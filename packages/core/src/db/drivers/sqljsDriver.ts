@@ -19,7 +19,7 @@ import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { corruptDatabaseError } from '../corrupt-refusal.js'
-import { sqlJsCorruptionCode } from './sqljsDriver.corruption.js'
+import { sqlJsCorruptionCode, refuseIfCorrupt } from './sqljsDriver.corruption.js'
 
 // ESM-compatible require for dynamic module loading
 const require = createRequire(import.meta.url)
@@ -456,6 +456,13 @@ export async function createSqlJsDatabase(
       sqliteCode,
       error
     )
+  }
+
+  // Integrity verdict, deliberately OUTSIDE the try above: `quick_check`
+  // REPORTS rather than throws, so no catch can observe it (ADR-175 § 2).
+  // Skipped for a brand-new empty database, where there is nothing to verify.
+  if (data !== undefined) {
+    refuseIfCorrupt(db, path)
   }
 
   return new SqlJsDatabaseAdapter(db, path, options)

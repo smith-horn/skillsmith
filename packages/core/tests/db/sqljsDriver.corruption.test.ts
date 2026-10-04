@@ -31,7 +31,10 @@ import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSqlJsDatabase } from '../../src/db/drivers/sqljsDriver.js'
-import { sqlJsCorruptionCode } from '../../src/db/drivers/sqljsDriver.corruption.js'
+import {
+  sqlJsCorruptionCode,
+  quickCheckVerdict,
+} from '../../src/db/drivers/sqljsDriver.corruption.js'
 import { isCorruptDatabaseError, DB_CORRUPT_CODE } from '../../src/db/db-errors.js'
 
 let dir: string
@@ -104,6 +107,43 @@ describe('sqlJsCorruptionCode — the message-to-code adapter', () => {
   })
 })
 
+describe('quickCheckVerdict — the integrity report', () => {
+  /** A stub matching only the shape the predicate needs. */
+  function stub(row: unknown[] | null): { prepare: () => never } | QuickCheckableStub {
+    return {
+      prepare: () => ({
+        step: () => row !== null,
+        get: () => row ?? [],
+        free: () => {},
+      }),
+    }
+  }
+  type QuickCheckableStub = {
+    prepare: (sql: string) => { step(): boolean; get(): unknown[]; free(): void }
+  }
+
+  it("treats SQLite's own ok token as healthy", () => {
+    expect(quickCheckVerdict(stub(['ok']) as QuickCheckableStub)).toBeUndefined()
+    // Case and surrounding whitespace are not meaningful.
+    expect(quickCheckVerdict(stub([' OK\n']) as QuickCheckableStub)).toBeUndefined()
+  })
+
+  it('returns the damage description verbatim when not ok', () => {
+    const damage = '*** in database main ***\nTree 2 page 2: btreeInitPage() returns error code 11'
+    expect(quickCheckVerdict(stub([damage]) as QuickCheckableStub)).toBe(damage)
+  })
+
+  // Both unreadable shapes are verdicts, not health. The alternative is
+  // publishing a handle whose integrity was never established.
+  it('treats an absent row as a verdict rather than as health', () => {
+    expect(quickCheckVerdict(stub(null) as QuickCheckableStub)).toMatch(/no result/)
+  })
+
+  it('treats a non-string result as a verdict rather than as health', () => {
+    expect(quickCheckVerdict(stub([42]) as QuickCheckableStub)).toMatch(/non-string/)
+  })
+})
+
 describe('createSqlJsDatabase — corrupt-file refusal (SMI-6961)', () => {
   // `readonly: true` is the arm that matters: it is what `skillsmith list` and
   // `manage` pass, and it is the case the old guard never consulted.
@@ -134,6 +174,54 @@ describe('createSqlJsDatabase — corrupt-file refusal (SMI-6961)', () => {
       /is corrupt and cannot be read/
     )
     expectUntouched(dbPath, before)
+  })
+
+  // PROBE PARITY (step 2b). This fixture has a VALID header and intact schema
+  // page, with 0xff over every page from 4096 on — the exact SMI-6931
+  // condition. Measured: it PASSES `SELECT name FROM sqlite_master LIMIT 1`
+  // and opens cleanly, so only `quick_check` catches it. Without the integrity
+  // report this driver would not refuse the file the native driver refuses,
+  // which ADR-175 § 1 forbids.
+  it.each([
+    ['readonly', { readonly: true }],
+    ['read-write', undefined],
+  ])(
+    'refuses a header-valid, page-corrupt database and leaves it untouched (%s)',
+    async (_label, options) => {
+      const dbPath = join(dir, 'skills.db')
+      const good = await seedBytes()
+      const damaged = Buffer.from(good)
+      for (let o = 4096; o < damaged.length; o += 1) damaged[o] = 0xff
+      writeFileSync(dbPath, damaged)
+      const before = snapshot(dbPath)
+
+      await expect(createSqlJsDatabase(dbPath, options)).rejects.toThrow(
+        /is corrupt and cannot be read/
+      )
+      expectUntouched(dbPath, before)
+    }
+  )
+
+  it('carries no sqliteCode on the reported-verdict path, unlike the thrown path', async () => {
+    // quick_check REPORTS; there is no thrown error to read a code from. This
+    // is why ADR-175 § 7 makes `sqliteCode` optional rather than deriving it
+    // from `cause` — a consumer relying on `cause` would find nothing here.
+    const dbPath = join(dir, 'skills.db')
+    const good = await seedBytes()
+    const damaged = Buffer.from(good)
+    for (let o = 4096; o < damaged.length; o += 1) damaged[o] = 0xff
+    writeFileSync(dbPath, damaged)
+
+    let error: unknown
+    try {
+      await createSqlJsDatabase(dbPath, { readonly: true })
+    } catch (e) {
+      error = e
+    }
+    expect(isCorruptDatabaseError(error)).toBe(true)
+    const refusal = error as { sqliteCode?: string; verdict: string }
+    expect(refusal.sqliteCode).toBeUndefined()
+    expect(refusal.verdict).toMatch(/btreeInitPage|malformed|page/i)
   })
 
   it('throws the same structured refusal the native driver throws', async () => {

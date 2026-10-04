@@ -1,10 +1,79 @@
 /**
- * Mapping a sql.js error to a SQLite result code (ADR-175 § 2, SMI-6961).
+ * Corruption classification for the sql.js driver (ADR-175 § 2, SMI-6961).
  *
- * A sibling module rather than a function inside `sqljsDriver.ts` for two
- * reasons: that file is at the 500-line standard, and this predicate is worth
- * testing directly against a case table rather than only through a driver open.
+ * A sibling module rather than functions inside `sqljsDriver.ts` for two
+ * reasons: that file is at the 500-line standard, and these predicates are
+ * worth testing directly against a case table rather than only through a
+ * driver open.
  */
+
+import { corruptDatabaseError } from '../corrupt-refusal.js'
+
+/** The narrowest shape `quickCheckVerdict` needs, so it is testable with a stub. */
+export interface QuickCheckable {
+  prepare(sql: string): {
+    step(): boolean
+    get(): unknown[]
+    free(): void
+  }
+}
+
+/**
+ * SQLite's integrity verdict on an open database, or `undefined` when healthy.
+ *
+ * **Why this exists separately from the error path.** `quick_check` **REPORTS**
+ * rather than throws: it returns `ok` or a description of the damage as a
+ * string, so no amount of `try`/`catch` around an open can observe it. The
+ * native driver has the same split (ADR-175 § 2), which is also why a verdict
+ * from here carries no `sqliteCode` — there is no thrown error to read one off.
+ *
+ * **Why the driver needs it at all.** This driver's existing probe is
+ * `SELECT name FROM sqlite_master LIMIT 1`, which reads only the schema page.
+ * Measured: a database with a valid header and `0xff` written over every page
+ * from 4096 onward — the exact condition SMI-6931 was filed for — **passes**
+ * that probe and opens cleanly, while `quick_check(1)` returns
+ * `*** in database main *** Tree 2 page 2: btreeInitPage() returns error code 11`.
+ * Without this, the two drivers refuse different files, which § 1 forbids.
+ *
+ * Compared case-insensitively against `ok` because that is SQLite's own
+ * success token; anything else is a verdict, including a shape this code did
+ * not anticipate. An unreadable or absent row is treated as a verdict too
+ * rather than as health — the safe direction, since the alternative is
+ * publishing a handle whose integrity was never established.
+ */
+export function quickCheckVerdict(db: QuickCheckable): string | undefined {
+  const stmt = db.prepare('PRAGMA quick_check(1)')
+  try {
+    if (!stmt.step()) return 'quick_check returned no result'
+    const first = stmt.get()[0]
+    if (typeof first !== 'string') return 'quick_check returned a non-string result'
+    return first.trim().toLowerCase() === 'ok' ? undefined : first
+  } finally {
+    stmt.free()
+  }
+}
+
+/**
+ * Refuse an open handle whose integrity `quick_check` reports as damaged.
+ *
+ * Closes the handle before throwing: it is never published to the caller, so
+ * nothing else will free its WASM heap.
+ *
+ * The refusal carries no `sqliteCode`. A reported verdict has no thrown error
+ * to read one from, which is the same shape the native driver's `quick_check`
+ * path has — and the reason ADR-175 § 7 puts `sqliteCode` on the error as an
+ * optional field rather than deriving it from `cause`.
+ */
+export function refuseIfCorrupt(db: QuickCheckable & { close(): void }, path: string): void {
+  const verdict = quickCheckVerdict(db)
+  if (verdict === undefined) return
+  try {
+    db.close()
+  } catch {
+    // already unusable; nothing left to free
+  }
+  throw corruptDatabaseError(path, verdict)
+}
 
 /**
  * The SQLite result code behind a sql.js error, derived from its message.
