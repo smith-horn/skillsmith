@@ -450,3 +450,136 @@ describe('runQuery — reindex staleness banner (SMI-5793)', () => {
     expect(result.additionalContext).not.toContain('[reindex]')
   })
 })
+
+describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
+  const baseArgs = {
+    sessionId: 'sess-1',
+    branch: 'smi-6744-bridge-verdict-consumer',
+    smi: 'smi-6744',
+    cwd: '',
+    out: '/tmp/o.md',
+  }
+
+  let repoDir: string
+  let stateDir: string
+  let originalStateOverride: string | undefined
+  let originalBridgeDisable: string | undefined
+  let originalBridgeShadow: string | undefined
+  let originalExpectedByTest: string | undefined
+
+  beforeEach(() => {
+    repoDir = makeFixtureTempDir('priming-bridge-repo')
+    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', repoDir], {
+      env: makeFixtureEnv(),
+    })
+    stateDir = mkdtempSync(join(tmpdir(), 'priming-bridge-state-'))
+    originalStateOverride = process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+    originalBridgeDisable = process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
+    originalBridgeShadow = process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW
+    originalExpectedByTest = process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO
+    process.env.SKILLSMITH_STATE_DIR_OVERRIDE = stateDir
+    delete process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
+    // Ship-live (D2, owner-decided 2026-10-03): the production default via
+    // .claude/settings.json is "0" (live) — match it here so these tests
+    // exercise the shipped behavior, with a dedicated shadow test overriding it.
+    process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW = '0'
+    // expectedBy gate: push it into the past so a `missing` case renders
+    // loudly in these tests, matching "well after ship" production state.
+    process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO = '2020-01-01T00:00:00.000Z'
+    process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING = '1'
+  })
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true })
+    rmSync(stateDir, { recursive: true, force: true })
+    if (originalStateOverride === undefined) delete process.env.SKILLSMITH_STATE_DIR_OVERRIDE
+    else process.env.SKILLSMITH_STATE_DIR_OVERRIDE = originalStateOverride
+    if (originalBridgeDisable === undefined) delete process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE
+    else process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE = originalBridgeDisable
+    if (originalBridgeShadow === undefined) delete process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW
+    else process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW = originalBridgeShadow
+    if (originalExpectedByTest === undefined) {
+      delete process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO
+    } else {
+      process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO = originalExpectedByTest
+    }
+    delete process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING
+  })
+
+  function seedBridgeEntry(overrides: Record<string, unknown> = {}): void {
+    const key = resolveMainRepoKey(repoDir)
+    if (!key) throw new Error('test setup: resolveMainRepoKey failed for the fixture repo')
+    const entry = {
+      evaluatedAt: new Date().toISOString(),
+      verdict: 'healthy',
+      reason: 'embeddingBackend=onnx',
+      observedBackend: 'onnx',
+      derivedFromVersion: '3.42.4',
+      patternsLearned: 1,
+      trajectoriesRecorded: 1,
+      consecutiveNoLearning: 0,
+      ...overrides,
+    }
+    writeFileSync(join(stateDir, 'ruflo-bridge.state'), `${JSON.stringify({ [key]: entry })}\n`)
+  }
+
+  it('renders nothing when no ruflo-bridge.state entry exists (before expectedBy)', async () => {
+    process.env.SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO = '2099-01-01T00:00:00.000Z'
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toBe('')
+  })
+
+  it('renders loudly when no entry exists past expectedBy (the writer never fired)', async () => {
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('state missing')
+  })
+
+  it('renders nothing for a fresh healthy entry', async () => {
+    seedBridgeEntry({ verdict: 'healthy' })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toBe('')
+  })
+
+  it('renders a degraded banner with the remedy', async () => {
+    seedBridgeEntry({ verdict: 'degraded', observedBackend: 'mock' })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('bridge degraded')
+    expect(result.additionalContext).toContain('node scripts/ruflo-bridge-probe.mjs')
+  })
+
+  it('SKILLSMITH_RUFLO_VERDICT_DISABLE=1 suppresses the banner even when degraded', async () => {
+    process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE = '1'
+    seedBridgeEntry({ verdict: 'degraded' })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).not.toContain('[ruflo-bridge]')
+  })
+
+  it('arm 10 — shadow mode (unset or non-"0") computes the line but renders nothing', async () => {
+    delete process.env.SKILLSMITH_RUFLO_VERDICT_SHADOW // unset = shadow, per the repo-wide predicate
+    seedBridgeEntry({ verdict: 'degraded' })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).not.toContain('[ruflo-bridge]')
+  })
+
+  it('arm 2a — a wrong/constant key resolution would see nothing: the real key must be used', async () => {
+    // Seeds under the REAL resolveMainRepoKey(repoDir) key, then verifies the
+    // banner renders the DEGRADED content specifically — i.e. runQuery is
+    // actually calling resolveMainRepoKey against this fixture's cwd and
+    // finding the seeded entry, not merely rendering the generic
+    // past-expectedBy "state missing" line a wrong key would also produce (a
+    // weaker `toContain('[ruflo-bridge]')` assertion does not distinguish
+    // the two — confirmed by mutation during implementation: hardcoding the
+    // bridgeKey to a constant in session-priming-query.ts still passed a
+    // `[ruflo-bridge]`-only assertion, because the past-expectedBy gate
+    // renders a loud "missing" line for ANY unresolved key). A
+    // session-priming-query.ts edit that hardcoded a constant key makes
+    // THIS assertion fail.
+    seedBridgeEntry({ verdict: 'degraded', observedBackend: 'mock' })
+    const result = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(result.additionalContext).toContain('[ruflo-bridge]')
+    expect(result.additionalContext).toContain('bridge degraded')
+    expect(result.additionalContext).not.toContain('state missing')
+  })
+})

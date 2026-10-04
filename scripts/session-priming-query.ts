@@ -27,6 +27,9 @@
  * state, and the CLI entry point.
  */
 
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
 import {
   readEntry,
   renderAutohealBanner,
@@ -50,6 +53,12 @@ import {
   readAndAck,
   renderDisconnectBanner,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
+import {
+  BRIDGE_VERDICT_SHADOW_VAR,
+  readEntryResult as readBridgeEntryResult,
+  renderBridgeBanner,
+  resolveBridgeLogPath,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import {
   logRetrievalEvent,
   resolveRetrievalLogPaths,
@@ -249,8 +258,63 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     }
   }
 
-  // Combined banner: stale-probe section first, liveness one-liner, reindex one-liner, disconnect one-liner below.
-  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine]
+  // SMI-6744 A5.5.2 delta — ruflo bridge-verdict banner (session-priming
+  // state-consumer, mirrors the autoheal/liveness/reindex/disconnect banners
+  // above). Computed BEFORE the disabled short-circuit, same rationale: a
+  // silently-degraded bridge should surface even when priming itself is
+  // disabled for this session. D2 (owner-decided 2026-10-03): this delta
+  // ships LIVE — `.claude/settings.json` sets SKILLSMITH_RUFLO_VERDICT_SHADOW
+  // to "0" — but the shadow predicate itself (unset or non-'0' = shadow)
+  // stays in force as the lever: shadow mode still computes the line and
+  // appends it to the probe's own log, it just never renders.
+  let bridgeLine = ''
+  if (process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE !== '1') {
+    // Reader-axis failures RENDER; they do not vanish. An earlier revision
+    // skipped the line entirely when the key resolved null, and swallowed any
+    // throw in a bare fail-soft catch — two silent paths, which the code gate
+    // found as its fifth finding. Silence is the exact state this banner
+    // exists to remove, so a reader that cannot do its job says so.
+    //
+    // Shape: the fallible work produces EITHER a rendered line OR a named
+    // fault, and the decision to render happens outside the try, so a throw
+    // while rendering cannot also swallow the fault it produced.
+    let computed = ''
+    let fault = ''
+    try {
+      const bridgeKey = resolveMainRepoKey(args.cwd)
+      if (!bridgeKey) {
+        fault = 'the host repo key could not be resolved, so no verdict could be read'
+      } else {
+        computed = renderBridgeBanner(readBridgeEntryResult(bridgeKey), { now })
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      fault = `the bridge-verdict reader failed: ${msg}`
+    }
+    const rendered = fault
+      ? `**[ruflo-bridge]** verdict not evaluated: ${fault} — run: node scripts/ruflo-bridge-probe.mjs — disable: SKILLSMITH_RUFLO_VERDICT_DISABLE=1`
+      : computed
+    if (rendered) {
+      const shadow = process.env[BRIDGE_VERDICT_SHADOW_VAR] !== '0'
+      if (shadow) {
+        // Best-effort only: a failure to LOG the shadow line must not become a
+        // second silent path, and must not crash the hook either.
+        try {
+          const logPath = resolveBridgeLogPath(now)
+          mkdirSync(dirname(logPath), { recursive: true })
+          appendFileSync(logPath, `${now.toISOString()} [shadow] would render:\n${rendered}\n`)
+        } catch {
+          /* logging is diagnostic; never block the hook on it */
+        }
+      } else {
+        bridgeLine = rendered
+      }
+    }
+  }
+
+  // Combined banner: stale-probe section first, liveness one-liner, reindex
+  // one-liner, disconnect one-liner, ruflo-bridge one-liner below.
+  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine, bridgeLine]
     .filter(Boolean)
     .join('\n')
 
