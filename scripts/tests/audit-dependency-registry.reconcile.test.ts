@@ -159,8 +159,12 @@ describe('--reconcile-audit', () => {
       info: GATE_BELOW,
       weird: GATE_UNKNOWN,
     }
-    const INFO = (id: string, pkg: string, sev: string, paths: string[]) =>
-      `ℹ Check 76 reconcile (informational): advisory ${id} (${pkg}, ${sev}) has no acceptance; npm audit reports it affecting production install(s) ${paths.join(', ')}, so it is production scope and outside this registry; ${GATE_BY_SEV[sev]}`
+    const INFO = (id: string, pkg: string, sev: string, paths: string[], devPaths: string[] = []) =>
+      `ℹ Check 76 reconcile (informational): advisory ${id} (${pkg}, ${sev}) has no acceptance; npm audit reports it affecting production install(s) ${paths.join(', ')}${
+        devPaths.length > 0
+          ? ` (and dev install(s) ${devPaths.join(', ')}, which it also affects because it is the only cause npm lists for ${pkg})`
+          : ''
+      }, so it is production scope and outside this registry; ${GATE_BY_SEV[sev]}`
     const withB = (pkg: string, severity: string) =>
       report({ pkgone: [advisory(A, 'pkgone')], [pkg]: [advisory(B, pkg, severity)] })
     // pkgone accepted; pkgtwo carries the unaccepted advisory B with explicit `nodes`.
@@ -225,7 +229,10 @@ describe('--reconcile-audit', () => {
         lockOf({ ...DEV_LOCK, pkgtwo: [{ dev: true }, {}] })
       )
       expect(r.status).toBe(0)
-      expect(r.out).toContain(INFO(B, 'pkgtwo', 'high', [NESTED('pkgtwo')]))
+      // L1: the dev install the advisory also affects is named too, labelled as dev.
+      expect(r.out).toContain(
+        INFO(B, 'pkgtwo', 'high', [NESTED('pkgtwo')], ['node_modules/pkgtwo'])
+      )
     })
     it.each([
       [
@@ -261,14 +268,48 @@ describe('--reconcile-audit', () => {
       expect(r.status).toBe(0)
       expect(r.out).toContain(INFO(B, 'pkgtwo', 'high', ['node_modules/pkgtwo', NESTED('pkgtwo')]))
     })
-    it('devOptional alone is dev-scope, so it still fails', () => {
+    it('devOptional WITHOUT dev is production (the gate passes --omit=dev alone), so it is informational', () => {
       const r = reconcile(
         [accept(A, 'pkgone')],
         withB('pkgtwo', 'high'),
         lockOf({ ...DEV_LOCK, pkgtwo: { devOptional: true } })
       )
+      expect(r.status).toBe(0)
+      expect(r.out).toContain(INFO(B, 'pkgtwo', 'high', ['node_modules/pkgtwo']))
+      expect(r.out).not.toContain('✗')
+    })
+    it('control: an install with dev AND devOptional set is still dev, so it fails', () => {
+      const r = reconcile(
+        [accept(A, 'pkgone')],
+        withB('pkgtwo', 'high'),
+        lockOf({ ...DEV_LOCK, pkgtwo: { dev: true, devOptional: true } })
+      )
       expect(r.status).toBe(1)
+      expect(r.out).toContain(`✗ Check 76 reconcile: unaccepted advisory ${B} (pkgtwo, high)`)
       expect(r.out).not.toContain('informational')
+    })
+    it("L2: a via item naming ANOTHER package fails closed, not through that package's entry", () => {
+      // npm never lists an advisory under a different package's entry. Here a dev-only
+      // entry carries an item naming prodpkg, whose own entry has an EMPTY via and a
+      // production node: read through prodpkg's entry it would be a sole-cause production
+      // advisory (informational, exit 0). It must be rejected as unusable instead.
+      const audit = reportWith({
+        pkgone: { via: [advisory(A, 'pkgone')], nodes: ['node_modules/pkgone'] },
+        devpkg: { via: [advisory(B, 'prodpkg')], nodes: ['node_modules/devpkg'] },
+        prodpkg: { via: [], nodes: ['node_modules/prodpkg'] },
+      })
+      const r = reconcile(
+        [accept(A, 'pkgone')],
+        audit,
+        lockOf({ ...DEV_LOCK, devpkg: { dev: true }, prodpkg: {} })
+      )
+      expect(r.status).toBe(1)
+      expect(r.out).toContain('the npm audit output is unusable')
+      expect(r.out).toContain(
+        `advisory ${B} is listed under "devpkg" but names package "prodpkg"; npm lists an advisory only under its own package's entry`
+      )
+      expect(r.out).not.toContain('informational')
+      expect(r.out).not.toContain('acceptances match')
     })
     it.each([
       ['missing', undefined],
@@ -345,7 +386,7 @@ describe('--reconcile-audit', () => {
   ])('a repeated advisory with conflicting severities (%s) fails closed', (_l, first, second) => {
     const r = reconcile(
       [accept(A, 'pkgone', 'high')],
-      report({ pkgone: [advisory(A, 'pkgone', first)], other: [advisory(A, 'pkgone', second)] })
+      report({ pkgone: [advisory(A, 'pkgone', first), advisory(A, 'pkgone', second)] })
     )
     expect(r.status).toBe(1)
     expect(r.out).toContain('the npm audit output is unusable')
@@ -355,7 +396,7 @@ describe('--reconcile-audit', () => {
   it('a repeated advisory with the SAME severity is fine', () => {
     const r = reconcile(
       [accept(A, 'pkgone')],
-      report({ pkgone: [advisory(A, 'pkgone')], other: [advisory(A, 'pkgone')] })
+      report({ pkgone: [advisory(A, 'pkgone'), advisory(A, 'pkgone')] })
     )
     expect(r.status).toBe(0)
     expect(r.out).toContain('1 acceptances match the npm audit report')

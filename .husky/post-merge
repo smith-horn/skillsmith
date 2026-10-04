@@ -1,4 +1,11 @@
 #!/bin/sh
+# SMI-6967: Husky invokes every hook through `sh -e` (.husky/_/h:17), so
+# errexit is always on here regardless of this file's own shebang -- the
+# shebang is never consulted. `set +e` restores this hook's documented
+# non-blocking behavior: without it, the first non-zero-exit command
+# (including the classifier status/token check below) would abort the
+# whole hook immediately, silently skipping everything after it.
+set +e
 # Post-merge hook
 # - SMI-2552: originally auto-installed npm dependencies when
 #   package-lock.json changed.
@@ -27,8 +34,16 @@ if git diff --name-only ORIG_HEAD HEAD | grep -q '^package-lock\.json$'; then
 
   # SMI-5624: linked-worktree detection, shared by the classify-driven
   # branch below and the advice printer's <main-checkout-path> argument.
-  _gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
-  _gd="$(git rev-parse --git-dir 2>/dev/null)"
+  # SMI-6967 L-3: the `|| echo ''` on each line below is belt-and-braces,
+  # not load-bearing -- `set +e` at the top of this file (SMI-6967 H-6/P-1)
+  # is the real errexit protection for this hook; these two predate that
+  # fix, from when each line had to defend itself individually. Measured:
+  # the assigned value is identical either way (a failing `git rev-parse`
+  # with stderr redirected already yields empty stdout), so dropping
+  # `|| echo ''` would change nothing observable -- kept only to avoid
+  # re-verifying that under every shell this hook might run under.
+  _gcd="$(git rev-parse --git-common-dir 2>/dev/null || echo '')"
+  _gd="$(git rev-parse --git-dir 2>/dev/null || echo '')"
   _IS_LINKED_WT=0
   _MAIN_CHECKOUT=""
   if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then
@@ -136,11 +151,12 @@ fi
 # inside the probe's own 120s lock-stale window — the two are related by
 # construction; changing one means re-checking the other.
 #
-# This hook has NO `set -e` (see the shebang above) and the line above this
-# comment closes the hook's only conditional, so a writer exit 2 here is
-# inert — it cannot fail a developer's pull. Do not add `|| true` (there is
-# no `set -e` for it to suppress) and do not move this after `exit 0` below,
-# where it would never run at all.
+# Husky invokes this hook under `sh -e` regardless of the shebang above (see
+# the `set +e` note at the top of this file, SMI-6967) -- that `set +e` is
+# what keeps a writer exit 2 here from aborting the whole hook; it cannot
+# fail a developer's pull as long as it stays in place. Do not remove it,
+# and do not move this call after `exit 0` below, where it would never run
+# at all.
 #
 # Capability-probe timeout binary (measured: stock macOS has NEITHER `timeout`
 # nor `gtimeout` on PATH by default — confirmed on a real machine; a bare
