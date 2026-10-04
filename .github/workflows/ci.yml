@@ -1261,6 +1261,22 @@ jobs:
   # that adds no file under `supabase/functions` cannot raise the baseline, but it
   # can still be FAILED by an INCONCLUSIVE result -- which is why the wrapper's
   # `RESULT` line is the first thing to read, ahead of `VERDICT`.
+  #
+  # LOAD-BEARING BEYOND THIS JOB -- do not tighten the `if:` (SMI-6969). Because
+  # `if:` is `!cancelled()` ALONE, this job still runs when `detect-changes`
+  # fails, and the step then fails closed on `DETECT_RESULT != success` (M-6
+  # below). That makes it the ONLY required context that goes red on a detector
+  # fault: measured 2026-10-04, 12 of the 13 required contexts `ci.yml` produces
+  # would SKIP in that case -- 9 via the default `if:`, and three more (PR
+  # Validation (Shell), Build Docker Image, Build) because they use
+  # `!cancelled()` but ALSO test `outputs.code == 'true'`, which is empty after a
+  # failure. GitHub treats a skipped required check as satisfied, so without this
+  # job's red the merge button would unblock on a broken pipeline. Adding an
+  # `outputs.code == 'true'` test here -- the same shape those three use, and an
+  # obvious-looking tidy-up -- would silently remove the last close and make the
+  # pipeline fail-open, with nothing in CI objecting. SMI-6969 tracks pinning
+  # this with a mutation-tested assertion; until that lands, this comment is the
+  # only thing marking the line as load-bearing.
   edge-functions-check:
     name: Edge Functions Typecheck
     runs-on: ubuntu-latest
