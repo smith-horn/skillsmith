@@ -198,7 +198,11 @@ function runHook(
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {}
 ): { status: number; stdout: string; stderr: string } {
-  const result = spawnSync('sh', [POST_MERGE_SCRIPT], {
+  // SMI-6967 (F1): Husky invokes every hook via `sh -e` (.husky/_/h:17)
+  // regardless of the hook's own shebang -- a plain `sh` spawn here never
+  // reproduces that execution mode, which is why an errexit-only defect in
+  // the hook survived to a post-merge retro. `-e` matches production.
+  const result = spawnSync('sh', ['-e', POST_MERGE_SCRIPT], {
     cwd,
     encoding: 'utf8',
     env: { ...makeFixtureEnv(), ...extraEnv },

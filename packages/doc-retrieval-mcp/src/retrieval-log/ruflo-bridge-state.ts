@@ -80,32 +80,17 @@ export const DEBOUNCE_MS = 24 * 60 * 60 * 1000
  */
 export const LOCK_STALE_MS = 120_000
 
-/**
- * The earliest moment a reader may treat a still-missing entry as a failure
- * rather than "this checkout has not had a post-merge fire since this
- * feature shipped" (A5.5.2's `expectedBy`, Wave 0 Step 4 — see
- * smi-6744-ruflo-intelligence-substrate-repair.md:126-130). The spec and the
- * swarm-execution-plan row name the *existence* of this gate precisely
- * (arms 6a/6b) but not a per-key derivation, and a per-key `expectedBy`
- * cannot be recorded without a writer having already run at least once for
- * that key — which is exactly the case this gate exists to cover. So this is
- * a single global constant (ship date + a one-day grace period for the
- * first post-merge to land), not a per-key record. This is a documented
- * implementation choice, not a literal spec requirement — see the delta's
- * own text for why no narrower mechanism is named. Override for tests only.
- */
-export const DEFAULT_EXPECTED_BY_ISO = '2026-10-04T00:00:00.000Z'
-const EXPECTED_BY_TEST_VAR = 'SKILLSMITH_RUFLO_VERDICT_EXPECTED_BY_TEST_ISO'
-
-export function resolveExpectedByIso(): string {
-  return process.env[EXPECTED_BY_TEST_VAR] || DEFAULT_EXPECTED_BY_ISO
-}
-
-/** Whether `now` is past the point a reader may expect an entry to exist. */
-export function hasExpectedByPassed(now: Date): boolean {
-  const t = Date.parse(resolveExpectedByIso())
-  return !Number.isFinite(t) || now.getTime() >= t
-}
+// ---- expectedBy gate (SMI-6967 H-1) ---------------------------------------
+// Split into `ruflo-bridge-state.expected-by.ts` to stay under this repo's
+// <500-line-per-file convention — re-exported here so callers (and the
+// writer) can import everything from this one module, matching the render
+// split below. See that module's own doc comment for the full rationale.
+export {
+  EXPECTED_BY_GRACE_MS,
+  hasExpectedByPassed,
+  resolveProbeInstalledAt,
+  resolveProbeScriptPath,
+} from './ruflo-bridge-state.expected-by.js'
 
 /**
  * The detector's five-value vocabulary (`ruflo-bridge-verdict.mjs`) plus
@@ -150,6 +135,28 @@ export interface BridgeEntry {
   trajectoriesRecorded: number | null
   /** A5.5.2 liveness arm: consecutive probes with neither counter moved. */
   consecutiveNoLearning: number
+  /**
+   * SMI-6967 H-9: latches `true` the first time any probe observes a
+   * counter above zero, and never un-latches. Gates {@link
+   * renderBridgeLivenessLine} — before this is true, nothing has ever
+   * produced a pattern or trajectory, so comparing two zeros as "unmoved"
+   * would fire permanently within days instead of signalling anything real.
+   * Absent on an entry written before this field existed; readers must treat
+   * `undefined` the same as `false` (dormant), never as `true`.
+   */
+  everLearned: boolean
+  /**
+   * SMI-6967 H-9: the last NON-NULL pair of counters this checkout has
+   * observed, carried forward unchanged across any probe that could not read
+   * them (`patternsLearned`/`trajectoriesRecorded` above are THIS probe's own
+   * raw reading, which can be null even when this baseline is not). This is
+   * the baseline `foldLiveness` compares the next real observation against —
+   * distinguishing "not observed this probe" from "observed and unchanged"
+   * rather than letting a null reading silently reset or silently extend a
+   * real streak.
+   */
+  lastObservedPatternsLearned: number | null
+  lastObservedTrajectoriesRecorded: number | null
 }
 
 export type BridgeState = Record<string, BridgeEntry>
@@ -444,29 +451,11 @@ export function writeEntryIfOwned(
 }
 
 // ---- Liveness arm (A5.5.2, in the liveness-state.ts shape) ----------------
-
-/**
- * Folds one probe's observed counters into the prior entry's streak. Both
- * counters must be present (non-null) on both this run and the prior one to
- * count as "unmoved" — a probe that could not read them (server unreachable,
- * malformed payload) resets the streak rather than silently extending it
- * over missing data.
- */
-export function foldLiveness(
-  prior: BridgeEntry | null,
-  patternsLearned: number | null,
-  trajectoriesRecorded: number | null
-): number {
-  const unmoved =
-    prior != null &&
-    prior.patternsLearned != null &&
-    prior.trajectoriesRecorded != null &&
-    patternsLearned != null &&
-    trajectoriesRecorded != null &&
-    prior.patternsLearned === patternsLearned &&
-    prior.trajectoriesRecorded === trajectoriesRecorded
-  return unmoved ? prior.consecutiveNoLearning + 1 : 0
-}
+// Split into `ruflo-bridge-state.liveness.ts` to stay under this repo's
+// <500-line-per-file convention — re-exported here so callers (and the
+// writer) can import everything from this one module, matching the render
+// split below. See that module's own doc comment for the full H-9 rationale.
+export { foldLiveness, type BridgeLivenessFold } from './ruflo-bridge-state.liveness.js'
 
 // ---- Render ----------------------------------------------------------
 // Split into `ruflo-bridge-state.render.ts` to stay under this repo's

@@ -72,6 +72,12 @@ function buildEntry(verdict: string): BridgeEntry {
     patternsLearned: null,
     trajectoriesRecorded: null,
     consecutiveNoLearning: 0,
+    // SMI-6967 H-9 added these two fields to BridgeEntry. This worker only
+    // exercises lock/orchestration concurrency (arm 5), never the liveness
+    // arm, so a fixed dormant/no-baseline shape is correct here.
+    everLearned: false,
+    lastObservedPatternsLearned: null,
+    lastObservedTrajectoriesRecorded: null,
   }
 }
 

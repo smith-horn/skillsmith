@@ -176,7 +176,11 @@ function runHook(
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {}
 ): { status: number; stdout: string; stderr: string } {
-  const result = spawnSync('sh', [script, ...args], {
+  // SMI-6967 (F2): Husky invokes every hook via `sh -e` (.husky/_/h:17)
+  // regardless of the hook's own shebang -- a plain `sh` spawn here never
+  // reproduces that execution mode. See post-merge-worktree-guard.test.ts's
+  // identical F1 fix for the full rationale.
+  const result = spawnSync('sh', ['-e', script, ...args], {
     cwd,
     encoding: 'utf8',
     env: { ...makeFixtureEnv(), ...extraEnv },

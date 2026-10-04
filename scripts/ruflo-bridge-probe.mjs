@@ -255,6 +255,7 @@ async function main() {
 
     if (!first.ok) {
       log(`unreadable: ${first.reason}`)
+      const fold = foldLiveness(prior, null, null)
       entry = {
         evaluatedAt: new Date().toISOString(),
         verdict: 'unreadable',
@@ -263,7 +264,10 @@ async function main() {
         derivedFromVersion: DERIVED_FROM.version,
         patternsLearned: null,
         trajectoriesRecorded: null,
-        consecutiveNoLearning: foldLiveness(prior, null, null),
+        consecutiveNoLearning: fold.consecutiveNoLearning,
+        everLearned: fold.everLearned,
+        lastObservedPatternsLearned: fold.lastObservedPatternsLearned,
+        lastObservedTrajectoriesRecorded: fold.lastObservedTrajectoriesRecorded,
       }
       exitCode = UNREADABLE_EXIT
     } else {
@@ -306,6 +310,7 @@ async function main() {
         }
       }
 
+      const fold = foldLiveness(prior, patternsLearned, trajectoriesRecorded)
       entry = {
         evaluatedAt: new Date().toISOString(),
         verdict: finalVerdict,
@@ -314,7 +319,10 @@ async function main() {
         derivedFromVersion: DERIVED_FROM.version,
         patternsLearned,
         trajectoriesRecorded,
-        consecutiveNoLearning: foldLiveness(prior, patternsLearned, trajectoriesRecorded),
+        consecutiveNoLearning: fold.consecutiveNoLearning,
+        everLearned: fold.everLearned,
+        lastObservedPatternsLearned: fold.lastObservedPatternsLearned,
+        lastObservedTrajectoriesRecorded: fold.lastObservedTrajectoriesRecorded,
       }
       log(`verdict: ${finalVerdict} -- ${finalReason}`)
     }

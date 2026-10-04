@@ -31,7 +31,7 @@ import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 import {
   BRIDGE_VERDICT_DISABLE_VAR,
-  DEFAULT_EXPECTED_BY_ISO,
+  EXPECTED_BY_GRACE_MS,
   LOCK_STALE_MS,
   acquireBridgeLock,
   bridgeLockStillHeld,
@@ -99,6 +99,13 @@ function makeEntry(overrides: Partial<BridgeEntry> = {}): BridgeEntry {
     patternsLearned: 10,
     trajectoriesRecorded: 2,
     consecutiveNoLearning: 0,
+    // SMI-6967 H-9: defaults model an already-armed checkout with a
+    // consistent baseline, matching the default patternsLearned/
+    // trajectoriesRecorded above — most existing arms below don't care
+    // about the liveness fields at all, so this keeps them unaffected.
+    everLearned: true,
+    lastObservedPatternsLearned: 10,
+    lastObservedTrajectoriesRecorded: 2,
     ...overrides,
   }
 }
@@ -184,14 +191,35 @@ describe('readEntryResult', () => {
   })
 })
 
-// ── expectedBy gate ─────────────────────────────────────────────────────
+// ── expectedBy gate (SMI-6967 H-1: per-checkout installedAt, not a wall-clock constant) ──
 
 describe('hasExpectedByPassed', () => {
-  it('is false before the constant', () => {
-    expect(hasExpectedByPassed(new Date(Date.parse(DEFAULT_EXPECTED_BY_ISO) - 1000))).toBe(false)
+  it('is false when the probe was never installed in this checkout (installedAt null), however far in the future `now` is', () => {
+    expect(hasExpectedByPassed(new Date('2099-01-01T00:00:00Z'), null)).toBe(false)
   })
-  it('is true at/after the constant', () => {
-    expect(hasExpectedByPassed(new Date(Date.parse(DEFAULT_EXPECTED_BY_ISO) + 1000))).toBe(true)
+
+  it('is false within the grace period after installedAt', () => {
+    const installedAt = new Date('2026-10-01T00:00:00Z')
+    const now = new Date(installedAt.getTime() + EXPECTED_BY_GRACE_MS - 1000)
+    expect(hasExpectedByPassed(now, installedAt)).toBe(false)
+  })
+
+  it('is true at/after the grace period elapses from installedAt', () => {
+    const installedAt = new Date('2026-10-01T00:00:00Z')
+    const now = new Date(installedAt.getTime() + EXPECTED_BY_GRACE_MS + 1000)
+    expect(hasExpectedByPassed(now, installedAt)).toBe(true)
+  })
+
+  it('honors a custom graceMs override', () => {
+    const installedAt = new Date('2026-10-01T00:00:00Z')
+    const now = new Date(installedAt.getTime() + 1000)
+    expect(hasExpectedByPassed(now, installedAt, 500)).toBe(true)
+    expect(hasExpectedByPassed(now, installedAt, 5000)).toBe(false)
+  })
+
+  it('a checkout created TODAY must not shout on its very first session: installedAt === now is never elapsed', () => {
+    const now = new Date('2099-06-15T00:00:00Z')
+    expect(hasExpectedByPassed(now, now)).toBe(false)
   })
 })
 
@@ -298,18 +326,39 @@ describe('renderBridgeVerdictLine', () => {
     expect(rendered).not.toContain('reader')
   })
 
-  it('arm 6a — missing before expectedBy is quiet', () => {
+  it('arm 6a — missing before expectedBy (recently installed) is quiet', () => {
+    const installedAt = new Date('2026-08-31T18:00:00Z')
     expect(
-      renderBridgeVerdictLine({ status: 'missing' }, { now: new Date('2026-09-01T00:00:00Z') })
+      renderBridgeVerdictLine(
+        { status: 'missing' },
+        { now: new Date('2026-09-01T00:00:00Z'), installedAt }
+      )
     ).toBe('')
   })
 
-  it('arm 6b — missing after expectedBy renders loudly, naming "missing"', () => {
+  it('arm 6b — missing after expectedBy (installed long ago) renders loudly, naming "missing"', () => {
+    const installedAt = new Date('2026-08-01T00:00:00Z')
     const rendered = renderBridgeVerdictLine(
       { status: 'missing' },
-      { now: new Date('2026-11-01T00:00:00Z') }
+      { now: new Date('2026-11-01T00:00:00Z'), installedAt }
     )
     expect(rendered).toContain('verdict not evaluated: state missing')
+  })
+
+  it('arm 6c (SMI-6967 H-1) — missing NEVER renders loudly when the probe was never installed in this checkout (installedAt null), regardless of how much time has passed', () => {
+    const rendered = renderBridgeVerdictLine(
+      { status: 'missing' },
+      { now: new Date('2099-01-01T00:00:00Z'), installedAt: null }
+    )
+    expect(rendered).toBe('')
+  })
+
+  it('arm 6d (SMI-6967 H-1) — missing is also quiet when `installedAt` is simply omitted (defaults to null, same as arm 6c)', () => {
+    const rendered = renderBridgeVerdictLine(
+      { status: 'missing' },
+      { now: new Date('2099-01-01T00:00:00Z') }
+    )
+    expect(rendered).toBe('')
   })
 
   it('malformed (reader-level: corrupt state file) always renders, regardless of expectedBy', () => {
@@ -350,14 +399,28 @@ describe('renderBridgeVerdictLine', () => {
 describe('renderBridgeLivenessLine', () => {
   const now = new Date('2026-10-10T00:00:00.000Z')
 
-  it('arm 9 — fires at the SKILLSMITH_RUFLO_LIVENESS_DAYS default (7)', () => {
-    const entry = makeEntry({ consecutiveNoLearning: 7 })
+  it('arm 9 — fires at the SKILLSMITH_RUFLO_LIVENESS_DAYS default (7), once armed', () => {
+    const entry = makeEntry({ everLearned: true, consecutiveNoLearning: 7 })
     const rendered = renderBridgeLivenessLine({ status: 'ok', entry }, { now })
-    expect(rendered).toContain('no learning recorded in 7 days')
+    // SMI-6967 M-13: the threshold counts consecutive PROBES, not days.
+    expect(rendered).toContain('no learning recorded in 7 consecutive probes')
+    expect(rendered).not.toContain('7 days')
   })
 
   it('does not fire one probe short of the threshold', () => {
-    const entry = makeEntry({ consecutiveNoLearning: 6 })
+    const entry = makeEntry({ everLearned: true, consecutiveNoLearning: 6 })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
+  })
+
+  it('SMI-6967 H-9 — stays dormant (renders nothing) before any probe has ever observed real learning, even past the threshold', () => {
+    const entry = makeEntry({ everLearned: false, consecutiveNoLearning: 999 })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
+  })
+
+  it('SMI-6967 H-9 — treats a missing everLearned field (an entry written before this fix) as dormant, not armed', () => {
+    const entry = makeEntry({ consecutiveNoLearning: 999 })
+    // @ts-expect-error — simulating an on-disk entry written before this field existed
+    delete entry.everLearned
     expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
   })
 
@@ -419,33 +482,102 @@ describe('arm 7 — cached and wrong-store answers render (complementary case)',
 
 // ── Liveness fold ───────────────────────────────────────────────────────
 
-describe('foldLiveness', () => {
-  it('starts at 0 with no prior entry', () => {
-    expect(foldLiveness(null, 10, 2)).toBe(0)
+describe('foldLiveness (SMI-6967 H-9 rewrite: three-way, object return)', () => {
+  it('starts at 0, not-yet-armed, with no prior entry and no observation this run', () => {
+    const fold = foldLiveness(null, null, null)
+    expect(fold.consecutiveNoLearning).toBe(0)
+    expect(fold.everLearned).toBe(false)
+    expect(fold.lastObservedPatternsLearned).toBeNull()
+    expect(fold.lastObservedTrajectoriesRecorded).toBeNull()
   })
-  it('increments when both counters are unchanged', () => {
+
+  it('an all-zero FIRST observation establishes the baseline but does NOT arm (nothing has produced anything yet)', () => {
+    const fold = foldLiveness(null, 0, 0)
+    expect(fold.everLearned).toBe(false)
+    expect(fold.consecutiveNoLearning).toBe(0) // first observation, no streak yet
+    expect(fold.lastObservedPatternsLearned).toBe(0)
+    expect(fold.lastObservedTrajectoriesRecorded).toBe(0)
+  })
+
+  it('a long run of repeated all-zero observations never arms by itself, however many probes accumulate', () => {
+    // This is the bug H-9 reports: two equal zeros used to count as
+    // "unmoved" and the streak alone (not what it measures) decided whether
+    // the arm fired. `everLearned` must stay false across any number of
+    // zero-zero probes — only an actual positive observation arms it.
+    let entry = makeEntry({
+      everLearned: false,
+      consecutiveNoLearning: 0,
+      lastObservedPatternsLearned: null,
+      lastObservedTrajectoriesRecorded: null,
+    })
+    for (let i = 0; i < 20; i += 1) {
+      const fold = foldLiveness(entry, 0, 0)
+      expect(fold.everLearned).toBe(false)
+      entry = makeEntry({ ...entry, ...fold })
+    }
+  })
+
+  it('arms on first observed increase above zero (dormant -> armed)', () => {
     const prior = makeEntry({
-      patternsLearned: 10,
-      trajectoriesRecorded: 2,
+      everLearned: false,
+      lastObservedPatternsLearned: 0,
+      lastObservedTrajectoriesRecorded: 0,
+      consecutiveNoLearning: 0,
+    })
+    const fold = foldLiveness(prior, 1, 0)
+    expect(fold.everLearned).toBe(true)
+    expect(fold.consecutiveNoLearning).toBe(0) // the value itself moved (0 -> 1), so this is a CHANGE
+  })
+
+  it('increments when both counters are unchanged from the last-observed baseline, once armed', () => {
+    const prior = makeEntry({
+      everLearned: true,
+      lastObservedPatternsLearned: 10,
+      lastObservedTrajectoriesRecorded: 2,
       consecutiveNoLearning: 3,
     })
-    expect(foldLiveness(prior, 10, 2)).toBe(4)
+    const fold = foldLiveness(prior, 10, 2)
+    expect(fold.consecutiveNoLearning).toBe(4)
+    expect(fold.everLearned).toBe(true)
   })
-  it('resets to 0 when either counter moved', () => {
+
+  it('resets to 0 when either counter moved from the last-observed baseline', () => {
     const prior = makeEntry({
-      patternsLearned: 10,
-      trajectoriesRecorded: 2,
+      everLearned: true,
+      lastObservedPatternsLearned: 10,
+      lastObservedTrajectoriesRecorded: 2,
       consecutiveNoLearning: 5,
     })
-    expect(foldLiveness(prior, 11, 2)).toBe(0)
+    const fold = foldLiveness(prior, 11, 2)
+    expect(fold.consecutiveNoLearning).toBe(0)
+    expect(fold.lastObservedPatternsLearned).toBe(11) // the baseline moves to the new reading
   })
-  it('resets to 0 when either counter is unreadable (null) this run', () => {
+
+  it('a null-counters probe (not observed) does NOT reset a real streak — it carries the streak forward unchanged', () => {
     const prior = makeEntry({
-      patternsLearned: 10,
-      trajectoriesRecorded: 2,
+      everLearned: true,
+      lastObservedPatternsLearned: 10,
+      lastObservedTrajectoriesRecorded: 2,
       consecutiveNoLearning: 5,
     })
-    expect(foldLiveness(prior, null, null)).toBe(0)
+    const fold = foldLiveness(prior, null, null)
+    expect(fold.consecutiveNoLearning).toBe(5) // unchanged, NOT reset to 0 (the H-9 bug)
+    expect(fold.everLearned).toBe(true) // still latched
+    expect(fold.lastObservedPatternsLearned).toBe(10) // baseline preserved for the next REAL observation
+    expect(fold.lastObservedTrajectoriesRecorded).toBe(2)
+  })
+
+  it('a null-counters probe never un-latches everLearned once armed, and never advances the streak either (nothing was observed)', () => {
+    const prior = makeEntry({ everLearned: true, consecutiveNoLearning: 2 })
+    const fold = foldLiveness(prior, null, null)
+    expect(fold.everLearned).toBe(true)
+    expect(fold.consecutiveNoLearning).toBe(2)
+  })
+
+  it('a null-counters probe with no prior baseline at all stays at a clean 0, not-armed slate', () => {
+    const fold = foldLiveness(null, null, null)
+    expect(fold.consecutiveNoLearning).toBe(0)
+    expect(fold.everLearned).toBe(false)
   })
 })
 

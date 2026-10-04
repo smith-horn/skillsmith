@@ -70,17 +70,20 @@ function detectorNotEvaluatedText(entry: BridgeEntry): { state: string; action: 
  * (`reindex-state.ts:183`) — a `missing`/`malformed`/`unreadable` READ past
  * {@link hasExpectedByPassed} is exactly when this must render loudly, the
  * defect one layer up from D3's that this delta's correction-of-record
- * section names.
+ * section names. `opts.installedAt` (SMI-6967 H-1) is this checkout's own
+ * anchor for that gate — see `ruflo-bridge-state.expected-by.ts`'s doc
+ * comment; omitted or `null` always means "not elapsed."
  */
 export function renderBridgeVerdictLine(
   read: BridgeReadResult,
-  opts: { now: Date; staleHours?: number }
+  opts: { now: Date; staleHours?: number; installedAt?: Date | null }
 ): string {
   const { now } = opts
   const staleHours = opts.staleHours ?? DEFAULT_STALE_HOURS
+  const installedAt = opts.installedAt ?? null
 
   if (read.status !== 'ok') {
-    if (read.status === 'missing' && !hasExpectedByPassed(now)) return ''
+    if (read.status === 'missing' && !hasExpectedByPassed(now, installedAt)) return ''
     const stateWord =
       read.status === 'missing'
         ? 'missing'
@@ -132,16 +135,30 @@ export function renderBridgeVerdictLine(
   return line(`${state} (${ageSuffix})`, action, now)
 }
 
-/** The liveness-axis line, or '' when the threshold has not been reached, or the read was not `ok`. */
+/**
+ * The liveness-axis line, or '' when dormant, the threshold has not been
+ * reached, or the read was not `ok`. SMI-6967 H-9: dormant until
+ * `entry.everLearned` is `true` — before any probe has ever observed a
+ * counter move above zero, nothing has been produced yet (the documented
+ * out-of-scope case), so comparing two equal zeros as "unmoved" would fire
+ * permanently within days of a fresh checkout instead of signalling
+ * anything real. `everLearned` is read as `=== true` (not merely truthy) so
+ * an entry written before this field existed — where it is `undefined` —
+ * is treated as dormant, never as armed.
+ */
 export function renderBridgeLivenessLine(
   read: BridgeReadResult,
   opts: { now: Date; livenessDays?: number }
 ): string {
   if (read.status !== 'ok') return ''
+  if (read.entry.everLearned !== true) return ''
   const days = opts.livenessDays ?? DEFAULT_LIVENESS_DAYS
   if (read.entry.consecutiveNoLearning < days) return ''
+  // SMI-6967 M-13: the threshold counts consecutive PROBES, not days —
+  // post-merge is the probe's only trigger, so `days` probes can span weeks
+  // of wall-clock time. The rendered text must say so, not "days".
   return line(
-    `no learning recorded in ${days} days (patternsLearned/trajectoriesRecorded unmoved)`,
+    `no learning recorded in ${days} consecutive probes (patternsLearned/trajectoriesRecorded unmoved)`,
     `run: ${PROBE_COMMAND} to re-check`,
     opts.now
   )
@@ -150,7 +167,7 @@ export function renderBridgeLivenessLine(
 /** Both lines joined (verdict first, then liveness), filtering empties — the fixed segment order this module owns. */
 export function renderBridgeBanner(
   read: BridgeReadResult,
-  opts: { now: Date; staleHours?: number; livenessDays?: number }
+  opts: { now: Date; staleHours?: number; livenessDays?: number; installedAt?: Date | null }
 ): string {
   return [renderBridgeVerdictLine(read, opts), renderBridgeLivenessLine(read, opts)]
     .filter(Boolean)
