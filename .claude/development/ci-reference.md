@@ -98,12 +98,17 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Website Skills E2E Gate | website-skills-e2e.yml | Skills-page e2e carve-out (SMI-5485); auto-passes via relevance skip on unrelated PRs |
 | pointer-check | submodule-pointer-check.yml | `docs/internal` gitlink ancestry gate (ADR-143, SMI-6260) |
 | Edge Functions Typecheck | ci.yml | deno-check ratchet over `supabase/functions` (SMI-6897); no path filter, exits 0 in-step on a non-code PR |
+| Dependency Guard | ci.yml | GitHub dependency review (`fail-on-severity: high`) plus Check 4's supply-chain drift guard, including the rule that credentialed CI runs the Vercel CLI from the lockfile tree (SMI-3985, SMI-6944); gated by a job-level `if:` on `classify`'s tier |
 
 **This table is an enumeration, which is a count.** It was missing `pointer-check` and `Edge Functions Typecheck` until 2026-10-04 — the same two contexts the JSON was missing, and it survived the edit directly below that was made *because of* that drift. A three-column table reads as more authoritative than the prose count removed from "How It Works", so the stale version was the stronger claim and the one left standing. If you add a required context, this table is the second place to change and the easier one to forget. Verify against `.github/branch-protection.json`, not against this table.
 
 **Accepted risk, recorded at promotion (2026-10-04)**: `pointer-check` hard-fails on a fork PR that touches a submodule mount — a fork gets no `STRATEGY_SUBMODULE_PAT`, so the check routes to R8 by design (see `submodule-pointer-check.yml`'s header). Now that the context is *required*, an external contributor's PR touching `docs/internal` is structurally unmergeable without `--admin`. Same shape as the `Website Skills E2E Gate` fork risk above, same compensating control (maintainer review), and internal PRs are unaffected — `STRATEGY_SUBMODULE_PAT` is provisioned and recent `pointer-check` runs are green.
 
-Note: `Dependency Guard` (ci.yml) runs on every PR but is NOT a required context — it is intentionally excluded from `required_status_checks.contexts`, so it does not appear above.
+**Promotion note (SMI-6944, 2026-10-04)**: `Dependency Guard` was promoted from a non-required job to a required context. Before promoting, two failure modes were checked:
+- **It cannot hang a PR.** Its gate is a job-level `if:`, and `ci.yml` has no `paths:` filter, so a skipped job still produces a check-run concluded `skipped`, which satisfies protection. In 5 of 5 recent runs where Classify Changes failed, Dependency Guard had a completed `skipped` check-run.
+- **Fork PRs are tolerated by construction but untested live.** Its only secret-dependent step, the git-crypt unlock, is skipped when the key is absent, and the drift guard passes on a locked tree with a coverage-skipped warning (measured: 363 encrypted files, 0 scanned, exit 0). No fork PR has ever run it.
+
+Until the live protection is updated after this change merges, the JSON lists one more context than live. Apply it as a `required_status_checks.checks` entry pinned to `app_id` 15368 (GitHub Actions), like the other 16, and diff the whole protection object before and after; see `docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md` § Making Dependency Guard required. `scripts/chronic-red-monitor.sh` needs no change: its allowlist is keyed by workflow file, and `ci.yml` is already on it.
 
 ### How It Works
 
