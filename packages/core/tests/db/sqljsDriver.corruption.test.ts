@@ -27,7 +27,15 @@
  *    assertion, and renaming is the whole defect.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  existsSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSqlJsDatabase } from '../../src/db/drivers/sqljsDriver.js'
@@ -267,13 +275,79 @@ describe('createSqlJsDatabase — corrupt-file refusal (SMI-6961)', () => {
 
   // Controls. Without these, a driver that refused unconditionally would
   // satisfy every arm above.
-  it('opens a healthy database and reads its rows', async () => {
+  it('opens a healthy database, LEAVES THE FILE INTACT, and reopens it from disk', async () => {
+    // The reopen and the byte check are not decoration. A cross-family review
+    // named a mutation this arm did not catch in its earlier form: after the
+    // healthy integrity check, delete `path` when `options.readonly` is set.
+    // Every corruption arm above still passed, because a corrupt input throws
+    // before reaching that line — and this control passed too, because it only
+    // read from the already-loaded WASM snapshot in memory. It never looked at
+    // the file again.
+    //
+    // So: read the rows, close, assert the backing file is byte-identical with
+    // nothing added beside it, then open it AGAIN from disk and read again.
+    // The second read is what proves the bytes on disk are still a database
+    // rather than merely present.
     const dbPath = join(dir, 'skills.db')
     writeFileSync(dbPath, await seedBytes())
+    const before = snapshot(dbPath)
 
-    const db = await createSqlJsDatabase(dbPath, { readonly: true })
+    const first = await createSqlJsDatabase(dbPath, { readonly: true })
     try {
-      expect(db.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(400)
+      expect(first.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(400)
+    } finally {
+      first.close()
+    }
+
+    expectUntouched(dbPath, before)
+
+    const second = await createSqlJsDatabase(dbPath, { readonly: true })
+    try {
+      expect(second.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(400)
+    } finally {
+      second.close()
+    }
+    expectUntouched(dbPath, before)
+  })
+
+  // A zero-byte file is its own input class, and no engine-level probe can see
+  // it: SQLite accepts a zero-length file as a brand-new database, so nothing
+  // throws and `quick_check` returns `ok`. Measured before the guard existed —
+  // the open succeeded and a write-capable caller persisted 274,432 bytes of
+  // valid empty database over the damaged artifact, reproducing the exact
+  // later-invocation shape this whole issue exists to close: call one converts
+  // the damage, call two succeeds against emptiness with nothing to refuse.
+  //
+  // Every other fixture in this file is NON-EMPTY, so none of them reach this.
+  it.each([
+    ['read-write', undefined],
+    ['read-only', { readonly: true } as const],
+  ])('refuses a zero-byte file (%s) and does not rewrite it', async (_label, options) => {
+    const dbPath = join(dir, 'skills.db')
+    writeFileSync(dbPath, Buffer.alloc(0))
+    const before = snapshot(dbPath)
+    expect(before.bytes.length).toBe(0)
+
+    await expect(createSqlJsDatabase(dbPath, options)).rejects.toThrow(
+      /is corrupt and cannot be read/
+    )
+
+    // Still zero bytes. The pre-guard behaviour wrote a full database here.
+    expectUntouched(dbPath, before)
+    expect(readFileSync(dbPath).length).toBe(0)
+  })
+
+  it('still treats an ABSENT file as benign — the zero-byte guard must not catch it', async () => {
+    // The paired negative. Absence is this contract's one benign case: nothing
+    // is installed, so nothing can be out of date. Without this arm, a guard
+    // that refused every path lacking a readable database would satisfy both
+    // zero-byte arms above while breaking every first run.
+    const dbPath = join(dir, 'absent.db')
+    expect(existsSync(dbPath)).toBe(false)
+
+    const db = await createSqlJsDatabase(dbPath)
+    try {
+      expect(db.memory).toBe(false)
     } finally {
       db.close()
     }

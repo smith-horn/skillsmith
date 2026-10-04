@@ -7,13 +7,20 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Fixed**: SMI-6961 / ADR-175 § 1 -- commands no longer proceed against an empty database when
   your local one is corrupt. The shared opener caught the driver's refusal, renamed the **main file
   only** -- orphaning any `-wal` against a rebuilt database -- and returned, so the command ran to
-  completion against nothing and reported success. It now rethrows: the command aborts and prints
-  the remedy, which names the file and the `mv` to run.
+  completion against nothing and reported success. It now surfaces the refusal, with a remedy naming
+  the file and the `mv` to run.
 
-  **This aborts every command, including `search`, `info` and `remove`**, each of which could have
-  served from the remote API or the filesystem without a database. Uniform refusal was chosen
-  deliberately over degrading those three: one code path is far harder to regress than fourteen plus
-  three exceptions. Move the database aside as the message instructs and every command works again.
+  **No command gets a repaired database, and none proceeds against an empty one** -- including
+  `search`, `info` and `remove`, each of which could have served from the remote API or the
+  filesystem without a database. Uniform refusal was chosen deliberately over degrading those three:
+  one code path is far harder to regress than fourteen plus three exceptions. Move the database aside
+  as the message instructs and every command works again.
+
+  What is uniform is the **refusal**, not the control flow. Most commands stop at the first failure
+  and exit 1. `skillsmith update` instead reports a failure per skill and continues, then exits 1 --
+  on a corrupt database that means every installed skill is reported as failed. `skillsmith list`
+  degrades deliberately, showing `Unknown` for each skill rather than a count it cannot verify. An
+  earlier draft of this entry said every command "aborts", which was never true of `update`.
 
   The message tells you to **move** the files, never delete them, and it now says why: a sync
   rebuilds the registry mirror, but it does **not** rebuild rows you created locally. Skills added

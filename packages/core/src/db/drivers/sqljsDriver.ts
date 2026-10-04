@@ -18,7 +18,7 @@
 import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { corruptDatabaseError } from '../corrupt-refusal.js'
+import { corruptDatabaseError, refuseIfZeroLength } from '../corrupt-refusal.js'
 import { sqlJsCorruptionCode, refuseIfCorrupt } from './sqljsDriver.corruption.js'
 
 // ESM-compatible require for dynamic module loading
@@ -395,6 +395,10 @@ export async function createSqlJsDatabase(
 ): Promise<SqlJsDatabaseAdapter> {
   const SQL = await loadSqlJs()
 
+  // Before the load: no later probe can see a zero-byte file, because sql.js
+  // accepts an empty buffer as a new database. Rationale in the function.
+  refuseIfZeroLength(path)
+
   // Load existing database from file if it exists
   let data: Uint8Array | undefined
   if (path !== ':memory:' && existsSync(path)) {
@@ -415,9 +419,14 @@ export async function createSqlJsDatabase(
   //
   // sql.js validates the file lazily — `new SQL.Database(data)` and a no-op
   // PRAGMA can both succeed on garbage bytes; corruption only surfaces on the
-  // first read of a page. We therefore probe `sqlite_master` inside the
-  // try-block so corruption is detected here rather than at an arbitrary later
-  // query the caller cannot recover from.
+  // first read of a page. We therefore probe inside the try-block so corruption
+  // is detected here rather than at an arbitrary later query.
+  //
+  // TWO probes, and neither subsumes the other. `sqlite_master` (here) reads
+  // only the schema page, so it throws on a bad header and opens a
+  // page-damaged file cleanly; `quick_check(1)` (below) reaches the later pages
+  // but REPORTS rather than throws, so it cannot live in this catch. ADR-175
+  // § 2. Do not collapse them.
   let db: SqlJsDatabase
   let partialDb: SqlJsDatabase | undefined
   try {

@@ -545,4 +545,77 @@ describeNative('quick_check result contract (SMI-6931)', () => {
 
     seed.close()
   })
+
+  // A zero-byte file is its own input class, and ADR-175 section 1 requires
+  // both drivers to agree about it. Measured BEFORE the guard existed, on this
+  // driver and the WASM one: a zero-byte file opened cleanly, `quick_check`
+  // returned `ok`, and a write-capable caller then persisted 274,432 bytes of
+  // valid empty database over the damaged artifact -- byte-for-byte the same
+  // outcome from both engines. SQLite accepts a zero-length file as a new
+  // database, so no engine-level probe can see this; the guard runs before the
+  // open for that reason.
+  //
+  // Every other fixture in this file is NON-EMPTY, so none of them reach it.
+  it.each([
+    ['read-write', undefined],
+    ['read-only', { readonly: true } as const],
+  ])('refuses a zero-byte file (%s) and does not rewrite it', (_label, options) => {
+    const dbPath = join(tempDir, 'skills.db')
+    writeFileSync(dbPath, Buffer.alloc(0))
+    const before = snapshot(tempDir, dbPath)
+    expect(before.bytes.length).toBe(0)
+
+    expect(() => createBetterSqlite3Database(dbPath, options)).toThrow(
+      /is corrupt and cannot be read/
+    )
+
+    expectUntouched(tempDir, dbPath, before)
+    expect(readFileSync(dbPath).length).toBe(0)
+  })
+
+  it('still treats an ABSENT file as benign — the zero-byte guard must not catch it', () => {
+    // The paired negative. Absence is this contract's one benign case, so a
+    // guard that refused any path without a readable database would satisfy
+    // both arms above while breaking every first run.
+    const dbPath = join(tempDir, 'absent.db')
+    expect(existsSync(dbPath)).toBe(false)
+
+    const db = createBetterSqlite3Database(dbPath)
+    try {
+      expect(db.open).toBe(true)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('opens a healthy database, LEAVES THE FILE INTACT, and reopens it from disk', () => {
+    // The reopen is the load-bearing half. A cross-family review named a
+    // mutation that a read-only control which only queries the open handle
+    // cannot catch: destroy the backing file after the healthy integrity
+    // check. Every corruption arm still passes, because a corrupt input throws
+    // first. Only closing and reopening from disk detects it.
+    const dbPath = join(tempDir, 'skills.db')
+    const seed = createBetterSqlite3Database(dbPath)
+    seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)')
+    seed.prepare('INSERT INTO t (val) VALUES (?)').run('kept')
+    seed.close()
+    const before = snapshot(tempDir, dbPath)
+
+    const first = createBetterSqlite3Database(dbPath, { readonly: true })
+    try {
+      expect(first.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(1)
+    } finally {
+      first.close()
+    }
+
+    expectUntouched(tempDir, dbPath, before)
+
+    const second = createBetterSqlite3Database(dbPath, { readonly: true })
+    try {
+      expect(second.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(1)
+    } finally {
+      second.close()
+    }
+    expectUntouched(tempDir, dbPath, before)
+  })
 })

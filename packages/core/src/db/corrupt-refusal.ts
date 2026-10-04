@@ -17,12 +17,66 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { statSync } from 'node:fs'
 import { CorruptDatabaseError } from './db-errors.js'
 import { remedyKindFor } from './probe-classification.js'
 
 /** Single-quote a path for a shell instruction, escaping any embedded quote. */
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * Refuse an existing database file of **zero bytes**.
+ *
+ * **Why this is a separate check from every other corruption path, and why it
+ * has to run before the open.** A zero-length file is not corrupt *to SQLite*:
+ * both engines accept it as a brand-new database. Measured on both drivers
+ * before this existed — a zero-byte file opened cleanly, `PRAGMA
+ * quick_check(1)` returned `ok`, and a write-capable command then initialized
+ * the schema and persisted 274,432 bytes of valid empty database over it.
+ *
+ * So no engine-level probe can catch this. There is nothing for `quick_check`
+ * to report, and nothing throws.
+ *
+ * **Why it is nonetheless a refusal.** An absent file is this contract's one
+ * benign case: nothing is installed, so nothing can be out of date. A
+ * zero-length file is not that. It is the documented residue of an interrupted
+ * write — `persist()`'s own docblock describes the crash window that produces
+ * one, and `schema.ts`'s `assertLegacyImportHasTables` already refuses the
+ * same artifact once it reaches that code path. Adopting it as "fresh" tells
+ * the user they have no skills, when what actually happened is that their
+ * database was destroyed. That is the false-currency claim SMI-6946 removed,
+ * arriving through a different input.
+ *
+ * It also reproduced the later-invocation shape this whole issue exists to
+ * close: the first call converted the damaged artifact into a valid empty
+ * database, and the second then succeeded against it with nothing to refuse.
+ *
+ * Applies to read-only opens too. The read-only case is the quieter half —
+ * `skillsmith list` reported zero skills rather than rewriting anything — and
+ * § 1 binds both drivers and both access modes identically.
+ *
+ * Nothing in production creates an empty file at a database path, so this
+ * refuses no legitimate flow.
+ *
+ * @param path - the database path; `:memory:` and absent paths are no-ops.
+ */
+export function refuseIfZeroLength(path: string): void {
+  if (path === ':memory:') return
+  let size: number
+  try {
+    size = statSync(path).size
+  } catch {
+    // Absent, or unreadable for a reason the open itself will report with a
+    // better code than anything inferable from a failed stat.
+    return
+  }
+  if (size > 0) return
+  throw corruptDatabaseError(
+    path,
+    'the file exists but is zero bytes, which is an interrupted write rather than a new database'
+  )
 }
 
 /**
