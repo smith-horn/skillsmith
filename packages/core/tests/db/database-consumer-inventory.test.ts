@@ -10,11 +10,19 @@
  * true on the day it is written, and a check is true on the day it is read.
  *
  * What it does. It enumerates the call sites that open a SQLite database across
- * every package and compares them to the frozen list below. Add, move or remove
- * one and this goes red — which is the point. The red is not a defect report;
- * it is a prompt to answer one question for the new site: **when the driver
- * refuses a corrupt database, what does this caller do with the refusal?** Then
- * record the answer here.
+ * every package and compares them to the frozen table below. Add, move or
+ * remove one and this goes red — which is the point. The red is not a defect
+ * report; it is a prompt to answer one question for the new site: **when the
+ * driver refuses a corrupt database, what does this caller do with the
+ * refusal?** Then record the answer here.
+ *
+ * **Granularity: file plus call-site count, never line numbers.** Line numbers
+ * churn on every unrelated edit, and a check that cries wolf gets disabled.
+ * Freezing the file set alone was the first draft and a governance round
+ * rejected it: a *second* call site added to an already-listed file would have
+ * been invisible, so a new destructive open could join a file already marked
+ * "inherits wrapper" without anything noticing. The per-file count closes that
+ * without reintroducing the churn.
  *
  * The instrument is a source scan, which is exactly the kind of check that
  * returns a plausible answer when it is pointed at the wrong thing — so it
@@ -32,7 +40,11 @@ import { join, dirname, relative, sep } from 'node:path'
  * Not `process.cwd()`: this suite runs from the repo root under the full
  * `npm test` and from `packages/core` under the per-package split, and a
  * cwd-relative path silently scans a different tree in the second case — the
- * wrong-subject failure this file's controls exist to catch.
+ * wrong-subject failure this file's controls exist to catch. Walking from
+ * `import.meta.url` makes the answer identical under both. Verified that no
+ * intermediate manifest between here and the root declares `workspaces`, so
+ * the walk cannot stop early; if one ever does, the scan throws on a missing
+ * `packages/` directory rather than quietly reporting an empty inventory.
  */
 function findRepoRoot(): string {
   let dir = dirname(new URL(import.meta.url).pathname)
@@ -96,75 +108,93 @@ function opensADatabase(line: string): boolean {
   return OPENERS.some((fn) => new RegExp(`\\b${fn}\\s*\\(`).test(line))
 }
 
-function inventory(root: string): string[] {
-  const found: string[] = []
+/** file path → number of call sites in it. */
+function inventory(root: string): Record<string, number> {
+  const counts: Record<string, number> = {}
   for (const file of sourceFiles(root)) {
     const rel = relative(root, file).split(sep).join('/')
-    const lines = readFileSync(file, 'utf8').split('\n')
-    lines.forEach((line, i) => {
-      if (opensADatabase(line)) found.push(`${rel}:${i + 1}`)
-    })
+    const n = readFileSync(file, 'utf8').split('\n').filter(opensADatabase).length
+    if (n > 0) counts[rel] = n
   }
-  return found.sort()
+  return counts
 }
 
 /**
- * The frozen inventory, by file. Line numbers are deliberately NOT frozen —
- * they churn on every unrelated edit, and a check that cries wolf gets
- * disabled. The FILE SET is the invariant worth holding.
- *
- * Each entry records what that file does with a corruption refusal, which is
- * the question the nine SMI-6931 reviews did not ask.
+ * The frozen inventory: every file that opens a database, how many times, and
+ * what it does with a corruption refusal — the question the nine SMI-6931
+ * reviews did not ask.
  */
-const KNOWN_OPENERS: Readonly<Record<string, string>> = {
-  // --- The two wrappers every other CLI caller goes through ---
-  // Read-only branch rethrows cleanly. Read-write branch still feeds the
-  // refusal to a substring matcher and renames the database aside: ADR-175 § 1
-  // forbids it and defers removal to PR-2. THE ONE KNOWN OPEN WINDOW.
-  'packages/cli/src/utils/open-database.ts': 'wrapper; read-write path still destructive (PR-2)',
-  'packages/core/src/db/createDatabase.ts': 'factory; selects native or WASM',
-  'packages/core/src/db/schema.ts': 'factory; legacy + async variants',
+const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> = {
+  // --- The wrappers every other caller goes through ---
+  // open-database.ts's read-only branch rethrows cleanly. Its read-write branch
+  // still feeds the refusal to a substring matcher and renames the database
+  // aside: ADR-175 § 1 forbids that and defers removal to PR-2. THE ONE KNOWN
+  // OPEN WINDOW on the native driver.
+  'packages/cli/src/utils/open-database.ts': {
+    sites: 4,
+    note: 'wrapper; read-write path still destructive (PR-2)',
+  },
+  'packages/core/src/db/createDatabase.ts': { sites: 2, note: 'factory; selects native or WASM' },
+  'packages/core/src/db/schema.ts': { sites: 3, note: 'factory; legacy + async variants' },
 
   // --- CLI commands, all read-write through openCliDatabase ---
   // Each inherits the wrapper's behaviour; none handles the refusal itself.
   // This is the set a PR-2 rethrow flips from "rebuilt empty, command
   // proceeds" to "command aborts", which is why it is enumerated here.
-  'packages/cli/src/commands/audit-sources.action.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/audit.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/import-local.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/import.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/info.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/install.action.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/manage.action.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/manage.update.helpers.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/manage.update.ts': 'read-write; getSkillDiff, the open window',
-  'packages/cli/src/commands/registry-install.action.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/search.action.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/sync.action.ts': 'read-write; inherits wrapper',
-  'packages/cli/src/commands/sync.status-history.action.ts': 'read-write; inherits wrapper',
+  'packages/cli/src/commands/audit-sources.action.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/audit.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/import-local.ts': { sites: 2, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/import.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/info.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/install.action.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/manage.action.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/manage.update.helpers.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/manage.update.ts': {
+    sites: 1,
+    note: 'read-write; getSkillDiff, the open window',
+  },
+  'packages/cli/src/commands/registry-install.action.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/search.action.ts': { sites: 2, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/sync.action.ts': { sites: 2, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/sync.status-history.action.ts': {
+    sites: 2,
+    note: 'read-write; wrapper',
+  },
 
   // --- The consumer SMI-6946 fixed ---
-  'packages/cli/src/utils/skills-directory.ts': 'READ-ONLY; classifies the refusal (ADR-175 § 5)',
+  'packages/cli/src/utils/skills-directory.ts': {
+    sites: 1,
+    note: 'READ-ONLY; classifies the refusal (ADR-175 § 5)',
+  },
 
   // --- MCP server ---
   // Confirmed to contain no isCorruptionError/backupCorruptDbFile, so it has
   // no destructive branch to converge; the refusal propagates to startup.
-  'packages/mcp-server/src/context.async.ts': 'propagates; no destructive branch',
-  'packages/mcp-server/src/context.ts': 'propagates; no destructive branch',
+  'packages/mcp-server/src/context.async.ts': {
+    sites: 2,
+    note: 'propagates; no destructive branch',
+  },
+  'packages/mcp-server/src/context.ts': { sites: 1, note: 'propagates; no destructive branch' },
 
   // --- Core internals, each owning its own database file, not skills.db ---
-  'packages/core/src/analytics/storage.ts': 'own analytics.db; propagates',
-  'packages/core/src/cache/sqlite.ts': 'own L2 cache; propagates',
-  'packages/core/src/cache/TieredCache.ts': 'own L2 cache; propagates',
-  'packages/core/src/embeddings/hnsw-store.ts': 'own HNSW store; propagates',
-  'packages/core/src/embeddings/index.ts': 'own store; propagates',
-  'packages/core/src/learning/PatternStore.ts': 'own patterns db; propagates',
-  'packages/core/src/search/hybrid.ts': 'own index; propagates',
-  'packages/core/src/benchmarks/IndexBenchmark.ts': ':memory: only',
-  'packages/core/src/benchmarks/SearchBenchmark.ts': ':memory: only',
-  'packages/core/src/scripts/import-to-database.ts': 'maintenance script; propagates',
-  'packages/core/src/scripts/merge-skills.ts': 'maintenance script; propagates',
-  'packages/core/src/scripts/review-lenny-skills.ts': 'maintenance script; propagates',
+  'packages/core/src/analytics/storage.ts': { sites: 1, note: 'own analytics.db; propagates' },
+  'packages/core/src/cache/sqlite.ts': { sites: 1, note: 'own L2 cache; propagates' },
+  'packages/core/src/cache/TieredCache.ts': { sites: 1, note: 'own L2 cache; propagates' },
+  'packages/core/src/embeddings/hnsw-store.ts': { sites: 1, note: 'own HNSW store; propagates' },
+  'packages/core/src/embeddings/index.ts': { sites: 1, note: 'own store; propagates' },
+  'packages/core/src/learning/PatternStore.ts': { sites: 1, note: 'own patterns db; propagates' },
+  'packages/core/src/search/hybrid.ts': { sites: 1, note: 'own index; propagates' },
+  'packages/core/src/benchmarks/IndexBenchmark.ts': { sites: 1, note: ':memory: only' },
+  'packages/core/src/benchmarks/SearchBenchmark.ts': { sites: 1, note: ':memory: only' },
+  'packages/core/src/scripts/import-to-database.ts': {
+    sites: 1,
+    note: 'maintenance script; propagates',
+  },
+  'packages/core/src/scripts/merge-skills.ts': { sites: 1, note: 'maintenance script; propagates' },
+  'packages/core/src/scripts/review-lenny-skills.ts': {
+    sites: 1,
+    note: 'maintenance script; propagates',
+  },
 }
 
 describe('the database-opening consumer inventory (ADR-175)', () => {
@@ -172,10 +202,10 @@ describe('the database-opening consumer inventory (ADR-175)', () => {
 
   // --- Controls. The scan is the kind of instrument that answers rather than
   // --- failing when aimed wrongly, so both directions are pinned first.
-  it('known-positive: the scan finds a call site that certainly exists', () => {
-    const files = new Set(inventory(root).map((e) => e.split(':')[0]))
-    expect(files.has('packages/cli/src/utils/skills-directory.ts')).toBe(true)
-    expect(files.has('packages/cli/src/utils/open-database.ts')).toBe(true)
+  it('known-positive: the scan finds call sites that certainly exist', () => {
+    const found = inventory(root)
+    expect(found['packages/cli/src/utils/skills-directory.ts']).toBeGreaterThan(0)
+    expect(found['packages/cli/src/utils/open-database.ts']).toBeGreaterThan(0)
   })
 
   it('known-negative: a prose mention is not counted as a call site', () => {
@@ -196,8 +226,9 @@ describe('the database-opening consumer inventory (ADR-175)', () => {
 
   // --- The inventory itself.
   it('contains no database-opening file that is not accounted for', () => {
-    const files = [...new Set(inventory(root).map((e) => e.split(':')[0]))].sort()
-    const unaccounted = files.filter((f) => KNOWN_OPENERS[f] === undefined)
+    const unaccounted = Object.keys(inventory(root))
+      .filter((f) => KNOWN_OPENERS[f] === undefined)
+      .sort()
 
     // If you are reading this because it went red: a new file opens a
     // database. Answer the one question — when the driver refuses a corrupt
@@ -207,12 +238,25 @@ describe('the database-opening consumer inventory (ADR-175)', () => {
   })
 
   it('has no stale entry for a file that no longer opens a database', () => {
-    const files = new Set(inventory(root).map((e) => e.split(':')[0]))
-    const stale = Object.keys(KNOWN_OPENERS).filter((f) => !files.has(f))
+    const found = inventory(root)
+    const stale = Object.keys(KNOWN_OPENERS).filter((f) => found[f] === undefined)
 
     // The other direction, and the one that rots silently: an inventory
     // keeping entries for code that no longer exists reads as coverage it
     // does not give.
     expect(stale).toEqual([])
+  })
+
+  it('has no accounted file whose call-site count has changed', () => {
+    const found = inventory(root)
+    const drifted = Object.entries(KNOWN_OPENERS)
+      .filter(([f, e]) => found[f] !== undefined && found[f] !== e.sites)
+      .map(([f, e]) => `${f}: expected ${e.sites}, found ${String(found[f])}`)
+      .sort()
+
+    // This is the arm the file-set-only draft lacked. A second open added to
+    // a file already marked "inherits wrapper" is a new destructive call site,
+    // and without this it joins the tree silently.
+    expect(drifted).toEqual([])
   })
 })

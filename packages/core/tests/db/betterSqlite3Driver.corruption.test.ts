@@ -32,19 +32,22 @@
  *
  * What the refusal arms below assert falls into three **disjoint** groups. No
  * arm belongs to two, so each group's guarantee is exactly as wide as its own
- * membership:
+ * membership — and that membership is deliberately **not counted here**. Five
+ * consecutive versions of this paragraph carried counts and every one of them
+ * was wrong, the last because the commit adding the structured arms did not
+ * update its own census. A count describes; the grouping instructs.
  *
- * - Three arms call `expectUntouched`: main-file bytes, its mtime, and the
- *   directory listing. "No backup, no rebuild, no stray sidecar" rests on
- *   these three alone.
- * - Two arms compare the `-wal` byte-for-byte. They do their own main-file
- *   compare and assert neither the mtime nor the listing.
- * - Two arms assert the refusal itself — its message, and its structured
- *   fields — rather than any file's contents.
+ * - Arms calling `expectUntouched` assert the main file's bytes, its mtime,
+ *   and the directory listing. "No backup, no rebuild, no stray sidecar"
+ *   rests on these and nothing else.
+ * - Arms comparing the `-wal` byte-for-byte do their own main-file compare and
+ *   assert neither the mtime nor the directory listing.
+ * - Arms asserting the refusal itself — its message, its remedy, its
+ *   structured fields — assert no file contents at all.
  *
- * The consequence of the split is worth stating: the two arms with the
- * strongest non-mutation claim are the two that do not check the directory, so
- * a refusal leaving both files byte-identical while dropping a backup beside
+ * The consequence of the split is worth stating: the arms with the strongest
+ * non-mutation claim are the ones that do not check the directory, so a
+ * refusal leaving both files byte-identical while dropping a backup beside
  * them would be caught only by the first group.
  *
  * The `-shm` must remain present and usable but its bytes are deliberately not

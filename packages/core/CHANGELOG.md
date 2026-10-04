@@ -105,13 +105,13 @@ All notable changes to `@skillsmith/core` are documented here.
   none: all nine `createBetterSqlite3Database` call sites in the existing driver test pass
   `:memory:`, which is why a missing probe reached production unnoticed. The arms fall into three
   **disjoint** groups, and no arm belongs to two, so each group's guarantee is exactly as wide as its
-  own membership: three call `expectUntouched` (main-file bytes, mtime, and the directory listing, so
-  "no backup, no rebuild, no stray sidecar" rests on these three alone); two compare the `-wal`
-  byte-for-byte and assert neither the mtime nor the listing; two assert the refusal itself -- its
-  message, and its structured fields -- rather than any file's contents. Two earlier versions of this
-  sentence were wrong about that split: the first claimed *every* arm asserted both files, and its
-  replacement said the `-wal` arms compared it *"additionally"*, which reads as a superset of the
-  `expectUntouched` arms when the two sets are in fact disjoint. The `-shm`'s
+  own membership: arms calling `expectUntouched` assert main-file bytes, mtime and the directory
+  listing, so "no backup, no rebuild, no stray sidecar" rests on those and nothing else; arms
+  comparing the `-wal` byte-for-byte assert neither the mtime nor the listing; arms asserting the
+  refusal itself -- message, remedy, structured fields -- assert no file contents at all. **The
+  membership is deliberately not counted**, here or in the test's own header: five consecutive
+  versions of this description carried counts and every one was wrong, the last because the commit
+  that added the structured arms left its own census behind. The `-shm`'s
   bytes are deliberately **not**
   asserted, and that narrowing is measured rather than assumed: with the `-shm` deleted outright
   every committed row remained readable and the `-wal` stayed byte-identical, so it is SQLite's

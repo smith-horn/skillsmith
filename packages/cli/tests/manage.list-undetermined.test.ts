@@ -97,6 +97,14 @@ describe('--outdated when nothing could be determined', () => {
 
     await listAction({ outdated: true })
 
+    // The PAIRED EXECUTION PROOF, first. Every other assertion in this test is
+    // a `not.toContain`, and a negative assertion is satisfied when the code
+    // under test never ran at all — a broken mock, a thrown error swallowed by
+    // the action's own catch, a renamed export. This pins that the run actually
+    // reached the renderer before the absences below mean anything.
+    expect(getInstalledSkills).toHaveBeenCalledTimes(1)
+    expect(warned).toHaveLength(1)
+
     // Kills the wrong-scope mutation: source `undetermined` from `filtered`
     // instead of `skills` and it is always empty under `--outdated` (which
     // keeps only 'available'), so this green line prints on a fully corrupt
