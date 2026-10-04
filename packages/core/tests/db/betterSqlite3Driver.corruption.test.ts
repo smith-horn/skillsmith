@@ -14,8 +14,13 @@
  * and SQLite coordinates processes through the file PATHS, not the inodes.
  * Renaming it out from under a live handle leaves that process writing into the
  * renamed backup while new connections use the replacement, and the two diverge
- * silently. ADR-155 had already settled the policy: *"Recovery never runs
- * automatically."*
+ * silently — and worse, the two files then share a journal by name, so one
+ * database's recovery can read the other's content. SQLite says so itself:
+ * renaming an open database "results in behavior that is undefined and probably
+ * undesirable." **ADR-175** records the decision. An earlier version of this
+ * comment cited *ADR-155: "Recovery never runs automatically"* as settled policy
+ * here; that was a misattribution — ADR-155 governs skill-folder recovery and
+ * mentions no database.
  *
  * The probe runs through a SEPARATE READ-ONLY connection, opened and closed
  * before the caller's connection exists. That is not fastidiousness: a
@@ -25,12 +30,31 @@
  * the rest is written. A first version claimed non-mutation without earning it,
  * and the test asserting the sidecars survive is what caught the lie.
  *
- * So every refusal below asserts the **main file and the `-wal`** are left
- * byte-identical — the two durable, data-bearing files. The `-shm` must remain
- * present and usable but its bytes are deliberately not asserted: a WAL reader
- * coordinates through it, so it is mutable shared state, and it carries no
- * durable data (measured — delete it outright and every committed row is still
- * readable). Byte-identity on it would assert the wrong property.
+ * What the refusal arms below assert falls into three **disjoint** groups. No
+ * arm belongs to two, so each group's guarantee is exactly as wide as its own
+ * membership — and that membership is deliberately **not counted here**. Five
+ * consecutive versions of this paragraph carried counts and every one of them
+ * was wrong, the last because the commit adding the structured arms did not
+ * update its own census. A count describes; the grouping instructs.
+ *
+ * - Arms calling `expectUntouched` assert the main file's bytes, its mtime,
+ *   and the directory listing. "No backup, no rebuild, no stray sidecar"
+ *   rests on these and nothing else.
+ * - Arms comparing the `-wal` byte-for-byte do their own main-file compare and
+ *   assert neither the mtime nor the directory listing.
+ * - Arms asserting the refusal itself — its message, its remedy, its
+ *   structured fields — assert no file contents at all.
+ *
+ * The consequence of the split is worth stating: the arms with the strongest
+ * non-mutation claim are the ones that do not check the directory, so a
+ * refusal leaving both files byte-identical while dropping a backup beside
+ * them would be caught only by the first group.
+ *
+ * The `-shm` must remain present and usable but its bytes are deliberately not
+ * asserted: a WAL reader coordinates through it, so it is mutable shared state,
+ * and it carries no durable data (measured — delete it outright and every
+ * committed row is still readable). Byte-identity on it would assert the wrong
+ * property.
  *
  * Those assertions are the discriminating ones, not decoration: a refusal that
  * still touched the bytes would pass a throw-only test.
@@ -57,6 +81,7 @@ import {
   createBetterSqlite3Database,
   isBetterSqlite3Available,
 } from '../../src/db/drivers/betterSqlite3Driver.js'
+import { DB_CORRUPT_CODE, isCorruptDatabaseError, type RemedyKind } from '../../src/db/db-errors.js'
 
 /** These tests are meaningless without the native module; skip rather than fail. */
 const describeNative = isBetterSqlite3Available() ? describe : describe.skip
@@ -165,6 +190,71 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
     expect(message).toContain(`${dbPath}-wal`)
     expect(message).toContain(`${dbPath}-shm`)
     expect(message).toMatch(/does not repair it automatically/)
+  })
+
+  // ADR-175 § 7, SMI-6946. The arms above all match the MESSAGE, so every one
+  // of them stays green if the driver throws a plain `Error` carrying the same
+  // text — and then a consumer's only discriminator is English prose again,
+  // which is the defect SMI-6946 exists to remove. These arms assert the
+  // contract a consumer actually branches on, at the one site that builds it.
+  //
+  // Both fixtures appear because they reach the refusal by DIFFERENT routes,
+  // and the contract has to hold on both: `writeNotADatabase` fails the OPEN,
+  // so SQLite throws; `writeHeaderValidPageCorrupt` opens fine and
+  // `quick_check` REPORTS the damage as a string, throwing nothing. The second
+  // is why `sqliteCode` is a field rather than something read off `cause`.
+  function refusalFrom(dbPath: string): unknown {
+    try {
+      createBetterSqlite3Database(dbPath)
+    } catch (error) {
+      return error
+    }
+    throw new Error(`expected a refusal for ${dbPath}, got none`)
+  }
+
+  const REMEDY_KINDS: readonly RemedyKind[] = ['reindex', 'replace']
+
+  it.each([
+    ['a file that is not a database — the open throws', writeNotADatabase],
+    ['a header-valid, page-corrupt file — quick_check reports', writeHeaderValidPageCorrupt],
+  ])('refuses %s with a structured, matchable error', (_label, writeFixture) => {
+    const dbPath = join(tempDir, 'skills.db')
+    writeFixture(dbPath)
+
+    const error = refusalFrom(dbPath)
+
+    // Matched structurally on `code`, exactly as a consumer must — never with
+    // `instanceof`, which fails across duplicate copies of @skillsmith/core.
+    expect(isCorruptDatabaseError(error)).toBe(true)
+    const refusal = error as {
+      code: string
+      path: string
+      verdict: string
+      remedyKind: RemedyKind
+    }
+    expect(refusal.code).toBe(DB_CORRUPT_CODE)
+    // Deliberately NOT 'SQLITE_CORRUPT': a policy refusal must stay
+    // distinguishable from an unhandled driver error.
+    expect(refusal.code).not.toMatch(/^SQLITE_/)
+    expect(refusal.path).toBe(dbPath)
+    expect(refusal.verdict.length).toBeGreaterThan(0)
+    expect(REMEDY_KINDS).toContain(refusal.remedyKind)
+  })
+
+  it('does not recognise a plain Error carrying the identical message', () => {
+    // The paired NEGATIVE, and the reason the group above discriminates. A
+    // predicate returning true for anything corruption-shaped would satisfy
+    // every assertion above; this is the arm that forbids it — and it is the
+    // precise mutation that survives a message-only suite.
+    const dbPath = join(tempDir, 'skills.db')
+    writeNotADatabase(dbPath)
+    const real = refusalFrom(dbPath) as Error
+
+    expect(isCorruptDatabaseError(new Error(real.message))).toBe(false)
+    // And the message alone is no longer load-bearing: a consumer reading
+    // `code` is unaffected by rewording, which is why Node documents
+    // `error.message` as changeable and `error.code` as stable.
+    expect(isCorruptDatabaseError({ code: DB_CORRUPT_CODE })).toBe(true)
   })
 
   it('refuses a corrupt file whether or not the caller asked for a read-only handle', () => {

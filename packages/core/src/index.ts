@@ -26,7 +26,25 @@ export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 export { getBestDriver, type DriverType } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
 // SMI-4484: corruption detection + self-heal helpers, reused by the CLI opener.
+// ADR-175 supersedes the self-heal: nothing repairs a database on an open, so
+// `backupCorruptDbFile` loses its last caller once the WASM driver converges in
+// PR-2, and both of these are candidates for removal then. Still exported here
+// because the WASM driver and its tests use them today.
 export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
+// ADR-175 / SMI-6946: the supported way to recognise a corruption refusal.
+// Match `code`, never the message and never `instanceof` — see db-errors.ts.
+export {
+  CorruptDatabaseError,
+  isCorruptDatabaseError,
+  DB_CORRUPT_CODE,
+  type RemedyKind,
+} from './db/db-errors.js'
+export {
+  classifyProbeFailure,
+  isCorruptionCode,
+  remedyKindFor,
+  type ProbeFailureClass,
+} from './db/probe-classification.js'
 // SMI-4807: native-driver failure reason getter.
 export { getBetterSqlite3FailureReason } from './db/drivers/betterSqlite3Driver.js'
 // SMI-5006: createLogger exposed for @smith-horn/enterprise/billing consumers.
