@@ -242,17 +242,21 @@ describe('hasExpectedByPassed', () => {
   })
 })
 
-// SMI-6967 H-2/L-2/PR-gate-H-B: resolveProbeInstalledAt/resolveProbeScriptPath
-// against a REAL filesystem (and, for H-B, a REAL git repo), with positive
-// and negative controls, per CLAUDE.md's "measure, don't reason" rule — the
-// finding's own case table, executed.
+// SMI-6967 H-2/L-2/PR-gate-H-B/round-2: resolveProbeInstalledAt/
+// resolveProbeScriptPath against a REAL filesystem (and, for H-B/round-2, a
+// REAL git repo), with positive and negative controls, per CLAUDE.md's
+// "measure, don't reason" rule — the finding's own case table, executed.
 //
 // H-B helper: initializes `dir` as a git repo (mirroring arm 2b's own fixture
 // conventions below) with `scripts/ruflo-bridge-probe.mjs` committed at
-// `committerDate` (an ISO string, fed to GIT_AUTHOR_DATE/GIT_COMMITTER_DATE
-// so the commit's date is pinned rather than "whenever this test ran").
-// Returns the script's absolute path.
-function initProbeRepoAt(dir: string, committerDate: string, content = '// x\n'): string {
+// `pinnedDate` (an ISO string, fed to BOTH GIT_AUTHOR_DATE and
+// GIT_COMMITTER_DATE so the commit's date is pinned rather than "whenever
+// this test ran" — named `pinnedDate`, not `authorDate`/`committerDate`,
+// because it sets both identically and most callers below don't care which
+// axis resolveProbeInstalledAt reads; the round-2 rebase red-test below
+// needs the two axes to DIVERGE and sets them up separately for that
+// reason). Returns the script's absolute path.
+function initProbeRepoAt(dir: string, pinnedDate: string, content = '// x\n'): string {
   execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
     env: makeFixtureEnv(),
   })
@@ -261,18 +265,18 @@ function initProbeRepoAt(dir: string, committerDate: string, content = '// x\n')
   writeFileSync(scriptPath, content)
   execFileSync('git', ['-C', dir, 'add', '.'], { env: makeFixtureEnv() })
   execFileSync('git', ['-C', dir, 'commit', '-m', 'x', '--quiet'], {
-    env: makeFixtureEnv({ GIT_AUTHOR_DATE: committerDate, GIT_COMMITTER_DATE: committerDate }),
+    env: makeFixtureEnv({ GIT_AUTHOR_DATE: pinnedDate, GIT_COMMITTER_DATE: pinnedDate }),
   })
   return scriptPath
 }
 
-describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR-gate H-B)', () => {
-  it('readable: returns installed with the commit date of the last change, not the working-tree mtime (positive control, H-B)', () => {
+describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR-gate H-B/round-2)', () => {
+  it('readable: returns installed with the AUTHOR date of the last change, not the working-tree mtime and not the committer date (positive control, H-B/round-2)', () => {
     const dir = tmpDir('expected-by-readable')
-    const committerDate = '2026-09-01T00:00:00Z'
-    initProbeRepoAt(dir, committerDate)
+    const pinnedDate = '2026-09-01T00:00:00Z'
+    initProbeRepoAt(dir, pinnedDate)
     const result = resolveProbeInstalledAt(dir)
-    expect(result).toEqual({ kind: 'installed', at: new Date(committerDate) })
+    expect(result).toEqual({ kind: 'installed', at: new Date(pinnedDate) })
   })
 
   it('absent (ENOENT): a directory that exists but never had the script returns absent, not unknown', () => {
@@ -321,7 +325,8 @@ describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR
     expect(resolveProbeInstalledAt('')).toEqual({ kind: 'absent' })
   })
 
-  // ── PR-gate H-B: commit-date anchor, not working-tree mtime ────────────
+  // ── PR-gate H-B/round-2: author-date anchor, not working-tree mtime and
+  // not the committer date ────────────────────────────────────────────────
 
   it('H-B: a script on disk but never committed (untracked, in a real repo WITH other history) reads as unknown — git log returns empty, not installed', () => {
     const dir = tmpDir('expected-by-uncommitted')
@@ -359,7 +364,7 @@ describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR
     expect(result.kind).toBe('unknown')
   })
 
-  it('H-B: a committer date in the future (clock skew / preserved archive metadata) reads as unknown, never silently clamped to installed', () => {
+  it('H-B/round-2: an author date in the future (clock skew / preserved archive metadata) reads as unknown, never silently clamped to installed', () => {
     const dir = tmpDir('expected-by-future')
     const futureDate = '2099-01-01T00:00:00Z'
     initProbeRepoAt(dir, futureDate)
@@ -370,20 +375,108 @@ describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR
 
   it('H-B RED-TEST: rewriting an already-installed, byte-identical script does NOT reopen the grace window', () => {
     const dir = tmpDir('expected-by-rewrite')
-    const committerDate = '2026-08-01T00:00:00Z'
+    const pinnedDate = '2026-08-01T00:00:00Z'
     const content = '// x\n'
-    const scriptPath = initProbeRepoAt(dir, committerDate, content)
+    const scriptPath = initProbeRepoAt(dir, pinnedDate, content)
 
     const before = resolveProbeInstalledAt(dir)
-    expect(before).toEqual({ kind: 'installed', at: new Date(committerDate) })
+    expect(before).toEqual({ kind: 'installed', at: new Date(pinnedDate) })
 
-    // Simulate a checkout/rebase/stash-restore: rewrite the SAME bytes to
+    // Simulate a checkout/stash-restore/copy: rewrite the SAME bytes to
     // disk (a real git-crypt smudge filter or a plain non-`-a` copy does
     // exactly this) and bump mtime to "now" explicitly, so a leftover
     // mtime-based implementation would visibly reopen the window here — the
-    // exact M-3 defect this fix removes.
+    // exact M-3 defect this fix removes. The REBASE path gets its own
+    // dedicated red-test below (round-2) — rebase doesn't touch mtime at
+    // all, it moves the COMMITTER date instead, a different mechanism this
+    // test's mtime-rewrite doesn't exercise.
     writeFileSync(scriptPath, content)
     utimesSync(scriptPath, new Date(), new Date())
+
+    const after = resolveProbeInstalledAt(dir)
+    expect(after).toEqual(before)
+  })
+
+  it('round-2 RED-TEST: a git rebase that replays the probe commit onto a moved base does NOT move the resolved install date', () => {
+    const dir = tmpDir('expected-by-rebase')
+    const authorDate = '2026-08-05T00:00:00Z'
+
+    // Base commit on main.
+    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
+      env: makeFixtureEnv(),
+    })
+    writeFileSync(join(dir, 'base.txt'), 'line1\n')
+    execFileSync('git', ['-C', dir, 'add', 'base.txt'], { env: makeFixtureEnv() })
+    execFileSync('git', ['-C', dir, 'commit', '-m', 'base', '--quiet'], {
+      env: makeFixtureEnv({
+        GIT_AUTHOR_DATE: '2026-08-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2026-08-01T00:00:00Z',
+      }),
+    })
+
+    // Branch off BEFORE main advances, then commit the probe script on the
+    // branch — it must be a commit UNIQUE to this branch (not an ancestor
+    // of main) so the rebase below actually REPLAYS it rather than
+    // fast-forwarding with nothing to redo.
+    execFileSync('git', ['-C', dir, 'checkout', '-q', '-b', 'feature'], { env: makeFixtureEnv() })
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    const scriptPath = join(dir, 'scripts', 'ruflo-bridge-probe.mjs')
+    writeFileSync(scriptPath, '// x\n')
+    execFileSync('git', ['-C', dir, 'add', 'scripts/ruflo-bridge-probe.mjs'], {
+      env: makeFixtureEnv(),
+    })
+    execFileSync('git', ['-C', dir, 'commit', '-m', 'add probe', '--quiet'], {
+      env: makeFixtureEnv({ GIT_AUTHOR_DATE: authorDate, GIT_COMMITTER_DATE: authorDate }),
+    })
+
+    const blobBefore = execFileSync(
+      'git',
+      ['-C', dir, 'rev-parse', 'HEAD:scripts/ruflo-bridge-probe.mjs'],
+      { env: makeFixtureEnv(), encoding: 'utf8' }
+    ).trim()
+
+    const before = resolveProbeInstalledAt(dir)
+    expect(before).toEqual({ kind: 'installed', at: new Date(authorDate) })
+
+    // Advance main with an UNRELATED commit so the rebase has a genuinely
+    // moved base to replay onto — a no-op rebase (nothing to replay) would
+    // pass vacuously and prove nothing about the mechanism under test.
+    execFileSync('git', ['-C', dir, 'checkout', '-q', 'main'], { env: makeFixtureEnv() })
+    writeFileSync(join(dir, 'base.txt'), 'line1\nline2\n')
+    execFileSync('git', ['-C', dir, 'add', 'base.txt'], { env: makeFixtureEnv() })
+    execFileSync('git', ['-C', dir, 'commit', '-m', 'advance main', '--quiet'], {
+      env: makeFixtureEnv({
+        GIT_AUTHOR_DATE: '2026-09-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2026-09-01T00:00:00Z',
+      }),
+    })
+    execFileSync('git', ['-C', dir, 'checkout', '-q', 'feature'], { env: makeFixtureEnv() })
+
+    // The actual production operation: a plain, flag-free `git rebase`,
+    // exactly what `./scripts/rebase-worktree.sh` runs (CLAUDE.md § Default
+    // Execution Model / git-crypt guide) — no GIT_AUTHOR_DATE/
+    // GIT_COMMITTER_DATE override here, so this exercises git's OWN default
+    // replay behavior, not a synthetic pin.
+    execFileSync('git', ['-C', dir, 'rebase', 'main', '--quiet'], { env: makeFixtureEnv() })
+
+    const blobAfter = execFileSync(
+      'git',
+      ['-C', dir, 'rev-parse', 'HEAD:scripts/ruflo-bridge-probe.mjs'],
+      { env: makeFixtureEnv(), encoding: 'utf8' }
+    ).trim()
+    // Content genuinely unchanged — proven by blob hash, not assumed.
+    expect(blobAfter).toBe(blobBefore)
+
+    // Sanity/positive-control: prove the rebase actually REPLAYED the
+    // commit (moving the committer date) rather than no-op'ing. Without
+    // this, the test below could pass vacuously regardless of which
+    // specifier resolveProbeInstalledAt reads.
+    const committerAfter = execFileSync(
+      'git',
+      ['-C', dir, 'log', '-1', '--format=%cI', '--', 'scripts/ruflo-bridge-probe.mjs'],
+      { env: makeFixtureEnv(), encoding: 'utf8' }
+    ).trim()
+    expect(committerAfter).not.toBe(authorDate)
 
     const after = resolveProbeInstalledAt(dir)
     expect(after).toEqual(before)

@@ -39,13 +39,12 @@
  * loud render indefinitely.
  *
  * SMI-6967 PR-gate (H-B) fix: the anchor is now the COMMIT DATE of the
- * revision that last changed the probe script (`git log -1 --format=%cI --
- * scripts/ruflo-bridge-probe.mjs`, resolved against the main repo), not the
- * working tree's mtime. This is:
+ * revision that last changed the probe script (resolved against the main
+ * repo), not the working tree's mtime. This is:
  *   - Monotonic and immune to the whole mtime-rewrite class above — a
- *     checkout/rebase/stash-restore/copy that leaves the script's bytes
- *     unchanged does not move the anchor, because nothing short of a new
- *     commit touching the file changes what `git log` reports for it.
+ *     checkout/stash-restore/copy that leaves the script's bytes unchanged
+ *     does not move the anchor, because nothing short of a new commit
+ *     touching the file changes what `git log` reports for it.
  *   - IDENTICAL across every checkout of the same commit (unlike mtime,
  *     which is a local filesystem artifact of when the bytes landed on
  *     THIS disk).
@@ -58,11 +57,48 @@
  * true and actionable (the line names the exact command to run), not a
  * regression; this is a deliberate trade, not an oversight.
  *
+ * SMI-6967 PR-gate round-2 correction: the H-B fix above read `%cI`, the
+ * COMMITTER date — and a REBASE rewrites the committer date to "now" when
+ * it replays a commit, even when the replayed commit's tree (and therefore
+ * the probe script's own bytes) is byte-for-byte unchanged. So the first
+ * bullet's "checkout/rebase/stash-restore/copy ... does not move the
+ * anchor" claim, as originally written, was false for rebase: it had been
+ * measured for checkout and stash but not for rebase, and a plain `git
+ * rebase` turned out to share intent with checkout/stash (no content
+ * change) without sharing their mechanism (no git-log-visible rewrite).
+ * Measured: a fixture repo with the probe script committed in August, then
+ * carried through a flag-free `git rebase <target>` — the exact invocation
+ * `./scripts/rebase-worktree.sh` runs, no date-preserving flag needed,
+ * making this a ROUTINE operation here, not an edge case — onto a moved
+ * base came back with `%cI` reporting the rebase's wall-clock time while
+ * `%aI` (the AUTHOR date) stayed pinned to the original commit, confirmed
+ * with the probe script's blob hash identical before and after. So the
+ * H-B fix inherited the exact defect class it was written to remove: the
+ * anchor was still renewable, just by a rebase instead of a checkout, and
+ * the reopening was still unbounded (every rebase resets the clock again).
+ *
+ * Fix: read `%aI` instead of `%cI`. Measured against every operation this
+ * repo performs routinely on a worktree branch — `git rebase`, `git
+ * cherry-pick`, and `git commit --amend` (without `--date` or
+ * `--reset-author`) — all three PRESERVE the original author date while
+ * still moving the committer date to "now," so reading the author axis
+ * removes the renewable path without losing anything the H-B fix was
+ * trying to gain; the three bullets above hold for real once "COMMIT DATE"
+ * is read as "author date." `git stash`/`stash pop` was already not a
+ * renewable path under H-B either — it never creates a commit at all, so
+ * NEITHER axis moves under it; the mtime-rewrite class it was originally
+ * cited for was a working-tree artifact H-B had already obsoleted. The
+ * deliberate ways to move an author date — `git commit --date=<arbitrary>`
+ * or `--reset-author` — are not routine operations in this repo, and are
+ * exactly the kind of lying date the future-date guard below exists to
+ * catch (confirmed live: `git commit --amend --date=<future>` with no
+ * `--reset-author` moves `%aI` to that future value).
+ *
  * Every failure path fails LOUD, matching {@link ProbeInstall}'s existing
  * `unknown` contract: `git log` failing, being unavailable (no git binary,
  * not a repository), or returning empty (the file is on disk but untracked
  * — no commit has ever touched it) all read as `unknown`, same as any other
- * reader-axis failure. A commit date that PARSES but lies in the future
+ * reader-axis failure. An author date that PARSES but lies in the future
  * (clock skew, or archive metadata that preserved a bogus date) also reads
  * as `unknown` rather than being silently clamped to "installed" — a lying
  * answer is exactly what `unknown` exists to flag, not a reason to trust the
@@ -112,23 +148,25 @@ export type ProbeInstall =
   | { kind: 'unknown'; errno: string } // anything else — could not ask
 
 /**
- * `git log -1 --format=%cI -- <relPath>`, resolved against `repoDir`. Returns
- * `null` for ANY failure — no git binary, `repoDir` is not a repository, a
- * timeout, or the path has no commit history (untracked/never committed,
- * which exits 0 with empty stdout rather than an error) — the caller folds
- * every one of those into `{ kind: 'unknown' }`, never into `{ kind: 'absent'
- * }` (that axis is decided by the `statSync` existence check that runs
- * before this is ever called).
+ * `git log -1 --format=%aI -- <relPath>`, resolved against `repoDir` — the
+ * commit's AUTHOR date, not its committer date (SMI-6967 PR-gate round-2:
+ * see this module's own doc comment for why `%cI` was wrong — a rebase
+ * rewrites it). Returns `null` for ANY failure — no git binary, `repoDir`
+ * is not a repository, a timeout, or the path has no commit history
+ * (untracked/never committed, which exits 0 with empty stdout rather than
+ * an error) — the caller folds every one of those into `{ kind: 'unknown'
+ * }`, never into `{ kind: 'absent' }` (that axis is decided by the
+ * `statSync` existence check that runs before this is ever called).
  *
  * `stripGitDiscoveryEnv` (SMI-5126's production read-path scrub, the same
  * helper `git-commits.ts`'s adapter uses for an analogous `git log` read)
  * strips `GIT_DIR`/`GIT_WORK_TREE`/etc so an ambient discovery var exported
  * by a wrapping hook cannot redirect this read to the wrong repository.
  */
-function resolveGitCommitDateIso(repoDir: string, relPath: string): string | null {
+function resolveGitAuthorDateIso(repoDir: string, relPath: string): string | null {
   let out: string
   try {
-    out = execFileSync('git', ['log', '-1', '--format=%cI', '--', relPath], {
+    out = execFileSync('git', ['log', '-1', '--format=%aI', '--', relPath], {
       cwd: repoDir,
       encoding: 'utf8',
       timeout: 5_000,
@@ -153,13 +191,15 @@ function resolveGitCommitDateIso(repoDir: string, relPath: string): string | nul
 }
 
 /**
- * When THIS checkout last received a COMMITTED change to the probe script
- * (via `git log`, not the working tree's mtime — see this module's own doc
- * comment for the full H-B rationale and why mtime was wrong). `now` is
- * accepted as a parameter (defaulting to the real clock) so a future-dated
- * commit is judged against the SAME instant the caller's own staleness
- * arithmetic uses, and so tests can pin it. See {@link ProbeInstall}'s doc
- * comment for why the result is three-way.
+ * When THIS checkout last received a COMMITTED change to the probe script —
+ * specifically, that commit's AUTHOR date (via `git log --format=%aI`, not
+ * the working tree's mtime and not the committer date — see this module's
+ * own doc comment for the full H-B / round-2 rationale and why both mtime
+ * and the committer date were wrong). `now` is accepted as a parameter
+ * (defaulting to the real clock) so a future-dated commit is judged against
+ * the SAME instant the caller's own staleness arithmetic uses, and so tests
+ * can pin it. See {@link ProbeInstall}'s doc comment for why the result is
+ * three-way.
  */
 export function resolveProbeInstalledAt(mainRepoKey: string, now: Date = new Date()): ProbeInstall {
   const scriptPath = resolveProbeScriptPath(mainRepoKey)
@@ -172,7 +212,7 @@ export function resolveProbeInstalledAt(mainRepoKey: string, now: Date = new Dat
     return { kind: 'unknown', errno: code ?? String(err) }
   }
 
-  const iso = resolveGitCommitDateIso(mainRepoKey, PROBE_RELATIVE_PATH)
+  const iso = resolveGitAuthorDateIso(mainRepoKey, PROBE_RELATIVE_PATH)
   if (iso === null) {
     return {
       kind: 'unknown',
