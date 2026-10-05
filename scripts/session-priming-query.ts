@@ -31,7 +31,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import {
-  readEntry,
+  readEntryResult as readAutohealEntryResult,
   renderAutohealBanner,
   resolveAutohealLogPath,
   resolveMainRepoKey,
@@ -41,12 +41,12 @@ import {
   type ProbeResult,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
 import {
-  readEntry as readLivenessEntry,
+  readEntryResult as readLivenessEntryResult,
   renderLivenessBanner,
   resolveLivenessLogPath,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/liveness-state.js'
 import {
-  readEntry as readReindexEntry,
+  readEntryResult as readReindexEntryResult,
   renderReindexBanner,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/reindex-state.js'
 import {
@@ -168,9 +168,14 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   try {
     const key = resolveMainRepoKey(args.cwd)
     if (key) {
-      const e = readEntry(key)
-      if (e && e.lastVerdict === 'fail') {
-        autohealLine = renderAutohealBanner(e, { now, logPath: resolveAutohealLogPath(now) })
+      // SMI-6995: the predicate is now "the read failed, OR the entry says
+      // what it used to say". The old `e && e.lastVerdict === 'fail'` form
+      // swallowed a malformed/unreadable state file silently, because a failed
+      // read is neither `fail` nor anything else -- a correct reader alone does
+      // not fix that, since the collapse had TWO layers and this is the second.
+      const read = readAutohealEntryResult(key)
+      if (read.status !== 'ok' || read.entry.lastVerdict === 'fail') {
+        autohealLine = renderAutohealBanner(read, { now, logPath: resolveAutohealLogPath(now) })
       }
     }
   } catch {
@@ -199,8 +204,11 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   try {
     const livenessKey = resolveMainRepoKey(args.cwd)
     if (livenessKey) {
-      const le = readLivenessEntry(livenessKey)
-      if (le && le.lastVerdict === 'stale') {
+      // SMI-6995: same two-layer collapse as the autoheal block above -- a
+      // malformed read is neither `stale` nor anything else, so the pre-filter
+      // has to admit a failed read or the reader fix changes nothing here.
+      const le = readLivenessEntryResult(livenessKey)
+      if (le.status !== 'ok' || le.entry.lastVerdict === 'stale') {
         livenessLine = renderLivenessBanner(le, {
           now,
           logPath: resolveLivenessLogPath(now),
@@ -225,14 +233,17 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     try {
       const reindexKey = resolveMainRepoKey(args.cwd)
       if (reindexKey) {
-        const re = readReindexEntry(reindexKey)
-        if (re) {
-          const currentHeadSha = await getCurrentHeadSha(args.cwd)
-          const staleHoursEnv = Number(process.env.SKILLSMITH_REINDEX_STALE_HOURS)
-          const staleHours =
-            Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
-          reindexLine = renderReindexBanner(re, { now, currentHeadSha, staleHours })
-        }
+        // SMI-6995: no pre-filter at all now. The old `if (re)` skipped the
+        // renderer whenever the read produced nothing, which is exactly the
+        // malformed/unreadable case this issue is about. The renderer itself is
+        // silent on `missing`, so calling it unconditionally is both correct and
+        // simpler -- the decision belongs in one place, not two.
+        const re = readReindexEntryResult(reindexKey)
+        const currentHeadSha = await getCurrentHeadSha(args.cwd)
+        const staleHoursEnv = Number(process.env.SKILLSMITH_REINDEX_STALE_HOURS)
+        const staleHours =
+          Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
+        reindexLine = renderReindexBanner(re, { now, currentHeadSha, staleHours })
       }
     } catch {
       /* fail-soft — must never crash the priming hook */

@@ -17,11 +17,34 @@
  * reads are fail-soft (a corrupt/missing file reads as "no entry").
  *
  * Spec: docs/internal/implementation/smi-5432-w02-liveness-alert.md §2.
+ *
+ * ## SMI-6995 — the two-axis read this module was missing
+ *
+ * {@link readState}/{@link readEntry} below collapse THREE distinct facts —
+ * "this key has never run" (no entry yet), "the file is corrupt" (bytes that
+ * don't parse, or an entry that doesn't shape up), and "the file could not
+ * even be read" (permissions, a directory sitting where the file belongs) —
+ * into the SAME `null`/`{}`. That is correct for the PRODUCER half of this
+ * module (`writeEntry`/`recordCheck`: a write path must always be able to
+ * overwrite corrupt state, never refuse because the prior read failed), but
+ * it is exactly the blindness the banner exists to remove when the SAME
+ * collapse reaches the CONSUMER half: `renderLivenessBanner` rendered
+ * nothing for a corrupt state file, indistinguishable from a healthy system
+ * that simply has not run yet. {@link readEntryResult} is the consumer-axis
+ * fix — it reports `missing`/`malformed`/`unreadable` as three separate
+ * facts, using the shared classification in `state-read.ts`, and
+ * {@link renderLivenessBanner} now takes that result instead of a bare
+ * `LivenessEntry | null` so a malformed or unreadable file renders a line
+ * naming the fault instead of silently reading as "never run." `readEntry`
+ * itself is UNCHANGED and stays exactly as it was — see its own doc comment
+ * below for why the producer side keeps the old conflation on purpose.
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+
+import { readEntryResult as sharedReadEntryResult, type StateReadResult } from './state-read.js'
 
 /** Re-export the shared main-repo key resolver — callers import from here, not autoheal-state. */
 export { resolveMainRepoKey } from './autoheal-state.js'
@@ -108,11 +131,88 @@ export function readState(path: string = resolveLivenessStatePath()): LivenessSt
   }
 }
 
+/**
+ * The PRODUCER/assertion accessor (SMI-6995). Deliberately conflates "this
+ * key has never run," "the file is corrupt," and "the file could not be
+ * read" into the same `null` — a fail-soft read is the correct contract for
+ * the cron/hook write paths and test assertions that call this (16 caller
+ * files as of SMI-6995, six of them tests), which only ever need "is there a
+ * usable prior entry or not," never WHY one is absent. Do not change this
+ * function's conflation to fix a banner — that is what {@link readEntryResult}
+ * is for. A banner consumer that needs to tell "never run" apart from
+ * "corrupt" must call {@link readEntryResult} instead; it is the one that
+ * reports the three cases on separate axes.
+ */
 export function readEntry(
   key: string,
   path: string = resolveLivenessStatePath()
 ): LivenessEntry | null {
   return readState(path)[key] ?? null
+}
+
+/**
+ * Validates every field {@link renderLivenessBanner} (and any other
+ * consumer) actually reads off a `LivenessEntry` — not a `typeof`
+ * spot-check. A spot-check that only confirms "it's an object with a
+ * `lastVerdict` property" would accept `{lastVerdict: "banana"}`: the read
+ * reports `ok`, the renderer's `=== 'stale'` branch does not match (nor does
+ * any other known value), and the banner falls through to "health unknown"
+ * for a payload that is actually garbage — the SMI-6995 collapse recreated
+ * one layer down, inside the fix meant to remove it (this exact example was
+ * a round-2 review finding against this plan's first draft). So every field
+ * gets its own check: `lastVerdict` against the literal union (not merely
+ * "is a string"), the two required numeric fields via a finite-number guard
+ * (rejects `NaN`/`Infinity`/non-numbers alike), and the optional fields
+ * checked only when present — `undefined` is valid for all three optional
+ * fields, but a PRESENT value of the wrong shape is not.
+ */
+function validateLivenessEntry(candidate: unknown): string | null {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return 'entry is not an object'
+  }
+  const e = candidate as Record<string, unknown>
+
+  if (!isFiniteNumber(e.lastCheckEpoch)) return 'lastCheckEpoch is not a finite number'
+
+  if (e.lastVerdict !== 'healthy' && e.lastVerdict !== 'stale') {
+    return `lastVerdict is not 'healthy' or 'stale' (got ${JSON.stringify(e.lastVerdict)})`
+  }
+
+  if (
+    e.lastStaleSinceTs !== undefined &&
+    e.lastStaleSinceTs !== null &&
+    typeof e.lastStaleSinceTs !== 'string'
+  ) {
+    return 'lastStaleSinceTs is present but neither a string nor null'
+  }
+
+  if (!isFiniteNumber(e.consecutiveStale)) return 'consecutiveStale is not a finite number'
+
+  if (e.lastAlertEpoch !== undefined && !isFiniteNumber(e.lastAlertEpoch)) {
+    return 'lastAlertEpoch is present but not a finite number'
+  }
+
+  if (e.openIssueNumber !== undefined && !isFiniteNumber(e.openIssueNumber)) {
+    return 'openIssueNumber is present but not a finite number'
+  }
+
+  return null
+}
+
+/**
+ * The CONSUMER accessor (SMI-6995) — the fix for the defect this module was
+ * filed for. Reports `missing`/`malformed`/`unreadable` as three separate
+ * facts instead of {@link readEntry}'s single collapsed `null`, via the
+ * shared classification in `state-read.ts` plus {@link validateLivenessEntry}
+ * above. {@link renderLivenessBanner} is its intended caller; any other
+ * banner/surface that needs to distinguish "never run" from "corrupt" should
+ * call this too rather than `readEntry`.
+ */
+export function readEntryResult(
+  key: string,
+  path: string = resolveLivenessStatePath()
+): StateReadResult<LivenessEntry> {
+  return sharedReadEntryResult<LivenessEntry>(key, path, validateLivenessEntry)
 }
 
 /** Atomic (temp + rename) write of a single entry, preserving other keys. */
@@ -197,25 +297,64 @@ export function recordAlert(
   }
 }
 
+/** The next action for a malformed/unreadable state-file read — re-running the real cron overwrites it. */
+const REFRESH_COMMAND = './scripts/retrieval-liveness-check.sh'
+
 /**
  * The non-silent bold-markdown banner for the session-priming surface (NOT a
- * GitHub [!WARNING] callout — those render the literal text). States the feed
- * has been stale since lastStaleSinceTs, points at the log + repair script,
- * and names the disable var verbatim so operators can copy-paste it.
+ * GitHub [!WARNING] callout — those render the literal text). Points at the
+ * log + repair script and names the disable var verbatim so operators can
+ * copy-paste it.
  *
- * When `opts.autohealFailed` is true, appends the M2 causal-linkage phrase so
- * a dead binding that causes BOTH the autoheal failure AND feed staleness is
- * surfaced as one root cause, not two separate investigations.
+ * SMI-6995: takes the two-axis {@link StateReadResult} from
+ * {@link readEntryResult}, not a bare `LivenessEntry | null` — the whole
+ * point of this change. Three branches on the READ axis, never collapsed:
+ *
+ * - `missing` — "has not run yet," the ordinary steady state for a fresh
+ *   checkout or one simply between cron ticks — renders nothing. This is a
+ *   DELIBERATE divergence from `ruflo-bridge-state`'s own banner, which
+ *   renders on `missing` too (SMI-6985 deleted ITS grace window for
+ *   bridge-specific reasons: that writer fires on every merge, so "never
+ *   run" is itself informative there). This module's writer is a
+ *   fire-and-forget cron with no such per-merge expectation, so silence on
+ *   `missing` is correct here and is not copied from the bridge.
+ * - `malformed`/`unreadable` — the state file exists but is corrupt or
+ *   could not be read — render UNCONDITIONALLY, naming the fault, because
+ *   this is exactly the case the old `LivenessEntry | null` signature made
+ *   indistinguishable from `missing` (the defect this change exists to
+ *   remove). Segment order matches `ruflo-bridge-state.render.ts`'s `line()`
+ *   helper: `**[liveness]** <state text> — <next action> — log: … —
+ *   disable: …`.
+ * - `ok` — the entry parsed and validated — preserves the PRE-SMI-6995
+ *   behaviour verbatim, field for field, including the M2 causal-linkage
+ *   phrase ("likely the host auto-heal failure above") that `opts
+ *   .autohealFailed` appends when the host auto-heal also failed, so both
+ *   surfaces point at one root cause instead of two separate
+ *   investigations. A healthy (non-stale) `ok` entry still renders the
+ *   "health unknown" line, exactly as it always has — this branch's own
+ *   behaviour did not change, only what feeds it did.
  */
 export function renderLivenessBanner(
-  entry: LivenessEntry | null,
+  read: StateReadResult<LivenessEntry>,
   opts: { now: Date; logPath: string; autohealFailed?: boolean }
 ): string {
   const disable = `disable: ${LIVENESS_DISABLE_VAR}=1`
   const logHint = `log: ${displayPath(opts.logPath)}`
   const repair = `repair: ./scripts/repair-host-native-deps.sh`
 
-  if (!entry || entry.lastVerdict !== 'stale') {
+  if (read.status === 'missing') return ''
+
+  if (read.status === 'malformed' || read.status === 'unreadable') {
+    const stateText =
+      read.status === 'malformed'
+        ? `state malformed at ${displayPath(resolveLivenessStatePath())}`
+        : `state unreadable (${read.detail})`
+    const nextAction = `run: ${REFRESH_COMMAND} to refresh`
+    return `**[liveness]** ${stateText} — ${nextAction} — ${logHint} — ${disable}`
+  }
+
+  const { entry } = read
+  if (entry.lastVerdict !== 'stale') {
     return `**[liveness]** retrieval feed health unknown — ${logHint} — ${disable}`
   }
 
@@ -228,6 +367,11 @@ export function renderLivenessBanner(
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/** `typeof === 'number'` alone accepts `NaN`/`Infinity` — this module's numeric fields never should. */
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
 
 function displayPath(p: string): string {
   const home = homedir()

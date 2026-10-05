@@ -11,7 +11,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -21,6 +21,7 @@ import {
   BACKOFF_SECONDS,
   cooldownDecision,
   readEntry,
+  readEntryResult,
   readState,
   recordResult,
   renderAutohealBanner,
@@ -29,6 +30,7 @@ import {
   resolveMainRepoKey,
   writeEntry,
   type AutohealEntry,
+  type AutohealReadResult,
 } from './autoheal-state.js'
 import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
@@ -275,14 +277,18 @@ describe('writeEntry / readState / readEntry', () => {
 
 // ── renderAutohealBanner ──────────────────────────────────────────────────────
 
+/** Wraps a plain entry as the `ok` reader result — the shape every pre-SMI-6995 test used before the signature change. */
+function ok(entry: AutohealEntry): AutohealReadResult {
+  return { status: 'ok', entry }
+}
+
 describe('renderAutohealBanner', () => {
   const now = new Date(1_700_000_000_000) // a fixed date
   const logPath = '/tmp/test-autoheal.log'
 
-  it('null entry → first-run sentinel containing DISABLE var verbatim', () => {
-    const banner = renderAutohealBanner(null, { now, logPath })
-    expect(banner).toContain('first run launched')
-    expect(banner).toContain(`${AUTOHEAL_DISABLE_VAR}=1`)
+  it('missing status → silent (empty string) — SMI-6995: "has not run yet" is the healthy steady state', () => {
+    const banner = renderAutohealBanner({ status: 'missing' }, { now, logPath })
+    expect(banner).toBe('')
   })
 
   it('fail entry within cap → contains "failed:" + disable var, NO "reset:"', () => {
@@ -292,7 +298,7 @@ describe('renderAutohealBanner', () => {
       lastFailureReason: 'toolchain error',
       lastAttemptEpoch: Math.floor(now.getTime() / 1000) - 60,
     })
-    const banner = renderAutohealBanner(entry, { now, logPath })
+    const banner = renderAutohealBanner(ok(entry), { now, logPath })
     expect(banner).toContain('failed:')
     expect(banner).toContain(`${AUTOHEAL_DISABLE_VAR}=1`)
     expect(banner).not.toContain('reset:')
@@ -305,7 +311,7 @@ describe('renderAutohealBanner', () => {
       lastFailureReason: 'persistent failure',
       lastAttemptEpoch: Math.floor(now.getTime() / 1000) - 3600,
     })
-    const banner = renderAutohealBanner(entry, { now, logPath })
+    const banner = renderAutohealBanner(ok(entry), { now, logPath })
     expect(banner).toContain('cooling down (attempt cap reached)')
     expect(banner).toContain('reset: rm ')
     expect(banner).toContain(`${AUTOHEAL_DISABLE_VAR}=1`)
@@ -313,7 +319,7 @@ describe('renderAutohealBanner', () => {
 
   it('ok entry → "[autoheal] launched" + disable var', () => {
     const entry = makeEntry({ consecutiveFailures: 0, lastVerdict: 'ok' })
-    const banner = renderAutohealBanner(entry, { now, logPath })
+    const banner = renderAutohealBanner(ok(entry), { now, logPath })
     expect(banner).toContain('[autoheal] launched')
     expect(banner).toContain(`${AUTOHEAL_DISABLE_VAR}=1`)
   })
@@ -330,7 +336,7 @@ describe('renderAutohealBanner', () => {
         lastAttemptEpoch: Math.floor(now.getTime() / 1000),
       })
       const homeLogPath = join(homedir(), '.skillsmith', 'logs', 'test.log')
-      const banner = renderAutohealBanner(entry, { now, logPath: homeLogPath })
+      const banner = renderAutohealBanner(ok(entry), { now, logPath: homeLogPath })
       // Both the log path and state path should be displayed with ~
       expect(banner).toContain('~/')
     } finally {
@@ -346,9 +352,80 @@ describe('renderAutohealBanner', () => {
       lastFailureReason: 'error',
       lastAttemptEpoch: Math.floor(now.getTime() / 1000),
     })
-    const banner = renderAutohealBanner(entry, { now, logPath })
+    const banner = renderAutohealBanner(ok(entry), { now, logPath })
     // Expect a timestamp like "2023-11-14 22:13" in the banner
     expect(banner).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+  })
+})
+
+// ── readEntryResult / renderAutohealBanner — the two-axis fix (SMI-6995) ────
+//
+// `readEntry` collapses "never written", "corrupt", and "could not be read"
+// into the same `null`, which made `renderAutohealBanner` render nothing for
+// a corrupt state file — indistinguishable from a healthy system that has
+// not run yet. These four cases are the ones this module never had before
+// this delta: a malformed file, an unreadable one (a directory standing
+// where the file is expected — never `chmodSync`, which is a no-op against
+// `readFileSync` when the runner is root, as this container and CI both
+// are), a syntactically-valid-but-wrong-shaped entry (the validator case),
+// and — in the SAME test body as the malformed case, against the SAME path
+// and the SAME reader — the missing case, so one execution proves both the
+// silence on `missing` and the render on `malformed` rather than two
+// separately-mockable assertions that could each pass against a reader that
+// returned one fixed answer for everything.
+
+describe('readEntryResult / renderAutohealBanner — malformed vs missing, same path and reader (SMI-6995)', () => {
+  it('missing is silent; the SAME path, once it holds malformed JSON, classifies malformed and renders naming it', () => {
+    const path = makeTmpStatePath()
+    const now = new Date(1_700_000_000_000)
+    const logPath = '/tmp/test-autoheal.log'
+
+    // Direction 1: the file does not exist yet.
+    const missingResult = readEntryResult('key-a', path)
+    expect(missingResult.status).toBe('missing')
+    expect(renderAutohealBanner(missingResult, { now, logPath })).toBe('')
+
+    // Direction 2: the SAME path, read by the SAME function, now holds
+    // malformed JSON. If the silence above came from a reader that always
+    // returns `missing` regardless of input, this assertion catches it.
+    writeFileSync(path, 'NOT JSON{{{')
+    const malformedResult = readEntryResult('key-a', path)
+    expect(malformedResult.status).toBe('malformed')
+    const banner = renderAutohealBanner(malformedResult, { now, logPath })
+    expect(banner).not.toBe('')
+    expect(banner).toContain('malformed')
+  })
+})
+
+describe('readEntryResult / renderAutohealBanner — unreadable (directory in place of the file)', () => {
+  it('status unreadable, detail carrying the errno, banner non-empty and carrying the same detail', () => {
+    const path = makeTmpStatePath()
+    mkdirSync(path, { recursive: true })
+    const result = readEntryResult('key-a', path)
+    expect(result.status).toBe('unreadable')
+    expect(result.status === 'unreadable' && result.detail).toContain('EISDIR')
+
+    const banner = renderAutohealBanner(result, {
+      now: new Date(1_700_000_000_000),
+      logPath: '/tmp/test-autoheal.log',
+    })
+    expect(banner).not.toBe('')
+    expect(banner).toContain('EISDIR')
+  })
+})
+
+describe('readEntryResult / renderAutohealBanner — valid JSON, invalid entry (the validator case)', () => {
+  it("lastVerdict outside its literal union ('banana') classifies malformed, not ok — a typeof spot-check would miss this", () => {
+    const path = makeTmpStatePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { lastVerdict: 'banana' } })}\n`)
+    const result = readEntryResult('key-a', path)
+    expect(result.status).toBe('malformed')
+
+    const banner = renderAutohealBanner(result, {
+      now: new Date(1_700_000_000_000),
+      logPath: '/tmp/test-autoheal.log',
+    })
+    expect(banner).not.toBe('')
   })
 })
 
