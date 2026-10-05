@@ -76,6 +76,10 @@ jobs:
       - name: Check 76 expiry and sync the tracking issue
         run: |
           set -uo pipefail
+          # Actions runs a run: step with no shell: as `bash -e {0}`, and -e stays on: any
+          # command that fails unexpectedly (a sed, a write) stops the job red rather than
+          # letting it close the issue as clean. Only the statuses this script decides on
+          # itself are captured, each with `|| VAR=$?` (SMI-6993).
           OUT="$RUNNER_TEMP/check76.out"
           CLEAN="$RUNNER_TEMP/check76.clean"
           BODY="$RUNNER_TEMP/check76.body.md"
@@ -84,18 +88,18 @@ jobs:
           AUDIT_FLAGS='--json --package-lock-only --offline=false --prefer-offline=false --registry=https://registry.npmjs.org --userconfig=/dev/null'
           FAIL_MARK=$(printf '\xe2\x9c\x97')
           INFO_MARK=$(printf '\xe2\x84\xb9')
-          node scripts/check-dependency-registry.mjs > "$OUT" 2>&1
-          RC=$?
+          RC=0
+          node scripts/check-dependency-registry.mjs > "$OUT" 2>&1 || RC=$?
           # Reconcile the acceptances against npm audit. --package-lock-only needs
           # no node_modules. npm exits non-zero when it FINDS advisories, so its
           # status is not the signal: the signal is a parseable report, which the
           # reconcile step validates. No output at all is a failure, never clean.
           # shellcheck disable=SC2086 # AUDIT_FLAGS is a fixed list of separate flags
-          npm audit $AUDIT_FLAGS > "$AUDIT" 2> "$RUNNER_TEMP/audit.err"
+          npm audit $AUDIT_FLAGS > "$AUDIT" 2> "$RUNNER_TEMP/audit.err" || true
           cat "$RUNNER_TEMP/audit.err" >&2
           if [ -s "$AUDIT" ]; then
-            node scripts/check-dependency-registry.mjs --reconcile-audit "$AUDIT" >> "$OUT" 2>&1
-            REC=$?
+            REC=0
+            node scripts/check-dependency-registry.mjs --reconcile-audit "$AUDIT" >> "$OUT" 2>&1 || REC=$?
           else
             echo "::error::npm audit produced no JSON output; the acceptances could not be reconciled"
             printf '%s Check 76 reconcile: npm audit produced no JSON output\n' "$FAIL_MARK" >> "$OUT"
@@ -117,11 +121,11 @@ jobs:
               N=$((N + 1))
               SAUDIT="$RUNNER_TEMP/audit-seed-$N.json"
               # shellcheck disable=SC2086
-              (cd "$(dirname "$LF")" && npm audit $AUDIT_FLAGS) > "$SAUDIT" 2> "$RUNNER_TEMP/audit-seed-$N.err"
+              (cd "$(dirname "$LF")" && npm audit $AUDIT_FLAGS) > "$SAUDIT" 2> "$RUNNER_TEMP/audit-seed-$N.err" || true
               cat "$RUNNER_TEMP/audit-seed-$N.err" >&2
               if [ -s "$SAUDIT" ]; then
-                node scripts/check-dependency-registry.mjs --reconcile-audit "$SAUDIT" --seed "$LF" >> "$OUT" 2>&1
-                SREC=$?
+                SREC=0
+                node scripts/check-dependency-registry.mjs --reconcile-audit "$SAUDIT" --seed "$LF" >> "$OUT" 2>&1 || SREC=$?
               else
                 echo "::error::npm audit produced no JSON output for $LF; its seed acceptances could not be reconciled"
                 printf '%s Check 76 reconcile [%s]: npm audit produced no JSON output\n' "$FAIL_MARK" "$LF" >> "$OUT"

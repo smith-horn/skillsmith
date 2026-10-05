@@ -11,7 +11,17 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node
 import { builtinModules } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { REPO_ROOT, WORKFLOW, doc, exec, script, verbs } from './dependency-registry-expiry.harness'
+import {
+  FINDINGS_AUDIT,
+  REPO_ROOT,
+  RUNNER_BASH_ARGS,
+  WORKFLOW,
+  doc,
+  exec,
+  script,
+  scriptStep,
+  verbs,
+} from './dependency-registry-expiry.harness'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 
 describe('workflow shape', () => {
@@ -189,6 +199,32 @@ describe('executed run of the workflow script (stub node and gh)', () => {
     expect(verbs(r.calls)).toContain('issue create')
     expect(r.body).toContain('npm audit produced no JSON output')
     expect(r.nodeCalls.some((c) => c.includes('--reconcile-audit'))).toBe(false)
+  })
+  it('npm audit exiting 1 because it FOUND advisories (the normal case) still reconciles and syncs (SMI-6993)', () => {
+    const rec =
+      '\u2713 Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted advisories\n'
+    const r = exec(GREEN_R4, 0, '42', '', { out: FINDINGS_AUDIT, rc: 1, rec, recRc: 0 })
+    expect(r.status).toBe(0)
+    // presence: the script got PAST npm audit and ran the reconcile and the issue sync
+    expect(r.nodeCalls.some((c) => c.includes('--reconcile-audit'))).toBe(true)
+    expect(r.calls.some((c) => c.startsWith('issue close 42 '))).toBe(true)
+  })
+  it('the step runs under the runner default shell: no `shell:` override, so `bash -e {0}` (SMI-6993)', () => {
+    // GitHub Actions runs a `run:` step with no `shell:` as `bash -e {0}` on Linux. The script
+    // keeps -e on and captures only the statuses it decides on itself, with `|| VAR=$?`; the
+    // harness runs it with the same flags, or -e-sensitive bugs are invisible.
+    expect(scriptStep()).not.toHaveProperty('shell')
+    expect(RUNNER_BASH_ARGS).toEqual(['-e'])
+    expect(script()).not.toMatch(/^\s*set\s+(\+[a-z]*e|\+o\s+errexit)/m) // -e is never turned off
+    for (const v of ['RC', 'REC', 'SREC']) expect(script()).toContain(`|| ${v}=$?`)
+  })
+  it('an unexpected failure (the colour-stripping sed) stops the job red and never closes the issue (SMI-6993)', () => {
+    // With -e off this sed failure left $CLEAN empty, so a run with an expiring acceptance
+    // read as clean and closed the open issue. With -e on, the step stops at the sed.
+    const r = exec(GREEN_R4 + EXPIRING, 0, '42', '', {}, {}, { sedFailOn: 'check76.out' })
+    expect(r.sedFailures).toHaveLength(1) // presence: the injected failure fired
+    expect(r.status).toBe(4)
+    expect(verbs(r.calls)).not.toContain('issue close')
   })
   it('a crash with no failure line still opens the issue and says the check did not complete', () => {
     const r = exec('Error: boom\n', 2)

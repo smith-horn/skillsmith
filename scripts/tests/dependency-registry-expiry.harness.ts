@@ -19,6 +19,7 @@ interface Step {
   name?: string
   uses?: string
   run?: string
+  shell?: string
 }
 export interface Doc {
   name: string
@@ -28,16 +29,25 @@ export interface Doc {
 }
 const yaml = require('js-yaml') as { load: (t: string) => Doc }
 export const doc = (): Doc => yaml.load(readFileSync(WORKFLOW, 'utf8'))
-export const script = (): string => {
+export const scriptStep = (): Step => {
   const steps = Object.values(doc().jobs)[0].steps.filter((s) =>
     s.run?.includes('check-dependency-registry')
   )
   expect(steps).toHaveLength(1)
-  return steps[0].run as string
+  return steps[0]
 }
+export const script = (): string => scriptStep().run as string
+/**
+ * The runner's own invocation of a `run:` step with no `shell:` on Linux is `bash -e {0}`
+ * (the run log prints `shell: /usr/bin/bash -e {0}`). The harness runs the script the same way,
+ * from a file, so a script that only works with -e off (SMI-6993) is caught here, not in prod.
+ */
+export const RUNNER_BASH_ARGS = ['-e']
 
 export interface AuditStub {
   out?: string
+  /** npm audit's own exit status. Default mirrors real npm: 0 only for an empty report, else 1. */
+  rc?: number
   rec?: string
   recRc?: number
 }
@@ -46,6 +56,8 @@ export interface SeedStub {
   list?: string
   listRc?: number
   auditOut?: string
+  /** The seed's npm audit exit status; same default as AuditStub.rc. */
+  auditRc?: number
   rec?: string
   recRc?: number
 }
@@ -64,7 +76,8 @@ exit "$STUB_NODE_RC"
 const NPM_STUB = `#!/bin/bash
 echo "$*" >> "$NODE_LOG"
 echo "$PWD" >> "$NPM_CWD_LOG"
-if [ "$PWD" = "$STUB_ROOT" ]; then printf '%s' "$STUB_AUDIT_OUT"; else printf '%s' "$STUB_SEED_AUDIT_OUT"; fi
+if [ "$PWD" = "$STUB_ROOT" ]; then printf '%s' "$STUB_AUDIT_OUT"; exit "$STUB_AUDIT_RC"; fi
+printf '%s' "$STUB_SEED_AUDIT_OUT"; exit "$STUB_SEED_AUDIT_RC"
 `
 const GH_STUB = `#!/bin/bash
 echo "$*" >> "$GH_LOG"
@@ -80,7 +93,23 @@ case "$1 $2" in
 esac
 exit 0
 `
+/**
+ * Opt-in: a sed that fails when one of its arguments names the file ending in $STUB_SED_FAIL_ON,
+ * and logs that it did, so a test can prove the injected failure fired. Every other sed call
+ * runs the real sed.
+ */
+const SED_STUB = `#!/bin/bash
+for a in "$@"; do
+  case "$a" in *"$STUB_SED_FAIL_ON") echo "$a" >> "$SED_LOG"; exit 4 ;; esac
+done
+exec /bin/sed "$@"
+`
 const EMPTY_AUDIT = '{"auditReportVersion":2,"vulnerabilities":{}}'
+/** A report with an advisory, as npm prints it; npm exits 1 whenever it finds one. */
+export const FINDINGS_AUDIT =
+  '{"auditReportVersion":2,"vulnerabilities":{"pkg":{"name":"pkg","severity":"high"}}}'
+/** Real npm audit exits 0 only for a clean report; findings, and a crash with no output, exit 1. */
+const npmRc = (out: string): number => (out === EMPTY_AUDIT ? 0 : 1)
 
 export function exec(
   nodeOut: string,
@@ -88,8 +117,11 @@ export function exec(
   existing = '',
   ghFail = '',
   audit: AuditStub = {},
-  seed: SeedStub = {}
+  seed: SeedStub = {},
+  opts: { sedFailOn?: string } = {}
 ) {
+  const auditOut = audit.out ?? EMPTY_AUDIT
+  const seedAuditOut = seed.auditOut ?? EMPTY_AUDIT
   const dir = mkdtempSync(join(tmpdir(), 'smi6949-expiry-'))
   const bin = join(dir, 'bin')
   mkdirSync(bin)
@@ -98,17 +130,22 @@ export function exec(
   const ghBody = join(dir, 'gh.body')
   const nodeLog = join(dir, 'node.log')
   const npmCwdLog = join(dir, 'npm-cwd.log')
+  const sedLog = join(dir, 'sed.log')
   writeFileSync(nodeOutFile, nodeOut)
-  for (const f of [ghLog, nodeLog, npmCwdLog]) writeFileSync(f, '')
-  for (const [name, body] of [
+  for (const f of [ghLog, nodeLog, npmCwdLog, sedLog]) writeFileSync(f, '')
+  const stubs: [string, string][] = [
     ['node', NODE_STUB],
     ['npm', NPM_STUB],
     ['gh', GH_STUB],
-  ]) {
+  ]
+  if (opts.sedFailOn) stubs.push(['sed', SED_STUB])
+  for (const [name, body] of stubs) {
     writeFileSync(join(bin, name), body)
     chmodSync(join(bin, name), 0o755)
   }
-  const r = spawnSync('bash', ['-c', script()], {
+  const scriptFile = join(dir, 'step.sh')
+  writeFileSync(scriptFile, script())
+  const r = spawnSync('bash', [...RUNNER_BASH_ARGS, scriptFile], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
@@ -121,12 +158,14 @@ export function exec(
       STUB_ROOT: REPO_ROOT,
       STUB_NODE_OUT: nodeOutFile,
       STUB_NODE_RC: String(nodeRc),
-      STUB_AUDIT_OUT: audit.out ?? EMPTY_AUDIT,
+      STUB_AUDIT_OUT: auditOut,
+      STUB_AUDIT_RC: String(audit.rc ?? npmRc(auditOut)),
       STUB_REC_OUT: audit.rec ?? '',
       STUB_REC_RC: String(audit.recRc ?? 0),
       STUB_SEEDS: seed.list ?? '',
       STUB_LIST_RC: String(seed.listRc ?? 0),
-      STUB_SEED_AUDIT_OUT: seed.auditOut ?? EMPTY_AUDIT,
+      STUB_SEED_AUDIT_OUT: seedAuditOut,
+      STUB_SEED_AUDIT_RC: String(seed.auditRc ?? npmRc(seedAuditOut)),
       STUB_SEED_REC_OUT: seed.rec ?? '',
       STUB_SEED_REC_RC: String(seed.recRc ?? 0),
       NODE_LOG: nodeLog,
@@ -135,6 +174,8 @@ export function exec(
       STUB_GH_FAIL: ghFail,
       GH_LOG: ghLog,
       GH_BODY: ghBody,
+      STUB_SED_FAIL_ON: opts.sedFailOn ?? '',
+      SED_LOG: sedLog,
     },
   })
   const lines = (f: string) => readFileSync(f, 'utf8').split('\n').filter(Boolean)
@@ -147,6 +188,7 @@ export function exec(
     stdout: r.stdout,
     nodeCalls: lines(nodeLog),
     npmCwds: lines(npmCwdLog),
+    sedFailures: lines(sedLog),
   }
 }
 export const verbs = (calls: string[]) => calls.map((c) => c.split(' ').slice(0, 2).join(' '))
