@@ -4,6 +4,53 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6961 / ADR-175 § 1 -- commands no longer proceed against an empty database when
+  your local one is corrupt. The shared opener caught the driver's refusal, renamed the **main file
+  only** -- orphaning any `-wal` against a rebuilt database -- and returned, so the command ran to
+  completion against nothing and reported success. It now surfaces the refusal, with a remedy naming
+  the file and the `mv` to run.
+
+  **No command gets a repaired database, and none proceeds against an empty one** -- including
+  `search`, `info` and `remove`, each of which could have served from the remote API or the
+  filesystem without a database. Uniform refusal was chosen deliberately over degrading those three:
+  one code path is far harder to regress than fourteen plus three exceptions. Move the database aside
+  as the message instructs and every command works again.
+
+  What is uniform is the **refusal**, not the control flow. Most commands stop at the first failure
+  and exit 1. `skillsmith update` instead reports a failure per skill and continues, then exits 1 --
+  on a corrupt database that means every installed skill is reported as failed. `skillsmith list`
+  degrades deliberately, showing `Unknown` for each skill rather than a count it cannot verify. An
+  earlier draft of this entry said every command "aborts", which was never true of `update`.
+
+  The message tells you to **move** the files, never delete them, and it now says why: a sync
+  rebuilds the registry mirror, but it does **not** rebuild rows you created locally. Skills added
+  with `skillsmith import-local` are tagged `source='local'` specifically so sync -- `--force`
+  included -- will not overwrite them, and quarantine review decisions have no registry source
+  either. An earlier draft of both this entry and the refusal itself claimed the database "holds no
+  data that cannot be rebuilt from the registry". That was false, and it was the sentence telling
+  you there was nothing to lose.
+
+- **Fixed** (behaviour change for scripts): SMI-6961 -- `skillsmith update` now exits **1** when any
+  skill failed. It previously printed a red `Failed: N` and exited **0**, so a script wrapping the
+  command read total failure as success. On a corrupt database every installed skill lands in that
+  bucket, which made it the same silent-success defect this release exists to remove.
+
+  Keyed on failures only. A **skipped** skill still exits 0: a skip is a decision the command made
+  on purpose (`local-drift`, `identity-mismatch`), and reporting those as a process failure would
+  make a correct refusal look like a malfunction. If you have automation that tolerates partial
+  update failures and checks only the exit status, this will start failing for you -- check the
+  `Failed:` count in the summary instead.
+
+- **Fixed**: SMI-6961 -- an error that no command handled used to print your absolute home path and
+  a stack trace. `program.parse()` does not await an async action's promise, so a rejection escaped
+  to Node, which printed the raw message -- bypassing the sanitizer that exists to replace home
+  paths with `~`. Every such failure now prints one sanitized line and exits 1.
+
+  Found in review of the change above, and newly reachable because of it: `search` opens its
+  database outside any `try`, so once the opener stopped swallowing corruption refusals, a corrupt
+  database on `skillsmith search` took exactly that route. The fix is at the entry point rather than
+  at those two call sites, so a command added later with the same shape cannot reintroduce it.
+
 - **Test**: SMI-6946 / ADR-175 -- coverage for the two `list` output paths a pre-merge gate showed
   were unobservable. `warnUndetermined` appeared in **zero** test files, so no mutation to it could
   be caught, and the gate named one that survived the whole suite: relocate that call one line later,

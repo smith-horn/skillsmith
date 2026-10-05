@@ -454,9 +454,13 @@ describeNative('createBetterSqlite3Database — corrupt-file refusal (SMI-6931)'
   })
 
   it('classifies on the SQLite result code, not on the word "malformed" in a path', () => {
-    // The shared `isCorruptionError` matches the bare substring `malformed`
-    // against a message, and a message can carry the file path. A healthy
-    // database living at a path containing that word must still open.
+    // The retired `isCorruptionError` matched the bare substring `malformed`
+    // against a message, and a message can carry the file path — so a healthy
+    // database at such a path was classified as corrupt. That helper is gone
+    // (SMI-6961 step 4) and classification is on the SQLite result code now,
+    // but the fixture stays: it pins the property, and the property is what
+    // must hold whatever the implementation. A healthy database living at a
+    // path containing that word must still open.
     const dirName = join(tempDir, 'malformed-fixtures')
     mkdirSync(dirName)
     const dbPath = join(dirName, 'skills.db')
@@ -540,5 +544,51 @@ describeNative('quick_check result contract (SMI-6931)', () => {
     expect(String(verdict).trim().toLowerCase()).toBe('ok')
 
     seed.close()
+  })
+
+  it('treats an ABSENT file as benign — nothing is installed, so nothing is stale', () => {
+    // Absence is this contract's one benign case, and the paired negative for
+    // every refusal arm above: a driver that refused any path without a
+    // readable database would look correct while breaking every first run.
+    const dbPath = join(tempDir, 'absent.db')
+    expect(existsSync(dbPath)).toBe(false)
+
+    const db = createBetterSqlite3Database(dbPath)
+    try {
+      expect(db.open).toBe(true)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('opens a healthy database, LEAVES THE FILE INTACT, and reopens it from disk', () => {
+    // The reopen is the load-bearing half. A cross-family review named a
+    // mutation that a read-only control which only queries the open handle
+    // cannot catch: destroy the backing file after the healthy integrity
+    // check. Every corruption arm still passes, because a corrupt input throws
+    // first. Only closing and reopening from disk detects it.
+    const dbPath = join(tempDir, 'skills.db')
+    const seed = createBetterSqlite3Database(dbPath)
+    seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)')
+    seed.prepare('INSERT INTO t (val) VALUES (?)').run('kept')
+    seed.close()
+    const before = snapshot(tempDir, dbPath)
+
+    const first = createBetterSqlite3Database(dbPath, { readonly: true })
+    try {
+      expect(first.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(1)
+    } finally {
+      first.close()
+    }
+
+    expectUntouched(tempDir, dbPath, before)
+
+    const second = createBetterSqlite3Database(dbPath, { readonly: true })
+    try {
+      expect(second.prepare<{ c: number }>('SELECT count(*) AS c FROM t').get()?.c).toBe(1)
+    } finally {
+      second.close()
+    }
+    expectUntouched(tempDir, dbPath, before)
   })
 })
