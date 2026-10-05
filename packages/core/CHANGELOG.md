@@ -4,6 +4,61 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Removed** (breaking): SMI-6961 -- `isCorruptionError` and `backupCorruptDbFile` are gone, along
+  with `db/drivers/corruption.ts`. This is an API removal, not a deprecation, and it is deliberate
+  for both.
+
+  `backupCorruptDbFile` renamed a database out of the way. ADR-175 § 1 forbids that: SQLite
+  coordinates through file paths rather than inodes, so renaming a database another process may hold
+  open is undefined behaviour, and the two files then share a journal **by name** -- meaning one
+  database's recovery can read the other's content. Leaving it exported invited a consumer to
+  reintroduce the exact defect this release removes.
+
+  `isCorruptionError` matched substrings against arbitrary error text, so an incidental word in a
+  wrapper message or a file path could classify a healthy failure as corruption. Use
+  `isCorruptDatabaseError`, which matches `CorruptDatabaseError`'s stable `code`.
+
+  There is **no replacement for the backup helper**, by design. The refusal's message names the
+  files to move and the commands to run; which copy to keep is the user's decision, not a library's.
+
+- **Fixed**: SMI-6961 / ADR-175 § 1 -- the WASM (sql.js) driver no longer renames a corrupt
+  database aside and rebuilds an empty one. It now refuses with the same structured
+  `CorruptDatabaseError` the native driver throws, so a consumer branching on `error.code` gets
+  identical behaviour from either driver. The old path was worse than a divergence: WASM `close()`
+  skips `persist()` on a read-only handle, so the rename left the database path **gone** rather than
+  replaced, and the next run opened an absent database and reported every skill up to date. Renaming
+  a database another process may hold open is what SQLite's own howtocorrupt documents as undefined
+  behaviour -- the two files then share a journal by name, so one database's recovery can read the
+  other's content.
+
+- **Fixed**: SMI-6961 -- the WASM driver now runs `PRAGMA quick_check(1)` before publishing a
+  handle. Measured: a database with a valid header and every page from 4096 onward overwritten --
+  the exact condition SMI-6931 was filed for -- **passes** the old `SELECT name FROM sqlite_master`
+  probe and opens cleanly, while `quick_check` reports the damage. Because `quick_check` *reports*
+  rather than throws, no `try`/`catch` around the open can observe it, which is why this is a
+  separate step rather than another catch arm -- and why its refusal carries no `sqliteCode`, there
+  being no thrown error to read one from.
+
+- **Changed**: SMI-6961 -- the refusal builder moved to `db/corrupt-refusal.ts` so both drivers
+  construct the identical error. No behaviour change on its own; it exists so the two drivers cannot
+  drift apart again.
+
+- **Fixed**: SMI-6961 -- two defects in the text of the refusal itself, both found in review, both
+  in words a user reads while deciding what to do with a database they cannot open.
+
+  The message claimed the database "holds no data that cannot be rebuilt from the registry". **That
+  was false.** Skills added with `import-local` are tagged `source='local'` precisely so registry
+  sync -- `--force` included -- will not overwrite them, so a sync cannot recreate them; quarantine
+  review decisions have no registry source either. It was the sentence telling the user there was
+  nothing to lose. It now says what a sync does and does not restore, and why the instructions move
+  the files rather than deleting them.
+
+  Separately, the `SQLITE_CORRUPT_INDEX` branch ended "move the files aside **as below**" with
+  nothing below it -- the `mv` block lived in the mutually exclusive `replace` arm of the same
+  ternary, so the fallback the message directed users to carried no command at all. Both branches
+  now render it from one binding. Nothing had ever rendered that branch: the existing assertion only
+  checked `remedyKind` membership, and both fixtures yield `replace`.
+
 - **Test**: SMI-6946 / ADR-175 -- the driver's refusal is now asserted on its **structured
   contract**, not only its message. A pre-merge gate found that all seven refusal arms matched the
   message text, so replacing `CorruptDatabaseError` with a plain `Error` carrying the same words left
