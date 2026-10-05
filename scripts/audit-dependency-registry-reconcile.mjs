@@ -56,7 +56,8 @@ const GATE_TEXT = {
   unknown:
     "its severity is not one the production gate's high threshold is known to classify, so whether any gate fails on it is unknown",
 }
-const key = (id, pkg) => `${id}\u0000${pkg}`
+/** Map key of one (advisory, package) pair; shared with the seed reconcile (SMI-6954). */
+export const key = (id, pkg) => `${id}\u0000${pkg}`
 const isProdInstall = (entry) => entry.dev !== true
 
 /** The advisory id of an object `via` item: the GHSA in `url`, else `src:<source>`, else null. */
@@ -197,35 +198,7 @@ export function reconcileAudit(registry, audit, lock) {
     return [f(`Check 76 reconcile: ${REGISTRY_PATH} has no "acceptances" array`)]
   }
   const out = []
-  const accepted = new Set()
-  for (const a of registry.acceptances) {
-    if (!a || typeof a !== 'object') continue
-    accepted.add(key(a.advisory, a.package))
-    const same = [...entries.values()].filter((e) => e.id === a.advisory)
-    const hit = same.find((e) => e.pkg === a.package)
-    if (same.length === 0) {
-      out.push(
-        f(
-          `Check 76 reconcile: accepted advisory ${a.advisory} (${a.package}) is absent from the npm audit report`,
-          'If it is fixed, delete the acceptance; if the id is wrong, correct it'
-        )
-      )
-    } else if (!hit) {
-      out.push(
-        f(
-          `Check 76 reconcile: accepted advisory ${a.advisory} is not for package "${a.package}"; npm audit reports it for ${same.map((e) => `"${e.pkg}"`).join(', ')}`,
-          'Correct the acceptance package'
-        )
-      )
-    } else if (hit.severity !== a.severity) {
-      out.push(
-        f(
-          `Check 76 reconcile: accepted advisory ${a.advisory} (${a.package}) is recorded as ${a.severity} but npm audit reports ${hit.severity}`,
-          'Correct the acceptance severity'
-        )
-      )
-    }
-  }
+  const accepted = matchAcceptances(registry.acceptances, entries, out, 'Check 76 reconcile')
   for (const e of entries.values()) {
     if (accepted.has(key(e.id, e.pkg))) continue
     const { scope, prod, dev, why } = scopeOf(lock, e)
@@ -251,6 +224,44 @@ export function reconcileAudit(registry, audit, lock) {
     )
   }
   return out
+}
+
+/**
+ * The acceptance-matching loop the root and seed reconciles share (SMI-6954): an accepted
+ * advisory absent from the report, reported for another package, or with another severity is
+ * a failure. Returns the set of accepted (advisory, package) keys.
+ */
+export function matchAcceptances(acceptances, entries, out, prefix) {
+  const accepted = new Set()
+  for (const a of acceptances) {
+    if (!a || typeof a !== 'object') continue
+    accepted.add(key(a.advisory, a.package))
+    const same = [...entries.values()].filter((e) => e.id === a.advisory)
+    const hit = same.find((e) => e.pkg === a.package)
+    if (same.length === 0) {
+      out.push(
+        f(
+          `${prefix}: accepted advisory ${a.advisory} (${a.package}) is absent from the npm audit report`,
+          'If it is fixed, delete the acceptance; if the id is wrong, correct it'
+        )
+      )
+    } else if (!hit) {
+      out.push(
+        f(
+          `${prefix}: accepted advisory ${a.advisory} is not for package "${a.package}"; npm audit reports it for ${same.map((e) => `"${e.pkg}"`).join(', ')}`,
+          'Correct the acceptance package'
+        )
+      )
+    } else if (hit.severity !== a.severity) {
+      out.push(
+        f(
+          `${prefix}: accepted advisory ${a.advisory} (${a.package}) is recorded as ${a.severity} but npm audit reports ${hit.severity}`,
+          'Correct the acceptance severity'
+        )
+      )
+    }
+  }
+  return accepted
 }
 
 /** Summary clause counting informational advisories the production gate does not fail on. */
