@@ -30,6 +30,25 @@ All notable changes to `@skillsmith/cli` are documented here.
   data that cannot be rebuilt from the registry". That was false, and it was the sentence telling
   you there was nothing to lose.
 
+- **Docs**: SMI-6991 -- two claims in `open-database.ts` and `fatal.ts` corrected after the
+  post-merge review of SMI-6961, both about this release's own behaviour.
+
+  The opener said "most commands have no `try` around their open", which was unmeasured and pointed
+  the wrong way — several commands catch and exit themselves. It also named `update` as the sole
+  command that does not abort, when `list` is a second one. It now describes the **two** shapes
+  without asserting how many commands are in each; the enumeration lives in the consumer-inventory
+  test, where it is checked rather than narrated. (A first attempt at this correction described
+  *three* shapes, and review measured that the first had no members — every call site is reached
+  from an `*ActionImpl` wrapped in try/catch. The entry-point handler is a backstop, not a shape
+  any command uses.)
+
+  `fatal.ts` justified preferring `process.exitCode` by asserting `process.exit()` "can truncate a
+  multi-line message mid-write on a piped stream". That was reasoning, not measurement, and it put
+  the file in conflict with the many existing `catch` blocks that print the same refusal and call
+  `process.exit(1)`. Measured: `skillsmith info` against a corrupt database produced **identical
+  1217-byte output piped and direct, with all three `mv` lines present**. No truncation, so those
+  five sites carry no defect and the claim is withdrawn.
+
 - **Fixed** (behaviour change for scripts): SMI-6961 -- `skillsmith update` now exits **1** when any
   skill failed. It previously printed a red `Failed: N` and exited **0**, so a script wrapping the
   command read total failure as success. On a corrupt database every installed skill lands in that
@@ -44,7 +63,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Fixed**: SMI-6961 -- an error that no command handled used to print your absolute home path and
   a stack trace. `program.parse()` does not await an async action's promise, so a rejection escaped
   to Node, which printed the raw message -- bypassing the sanitizer that exists to replace home
-  paths with `~`. Every such failure now prints one sanitized line and exits 1.
+  paths with `~`. Every such failure now prints the sanitized message and exits 1 — the whole
+  message, not one line: the corruption refusal is multi-line by design and the `mv` commands are
+  the point of it. (An earlier draft of this entry said "one sanitized line", which the 1217-byte
+  measurement recorded in `fatal.ts` contradicts.)
 
   Found in review of the change above, and newly reachable because of it: `search` opens its
   database outside any `try`, so once the opener stopped swallowing corruption refusals, a corrupt

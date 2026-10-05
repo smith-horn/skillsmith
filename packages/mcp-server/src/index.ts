@@ -81,6 +81,7 @@ import {
   formatUpdateNotification,
   resolveUpdateNotificationClient,
 } from '@skillsmith/core'
+import { formatDbInitFailure } from './db-init-troubleshooting.js'
 // SMI-5456: agent-mediation marker channel — resolution + AsyncLocalStorage
 // scoping now live in call-tool-handler.js (SMI-5479 extraction).
 // SMI-5479: flush-on-shutdown wiring lives in shutdown.js (own module — no
@@ -350,16 +351,12 @@ async function main() {
     startPeriodicFlush(() => toolContext?.db)
   } catch (error) {
     const errorDetail = error instanceof Error ? error.message : String(error)
-    // SMI-5615: single '\n'-joined message reproduces the prior 8-line stderr output.
-    const troubleshooting = [
-      '  - In Docker: Ensure container is running',
-      '  - On macOS: sql.js WASM should load automatically',
-      '  - Set SKILLSMITH_FORCE_WASM=true to use the WASM SQLite fallback',
-    ].join('\n')
-    logger.error(
-      `[skillsmith] Failed to initialize database:\n${errorDetail}\n\nTroubleshooting:\n${troubleshooting}\n`,
-      { err: error }
-    )
+    // SMI-5615: single '\n'-joined message reproduces the prior 8-line stderr
+    // output. SMI-6991: the block is now chosen by failure kind rather than
+    // printed for every failure — a corruption refusal must not be followed by
+    // "switch drivers", which both drivers now refuse identically. The decision
+    // lives in its own module because this file runs main() at import.
+    logger.error(formatDbInitFailure(errorDetail, error), { err: error })
     process.exit(1)
   }
 

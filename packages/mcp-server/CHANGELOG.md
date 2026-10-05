@@ -4,6 +4,20 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6991 -- a corrupt database no longer ends with advice that cannot work. The
+  startup failure printed one fixed troubleshooting block for every error, whose last line was
+  "Set `SKILLSMITH_FORCE_WASM=true` to use the WASM SQLite fallback". That is advice about driver
+  **availability**; a corruption refusal is a verdict about the **file**, and since SMI-6961 both
+  drivers refuse the same corrupt file -- so switching drivers is a dead end. It only ever appeared
+  to help because the WASM driver used to destroy the file, which is the defect SMI-6961 removed.
+
+  This is the npx path, where WASM is already the default driver, so the last thing a user read
+  after a correct refusal was a suggestion to switch to the driver they were already running. The
+  block is now chosen by failure kind: a refusal prints its own remedy and nothing else.
+
+  Found in the post-merge review of SMI-6961. The decision lives in its own module because
+  `index.ts` runs `main()` at import and so cannot be unit-tested.
+
 - **Fix (concurrency)**: SMI-6733 / SMI-6746 -- `saveManifest` no longer carries its own
   temp-file write. It wrote through `MANIFEST_PATH + '.tmp.' + process.pid`, which has no random
   suffix, so two concurrent saves in one process collided on an identical temp path, and no cleanup,

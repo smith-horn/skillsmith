@@ -64,7 +64,27 @@ export class CorruptDatabaseError extends Error {
   /** SQLite's own words — a result message, or a `quick_check` verdict row. */
   readonly verdict: string
 
-  /** Which recommended recovery framework applies. */
+  /**
+   * Which recommended recovery framework applies.
+   *
+   * **NOT driver-independent, unlike `code` (SMI-6991).** `'reindex'` requires
+   * the extended code `SQLITE_CORRUPT_INDEX`, and only the native driver can
+   * supply one: `sqlJsCorruptionCode` resolves exactly two messages, neither of
+   * them the index case, and the WASM `quick_check` path carries no code at
+   * all. Measured: `'reindex'` is reachable ONLY from native's **thrown** path.
+   * Native's own `quick_check` path also returns a verdict with no code, so a
+   * database whose index damage `quick_check` finds gets `'replace'` on native
+   * too. The divergence is per-path, not simply native-versus-WASM — an earlier
+   * version of this note generalised one fixture into a claim about drivers.
+   *
+   * That matters because the two remedies differ in what they cost the user:
+   * `'reindex'` is a non-destructive repair attempt, `'replace'` moves the
+   * database aside and loses anything a sync cannot rebuild. An npx install,
+   * where WASM is the default driver, therefore gets the worse advice.
+   *
+   * Branch on `code` for "is this corruption"; treat `remedyKind` as a hint
+   * whose precision depends on the driver until SMI-6991 closes the gap.
+   */
   readonly remedyKind: RemedyKind
 
   /**
