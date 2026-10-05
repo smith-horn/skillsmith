@@ -76,6 +76,11 @@ jobs:
       - name: Check 76 expiry and sync the tracking issue
         run: |
           set -uo pipefail
+          # Actions runs a run: step with no shell: as `bash -e {0}`. This script captures
+          # every exit status explicitly ($?) and decides the step's result itself via
+          # `exit "$RC"`, and `npm audit` exits 1 whenever it finds advisories, so -e must
+          # be off (SMI-6993).
+          set +e
           OUT="$RUNNER_TEMP/check76.out"
           CLEAN="$RUNNER_TEMP/check76.clean"
           BODY="$RUNNER_TEMP/check76.body.md"
