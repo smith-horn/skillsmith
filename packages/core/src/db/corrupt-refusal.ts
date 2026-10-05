@@ -67,9 +67,16 @@ export function sqliteCodeOf(error: unknown): string | undefined {
  *
  * The message therefore has to be actionable, because a correct refusal the
  * user cannot act on is its own defect. It names the path, the verdict, and the
- * exact manual move — **including the WAL sidecars**, because
- * `schema-sql.ts` sets `journal_mode = WAL`, so the database on disk is three
+ * exact manual move — **including any WAL sidecars**, because `schema-sql.ts`
+ * sets `journal_mode = WAL`, so a native-written database on disk is three
  * files and moving one leaves the others orphaned against a rebuilt file.
+ *
+ * "Any", not "the". sql.js has no filesystem VFS and never honours WAL, so a
+ * database the WASM driver created has no sidecars at all. This paragraph said
+ * "the WAL sidecars" and asserted three files unconditionally — the same defect
+ * as the rendered string below, and it was left standing in this same file when
+ * that one was corrected (SMI-6991). The `# if present` guards on the commands
+ * were always right; both sentences about them were not.
  */
 export function corruptDatabaseError(
   path: string,

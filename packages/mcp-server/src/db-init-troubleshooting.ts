@@ -46,8 +46,12 @@ export function troubleshootingFor(error: unknown): string | null {
 /**
  * The full stderr block for a database-init failure.
  *
- * Kept here with the decision so the two cannot drift: a caller that forgot the
- * `null` case would otherwise print the literal string "null" as advice.
+ * Kept beside the decision because the null case is easy to mishandle: a caller
+ * that interpolated the result straight into a template would render the
+ * literal string "null" as advice. Co-location makes that less likely, not
+ * impossible — `troubleshootingFor` is exported for its own tests, and
+ * TypeScript does not reject interpolating a nullable string. The test forbids
+ * it for THIS function; a new caller needs its own arm (SMI-6991).
  */
 export function formatDbInitFailure(errorDetail: string, error: unknown): string {
   const troubleshooting = troubleshootingFor(error)

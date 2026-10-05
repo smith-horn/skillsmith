@@ -60,7 +60,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Fixed**: SMI-6961 -- an error that no command handled used to print your absolute home path and
   a stack trace. `program.parse()` does not await an async action's promise, so a rejection escaped
   to Node, which printed the raw message -- bypassing the sanitizer that exists to replace home
-  paths with `~`. Every such failure now prints one sanitized line and exits 1.
+  paths with `~`. Every such failure now prints the sanitized message and exits 1 — the whole
+  message, not one line: the corruption refusal is multi-line by design and the `mv` commands are
+  the point of it. (An earlier draft of this entry said "one sanitized line", which the 1217-byte
+  measurement recorded in `fatal.ts` contradicts.)
 
   Found in review of the change above, and newly reachable because of it: `search` opens its
   database outside any `try`, so once the opener stopped swallowing corruption refusals, a corrupt

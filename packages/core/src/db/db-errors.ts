@@ -71,8 +71,11 @@ export class CorruptDatabaseError extends Error {
    * the extended code `SQLITE_CORRUPT_INDEX`, and only the native driver can
    * supply one: `sqlJsCorruptionCode` resolves exactly two messages, neither of
    * them the index case, and the WASM `quick_check` path carries no code at
-   * all. Measured — for the same index-corrupt database, native yields
-   * `'reindex'` and both WASM paths yield `'replace'`.
+   * all. Measured: `'reindex'` is reachable ONLY from native's **thrown** path.
+   * Native's own `quick_check` path also returns a verdict with no code, so a
+   * database whose index damage `quick_check` finds gets `'replace'` on native
+   * too. The divergence is per-path, not simply native-versus-WASM — an earlier
+   * version of this note generalised one fixture into a claim about drivers.
    *
    * That matters because the two remedies differ in what they cost the user:
    * `'reindex'` is a non-destructive repair attempt, `'replace'` moves the
