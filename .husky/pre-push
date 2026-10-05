@@ -241,6 +241,12 @@ else
   echo "⚠️  scripts/lib/hook-docker-detect.sh missing — using legacy in-container path"
   echo "   (rebase onto main to pick up SMI-4681)"
   DOCKER_AVAILABLE=1
+  # SMI-6985 L-1: set for parity with hook-docker-detect.sh's full fallback
+  # contract (the sourced lib sets DOCKER_AVAILABLE/USE_DOCKER/FELL_BACK/
+  # CONTAINER_WD/RUN_PREFIX together) so this legacy-path branch leaves every
+  # var the lib would have set, even though this hook itself only reads
+  # DOCKER_AVAILABLE/FELL_BACK/RUN_PREFIX below, never USE_DOCKER.
+  # shellcheck disable=SC2034 # see comment above: set for fallback-contract parity, not read in this hook
   USE_DOCKER=1
   FELL_BACK=0
   CONTAINER_WD="/app"

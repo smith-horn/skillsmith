@@ -1,4 +1,24 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# SMI-6985: Husky invokes every hook through `sh -e` (.husky/_/h:17), so
+# errexit is always on here regardless of this file's own shebang -- the
+# shebang is never consulted (same mechanism documented in .husky/post-merge,
+# .husky/post-checkout, and .husky/post-commit's own headers, SMI-6967). This
+# file's shebang previously read `#!/usr/bin/env bash`, which bought it
+# nothing: measured, `dash -n` (the same /bin/sh this hook runs under on
+# ubuntu-latest and in this repo's own dev container) failed this file with
+# a hard syntax error on a bash-only `<<<` herestring. `git rebase` broke
+# outright on any Linux host with husky installed, since a syntax error
+# aborts the hook before any of its own logic runs. A second bash-ism in
+# this file, `[[ ! $REPLY =~ ^[Yy]$ ]]`, is NOT itself a dash -n syntax
+# error -- `[[` is not a dash reserved word, so dash parses it as an
+# ordinary (undefined) command name and only fails at RUNTIME, with
+# `[[: not found` -- measured live. Converted to POSIX sh below; see
+# SMI-6985 for the full measured before/after, including two more
+# dash-incompatible constructs found only by executing this file's
+# interactive branch (not caught by `dash -n` at all): `read -n 1` (dash's
+# `read` has no `-n` option) and `read` with no explicit variable name
+# (dash requires one; bash defaults to $REPLY).
+#
 # Pre-rebase hook: Warn about unmerged feature branches
 # Prevents accidental loss of work during rebase operations
 # See: docs/retros/2025-01-22-docs-404-recovery.md
@@ -6,31 +26,45 @@
 set -e
 
 echo ""
-echo -e "\033[0;34m=== Pre-Rebase Check ===\033[0m"
+printf '\033[0;34m=== Pre-Rebase Check ===\033[0m\n'
 echo ""
 
 # Get the target branch (what we're rebasing onto)
+# SMI-6985 L-1: per git's own pre-rebase hook contract, $1 is the upstream
+# the series was forked from -- captured here for that documentation value,
+# but every check below is intentionally hardcoded against `main` (this
+# repo's single integration branch, per the branch-naming/wave-stacking
+# conventions in CLAUDE.md), not parameterized on it -- so it is genuinely
+# unused, not a bug shellcheck mis-flagged.
+# shellcheck disable=SC2034 # see comment above: captured for the hook-contract documentation, not consumed
 TARGET_BRANCH="${1:-HEAD}"
 
 # Find feature branches with commits not in main
-echo -e "\033[1;33mChecking for unmerged feature branches...\033[0m"
+printf '\033[1;33mChecking for unmerged feature branches...\033[0m\n'
 
 UNMERGED_BRANCHES=$(git branch --no-merged main 2>/dev/null | grep -v "^\*" | sed 's/^[[:space:]]*//' || true)
 
 if [ -z "$UNMERGED_BRANCHES" ]; then
-    echo -e "\033[0;32m  ✓ No unmerged feature branches found\033[0m"
+    printf '\033[0;32m  ✓ No unmerged feature branches found\033[0m\n'
     echo ""
     exit 0
 fi
 
 # Count commits in each unmerged branch
 echo ""
-echo -e "\033[1;33m⚠️  WARNING: Found unmerged feature branches\033[0m"
+printf '\033[1;33m⚠️  WARNING: Found unmerged feature branches\033[0m\n'
 echo ""
 echo "The following branches have commits not in main:"
 echo ""
 
 SIGNIFICANT_BRANCHES=""
+# SMI-6985: a POSIX heredoc replaces the bash-only `done <<< "$VAR"`
+# herestring. A `printf '%s\n' "$VAR" | while read ...` pipe form was
+# considered and rejected: piping into a `while` runs the loop in a
+# subshell, so SIGNIFICANT_BRANCHES (set inside the loop, read after it)
+# would be silently lost once the loop exits -- measured live, the pipe
+# form left the accumulator empty while this heredoc form preserved it
+# exactly, matching the original bash herestring's behavior.
 while IFS= read -r branch; do
     if [ -n "$branch" ]; then
         # Count commits ahead of main
@@ -43,7 +77,7 @@ while IFS= read -r branch; do
         LAST_MSG=$(git log -1 --format='%s' "$branch" 2>/dev/null | head -c 50 || echo "")
 
         if [ "$COMMIT_COUNT" -gt 0 ]; then
-            echo -e "  \033[1;31m$branch\033[0m"
+            printf '  \033[1;31m%s\033[0m\n' "$branch"
             echo "    └─ $COMMIT_COUNT commit(s) ahead of main"
             echo "    └─ Last commit: $LAST_COMMIT"
             echo "    └─ \"$LAST_MSG...\""
@@ -51,18 +85,20 @@ while IFS= read -r branch; do
             SIGNIFICANT_BRANCHES="$SIGNIFICANT_BRANCHES$branch\n"
         fi
     fi
-done <<< "$UNMERGED_BRANCHES"
+done <<_SKILLSMITH_PRE_REBASE_BRANCHES_
+$UNMERGED_BRANCHES
+_SKILLSMITH_PRE_REBASE_BRANCHES_
 
 if [ -z "$SIGNIFICANT_BRANCHES" ]; then
-    echo -e "\033[0;32m  ✓ No significant unmerged work found\033[0m"
+    printf '\033[0;32m  ✓ No significant unmerged work found\033[0m\n'
     echo ""
     exit 0
 fi
 
 # Warn and require confirmation
-echo -e "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-echo -e "\033[1;33m⚠️  CAUTION: Rebasing may cause these branches to diverge\033[0m"
-echo -e "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+printf '\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
+printf '\033[1;33m⚠️  CAUTION: Rebasing may cause these branches to diverge\033[0m\n'
+printf '\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n'
 echo ""
 echo "Consider merging or backing up important work before rebasing."
 echo ""
@@ -74,17 +110,67 @@ echo ""
 
 # Check if running in interactive mode
 if [ -t 0 ]; then
-    read -p "Continue with rebase? (y/N) " -n 1 -r
+    # SMI-6985: `read -p PROMPT -n 1 -r` (no explicit var name) is two more
+    # bash-isms beyond the two named in the brief, found by executing this
+    # branch under dash rather than reasoning from the shebang: (1) dash's
+    # `read` has no `-n` (char-count) option at all -- `Illegal option -n`,
+    # a non-zero exit that would abort the whole hook under this runner's
+    # `sh -e`; (2) dash's `read` requires an explicit variable name -- with
+    # none given (bash defaults to $REPLY) dash errors `read: arg count`.
+    # Fixed by dropping -n (requires Enter to submit; no portable
+    # single-keystroke equivalent exists across dash and bash) and naming
+    # REPLY explicitly.
+    #
+    # SMI-6985 L-2: `read -p` itself is also non-POSIX (shellcheck SC3045 in
+    # `-s sh` mode) -- it happens to work under dash too (confirmed live on
+    # both the host's and this repo's dev-container's dash), but a file
+    # whose own header is about not relying on non-POSIX constructs
+    # shouldn't rely on an extension merely because today's interpreter
+    # tolerates it. A plain `printf` + `read -r` is portable everywhere this
+    # hook runs (host sh/bash/dash, container dash).
+    printf '%s' "Continue with rebase? (y/N) "
+    read -r REPLY
     echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "\033[0;31mRebase aborted.\033[0m"
-        exit 1
-    fi
+    # SMI-6985: POSIX `case` replaces the bash-only `[[ ! $REPLY =~ ^[Yy]$ ]]`.
+    #
+    # SMI-6985 L-4 (reviewer-found): dropping `-n 1` above and naming `REPLY`
+    # explicitly changed the ACCEPTED-INPUT set, not just the syntax --
+    # measured end-to-end (bash and dash, both identical) against the
+    # original `read -p ... -n 1 -r` + `[[ ! $REPLY =~ ^[Yy]$ ]]`:
+    #   y / Y / n / Enter / EOF / "y "   identical in both forms
+    #   "yes"+Enter       old PROCEED (read -n 1 takes only "y") -> new ABORT (full string compared) -- DIVERGE
+    #   "yy"+Enter        old PROCEED (same reason)              -> new ABORT                        -- DIVERGE
+    #   " y"+Enter        old ABORT (the single char read is " ") -> new PROCEED (read -r strips leading/trailing IFS whitespace when a name is given, the old nameless form did not) -- DIVERGE
+    #   "\ty"+Enter       old ABORT (same reason)                 -> new PROCEED                       -- DIVERGE
+    # Net effect on a destructive-operation guard is mixed: "yes" now aborts
+    # (fail-safe, if surprising) and leading/trailing whitespace around "y"
+    # now proceeds (a loosening). The whitespace-stripping divergence is an
+    # unavoidable consequence of naming REPLY (required for dash, which has
+    # no unnamed-default `read`) and is accepted as-is -- a stray space
+    # around an otherwise-unambiguous "y" proceeding is a minor loosening,
+    # not a new footgun. The "yes" divergence is a deliberate, separate
+    # decision, made explicitly here rather than left as a side effect: a
+    # user who types "yes" at a y/N prompt means yes, and silently aborting
+    # their rebase instead is a worse surprise than accepting it, so "yes"
+    # (any case) is matched alongside the single-letter form below. (The
+    # prior version of this comment claimed "all nine cases produced
+    # identical results" -- that was true only of the `[Yy]` REGEX/PATTERN
+    # compared in isolation against a HAND-PICKED single-character REPLY
+    # value, not of the two READ invocations end-to-end on the same raw
+    # input; it read as a claim about the whole prompt and was wrong on 4 of
+    # the 10 real inputs above. Corrected here, SMI-6985.)
+    case "$REPLY" in
+        [Yy]|[Yy][Ee][Ss]) ;;
+        *)
+            printf '\033[0;31mRebase aborted.\033[0m\n'
+            exit 1
+            ;;
+    esac
 else
     # Non-interactive mode (CI/scripts) - just warn, don't block
-    echo -e "\033[1;33mRunning in non-interactive mode - proceeding with rebase\033[0m"
+    printf '\033[1;33mRunning in non-interactive mode - proceeding with rebase\033[0m\n'
 fi
 
 echo ""
-echo -e "\033[0;32m=== Pre-Rebase Check Passed ===\033[0m"
+printf '\033[0;32m=== Pre-Rebase Check Passed ===\033[0m\n'
 echo ""

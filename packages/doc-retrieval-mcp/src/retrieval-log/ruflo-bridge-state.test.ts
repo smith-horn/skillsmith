@@ -31,12 +31,10 @@ import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 import {
   BRIDGE_VERDICT_DISABLE_VAR,
-  EXPECTED_BY_GRACE_MS,
   LOCK_STALE_MS,
   acquireBridgeLock,
   bridgeLockStillHeld,
   foldLiveness,
-  hasExpectedByPassed,
   readEntryResult,
   readState,
   releaseBridgeLock,
@@ -45,12 +43,9 @@ import {
   renderBridgeVerdictLine,
   resolveBridgeStatePath,
   resolveMainRepoKey,
-  resolveProbeInstalledAt,
-  resolveProbeScriptPath,
   shouldProbe,
   writeEntryIfOwned,
   type BridgeEntry,
-  type ProbeInstall,
 } from './ruflo-bridge-state.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -102,13 +97,13 @@ function makeEntry(overrides: Partial<BridgeEntry> = {}): BridgeEntry {
     patternsLearned: 10,
     trajectoriesRecorded: 2,
     consecutiveNoLearning: 0,
-    // SMI-6967 H-9/H-1: defaults model an already-armed, fully-producing
+    // SMI-6967 H-9/SMI-6985: defaults model an already-armed, fully-producing
     // checkout with a consistent baseline, matching the default
     // patternsLearned/trajectoriesRecorded above — most existing arms below
     // don't care about the liveness fields at all, so this keeps them
-    // unaffected. `everProducerPresent` defaults true because the gate is
-    // now THAT flag (H-1) — a test exercising the pre-producer dormant case
-    // must override it explicitly, same as it already must for `everLearned`.
+    // unaffected. `everLearned` defaults true because the render gate is
+    // that flag (SMI-6985, superseding H-1's `everProducerPresent`) — a test
+    // exercising the pre-learning dormant case must override it explicitly.
     everProducerPresent: true,
     everLearned: true,
     countersRegressed: false,
@@ -199,298 +194,25 @@ describe('readEntryResult', () => {
   })
 })
 
-// ── expectedBy gate (SMI-6967 H-1: per-checkout installedAt, not a wall-clock constant) ──
-
-describe('hasExpectedByPassed', () => {
-  it('is false when the probe was never installed in this checkout (absent), however far in the future `now` is', () => {
-    expect(hasExpectedByPassed(new Date('2099-01-01T00:00:00Z'), { kind: 'absent' })).toBe(false)
-  })
-
-  it('is false within the grace period after installedAt', () => {
-    const installedAt: ProbeInstall = { kind: 'installed', at: new Date('2026-10-01T00:00:00Z') }
-    const now = new Date(installedAt.at.getTime() + EXPECTED_BY_GRACE_MS - 1000)
-    expect(hasExpectedByPassed(now, installedAt)).toBe(false)
-  })
-
-  it('is true at/after the grace period elapses from installedAt', () => {
-    const installedAt: ProbeInstall = { kind: 'installed', at: new Date('2026-10-01T00:00:00Z') }
-    const now = new Date(installedAt.at.getTime() + EXPECTED_BY_GRACE_MS + 1000)
-    expect(hasExpectedByPassed(now, installedAt)).toBe(true)
-  })
-
-  it('honors a custom graceMs override', () => {
-    const installedAt: ProbeInstall = { kind: 'installed', at: new Date('2026-10-01T00:00:00Z') }
-    const now = new Date(installedAt.at.getTime() + 1000)
-    expect(hasExpectedByPassed(now, installedAt, 500)).toBe(true)
-    expect(hasExpectedByPassed(now, installedAt, 5000)).toBe(false)
-  })
-
-  it('a checkout created TODAY must not shout on its very first session: installedAt === now is never elapsed', () => {
-    const now = new Date('2099-06-15T00:00:00Z')
-    expect(hasExpectedByPassed(now, { kind: 'installed', at: now })).toBe(false)
-  })
-
-  // SMI-6967 H-2: a THREE-way outcome. `unknown` (the filesystem could not
-  // answer whether the script is installed — e.g. EACCES) must always read
-  // as elapsed, the opposite of `absent`'s always-false — contrast asserted
-  // in the SAME execution against the SAME `now` so this isn't two separate,
-  // individually-plausible-looking expectations.
-  it('is true for `unknown` (could not ask) regardless of how recent `now` is, in contrast with `absent` at the identical instant', () => {
-    const now = new Date('2026-10-01T00:00:00Z')
-    expect(hasExpectedByPassed(now, { kind: 'unknown', errno: 'EACCES' })).toBe(true)
-    expect(hasExpectedByPassed(now, { kind: 'absent' })).toBe(false)
-  })
-})
-
-// SMI-6967 H-2/L-2/PR-gate-H-B/round-2: resolveProbeInstalledAt/
-// resolveProbeScriptPath against a REAL filesystem (and, for H-B/round-2, a
-// REAL git repo), with positive and negative controls, per CLAUDE.md's
-// "measure, don't reason" rule — the finding's own case table, executed.
-//
-// H-B helper: initializes `dir` as a git repo (mirroring arm 2b's own fixture
-// conventions below) with `scripts/ruflo-bridge-probe.mjs` committed at
-// `pinnedDate` (an ISO string, fed to BOTH GIT_AUTHOR_DATE and
-// GIT_COMMITTER_DATE so the commit's date is pinned rather than "whenever
-// this test ran" — named `pinnedDate`, not `authorDate`/`committerDate`,
-// because it sets both identically and most callers below don't care which
-// axis resolveProbeInstalledAt reads; the round-2 rebase red-test below
-// needs the two axes to DIVERGE and sets them up separately for that
-// reason). Returns the script's absolute path.
-function initProbeRepoAt(dir: string, pinnedDate: string, content = '// x\n'): string {
-  execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
-    env: makeFixtureEnv(),
-  })
-  mkdirSync(join(dir, 'scripts'), { recursive: true })
-  const scriptPath = join(dir, 'scripts', 'ruflo-bridge-probe.mjs')
-  writeFileSync(scriptPath, content)
-  execFileSync('git', ['-C', dir, 'add', '.'], { env: makeFixtureEnv() })
-  execFileSync('git', ['-C', dir, 'commit', '-m', 'x', '--quiet'], {
-    env: makeFixtureEnv({ GIT_AUTHOR_DATE: pinnedDate, GIT_COMMITTER_DATE: pinnedDate }),
-  })
-  return scriptPath
-}
-
-describe('resolveProbeInstalledAt / resolveProbeScriptPath (SMI-6967 H-2/L-2, PR-gate H-B/round-2)', () => {
-  it('readable: returns installed with the AUTHOR date of the last change, not the working-tree mtime and not the committer date (positive control, H-B/round-2)', () => {
-    const dir = tmpDir('expected-by-readable')
-    const pinnedDate = '2026-09-01T00:00:00Z'
-    initProbeRepoAt(dir, pinnedDate)
-    const result = resolveProbeInstalledAt(dir)
-    expect(result).toEqual({ kind: 'installed', at: new Date(pinnedDate) })
-  })
-
-  it('absent (ENOENT): a directory that exists but never had the script returns absent, not unknown', () => {
-    const dir = tmpDir('expected-by-absent')
-    expect(resolveProbeInstalledAt(dir)).toEqual({ kind: 'absent' })
-  })
-
-  it('permission denied (EACCES): returns unknown naming the errno, not absent — the H-2 bug', () => {
-    if (process.getuid && process.getuid() === 0) {
-      return // root bypasses file-mode permissions — skip, matching the repo's own uid caveat
-    }
-    const dir = tmpDir('expected-by-eacces')
-    const scriptsDir = join(dir, 'scripts')
-    mkdirSync(scriptsDir, { recursive: true })
-    writeFileSync(join(scriptsDir, 'ruflo-bridge-probe.mjs'), '// x\n')
-    chmodSync(scriptsDir, 0o000)
-    try {
-      const result = resolveProbeInstalledAt(dir)
-      expect(result).toEqual({ kind: 'unknown', errno: 'EACCES' })
-    } finally {
-      chmodSync(scriptsDir, 0o755)
-    }
-  })
-
-  it('L-2: an empty mainRepoKey resolves to null, never a path relative to process.cwd()', () => {
-    expect(resolveProbeScriptPath('')).toBeNull()
-  })
-
-  it('L-2: a non-absolute mainRepoKey resolves to null', () => {
-    expect(resolveProbeScriptPath('relative/path')).toBeNull()
-  })
-
-  it('L-2: a valid absolute mainRepoKey still resolves the real path (not over-guarded)', () => {
-    expect(resolveProbeScriptPath('/repo')).toBe(join('/repo', 'scripts', 'ruflo-bridge-probe.mjs'))
-  })
-
-  it('L-2: resolveProbeInstalledAt("") is absent, never a wrong stat against process.cwd()', () => {
-    // Negative control proving the guard actually matters, not merely
-    // plausible: `join('', 'scripts', 'ruflo-bridge-probe.mjs')` resolves to
-    // the literal relative path 'scripts/ruflo-bridge-probe.mjs', and
-    // process.cwd() during this test run (measured: `test -f
-    // scripts/ruflo-bridge-probe.mjs` from the repo root) IS this repo's own
-    // root, which really does contain that real file — so an unguarded stat
-    // would have wrongly reported `installed` with THIS repo's own probe
-    // script's mtime, not failed loudly or obviously.
-    expect(resolveProbeInstalledAt('')).toEqual({ kind: 'absent' })
-  })
-
-  // ── PR-gate H-B/round-2: author-date anchor, not working-tree mtime and
-  // not the committer date ────────────────────────────────────────────────
-
-  it('H-B: a script on disk but never committed (untracked, in a real repo WITH other history) reads as unknown — git log returns empty, not installed', () => {
-    const dir = tmpDir('expected-by-uncommitted')
-    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
-      env: makeFixtureEnv(),
-    })
-    // An unrelated commit establishes a real HEAD first — measured live: a
-    // repo with ZERO commits at all fails `git log -1 -- <path>` with
-    // "fatal: ... does not have any commits yet" (the FAILS sub-case,
-    // covered by the no-repository-at-all test below), which is a different
-    // mechanism from the EMPTY-stdout sub-case this test exists to cover —
-    // an untracked path in a repo that already has history.
-    writeFileSync(join(dir, 'unrelated.txt'), 'x')
-    execFileSync('git', ['-C', dir, 'add', 'unrelated.txt'], { env: makeFixtureEnv() })
-    execFileSync('git', ['-C', dir, 'commit', '-m', 'unrelated', '--quiet'], {
-      env: makeFixtureEnv(),
-    })
-    mkdirSync(join(dir, 'scripts'), { recursive: true })
-    writeFileSync(join(dir, 'scripts', 'ruflo-bridge-probe.mjs'), '// x\n')
-    // Deliberately never `git add`/`git commit` the probe script itself —
-    // `git log -1 -- <path>` exits 0 with EMPTY stdout for an untracked
-    // path once the repo has at least one commit, the "returns empty"
-    // failure mode named in the fix's own spec.
-    const result = resolveProbeInstalledAt(dir)
-    expect(result.kind).toBe('unknown')
-  })
-
-  it('H-B: a script on disk with no git repository at all reads as unknown — git log fails, never absent and never a bogus mtime', () => {
-    const dir = tmpDir('expected-by-no-git')
-    mkdirSync(join(dir, 'scripts'), { recursive: true })
-    writeFileSync(join(dir, 'scripts', 'ruflo-bridge-probe.mjs'), '// x\n')
-    // No `git init` at all — `git log` fails with a non-zero exit (confirmed
-    // live: "fatal: not a git repository").
-    const result = resolveProbeInstalledAt(dir)
-    expect(result.kind).toBe('unknown')
-  })
-
-  it('H-B/round-2: an author date in the future (clock skew / preserved archive metadata) reads as unknown, never silently clamped to installed', () => {
-    const dir = tmpDir('expected-by-future')
-    const futureDate = '2099-01-01T00:00:00Z'
-    initProbeRepoAt(dir, futureDate)
-    const result = resolveProbeInstalledAt(dir, new Date('2026-01-01T00:00:00Z'))
-    expect(result.kind).toBe('unknown')
-    expect(result.kind === 'unknown' && result.errno).toContain('future')
-  })
-
-  it('H-B RED-TEST: rewriting an already-installed, byte-identical script does NOT reopen the grace window', () => {
-    const dir = tmpDir('expected-by-rewrite')
-    const pinnedDate = '2026-08-01T00:00:00Z'
-    const content = '// x\n'
-    const scriptPath = initProbeRepoAt(dir, pinnedDate, content)
-
-    const before = resolveProbeInstalledAt(dir)
-    expect(before).toEqual({ kind: 'installed', at: new Date(pinnedDate) })
-
-    // Simulate a checkout/stash-restore/copy: rewrite the SAME bytes to
-    // disk (a real git-crypt smudge filter or a plain non-`-a` copy does
-    // exactly this) and bump mtime to "now" explicitly, so a leftover
-    // mtime-based implementation would visibly reopen the window here — the
-    // exact M-3 defect this fix removes. The REBASE path gets its own
-    // dedicated red-test below (round-2) — rebase doesn't touch mtime at
-    // all, it moves the COMMITTER date instead, a different mechanism this
-    // test's mtime-rewrite doesn't exercise.
-    writeFileSync(scriptPath, content)
-    utimesSync(scriptPath, new Date(), new Date())
-
-    const after = resolveProbeInstalledAt(dir)
-    expect(after).toEqual(before)
-  })
-
-  it('round-2 RED-TEST: a git rebase that replays the probe commit onto a moved base does NOT move the resolved install date', () => {
-    const dir = tmpDir('expected-by-rebase')
-    const authorDate = '2026-08-05T00:00:00Z'
-
-    // Base commit on main.
-    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', dir], {
-      env: makeFixtureEnv(),
-    })
-    writeFileSync(join(dir, 'base.txt'), 'line1\n')
-    execFileSync('git', ['-C', dir, 'add', 'base.txt'], { env: makeFixtureEnv() })
-    execFileSync('git', ['-C', dir, 'commit', '-m', 'base', '--quiet'], {
-      env: makeFixtureEnv({
-        GIT_AUTHOR_DATE: '2026-08-01T00:00:00Z',
-        GIT_COMMITTER_DATE: '2026-08-01T00:00:00Z',
-      }),
-    })
-
-    // Branch off BEFORE main advances, then commit the probe script on the
-    // branch — it must be a commit UNIQUE to this branch (not an ancestor
-    // of main) so the rebase below actually REPLAYS it rather than
-    // fast-forwarding with nothing to redo.
-    execFileSync('git', ['-C', dir, 'checkout', '-q', '-b', 'feature'], { env: makeFixtureEnv() })
-    mkdirSync(join(dir, 'scripts'), { recursive: true })
-    const scriptPath = join(dir, 'scripts', 'ruflo-bridge-probe.mjs')
-    writeFileSync(scriptPath, '// x\n')
-    execFileSync('git', ['-C', dir, 'add', 'scripts/ruflo-bridge-probe.mjs'], {
-      env: makeFixtureEnv(),
-    })
-    execFileSync('git', ['-C', dir, 'commit', '-m', 'add probe', '--quiet'], {
-      env: makeFixtureEnv({ GIT_AUTHOR_DATE: authorDate, GIT_COMMITTER_DATE: authorDate }),
-    })
-
-    const blobBefore = execFileSync(
-      'git',
-      ['-C', dir, 'rev-parse', 'HEAD:scripts/ruflo-bridge-probe.mjs'],
-      { env: makeFixtureEnv(), encoding: 'utf8' }
-    ).trim()
-
-    const before = resolveProbeInstalledAt(dir)
-    expect(before).toEqual({ kind: 'installed', at: new Date(authorDate) })
-
-    // Advance main with an UNRELATED commit so the rebase has a genuinely
-    // moved base to replay onto — a no-op rebase (nothing to replay) would
-    // pass vacuously and prove nothing about the mechanism under test.
-    execFileSync('git', ['-C', dir, 'checkout', '-q', 'main'], { env: makeFixtureEnv() })
-    writeFileSync(join(dir, 'base.txt'), 'line1\nline2\n')
-    execFileSync('git', ['-C', dir, 'add', 'base.txt'], { env: makeFixtureEnv() })
-    execFileSync('git', ['-C', dir, 'commit', '-m', 'advance main', '--quiet'], {
-      env: makeFixtureEnv({
-        GIT_AUTHOR_DATE: '2026-09-01T00:00:00Z',
-        GIT_COMMITTER_DATE: '2026-09-01T00:00:00Z',
-      }),
-    })
-    execFileSync('git', ['-C', dir, 'checkout', '-q', 'feature'], { env: makeFixtureEnv() })
-
-    // The actual production operation: a plain, flag-free `git rebase`,
-    // exactly what `./scripts/rebase-worktree.sh` runs (CLAUDE.md § Default
-    // Execution Model / git-crypt guide) — no GIT_AUTHOR_DATE/
-    // GIT_COMMITTER_DATE override here, so this exercises git's OWN default
-    // replay behavior, not a synthetic pin.
-    execFileSync('git', ['-C', dir, 'rebase', 'main', '--quiet'], { env: makeFixtureEnv() })
-
-    const blobAfter = execFileSync(
-      'git',
-      ['-C', dir, 'rev-parse', 'HEAD:scripts/ruflo-bridge-probe.mjs'],
-      { env: makeFixtureEnv(), encoding: 'utf8' }
-    ).trim()
-    // Content genuinely unchanged — proven by blob hash, not assumed.
-    expect(blobAfter).toBe(blobBefore)
-
-    // Sanity/positive-control: prove the rebase actually REPLAYED the
-    // commit (moving the committer date) rather than no-op'ing. Without
-    // this, the test below could pass vacuously regardless of which
-    // specifier resolveProbeInstalledAt reads.
-    const committerAfter = execFileSync(
-      'git',
-      ['-C', dir, 'log', '-1', '--format=%cI', '--', 'scripts/ruflo-bridge-probe.mjs'],
-      { env: makeFixtureEnv(), encoding: 'utf8' }
-    ).trim()
-    expect(committerAfter).not.toBe(authorDate)
-
-    const after = resolveProbeInstalledAt(dir)
-    expect(after).toEqual(before)
-  })
-})
-
 // ── Render: verdict axis ───────────────────────────────────────────────
 
 describe('renderBridgeVerdictLine', () => {
   const now = new Date('2026-10-10T00:00:00.000Z')
 
+  // SMI-6985 M-3 follow-up (coordinator-found, round 2, full-file sweep): a
+  // bare `.toBe('')` here would also pass if this function always returned
+  // '' for some unrelated reason. Control: the SAME `now`, a degraded entry
+  // instead of healthy, must render — proving the function actually ran and
+  // that `verdict: 'healthy'` is the discriminating input, not that nothing
+  // executed.
   it('renders nothing for a fresh healthy entry', () => {
     const entry = makeEntry({ verdict: 'healthy', evaluatedAt: now.toISOString() })
     expect(renderBridgeVerdictLine({ status: 'ok', entry }, { now })).toBe('')
+
+    const degraded = makeEntry({ verdict: 'degraded', evaluatedAt: now.toISOString() })
+    expect(renderBridgeVerdictLine({ status: 'ok', entry: degraded }, { now })).toContain(
+      'bridge degraded'
+    )
   })
 
   it('arm 3 — healthy does not guard the only mutation: forcing degraded must render', () => {
@@ -586,60 +308,25 @@ describe('renderBridgeVerdictLine', () => {
     expect(rendered).not.toContain('reader')
   })
 
-  it('arm 6a — missing before expectedBy (recently installed) is quiet', () => {
-    const installedAt: ProbeInstall = { kind: 'installed', at: new Date('2026-08-31T18:00:00Z') }
-    expect(
-      renderBridgeVerdictLine(
-        { status: 'missing' },
-        { now: new Date('2026-09-01T00:00:00Z'), installedAt }
-      )
-    ).toBe('')
-  })
-
-  it('arm 6b — missing after expectedBy (installed long ago) renders loudly, naming "missing"', () => {
-    const installedAt: ProbeInstall = { kind: 'installed', at: new Date('2026-08-01T00:00:00Z') }
+  // SMI-6985: the `expectedBy` grace window that used to suppress a
+  // `missing` read for a time is deleted outright (owner decision — its
+  // per-checkout install-date anchor was fixed three times and was
+  // renewable every time: working-tree mtime, then the commit's committer
+  // date, then its author date, which a shallow clone's grafted boundary
+  // moves too, moving again on every subsequent `git fetch --depth=1`). A
+  // `missing` read now renders unconditionally — no filesystem or git state
+  // of any kind can suppress it. This replaces the former arms 6a-6d and the
+  // SMI-6967 H-2 "unknown install check" test, which exercised the deleted
+  // `installedAt` option that no longer exists on this function's signature.
+  it('SMI-6985 — a missing verdict always renders, regardless of any filesystem or git state (the expectedBy grace window is gone)', () => {
     const rendered = renderBridgeVerdictLine(
       { status: 'missing' },
-      { now: new Date('2026-11-01T00:00:00Z'), installedAt }
+      { now: new Date('2026-01-01T00:00:00Z') }
     )
     expect(rendered).toContain('verdict not evaluated: state missing')
   })
 
-  it('arm 6c (SMI-6967 H-1) — missing NEVER renders loudly when the probe was never installed in this checkout (absent), regardless of how much time has passed', () => {
-    const rendered = renderBridgeVerdictLine(
-      { status: 'missing' },
-      { now: new Date('2099-01-01T00:00:00Z'), installedAt: { kind: 'absent' } }
-    )
-    expect(rendered).toBe('')
-  })
-
-  it('arm 6d (SMI-6967 H-1) — missing is also quiet when `installedAt` is simply omitted (defaults to absent, same as arm 6c)', () => {
-    const rendered = renderBridgeVerdictLine(
-      { status: 'missing' },
-      { now: new Date('2099-01-01T00:00:00Z') }
-    )
-    expect(rendered).toBe('')
-  })
-
-  it('SMI-6967 H-2 — missing past an UNKNOWN install check (could not ask) renders loudly AND names the errno, in contrast with absent at the identical "now"', () => {
-    const now = new Date('2026-09-01T00:00:00Z') // deliberately BEFORE any grace window would matter
-    const unknownRendered = renderBridgeVerdictLine(
-      { status: 'missing' },
-      { now, installedAt: { kind: 'unknown', errno: 'EACCES' } }
-    )
-    expect(unknownRendered).toContain('verdict not evaluated: state missing')
-    expect(unknownRendered).toContain('install check unreadable: EACCES')
-    // Contrast, same `now`: `absent` at the identical instant stays quiet —
-    // proves the loud render comes from the install check's OWN unknown
-    // status, not merely from a missing-state branch that always renders.
-    const absentRendered = renderBridgeVerdictLine(
-      { status: 'missing' },
-      { now, installedAt: { kind: 'absent' } }
-    )
-    expect(absentRendered).toBe('')
-  })
-
-  it('malformed (reader-level: corrupt state file) always renders, regardless of expectedBy', () => {
+  it('malformed (reader-level: corrupt state file) always renders', () => {
     const early = renderBridgeVerdictLine(
       { status: 'malformed', detail: 'x' },
       { now: new Date('2026-09-01T00:00:00Z') }
@@ -685,61 +372,117 @@ describe('renderBridgeLivenessLine', () => {
     expect(rendered).not.toContain('7 days')
   })
 
+  // SMI-6985 M-3 follow-up (coordinator-found, round 2): a bare `.toBe('')`
+  // here would also pass if this function always returned '' regardless of
+  // input. Control: one probe later (7, the default threshold) on the same
+  // everLearned:true entry must fire — proving the boundary is real, not
+  // that the function is silently inert.
   it('does not fire one probe short of the threshold', () => {
     const entry = makeEntry({ everLearned: true, consecutiveNoLearning: 6 })
     expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
+
+    const atThreshold = makeEntry({ everLearned: true, consecutiveNoLearning: 7 })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: atThreshold }, { now })).toContain(
+      'no learning recorded in 7 consecutive probes'
+    )
   })
 
-  it('SMI-6967 H-9/H-1 — stays dormant (renders nothing) before any PRODUCER has ever been observed, even past the threshold', () => {
-    const entry = makeEntry({
-      everProducerPresent: false,
-      everLearned: false,
-      consecutiveNoLearning: 999,
-    })
-    expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
-  })
-
-  // SMI-6967 H-1 — the finding's own reported bug: a healthy, CONNECTED
-  // bridge with real store entries ("32 total entries") that has recorded
-  // zero patterns and zero trajectories, EVER, is a producer that exists and
-  // has never produced — the exact silent-stall shape SMI-6744 was filed
-  // for. The old gate (`everLearned`) made this permanently unreportable
-  // because it conflated "a producer exists" with "learning happened." Both
-  // scenarios must fire, with DIFFERENT wording, once producer-presence has
-  // armed the arm.
-  it('SMI-6967 H-1 fix — a connected bridge that has NEVER learned anything fires past the threshold, worded differently from "learned then stalled"', () => {
-    const neverLearned = makeEntry({
+  // SMI-6985 correction of record (owner-decided, superseding SMI-6967 H-1,
+  // corrected in place rather than appended below). Measured live: nothing in
+  // this repository calls the trajectory-capture hooks at all, so a
+  // connected bridge with a non-empty store — THIS checkout's actual,
+  // permanent state — latches `everProducerPresent` immediately and never
+  // un-latches, while `everLearned` never does. Gating on
+  // `everProducerPresent` (H-1's fix) therefore fired "has never recorded a
+  // pattern or trajectory... across N consecutive probes" PERPETUALLY, on a
+  // condition nobody can act on: H-1 traded an unreportable `false` for an
+  // un-actionable `true`, one layer out. `everLearned` — the counters' own
+  // persisted history — is the gate now: until something has actually been
+  // recorded at least once there is nothing actionable to report, so the arm
+  // stays silent, correctly. See `renderBridgeVerdictLine`'s sibling function
+  // doc comment (`renderBridgeLivenessLine`'s own, in ruflo-bridge-state.ts)
+  // for the full history.
+  // SMI-6985 M-3 (reviewer-found): a bare `.toBe('')` here would also pass if
+  // this function were broken in some way that always returns '' (wrong
+  // import, wrong argument shape, an early return added by mistake) — it
+  // does not prove the dormancy is actually CAUSED by `everLearned: false`.
+  // Control: flipping ONLY `everLearned` to true on the same
+  // otherwise-identical entry (same `consecutiveNoLearning`, same `now`)
+  // must make the line render — pairing the two in one test proves the
+  // function was actually exercised and that `everLearned` is the
+  // discriminating field.
+  it('SMI-6985 — stays dormant (renders nothing) before anything has ever been learned, even with a producer connected and past the threshold', () => {
+    const dormant = makeEntry({
       everProducerPresent: true,
       everLearned: false,
-      consecutiveNoLearning: 7,
+      consecutiveNoLearning: 999,
       lastObservedPatternsLearned: 0,
       lastObservedTrajectoriesRecorded: 0,
     })
-    const learnedThenStalled = makeEntry({
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: dormant }, { now })).toBe('')
+
+    const armed = makeEntry({ ...dormant, everLearned: true })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: armed }, { now })).toContain(
+      'no learning recorded'
+    )
+  })
+
+  // SMI-6985 M-3 follow-up (coordinator-found, round 2): the same gap as the
+  // "stays dormant" test above — a bare `.toBe('')` here would also pass if
+  // this function were broken in some way that always returns '' (wrong
+  // import, wrong argument shape, an early return added by mistake). Control:
+  // flipping ONLY `everLearned` to true on the same otherwise-identical entry
+  // (same `consecutiveNoLearning`, same `now`) must make the line render —
+  // pairing the two in one test proves the function was actually exercised
+  // and that `everLearned` is the discriminating field, not that the
+  // function (or this test) is silently inert.
+  it('SMI-6985 RED-TEST — reproduces the reported defect: a connected bridge that has NEVER learned anything must NOT fire, however long it has been connected', () => {
+    // The exact SMI-6967 H-1 scenario this correction reverses: on the live
+    // host both halves of the superseded gate (bridge.status==='connected',
+    // agentdb.totalEntries>0) are true PERMANENTLY, since no trajectory
+    // writer exists anywhere in this repo — so under that gate this fired
+    // unconditionally, on every probe, forever, with nothing anyone could
+    // fix. An arbitrarily large streak must still render nothing here.
+    const dormant = makeEntry({
       everProducerPresent: true,
+      everLearned: false,
+      consecutiveNoLearning: 999_999,
+      lastObservedPatternsLearned: 0,
+      lastObservedTrajectoriesRecorded: 0,
+    })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: dormant }, { now })).toBe('')
+
+    const armed = makeEntry({ ...dormant, everLearned: true })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: armed }, { now })).toContain(
+      'no learning recorded'
+    )
+  })
+
+  it('fires once armed (everLearned true) and past the threshold, regardless of everProducerPresent — the gate no longer depends on it', () => {
+    const entry = makeEntry({
+      everProducerPresent: false,
       everLearned: true,
       consecutiveNoLearning: 7,
     })
-    const neverLearnedLine = renderBridgeLivenessLine(
-      { status: 'ok', entry: neverLearned },
-      { now }
-    )
-    const stalledLine = renderBridgeLivenessLine(
-      { status: 'ok', entry: learnedThenStalled },
-      { now }
-    )
-    expect(neverLearnedLine).not.toBe('')
-    expect(stalledLine).not.toBe('')
-    expect(neverLearnedLine).not.toBe(stalledLine)
-    expect(neverLearnedLine).toContain('has never recorded a pattern or trajectory')
-    expect(stalledLine).toContain('no learning recorded in 7 consecutive probes')
+    const rendered = renderBridgeLivenessLine({ status: 'ok', entry }, { now })
+    expect(rendered).toContain('no learning recorded in 7 consecutive probes')
   })
 
-  it('SMI-6967 H-1 — treats a missing everProducerPresent field (an entry written before this fix shipped) as dormant, regardless of everLearned', () => {
-    const entry = makeEntry({ everLearned: true, consecutiveNoLearning: 999 })
+  // SMI-6985 M-3 follow-up (coordinator-found, round 2): a bare `.toBe('')`
+  // here would also pass if this function always returned ''. Control: the
+  // SAME entry with `everLearned` explicitly restored to `true` must fire —
+  // proving the missing-field case is actually read as dormant, not that
+  // the function never runs.
+  it('SMI-6985 — treats a missing everLearned field (an entry written before this correction shipped) as dormant', () => {
+    const entry = makeEntry({ consecutiveNoLearning: 999 })
     // @ts-expect-error — simulating an on-disk entry written before this field existed
-    delete entry.everProducerPresent
+    delete entry.everLearned
     expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
+
+    const armed = makeEntry({ ...entry, everLearned: true, consecutiveNoLearning: 999 })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: armed }, { now })).toContain(
+      'no learning recorded'
+    )
   })
 
   it('SMI-6967 M-5 — a counter regression renders unconditionally, ahead of and independent from the no-learning threshold', () => {
@@ -750,13 +493,35 @@ describe('renderBridgeLivenessLine', () => {
     expect(rendered).toContain('decreased since the last probe')
   })
 
-  it('SMI-6967 M-5 — a counter regression never fires before any producer has been observed (defense in depth at the render layer)', () => {
-    const entry = makeEntry({ everProducerPresent: false, countersRegressed: true })
-    expect(renderBridgeLivenessLine({ status: 'ok', entry }, { now })).toBe('')
+  // SMI-6985 M-1 (reviewer-found): this test used to assert the OPPOSITE —
+  // that a regression stays suppressed until `everLearned` latches — on the
+  // theory that a regression requires a positive prior baseline which would
+  // already have set `everLearned`. That theory is false for a baseline
+  // seeded from a LEGACY entry (see `renderBridgeLivenessLine`'s own doc
+  // comment): `seedBaseline` falls back to the entry's raw
+  // `patternsLearned`/`trajectoriesRecorded` when `lastObserved*` is
+  // `undefined`, and `readEntryResult` never validates `everLearned`, so a
+  // pre-SMI-6967 on-disk entry wiped to exactly zero reaches this exact
+  // state (`everLearned: false`, `countersRegressed: true`) — the loudest
+  // signal this arm has, and the old assertion pinned its suppression.
+  it('SMI-6985 M-1 — a counter regression renders even when everLearned is false (a legacy-baseline wipe-to-zero)', () => {
+    const entry = makeEntry({ everLearned: false, countersRegressed: true })
+    const rendered = renderBridgeLivenessLine({ status: 'ok', entry }, { now })
+    expect(rendered).toContain('learning counters regressed')
   })
 
+  // SMI-6985 M-3 follow-up (coordinator-found, round 2): a bare `.toBe('')`
+  // here would also pass if this function always returned ''. Control: an
+  // `ok` read with an armed, past-threshold entry must fire — proving the
+  // `status !== 'ok'` short-circuit is real, not that the function never
+  // produces output at all.
   it('renders nothing for a non-ok read', () => {
     expect(renderBridgeLivenessLine({ status: 'missing' }, { now })).toBe('')
+
+    const armed = makeEntry({ everLearned: true, consecutiveNoLearning: 7 })
+    expect(renderBridgeLivenessLine({ status: 'ok', entry: armed }, { now })).toContain(
+      'no learning recorded'
+    )
   })
 })
 
