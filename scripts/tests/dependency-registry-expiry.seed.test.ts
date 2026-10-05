@@ -118,29 +118,37 @@ describe('seed loop', () => {
     expect(sec).toBeDefined()
     expect(sec).toContain('--list-seeds failed (exit 2)')
   })
-  it('W6c a multiline cause with markdown and mentions is indented line by line, never raw', () => {
-    const payload = [
-      'Check 76 --list-seeds: cannot read x',
-      '### injected heading',
-      '```sh',
-      '<details><summary>injected</summary>',
-      '@team please look',
-    ]
-    const r = exec(GREEN, 0, '', '', root(), { listRc: 1, listErr: payload.join('\n') })
-    const sec = section(r.body, LIST_HEADING)
-    expect(sec).toBeDefined()
-    // Absence first: no unindented copy of any payload line anywhere in the body...
-    const bodyLines = r.body.split('\n')
-    for (const line of payload) {
-      for (const b of bodyLines.filter((l) => l.includes(line))) expect(b).toBe('    ' + line)
+  // Markdown (CommonMark) ends a line at LF, CR or CRLF, so the body is split on all three.
+  it.each([
+    ['LF', '\n'],
+    ['CR', '\r'],
+    ['CRLF', '\r\n'],
+  ])(
+    'W6c a multiline cause (%s) with markdown and mentions is indented line by line, never raw',
+    (_n, sep) => {
+      const payload = [
+        'Check 76 --list-seeds: cannot read x',
+        '### injected heading',
+        '```sh',
+        '<details><summary>injected</summary>',
+        '@team please look',
+      ]
+      const r = exec(GREEN, 0, '', '', root(), { listRc: 1, listErr: payload.join(sep) })
+      const sec = section(r.body, LIST_HEADING)
+      expect(sec).toBeDefined()
+      // Absence first: no unindented copy of any payload line anywhere in the body...
+      const bodyLines = r.body.split(/\r\n|\r|\n/)
+      for (const line of payload) {
+        for (const b of bodyLines.filter((l) => l.includes(line))) expect(b).toBe('    ' + line)
+      }
+      for (const lead of ['### injected', '```', '<details>', '@team']) {
+        expect(bodyLines.filter((l) => l.startsWith(lead))).toEqual([])
+      }
+      // ...paired with presence from the same run: every payload line is there, indented.
+      const secLines = (sec as string).split(/\r\n|\r|\n/)
+      for (const line of payload) expect(secLines).toContain('    ' + line)
     }
-    for (const lead of ['### injected', '```', '<details>', '@team']) {
-      expect(bodyLines.filter((l) => l.startsWith(lead))).toEqual([])
-    }
-    // ...paired with presence from the same run: every payload line is there, indented.
-    const secLines = (sec as string).split('\n')
-    for (const line of payload) expect(secLines).toContain('    ' + line)
-  })
+  )
 })
 
 describe('failure-specific issue text (PR-2, #3005 retro)', () => {

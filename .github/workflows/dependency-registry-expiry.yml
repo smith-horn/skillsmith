@@ -191,7 +191,9 @@ jobs:
                 printf '%s\n' "$LIST_FAILS" | sed -e 's/^/- /'
                 if [ -s "$LS_ERR" ]; then
                   printf '\nCause (stderr of --list-seeds):\n\n'
-                  sed -e 's/^/    /' "$LS_ERR"
+                  # Markdown ends a line at CR as well as LF, so turn every CR into LF
+                  # before indenting, or a CR-separated line would escape the code block.
+                  tr '\r' '\n' < "$LS_ERR" | sed -e 's/^/    /'
                 fi
                 printf '\n\nNo seed lockfile was audited this run. Reproduce: node scripts/check-dependency-registry.mjs --list-seeds\n\n'
               fi
