@@ -1,0 +1,36 @@
+{
+  // SMI-6975: standalone, non-composite config bringing non-test scripts/**
+  // into a typecheck gate. Deliberately NOT referenced from root tsconfig.json
+  // and NOT composite -- see docs/internal/implementation/smi-6975-scripts-typecheck-gate.md
+  // "What Changes" § 1 for why a referenced composite project (which DOES work,
+  // finding 5 / M7a) was rejected on a measured tradeoff rather than a false
+  // blocker: it would couple every `npm run typecheck` to
+  // packages/doc-retrieval-mcp's build ordering and declaration output.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    // esnext + bundler, NOT NodeNext -- this is a CHOSEN static-resolution
+    // model, not a reproduction of the tsx runtime these files execute under.
+    // tsx performs no type checking at all, so there is nothing to "match"
+    // (finding 3). What this combination does is accept the import forms
+    // these files already use -- .ts extensions and extensionless relatives --
+    // which NodeNext rejects.
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  // .mts/.cts/.tsx included even though today's count is 3/0/0 (vs. 260 .ts),
+  // so a file added later in one of those extensions does not silently fall
+  // outside the gate (finding 4 -- a .ts-only glob was the exact defect).
+  "include": ["scripts/**/*.ts", "scripts/**/*.mts", "scripts/**/*.cts", "scripts/**/*.tsx"],
+  // scripts/tests/** (417 files, 284 errors) is SMI-7006, not this gate --
+  // named here so a reader of this config sees the gate covers a subset
+  // rather than inferring full scripts/ coverage from its name.
+  "exclude": ["node_modules", "dist", "scripts/tests/**"]
+}

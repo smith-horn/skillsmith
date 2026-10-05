@@ -215,7 +215,25 @@ async function transformSkill(skillPath: string): Promise<TransformResult> {
     join(PROJECT_ROOT, 'packages/core/dist/services/TransformationService.js'),
   ]
 
-  let TransformationService: (new (...args: unknown[]) => unknown) | null = null
+  // SMI-6975: TransformationService is loaded via a COMPUTED dynamic
+  // import(p) (p is a variable, not a literal) -- no static resolver can
+  // know its real type (this is finding 7's computed-import category, named
+  // rather than fixed: the plan treats this class of import as a named
+  // limitation of the gate, not something to synthesize a fake type for).
+  // The constructor type below already encodes "we don't know the real
+  // class" via `unknown` args; this interface encodes the same honesty for
+  // its INSTANCE -- not the real TransformationService shape, just the
+  // subset of fields this function actually reads off a transform() result.
+  interface TransformationServiceInstance {
+    transform(content: string): Promise<{
+      optimized?: { content?: string }
+      stats?: { tokenReductionPercent?: number }
+      subagent?: { content?: string }
+    }>
+  }
+
+  let TransformationService: (new (...args: unknown[]) => TransformationServiceInstance) | null =
+    null
   for (const p of possiblePaths) {
     if (existsSync(p)) {
       try {

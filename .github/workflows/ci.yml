@@ -507,9 +507,11 @@ jobs:
           fi
           echo "gold-set.json: $COUNT entries"
       # Note: TypeScript type-check of eval/ is already performed by the
-      # `Quality Checks` job (pure-JS carve-out runs root `npm run typecheck` which
-      # builds workspace deps via Turborepo). Re-running tsc here without
-      # building @skillsmith/core would fail on unrelated src/ imports.
+      # `Quality Checks` job (pure-JS carve-out runs root `npm run typecheck`,
+      # which since SMI-6975 runs BOTH `tsc --build` over the referenced
+      # packages and a separate gate over non-test scripts/, and builds
+      # workspace deps via Turborepo). Re-running tsc here without building
+      # @skillsmith/core would fail on unrelated src/ imports.
       - name: Run eval unit tests (metrics, ablation, drift check)
         if: steps.filter.outputs.relevant == 'true'
         working-directory: packages/doc-retrieval-mcp

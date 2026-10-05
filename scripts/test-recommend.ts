@@ -177,10 +177,19 @@ async function main(): Promise<void> {
 
   console.log('Initializing test database...')
   const ctx = await createTestDatabase()
+  // SMI-6975: ToolContext gained coInstallRepository/skillDependencyRepository/
+  // sessionInstalledSkillIds/apiClient after this script was written
+  // (SMI-2761/SMI-3137/SMI-1183) -- createTestDatabase()'s own return shape
+  // already carries all four, so this is reading real fields off `ctx`, not
+  // fabricating them.
   const toolContext: ToolContext = {
     db: ctx.db,
     searchService: ctx.searchService,
     skillRepository: ctx.skillRepository,
+    coInstallRepository: ctx.coInstallRepository,
+    skillDependencyRepository: ctx.skillDependencyRepository,
+    sessionInstalledSkillIds: ctx.sessionInstalledSkillIds,
+    apiClient: ctx.apiClient,
   }
 
   try {

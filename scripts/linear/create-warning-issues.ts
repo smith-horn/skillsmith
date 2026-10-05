@@ -7,6 +7,7 @@
  */
 
 import { LinearClient } from '@linear/sdk'
+import type { Project } from '@linear/sdk'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -274,7 +275,14 @@ async function main() {
     filter: { name: { containsIgnoreCase: 'phase 6' } },
   })
 
-  let project = projects.nodes[0]
+  // SMI-6975: `project` is genuinely optional across this whole sequence (two
+  // separate `if (!project)` recovery attempts below) -- the un-annotated
+  // `let project = projects.nodes[0]` locked its type to plain `Project`
+  // instead (TS does not widen array-index access to `| undefined` here
+  // without `noUncheckedIndexedAccess`), which is what made the broader-
+  // search reassignment below (genuinely `Project | undefined`, from
+  // `Array.prototype.find`) a real mismatch, not a false positive.
+  let project: Project | undefined = projects.nodes[0]
   if (!project) {
     // Try broader search
     const allProjects = await client.projects()
@@ -291,7 +299,12 @@ async function main() {
       description:
         'Deploy Skillsmith to production with Supabase, Vercel, and enterprise features.',
     })
-    project = (await newProject.project) as typeof project
+    const created = await newProject.project
+    if (!created) {
+      console.error('Failed to create Phase 6 project')
+      process.exit(1)
+    }
+    project = created
   }
 
   console.log(`Project: ${project.name}`)
