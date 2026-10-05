@@ -226,6 +226,10 @@ describe('executed run of the workflow script (stub node and gh)', () => {
   // backstops the ordinary spellings only), and work done inside a command substitution, where
   // bash disables -e and the depth rule exempts it by design. A `( set +e; ... )` subshell is
   // exempt the same way, and a branch that none of the scenarios below reaches is not traced.
+  // A third limit is not evasion: the trace reads the `e` FLAG, and bash ignores -e while the flag
+  // stays set inside a function or group on the left of `||`/`&&`, an `if`/`while` condition, or
+  // after `!`. Keep those constructs out of the step's body, or capture with `cmd || VAR=$?` only
+  // around a single command, never around a function holding several.
   const SEED = 'scripts/tests/fixtures/package-lock.json'
   const ROOT_FAIL =
     '✗ Check 76 reconcile: unaccepted advisory GHSA-aaaa-bbbb-cccc (pkg, high) is reported by npm audit and has no acceptance\n'
@@ -274,6 +278,7 @@ describe('executed run of the workflow script (stub node and gh)', () => {
   const insertAfterClean = (stmt: string) => (src: string) => {
     const ls = src.split('\n')
     const i = ls.findIndex((l) => l.trimEnd().endsWith('> "$CLEAN"'))
+    expect(i).toBeGreaterThanOrEqual(0) // the anchor exists, so the control lands where declared
     ls.splice(i + 1, 0, `          ${stmt}`)
     return ls.join('\n')
   }

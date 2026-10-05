@@ -48,10 +48,14 @@ export const RUNNER_BASH_ARGS = ['-e']
  * Errexit trace (SMI-6996). Every executed run is prefixed with three lines: `set -T` (so the DEBUG
  * trap also fires inside shell functions and command substitutions), a DEBUG trap recording
  * `$-:$LINENO:$BASH_SUBSHELL:FUNCNAME` before each command, and an EXIT trap recording the final
- * `$-`. A depth-0 entry whose flags lack `e` means errexit was off for a command the script ran at
- * its own level; entries at depth > 0 are command substitutions and subshells, where bash runs
- * without -e by design, so they are classified apart and never asserted against. `exec` asserts the
- * depth-0 invariant on every run unless `allowErrexitOff` is set (the known-positive controls).
+ * `$-`. A depth-0 entry whose flags lack `e` means the `e` flag was clear for a command the script
+ * ran at its own level. Entries at depth > 0 are exempt: bash runs command substitutions without
+ * -e, and although a `( ... )` subshell inherits -e, the depth field cannot tell the two apart.
+ * The flag is not the whole story: bash also IGNORES -e, while `$-` still shows `e`, inside a
+ * function, brace group or subshell on the left of `||` or `&&`, in an `if`/`while` condition, and
+ * after `!` (measured, bash 5.2.15). So `do_seeds || SREC=$?` would silently disable -e for the
+ * whole function body and this trace would not see it. `exec` asserts the depth-0 invariant on
+ * every run unless `allowErrexitOff` is set (the known-positive controls).
  */
 export const EE_PREFIX_LINES = 3
 const EE_PREFIX = [

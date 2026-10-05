@@ -53,12 +53,15 @@ describe('gitDiscoveryScrubbedEnv', () => {
     const script = fileURLToPath(new URL('../lib/git-discovery-env.mjs', import.meta.url))
     const code =
       `import(${JSON.stringify(script)}).then((m) => ` +
-      `console.log(JSON.stringify([ 'GIT_DIR' in m.gitDiscoveryScrubbedEnv(), process.env.GIT_DIR ])))`
+      `{ const e = m.gitDiscoveryScrubbedEnv(); ` +
+      `console.log(JSON.stringify([ 'GIT_DIR' in e, e.SMI6994_KEEP, process.env.GIT_DIR ])) })`
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
       encoding: 'utf8',
-      env: { ...process.env, GIT_DIR: '/x' },
+      env: { ...process.env, GIT_DIR: '/x', SMI6994_KEEP: '1' },
     })
     expect(r.status).toBe(0)
-    expect(JSON.parse(r.stdout)).toEqual([false, '/x'])
+    // GIT_DIR scrubbed, AND a non-git variable carried over from process.env (presence: the
+    // default really is process.env, not an empty object), AND the real env left intact
+    expect(JSON.parse(r.stdout)).toEqual([false, '1', '/x'])
   })
 })
