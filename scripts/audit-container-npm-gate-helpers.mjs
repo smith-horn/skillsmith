@@ -39,6 +39,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { gitDiscoveryScrubbedEnv } from './lib/git-discovery-env.mjs'
 import {
   classifyUnit,
   logicalUnits,
@@ -69,17 +70,12 @@ export const CONTAINER_NPM_GATE_ALLOWLIST_JUSTIFICATIONS = Object.freeze({})
 const EXCLUDED_DIR_RE = /(^|\/)(tests?|__tests__|fixtures?)\//
 const EXCLUDED_FILE_RE = /\.(test|spec)\.[a-z]+$/
 const MD_RE = /\.mdx?$/i
-const GIT_DISCOVERY_ENV_RE =
-  /^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|PREFIX|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)$/
 
 /** R1: `git ls-files` at the repo root (no submodule recursion), with modes so gitlinks are exact. */
 function listTrackedEntries(repoRoot) {
   // An inherited GIT_DIR or GIT_INDEX_FILE (git hooks set them) would make
   // `git -C <root>` read another repository or a temporary index.
-  const env = { ...process.env }
-  for (const k of Object.keys(env)) {
-    if (GIT_DISCOVERY_ENV_RE.test(k)) delete env[k]
-  }
+  const env = gitDiscoveryScrubbedEnv()
   // CI's Test (root) container checks the repo out under a different UID than
   // the process running git, so git refuses with "detected dubious ownership"
   // (PR #2857 CI). Trust exactly the repo being audited, from command-line

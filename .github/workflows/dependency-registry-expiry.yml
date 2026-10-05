@@ -29,10 +29,16 @@
 # Seed lockfiles (SMI-6954, ADR-176 section 6): for every key that
 # `check-dependency-registry.mjs --list-seeds` prints, the same pinned-flag
 # `npm audit` runs INSIDE that seed's directory and is reconciled with
-# `--reconcile-audit <file> --seed <lockfile>`. No gate audits a seed tree, so any
-# unaccepted seed advisory fails, at any severity and install scope. A seed or
+# `--reconcile-audit <file> --seed <lockfile>`. No other blocking gate or scheduled
+# npm audit job evaluates the standing seed tree: Dependency Guard
+# (dependency-review-action, fail-on-severity: high) checks only the seed
+# dependencies a PR adds or changes, and Dependabot alerts on the seed manifest are
+# non-blocking. So any unaccepted seed advisory fails here, at any severity and
+# install scope. A seed or
 # root reconcile failure fails this daily job only (decision 4: code PRs are not
-# blocked by it); a Check 76 failure fails every code PR. The issue body says which.
+# blocked by it); a Check 76 failure fails every code PR. The issue body says which. A
+# `--list-seeds` failure gets its own section, "Seed lockfiles not listed", carrying
+# that command's stderr, so its cause is never filed under the root reconcile.
 #
 # No Docker, no `npm ci` and no `needs: docker-build`: this runs
 # scripts/check-dependency-registry.mjs, whose import closure is node builtins
@@ -114,7 +120,13 @@ jobs:
           : > "$SEEDS_FAILED"
           # Single-quote a value for the shell commands printed into the issue body.
           shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
-          if node scripts/check-dependency-registry.mjs --list-seeds > "$SEED_LIST" 2>> "$OUT"; then
+          # --list-seeds stderr goes to its own file: on failure the issue body prints it as
+          # the cause (SMI-6994); the run log gets it through the cat.
+          LS_ERR="$RUNNER_TEMP/list-seeds.err"
+          LSRC=0
+          node scripts/check-dependency-registry.mjs --list-seeds > "$SEED_LIST" 2> "$LS_ERR" || LSRC=$?
+          cat "$LS_ERR" >&2
+          if [ "$LSRC" -eq 0 ]; then
             N=0
             while IFS= read -r LF; do
               [ -n "$LF" ] || continue
@@ -135,15 +147,16 @@ jobs:
               if [ "$RC" -eq 0 ] && [ "$SREC" -ne 0 ]; then RC="$SREC"; fi
             done < "$SEED_LIST"
           else
-            printf '%s Check 76 reconcile: --list-seeds failed, so no seed lockfile was reconciled\n' "$FAIL_MARK" >> "$OUT"
-            if [ "$RC" -eq 0 ]; then RC=1; fi
+            printf '%s Check 76 seed list: --list-seeds failed (exit %s), so no seed lockfile was reconciled\n' "$FAIL_MARK" "$LSRC" >> "$OUT"
+            if [ "$RC" -eq 0 ]; then RC="$LSRC"; fi
           fi
           cat "$OUT"
           sed -e 's/\x1b\[[0-9;]*m//g' "$OUT" > "$CLEAN"
           FAILS=$(grep -aF "$FAIL_MARK" "$CLEAN" | grep -a 'Check 76' || true)
           # Split by what fails: Check 76 itself fails every code PR; a reconcile
           # failure (root, or a seed's, labelled "reconcile [<lockfile>]") fails this job only.
-          CHECK_FAILS=$(printf '%s\n' "$FAILS" | grep -av 'Check 76 reconcile' || true)
+          CHECK_FAILS=$(printf '%s\n' "$FAILS" | grep -av 'Check 76 reconcile' | grep -avF 'Check 76 seed list:' || true)
+          LIST_FAILS=$(printf '%s\n' "$FAILS" | grep -aF 'Check 76 seed list:' || true)
           SEED_FAILS=$(printf '%s\n' "$FAILS" | grep -aF 'Check 76 reconcile [' || true)
           ROOT_FAILS=$(printf '%s\n' "$FAILS" | grep -a 'Check 76 reconcile' | grep -avF 'Check 76 reconcile [' || true)
           INFOS=$(grep -aF "$INFO_MARK" "$CLEAN" | grep -a 'Check 76' || true)
@@ -172,6 +185,17 @@ jobs:
                 printf '### Failing root reconcile (fails this daily job only; code PRs are not blocked)\n\n'
                 printf '%s\n' "$ROOT_FAILS" | sed -e 's/^/- /'
                 printf '\nReproduce: npm audit %s > A.json, then node scripts/check-dependency-registry.mjs --reconcile-audit A.json.\n\n' "$AUDIT_FLAGS"
+              fi
+              if [ -n "$LIST_FAILS" ]; then
+                printf '### Seed lockfiles not listed (fails this daily job only; code PRs are not blocked)\n\n'
+                printf '%s\n' "$LIST_FAILS" | sed -e 's/^/- /'
+                if [ -s "$LS_ERR" ]; then
+                  printf '\nCause (stderr of --list-seeds):\n\n'
+                  # Markdown ends a line at CR as well as LF, so turn every CR into LF
+                  # before indenting, or a CR-separated line would escape the code block.
+                  tr '\r' '\n' < "$LS_ERR" | sed -e 's/^/    /'
+                fi
+                printf '\n\nNo seed lockfile was audited this run. Reproduce: node scripts/check-dependency-registry.mjs --list-seeds\n\n'
               fi
               if [ -n "$SEED_FAILS" ]; then
                 printf '### Failing seed reconcile (fails this daily job only; code PRs are not blocked):\n\n'
