@@ -434,8 +434,10 @@ export async function createSqlJsDatabase(
     // 2. Journal modes are meaningless without filesystem integration
     // 3. Setting WAL would create false parity expectations with better-sqlite3
     db.run('PRAGMA foreign_keys = ON')
-    // Integrity probe: forces sql.js to read the schema page. Skipped for a
-    // brand-new empty database (no `data`) where there is nothing to validate.
+    // SCHEMA-PAGE probe, not the integrity check: it forces a read of page 1,
+    // which is what makes a bad header throw here rather than at an arbitrary
+    // later query. `quick_check` below reaches the later pages. Skipped for a
+    // brand-new empty database (no `data`), where there is nothing to validate.
     if (data !== undefined) {
       db.run('SELECT name FROM sqlite_master LIMIT 1')
     }

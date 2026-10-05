@@ -30,6 +30,10 @@
  */
 import { describe, it, expect } from 'vitest'
 import { corruptDatabaseError } from '../../src/db/corrupt-refusal.js'
+import {
+  sqlJsCorruptionCode,
+  refuseIfCorrupt,
+} from '../../src/db/drivers/sqljsDriver.corruption.js'
 
 /** A line that is an actual `mv` command, not prose mentioning one. */
 const MV_COMMAND = /^ {2}mv /m
@@ -38,6 +42,11 @@ const MV_COMMAND = /^ {2}mv /m
 const RETIRED_FALSE_CLAIM = /holds no data that cannot be rebuilt|rebuilt from the registry/
 
 const PATH = '/tmp/smi6961/skills.db'
+
+/** `remedyKind` for a code, read off the shared builder's own output. */
+function remedyKindOf(sqliteCode?: string): string {
+  return render(sqliteCode).remedyKind
+}
 
 function render(sqliteCode?: string): { message: string; remedyKind: string } {
   const error = corruptDatabaseError(PATH, 'damaged', sqliteCode) as unknown as {
@@ -128,5 +137,127 @@ describe('SMI-6961 F1: the message does not claim the data is all rebuildable', 
         "risks losing that process's writes."
     ).toMatch(RETIRED_FALSE_CLAIM)
     expect('a sync rebuilds the registry mirror').not.toMatch(RETIRED_FALSE_CLAIM)
+  })
+})
+
+/**
+ * SMI-6991: `remedyKind` is NOT driver-independent, unlike `code`.
+ *
+ * The accurate statement, narrower than an earlier draft of this docblock:
+ * **`'reindex'` is reachable only from the native driver's THROWN path.** It
+ * needs the extended code `SQLITE_CORRUPT_INDEX`, and only a thrown
+ * better-sqlite3 error carries one. Both drivers' `quick_check` paths report a
+ * verdict with no code at all, so a database whose index damage `quick_check`
+ * finds gets `'replace'` on native too — the divergence is per-path, not
+ * simply native-versus-WASM.
+ *
+ * **Where the tripwire has to live, and why an earlier version of this block
+ * was not one.** It asserted only `corruptDatabaseError`'s `code → remedyKind`
+ * mapping and `sqlJsCorruptionCode`'s two messages. A fix for SMI-6991 lands in
+ * `refuseIfCorrupt`, which neither touches — and after that fix,
+ * `corruptDatabaseError(path, 'damaged', undefined)` must *still* yield
+ * `'replace'`, because `undefined` still means replace. So the whole block
+ * stayed green through the fix while claiming it would go red.
+ *
+ * The arms below therefore drive `refuseIfCorrupt` itself, through the stub
+ * interface it already accepts. When that function learns to classify an
+ * index-only verdict, **the index arm** goes red, which is the point. An
+ * earlier version of this sentence said "the first two go red" — false, and
+ * contradicted by the very measurement recorded in the commit that added it:
+ * the second arm is the page-damage CONTROL, which a correct fix must leave at
+ * `replace`, and the simulation reported exactly one failure.
+ *
+ * **What this still does not cover**, stated rather than left implied:
+ *
+ * - The index arm is parameterised over several real `quick_check` wordings,
+ *   but SQLite's verdict text is not a closed set. A classifier keyed on a
+ *   phrasing absent from the table below would leave these green.
+ * - It drives the **WASM** reported-verdict path. A fix applied only to the
+ *   native driver's own `quick_check` path — which also builds a refusal with
+ *   no code — would not trip it. A mirror arm belongs in
+ *   `betterSqlite3Driver.corruption.test.ts`, which is native-gated, so a
+ *   broken binding there renders as a skip rather than a failure (SMI-6792).
+ *   Both gaps are recorded in SMI-6991 rather than papered over here.
+ */
+describe('SMI-6991: the reported-verdict path cannot reach reindex, and that is pinned', () => {
+  /** Drives the real `refuseIfCorrupt` and returns the refusal it throws. */
+  function refusalFor(verdict: string): { remedyKind: string; sqliteCode?: string } {
+    let closed = 0
+    const db = {
+      prepare: () => ({
+        step: () => true,
+        get: () => [verdict],
+        free: () => {},
+      }),
+      close: () => {
+        closed += 1
+      },
+    }
+    try {
+      refuseIfCorrupt(db, '/tmp/smi6991/skills.db')
+    } catch (error) {
+      // The handle must be closed before the throw — it is never published, so
+      // nothing else would free its WASM heap.
+      expect(closed).toBe(1)
+      return error as { remedyKind: string; sqliteCode?: string }
+    }
+    throw new Error('refuseIfCorrupt did not throw for a non-ok verdict')
+  }
+
+  // THE TRIPWIRE, over several of SQLite's own wordings for index-only damage
+  // rather than one. A single wording was the first version's weakness: a
+  // classifier keyed on any other legitimate phrasing would have left it green.
+  // These are the shapes `integrity_check`/`quick_check` actually emit for an
+  // index whose contents disagree with its table.
+  it.each([
+    ['wrong # of entries in index sqlite_autoindex_skills_1'],
+    ['row 42 missing from index idx_skills_author'],
+    ['non-unique entry in index sqlite_autoindex_skills_1'],
+    ['rowid 7 missing from index idx_skills_name'],
+  ])('an INDEX-ONLY verdict still yields replace, not reindex: %s', (verdict) => {
+    const refusal = refusalFor(verdict)
+    expect(refusal.remedyKind).toBe('replace')
+    expect(refusal.sqliteCode).toBeUndefined()
+  })
+
+  it('a PAGE-damage verdict yields replace too — the control', () => {
+    // Without this, the arm above could be read as "verdicts never classify",
+    // when what it pins is specifically that the index case is not singled out.
+    // A correct fix must leave THIS one at `replace`.
+    const refusal = refusalFor('*** in database main *** Page 4 is never used')
+    expect(refusal.remedyKind).toBe('replace')
+    expect(refusal.sqliteCode).toBeUndefined()
+  })
+
+  it('reindex IS reachable when a code is supplied — so the above is not a dead constant', () => {
+    // The paired presence assertion. `'reindex'` is a live value of the shared
+    // builder; it is only unreachable from a reported verdict.
+    expect(remedyKindOf('SQLITE_CORRUPT_INDEX')).toBe('reindex')
+  })
+
+  it('the WASM message adapter resolves no code that could reach reindex', () => {
+    // The second half of the mechanism: on the THROWN path, this function is the
+    // WASM driver's only source of a code. Asserted as a mapping rather than as
+    // a closed world — a third mapping added later would not falsify this, and
+    // claiming otherwise would be a quantifier the test cannot establish.
+    expect(sqlJsCorruptionCode(new Error('file is not a database'))).toBe('SQLITE_NOTADB')
+    expect(sqlJsCorruptionCode(new Error('database disk image is malformed'))).toBe(
+      'SQLITE_CORRUPT'
+    )
+    expect(remedyKindOf('SQLITE_NOTADB')).toBe('replace')
+    expect(remedyKindOf('SQLITE_CORRUPT')).toBe('replace')
+  })
+
+  it('the two remedies differ in what they cost the user', () => {
+    // Why the divergence matters rather than being a cosmetic label: one
+    // suggests a non-destructive repair, the other moves the database aside.
+    const reindex = render('SQLITE_CORRUPT_INDEX').message
+    const replace = render(undefined).message
+    expect(reindex).toContain("'REINDEX;'")
+    expect(replace).not.toContain("'REINDEX;'")
+    // Both still end in an actionable move — the SMI-6961 F2 fix — so the
+    // difference is the repair ATTEMPT, not whether advice exists at all.
+    expect(reindex).toMatch(MV_COMMAND)
+    expect(replace).toMatch(MV_COMMAND)
   })
 })
