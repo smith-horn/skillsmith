@@ -4,7 +4,7 @@
  * Executes the workflow's own script with stub node, npm and gh.
  */
 import { describe, expect, it } from 'vitest'
-import { REPO_ROOT, exec, verbs } from './dependency-registry-expiry.harness'
+import { FINDINGS_AUDIT, REPO_ROOT, exec, verbs } from './dependency-registry-expiry.harness'
 
 // Any existing repo directory works as the seed directory: the stub npm records its cwd.
 const SEED = 'scripts/tests/fixtures/package-lock.json'
@@ -57,6 +57,16 @@ describe('seed loop', () => {
     expect(r.status).toBe(1)
     expect(verbs(r.calls)).toContain('issue create')
     expect(r.body).toContain('unaccepted advisory GHSA-aaaa-bbbb-cccc')
+  })
+  it('a seed npm audit exiting 1 because it found advisories still reconciles that seed (SMI-6993)', () => {
+    const r = exec(GREEN, 0, '', '', root(), {
+      list: `${SEED}\n`,
+      auditOut: FINDINGS_AUDIT,
+      auditRc: 1,
+      rec: SEED_OK,
+    })
+    expect(r.status).toBe(0)
+    expect(r.nodeCalls.some((c) => c.includes(`--seed ${SEED}`))).toBe(true)
   })
   it('W3 a seed npm audit with no output is an ::error:: and a failure, never clean', () => {
     const r = exec(GREEN, 0, '', '', root(), { list: `${SEED}\n`, auditOut: '' })
