@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import * as reg from '../audit-dependency-registry-helpers.mjs'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 
 const {
   evaluateDependencyRegistry,
@@ -307,7 +308,7 @@ describe('S10 enumeration and inputs fail closed', () => {
     )
   })
   it('S-read readDependencyRegistryInputs lists tracked lockfiles with git and reads seed inputs', () => {
-    const root = mkdtempSync(join(tmpdir(), 'smi6954-read-'))
+    const root = makeFixtureTempDir('smi6954-read')
     mkdirSync(join(root, '.github'), { recursive: true })
     mkdirSync(join(root, 'scripts/x'), { recursive: true })
     writeFileSync(join(root, 'package.json'), '{}')
@@ -320,7 +321,7 @@ describe('S10 enumeration and inputs fail closed', () => {
       JSON.stringify({ overrides: {}, acceptances: [], seeds: { [K]: {} } })
     )
     const git = (...a: string[]) =>
-      spawnSync('git', a, { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } })
+      spawnSync('git', a, { cwd: root, encoding: 'utf8', env: makeFixtureEnv() })
     expect(git('init', '-q').status).toBe(0)
     expect(git('add', '-A').status).toBe(0)
     const i = readDependencyRegistryInputs(root)

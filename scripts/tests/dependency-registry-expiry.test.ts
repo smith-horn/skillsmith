@@ -7,12 +7,12 @@
  * dependency-registry-expiry.seed.test.ts.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
-import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT, WORKFLOW, doc, exec, script, verbs } from './dependency-registry-expiry.harness'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 
 describe('workflow shape', () => {
   it('exists, is ASCII only, and has a daily schedule plus workflow_dispatch', () => {
@@ -272,7 +272,7 @@ globalThis.Date = class extends R {
       omitPinFile?: boolean
     } = {}
   ) {
-    const dir = mkdtempSync(join(tmpdir(), 'smi6949-bare-'))
+    const dir = makeFixtureTempDir('smi6949-bare')
     // The whole scripts/ tree (minus tests, any node_modules and any lockfile): the closure must
     // resolve in it. A copied seed lockfile would be tracked below and need a seeds entry (SMI-6954).
     cpSync(join(REPO_ROOT, 'scripts'), join(dir, 'scripts'), {
@@ -304,9 +304,7 @@ globalThis.Date = class extends R {
       ['init', '-q'],
       ['add', '-A'],
     ]) {
-      expect(spawnSync('git', a, { cwd: dir, env: { PATH: process.env.PATH ?? '' } }).status).toBe(
-        0
-      )
+      expect(spawnSync('git', a, { cwd: dir, env: makeFixtureEnv() }).status).toBe(0)
     }
     const env: Record<string, string> = { PATH: process.env.PATH ?? '' }
     if (opts.fakeNow) {

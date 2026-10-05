@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import * as reg from '../audit-dependency-registry-helpers.mjs'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 // @ts-expect-error - .mjs helper has no typings
 import { scanDuplicateJsonKeys } from '../audit-dependency-registry-json.mjs'
 
@@ -514,7 +515,7 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
   const T21_TODAYS = ['2026-10-26', '2026-04-05', '2026-03-08', '2026-09-26'] // each expires - 14d
 
   function t21Root(): string {
-    const root = mkdtempSync(join(tmpdir(), 'smi6949-tz-'))
+    const root = makeFixtureTempDir('smi6949-tz')
     mkdirSync(join(root, '.github'), { recursive: true })
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fx', overrides: {} }))
     writeFileSync(
@@ -535,9 +536,7 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
       ['init', '-q'],
       ['add', '-A'],
     ]) {
-      expect(spawnSync('git', a, { cwd: root, env: { PATH: process.env.PATH ?? '' } }).status).toBe(
-        0
-      )
+      expect(spawnSync('git', a, { cwd: root, env: makeFixtureEnv() }).status).toBe(0)
     }
     return root
   }
