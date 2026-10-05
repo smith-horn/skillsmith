@@ -5,12 +5,14 @@
  * Synthetic inputs only; `trackedLockfiles` and `seedInputs` are injected.
  */
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import * as reg from '../audit-dependency-registry-helpers.mjs'
+// @ts-expect-error - .mjs helper has no typings
+import { listTrackedLockfiles } from '../audit-dependency-registry-seeds.mjs'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 
 const {
@@ -335,6 +337,52 @@ describe('S10 enumeration and inputs fail closed', () => {
     const b = readDependencyRegistryInputs(bare)
     expect(b.lockfileSource).toBe('scan')
     expect(b.trackedLockfiles).toEqual(['package-lock.json'])
+  })
+  const TWO = ['other/package-lock.json', 'package-lock.json'] // what makeTrackedRepo tracks
+  const makeTrackedRepo = (prefix: string) => {
+    const root = makeFixtureTempDir(prefix)
+    mkdirSync(join(root, 'other'), { recursive: true })
+    for (const f of ['package-lock.json', 'other/package-lock.json'])
+      writeFileSync(join(root, f), '{}')
+    const git = (...a: string[]) =>
+      spawnSync('git', a, { cwd: root, encoding: 'utf8', env: makeFixtureEnv() })
+    for (const a of [
+      ['init', '-q'],
+      ['add', '-A'],
+    ])
+      expect(git(...a).status).toBe(0)
+    return { root, git }
+  }
+  it('S-env an inherited GIT_DIR does not redirect the tracked-lockfile listing (SMI-6994)', () => {
+    const { root: fixture } = makeTrackedRepo('smi6994-env')
+    const bare = makeFixtureTempDir('smi6994-env-bare')
+    writeFileSync(join(bare, 'package-lock.json'), '{}')
+    const helpers = new URL('../audit-dependency-registry-helpers.mjs', import.meta.url).pathname
+    const code = `import(${JSON.stringify(helpers)}).then((m) => { const i = m.readDependencyRegistryInputs(process.argv[1]); console.log(JSON.stringify({ source: i.lockfileSource, tracked: [...i.trackedLockfiles].sort() })) })`
+    const read = (root: string) => {
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', code, root], {
+        encoding: 'utf8',
+        env: { ...makeFixtureEnv(), GIT_DIR: join(fixture, '.git') },
+      })
+      expect(r.status, r.stderr).toBe(0)
+      return JSON.parse(r.stdout) as { source: string; tracked: string[] }
+    }
+    // known-positive: GIT_DIR names a live repo, which lists; the bare root is not its work tree
+    expect(read(fixture)).toEqual({ source: 'git', tracked: TWO })
+    expect(read(bare)).toEqual({ source: 'scan', tracked: ['package-lock.json'] })
+  })
+  it('S-fsmon listing tracked lockfiles never runs a repo-configured fsmonitor hook (SMI-6994)', () => {
+    const { root, git } = makeTrackedRepo('smi6994-fsmon')
+    const aux = makeFixtureTempDir('smi6994-aux')
+    const [marker, hook] = [join(aux, 'marker'), join(aux, 'hook.sh')]
+    writeFileSync(hook, `#!/bin/sh\necho ran >> "${marker}"\nprintf '\\0'\n`, { mode: 0o755 })
+    writeFileSync(marker, '')
+    expect(git('config', 'core.fsmonitor', hook).status).toBe(0)
+    git('status', '--porcelain') // known-positive: the hook is wired, so git runs it
+    expect(readFileSync(marker, 'utf8')).not.toBe('')
+    writeFileSync(marker, '')
+    expect([...(listTrackedLockfiles(root) ?? [])].sort()).toEqual(TWO)
+    expect(readFileSync(marker, 'utf8')).toBe('')
   })
 })
 

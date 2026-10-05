@@ -52,7 +52,6 @@ jobs:
             ARGS+=(--since "$SINCE_INPUT")
           fi
           node scripts/lint-linear-issues.mjs "${ARGS[@]}" --json > /tmp/lint-results.json
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Check for violations
         id: check
