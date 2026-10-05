@@ -47,6 +47,12 @@ else
   FELL_BACK=0
   CONTAINER_WD="/app"
   DOCKER_CONTAINER="skillsmith-dev-1"
+  # SMI-6985 L-1: set for parity with hook-docker-detect.sh's full fallback
+  # contract (line 29's own comment: "Sets ... RUN_PREFIX") so this
+  # legacy-path branch leaves every var the sourced lib would have set, even
+  # though pre-commit itself (unlike pre-push, which prints a "Run: $RUN_PREFIX
+  # ..." fix-hint) doesn't read it today.
+  # shellcheck disable=SC2034 # see comment above: set for fallback-contract parity, not read in this hook
   RUN_PREFIX="docker exec ${DOCKER_CONTAINER}"
   run_cmd() {
     docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" "$@"

@@ -80,25 +80,12 @@ export const DEBOUNCE_MS = 24 * 60 * 60 * 1000
  */
 export const LOCK_STALE_MS = 120_000
 
-// ---- expectedBy gate (SMI-6967 H-1) ---------------------------------------
-// Split into `ruflo-bridge-state.expected-by.ts` to stay under this repo's
-// <500-line-per-file convention — re-exported here so callers (and the
-// writer) can import everything from this one module, matching the render
-// split below. See that module's own doc comment for the full rationale.
-export {
-  EXPECTED_BY_GRACE_MS,
-  hasExpectedByPassed,
-  resolveProbeInstalledAt,
-  resolveProbeScriptPath,
-  type ProbeInstall,
-} from './ruflo-bridge-state.expected-by.js'
-
 // ---- Entry/state shape (SMI-6744 A5.5.2(b)/(c) delta) ---------------------
 // Split into `ruflo-bridge-state.entry.ts` to stay under this repo's
 // <500-line-per-file convention — re-exported here so callers (and the
 // writer) can import everything from this one module, matching the
-// expected-by/liveness/render splits below. See that module's own doc
-// comment for the full SMI-6967 H-1/M-5 field-semantics rationale.
+// liveness/render splits below. See that module's own doc comment for the
+// full SMI-6967 H-1/M-5 field-semantics rationale.
 import type { BridgeEntry, BridgeState } from './ruflo-bridge-state.entry.js'
 export {
   KNOWN_VERDICTS,

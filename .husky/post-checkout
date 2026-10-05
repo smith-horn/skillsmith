@@ -32,7 +32,17 @@ set +e
 # diff gate (condition 4) makes that a no-op for the common case where the
 # rebase doesn't change package-lock.json.
 #
-# Non-blocking (git ignores the exit code of post-checkout; we always exit 0).
+# Unlike post-commit and post-merge, git DOES propagate post-checkout's own
+# exit status into the invoking `git checkout`'s exit code -- measured
+# (SMI-6985): a hook that exits 7 makes `git checkout` itself return 1, even
+# though the branch switch has already completed by the time this hook runs
+# (a CONTROL run of the same exit-7 hook as pre-commit confirmed the
+# instrument discriminates: pre-commit's non-zero DOES block the commit,
+# which is expected and unrelated to this propagation behavior). Before the
+# `set +e` above, an errexit abort inside this hook made `git checkout`
+# return 1, which would break any `set -e` script or `&&` chain wrapping a
+# checkout -- including sync-main.sh, rebase-worktree.sh, and
+# create-worktree.sh. This hook always exits 0, so it never does.
 
 # Color codes (match post-merge style)
 GREEN='\033[0;32m'

@@ -5,18 +5,24 @@
  * module: no dependency on the rest of that file, which re-exports
  * everything here so callers keep importing from the one entry point.
  *
- * SMI-6967 H-1/M-5 correction: two liveness-related latches live on this
- * entry, and they answer DIFFERENT questions — never collapse them (see
+ * SMI-6967 H-1/M-5 correction, then SMI-6985 correction of record (corrected
+ * in place rather than appended below): two liveness-related latches live on
+ * this entry, and they answer DIFFERENT questions — never collapse them (see
  * `ruflo-bridge-state.liveness.ts`'s own doc comment for the full fold):
- *   - `everProducerPresent` gates whether the liveness arm can fire AT ALL.
- *     It latches from a producer actually existing (the bridge reported
- *     `connected`, or the store already held entries) — nothing stronger.
- *   - `everLearned` never gates anything by itself any more (the H-1 bug: the
- *     old code gated the arm on THIS flag, making a connected bridge that
- *     has never produced a single pattern/trajectory permanently
- *     unreportable — precisely the silent-stall shape SMI-6744 exists to
- *     catch). It now only changes the WORDING of the rendered line once the
- *     arm is armed.
+ *   - `everLearned` gates whether the liveness arm can fire AT ALL (SMI-6985,
+ *     reverting SMI-6967 H-1's `everProducerPresent` gate). It latches from
+ *     the counters' own history — `patternsLearned`/`trajectoriesRecorded`
+ *     observed above zero at least once — because the owner found, measured
+ *     live, that "a producer exists" is the wrong gate: nothing in this
+ *     repository calls the trajectory-capture hooks at all, so a connected
+ *     bridge with a non-empty store (this checkout's actual, permanent
+ *     state) armed the H-1 gate immediately and fired perpetually, on a
+ *     condition nobody could act on.
+ *   - `everProducerPresent` stays folded (latches from a producer actually
+ *     existing — the bridge reported `connected`, or the store already held
+ *     entries — nothing stronger) but no longer gates or words anything;
+ *     nothing currently reads it. See `ruflo-bridge-state.render.ts`'s
+ *     `renderBridgeLivenessLine` doc comment for the full correction.
  */
 
 /**
@@ -62,29 +68,40 @@ export interface BridgeEntry {
   trajectoriesRecorded: number | null
   /**
    * A5.5.2 liveness arm: consecutive probes with neither counter moved,
-   * counted only once {@link everProducerPresent} has armed the arm (SMI-6967
-   * H-1). Reset to 0 by {@link countersRegressed}.
+   * counted only once {@link everLearned} has armed the arm (SMI-6985,
+   * superseding SMI-6967 H-1's `everProducerPresent` gate — see
+   * `ruflo-bridge-state.render.ts`'s `renderBridgeLivenessLine` doc comment
+   * for the full correction of record). Reset to 0 by {@link countersRegressed}.
    */
   consecutiveNoLearning: number
   /**
    * SMI-6967 H-1: latches `true` the first time any probe observes a
    * PRODUCER — `bridge.status === 'connected'` and/or `agentdb.totalEntries
-   * > 0` — and never un-latches. Gates `renderBridgeLivenessLine` entirely:
-   * before this is true there is nothing to report a stall about. Absent on
-   * an entry written before this field existed; readers must treat
+   * > 0` — and never un-latches. **SMI-6985 correction of record (owner-
+   * decided, corrected in place): this field no longer gates
+   * `renderBridgeLivenessLine`.** Measured live, nothing in this repository
+   * ever calls the trajectory-capture hooks, so gating on "a producer exists"
+   * made the arm fire perpetually and un-actionably on this checkout's
+   * permanent, correct state (connected, non-empty store, nothing ever
+   * learned). {@link everLearned} is the gate now — see that function's own
+   * doc comment for the full history. This field stays folded (still
+   * latched, still never un-latched) for a future consumer that needs
+   * "has a producer ever existed" as its own signal; nothing reads it today.
+   * Absent on an entry written before this field existed; readers must treat
    * `undefined` the same as `false` (dormant), never as `true` — the same
    * convention {@link everLearned} already uses.
    */
   everProducerPresent: boolean
   /**
    * SMI-6967 H-9: latches `true` the first time any probe observes a
-   * counter above zero, and never un-latches. SMI-6967 H-1 retires this
-   * field's GATING role (see this file's own doc comment) — it is now used
-   * only to WORD `renderBridgeLivenessLine`'s line once
-   * {@link everProducerPresent} has armed it: a producer that has never
-   * learned anything reads differently from one that learned and then
-   * stalled. Absent on an entry written before this field existed; readers
-   * must treat `undefined` the same as `false` (dormant), never as `true`.
+   * counter above zero, and never un-latches. **SMI-6985 correction of
+   * record: this is now the GATE for `renderBridgeLivenessLine`, not merely
+   * its wording** — SMI-6967 H-1 had retired this field's gating role in
+   * favor of {@link everProducerPresent}, which the SMI-6985 correction
+   * found was gated on the wrong producer (a connected bridge, not a
+   * trajectory writer — see `renderBridgeLivenessLine`'s own doc comment).
+   * Absent on an entry written before this field existed; readers must
+   * treat `undefined` the same as `false` (dormant), never as `true`.
    */
   everLearned: boolean
   /**

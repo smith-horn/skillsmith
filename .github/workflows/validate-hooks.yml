@@ -204,9 +204,30 @@ jobs:
       # is lint-checked under `shellcheck -S warning -s sh`) and run here on
       # its own, matching how this workflow treats every other sh-shebang
       # script (see the bash -n step below, which runs `sh -n` for those).
+      #
+      # SMI-6985 L-1: the six `.husky/*` hooks below are added to this SAME
+      # step rather than a new one -- they are `#!/bin/sh` scripts executed
+      # by Husky via `sh -e` regardless of shebang (see each hook's own
+      # header comment), so `-s sh` is the correct mode, same as
+      # ruflo-service-entrypoint.sh above. `sh -n` alone (the "Syntax check"
+      # step below) cannot see a bash-only construct that is ALSO valid sh
+      # grammar and only misbehaves at runtime (e.g. `[[ ]]`/`=~` parse as an
+      # ordinary, undefined command under dash and fail with `[[: not found`
+      # rather than a syntax error) -- this is exactly the SMI-6985 defect
+      # class: `.husky/pre-rebase` shipped a `[[ ! $REPLY =~ ^[Yy]$ ]]` that
+      # both `sh -n` and `dash -n` accept cleanly. Each finding below was
+      # triaged live (`shellcheck -S warning -s sh` against the shipped
+      # tree) and either fixed or narrowly suppressed inline with a comment
+      # naming why -- never a blanket rule disable.
       - name: shellcheck (sh scripts)
         run: |
           shellcheck -S warning -s sh scripts/ruflo-service-entrypoint.sh
+          shellcheck -S warning -s sh .husky/pre-commit
+          shellcheck -S warning -s sh .husky/pre-push
+          shellcheck -S warning -s sh .husky/post-merge
+          shellcheck -S warning -s sh .husky/post-checkout
+          shellcheck -S warning -s sh .husky/post-commit
+          shellcheck -S warning -s sh .husky/pre-rebase
 
       - name: Syntax check (bash -n)
         run: |
@@ -268,6 +289,9 @@ jobs:
           sh -n .husky/pre-commit
           sh -n .husky/pre-push
           sh -n .husky/post-merge
+          sh -n .husky/post-checkout
+          sh -n .husky/post-commit
+          sh -n .husky/pre-rebase
           bash -n scripts/mcp-ruflo-launcher.sh
           bash -n scripts/ruflo-service-up.sh
           bash -n scripts/ruflo-service-up.helpers.sh
