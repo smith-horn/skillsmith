@@ -102,6 +102,14 @@ updates:
       # tree-sitter 0.26.x. Re-evaluate when tree-sitter-wasms ≥ 0.2 ships.
       - dependency-name: 'web-tree-sitter'
         versions: ['>=0.26.0']
+      # SMI-6956: vsce refuses to package when @types/vscode is newer than the
+      # extension's engines.vscode (packages/vscode-extension). Move it only by
+      # hand, together with engines.vscode, because raising engines.vscode raises
+      # the minimum VS Code version users need. Note: the pin on main already
+      # breaks this (1.125.0 against ^1.110.0, measured with vsce 3.9.2); that
+      # is tracked in SMI-7008; this rule only stops Dependabot widening it.
+      - dependency-name: '@types/vscode'
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
 
   - package-ecosystem: 'github-actions'
     directory: '/'

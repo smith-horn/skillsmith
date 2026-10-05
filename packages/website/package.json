@@ -20,7 +20,7 @@
     "build:worker": "npx wrangler deploy --dry-run --outdir dist-worker"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.114.0",
+    "@supabase/supabase-js": "2.117.2",
     "@tailwindcss/vite": "4.1.18",
     "cookie": "2.0.1",
     "sharp": "0.35.4",
@@ -33,7 +33,7 @@
     "@astrojs/rss": "4.0.19",
     "@astrojs/sitemap": "3.7.4",
     "@astrojs/vercel": "11.0.9",
-    "@axe-core/playwright": "4.11.1",
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.62.1",
     "@tailwindcss/typography": "0.5.19",
     "@types/node": "^25.9.3",
