@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.19
+
 - **Fixed**: SMI-6991 -- a corrupt database no longer ends with advice that cannot work. The
   startup failure printed one fixed troubleshooting block for every error, whose last line was
   "Set `SKILLSMITH_FORCE_WASM=true` to use the WASM SQLite fallback". That is advice about driver
@@ -53,6 +55,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   turned into a message carrying no diagnosis. Measured on both shapes before the fix. Applies to
   `apply-manifest-reconcile.{actions,helpers,verify}.ts`; no behaviour change on a well-formed
   manifest.
+
 ## v0.7.18
 
 - **Fix (critical)**: **v0.7.17 cannot be imported at all — use this version instead.** `0.7.17`
