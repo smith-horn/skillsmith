@@ -36,14 +36,17 @@
  * - **The shared primitive** — {@link readRawState} — is neither; it is the
  *   one classification both policies are built from, so the five readers it
  *   replaces keep matching the bridge's own four-way split exactly.
- * - **The recovery primitives** — {@link quarantineCorruptState} and its
+ * - **The recovery primitives** — {@link copyCorruptStateAside} and its
  *   single-call writer counterpart {@link writeEntryWithRecovery} (both
  *   defined in `state-read.quarantine.ts` and re-exported here — see that
  *   file's own top comment for why) — let a producer satisfy its own
  *   "always overwritable" contract WITHOUT losing the corrupt bytes, and
  *   without the gap between "we noticed it's corrupt" and "we did something
- *   about it" that a caller doing those as two separate steps would leave
- *   open for another process to land in.
+ *   about it" that a caller doing those as two separate JS-level calls would
+ *   leave open for another call on the SAME process to land in (see
+ *   `state-read.quarantine.ts`'s own doc comment for exactly what this does
+ *   and does not protect against across OS processes — SMI-6995 round-4
+ *   design decision D corrects an earlier over-claim here).
  *
  * ## SMI-6995 round-2 adversarial review — this file answers all 12 findings
  *
@@ -64,13 +67,61 @@
  * every caller still imports from this one path — the split exists only to
  * stay under CLAUDE.md's 500-line pre-commit gate, not a semantic boundary.
  * Findings 10 and 11 were reviewed as sound; nothing changed for them.
+ *
+ * ## SMI-6995 round-4 adversarial review — findings answered in THIS file
+ *
+ * Round 4 found 9 further issues against the round-2 fix; this file answers
+ * the three whose mechanism lives here (the other six — copy-not-move
+ * ordering, the TOCTOU-claim correction, leaked reservation slots, the
+ * reservation fd leak, and the untested rename-failure path — live in
+ * `state-read.quarantine.ts`, including a design-decision write-up at that
+ * file's top that both files' doc comments now point back to):
+ *
+ * - **Finding 4 — the size bound was bypassable.** The old `readRawState`
+ *   called `statSync(path)` and then SEPARATELY `readFileSync(path)` —
+ *   re-resolving `path` by NAME a second time. Growth, truncation, or an
+ *   outright replacement of whatever sits at `path` in between those two
+ *   calls meant the size check and the actual read could observe two
+ *   different files, defeating the bound finding 12 (round 2) added. Fixed
+ *   by opening `path` exactly ONCE: `fstatSync` and the bounded read below
+ *   both run against that SAME descriptor, which keeps referring to the
+ *   SAME inode for the rest of this call no matter what later happens to
+ *   the pathname — there is no second name resolution left to race. The fd
+ *   is always closed via a `finally`, including on every early return, so
+ *   this function cannot leak one per call (verified by its own
+ *   `/proc/self/fd`-count test, the same technique finding 6 uses).
+ * - **Finding 5 — a thrown non-`Error` with a throwing `toString` could
+ *   escape this module's own "never throws" promise.** The old
+ *   `errMessage` called `String(err)` unconditionally on anything that
+ *   wasn't an `Error`, and `String()` on an object calls that object's own
+ *   `toString`/`Symbol.toPrimitive` — which a hostile or merely buggy
+ *   caller-supplied `validate` function (see {@link readEntryResult}) could
+ *   make throw. Fixed: wrapped in its own try/catch with a fixed fallback
+ *   string, so `errMessage` itself can never be the thing that turns "the
+ *   validator misbehaved" into an uncaught exception. Exported (it was
+ *   private before) so `state-read.quarantine.ts` can reuse the same
+ *   hardened implementation instead of carrying a second copy of it.
+ * - **Finding 8 — a test pinned presentation, not behaviour.** Two tests
+ *   asserted the EXACT literal string `'state file is not a JSON object'`.
+ *   Relaxed to assert the classification plus a non-empty explanation — the
+ *   wording itself was never read by any consumer on that branch (every
+ *   caller discards `detail` once it has the `malformed`/`unreadable`
+ *   `kind`), so pinning it tested a sentence a copy-edit could break for no
+ *   behavioural reason.
+ *
+ * Finding 9 (round 4) was reviewed as SOUND — the `lstatSync`/`statSync`
+ * exception handling, the directory/symlink refusal, and
+ * {@link readStateWithClassification}'s `needsQuarantine` derivation were
+ * all correct already; nothing here changed for it.
  */
 
-import { readFileSync, statSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs'
 
 export {
-  quarantineCorruptState,
+  copyCorruptStateAside,
   writeEntryWithRecovery,
+  finalizeAtomicWrite,
+  RecoveryWriteError,
   QUARANTINE_DEST_MAX_ATTEMPTS,
 } from './state-read.quarantine.js'
 
@@ -93,29 +144,48 @@ export type StateReadResult<T> =
 
 /**
  * Hard ceiling on how large a state file {@link readRawState} will read,
- * checked via `statSync` BEFORE any `readFileSync`/`JSON.parse` call
- * (SMI-6995 finding 12 — this read runs synchronously on a `SessionStart`
- * hook path, where an unbounded read of a huge or attacker-controlled file
- * could stall the hook or exhaust memory). These files hold a handful of
- * small JSON entries keyed by repo path — a real entry is low hundreds of
- * bytes, so even a few hundred concurrent worktrees land nowhere near six
- * figures of total bytes. 1 MiB is roughly three orders of magnitude over
- * that realistic ceiling: generous enough that no legitimate state file
- * ever trips it, while still bounding the worst case.
+ * checked via `fstatSync` on an already-open descriptor BEFORE any
+ * `readSync`/`JSON.parse` call (SMI-6995 finding 12, round 2 — this read
+ * runs synchronously on a `SessionStart` hook path, where an unbounded read
+ * of a huge or attacker-controlled file could stall the hook or exhaust
+ * memory). These files hold a handful of small JSON entries keyed by repo
+ * path — a real entry is low hundreds of bytes, so even a few hundred
+ * concurrent worktrees land nowhere near six figures of total bytes. 1 MiB
+ * is roughly three orders of magnitude over that realistic ceiling:
+ * generous enough that no legitimate state file ever trips it, while still
+ * bounding the worst case.
  */
 export const MAX_STATE_FILE_BYTES = 1_048_576 // 1 MiB
 
 /**
  * The whole-file read both policies are built from. Lifted VERBATIM in
- * semantics from `ruflo-bridge-state.ts`'s private `readRawState` (now
- * deleted there in favor of this one): `ENOENT` is `missing`; any other
- * read errno is `unreadable`, carrying that errno (or the error's own
- * message when the errno is absent); a file over {@link MAX_STATE_FILE_BYTES}
- * is `unreadable` WITHOUT being read at all (finding 12); a `JSON.parse`
- * throw is `malformed`, carrying the parse error's message; a value that
- * parses but is falsy, not an object, or an array is also `malformed` — a
- * state file is always a JSON object keyed by repo path, never a bare array
- * or scalar.
+ * classification semantics from `ruflo-bridge-state.ts`'s private
+ * `readRawState` (now deleted there in favor of this one): `ENOENT` is
+ * `missing`; any other open/stat/read errno is `unreadable`, carrying that
+ * errno (or the error's own message when the errno is absent); a file over
+ * {@link MAX_STATE_FILE_BYTES} is `unreadable` WITHOUT being read at all
+ * (finding 12, round 2); a `JSON.parse` throw is `malformed`, carrying the
+ * parse error's message; a value that parses but is falsy, not an object,
+ * or an array is also `malformed` — a state file is always a JSON object
+ * keyed by repo path, never a bare array or scalar.
+ *
+ * **Single descriptor, open to close (SMI-6995 round-4 finding 4).** `path`
+ * is opened exactly once. The size check (`fstatSync`) and the bounded read
+ * below both run against that one descriptor — never a second
+ * `statSync(path)`/`readFileSync(path)` pair that re-resolves the pathname
+ * and can therefore observe a DIFFERENT file than the one just measured if
+ * anything changes what `path` points at in between. The descriptor is
+ * closed in a `finally` so every return path — classification success,
+ * every failure branch, even a `closeSync` that itself throws (swallowed;
+ * this function must never throw) — closes it exactly once.
+ *
+ * The read itself asks for at most `MAX_STATE_FILE_BYTES + 1` bytes, in a
+ * loop that keeps requesting more only while the previous `readSync` call
+ * returned a nonzero count (a single `read(2)` on a regular file is allowed
+ * to return fewer bytes than requested even when more remain) — so this
+ * function never buffers more than one byte over the limit regardless of
+ * the file's real size, and still correctly reads a file right at the
+ * boundary.
  *
  * `S extends object` (not `unknown`): every caller's state shape is a
  * `Record<string, Entry>`, and requiring `object` here is what lets the
@@ -129,50 +199,81 @@ export function readRawState<S extends object>(
 ):
   | { ok: true; state: S }
   | { ok: false; kind: 'missing' | 'malformed' | 'unreadable'; detail: string } {
-  // `statSync` first, deliberately BEFORE any read of the bytes — this is
-  // what lets the size ceiling below reject an oversized file without ever
-  // calling `readFileSync` on it (finding 12). Its own ENOENT/other-errno
-  // handling mirrors the `readFileSync` catch below exactly, because the
-  // file can legitimately not exist at this step too.
-  let size: number
+  let fd: number
   try {
-    size = statSync(path).size
+    fd = openSync(path, 'r')
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'ENOENT')
       return { ok: false, kind: 'missing', detail: 'state file does not exist' }
     return { ok: false, kind: 'unreadable', detail: code ?? errMessage(err) }
   }
-  if (size > MAX_STATE_FILE_BYTES) {
-    return {
-      ok: false,
-      kind: 'unreadable',
-      detail: `state file is ${size} bytes, over the ${MAX_STATE_FILE_BYTES}-byte limit — refusing to read without parsing (SMI-6995 finding 12)`,
+  try {
+    let size: number
+    try {
+      size = fstatSync(fd).size
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code
+      return { ok: false, kind: 'unreadable', detail: code ?? errMessage(err) }
+    }
+    if (size > MAX_STATE_FILE_BYTES) {
+      return {
+        ok: false,
+        kind: 'unreadable',
+        detail: `state file is ${size} bytes, over the ${MAX_STATE_FILE_BYTES}-byte limit — refusing to read without parsing (SMI-6995 finding 12)`,
+      }
+    }
+
+    const buf = Buffer.alloc(MAX_STATE_FILE_BYTES + 1)
+    let total = 0
+    while (total < buf.length) {
+      let n: number
+      try {
+        n = readSync(fd, buf, total, buf.length - total, total)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code
+        return { ok: false, kind: 'unreadable', detail: code ?? errMessage(err) }
+      }
+      if (n === 0) break // EOF — the file is no larger than what we already have
+      total += n
+    }
+    if (total > MAX_STATE_FILE_BYTES) {
+      // Only reachable if the file grew to fill the whole MAX+1 buffer
+      // between the fstat above and this read loop finishing — the same
+      // single-descriptor read still bounds how much we ever buffer, so
+      // this is reported the same way the upfront size check reports it.
+      return {
+        ok: false,
+        kind: 'unreadable',
+        detail: `state file grew past the ${MAX_STATE_FILE_BYTES}-byte limit between the size check and the read — refusing to read further (SMI-6995 finding 4)`,
+      }
+    }
+
+    const raw = buf.toString('utf8', 0, total)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch (err) {
+      return {
+        ok: false,
+        kind: 'malformed',
+        detail: `state file does not parse: ${errMessage(err)}`,
+      }
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, kind: 'malformed', detail: 'state file is not a JSON object' }
+    }
+    return { ok: true, state: parsed as S }
+  } finally {
+    try {
+      closeSync(fd)
+    } catch {
+      // Never let a close failure override a classification already
+      // computed above, or escape this function's own never-throws
+      // contract — the fd was opened read-only and is being discarded
+      // either way.
     }
   }
-  let raw: string
-  try {
-    raw = readFileSync(path, 'utf8')
-  } catch (err) {
-    // Re-handles ENOENT/other-errno here too: a TOCTOU window exists between
-    // the `statSync` above and this read (e.g. the file is deleted in
-    // between) — rare, but the fallback must classify it the same way the
-    // first check would have, not throw or report something unexpected.
-    const code = (err as NodeJS.ErrnoException)?.code
-    if (code === 'ENOENT')
-      return { ok: false, kind: 'missing', detail: 'state file does not exist' }
-    return { ok: false, kind: 'unreadable', detail: code ?? errMessage(err) }
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (err) {
-    return { ok: false, kind: 'malformed', detail: `state file does not parse: ${errMessage(err)}` }
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, kind: 'malformed', detail: 'state file is not a JSON object' }
-  }
-  return { ok: true, state: parsed as S }
 }
 
 // ---- Consumer API: report the failure -------------------------------------
@@ -196,7 +297,11 @@ export function readRawState<S extends object>(
  * `validate` is caller-supplied and therefore untrusted to behave: a
  * throwing validator must not take down the "never fails" promise this
  * function makes to its own callers (finding 1) — caught and reported as
- * `malformed`, naming that the validator itself threw.
+ * `malformed`, naming that the validator itself threw. `errMessage` below is
+ * what renders that thrown value into text; it is itself hardened (SMI-6995
+ * round-4 finding 5) so a validator that throws something hostile — a plain
+ * string, `null`, or an object whose own `toString` throws — still cannot
+ * escape as an uncaught exception from HERE either.
  */
 export function readEntryResult<T>(
   key: string,
@@ -231,7 +336,7 @@ export function readEntryResult<T>(
  *
  * `priorWasCorrupt` is `true` exactly when the file OR this key's own entry
  * could not be read cleanly — a malformed/unreadable whole file (every key's
- * history is at risk, not just this one — see {@link quarantineCorruptState}
+ * history is at risk, not just this one — see {@link copyCorruptStateAside}
  * for why that matters), a present entry rejected by `validate`, OR a
  * `validate` call that itself threw (finding 1). It is `false` for a
  * genuinely missing file, for a file that parses fine but simply has never
@@ -287,10 +392,11 @@ export function readEntryForUpdate<T>(
  * Never throws, matching the function it replaces — see {@link readRawState}
  * for why a corrupt read must never become an exception on this path. A
  * caller that wants to ALSO quarantine before overwriting should prefer
- * {@link writeEntryWithRecovery}, which does the read, the quarantine, the
- * merge and the atomic write as one call so another process cannot
- * interleave between them (finding 4) — use this function directly only
- * when the caller needs the classification without writing anything yet.
+ * {@link writeEntryWithRecovery}, which does the read, the copy-aside, the
+ * merge and the atomic write as one call so no OTHER code in this process
+ * can interleave between them (finding 4, round 2) — use this function
+ * directly only when the caller needs the classification without writing
+ * anything yet.
  */
 export function readStateWithClassification<S extends object>(
   path: string
@@ -314,6 +420,26 @@ export function readStateWithClassification<S extends object>(
 
 // ---- internal helpers ------------------------------------------------------
 
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+/**
+ * Renders any thrown value to text — exported (it was private before SMI-
+ * 6995 round-4 finding 5) so `state-read.quarantine.ts` can share this one
+ * hardened implementation rather than carrying a second copy.
+ *
+ * The naive version (`err instanceof Error ? err.message : String(err)`)
+ * calls `String(err)` unconditionally on anything that is not an `Error`,
+ * and `String()` on an object invokes that object's OWN `toString`/
+ * `Symbol.toPrimitive` — which a caller-supplied value (a `validate`
+ * function's thrown value, in particular) can make throw. This function
+ * promises never to throw, so that possibility is wrapped in its own
+ * try/catch with a fixed fallback string: a thrown plain string or `null`
+ * stringifies normally (`String` never throws on primitives), and only a
+ * thrown object with a hostile `toString` falls through to the fallback.
+ */
+export function errMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  try {
+    return String(err)
+  } catch {
+    return '<unprintable thrown value>'
+  }
 }

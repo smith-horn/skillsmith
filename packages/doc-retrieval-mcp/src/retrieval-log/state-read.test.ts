@@ -15,10 +15,10 @@
  * reader that returned an error for literally everything (SMI-6995 plan
  * § Verification, assertion 4; CLAUDE.md's measure-don't-reason rule).
  *
- * Quarantine- and writer-specific tests (`quarantineCorruptState`,
- * `writeEntryWithRecovery`) live in `state-read.quarantine.test.ts`,
- * matching the production split (see that module's top doc comment for why
- * it's split at all).
+ * Quarantine- and writer-specific tests (`copyCorruptStateAside`,
+ * `writeEntryWithRecovery`, `finalizeAtomicWrite`) live in
+ * `state-read.quarantine.test.ts`, matching the production split (see that
+ * module's top doc comment for why it's split at all).
  *
  * Round-2 adversarial review findings answered in this file: 1 (a throwing
  * `validate` must not escape as an exception), 3 (`readStateFailSoft` is
@@ -28,16 +28,36 @@
  * the parse-error tests now retain a live fragment of the real
  * `JSON.parse` message instead of only requiring a fixed phrase), and 12
  * (an oversized file is `unreadable` without ever being read).
+ *
+ * Round-4 adversarial review findings answered in this file:
+ *
+ * - **Finding 4** — `readRawState` reads via a SINGLE file descriptor
+ *   (open → fstat → read → close), closing it is proven (not assumed) via
+ *   a `/proc/self/fd` count across many calls, the same technique
+ *   `state-read.quarantine.test.ts` uses for finding 6 there — this is a
+ *   real regression risk the round-4 refactor itself introduced, not just
+ *   a restatement of the bug it fixes.
+ * - **Finding 5** — `errMessage` (now exported) cannot itself throw, even
+ *   when the thrown value is a plain string, `null`, or an object whose
+ *   own `toString` throws — exercised both directly and through
+ *   `readEntryResult`'s validator-throw path, the one place in this
+ *   module a genuinely hostile thrown value (not just an `Error`) can
+ *   reach it.
+ * - **Finding 8** — two tests used to pin the EXACT literal string
+ *   `'state file is not a JSON object'`. Relaxed to assert the
+ *   classification plus a non-empty explanation, since no consumer on
+ *   that branch ever reads the wording itself.
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 import {
   MAX_STATE_FILE_BYTES,
+  errMessage,
   readEntryForUpdate,
   readEntryResult,
   readRawState,
@@ -85,6 +105,27 @@ function validateTestEntry(candidate: unknown): string | null {
 /** A validator that misbehaves by throwing instead of returning an error string (finding 1). */
 function throwingValidator(): string | null {
   throw new Error('validator exploded')
+}
+
+/**
+ * Three more ways a validator can misbehave (round-4 finding 5): throwing
+ * a bare value instead of an `Error` at all. `errMessage` must render all
+ * three without itself throwing.
+ */
+function throwingStringValidator(): string | null {
+  throw 'plain string thrown by validator'
+}
+
+function throwingNullValidator(): string | null {
+  throw null
+}
+
+function throwingHostileToStringValidator(): string | null {
+  throw {
+    toString() {
+      throw new Error('toString exploded')
+    },
+  }
 }
 
 /**
@@ -144,7 +185,13 @@ describe('readRawState', () => {
     const result = readRawState<Record<string, unknown>>(path)
     expect(result.ok).toBe(false)
     expect(!result.ok && result.kind).toBe('malformed')
-    expect(!result.ok && result.detail).toBe('state file is not a JSON object')
+    // Round-4 finding 8: `detail`'s exact wording is presentation only — no
+    // consumer on the `malformed` branch reads the text itself, so pinning
+    // the literal string tested a sentence a copy-edit could break for no
+    // behavioural reason. Assert classification plus a non-empty
+    // explanation instead.
+    expect(!result.ok && typeof result.detail).toBe('string')
+    expect(!result.ok && result.detail.length > 0).toBe(true)
   })
 
   it('classifies a JSON scalar (string or number) as malformed', () => {
@@ -231,7 +278,10 @@ describe('readEntryResult', () => {
     writeFileSync(path, '[]\n')
     const result = readEntryResult<TestEntry>('key-a', path, validateTestEntry)
     expect(result.status).toBe('malformed')
-    expect(result.status === 'malformed' && result.detail).toBe('state file is not a JSON object')
+    // Round-4 finding 8 — see the matching readRawState test above for why
+    // this no longer pins the exact literal string.
+    expect(result.status === 'malformed' && typeof result.detail).toBe('string')
+    expect(result.status === 'malformed' && result.detail.length > 0).toBe(true)
   })
 
   it('returns unreadable, detail carrying EISDIR, when a directory stands where the file is expected', () => {
@@ -261,6 +311,41 @@ describe('readEntryResult', () => {
     expect(result?.status).toBe('malformed')
     expect(result?.status === 'malformed' && result.detail).toContain('validator itself threw')
     expect(result?.status === 'malformed' && result.detail).toContain('validator exploded')
+  })
+
+  it('returns malformed, without throwing, when the validator throws a plain string instead of an Error (finding 5)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
+    let result: StateReadResult<TestEntry> | undefined
+    expect(() => {
+      result = readEntryResult<TestEntry>('key-a', path, throwingStringValidator)
+    }).not.toThrow()
+    expect(result?.status).toBe('malformed')
+    expect(result?.status === 'malformed' && result.detail).toContain(
+      'plain string thrown by validator'
+    )
+  })
+
+  it('returns malformed, without throwing, when the validator throws null (finding 5)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
+    let result: StateReadResult<TestEntry> | undefined
+    expect(() => {
+      result = readEntryResult<TestEntry>('key-a', path, throwingNullValidator)
+    }).not.toThrow()
+    expect(result?.status).toBe('malformed')
+    expect(result?.status === 'malformed' && result.detail).toContain('null')
+  })
+
+  it('returns malformed, without throwing, when the validator throws an object whose own toString throws (finding 5 — the actual escape hatch this finding closes)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
+    let result: StateReadResult<TestEntry> | undefined
+    expect(() => {
+      result = readEntryResult<TestEntry>('key-a', path, throwingHostileToStringValidator)
+    }).not.toThrow()
+    expect(result?.status).toBe('malformed')
+    expect(result?.status === 'malformed' && result.detail).toContain('<unprintable thrown value>')
   })
 
   it('ok control: returns the entry for a present, valid key — proving the above are not vacuous', () => {
@@ -398,5 +483,61 @@ describe('readStateWithClassification', () => {
       detail: null,
       needsQuarantine: false,
     })
+  })
+})
+
+// ── readRawState — single-descriptor read (SMI-6995 round-4 finding 4) ──
+
+describe('readRawState — descriptor hygiene', () => {
+  it('does not leak a file descriptor per call — fstat and read share one fd, closed in a finally (finding 4)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
+    const countOpenFds = () => readdirSync('/proc/self/fd').length
+
+    // Warm up once so one-time costs don't pollute the baseline.
+    readRawState<Record<string, unknown>>(path)
+
+    const before = countOpenFds()
+    const iterations = 200
+    for (let i = 0; i < iterations; i++) {
+      readRawState<Record<string, unknown>>(path)
+    }
+    const after = countOpenFds()
+
+    // A leaking close grows the open-fd count by ~1 per call; a correct
+    // implementation grows it by ~0, modulo unrelated test-runner noise.
+    // This threshold is intentionally far below `iterations` so it cannot
+    // pass by accident — the same technique
+    // `state-read.quarantine.test.ts` uses for its own finding-6 test.
+    expect(after - before).toBeLessThan(iterations / 2)
+  })
+})
+
+// ── errMessage (SMI-6995 round-4 finding 5) ──────────────────────────────
+
+describe('errMessage', () => {
+  it('returns the message of a real Error', () => {
+    expect(errMessage(new Error('boom'))).toBe('boom')
+  })
+
+  it('stringifies a thrown plain string without throwing', () => {
+    expect(errMessage('plain string')).toBe('plain string')
+  })
+
+  it('stringifies a thrown null without throwing', () => {
+    expect(errMessage(null)).toBe('null')
+  })
+
+  it("falls back to a fixed message, without throwing, when the thrown value's own toString throws", () => {
+    const hostile = {
+      toString() {
+        throw new Error('toString exploded')
+      },
+    }
+    let result: string | undefined
+    expect(() => {
+      result = errMessage(hostile)
+    }).not.toThrow()
+    expect(result).toBe('<unprintable thrown value>')
   })
 })
