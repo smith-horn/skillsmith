@@ -31,6 +31,15 @@
  * getting this wrong for `reindex.state`).
  *
  * Spec: docs/internal/implementation/smi-6744-bridge-verdict-consumer.md.
+ *
+ * SMI-6995: the three-way file read below (`readRawState`'s own classifying
+ * logic, formerly private to this module) now lives in `state-read.ts`,
+ * made generic so the five sibling readers that used to collapse "never
+ * written" / "corrupt" / "unreadable" into the same silent null can
+ * delegate to the one implementation that got this right from the start —
+ * this module. `readEntryResult`/`readState`/`BridgeReadResult` keep their
+ * current signatures and behavior unchanged; only the read underneath them
+ * moved.
  */
 
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -95,6 +104,11 @@ export {
   type BridgeState,
 } from './ruflo-bridge-state.entry.js'
 
+// SMI-6995: the shared three-way read this module pioneered, now lifted out
+// so the five sibling readers can delegate to it too — see the file-level
+// doc comment above.
+import { readRawState, type StateReadResult } from './state-read.js'
+
 export function resolveBridgeStateDir(): string {
   return process.env.SKILLSMITH_STATE_DIR_OVERRIDE || join(homedir(), '.skillsmith')
 }
@@ -114,48 +128,29 @@ function resolveLockDirPath(): string {
 
 // ---- Reader: two-axis result, never collapsing a parse failure into "no entry" ----
 
-export type BridgeReadResult =
-  | { status: 'ok'; entry: BridgeEntry }
-  | { status: 'missing' }
-  | { status: 'malformed'; detail: string }
-  | { status: 'unreadable'; detail: string }
-
-function readRawState(
-  path: string
-):
-  | { ok: true; state: BridgeState }
-  | { ok: false; kind: 'missing' | 'malformed' | 'unreadable'; detail: string } {
-  let raw: string
-  try {
-    raw = readFileSync(path, 'utf8')
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code
-    if (code === 'ENOENT')
-      return { ok: false, kind: 'missing', detail: 'state file does not exist' }
-    return { ok: false, kind: 'unreadable', detail: code ?? errMessage(err) }
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (err) {
-    return { ok: false, kind: 'malformed', detail: `state file does not parse: ${errMessage(err)}` }
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, kind: 'malformed', detail: 'state file is not a JSON object' }
-  }
-  return { ok: true, state: parsed as BridgeState }
-}
+/**
+ * SMI-6995: an alias of the shared {@link StateReadResult}, not a
+ * reimplementation — verified exactly equivalent field-for-field (same four
+ * variants, same field names, same types) before making the switch, per
+ * this delta's own "verify before aliasing" instruction. Kept as its own
+ * named export because every caller already imports `BridgeReadResult` by
+ * name; only its definition moved.
+ */
+export type BridgeReadResult = StateReadResult<BridgeEntry>
 
 /**
  * Reader entry point. Returns a typed result on a SEPARATE axis from the
  * entry's own `verdict` field — a corrupt or unreadable state file is never
- * reported as "no entry" (A5.5.2's correction-of-record finding).
+ * reported as "no entry" (A5.5.2's correction-of-record finding). The
+ * three-way file read underneath is {@link readRawState} from
+ * `state-read.ts` (SMI-6995) — this function's own job is purely the
+ * per-entry validation on top of it, same as before the extraction.
  */
 export function readEntryResult(
   key: string,
   path: string = resolveBridgeStatePath()
 ): BridgeReadResult {
-  const raw = readRawState(path)
+  const raw = readRawState<BridgeState>(path)
   if (!raw.ok) {
     if (raw.kind === 'missing') return { status: 'missing' }
     return { status: raw.kind, detail: raw.detail }
@@ -176,7 +171,7 @@ export function readEntryResult(
 
 /** Fail-soft whole-state read, for the writer's own debounce/liveness-fold read. `{}` on any error. */
 export function readState(path: string = resolveBridgeStatePath()): BridgeState {
-  const raw = readRawState(path)
+  const raw = readRawState<BridgeState>(path)
   return raw.ok ? raw.state : {}
 }
 
@@ -407,10 +402,6 @@ export {
 } from './ruflo-bridge-state.render.js'
 
 // ---- internal helpers --------------------------------------------------
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
