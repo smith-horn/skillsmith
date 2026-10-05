@@ -74,13 +74,25 @@ export async function openCliDatabase(
     // it did, which was false: what a caller does with the refusal is the
     // caller's own business, and one of them swallows it.
     //
-    //   Most commands have no `try` around their open, so the refusal reaches
-    //   the entry point's handler, prints one sanitized line, and exits 1.
-    //   `skillsmith update` does NOT abort. Its open sits inside
-    //   `updateSkillWithOutcome`'s try, whose catch records a per-skill
-    //   failure and lets the loop continue — so on a corrupt database every
-    //   skill fails, the command reports them, and (since SMI-6961 step 6)
-    //   exits 1. It never proceeds against an empty database, which is what
+    //   There are THREE shapes, and this comment deliberately does not say how
+    //   many commands are in each — an earlier version said "aborts every
+    //   command", then "most commands have no try", and both were wrong. The
+    //   enumeration lives in `database-consumer-inventory.test.ts`, where it is
+    //   checked; a count here would only rot (SMI-6991).
+    //
+    //   (a) The open sits outside any `try`. The refusal reaches the entry
+    //       point's handler, which prints one sanitized line and exits 1.
+    //   (b) The open sits inside a `try` whose catch sanitizes and calls
+    //       `process.exit(1)` itself, so the entry-point handler never fires.
+    //       Same user-visible outcome, different mechanism.
+    //   (c) The command handles the refusal and keeps going. TWO do this, and
+    //       both are deliberate: `skillsmith update` records a per-skill
+    //       failure and continues, so on a corrupt database every skill fails
+    //       and the command exits 1 (step 6); `skillsmith list` classifies the
+    //       refusal into `updateStatus: 'unknown'` and exits 0, reporting what
+    //       it cannot determine rather than a count it cannot verify.
+    //
+    //   None of the three proceeds against an empty database, which is what
     //   § 1 actually requires, but it is not an abort.
     //
     // The cost of refusing at all was weighed against degrading `search`,

@@ -30,6 +30,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { corruptDatabaseError } from '../../src/db/corrupt-refusal.js'
+import { sqlJsCorruptionCode } from '../../src/db/drivers/sqljsDriver.corruption.js'
 
 /** A line that is an actual `mv` command, not prose mentioning one. */
 const MV_COMMAND = /^ {2}mv /m
@@ -38,6 +39,11 @@ const MV_COMMAND = /^ {2}mv /m
 const RETIRED_FALSE_CLAIM = /holds no data that cannot be rebuilt|rebuilt from the registry/
 
 const PATH = '/tmp/smi6961/skills.db'
+
+/** `remedyKind` for a code, read off the shared builder's own output. */
+function remedyKindOf(sqliteCode?: string): string {
+  return render(sqliteCode).remedyKind
+}
 
 function render(sqliteCode?: string): { message: string; remedyKind: string } {
   const error = corruptDatabaseError(PATH, 'damaged', sqliteCode) as unknown as {
@@ -128,5 +134,63 @@ describe('SMI-6961 F1: the message does not claim the data is all rebuildable', 
         "risks losing that process's writes."
     ).toMatch(RETIRED_FALSE_CLAIM)
     expect('a sync rebuilds the registry mirror').not.toMatch(RETIRED_FALSE_CLAIM)
+  })
+})
+
+/**
+ * SMI-6991: `remedyKind` is NOT driver-independent, unlike `code`.
+ *
+ * Found in the post-merge retro of PR #3008. The core CHANGELOG claimed a
+ * consumer "gets identical behaviour from either driver". The `code` half is
+ * true — it is a single constant. `remedyKind` is not, and the difference is
+ * what the user is told to do with their database.
+ *
+ * These arms pin the divergence so the documented claim is machine-checked
+ * rather than prose. When SMI-6991 closes the gap, this block goes red and
+ * must be updated deliberately — which is the point.
+ */
+describe('SMI-6991: remedyKind diverges by driver, and that is pinned', () => {
+  it('only SQLITE_CORRUPT_INDEX yields reindex — the native-only path', () => {
+    expect(remedyKindOf('SQLITE_CORRUPT_INDEX')).toBe('reindex')
+  })
+
+  // Objects rather than tuples: a mixed `[string, string] | [undefined, string]`
+  // tuple union does not narrow to a one-parameter callback, which typecheck
+  // caught even though every arm passed at runtime.
+  const wasmReachable: Array<{ code: string | undefined; why: string }> = [
+    { code: 'SQLITE_NOTADB', why: 'the WASM throw path' },
+    { code: 'SQLITE_CORRUPT', why: 'the WASM throw path' },
+    { code: undefined, why: 'the WASM quick_check path, which carries no code at all' },
+  ]
+
+  it.each(wasmReachable)('$code yields replace via $why', ({ code }) => {
+    expect(remedyKindOf(code)).toBe('replace')
+  })
+
+  it('the WASM message adapter can never produce the index code', () => {
+    // The mechanism behind the divergence, asserted directly: this function is
+    // the WASM driver's ONLY source of a sqliteCode, and it resolves exactly
+    // two messages. So no sql.js failure can reach the reindex remedy.
+    const everyResolvableMessage = ['file is not a database', 'database disk image is malformed']
+    const codes = everyResolvableMessage.map((m) => sqlJsCorruptionCode(new Error(m)))
+    expect(codes).toEqual(['SQLITE_NOTADB', 'SQLITE_CORRUPT'])
+    expect(codes).not.toContain('SQLITE_CORRUPT_INDEX')
+    // And the paired presence assertion, so this is not vacuous: the index code
+    // IS a value the shared builder understands — it is only unreachable from
+    // this driver, which is the divergence rather than a dead constant.
+    expect(remedyKindOf('SQLITE_CORRUPT_INDEX')).toBe('reindex')
+  })
+
+  it('the two remedies differ in what they cost the user', () => {
+    // Why the divergence matters rather than being a cosmetic label: one
+    // suggests a non-destructive repair, the other moves the database aside.
+    const reindex = render('SQLITE_CORRUPT_INDEX').message
+    const replace = render(undefined).message
+    expect(reindex).toContain("'REINDEX;'")
+    expect(replace).not.toContain("'REINDEX;'")
+    // Both still end in an actionable move — the SMI-6961 F2 fix — so the
+    // difference is the repair ATTEMPT, not whether advice exists at all.
+    expect(reindex).toMatch(MV_COMMAND)
+    expect(replace).toMatch(MV_COMMAND)
   })
 })

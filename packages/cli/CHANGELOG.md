@@ -30,6 +30,22 @@ All notable changes to `@skillsmith/cli` are documented here.
   data that cannot be rebuilt from the registry". That was false, and it was the sentence telling
   you there was nothing to lose.
 
+- **Docs**: SMI-6991 -- two claims in `open-database.ts` and `fatal.ts` corrected after the
+  post-merge review of SMI-6961, both about this release's own behaviour.
+
+  The opener said "most commands have no `try` around their open", which was unmeasured and pointed
+  the wrong way — several commands catch and exit themselves. It also named `update` as the sole
+  command that does not abort, when `list` is a second one. It now describes the three shapes
+  without asserting how many commands are in each; the enumeration lives in the consumer-inventory
+  test, where it is checked rather than narrated.
+
+  `fatal.ts` justified preferring `process.exitCode` by asserting `process.exit()` "can truncate a
+  multi-line message mid-write on a piped stream". That was reasoning, not measurement, and it put
+  the file in conflict with five existing `catch` blocks that print the same refusal and then call
+  `process.exit(1)`. Measured: `skillsmith info` against a corrupt database produced **identical
+  1217-byte output piped and direct, with all three `mv` lines present**. No truncation, so those
+  five sites carry no defect and the claim is withdrawn.
+
 - **Fixed** (behaviour change for scripts): SMI-6961 -- `skillsmith update` now exits **1** when any
   skill failed. It previously printed a red `Failed: N` and exited **0**, so a script wrapping the
   command read total failure as success. On a corrupt database every installed skill lands in that

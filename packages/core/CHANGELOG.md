@@ -24,7 +24,16 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-6961 / ADR-175 § 1 -- the WASM (sql.js) driver no longer renames a corrupt
   database aside and rebuilds an empty one. It now refuses with the same structured
   `CorruptDatabaseError` the native driver throws, so a consumer branching on `error.code` gets
-  identical behaviour from either driver. The old path was worse than a divergence: WASM `close()`
+  identical behaviour from either driver.
+
+  **Corrected (SMI-6991): `error.code` is identical, `remedyKind` is not.** Only the native driver
+  can produce `remedyKind: 'reindex'`, because that requires the extended code
+  `SQLITE_CORRUPT_INDEX` and the WASM driver cannot supply one — `sqlJsCorruptionCode` resolves
+  exactly two messages, and the `quick_check` path carries no code at all. Measured: native yields
+  `reindex` for an index-corrupt database while both WASM paths yield `replace`. So for the same
+  file, a native user is offered a non-destructive REINDEX and an npx user (where WASM is the
+  default driver) is told to move the database aside. Tracked in SMI-6991; until it is fixed, treat
+  `remedyKind: 'reindex'` as native-only. The old path was worse than a divergence: WASM `close()`
   skips `persist()` on a read-only handle, so the rename left the database path **gone** rather than
   replaced, and the next run opened an absent database and reported every skill up to date. Renaming
   a database another process may hold open is what SQLite's own howtocorrupt documents as undefined

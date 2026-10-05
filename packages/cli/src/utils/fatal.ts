@@ -35,11 +35,28 @@ export function renderFatal(error: unknown): string {
 /**
  * Install the handler. Call AFTER `parseAsync` is wired, before parsing.
  *
- * `process.exitCode` rather than `process.exit()`: it lets stdout and stderr
- * flush. `process.exit()` can truncate a multi-line message mid-write on a
- * piped stream, and the corruption refusal is the longest message this CLI
- * prints — truncating it would cut off the `mv` commands that are the whole
- * point of it.
+ * `process.exitCode` rather than `process.exit()`, because it does not cut the
+ * process short: anything already queued still writes, and control returns to
+ * the caller rather than ending mid-function.
+ *
+ * **An earlier version of this comment overstated the case** (SMI-6991). It
+ * asserted that `process.exit()` "can truncate a multi-line message mid-write
+ * on a piped stream" and used the corruption refusal as the example. That was
+ * reasoning, not measurement, and it put this file in conflict with five
+ * `catch` blocks that print the same refusal and then call `process.exit(1)` —
+ * `info.ts`, `install.action.ts`, `registry-install.action.ts` and
+ * `sync.action.ts` twice.
+ *
+ * Measured instead: `skillsmith info` against a corrupt database, piped through
+ * `cat` and written directly, produced **identical 1217-byte output with all
+ * three `mv` lines present** in both. So the refusal is not truncated at its
+ * current size and those five sites carry no defect. Truncation on exit is a
+ * real Node hazard for large asynchronous writes to a pipe; it is not what
+ * happens here, and the claim should not be restated without a measurement
+ * that reproduces it.
+ *
+ * `exitCode` remains the right choice for a handler — it composes rather than
+ * terminating — but that is a design preference, not a bug fix.
  */
 export function installFatalHandler(
   write: (text: string) => void = (text) => process.stderr.write(text)

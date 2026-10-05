@@ -101,7 +101,7 @@ export function corruptDatabaseError(
   // ternary. A reader who reached the fallback got no command at all. One
   // binding, so the branches cannot drift apart again (SMI-6961 review F2).
   const moveAside =
-    `This is a WAL database, so move whichever of the three files are present:\n` +
+    `A Skillsmith database can be up to three files, so move whichever are present:\n` +
     `  mv ${q(path)} ${q(dest)}\n` +
     `  mv ${q(`${path}-wal`)} ${q(`${dest}-wal`)}   # if present\n` +
     `  mv ${q(`${path}-shm`)} ${q(`${dest}-shm`)}   # if present\n`
