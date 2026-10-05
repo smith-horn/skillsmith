@@ -27,7 +27,13 @@
  * `vercel` in its owner/repo, a use of an alias or function whose definition is
  * not in the same run block, and wrappers not in the wrappers module's table
  * (`chrt`, `taskset`, `ionice`, `flock`, `unshare`, `nsenter`, `runuser`,
- * `su -c`, `script -c`, `watch`, `parallel`, `strace`, `ssh host vercel`, ...).
+ * `su -c`, `script -c`, `watch`, `parallel`, `strace`, `ssh host vercel`, ...),
+ * combined short flags that end in a value-taking flag (`sudo -Eu runner
+ * vercel`, `xargs -0I {} vercel`, `timeout -vs KILL 60 vercel`), and an alias
+ * whose name is outside the variable-name pattern (`alias deploy-site='vercel
+ * deploy'`; non-interactive bash does not expand aliases without `shopt -s
+ * expand_aliases`, so such a definition is inert in a run block unless that is
+ * set).
  *
  * Pure functions. ASCII only.
  *

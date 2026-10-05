@@ -133,13 +133,17 @@ describe('SMI-6944 round 2: content digest of the CLI closure', () => {
     expect(r.err).toContain('use-lockfile-vercel: cli-digest: VERCEL_CLI_DIGEST')
   })
 
-  it('a new nested package that would shadow a hoisted dependency changes the digest', () => {
-    const t = buildTree(root, { override: null }) // canary off: only the digest can see it
+  it('a new nested package that would shadow a hoisted dependency is refused by path', () => {
+    const t = buildTree(root, { override: null }) // canary off: only the digest step can see it
     const digest = install(t)
-    smolToml(join(t.ws, 'node_modules/vercel/node_modules/smol-toml'), '1.9.0')
+    const nested = join(t.ws, 'node_modules/vercel/node_modules/smol-toml')
+    smolToml(nested, '1.9.0')
+    // It sits at a level Node consults before the hoisted copy, so the shadow check
+    // names it (the digest would also have changed: the N line for it is new).
     const r = verify(t, digest)
     expect(r.status).not.toBe(0)
-    expect(r.err).toContain('cli-digest: the CLI closure changed')
+    expect(r.err).toContain(`but ${nested} exists`)
+    expect(r.err).toContain('use-lockfile-vercel: cli-digest')
   })
 
   it('a symlink inside the hashed tree is refused by name, not followed', () => {
@@ -203,6 +207,165 @@ describe('SMI-6944 round 2: content digest of the CLI closure', () => {
     // Control: removing the planted package restores the recorded digest.
     rmSync(planted, { recursive: true })
     expect(verify(t, digest).status).toBe(0)
+  })
+
+  // ---- file forms and absent-optional packages on a lookup path ----------------
+  /** Rewrite the fixture lockfile in place. */
+  const editLock = (t: Tree, fn: (pkgs: Record<string, Record<string, unknown>>) => void) => {
+    const p = join(t.ws, 'package-lock.json')
+    const lock = JSON.parse(readFileSync(p, 'utf-8'))
+    fn(lock.packages)
+    writeFileSync(p, JSON.stringify(lock))
+  }
+  /** `plat-x`: lockfile-optional, resolved by the lockfile, and not installed. */
+  const addAbsentOptional = (t: Tree) =>
+    editLock(t, (pkgs) => {
+      pkgs['node_modules/vercel'].optionalDependencies = { 'plat-x': '1.0.0' }
+      pkgs['node_modules/plat-x'] = { version: '1.0.0', optional: true }
+    })
+  const plantFile = (file: string, body = 'module.exports = {}\n') => {
+    mkdirSync(join(file, '..'), { recursive: true })
+    writeFileSync(file, body)
+  }
+  const expectRefused = (t: Tree, digest: string, planted: string) => {
+    const v = verify(t, digest)
+    expect(v.status).not.toBe(0)
+    expect(v.err).toContain(`but ${planted} exists`)
+    expect(v.err).toContain('use-lockfile-vercel: cli-digest')
+    const out = join(t.root, 'out-file-form')
+    writeFileSync(out, '')
+    const i = run(t, undefined, [], { GITHUB_OUTPUT: out })
+    expect(i.status).not.toBe(0)
+    expect(i.err).toContain(`but ${planted} exists`)
+    expect(readFileSync(out, 'utf-8')).toBe('')
+  }
+
+  it.each(['.js', '.json', '.node'])(
+    'a planted encoding%s file (not a directory) is refused by path, at the workspace root and above it',
+    (suffix) => {
+      for (const where of [
+        (t: Tree) => join(t.ws, `node_modules/encoding${suffix}`),
+        (t: Tree) => join(t.root, `node_modules/encoding${suffix}`),
+      ]) {
+        const t = buildTree(realpathSync(mkdtempSync(join(root, 'case-'))))
+        const digest = install(t)
+        const planted = where(t)
+        plantFile(planted)
+        expectRefused(t, digest, planted)
+        // Control: removing it restores the recorded digest.
+        rmSync(planted)
+        expect(verify(t, digest).status).toBe(0)
+      }
+    }
+  )
+
+  it('a dangling symlink named encoding.js is refused too: presence is lstat, not a followed stat', () => {
+    const t = buildTree(root)
+    const digest = install(t)
+    const planted = join(t.ws, 'node_modules/encoding.js')
+    symlinkSync(join(root, 'does-not-exist'), planted)
+    expectRefused(t, digest, planted)
+  })
+
+  it('a planted scoped @s/x.js file is refused by path for an unresolved scoped optional edge', () => {
+    const t = buildTree(root)
+    editLock(t, (pkgs) => {
+      pkgs['node_modules/@vercel/build-utils'].peerDependencies = { '@s/x': '^1.0.0' }
+      pkgs['node_modules/@vercel/build-utils'].peerDependenciesMeta = { '@s/x': { optional: true } }
+    })
+    const digest = install(t)
+    const planted = join(t.ws, 'node_modules/@s/x.js')
+    plantFile(planted)
+    expectRefused(t, digest, planted)
+    rmSync(planted)
+    expect(verify(t, digest).status).toBe(0)
+  })
+
+  it('an absent-optional package is recorded, and anything planted on its lookup path is refused', () => {
+    const t = buildTree(root)
+    addAbsentOptional(t)
+    const digest = install(t)
+    const manifest = readFileSync(join(t.temp, 'vercel-cli-digest.manifest'), 'utf-8')
+    expect(manifest.split('\n')).toContain('S node_modules/plat-x absent-optional')
+    // Control: the clean tree verifies, and the digest is stable across installs.
+    expect(verify(t, digest).status).toBe(0)
+    writeFileSync(t.ghOutput, '')
+    expect(install(t)).toBe(digest)
+    // Each of these is a lookup path for `plat-x` that is NOT the lockfile key itself,
+    // so nothing hashes it: only the path check can see it.
+    for (const [file, named] of [
+      [join(t.ws, 'node_modules/plat-x.js'), join(t.ws, 'node_modules/plat-x.js')],
+      [join(t.ws, 'node_modules/plat-x.json'), join(t.ws, 'node_modules/plat-x.json')],
+      [join(t.root, 'node_modules/plat-x/index.js'), join(t.root, 'node_modules/plat-x')],
+    ]) {
+      plantFile(file)
+      expectRefused(t, digest, named)
+      rmSync(named, { recursive: true })
+      expect(verify(t, digest).status).toBe(0)
+    }
+  })
+
+  // ---- a closure package shadowed by a file form or a nearer level --------------
+  /** An installed, hoisted closure package `name`, required by `requirer`. */
+  const addClosurePkg = (t: Tree, name: string, requirer = 'node_modules/vercel') => {
+    editLock(t, (pkgs) => {
+      const r = pkgs[requirer]
+      r.dependencies = { ...((r.dependencies as object) || {}), [name]: '1.0.0' }
+      pkgs[`node_modules/${name}`] = { version: '1.0.0' }
+    })
+    const dir = join(t.ws, 'node_modules', name)
+    plantFile(join(dir, 'index.js'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0' }))
+  }
+
+  it.each(['.js', '.json', '.node'])(
+    'a file foo%s beside the installed closure package foo/ is refused by path',
+    (suffix) => {
+      const t = buildTree(root)
+      addClosurePkg(t, 'foo')
+      const digest = install(t)
+      expect(verify(t, digest).status).toBe(0) // control: foo/ alone is recorded and verifies
+      const planted = join(t.ws, `node_modules/foo${suffix}`)
+      plantFile(planted)
+      expectRefused(t, digest, planted)
+      rmSync(planted)
+      expect(verify(t, digest).status).toBe(0)
+    }
+  )
+
+  it('a file @s/x.js beside the installed scoped closure package @s/x/ is refused by path', () => {
+    const t = buildTree(root)
+    addClosurePkg(t, '@s/x')
+    const digest = install(t)
+    const planted = join(t.ws, 'node_modules/@s/x.js')
+    plantFile(planted)
+    expectRefused(t, digest, planted)
+    rmSync(planted)
+    expect(verify(t, digest).status).toBe(0)
+  })
+
+  it('a copy at a level nearer than the package for one of its requirers is refused; one farther away is not', () => {
+    const t = buildTree(root)
+    addClosurePkg(t, 'foo', 'node_modules/@vercel/build-utils')
+    const digest = install(t)
+    // Farther than the real location (above the workspace): Node never reaches it.
+    plantFile(join(t.root, 'node_modules/foo.js'))
+    expect(verify(t, digest).status).toBe(0)
+    // Nearer for @vercel/build-utils: node_modules/@vercel/node_modules is consulted first.
+    const planted = join(t.ws, 'node_modules/@vercel/node_modules/foo')
+    plantFile(join(planted, 'index.js'))
+    expectRefused(t, digest, planted)
+  })
+
+  it('an absent-optional package that appears at its own key is hashed, so the digest changes', () => {
+    const t = buildTree(root)
+    addAbsentOptional(t)
+    const digest = install(t)
+    plantFile(join(t.ws, 'node_modules/plat-x/index.js'))
+    const v = verify(t, digest)
+    expect(v.status).not.toBe(0)
+    expect(v.err).toContain('cli-digest: the CLI closure changed')
+    expect(v.err).toContain('+ F node_modules/plat-x/index.js')
   })
 
   it('the RUNNER_TEMP manifest is diagnostic only: deleting or forging it does not change the verdict', () => {
