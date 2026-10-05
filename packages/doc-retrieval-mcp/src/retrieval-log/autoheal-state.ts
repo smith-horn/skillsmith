@@ -295,7 +295,17 @@ export function renderAutohealBanner(
   const logHint = `log: ${displayPath(opts.logPath)}`
   const reset = `rm ${displayPath(resolveAutohealStatePath())}`
 
-  if (read.status === 'missing') return ''
+  // SMI-6995 CORRECTION: `missing` is NOT silent here, and making it silent
+  // was a regression this sweep introduced and a test caught. The blanket
+  // rule "render on malformed/unreadable, stay silent on missing" was
+  // generalised from reindex-state, the only one of the three whose null
+  // branch really was `return ''`. This module's null branch always carried a
+  // real message, and that message is correct: the --print-banner CLI is
+  // invoked by the heal script at the moment it launches a heal, when no state
+  // exists yet, and "first run launched" is exactly what the user needs to see.
+  if (read.status === 'missing') {
+    return `[autoheal] first run launched — ${logHint} — ${disable}`
+  }
 
   if (read.status === 'malformed') {
     return (

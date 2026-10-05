@@ -72,10 +72,13 @@ import {
   countRecentJsonlSessions,
   extractRecentBullets,
   parseCliArgs,
+  renderInstrumentationBanner,
   renderPrimingMarkdown,
   runQuery,
   truncateBytes,
 } from '../session-priming-query.js'
+import type { ProbeResult } from '../../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
+import type { RetrievalLogOutageMarker } from '../../packages/doc-retrieval-mcp/src/retrieval-log/schema.js'
 import {
   encodeProjectSegment,
   resetProjectDirCache,
@@ -1000,5 +1003,114 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
       if (original === undefined) delete process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS
       else process.env.SKILLSMITH_RUFLO_LIVENESS_DAYS = original
     }
+  })
+})
+
+// ── SMI-6995: the outage-marker line must never claim absence for a file that
+// is PRESENT and unreadable ───────────────────────────────────────────────────
+//
+// Before this, the line was `probe.outageMarker?.ts ?? 'absent'`, so a corrupt
+// marker rendered as `- Outage marker: absent.` -- a positive claim, and the
+// opposite of the truth. Absence is the HEALTHY state for this marker, so the
+// collapse did not merely hide a warning, it asserted health. And the banner
+// only renders once `probe.stale` is already true, so the false line appeared
+// exactly when someone was diagnosing broken instrumentation and would act on
+// it. Nothing tested this function at all before SMI-6995.
+describe('renderInstrumentationBanner — outage marker line (SMI-6995)', () => {
+  const now = new Date('2026-10-05T00:00:00Z')
+  const marker: RetrievalLogOutageMarker = {
+    ts: '2026-10-04T12:00:00Z',
+    reason: 'binding_unavailable',
+    error: 'boom',
+    hint: 'run the repair script',
+  }
+
+  function probeWith(
+    read: ProbeResult['outageMarkerRead'],
+    outageMarker: RetrievalLogOutageMarker | null = null
+  ): ProbeResult {
+    return {
+      stale: true,
+      reason: 'binding_unavailable_no_marker',
+      lastRealSessionTs: null,
+      outageMarker,
+      isDockerOnHost: false,
+      outageMarkerRead: read,
+    }
+  }
+
+  /**
+   * Pulls the marker line out, asserting it exists. Without this guard every
+   * `not.toContain` below would pass against an empty banner -- an absence
+   * assertion that holds because nothing ran is the exact defect class this
+   * whole issue is about, and it would be galling to reproduce it here.
+   */
+  function markerLine(banner: string): string {
+    const line = banner.split('\n').find((l) => l.startsWith('- Outage marker:'))
+    expect(line, 'the banner must contain an outage-marker line at all').toBeDefined()
+    return line as string
+  }
+
+  it('absent says "absent" — the known-negative control, without which the rest proves nothing', () => {
+    expect(
+      markerLine(renderInstrumentationBanner(probeWith({ status: 'absent' }, null), now))
+    ).toContain('absent')
+  })
+
+  it('present names the marker timestamp', () => {
+    const line = markerLine(
+      renderInstrumentationBanner(probeWith({ status: 'present', marker }, marker), now)
+    )
+    expect(line).toContain(marker.ts)
+    expect(line).not.toMatch(/Outage marker: absent\b/)
+  })
+
+  it('MALFORMED never claims absence, and says the file is present — the regression this fix exists for', () => {
+    const line = markerLine(
+      renderInstrumentationBanner(
+        probeWith(
+          { status: 'malformed', detail: 'state file does not parse: Unexpected token' },
+          null
+        ),
+        now
+      )
+    )
+    // Presence assertions first, so the absence assertion below cannot be the
+    // only thing holding this test up.
+    expect(line.toUpperCase()).toContain('PRESENT')
+    expect(line).toContain('does not parse')
+    expect(line).not.toMatch(/Outage marker: absent\b/)
+  })
+
+  it('UNREADABLE never claims absence, and carries the errno', () => {
+    const line = markerLine(
+      renderInstrumentationBanner(probeWith({ status: 'unreadable', detail: 'EISDIR' }, null), now)
+    )
+    expect(line.toUpperCase()).toContain('PRESENT')
+    expect(line).toContain('EISDIR')
+    expect(line).not.toMatch(/Outage marker: absent\b/)
+  })
+
+  it('EXPIRED is named rather than hidden, but is still not reported as absence', () => {
+    const line = markerLine(
+      renderInstrumentationBanner(probeWith({ status: 'expired', marker }, null), now)
+    )
+    expect(line).toContain('expired')
+    expect(line).toContain(marker.ts)
+    expect(line).not.toMatch(/Outage marker: absent\b/)
+  })
+
+  it('absent and malformed render DIFFERENT lines — one execution, both directions', () => {
+    // The pre-fix bug was precisely that these two produced the same text. A
+    // test that only checks one of them in isolation cannot see that.
+    const absentLine = markerLine(
+      renderInstrumentationBanner(probeWith({ status: 'absent' }, null), now)
+    )
+    const malformedLine = markerLine(
+      renderInstrumentationBanner(probeWith({ status: 'malformed', detail: 'bad json' }, null), now)
+    )
+    expect(absentLine).not.toBe(malformedLine)
+    expect(absentLine).toContain('absent')
+    expect(malformedLine).not.toMatch(/Outage marker: absent\b/)
   })
 })

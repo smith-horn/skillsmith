@@ -17,9 +17,9 @@
 
 import { parseArgs } from 'node:util'
 import {
-  readAndAck,
+  readAndAckResult,
   recordDisconnect,
-  renderDisconnectBanner,
+  renderDisconnectBannerResult,
   type McpServerName,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
 
@@ -60,8 +60,9 @@ function main(): void {
   }
 
   if (command === 'ack') {
-    const entry = readAndAck(repoKey, server)
-    if (entry) process.stdout.write(renderDisconnectBanner(server, entry))
+    // SMI-6995: result-shaped reader; the renderer decides what is silent.
+    const read = readAndAckResult(repoKey, server)
+    process.stdout.write(renderDisconnectBannerResult(server, read))
     return
   }
 

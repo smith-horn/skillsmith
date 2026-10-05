@@ -26,6 +26,46 @@
  * for why a naive read-modify-write and a naive age-only stale-lock reclaim
  * both failed before this design.
  *
+ * ## SMI-6995 — the two-axis read, and why this module is the odd one out
+ *
+ * {@link readAndAck} collapses FOUR distinct outcomes into one `null`: no
+ * state file, a corrupt state file, a present-but-fully-acknowledged entry,
+ * and (below) a lock-acquisition timeout. For a feature whose only job is
+ * telling a developer an MCP server dropped, going quiet on a corrupt state
+ * file is the exact failure it exists to prevent — the same collapse the
+ * sibling readers (`reindex-state.ts`, `liveness-state.ts`,
+ * `autoheal-state.ts`, `ruflo-bridge-state.ts`) were fixed for earlier in
+ * this sweep, via the shared `StateReadResult`-shaped reader in
+ * `state-read.ts`. This module is LAST in that sweep and cannot simply adopt
+ * the shared reader as-is, because its reader also WRITES: {@link readAndAck}
+ * is a read-modify-write under {@link withLock} — read, decide, ack by
+ * writing `sinceAckCount` back to 0, return — not a pure read. Two rules
+ * follow, both found in adversarial review rather than in the original
+ * ticket, and both implemented in `mcp-disconnect-state.read.ts` (split out
+ * purely to stay under this repo's <500-line-per-file convention — see that
+ * file's own top comment):
+ *
+ * - **RULE 1 — a `malformed` or `unreadable` read must NEVER ack.** Acking
+ *   writes over the only evidence of the corruption. `readAndAckResult`
+ *   (in the split file) returns from inside the lock, before calling
+ *   {@link writeState}, on every non-`ok` branch — the same "return without
+ *   writing" shape {@link readAndAck} already uses for "nothing to report"
+ *   (the `if (!entry || entry.sinceAckCount <= 0) return null` line below),
+ *   so this is not a new lock-usage pattern, only a new set of branches
+ *   that take it.
+ * - **RULE 2 — a lock-acquisition timeout is a FOURTH (really fifth) axis,
+ *   and must never report as `missing`.** "Another process holds the lock"
+ *   is not "nothing has happened" — a caller that treats them alike tells
+ *   the user there is no disconnect when in truth it could not look.
+ *   `readAndAckResult` reports this as its own `lock-timeout` status, never
+ *   folded into `missing`.
+ *
+ * {@link readAndAck} itself is UNCHANGED and stays exported: other callers
+ * and tests already depend on its `| null` shape, and narrowing that is out
+ * of scope here. New banner consumers should call `readAndAckResult` /
+ * `renderDisconnectBannerResult` instead — both re-exported below from the
+ * split file, so every caller still imports from this one path.
+ *
  * Spec: docs/internal/implementation/smi-5941-mcp-live-disconnect-detection.md.
  */
 
@@ -254,7 +294,14 @@ export function readState(path: string = resolveMcpDisconnectStatePath()): McpDi
   }
 }
 
-function writeState(
+/**
+ * Exported (was private) so `mcp-disconnect-state.read.ts` can share this
+ * ONE atomic-write implementation for {@link readAndAckResult}'s ack path
+ * (SMI-6995) instead of carrying a second copy — matching the precedent
+ * `state-read.ts` set for `errMessage`/`readRawState` when it split out
+ * `state-read.quarantine.ts` for the same <500-line reason.
+ */
+export function writeState(
   state: McpDisconnectState,
   path: string = resolveMcpDisconnectStatePath()
 ): void {
@@ -264,7 +311,8 @@ function writeState(
   renameSync(tmp, path)
 }
 
-function logSkippedWrite(reason: string, now: Date = new Date()): void {
+/** Exported (was private) for the same reason as {@link writeState} above — shared with the split file. */
+export function logSkippedWrite(reason: string, now: Date = new Date()): void {
   try {
     const logPath = resolveMcpDisconnectLogPath(now)
     mkdirSync(dirname(logPath), { recursive: true })
@@ -335,6 +383,15 @@ export function recordDisconnect(
  * nothing to report, or if the lock could not be acquired (fail-soft — the
  * banner simply doesn't render this session; the next session tries again
  * with the same unacknowledged count, so nothing is lost, just delayed).
+ *
+ * **LEGACY (SMI-6995): this is the accessor that conflates FOUR outcomes**
+ * — no state file, a corrupt state file, a fully-acknowledged entry, and a
+ * lock-acquisition timeout — into the same `null`. Kept exactly as-is: other
+ * callers and tests already depend on this `| null` shape, and narrowing it
+ * is out of scope here. Point new banner consumers at `readAndAckResult`
+ * (re-exported below from `mcp-disconnect-state.read.ts`) instead, which
+ * reports all four as distinct statuses and never acks on a corrupt read
+ * (see that file's RULE 1/RULE 2 doc comments).
  */
 export function readAndAck(repoKey: string, server: McpServerName): McpDisconnectEntry | null {
   const outcome = withLock(() => {
@@ -357,6 +414,14 @@ export function readAndAck(repoKey: string, server: McpServerName): McpDisconnec
  * SessionStart banner text, or '' if there's nothing to report. Mirrors the
  * sibling modules' bold-markdown banner convention (not a GitHub [!WARNING]
  * callout — those render as literal text inside additionalContext).
+ *
+ * This renders only the `ok` (real, unacknowledged entry) case — it is
+ * called directly by legacy `readAndAck` callers after their own truthiness
+ * check, and ALSO reused internally by `renderDisconnectBannerResult`
+ * (`mcp-disconnect-state.read.ts`) for its own `ok` branch, so the entry
+ * wording stays in exactly one place. `malformed`/`unreadable`/
+ * `lock-timeout` render through that sibling instead — this function takes
+ * no non-null-entry status, so it has nothing to say about them.
  */
 export function renderDisconnectBanner(server: McpServerName, entry: McpDisconnectEntry): string {
   const count = entry.sinceAckCount > 0 ? entry.sinceAckCount : entry.totalCount
@@ -368,6 +433,23 @@ export function renderDisconnectBanner(server: McpServerName, entry: McpDisconne
     `\`/mcp\` → \`${server}\` → Reconnect. — ${disable}`
   )
 }
+
+// ── SMI-6995: two-axis (really five-status) read + ack, split out ──────────
+// Split into `mcp-disconnect-state.read.ts` to stay under this repo's
+// <500-line-per-file convention — re-exported here so every caller still
+// imports from this one path, matching the sibling state modules' split
+// convention (`state-read.ts`/`state-read.quarantine.ts`,
+// `ruflo-bridge-state.ts`/`ruflo-bridge-state.render.ts`). That file imports
+// back from here (`withLock`, `writeState`, `logSkippedWrite`, the path
+// resolvers, `renderDisconnectBanner`) — a deliberate two-way module
+// reference, same as `state-read.ts` already carries with its own
+// `quarantine` split; see this module's own doc comment for why a pure
+// one-way split cannot work here (its reader also writes).
+export {
+  readAndAckResult,
+  renderDisconnectBannerResult,
+  type McpDisconnectReadResult,
+} from './mcp-disconnect-state.read.js'
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 

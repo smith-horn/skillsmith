@@ -342,7 +342,17 @@ export function renderLivenessBanner(
   const logHint = `log: ${displayPath(opts.logPath)}`
   const repair = `repair: ./scripts/repair-host-native-deps.sh`
 
-  if (read.status === 'missing') return ''
+  // SMI-6995 CORRECTION: `missing` is NOT silent here, and making it silent
+  // was a regression this sweep introduced and a test caught. The blanket
+  // rule "render on malformed/unreadable, stay silent on missing" was
+  // generalised from reindex-state, the only one of the three whose null
+  // branch really was `return ''`. This module's null branch always carried a
+  // real message, and that message is correct: "health unknown" is
+  // already this issue's own philosophy applied -- saying "I cannot tell you"
+  // rather than saying nothing. Replacing it with silence moved BACKWARDS.
+  if (read.status === 'missing') {
+    return `**[liveness]** retrieval feed health unknown — ${logHint} — ${disable}`
+  }
 
   if (read.status === 'malformed' || read.status === 'unreadable') {
     const stateText =

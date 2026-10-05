@@ -547,7 +547,11 @@ describe('renderLivenessBanner', () => {
     // --- missing half, asserted first against a path nothing has touched yet ---
     const missingRead = readEntryResult('repo-key', path)
     expect(missingRead.status).toBe('missing')
-    expect(renderLivenessBanner(missingRead, { now, logPath })).toBe('')
+    // SMI-6995 correction: `missing` keeps this module's pre-existing
+    // "health unknown" message rather than going silent -- silence was a
+    // regression this sweep introduced.
+    const missingBanner = renderLivenessBanner(missingRead, { now, logPath })
+    expect(missingBanner).toContain('health unknown')
 
     // --- malformed half, same path, same reader ---
     writeFileSync(path, 'NOT JSON{{{', 'utf8')
@@ -555,6 +559,10 @@ describe('renderLivenessBanner', () => {
     expect(malformedRead.status).toBe('malformed')
     const banner = renderLivenessBanner(malformedRead, { now, logPath })
     expect(banner).not.toBe('')
+    // The two must be DISTINGUISHABLE -- that is the whole point of the fix,
+    // and asserting both are non-empty would not establish it.
+    expect(banner).not.toBe(missingBanner)
+    expect(banner).toContain('malformed')
     expect(banner).toContain('malformed')
     expect(banner).toContain(LIVENESS_DISABLE_VAR)
   })

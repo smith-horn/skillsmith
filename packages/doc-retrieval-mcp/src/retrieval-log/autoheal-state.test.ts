@@ -287,8 +287,12 @@ describe('renderAutohealBanner', () => {
   const logPath = '/tmp/test-autoheal.log'
 
   it('missing status → silent (empty string) — SMI-6995: "has not run yet" is the healthy steady state', () => {
+    // SMI-6995 correction: `missing` keeps this module's pre-existing
+    // message. Silence here was a regression, caught by
+    // scripts/tests/retrieval-autoheal.test.ts's --print-banner case.
     const banner = renderAutohealBanner({ status: 'missing' }, { now, logPath })
-    expect(banner).toBe('')
+    expect(banner).toContain('first run launched')
+    expect(banner).toContain(AUTOHEAL_DISABLE_VAR)
   })
 
   it('fail entry within cap → contains "failed:" + disable var, NO "reset:"', () => {
@@ -375,7 +379,7 @@ describe('renderAutohealBanner', () => {
 // returned one fixed answer for everything.
 
 describe('readEntryResult / renderAutohealBanner — malformed vs missing, same path and reader (SMI-6995)', () => {
-  it('missing is silent; the SAME path, once it holds malformed JSON, classifies malformed and renders naming it', () => {
+  it('missing and malformed render DIFFERENT lines from the SAME path and reader', () => {
     const path = makeTmpStatePath()
     const now = new Date(1_700_000_000_000)
     const logPath = '/tmp/test-autoheal.log'
@@ -383,7 +387,12 @@ describe('readEntryResult / renderAutohealBanner — malformed vs missing, same 
     // Direction 1: the file does not exist yet.
     const missingResult = readEntryResult('key-a', path)
     expect(missingResult.status).toBe('missing')
-    expect(renderAutohealBanner(missingResult, { now, logPath })).toBe('')
+    // SMI-6995 correction: `missing` is not silent in this module -- see
+    // renderAutohealBanner's own note. What matters is that the two outcomes
+    // are DISTINGUISHABLE, which is asserted below; before the fix they were
+    // byte-identical, which is the defect.
+    const missingBanner = renderAutohealBanner(missingResult, { now, logPath })
+    expect(missingBanner).toContain('first run launched')
 
     // Direction 2: the SAME path, read by the SAME function, now holds
     // malformed JSON. If the silence above came from a reader that always
@@ -394,6 +403,7 @@ describe('readEntryResult / renderAutohealBanner — malformed vs missing, same 
     const banner = renderAutohealBanner(malformedResult, { now, logPath })
     expect(banner).not.toBe('')
     expect(banner).toContain('malformed')
+    expect(banner).not.toBe(missingBanner)
   })
 })
 
