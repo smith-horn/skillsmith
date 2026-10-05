@@ -14,20 +14,35 @@
  * malformed/unreadable/missing assertion above it could pass against a
  * reader that returned an error for literally everything (SMI-6995 plan
  * § Verification, assertion 4; CLAUDE.md's measure-don't-reason rule).
+ *
+ * Quarantine- and writer-specific tests (`quarantineCorruptState`,
+ * `writeEntryWithRecovery`) live in `state-read.quarantine.test.ts`,
+ * matching the production split (see that module's top doc comment for why
+ * it's split at all).
+ *
+ * Round-2 adversarial review findings answered in this file: 1 (a throwing
+ * `validate` must not escape as an exception), 3 (`readStateFailSoft` is
+ * gone — `readStateWithClassification` replaces it), 5 (a present entry
+ * whose value is JSON `null` is `missing`, not `malformed` — the strongest
+ * uncaught mutation from round 1), 9 (assert behaviour, not presentation —
+ * the parse-error tests now retain a live fragment of the real
+ * `JSON.parse` message instead of only requiring a fixed phrase), and 12
+ * (an oversized file is `unreadable` without ever being read).
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 import {
-  quarantineCorruptState,
+  MAX_STATE_FILE_BYTES,
   readEntryForUpdate,
   readEntryResult,
   readRawState,
-  readStateFailSoft,
+  readStateWithClassification,
+  type StateReadResult,
 } from './state-read.js'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -67,20 +82,40 @@ function validateTestEntry(candidate: unknown): string | null {
   return null
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** A validator that misbehaves by throwing instead of returning an error string (finding 1). */
+function throwingValidator(): string | null {
+  throw new Error('validator exploded')
+}
+
+/**
+ * Captures the REAL `JSON.parse` error message for `raw`, live, in this
+ * runtime — so a test can assert that detail text RETAINS a fragment of
+ * it (finding 9) instead of asserting a fixed phrase a constant could also
+ * satisfy. Throws (failing the test loudly) if `raw` turns out to parse.
+ */
+function capturedJsonParseErrorMessage(raw: string): string {
+  try {
+    JSON.parse(raw)
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+  throw new Error('fixture does not actually fail to parse — test is not exercising what it claims')
 }
 
 // ── readRawState ─────────────────────────────────────────────────────────
 
 describe('readRawState', () => {
-  it('classifies a missing file as missing, with a stable detail', () => {
+  it('classifies a missing file as missing', () => {
     const path = statePath()
-    expect(readRawState<Record<string, unknown>>(path)).toEqual({
-      ok: false,
-      kind: 'missing',
-      detail: 'state file does not exist',
-    })
+    const result = readRawState<Record<string, unknown>>(path)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.kind).toBe('missing')
+    // `detail`'s exact wording is presentation only — every consumer
+    // (readEntryResult / readEntryForUpdate / readStateWithClassification)
+    // discards it on the `missing` branch, so pinning the literal string
+    // tests nothing a change to it would break (SMI-6995 finding 9).
+    expect(!result.ok && typeof result.detail).toBe('string')
+    expect(!result.ok && result.detail.length > 0).toBe(true)
   })
 
   it('classifies a directory standing where the file is expected as unreadable, detail carrying EISDIR', () => {
@@ -92,13 +127,15 @@ describe('readRawState', () => {
     expect(!result.ok && result.detail).toContain('EISDIR')
   })
 
-  it('classifies truncated JSON as malformed, detail naming the parse failure', () => {
+  it('classifies truncated JSON as malformed, detail retaining the real parser error (not a constant)', () => {
     const path = statePath()
-    writeFileSync(path, '{"a": {"b": "c')
+    const raw = '{"a": {"b": "c'
+    writeFileSync(path, raw)
+    const expectedFragment = capturedJsonParseErrorMessage(raw)
     const result = readRawState<Record<string, unknown>>(path)
     expect(result.ok).toBe(false)
     expect(!result.ok && result.kind).toBe('malformed')
-    expect(!result.ok && result.detail).toContain('does not parse')
+    expect(!result.ok && result.detail).toContain(expectedFragment)
   })
 
   it('classifies a JSON array as malformed, detail naming the not-an-object condition', () => {
@@ -135,6 +172,19 @@ describe('readRawState', () => {
   })
 })
 
+describe('readRawState — size limit (SMI-6995 finding 12)', () => {
+  it('classifies a file over MAX_STATE_FILE_BYTES as unreadable WITHOUT ever reading it, detail naming size and limit', () => {
+    const path = statePath()
+    const oversized = 'x'.repeat(MAX_STATE_FILE_BYTES + 1)
+    writeFileSync(path, oversized)
+    const result = readRawState<Record<string, unknown>>(path)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.kind).toBe('unreadable')
+    expect(!result.ok && result.detail).toContain(String(oversized.length))
+    expect(!result.ok && result.detail).toContain(String(MAX_STATE_FILE_BYTES))
+  })
+})
+
 // ── readEntryResult (consumer API) ──────────────────────────────────────
 
 describe('readEntryResult', () => {
@@ -153,12 +203,27 @@ describe('readEntryResult', () => {
     })
   })
 
+  it('returns missing — not malformed — when the key is present but its value is literally JSON null (finding 5)', () => {
+    // The strongest uncaught mutation from round 1: changing the
+    // `candidate === undefined || candidate === null` check to
+    // `candidate === undefined` alone flips this to `malformed` and every
+    // OTHER existing assertion still passed. See this suite's own
+    // red/green verification note for the mutation-kill proof.
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': null })}\n`)
+    expect(readEntryResult<TestEntry>('key-a', path, validateTestEntry)).toEqual({
+      status: 'missing',
+    })
+  })
+
   it('returns malformed, with the file-level detail, when the whole file does not parse', () => {
     const path = statePath()
-    writeFileSync(path, '{"key-a": {"foo": "b')
+    const raw = '{"key-a": {"foo": "b'
+    writeFileSync(path, raw)
+    const expectedFragment = capturedJsonParseErrorMessage(raw)
     const result = readEntryResult<TestEntry>('key-a', path, validateTestEntry)
     expect(result.status).toBe('malformed')
-    expect(result.status === 'malformed' && result.detail).toContain('does not parse')
+    expect(result.status === 'malformed' && result.detail).toContain(expectedFragment)
   })
 
   it('returns malformed, with the file-level detail, when the whole file is a JSON array', () => {
@@ -186,6 +251,18 @@ describe('readEntryResult', () => {
     })
   })
 
+  it('returns malformed, naming that the validator itself threw, rather than letting the throw escape (finding 1)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
+    let result: StateReadResult<TestEntry> | undefined
+    expect(() => {
+      result = readEntryResult<TestEntry>('key-a', path, throwingValidator)
+    }).not.toThrow()
+    expect(result?.status).toBe('malformed')
+    expect(result?.status === 'malformed' && result.detail).toContain('validator itself threw')
+    expect(result?.status === 'malformed' && result.detail).toContain('validator exploded')
+  })
+
   it('ok control: returns the entry for a present, valid key — proving the above are not vacuous', () => {
     const path = statePath()
     writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
@@ -193,33 +270,6 @@ describe('readEntryResult', () => {
       status: 'ok',
       entry: { foo: 'bar' },
     })
-  })
-})
-
-// ── readStateFailSoft (producer API) ────────────────────────────────────
-
-describe('readStateFailSoft', () => {
-  it('returns {} for a missing file', () => {
-    expect(readStateFailSoft<Record<string, unknown>>(statePath())).toEqual({})
-  })
-
-  it('returns {} for a malformed file — never throws, never reports an error', () => {
-    const path = statePath()
-    writeFileSync(path, 'not json{{{')
-    expect(readStateFailSoft<Record<string, unknown>>(path)).toEqual({})
-  })
-
-  it('returns {} for an unreadable file (directory in its place)', () => {
-    const path = statePath()
-    mkdirSync(path, { recursive: true })
-    expect(readStateFailSoft<Record<string, unknown>>(path)).toEqual({})
-  })
-
-  it('ok control: returns the real parsed state for a valid file', () => {
-    const path = statePath()
-    const state = { 'key-a': { foo: 'bar' } }
-    writeFileSync(path, `${JSON.stringify(state)}\n`)
-    expect(readStateFailSoft<Record<string, unknown>>(path)).toEqual(state)
   })
 })
 
@@ -260,6 +310,18 @@ describe('readEntryForUpdate', () => {
     })
   })
 
+  it('valid file, key present but value is literally JSON null: entry null, priorWasCorrupt FALSE (finding 5)', () => {
+    // Same mutation-sensitive axis as readEntryResult's null-value test
+    // above: nothing was ever written for this key, so there is nothing to
+    // lose — priorWasCorrupt must stay false here, not flip to true.
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': null })}\n`)
+    expect(readEntryForUpdate<TestEntry>('key-a', path, validateTestEntry)).toEqual({
+      entry: null,
+      priorWasCorrupt: false,
+    })
+  })
+
   it('valid file, key present but fails validation: entry null, priorWasCorrupt true — this key own history is lost', () => {
     const path = statePath()
     writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 42 } })}\n`)
@@ -267,6 +329,16 @@ describe('readEntryForUpdate', () => {
       entry: null,
       priorWasCorrupt: true,
     })
+  })
+
+  it('valid file, key present but validate itself throws: entry null, priorWasCorrupt true, no exception escapes (finding 1)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ 'key-a': { foo: 'bar' } })}\n`)
+    let result: { entry: TestEntry | null; priorWasCorrupt: boolean } | undefined
+    expect(() => {
+      result = readEntryForUpdate<TestEntry>('key-a', path, throwingValidator)
+    }).not.toThrow()
+    expect(result).toEqual({ entry: null, priorWasCorrupt: true })
   })
 
   it('ok control: valid file, key present and valid — entry returned, priorWasCorrupt false', () => {
@@ -279,44 +351,52 @@ describe('readEntryForUpdate', () => {
   })
 })
 
-// ── quarantineCorruptState ──────────────────────────────────────────────
+// ── readStateWithClassification (producer whole-state API — finding 3) ──
 
-describe('quarantineCorruptState', () => {
-  it('renames the file to <path>.corrupt-<ISO> and returns the new path, preserving the content', () => {
+describe('readStateWithClassification', () => {
+  it('missing: classification missing, needsQuarantine false, state {}', () => {
+    const result = readStateWithClassification<Record<string, unknown>>(statePath())
+    expect(result.classification).toBe('missing')
+    expect(result.needsQuarantine).toBe(false)
+    expect(result.state).toEqual({})
+    expect(typeof result.detail).toBe('string')
+  })
+
+  it('malformed: classification malformed, needsQuarantine TRUE, state {} — the signal readStateFailSoft used to throw away', () => {
     const path = statePath()
     writeFileSync(path, 'not json{{{')
-    const dest = quarantineCorruptState(path)
-    expect(dest).toMatch(
-      new RegExp(
-        `^${escapeRegExp(path)}\\.corrupt-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z$`
-      )
-    )
-    expect(existsSync(path)).toBe(false)
-    expect(dest !== null && readFileSync(dest, 'utf8')).toBe('not json{{{')
+    const result = readStateWithClassification<Record<string, unknown>>(path)
+    expect(result.classification).toBe('malformed')
+    expect(result.needsQuarantine).toBe(true)
+    expect(result.state).toEqual({})
+    expect(typeof result.detail).toBe('string')
   })
 
-  it('returns null, without throwing, when there is nothing to quarantine (missing path)', () => {
+  it('unreadable (directory in its place): classification unreadable, needsQuarantine TRUE, state {}', () => {
     const path = statePath()
-    let result: string | null | undefined
-    expect(() => {
-      result = quarantineCorruptState(path)
-    }).not.toThrow()
-    expect(result).toBeNull()
+    mkdirSync(path, { recursive: true })
+    const result = readStateWithClassification<Record<string, unknown>>(path)
+    expect(result.classification).toBe('unreadable')
+    expect(result.needsQuarantine).toBe(true)
+    expect(result.state).toEqual({})
   })
 
-  it('never throws even when the rename itself fails for an existing-looking path (ENAMETOOLONG) — the recovery path this runs on must not itself crash', () => {
-    // Measured (not inferred, per CLAUDE.md's measure-don't-reason rule):
-    // renameSync on a path exceeding PATH_MAX throws ENAMETOOLONG
-    // synchronously, independent of uid — confirmed live in this container
-    // before writing this test. That is a DIFFERENT failure than the
-    // missing-path case above (there, the source never existed; here, the
-    // rename call itself fails), and quarantineCorruptState's own contract
-    // is that BOTH collapse to a swallowed `null`, never a throw.
-    const longPath = `${statePath()}-${'a'.repeat(5000)}`
-    let result: string | null | undefined
-    expect(() => {
-      result = quarantineCorruptState(longPath)
-    }).not.toThrow()
-    expect(result).toBeNull()
+  it('never throws across every failure axis — matches the never-fail contract of the function it replaces', () => {
+    const path = statePath()
+    expect(() => readStateWithClassification(path)).not.toThrow()
+    mkdirSync(path, { recursive: true })
+    expect(() => readStateWithClassification(path)).not.toThrow()
+  })
+
+  it('ok control: a valid file returns classification ok, needsQuarantine false, detail null, and the real state', () => {
+    const path = statePath()
+    const state = { 'key-a': { foo: 'bar' } }
+    writeFileSync(path, `${JSON.stringify(state)}\n`)
+    expect(readStateWithClassification<Record<string, unknown>>(path)).toEqual({
+      state,
+      classification: 'ok',
+      detail: null,
+      needsQuarantine: false,
+    })
   })
 })
