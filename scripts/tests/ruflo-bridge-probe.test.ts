@@ -26,7 +26,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { isProducerPresent } from '../ruflo-bridge-probe.mjs'
+import { extractLearningCounters, isProducerPresent } from '../ruflo-bridge-probe.mjs'
 
 describe('isProducerPresent — agentdb.totalEntries arm (SMI-6967 H-A: shared isValidCount, not a second Number.isFinite copy)', () => {
   it('arms on an integer totalEntries > 0', () => {
@@ -114,5 +114,48 @@ describe('isProducerPresent — malformed top-level payload', () => {
 
   it('does NOT arm, and does not throw, on an undefined payload', () => {
     expect(isProducerPresent(undefined)).toBe(false)
+  })
+})
+
+// SMI-6985 Medium: before this seam was split out, nothing drove this exact
+// extraction from any test (confirmed: `grep -n intelligence scripts/tests/
+// *.ts packages/doc-retrieval-mcp/src/retrieval-log/*.test.ts` returned a
+// single hit, a type declaration) — the gap that let a reachable, healthy
+// payload whose `intelligence` block silently vanished go permanently
+// unreportable (ruflo-bridge-state.liveness.ts's own SMI-6985 doc comment
+// has the full mechanism).
+describe('extractLearningCounters (SMI-6985 Medium)', () => {
+  it('reads both counters when the intelligence block is present', () => {
+    expect(
+      extractLearningCounters({ intelligence: { patternsLearned: 3, trajectoriesRecorded: 5 } })
+    ).toEqual({ patternsLearned: 3, trajectoriesRecorded: 5 })
+  })
+
+  it('returns {null, null} when the intelligence block is entirely absent — the exact reported shape', () => {
+    expect(extractLearningCounters({ agentdb: {}, bridge: { status: 'connected' } })).toEqual({
+      patternsLearned: null,
+      trajectoriesRecorded: null,
+    })
+  })
+
+  it('returns {null, null} on an empty payload, without throwing', () => {
+    expect(extractLearningCounters({})).toEqual({
+      patternsLearned: null,
+      trajectoriesRecorded: null,
+    })
+  })
+
+  it('does not throw, and returns {null, null}, on a null payload', () => {
+    expect(extractLearningCounters(null)).toEqual({
+      patternsLearned: null,
+      trajectoriesRecorded: null,
+    })
+  })
+
+  it('reads a partial intelligence block (one counter present, the other absent) independently per axis', () => {
+    expect(extractLearningCounters({ intelligence: { patternsLearned: 4 } })).toEqual({
+      patternsLearned: 4,
+      trajectoriesRecorded: null,
+    })
   })
 })

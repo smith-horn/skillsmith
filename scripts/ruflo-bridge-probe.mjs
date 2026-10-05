@@ -91,6 +91,28 @@ export function isProducerPresent(payload) {
   return payload?.bridge?.status === 'connected'
 }
 
+/**
+ * SMI-6985 Medium: extraction seam for `intelligence.patternsLearned`/
+ * `.trajectoriesRecorded`, exported so a test can drive it directly against
+ * a payload shape (e.g. one with no `intelligence` block at all) without
+ * spinning up the launcher — the same seam `isProducerPresent` already is
+ * for `bridge`/`agentdb`. Raw values only (not yet validated as counts):
+ * `foldLiveness` is the one place that calls `isValidCount` on them. Before
+ * this was split out, nothing drove this exact expression from any test
+ * (confirmed: `grep -n intelligence scripts/tests/*.ts
+ * packages/doc-retrieval-mcp/src/retrieval-log/*.test.ts` returned a single
+ * hit, a type declaration). An `intelligence` block that silently vanishes
+ * upstream would still matter once a trajectory writer exists and the
+ * liveness arm can arm — see `ruflo-bridge-state.liveness.ts`'s own SMI-6985
+ * doc comment for why that follow-on is filed, not built, today.
+ */
+export function extractLearningCounters(payload) {
+  return {
+    patternsLearned: payload?.intelligence?.patternsLearned ?? null,
+    trajectoriesRecorded: payload?.intelligence?.trajectoriesRecorded ?? null,
+  }
+}
+
 // ---- Deadlines, and why these numbers ------------------------------------
 // The invariant is that this writer never terminates without having written
 // something. The hook SIGTERMs at 60 s and SIGKILLs at 65 s, and SIGKILL
@@ -308,8 +330,7 @@ async function main() {
         // side-file write is diagnostic only — never block on it
       }
       const verdict = bridgeVerdict(first.payload)
-      const patternsLearned = first.payload?.intelligence?.patternsLearned ?? null
-      const trajectoriesRecorded = first.payload?.intelligence?.trajectoriesRecorded ?? null
+      const { patternsLearned, trajectoriesRecorded } = extractLearningCounters(first.payload)
 
       let finalVerdict = verdict.verdict
       let finalReason = verdict.reason

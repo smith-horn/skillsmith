@@ -6,19 +6,26 @@
  * the main module re-exports {@link foldLiveness} so callers (and the
  * writer) still import everything from that one entry point.
  *
- * SMI-6967 H-1 rewrite (misreading correction). The owner's decision was to
- * gate the arm on a PRODUCER EXISTING, not on learning having happened — the
- * prior (H-9) implementation conflated the two onto one flag (`everLearned`),
- * which made a connected bridge with real store entries that has simply
- * never produced a pattern or trajectory permanently unreportable: exactly
- * the silent-stall shape SMI-6744 exists to catch. This fold now tracks two
- * latches that never collapse into each other:
- *   - `everProducerPresent` (NEW): gates the arm. Latches from the probe
- *     observing `bridge.status === 'connected'` and/or `agentdb.totalEntries
- *     > 0` — passed in as `producerPresentThisProbe`.
- *   - `everLearned` (unchanged latch rule, demoted role): used ONLY to word
- *     the rendered line once the arm is armed — see
- *     `ruflo-bridge-state.render.ts`'s `renderBridgeLivenessLine`.
+ * SMI-6967 H-1 rewrite (misreading correction), then reverted by SMI-6985
+ * (corrected in place rather than appended below — see
+ * `ruflo-bridge-state.render.ts`'s `renderBridgeLivenessLine` doc comment for
+ * the full history). H-1's decision was to gate the arm on a PRODUCER
+ * EXISTING rather than on learning having happened, because the prior (H-9)
+ * implementation conflated the two onto one flag (`everLearned`), making a
+ * connected bridge with real store entries that has simply never produced a
+ * pattern or trajectory permanently unreportable. SMI-6985 found that gate
+ * itself wrong: measured live, nothing in this repository calls the
+ * trajectory-capture hooks at all, so "a producer exists" is permanently
+ * true here and the H-1 gate fired perpetually, un-actionably. This fold
+ * still tracks two latches that never collapse into each other, but their
+ * roles are reversed from H-1's:
+ *   - `everLearned` (role restored): GATES the arm. Latches the first time
+ *     any probe observes a counter above zero.
+ *   - `everProducerPresent` (role retired, still folded): latches from the
+ *     probe observing `bridge.status === 'connected'` and/or
+ *     `agentdb.totalEntries > 0` — passed in as `producerPresentThisProbe` —
+ *     but no longer gates or words anything; kept in case a future consumer
+ *     needs "has a producer ever existed" as its own signal.
  * A fresh checkout with no payload at all still renders nothing: neither
  * latch is ever set from a probe that could not ask.
  *
@@ -58,6 +65,31 @@
  * (`Number.isFinite`, which wrongly accepted `0.5`) one function over. One
  * source of truth for "what counts as a valid non-negative integer read from
  * untrusted JSON" — never a second predicate that can drift from this one.
+ *
+ * SMI-6985 correction of record (owner-decided, superseding the H-1 rewrite
+ * above as the render-time GATE, corrected in place rather than appended
+ * below): `everProducerPresent` is still folded here exactly as H-1 describes
+ * — latched, never un-latched, independent of `everLearned` — but
+ * `ruflo-bridge-state.render.ts`'s `renderBridgeLivenessLine` no longer gates
+ * on it. Measured live: nothing in this repository calls the trajectory-
+ * capture hooks at all, so on a real connected bridge with a non-empty store
+ * (this checkout's actual, permanent state), `everProducerPresent` latches
+ * immediately and stays true forever while `everLearned` never does — the
+ * H-1 gate therefore fired "has never recorded a pattern or trajectory"
+ * perpetually, on a condition nobody could act on. The render layer now
+ * gates on `everLearned` instead (see that function's own doc comment for
+ * the full correction). `everProducerPresent` remains folded here, unused by
+ * the render layer today, in case a future consumer needs "has a producer
+ * ever existed" as a distinct signal from "has it ever learned anything."
+ *
+ * **Follow-on filed, not built (SMI-6985):** once a trajectory writer exists
+ * and the liveness arm can actually arm, a payload that answers but omits
+ * `intelligence.patternsLearned`/`.trajectoriesRecorded` would silently
+ * freeze `consecutiveNoLearning` forever (the "nothing observed this probe"
+ * branch below carries it forward unchanged) — the same silent-stall shape
+ * one layer out. See `renderBridgeLivenessLine`'s own doc comment for why
+ * that fix (a `consecutiveCountersUnreadable`-shaped streak) is deliberately
+ * not implemented yet: the arm it would protect cannot currently arm at all.
  */
 
 import type { BridgeEntry } from './ruflo-bridge-state.js'
