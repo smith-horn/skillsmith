@@ -4,8 +4,10 @@
  * run INSIDE that seed's directory.
  *
  * Differences from the root reconcile (audit-dependency-registry-reconcile.mjs), by design:
- * - Every unaccepted advisory fails, at any severity and any install scope. No gate audits a
- *   seed tree, so there is no production or informational escape: the root reconcile's
+ * - Every unaccepted advisory fails, at any severity and any install scope. No other blocking
+ *   gate or scheduled npm audit job evaluates the standing seed tree (Dependency Guard sees only
+ *   a PR's added or changed seed dependencies, at high or above; Dependabot alerts are
+ *   non-blocking), so there is no production or informational escape: the root reconcile's
  *   `isProdInstall` would classify all of a seed's non-dev installs as production and pass.
  * - The report must be for this seed: its `metadata.dependencies.total` must equal the seed
  *   lockfile's non-root entry count, and every affected install (`nodes`) must be a path in the
@@ -67,7 +69,7 @@ export function reconcileSeedAudit(seedKey, section, audit, seedLock) {
     if (accepted.has(key(e.id, e.pkg))) continue
     out.push(
       f(
-        `${P}: unaccepted advisory ${e.id} (${e.pkg}, ${e.severity}) is reported by npm audit for ${seedKey} and has no acceptance; no gate audits a seed tree, so every advisory needs a fix or an acceptance at any severity and scope`,
+        `${P}: unaccepted advisory ${e.id} (${e.pkg}, ${e.severity}) is reported by npm audit for ${seedKey} and has no acceptance; no other blocking gate or scheduled npm audit job evaluates the standing seed tree, so every advisory needs a fix or an acceptance at any severity and scope`,
         `Fix it with a seed override (the seed's own package.json overrides plus seeds["${seedKey}"].overrides), or add an acceptance under seeds["${seedKey}"] in ${REGISTRY_PATH}`
       )
     )
