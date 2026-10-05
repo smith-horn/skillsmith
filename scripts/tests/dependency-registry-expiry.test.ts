@@ -1,49 +1,28 @@
 /**
  * SMI-6949 review round 1 (R1-L4): .github/workflows/dependency-registry-expiry.yml.
  * Static shape (schedule, permissions, command, pinned actions) plus an EXECUTED
- * run of the workflow's own script with stub `node` and `gh`, so the dedup and
- * close-when-clean behaviour is observed, not just spelled. The script uses GNU
- * sed escapes (ubuntu runner); tests run in the Linux container.
+ * run of the workflow's own script with stub `node`, `npm` and `gh` (the harness in
+ * dependency-registry-expiry.harness.ts), so the dedup and close-when-clean behaviour
+ * is observed, not just spelled. The seed loop (SMI-6954) is tested in
+ * dependency-registry-expiry.seed.test.ts.
  */
 import { spawnSync } from 'node:child_process'
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs'
-import { builtinModules, createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { builtinModules } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const WORKFLOW = join(REPO_ROOT, '.github/workflows/dependency-registry-expiry.yml')
-const require = createRequire(import.meta.url)
-interface Step {
-  name?: string
-  uses?: string
-  run?: string
-}
-interface Doc {
-  name: string
-  on: { schedule?: Array<{ cron: string }>; workflow_dispatch?: unknown }
-  permissions: Record<string, string>
-  jobs: Record<string, { steps: Step[]; env?: Record<string, string> }>
-}
-const yaml = require('js-yaml') as { load: (t: string) => Doc }
-const doc = (): Doc => yaml.load(readFileSync(WORKFLOW, 'utf8'))
-const script = (): string => {
-  const steps = Object.values(doc().jobs)[0].steps.filter((s) =>
-    s.run?.includes('check-dependency-registry')
-  )
-  expect(steps).toHaveLength(1)
-  return steps[0].run as string
-}
+import {
+  FINDINGS_AUDIT,
+  REPO_ROOT,
+  RUNNER_BASH_ARGS,
+  WORKFLOW,
+  doc,
+  exec,
+  script,
+  scriptStep,
+  verbs,
+} from './dependency-registry-expiry.harness'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 
 describe('workflow shape', () => {
   it('exists, is ASCII only, and has a daily schedule plus workflow_dispatch', () => {
@@ -84,81 +63,6 @@ describe('executed run of the workflow script (stub node and gh)', () => {
     '⚠ Check 76: acceptance GHSA-xxxx-yyyy-zzzz (pkg, tier R2, owner someone) expires 2026-10-10 (UTC) in 7 day(s), owner someone\n'
   const FAILED =
     '✗ Check 76: acceptance GHSA-ffff-gggg-hhhh (pkg, tier R2, owner someone) expired 2026-10-01 (UTC). Re-triage.\n'
-
-  function exec(
-    nodeOut: string,
-    nodeRc: number,
-    existing = '',
-    ghFail = '',
-    audit: { out?: string; rec?: string; recRc?: number } = {}
-  ) {
-    const dir = mkdtempSync(join(tmpdir(), 'smi6949-expiry-'))
-    const bin = join(dir, 'bin')
-    mkdirSync(bin)
-    const nodeOutFile = join(dir, 'node.out')
-    const ghLog = join(dir, 'gh.log')
-    const ghBody = join(dir, 'gh.body')
-    writeFileSync(nodeOutFile, nodeOut)
-    writeFileSync(ghLog, '')
-    // The reconcile invocation is told apart by its flag; every other node call is the expiry check.
-    writeFileSync(
-      join(bin, 'node'),
-      '#!/bin/bash\nfor a in "$@"; do\n  if [ "$a" = "--reconcile-audit" ]; then\n    echo "$*" >> "$NODE_LOG"; printf \'%s\' "$STUB_REC_OUT"; exit "$STUB_REC_RC"\n  fi\ndone\ncat "$STUB_NODE_OUT"\nexit "$STUB_NODE_RC"\n'
-    )
-    writeFileSync(
-      join(bin, 'npm'),
-      '#!/bin/bash\necho "$*" >> "$NODE_LOG"\nprintf \'%s\' "$STUB_AUDIT_OUT"\n'
-    )
-    chmodSync(join(bin, 'npm'), 0o755)
-    const nodeLog = join(dir, 'node.log')
-    writeFileSync(nodeLog, '')
-    writeFileSync(
-      join(bin, 'gh'),
-      `#!/bin/bash
-echo "$*" >> "$GH_LOG"
-if [ "$1 $2" = "$STUB_GH_FAIL" ]; then echo "stub gh: $1 $2 failed" >&2; exit 1; fi
-prev=""
-for a in "$@"; do
-  if [ "$prev" = "--body-file" ]; then cp "$a" "$GH_BODY"; fi
-  prev="$a"
-done
-case "$1 $2" in
-  "issue list") printf '%s\\n' "$STUB_EXISTING" ;;
-  "issue create") echo https://github.com/o/r/issues/99 ;;
-esac
-exit 0
-`
-    )
-    chmodSync(join(bin, 'node'), 0o755)
-    chmodSync(join(bin, 'gh'), 0o755)
-    const r = spawnSync('bash', ['-c', script()], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      env: {
-        PATH: `${bin}:${process.env.PATH ?? ''}`,
-        RUNNER_TEMP: dir,
-        ISSUE_LABEL: 'dependency-registry-expiry',
-        GITHUB_SERVER_URL: 'https://github.com',
-        GITHUB_REPOSITORY: 'o/r',
-        GITHUB_RUN_ID: '123',
-        STUB_NODE_OUT: nodeOutFile,
-        STUB_NODE_RC: String(nodeRc),
-        STUB_AUDIT_OUT: audit.out ?? '{"auditReportVersion":2,"vulnerabilities":{}}',
-        STUB_REC_OUT: audit.rec ?? '',
-        STUB_REC_RC: String(audit.recRc ?? 0),
-        NODE_LOG: nodeLog,
-        STUB_EXISTING: existing,
-        STUB_GH_FAIL: ghFail,
-        GH_LOG: ghLog,
-        GH_BODY: ghBody,
-      },
-    })
-    const calls = readFileSync(ghLog, 'utf8').split('\n').filter(Boolean)
-    const body = existsSync(ghBody) ? readFileSync(ghBody, 'utf8') : ''
-    const nodeCalls = readFileSync(nodeLog, 'utf8').split('\n').filter(Boolean)
-    return { status: r.status, calls, body, stderr: r.stderr, stdout: r.stdout, nodeCalls }
-  }
-  const verbs = (calls: string[]) => calls.map((c) => c.split(' ').slice(0, 2).join(' '))
 
   it('clean run (only the standing R4 unpinned warning): no label, create, edit or close', () => {
     const r = exec(GREEN_R4, 0)
@@ -283,7 +187,9 @@ exit 0
     const r = exec(GREEN_R4, 0, '', '', { rec, recRc: 1 })
     expect(r.status).toBe(1)
     expect(verbs(r.calls)).toContain('issue create')
-    expect(r.body).toContain('Failing (every code PR fails')
+    // SMI-6954 PR-2: a root reconcile failure fails the daily job only, and the body says so
+    expect(r.body).toContain('### Failing root reconcile (fails this daily job only')
+    expect(r.body).not.toContain('every code PR fails')
     expect(r.body).toContain('unaccepted advisory GHSA-aaaa-bbbb-cccc')
   })
   it('npm audit producing no output is a ::error:: and a failing job, never a clean run', () => {
@@ -293,6 +199,32 @@ exit 0
     expect(verbs(r.calls)).toContain('issue create')
     expect(r.body).toContain('npm audit produced no JSON output')
     expect(r.nodeCalls.some((c) => c.includes('--reconcile-audit'))).toBe(false)
+  })
+  it('npm audit exiting 1 because it FOUND advisories (the normal case) still reconciles and syncs (SMI-6993)', () => {
+    const rec =
+      '\u2713 Check 76 reconcile: 1 acceptances match the npm audit report; no unaccepted advisories\n'
+    const r = exec(GREEN_R4, 0, '42', '', { out: FINDINGS_AUDIT, rc: 1, rec, recRc: 0 })
+    expect(r.status).toBe(0)
+    // presence: the script got PAST npm audit and ran the reconcile and the issue sync
+    expect(r.nodeCalls.some((c) => c.includes('--reconcile-audit'))).toBe(true)
+    expect(r.calls.some((c) => c.startsWith('issue close 42 '))).toBe(true)
+  })
+  it('the step runs under the runner default shell: no `shell:` override, so `bash -e {0}` (SMI-6993)', () => {
+    // GitHub Actions runs a `run:` step with no `shell:` as `bash -e {0}` on Linux. The script
+    // keeps -e on and captures only the statuses it decides on itself, with `|| VAR=$?`; the
+    // harness runs it with the same flags, or -e-sensitive bugs are invisible.
+    expect(scriptStep()).not.toHaveProperty('shell')
+    expect(RUNNER_BASH_ARGS).toEqual(['-e'])
+    expect(script()).not.toMatch(/^\s*set\s+(\+[a-z]*e|\+o\s+errexit)/m) // -e is never turned off
+    for (const v of ['RC', 'REC', 'SREC']) expect(script()).toContain(`|| ${v}=$?`)
+  })
+  it('an unexpected failure (the colour-stripping sed) stops the job red and never closes the issue (SMI-6993)', () => {
+    // With -e off this sed failure left $CLEAN empty, so a run with an expiring acceptance
+    // read as clean and closed the open issue. With -e on, the step stops at the sed.
+    const r = exec(GREEN_R4 + EXPIRING, 0, '42', '', {}, {}, { sedFailOn: 'check76.out' })
+    expect(r.sedFailures).toHaveLength(1) // presence: the injected failure fired
+    expect(r.status).toBe(4)
+    expect(verbs(r.calls)).not.toContain('issue close')
   })
   it('a crash with no failure line still opens the issue and says the check did not complete', () => {
     const r = exec('Error: boom\n', 2)
@@ -376,11 +308,12 @@ globalThis.Date = class extends R {
       omitPinFile?: boolean
     } = {}
   ) {
-    const dir = mkdtempSync(join(tmpdir(), 'smi6949-bare-'))
-    // The whole scripts/ tree (minus tests and any node_modules): the closure must resolve in it.
+    const dir = makeFixtureTempDir('smi6949-bare')
+    // The whole scripts/ tree (minus tests, any node_modules and any lockfile): the closure must
+    // resolve in it. A copied seed lockfile would be tracked below and need a seeds entry (SMI-6954).
     cpSync(join(REPO_ROOT, 'scripts'), join(dir, 'scripts'), {
       recursive: true,
-      filter: (src) => !/[\\/](node_modules|tests)$/.test(src),
+      filter: (src) => !/[\\/](node_modules|tests|package-lock\.json)$/.test(src),
     })
     mkdirSync(join(dir, '.github'), { recursive: true })
     writeFileSync(
@@ -401,6 +334,14 @@ globalThis.Date = class extends R {
       writeFileSync(helper, `${readFileSync(helper, 'utf8')}\n${opts.inject}\n`)
     }
     expect(existsSync(join(dir, 'node_modules'))).toBe(false)
+    // Check 76 lists tracked lockfiles with git ls-files (SMI-6954); without a repository it
+    // reports NOT EVALUATED, so the copy is a real repository and the real path is exercised.
+    for (const a of [
+      ['init', '-q'],
+      ['add', '-A'],
+    ]) {
+      expect(spawnSync('git', a, { cwd: dir, env: makeFixtureEnv() }).status).toBe(0)
+    }
     const env: Record<string, string> = { PATH: process.env.PATH ?? '' }
     if (opts.fakeNow) {
       writeFileSync(join(dir, 'fake-clock.mjs'), FAKE_CLOCK)
@@ -426,7 +367,7 @@ globalThis.Date = class extends R {
   it.each([
     // fixed clocks: the fixture acceptance (R4, expires 2027-04-01) is live under both, on any real date
     ['a fixed clock (2026-10-04)', '2026-10-04'],
-    ['a fixed clock after the 2026-11-02 expiries (2026-11-03)', '2026-11-03'],
+    ['a later fixed clock (2026-11-03)', '2026-11-03'],
   ])('loads and evaluates from a node_modules-free copy under %s', (_label, fakeNow) => {
     const r = runFromBareCopy({ fakeNow })
     expect(closureProblems(r)).toEqual([])

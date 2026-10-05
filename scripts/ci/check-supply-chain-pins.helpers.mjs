@@ -22,18 +22,22 @@
  *   - rules `workflow-vercel-action` and
  *     `workflow-vercel-indirect-dispatch` (check-supply-chain-pins.vercel-dispatch.mjs).
  *   - scanWorkflowSource(source, file, rootDeps, lockVersions) — Check 4 over one YAML source.
- *   - loadDirectDependencyNames(rootDir) — direct deps of root + every workspace.
- *   - loadLockfileVersions(rootDir) — name -> version of the root lockfile's top-level installs.
+ *   - loadDirectDependencyNames / loadLockfileVersions / ManifestReadError —
+ *     re-exported from check-supply-chain-pins.manifests.mjs, which holds the
+ *     only file reads.
  *   - NPM_CI_REGEX — predicate for "this block runs npm ci or npm install".
  *
- * Pure functions apart from `loadDirectDependencyNames`, the one file reader.
+ * Pure functions.
  *
  * @see scripts/ci/check-supply-chain-pins.mjs (calls these from auditWorkflowInstalls)
  * @see docs/internal/implementation/smi-4874-ci-pin-audit.md (Wave D rationale)
  * @see docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md
  */
-import { readFileSync, existsSync, readdirSync } from 'fs'
-import { join } from 'path'
+export {
+  ManifestReadError,
+  loadDirectDependencyNames,
+  loadLockfileVersions,
+} from './check-supply-chain-pins.manifests.mjs'
 import {
   packageCommands,
   vercelCalls,
@@ -420,57 +424,4 @@ export function scanWorkflowSource(source, file, rootDeps, lockVersions = undefi
     if (NPM_CI_REGEX.test(block.body)) npmCiByJob.set(jobKey, true)
   }
   return { findings, runBlocks: blocks.length, vercelInvocationBlocks }
-}
-
-function readManifest(path) {
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8'))
-  } catch {
-    return {}
-  }
-}
-
-/**
- * Names of every direct dependency (`dependencies` ∪ `devDependencies`) of the
- * root `package.json` and of every workspace manifest it lists.
- */
-export function loadDirectDependencyNames(rootDir) {
-  const names = new Set()
-  const add = (pkg) => {
-    for (const k of ['dependencies', 'devDependencies']) {
-      for (const n of Object.keys(pkg[k] || {})) names.add(n)
-    }
-  }
-  const root = readManifest(join(rootDir, 'package.json'))
-  add(root)
-  const ws = Array.isArray(root.workspaces) ? root.workspaces : root.workspaces?.packages || []
-  for (const pattern of ws) {
-    const dirs = []
-    if (pattern.endsWith('/*')) {
-      const base = join(rootDir, pattern.slice(0, -2))
-      if (existsSync(base)) {
-        for (const e of readdirSync(base, { withFileTypes: true })) {
-          if (e.isDirectory()) dirs.push(join(base, e.name))
-        }
-      }
-    } else {
-      dirs.push(join(rootDir, pattern))
-    }
-    for (const d of dirs) add(readManifest(join(d, 'package.json')))
-  }
-  return names
-}
-
-/**
- * name -> version for every top-level `node_modules/<name>` entry of the root
- * `package-lock.json` (empty Map when it cannot be read).
- */
-export function loadLockfileVersions(rootDir) {
-  const versions = new Map()
-  const packages = readManifest(join(rootDir, 'package-lock.json')).packages || {}
-  for (const [key, entry] of Object.entries(packages)) {
-    const m = key.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)$/)
-    if (m && entry && typeof entry.version === 'string') versions.set(m[1], entry.version)
-  }
-  return versions
 }

@@ -38,6 +38,7 @@ const run = (pkg: string, packages: Packages) => {
     registryText: JSON.stringify({ overrides: { alpha: ov }, acceptances: [acc(pkg)] }),
     lock: { lockfileVersion: 3, packages: { '': {}, ...packages } },
     today: '2026-10-03',
+    trackedLockfiles: ['package-lock.json'], // SMI-6954: no seed lockfile in these fixtures
   }) as { findings: Finding[] }
   return r.findings.filter((f) => f.severity === 'fail').map((f) => f.message)
 }

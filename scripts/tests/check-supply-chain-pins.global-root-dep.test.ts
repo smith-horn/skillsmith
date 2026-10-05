@@ -454,15 +454,18 @@ describe('SMI-6944 Test 3: every credentialed vercel call runs the lockfile bina
     }
   })
 
-  it('L1: every shim-carrying workflow that path-filters its trigger lists the script', () => {
-    const script = 'scripts/ci/use-lockfile-vercel.sh'
+  // The step runs the script AND the digest module it loads, so a change to either
+  // must trigger every workflow that carries the step (SMI-6978 M2).
+  const SHIM_FILES = ['scripts/ci/use-lockfile-vercel.sh', 'scripts/ci/vercel-cli-digest.cjs']
+
+  it('L1: every shim-carrying workflow that path-filters its trigger lists the script and the digest module', () => {
     let filtered = 0
     for (const f of realFiles.filter((x) => x.source.includes(SHIM_RUN))) {
       const on = (parseYaml(f.source) as { on?: Record<string, { paths?: string[] }> }).on ?? {}
       for (const [event, cfg] of Object.entries(on)) {
         if (cfg && Array.isArray(cfg.paths)) {
           filtered++
-          expect(cfg.paths, `${f.file} ${event}.paths`).toContain(script)
+          for (const p of SHIM_FILES) expect(cfg.paths, `${f.file} ${event}.paths`).toContain(p)
         }
       }
     }
@@ -471,5 +474,17 @@ describe('SMI-6944 Test 3: every credentialed vercel call runs the lockfile bina
       .paths
     expect(staged).toContain('packages/website/**')
     expect(filtered).toBeGreaterThanOrEqual(5)
+  })
+
+  it('L1: the skills-e2e relevance regex (its paths filter replacement) matches both files', () => {
+    const f = realFiles.find((x) => x.file === 'website-skills-e2e.yml')!
+    expect(f.source).toContain(SHIM_RUN)
+    const m = f.source.match(/grep -qE '([^']+)'/)
+    expect(m, 'website-skills-e2e.yml relevance grep').not.toBeNull()
+    const re = new RegExp(m![1])
+    for (const p of SHIM_FILES)
+      expect(re.test(p), `website-skills-e2e.yml relevance: ${p}`).toBe(true)
+    // Presence control: the regex is anchored, so a lookalike path does not match.
+    expect(re.test(`x${SHIM_FILES[1]}`)).toBe(false)
   })
 })

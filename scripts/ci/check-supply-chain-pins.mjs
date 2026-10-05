@@ -52,6 +52,7 @@ import {
   jobNameOf,
   vercelInvocations,
   NPM_CI_REGEX,
+  ManifestReadError,
 } from './check-supply-chain-pins.helpers.mjs'
 
 // Re-export helpers so tests can import them through the main module surface.
@@ -369,7 +370,18 @@ export function auditWorkflowInstalls(rootDir) {
   const wfRoot = join(rootDir, '.github', 'workflows')
   if (!existsSync(wfRoot)) return empty
 
-  const rootDeps = loadDirectDependencyNames(rootDir)
+  let rootDeps = new Set()
+  try {
+    rootDeps = loadDirectDependencyNames(rootDir)
+  } catch (e) {
+    if (!(e instanceof ManifestReadError)) throw e
+    localFindings.push({
+      file: relative(rootDir, e.path),
+      rule: 'workflow-install-manifest',
+      message: `${e.message}; the repo-dependency rule has no dependency list to check against`,
+      remediation: 'Fix the manifest so it parses as JSON; Check 4 fails closed until it does.',
+    })
+  }
   const lockVersions = loadLockfileVersions(rootDir)
   const isYml = (p) => p.endsWith('.yml') || p.endsWith('.yaml')
   const isAction = (p) => /(^|[\\/])action\.ya?ml$/.test(p)

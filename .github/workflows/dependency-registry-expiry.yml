@@ -2,14 +2,16 @@
 # PRs, so its 14-day expiry warning reaches nobody between PRs and an acceptance
 # can lapse unseen on a quiet week. This daily run re-evaluates the dependency
 # registry and keeps ONE GitHub Issue (label dependency-registry-expiry) open
-# while Check 76 reports a failure, an acceptance inside its warn window or an
-# informational production-scope advisory, and closes it only when all three are
-# absent. Standing R4 "unpinned" warnings are not an
-# expiry signal and are deliberately not listed (they would keep the issue open
-# permanently). Informational reconcile lines are listed in their own section.
-# The job exits with Check 76's own status when that failed, so a
+# while any of four conditions holds: a failure line, an acceptance inside its
+# warn window, an informational production-scope advisory, or a non-zero exit
+# with no failure line (the check crashed or did not complete). It closes the
+# issue only when all four are absent. Dedup is by the label, never the title,
+# so the title can name what the issue is about. Standing R4 "unpinned" warnings
+# are not an expiry signal and are deliberately not listed (they would keep the
+# issue open permanently). Informational reconcile lines are listed in their own
+# section. The job exits with Check 76's own status when that failed, so a
 # lapsed acceptance also shows red in Actions; when the expiry check passed it
-# exits with the reconcile's status instead. After the expiry check it reconciles the
+# exits with the first failing reconcile's status instead. After the expiry check it reconciles the
 # acceptances against `npm audit --json --package-lock-only` (scripts/
 # check-dependency-registry.mjs --reconcile-audit): an acceptance whose advisory
 # is absent, belongs to another package or has another severity is a failure.
@@ -23,6 +25,14 @@
 # advisory, which no gate enforces, is visible there. Affected installs that
 # cannot be determined fail closed. Failures are reported in the same issue. A
 # missing audit report is a failure, never a clean result.
+#
+# Seed lockfiles (SMI-6954, ADR-176 section 6): for every key that
+# `check-dependency-registry.mjs --list-seeds` prints, the same pinned-flag
+# `npm audit` runs INSIDE that seed's directory and is reconciled with
+# `--reconcile-audit <file> --seed <lockfile>`. No gate audits a seed tree, so any
+# unaccepted seed advisory fails, at any severity and install scope. A seed or
+# root reconcile failure fails this daily job only (decision 4: code PRs are not
+# blocked by it); a Check 76 failure fails every code PR. The issue body says which.
 #
 # No Docker, no `npm ci` and no `needs: docker-build`: this runs
 # scripts/check-dependency-registry.mjs, whose import closure is node builtins
@@ -66,34 +76,76 @@ jobs:
       - name: Check 76 expiry and sync the tracking issue
         run: |
           set -uo pipefail
+          # Actions runs a run: step with no shell: as `bash -e {0}`, and -e stays on: any
+          # command that fails unexpectedly (a sed, a write) stops the job red rather than
+          # letting it close the issue as clean. Only the statuses this script decides on
+          # itself are captured, each with `|| VAR=$?` (SMI-6993).
           OUT="$RUNNER_TEMP/check76.out"
           CLEAN="$RUNNER_TEMP/check76.clean"
           BODY="$RUNNER_TEMP/check76.body.md"
-          TITLE='Dependency registry: acceptances failing or expiring (Check 76)'
           AUDIT="$RUNNER_TEMP/audit.json"
+          SEED_LIST="$RUNNER_TEMP/seeds.txt"
+          AUDIT_FLAGS='--json --package-lock-only --offline=false --prefer-offline=false --registry=https://registry.npmjs.org --userconfig=/dev/null'
           FAIL_MARK=$(printf '\xe2\x9c\x97')
           INFO_MARK=$(printf '\xe2\x84\xb9')
-          node scripts/check-dependency-registry.mjs > "$OUT" 2>&1
-          RC=$?
+          RC=0
+          node scripts/check-dependency-registry.mjs > "$OUT" 2>&1 || RC=$?
           # Reconcile the acceptances against npm audit. --package-lock-only needs
           # no node_modules. npm exits non-zero when it FINDS advisories, so its
           # status is not the signal: the signal is a parseable report, which the
           # reconcile step validates. No output at all is a failure, never clean.
-          npm audit --json --package-lock-only --offline=false --prefer-offline=false \
-            --registry=https://registry.npmjs.org --userconfig=/dev/null > "$AUDIT" 2> "$RUNNER_TEMP/audit.err"
+          # shellcheck disable=SC2086 # AUDIT_FLAGS is a fixed list of separate flags
+          npm audit $AUDIT_FLAGS > "$AUDIT" 2> "$RUNNER_TEMP/audit.err" || true
           cat "$RUNNER_TEMP/audit.err" >&2
           if [ -s "$AUDIT" ]; then
-            node scripts/check-dependency-registry.mjs --reconcile-audit "$AUDIT" >> "$OUT" 2>&1
-            REC=$?
+            REC=0
+            node scripts/check-dependency-registry.mjs --reconcile-audit "$AUDIT" >> "$OUT" 2>&1 || REC=$?
           else
             echo "::error::npm audit produced no JSON output; the acceptances could not be reconciled"
             printf '%s Check 76 reconcile: npm audit produced no JSON output\n' "$FAIL_MARK" >> "$OUT"
             REC=1
           fi
           if [ "$RC" -eq 0 ] && [ "$REC" -ne 0 ]; then RC="$REC"; fi
+          # Seed lockfiles (SMI-6954): audit each inside its own directory, so npm
+          # resolves that directory as the project root, and reconcile with --seed.
+          # Seed keys cannot contain control characters (Check 76 enforces it), so one per line is safe.
+          # Failed seed paths, one per line, so a path with whitespace stays one path.
+          SEEDS_FAILED="$RUNNER_TEMP/seeds-failed.txt"
+          : > "$SEEDS_FAILED"
+          # Single-quote a value for the shell commands printed into the issue body.
+          shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+          if node scripts/check-dependency-registry.mjs --list-seeds > "$SEED_LIST" 2>> "$OUT"; then
+            N=0
+            while IFS= read -r LF; do
+              [ -n "$LF" ] || continue
+              N=$((N + 1))
+              SAUDIT="$RUNNER_TEMP/audit-seed-$N.json"
+              # shellcheck disable=SC2086
+              (cd "$(dirname "$LF")" && npm audit $AUDIT_FLAGS) > "$SAUDIT" 2> "$RUNNER_TEMP/audit-seed-$N.err" || true
+              cat "$RUNNER_TEMP/audit-seed-$N.err" >&2
+              if [ -s "$SAUDIT" ]; then
+                SREC=0
+                node scripts/check-dependency-registry.mjs --reconcile-audit "$SAUDIT" --seed "$LF" >> "$OUT" 2>&1 || SREC=$?
+              else
+                echo "::error::npm audit produced no JSON output for $LF; its seed acceptances could not be reconciled"
+                printf '%s Check 76 reconcile [%s]: npm audit produced no JSON output\n' "$FAIL_MARK" "$LF" >> "$OUT"
+                SREC=1
+              fi
+              if [ "$SREC" -ne 0 ]; then printf '%s\n' "$LF" >> "$SEEDS_FAILED"; fi
+              if [ "$RC" -eq 0 ] && [ "$SREC" -ne 0 ]; then RC="$SREC"; fi
+            done < "$SEED_LIST"
+          else
+            printf '%s Check 76 reconcile: --list-seeds failed, so no seed lockfile was reconciled\n' "$FAIL_MARK" >> "$OUT"
+            if [ "$RC" -eq 0 ]; then RC=1; fi
+          fi
           cat "$OUT"
           sed -e 's/\x1b\[[0-9;]*m//g' "$OUT" > "$CLEAN"
           FAILS=$(grep -aF "$FAIL_MARK" "$CLEAN" | grep -a 'Check 76' || true)
+          # Split by what fails: Check 76 itself fails every code PR; a reconcile
+          # failure (root, or a seed's, labelled "reconcile [<lockfile>]") fails this job only.
+          CHECK_FAILS=$(printf '%s\n' "$FAILS" | grep -av 'Check 76 reconcile' || true)
+          SEED_FAILS=$(printf '%s\n' "$FAILS" | grep -aF 'Check 76 reconcile [' || true)
+          ROOT_FAILS=$(printf '%s\n' "$FAILS" | grep -a 'Check 76 reconcile' | grep -avF 'Check 76 reconcile [' || true)
           INFOS=$(grep -aF "$INFO_MARK" "$CLEAN" | grep -a 'Check 76' || true)
           EXPIRING=$(grep -a '^::warning file=.github/dependency-registry.json::' "$CLEAN" | sed -e 's/^::warning file=[^:]*:://' || true)
           # A failed lookup must not read as "no open issue" (that would file a duplicate).
@@ -102,28 +154,49 @@ jobs:
             exit 1
           fi
           if [ -n "$FAILS" ] || [ -n "$EXPIRING" ] || [ -n "$INFOS" ] || [ "$RC" -ne 0 ]; then
+            if [ -n "$FAILS" ] || [ "$RC" -ne 0 ]; then
+              TITLE='Dependency registry (Check 76): checks failing'
+            elif [ -n "$EXPIRING" ]; then
+              TITLE='Dependency registry (Check 76): acceptances expiring'
+            else
+              TITLE='Dependency registry (Check 76): informational advisories'
+            fi
             {
               printf 'The scheduled dependency-registry check (audit:standards Check 76) needs attention.\n\n'
-              if [ -n "$FAILS" ]; then
+              if [ -n "$CHECK_FAILS" ]; then
                 printf '### Failing (every code PR fails until this is fixed)\n\n'
-                printf '%s\n' "$FAILS" | sed -e 's/^/- /'
+                printf '%s\n' "$CHECK_FAILS" | sed -e 's/^/- /'
+                printf '\nRe-triage in .github/dependency-registry.json (see .claude/development/ci-reference.md, npm Overrides): renew within the tier ceiling or delete the entry.\n\n'
+              fi
+              if [ -n "$ROOT_FAILS" ]; then
+                printf '### Failing root reconcile (fails this daily job only; code PRs are not blocked)\n\n'
+                printf '%s\n' "$ROOT_FAILS" | sed -e 's/^/- /'
+                printf '\nReproduce: npm audit %s > A.json, then node scripts/check-dependency-registry.mjs --reconcile-audit A.json.\n\n' "$AUDIT_FLAGS"
+              fi
+              if [ -n "$SEED_FAILS" ]; then
+                printf '### Failing seed reconcile (fails this daily job only; code PRs are not blocked):\n\n'
+                printf '%s\n' "$SEED_FAILS" | sed -e 's/^/- /'
                 printf '\n'
+                while IFS= read -r LF; do
+                  [ -n "$LF" ] || continue
+                  printf 'Reproduce %s: (cd %s && npm audit %s) > A.json, then node scripts/check-dependency-registry.mjs --reconcile-audit A.json --seed %s\n' "$(shq "$LF")" "$(shq "$(dirname "$LF")")" "$AUDIT_FLAGS" "$(shq "$LF")"
+                done < "$SEEDS_FAILED"
+                printf 'Fix with a seed override or add an acceptance under seeds[...] (tier R3, or R4 with pinnedBy); see .claude/development/ci-reference.md, Operating the seed section.\n\n'
               fi
               if [ -n "$EXPIRING" ]; then
                 printf '### Expiring within 14 days (UTC)\n\n'
                 printf '%s\n' "$EXPIRING" | sed -e 's/^/- /'
-                printf '\n'
+                printf '\nRe-triage in .github/dependency-registry.json before expiry: renew within the tier ceiling or delete the entry.\n\n'
               fi
               if [ -n "$INFOS" ]; then
                 printf '### Informational (production scope, below or outside the registry)\n\n'
                 printf '%s\n' "$INFOS" | sed -e 's/^/- /'
-                printf '\n'
+                printf '\nThese production-scope advisories are outside the registry and no job fails on them; the production audit gate fails only at high or above. Fix them when a fixed version exists (see .claude/development/ci-reference.md, When the production audit gate blocks on an advisory).\n\n'
               fi
               if [ "$RC" -ne 0 ] && [ -z "$FAILS" ]; then
                 printf '### The check did not complete (exit %s)\n\nSee the run log.\n\n' "$RC"
               fi
               printf 'Run: %s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-              printf 'Re-triage in .github/dependency-registry.json (see .claude/development/ci-reference.md): renew within the tier ceiling or delete the entry.\n'
             } > "$BODY"
             gh label create "$ISSUE_LABEL" --color d93f0b --force > /dev/null 2>&1 || true
             if [ -n "$EXISTING" ]; then

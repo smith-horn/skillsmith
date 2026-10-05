@@ -36,6 +36,9 @@ describe('SMI-3985: check-supply-chain-pins — run-block installs (SMI-4874)', 
 
   beforeEach(() => {
     tmp = makeFixtureTempDir('scpin')
+    // Check 4 fails closed on an unreadable root package.json (SMI-6978), so the
+    // fixture repo has one, with no dependencies.
+    writeFileSync(join(tmp, 'package.json'), '{}')
   })
 
   afterEach(() => {

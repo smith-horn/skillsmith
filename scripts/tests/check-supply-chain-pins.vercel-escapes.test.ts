@@ -8,7 +8,9 @@
  *
  * @see docs/internal/implementation/smi-6944-vercel-cli-from-lockfile.md
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -134,6 +136,46 @@ describe('SMI-6944 review round 1: Check 4 escapes', () => {
     ]
     it.each(clean)('presence control, not flagged: %s', (_name, body, ci) => {
       expect(rulesFor(body, ci)).not.toContain(ROOT_DEP)
+    })
+  })
+
+  describe('SMI-6978 L4: an unreadable manifest fails closed', () => {
+    const MANIFEST = 'workflow-install-manifest'
+    let tmp = ''
+    beforeEach(() => {
+      tmp = realpathSync(mkdtempSync(join(tmpdir(), 'scpin-manifest-')))
+      mkdirSync(join(tmp, '.github', 'workflows'), { recursive: true })
+      writeFileSync(join(tmp, '.github', 'workflows', 'w.yml'), wf('npm i -g vercel@52.2.0', true))
+    })
+    afterEach(() => rmSync(tmp, { recursive: true, force: true }))
+    const manifestFindings = () =>
+      auditWorkflowInstalls(tmp).findings.filter((f) => f.rule === MANIFEST)
+
+    it.each([
+      ['an unparseable', '{ not json'],
+      ['a missing', null],
+    ])('%s root package.json is a Check 4 failure naming the file', (_n, content) => {
+      if (content !== null) writeFileSync(join(tmp, 'package.json'), content)
+      const found = manifestFindings()
+      expect(found).toHaveLength(1)
+      expect(found[0].file).toBe('package.json')
+      expect(found[0].message).toContain(join(tmp, 'package.json'))
+    })
+
+    it('an unparseable workspace manifest is named; a workspace dir without one is skipped', () => {
+      writeFileSync(join(tmp, 'package.json'), '{"workspaces":["packages/*"]}')
+      mkdirSync(join(tmp, 'packages', 'broken'), { recursive: true })
+      mkdirSync(join(tmp, 'packages', 'not-a-workspace'), { recursive: true })
+      writeFileSync(join(tmp, 'packages', 'broken', 'package.json'), '{')
+      const found = manifestFindings()
+      expect(found.map((f) => f.file)).toEqual([join('packages', 'broken', 'package.json')])
+    })
+
+    it('control: a readable package.json yields no manifest finding and feeds the dependency rule', () => {
+      writeFileSync(join(tmp, 'package.json'), '{"devDependencies":{"vercel":"52.2.0"}}')
+      const r = auditWorkflowInstalls(tmp)
+      expect(r.findings.filter((f) => f.rule === MANIFEST)).toEqual([])
+      expect(r.findings.map((f) => f.rule)).toContain(ROOT_DEP)
     })
   })
 

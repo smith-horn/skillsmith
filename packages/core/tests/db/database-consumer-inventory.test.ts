@@ -126,21 +126,30 @@ function inventory(root: string): Record<string, number> {
  */
 const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> = {
   // --- The wrappers every other caller goes through ---
-  // open-database.ts's read-only branch rethrows cleanly. Its read-write branch
-  // still feeds the refusal to a substring matcher and renames the database
-  // aside: ADR-175 § 1 forbids that and defers removal to PR-2. THE ONE KNOWN
-  // OPEN WINDOW on the native driver.
+  // Both of open-database.ts's branches now rethrow untouched. SMI-6961 deleted
+  // the read-write repair path — the substring matcher, the rename of the main
+  // file, and the rebuild — which is why this count dropped by one: the repair
+  // branch's own `createDatabaseAsync` is gone. No open window remains here.
   'packages/cli/src/utils/open-database.ts': {
-    sites: 4,
-    note: 'wrapper; read-write path still destructive (PR-2)',
+    sites: 3,
+    note: 'wrapper; both branches rethrow untouched',
   },
   'packages/core/src/db/createDatabase.ts': { sites: 2, note: 'factory; selects native or WASM' },
   'packages/core/src/db/schema.ts': { sites: 3, note: 'factory; legacy + async variants' },
 
   // --- CLI commands, all read-write through openCliDatabase ---
-  // Each inherits the wrapper's behaviour; none handles the refusal itself.
-  // This is the set a PR-2 rethrow flips from "rebuilt empty, command
-  // proceeds" to "command aborts", which is why it is enumerated here.
+  // SMI-6961's rethrow flipped this whole set from "rebuilt empty, command
+  // proceeds" to "no caller gets a repaired database", by owner decision,
+  // including `search`, `info` and `remove`, which could each have degraded to
+  // a remote or filesystem path instead. That is why the set is enumerated here
+  // rather than summarised: the cost is per-command.
+  //
+  // What this header must NOT say — and twice did — is that every command
+  // "aborts" or that "none handles the refusal itself". `manage.update.ts` is
+  // in this very list and does both: it catches per skill and continues. The
+  // note on its own entry below says so. Two surfaces in one file disagreeing
+  // is the exact defect this file keeps accruing, so: the uniform property is
+  // about REPAIR, not about control flow.
   'packages/cli/src/commands/audit-sources.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/audit.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/import-local.ts': { sites: 2, note: 'read-write; wrapper' },
@@ -149,9 +158,19 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   'packages/cli/src/commands/install.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.update.helpers.ts': { sites: 1, note: 'read-write; wrapper' },
+  // `update` does not abort on a refusal the way every other command does: its
+  // `getSkillDiff` call sits inside `updateSkillWithOutcome`'s try, whose catch
+  // converts the refusal into a per-skill `failed` outcome and lets the loop
+  // continue. On a corrupt database that means EVERY skill fails.
+  //
+  // `failed > 0` now sets `process.exitCode = 1` (SMI-6961 step 6), so the
+  // condition is no longer invisible to a script. What remains is display only:
+  // the catch prints `sanitizeError(error)` — the whole multi-line remedy —
+  // once PER SKILL, so N installed skills produce N copies. Tracked as
+  // SMI-6982, filed Low; it is cosmetic, not data loss and not a wrong exit.
   'packages/cli/src/commands/manage.update.ts': {
     sites: 1,
-    note: 'read-write; getSkillDiff, the open window',
+    note: 'read-write; per-skill failure, exits 1; remedy repeats (SMI-6982)',
   },
   'packages/cli/src/commands/registry-install.action.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/search.action.ts': { sites: 2, note: 'read-write; wrapper' },
@@ -168,8 +187,9 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   },
 
   // --- MCP server ---
-  // Confirmed to contain no isCorruptionError/backupCorruptDbFile, so it has
-  // no destructive branch to converge; the refusal propagates to startup.
+  // Never had a destructive branch to converge — the refusal propagates to
+  // startup. (It was confirmed to call neither of the two SMI-4484 helpers,
+  // which no longer exist anywhere: SMI-6961 step 4 deleted them outright.)
   'packages/mcp-server/src/context.async.ts': {
     sites: 2,
     note: 'propagates; no destructive branch',

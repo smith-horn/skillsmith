@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import * as reg from '../audit-dependency-registry-helpers.mjs'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
 // @ts-expect-error - .mjs helper has no typings
 import { scanDuplicateJsonKeys } from '../audit-dependency-registry-json.mjs'
 
@@ -66,6 +67,7 @@ function evalFx(fx: Fx = {}) {
     pkg: fx.pkg ?? { overrides: { alpha: '^1.0.0' } },
     registryText,
     lock: fx.lock ?? lockWith('pkgone'),
+    trackedLockfiles: ['package-lock.json'], // SMI-6954: no seed lockfile in these fixtures
     today: fx.today ?? TODAY,
     exists: fx.exists ?? (() => true),
   }) as {
@@ -406,21 +408,41 @@ describe('GitHub Actions visibility (H4)', () => {
 
 describe('Check 76 against the real repo files (T19, T21)', () => {
   const inputs = () => readDependencyRegistryInputs(REPO_ROOT)
+  type Seeds = Record<string, { overrides: object; acceptances: Array<{ accepted: string }> }>
   const todayFromRegistry = () => {
     const parsed = JSON.parse(inputs().registryText as string) as {
       acceptances: Array<{ accepted: string }>
+      seeds?: Seeds
     }
-    return parsed.acceptances
+    const seedAcceptances = Object.values(parsed.seeds ?? {}).flatMap((s) => s.acceptances)
+    return [...parsed.acceptances, ...seedAcceptances]
       .map((a) => a.accepted)
       .sort()
       .pop() as string
   }
+  // SMI-6954: Check 76 lists tracked lockfiles with git ls-files, and falls back to a file scan
+  // where git cannot run (a worktree dev container's .git names an unmounted host path). Either
+  // way the real tree must enumerate exactly the root and the seed lockfile, and these tests run
+  // in every environment; the source is logged so a run shows which one served it.
+  const enumerated = () => {
+    const i = inputs()
+    console.log(
+      `check76 real-tree lockfiles: source=${i.lockfileSource} ${JSON.stringify(i.trackedLockfiles)}`
+    )
+    expect(['git', 'scan']).toContain(i.lockfileSource)
+    const parsed = JSON.parse(i.registryText as string) as { seeds?: Seeds }
+    expect([...i.trackedLockfiles].sort()).toEqual(
+      ['package-lock.json', ...Object.keys(parsed.seeds ?? {})].sort()
+    )
+  }
 
   it('T19 zero fails; warns are exactly the tracking-only R4 entries; examined counts equal the registry own counts', () => {
+    enumerated()
     const i = inputs()
     const parsed = JSON.parse(i.registryText as string) as {
       overrides: object
       acceptances: Array<Record<string, unknown>>
+      seeds?: Seeds
     }
     const r = evaluateDependencyRegistry({ ...i, today: todayFromRegistry() }) as ReturnType<
       typeof evalFx
@@ -433,6 +455,14 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
     expect(r.examined.overrides).toBeGreaterThan(0)
     expect(r.examined.acceptances).toBeGreaterThan(0)
     expect(r.examined.overrideLeaves).toBe(r.examined.overrides)
+    // SMI-6954: every seed section was examined, and the real tree has at least one
+    const seeds = Object.values(parsed.seeds ?? {})
+    expect(r.examined.seedSections).toBe(seeds.length)
+    expect(r.examined.seedSections).toBeGreaterThan(0)
+    expect(r.examined.seedOverrides).toBe(
+      seeds.reduce((n, s) => n + Object.keys(s.overrides).length, 0)
+    )
+    expect(r.examined.seedAcceptances).toBe(seeds.reduce((n, s) => n + s.acceptances.length, 0))
     const expected = parsed.acceptances
       .filter((a) => a.tier === 'R4' && a.tracking && !a.pinnedBy)
       .map((a) => a.advisory as string)
@@ -444,6 +474,7 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
   })
 
   it('T19 control: an empty registry examines nothing, which the count assertion distinguishes', () => {
+    enumerated()
     const i = inputs()
     const r = evaluateDependencyRegistry({
       ...i,
@@ -452,9 +483,14 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
     }) as ReturnType<typeof evalFx>
     expect(r.examined.overrides).toBe(0)
     expect(fails(r).length).toBeGreaterThan(0) // every real override is now "missing"
+    // and the tracked seed lockfile now has no seeds entry (SMI-6954 completeness, real tree)
+    expect(fails(r).map((f) => f.message)).toContainEqual(
+      expect.stringMatching(/package-lock\.json has no "seeds" entry/)
+    )
   })
 
   it('T26 positive control: every real acceptance package is found in package-lock.json', () => {
+    enumerated()
     const i = inputs()
     const r = evaluateDependencyRegistry({ ...i, today: todayFromRegistry() }) as ReturnType<
       typeof evalFx
@@ -479,7 +515,7 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
   const T21_TODAYS = ['2026-10-26', '2026-04-05', '2026-03-08', '2026-09-26'] // each expires - 14d
 
   function t21Root(): string {
-    const root = mkdtempSync(join(tmpdir(), 'smi6949-tz-'))
+    const root = makeFixtureTempDir('smi6949-tz')
     mkdirSync(join(root, '.github'), { recursive: true })
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fx', overrides: {} }))
     writeFileSync(
@@ -495,6 +531,13 @@ describe('Check 76 against the real repo files (T19, T21)', () => {
         ),
       })
     )
+    // Check 76 lists tracked lockfiles with git (SMI-6954): make the fixture a repository
+    for (const a of [
+      ['init', '-q'],
+      ['add', '-A'],
+    ]) {
+      expect(spawnSync('git', a, { cwd: root, env: makeFixtureEnv() }).status).toBe(0)
+    }
     return root
   }
 

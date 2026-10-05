@@ -6,6 +6,7 @@ on:
     paths:
       - 'packages/website/**'
       - 'scripts/ci/use-lockfile-vercel.sh'
+      - 'scripts/ci/vercel-cli-digest.cjs'
   workflow_dispatch:
     inputs:
       smoke_test_timeout:
@@ -214,7 +215,7 @@ jobs:
       - name: Parse link check results
         id: parse
         run: |
-          set -eu
+          set -euo pipefail
           DEPLOYMENT_URL="${{ needs.deploy-staging.outputs.deployment-url }}"
           DOMAIN=$(echo "$DEPLOYMENT_URL" | sed 's|https://||' | cut -d'/' -f1)
 
@@ -617,7 +618,7 @@ jobs:
         # `read < <(curl -w ...)`: curl -w emits no trailing newline, so `read`
         # returns non-zero at EOF and trips `errexit` before any check runs.
         run: |
-          set -eu
+          set -euo pipefail
           URL=https://www.skillsmith.app/openapi.yaml
           TMP=$(mktemp)
           ok=0

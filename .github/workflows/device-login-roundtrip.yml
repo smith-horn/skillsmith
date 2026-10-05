@@ -43,6 +43,7 @@ on:
       - 'scripts/e2e-negative-control.sh'
       - '.github/workflows/device-login-roundtrip.yml'
       - 'scripts/ci/use-lockfile-vercel.sh'
+      - 'scripts/ci/vercel-cli-digest.cjs'
 
 concurrency:
   group: device-login-roundtrip-${{ github.ref }}
