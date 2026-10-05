@@ -38,6 +38,7 @@ on:
       - '.github/workflows/cross-harness-inventory-e2e.yml'
       - '.github/workflows/cross-harness-inventory-e2e-cleanup.yml'
       - 'scripts/ci/use-lockfile-vercel.sh'
+      - 'scripts/ci/vercel-cli-digest.cjs'
       - 'scripts/seed-e2e-inventory-users.ts'
       - 'supabase/functions/inventory-upload/**'
       - 'supabase/migrations/2026062600000*.sql'

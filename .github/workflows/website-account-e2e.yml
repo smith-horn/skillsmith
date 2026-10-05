@@ -76,6 +76,7 @@ on:
       - 'packages/website/playwright.config.ts'
       - '.github/workflows/website-account-e2e.yml'
       - 'scripts/ci/use-lockfile-vercel.sh'
+      - 'scripts/ci/vercel-cli-digest.cjs'
   workflow_dispatch: {}
 
 concurrency:

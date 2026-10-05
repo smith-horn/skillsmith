@@ -11,6 +11,7 @@ on:
     paths:
       - 'packages/website/**'
       - 'scripts/ci/use-lockfile-vercel.sh'
+      - 'scripts/ci/vercel-cli-digest.cjs'
 
 concurrency:
   group: website-preview-${{ github.ref }}
