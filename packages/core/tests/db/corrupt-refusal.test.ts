@@ -161,7 +161,23 @@ describe('SMI-6961 F1: the message does not claim the data is all rebuildable', 
  *
  * The arms below therefore drive `refuseIfCorrupt` itself, through the stub
  * interface it already accepts. When that function learns to classify an
- * index-only verdict, the first two go red, which is the point.
+ * index-only verdict, **the index arm** goes red, which is the point. An
+ * earlier version of this sentence said "the first two go red" — false, and
+ * contradicted by the very measurement recorded in the commit that added it:
+ * the second arm is the page-damage CONTROL, which a correct fix must leave at
+ * `replace`, and the simulation reported exactly one failure.
+ *
+ * **What this still does not cover**, stated rather than left implied:
+ *
+ * - The index arm is parameterised over several real `quick_check` wordings,
+ *   but SQLite's verdict text is not a closed set. A classifier keyed on a
+ *   phrasing absent from the table below would leave these green.
+ * - It drives the **WASM** reported-verdict path. A fix applied only to the
+ *   native driver's own `quick_check` path — which also builds a refusal with
+ *   no code — would not trip it. A mirror arm belongs in
+ *   `betterSqlite3Driver.corruption.test.ts`, which is native-gated, so a
+ *   broken binding there renders as a skip rather than a failure (SMI-6792).
+ *   Both gaps are recorded in SMI-6991 rather than papered over here.
  */
 describe('SMI-6991: the reported-verdict path cannot reach reindex, and that is pinned', () => {
   /** Drives the real `refuseIfCorrupt` and returns the refusal it throws. */
@@ -188,11 +204,18 @@ describe('SMI-6991: the reported-verdict path cannot reach reindex, and that is 
     throw new Error('refuseIfCorrupt did not throw for a non-ok verdict')
   }
 
-  // THE TRIPWIRE. This verdict is SQLite's own wording for index-only damage —
-  // the case a fix would classify. While `refuseIfCorrupt` passes no code, it
-  // renders the destructive remedy; once it classifies, this goes red.
-  it('an INDEX-ONLY verdict still yields replace, not reindex', () => {
-    const refusal = refusalFor('wrong # of entries in index sqlite_autoindex_skills_1')
+  // THE TRIPWIRE, over several of SQLite's own wordings for index-only damage
+  // rather than one. A single wording was the first version's weakness: a
+  // classifier keyed on any other legitimate phrasing would have left it green.
+  // These are the shapes `integrity_check`/`quick_check` actually emit for an
+  // index whose contents disagree with its table.
+  it.each([
+    ['wrong # of entries in index sqlite_autoindex_skills_1'],
+    ['row 42 missing from index idx_skills_author'],
+    ['non-unique entry in index sqlite_autoindex_skills_1'],
+    ['rowid 7 missing from index idx_skills_name'],
+  ])('an INDEX-ONLY verdict still yields replace, not reindex: %s', (verdict) => {
+    const refusal = refusalFor(verdict)
     expect(refusal.remedyKind).toBe('replace')
     expect(refusal.sqliteCode).toBeUndefined()
   })

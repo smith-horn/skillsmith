@@ -35,13 +35,16 @@ All notable changes to `@skillsmith/cli` are documented here.
 
   The opener said "most commands have no `try` around their open", which was unmeasured and pointed
   the wrong way — several commands catch and exit themselves. It also named `update` as the sole
-  command that does not abort, when `list` is a second one. It now describes the three shapes
+  command that does not abort, when `list` is a second one. It now describes the **two** shapes
   without asserting how many commands are in each; the enumeration lives in the consumer-inventory
-  test, where it is checked rather than narrated.
+  test, where it is checked rather than narrated. (A first attempt at this correction described
+  *three* shapes, and review measured that the first had no members — every call site is reached
+  from an `*ActionImpl` wrapped in try/catch. The entry-point handler is a backstop, not a shape
+  any command uses.)
 
   `fatal.ts` justified preferring `process.exitCode` by asserting `process.exit()` "can truncate a
   multi-line message mid-write on a piped stream". That was reasoning, not measurement, and it put
-  the file in conflict with five existing `catch` blocks that print the same refusal and then call
+  the file in conflict with the many existing `catch` blocks that print the same refusal and call
   `process.exit(1)`. Measured: `skillsmith info` against a corrupt database produced **identical
   1217-byte output piped and direct, with all three `mv` lines present**. No truncation, so those
   five sites carry no defect and the claim is withdrawn.
