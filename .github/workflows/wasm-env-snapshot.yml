@@ -70,7 +70,6 @@ jobs:
             skillsmith-snapshot:${{ github.sha }} \
             node scripts/diagnostics/wasm-env-snapshot.mjs --emit \
             > wasm-env-ci-snapshot.json
-          echo "Exit code: $?"
           echo "--- Snapshot preview ---"
           head -40 wasm-env-ci-snapshot.json
 
