@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.13.0
+
+- **Fix**: SMI-6991 -- a corruption refusal told users to switch to the driver that also refuses it (#3013)
 - **Removed** (breaking): SMI-6961 -- `isCorruptionError` and `backupCorruptDbFile` are gone, along
   with `db/drivers/corruption.ts`. This is an API removal, not a deprecation, and it is deliberate
   for both.

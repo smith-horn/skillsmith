@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.13
+
 - **Fixed**: SMI-6961 / ADR-175 § 1 -- commands no longer proceed against an empty database when
   your local one is corrupt. The shared opener caught the driver's refusal, renamed the **main file
   only** -- orphaning any `-wal` against a rebuilt database -- and returned, so the command ran to
