@@ -143,6 +143,14 @@ export function lockScopeProblem(lock, name) {
   return `has a production (non-dev) install at ${prod.map((o) => o.path).join(', ')}, so a dev-scope acceptance does not cover it${why}`
 }
 
+/**
+ * Why `name` cannot carry a seed-scope acceptance, or null (SMI-6954, ADR-176 section 6): it must
+ * occur in the seed lockfile `label`. Any install scope is fine; a seed tree has no dev split.
+ */
+export function lockPresenceProblem(lock, name, label) {
+  return lockOccurrences(lock, name).length === 0 ? `is not in ${label}` : null
+}
+
 /** Why the lockfile cannot be evaluated, or null: `packages` exists only from lockfileVersion 2. */
 export function lockProblem(lock) {
   const v = lock?.lockfileVersion

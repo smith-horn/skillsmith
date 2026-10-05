@@ -57,23 +57,15 @@
 # the actual digest computation always happens INSIDE the container, never
 # on the host -- the host's own node may differ in version from the image's).
 #
-# scripts/ruflo-seed/package.json's four exact `overrides` (SMI-6744 M-4,
-# post-merge governance retro on PR #2931) -- covered by the seed digest
-# above, so this script (the one a bumper runs) is where the rationale and
-# bump procedure live instead:
-#   protobufjs      7.6.6  -- Dependency Guard (npm audit --audit-level=high)
-#                             finding, reached via @google/genai,
-#                             @grpc/proto-loader, onnx-proto and
-#                             onnxruntime-web (lockfile-confirmed parents).
-#   @opentelemetry/propagator-jaeger
-#                   2.9.0  -- Dependency Guard finding, reached via
-#                             @opentelemetry/sdk-node.
-#   toml            4.2.0  -- Dependency Guard finding, reached via
-#                             @claude-flow/cli itself.
-#   sharp           0.35.4 -- Dependency Guard finding, reached via
-#                             @huggingface/transformers and
-#                             @xenova/transformers.
-# Instruction: re-evaluate EVERY override above on every @claude-flow/cli
+# scripts/ruflo-seed/package.json's exact `overrides` (SMI-6744 M-4) are
+# covered by the seed digest above. Their rationale, advisories, major
+# crossings and removal conditions live in ONE place:
+# .github/dependency-registry.json, under
+# seeds["scripts/ruflo-seed/package-lock.json"].overrides (SMI-6954,
+# ADR-176 section 6). audit:standards Check 76 fails when an override here
+# has no entry there, or the pins differ. Add or change both in the same
+# change, then regenerate this digest.
+# Instruction: re-evaluate EVERY seed override on every @claude-flow/cli
 # version bump. Remove an override the moment `npm ls <pkg>` inside
 # scripts/ruflo-seed/ no longer lists that package at all -- npm applies an
 # `overrides` entry unconditionally, tree-wide, and never warns when its
