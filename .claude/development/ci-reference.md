@@ -563,9 +563,18 @@ These steps cover the `seeds` section of `.github/dependency-registry.json` (SMI
 - **Fix with an override:** add it to the seed's own `package.json` `overrides`, and add its `seeds[...].overrides` entry in the same change. Then regenerate the seed lockfile and `SEED-MANIFEST.sha256` on arm64 (`ruflo-seed-digest.yml`). Root overrides never reach the seed.
 - **After regenerating the seed lockfile for any reason:** re-run the audit and reconcile above before merging. Check 76 re-checks the override pins, and checks that every acceptance's package is still in the lockfile.
 
-## Release-PR `Package Validation` Carve-out (SMI-4530, SMI-4778)
+## Release-PR `Package Validation` (SMI-4530, SMI-4778; corrected by SMI-4920)
 
-`Package Validation` (script: `scripts/verify-publish-deps.mjs --ci`) fails by design on `chore/release-*` branches. The check verifies that every `@skillsmith/<pkg>` dep range is satisfied by an already-published npm version — but a release PR's whole purpose is to bump to a version that hasn't been published yet, so it cannot pass. **Admin-merge with `gh pr merge --admin` is the correct path** when this is the *only* failing check on a release PR and all other required checks are green. Before bypassing, search for an in-flight infra fix (`gh pr list --search "verify-publish-deps OR Package Validation"`); if one is open, rebase onto it instead. Do not admin-bypass other failing checks — that's how the SMI-4647 / SMI-4767 incidents started.
+**`Package Validation` passes on a release PR and needs no carve-out.** Earlier text here said it "fails by design on `chore/release-*` branches" and that `gh pr merge --admin` was "the correct path". Both halves were wrong, and the second was the dangerous one — it pre-authorised a privilege escalation nobody needs. Evidence lives in SMI-4920 rather than here, so this cannot rot the same way.
+
+The check verifies that every `@skillsmith/<pkg>` dep range is satisfied by an already-published npm version, which is why a release PR once could not pass it. **SMI-4920 fixed that at the source**: the script determines which packages are being released in *this* PR by diffing each `package.json` against the base ref, then accepts a range pointing at a version not yet on npm, logging `not yet on npm, accepted (released in this PR)`.
+
+Two consequences, and the second is the one that bites:
+
+- **Nothing gates on the PR's own branch name.** The script never inspects the head branch — `GITHUB_HEAD_REF`, `GITHUB_REF`, `branch --show-current` and `rev-parse --abbrev-ref` all appear zero times. The one ref it *does* read is `GITHUB_BASE_REF` (the base, defaulting to `main`), purely as the thing to diff against. So the `chore/release-*` pattern described a mechanism that never existed, and naming a branch to match it trips no exemption.
+- **A red `Package Validation` on a release PR is a real failure, not an expected one.** The old text invited you to read it as the cost of releasing and reach for `--admin`. Read the step's own log instead: if it is *not* logging `not yet on npm, accepted (released in this PR)` for your bumped packages, something is genuinely wrong — most likely the base-ref diff found no version change, meaning the bump is not where the script is looking.
+
+If you still conclude an admin merge is warranted, that is a **named bypass requiring explicit per-instance consent** — it is not pre-authorised by this file. Do not admin-bypass other failing checks; that is how the SMI-4647 / SMI-4767 incidents started.
 
 ## Vitest Split Rationale
 
