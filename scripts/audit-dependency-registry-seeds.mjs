@@ -32,6 +32,7 @@ import { spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hasOwn, lockProblem } from './audit-dependency-registry-fields.mjs'
+import { gitDiscoveryScrubbedEnv } from './lib/git-discovery-env.mjs'
 
 const REGISTRY = '.github/dependency-registry.json'
 const SEED_TIERS = Object.freeze(['R3', 'R4'])
@@ -59,10 +60,14 @@ export function seedKeyProblem(key) {
 
 /** Tracked package-lock.json paths, repo-relative; null (never []) when git cannot list them. */
 export function listTrackedLockfiles(root) {
-  const r = spawnSync('git', ['ls-files', '-z', '--', ':(glob)**/package-lock.json'], {
-    cwd: root,
-    encoding: 'utf8',
-  })
+  // The scrubbed env stops an inherited GIT_DIR (git hooks in a linked worktree export it) from
+  // answering about another repository; `core.fsmonitor=false` stops a repo-configured fsmonitor
+  // hook from executing during this read (SMI-6994).
+  const r = spawnSync(
+    'git',
+    ['-c', 'core.fsmonitor=false', 'ls-files', '-z', '--', ':(glob)**/package-lock.json'],
+    { cwd: root, encoding: 'utf8', env: gitDiscoveryScrubbedEnv() }
+  )
   if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null
   return r.stdout.split('\0').filter(Boolean)
 }
