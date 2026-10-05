@@ -211,11 +211,20 @@ describe('executed run of the workflow script (stub node and gh)', () => {
   })
   it('the step runs under the runner default shell: no `shell:` override, so `bash -e {0}` (SMI-6993)', () => {
     // GitHub Actions runs a `run:` step with no `shell:` as `bash -e {0}` on Linux. The script
-    // captures statuses with $? and ends in `exit "$RC"`, so it must turn -e off itself (set +e),
-    // and the harness must run it with the same flags, or -e-sensitive bugs are invisible.
+    // keeps -e on and captures only the statuses it decides on itself, with `|| VAR=$?`; the
+    // harness runs it with the same flags, or -e-sensitive bugs are invisible.
     expect(scriptStep()).not.toHaveProperty('shell')
     expect(RUNNER_BASH_ARGS).toEqual(['-e'])
-    expect(script()).toMatch(/^set -uo pipefail\n(#.*\n)*set \+e\n/m)
+    expect(script()).not.toMatch(/^\s*set\s+(\+[a-z]*e|\+o\s+errexit)/m) // -e is never turned off
+    for (const v of ['RC', 'REC', 'SREC']) expect(script()).toContain(`|| ${v}=$?`)
+  })
+  it('an unexpected failure (the colour-stripping sed) stops the job red and never closes the issue (SMI-6993)', () => {
+    // With -e off this sed failure left $CLEAN empty, so a run with an expiring acceptance
+    // read as clean and closed the open issue. With -e on, the step stops at the sed.
+    const r = exec(GREEN_R4 + EXPIRING, 0, '42', '', {}, {}, { sedFailOn: 'check76.out' })
+    expect(r.sedFailures).toHaveLength(1) // presence: the injected failure fired
+    expect(r.status).toBe(4)
+    expect(verbs(r.calls)).not.toContain('issue close')
   })
   it('a crash with no failure line still opens the issue and says the check did not complete', () => {
     const r = exec('Error: boom\n', 2)

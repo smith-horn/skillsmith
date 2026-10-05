@@ -93,6 +93,17 @@ case "$1 $2" in
 esac
 exit 0
 `
+/**
+ * Opt-in: a sed that fails when one of its arguments names the file ending in $STUB_SED_FAIL_ON,
+ * and logs that it did, so a test can prove the injected failure fired. Every other sed call
+ * runs the real sed.
+ */
+const SED_STUB = `#!/bin/bash
+for a in "$@"; do
+  case "$a" in *"$STUB_SED_FAIL_ON") echo "$a" >> "$SED_LOG"; exit 4 ;; esac
+done
+exec /bin/sed "$@"
+`
 const EMPTY_AUDIT = '{"auditReportVersion":2,"vulnerabilities":{}}'
 /** A report with an advisory, as npm prints it; npm exits 1 whenever it finds one. */
 export const FINDINGS_AUDIT =
@@ -106,7 +117,8 @@ export function exec(
   existing = '',
   ghFail = '',
   audit: AuditStub = {},
-  seed: SeedStub = {}
+  seed: SeedStub = {},
+  opts: { sedFailOn?: string } = {}
 ) {
   const auditOut = audit.out ?? EMPTY_AUDIT
   const seedAuditOut = seed.auditOut ?? EMPTY_AUDIT
@@ -118,13 +130,16 @@ export function exec(
   const ghBody = join(dir, 'gh.body')
   const nodeLog = join(dir, 'node.log')
   const npmCwdLog = join(dir, 'npm-cwd.log')
+  const sedLog = join(dir, 'sed.log')
   writeFileSync(nodeOutFile, nodeOut)
-  for (const f of [ghLog, nodeLog, npmCwdLog]) writeFileSync(f, '')
-  for (const [name, body] of [
+  for (const f of [ghLog, nodeLog, npmCwdLog, sedLog]) writeFileSync(f, '')
+  const stubs: [string, string][] = [
     ['node', NODE_STUB],
     ['npm', NPM_STUB],
     ['gh', GH_STUB],
-  ]) {
+  ]
+  if (opts.sedFailOn) stubs.push(['sed', SED_STUB])
+  for (const [name, body] of stubs) {
     writeFileSync(join(bin, name), body)
     chmodSync(join(bin, name), 0o755)
   }
@@ -159,6 +174,8 @@ export function exec(
       STUB_GH_FAIL: ghFail,
       GH_LOG: ghLog,
       GH_BODY: ghBody,
+      STUB_SED_FAIL_ON: opts.sedFailOn ?? '',
+      SED_LOG: sedLog,
     },
   })
   const lines = (f: string) => readFileSync(f, 'utf8').split('\n').filter(Boolean)
@@ -171,6 +188,7 @@ export function exec(
     stdout: r.stdout,
     nodeCalls: lines(nodeLog),
     npmCwds: lines(npmCwdLog),
+    sedFailures: lines(sedLog),
   }
 }
 export const verbs = (calls: string[]) => calls.map((c) => c.split(' ').slice(0, 2).join(' '))
