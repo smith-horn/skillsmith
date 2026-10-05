@@ -215,8 +215,93 @@ describe('executed run of the workflow script (stub node and gh)', () => {
     // harness runs it with the same flags, or -e-sensitive bugs are invisible.
     expect(scriptStep()).not.toHaveProperty('shell')
     expect(RUNNER_BASH_ARGS).toEqual(['-e'])
-    expect(script()).not.toMatch(/^\s*set\s+(\+[a-z]*e|\+o\s+errexit)/m) // -e is never turned off
-    for (const v of ['RC', 'REC', 'SREC']) expect(script()).toContain(`|| ${v}=$?`)
+    for (const v of ['RC', 'REC', 'SREC', 'LSRC']) expect(script()).toContain(`|| ${v}=$?`)
+  })
+  // The errexit pin is BEHAVIOURAL (SMI-6996): the harness records `$-` before every command of an
+  // executed run (see EE_PREFIX in the harness) and `exec` itself asserts that no command the
+  // script runs at its own level had errexit off. It catches ACCIDENTAL errexit regressions, in
+  // every spelling listed below, a toggle inside a shell function included. It does NOT claim to
+  // catch deliberate evasion of the harness. Two evasions are stated limits (owner decision,
+  // 2026-10-05): removing and restoring the DEBUG trap around a toggle (the C6 text check below
+  // backstops the ordinary spellings only), and work done inside a command substitution, where
+  // bash disables -e and the depth rule exempts it by design. A `( set +e; ... )` subshell is
+  // exempt the same way, and a branch that none of the scenarios below reaches is not traced.
+  const SEED = 'scripts/tests/fixtures/package-lock.json'
+  const ROOT_FAIL =
+    '✗ Check 76 reconcile: unaccepted advisory GHSA-aaaa-bbbb-cccc (pkg, high) is reported by npm audit and has no acceptance\n'
+  const SEED_FAIL = `✗ Check 76 reconcile [${SEED}]: unaccepted advisory GHSA-aaaa-bbbb-cccc (pkg, high) is reported by npm audit for ${SEED} and has no acceptance\n`
+  const SEED_OK = `✓ Check 76 reconcile [${SEED}]: 1 acceptances match the npm audit report for ${SEED}; no unaccepted advisories\n`
+  const SEED_LIST = { list: `${SEED}\n` }
+  const INFO_ONLY = INFO_LINE + INFO_SUMMARY
+  const scripted = script()
+  const lineOf = (pred: (l: string) => boolean): number => scripted.split('\n').findIndex(pred) + 1
+  const SED_LINE = lineOf((l) => l.trim().startsWith("sed -e 's/\\x1b"))
+  const EXIT_LINE = lineOf((l) => l.trim() === 'exit "$RC"')
+  it('the lines the errexit scenarios anchor on exist (presence: located by text)', () => {
+    expect(SED_LINE).toBeGreaterThan(0)
+    expect(EXIT_LINE).toBeGreaterThan(SED_LINE)
+  })
+  it.each([
+    ['clean', () => exec(GREEN_R4, 0)],
+    ['clean with an open issue (close path)', () => exec(GREEN_R4, 0, '42')],
+    ['expiring', () => exec(EXPIRING, 0)],
+    ['check failure', () => exec(FAILED, 1)],
+    ['check failure with an open issue (edit path)', () => exec(FAILED, 1, '42')],
+    ['root reconcile failure', () => exec(GREEN_R4, 0, '', '', { rec: ROOT_FAIL, recRc: 1 })],
+    [
+      'seed reconcile failure',
+      () => exec(GREEN_R4, 0, '', '', {}, { ...SEED_LIST, rec: SEED_FAIL, recRc: 1 }),
+    ],
+    ['seed reconcile pass', () => exec(GREEN_R4, 0, '', '', {}, { ...SEED_LIST, rec: SEED_OK })],
+    ['--list-seeds failure', () => exec(GREEN_R4, 0, '', '', {}, { listRc: 1, listErr: 'boom' })],
+    ['informational only', () => exec(GREEN_R4, 0, '', '', { rec: INFO_ONLY, recRc: 0 })],
+    ['crash', () => exec('Error: boom\n', 2)],
+  ])(
+    '-e is on before every top-level and function-body command, in every path: %s',
+    (name, run) => {
+      const r = run()
+      expect(r.errexitOff).toEqual([]) // the invariant (exec asserts it too)
+      // presence: the run reached the region the absence claim covers, at the script's own level
+      const top = (line: number) => r.trace.some((e) => e.depth === 0 && e.line === line)
+      expect(top(SED_LINE)).toBe(true)
+      expect(top(EXIT_LINE)).toBe(true)
+      if (name === 'seed reconcile failure') {
+        // presence: the traps reached the function body (shq runs only inside a substitution)
+        expect(r.trace.some((e) => e.func === 'shq')).toBe(true)
+      }
+    }
+  )
+  const insertAfterClean = (stmt: string) => (src: string) => {
+    const ls = src.split('\n')
+    const i = ls.findIndex((l) => l.trimEnd().endsWith('> "$CLEAN"'))
+    ls.splice(i + 1, 0, `          ${stmt}`)
+    return ls.join('\n')
+  }
+  it.each([
+    'set -u +e',
+    'set +u +e',
+    'shopt -u -o errexit',
+    '{ set +e; }',
+    'true; set +e',
+    'set +e',
+    'set +o errexit',
+    'set +e; true; set -e',
+    'f() { builtin set +e; false; set -e; }; f',
+  ])('known-positive: %s turns errexit off and the trace sees it', (stmt) => {
+    const transform = insertAfterClean(stmt)
+    expect(transform(scripted)).not.toBe(scripted) // presence: the mutation applied
+    const r = exec(GREEN_R4, 0, '', '', {}, {}, { transform, allowErrexitOff: true })
+    expect(r.errexitOff.length).toBeGreaterThan(0)
+  })
+  it('known-negative: a depth-0 function that keeps errexit on is clean', () => {
+    const r = exec(GREEN_R4, 0, '', '', {}, {}, { transform: insertAfterClean('g() { true; }; g') })
+    expect(r.errexitOff).toEqual([])
+    expect(r.trace.some((e) => e.func === 'g')).toBe(true) // presence: the function ran traced
+  })
+  it('C6: the script never manipulates the DEBUG trap the errexit trace depends on', () => {
+    const EVASION = 'D=$(trap -p DEBUG); trap - DEBUG; set +e; false; set -e; eval "$D"'
+    expect(/\btrap\b[^\n]*\bDEBUG\b/.test(EVASION)).toBe(true) // presence: the regex sees the shape it bans
+    expect(script()).not.toMatch(/\btrap\b[^\n]*\bDEBUG\b/)
   })
   it('an unexpected failure (the colour-stripping sed) stops the job red and never closes the issue (SMI-6993)', () => {
     // With -e off this sed failure left $CLEAN empty, so a run with an expiring acceptance
@@ -259,6 +344,8 @@ describe('the REAL script runs with no node_modules on the path (M1)', () => {
     }
     walk(join(REPO_ROOT, 'scripts/check-dependency-registry.mjs'))
     expect(seen.size).toBeGreaterThanOrEqual(4) // presence: the walk reached the helper modules
+    // presence: the walk crossed into scripts/lib/, the one directory the closure gained (SMI-6994)
+    expect(seen.has(join(REPO_ROOT, 'scripts/lib/git-discovery-env.mjs'))).toBe(true)
     expect(bare).toEqual([])
   })
   // The property under test is the IMPORT CLOSURE, not the registry's policy verdict: which

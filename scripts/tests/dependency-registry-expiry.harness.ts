@@ -44,6 +44,30 @@ export const script = (): string => scriptStep().run as string
  */
 export const RUNNER_BASH_ARGS = ['-e']
 
+/**
+ * Errexit trace (SMI-6996). Every executed run is prefixed with three lines: `set -T` (so the DEBUG
+ * trap also fires inside shell functions and command substitutions), a DEBUG trap recording
+ * `$-:$LINENO:$BASH_SUBSHELL:FUNCNAME` before each command, and an EXIT trap recording the final
+ * `$-`. A depth-0 entry whose flags lack `e` means errexit was off for a command the script ran at
+ * its own level; entries at depth > 0 are command substitutions and subshells, where bash runs
+ * without -e by design, so they are classified apart and never asserted against. `exec` asserts the
+ * depth-0 invariant on every run unless `allowErrexitOff` is set (the known-positive controls).
+ */
+export const EE_PREFIX_LINES = 3
+const EE_PREFIX = [
+  'set -T',
+  `trap 'printf "%s:%s:%s:%s\\n" "$-" "$LINENO" "$BASH_SUBSHELL" "\${FUNCNAME[0]:-main}" >> "$EE_TRACE"' DEBUG`,
+  `trap 'printf "%s" "$-" > "$EE_END"' EXIT`,
+  '',
+].join('\n')
+export interface TraceEntry {
+  flags: string
+  /** The script line, mapped back through the prefix. */
+  line: number
+  depth: number
+  func: string
+}
+
 export interface AuditStub {
   out?: string
   /** npm audit's own exit status. Default mirrors real npm: 0 only for an empty report, else 1. */
@@ -55,6 +79,8 @@ export interface AuditStub {
 export interface SeedStub {
   list?: string
   listRc?: number
+  /** What `--list-seeds` prints to stderr (its failure cause). */
+  listErr?: string
   auditOut?: string
   /** The seed's npm audit exit status; same default as AuditStub.rc. */
   auditRc?: number
@@ -65,7 +91,7 @@ export interface SeedStub {
 // Calls are told apart by their flags; every other node call is the expiry check.
 const NODE_STUB = `#!/bin/bash
 case " $* " in
-  *" --list-seeds "*) printf '%s' "$STUB_SEEDS"; exit "$STUB_LIST_RC" ;;
+  *" --list-seeds "*) printf '%s' "$STUB_LIST_ERR" >&2; printf '%s' "$STUB_SEEDS"; exit "$STUB_LIST_RC" ;;
   *" --seed "*) echo "$*" >> "$NODE_LOG"; printf '%s' "$STUB_SEED_REC_OUT"; exit "$STUB_SEED_REC_RC" ;;
   *" --reconcile-audit "*) echo "$*" >> "$NODE_LOG"; printf '%s' "$STUB_REC_OUT"; exit "$STUB_REC_RC" ;;
 esac
@@ -118,7 +144,13 @@ export function exec(
   ghFail = '',
   audit: AuditStub = {},
   seed: SeedStub = {},
-  opts: { sedFailOn?: string } = {}
+  opts: {
+    sedFailOn?: string
+    /** Rewrites the script before it runs (the known-positive errexit controls). */
+    transform?: (script: string) => string
+    /** Skip the errexit assertions: the run is a deliberate known-positive control. */
+    allowErrexitOff?: boolean
+  } = {}
 ) {
   const auditOut = audit.out ?? EMPTY_AUDIT
   const seedAuditOut = seed.auditOut ?? EMPTY_AUDIT
@@ -131,8 +163,10 @@ export function exec(
   const nodeLog = join(dir, 'node.log')
   const npmCwdLog = join(dir, 'npm-cwd.log')
   const sedLog = join(dir, 'sed.log')
+  const eeTrace = join(dir, 'errexit.trace')
+  const eeEnd = join(dir, 'errexit.end')
   writeFileSync(nodeOutFile, nodeOut)
-  for (const f of [ghLog, nodeLog, npmCwdLog, sedLog]) writeFileSync(f, '')
+  for (const f of [ghLog, nodeLog, npmCwdLog, sedLog, eeTrace]) writeFileSync(f, '')
   const stubs: [string, string][] = [
     ['node', NODE_STUB],
     ['npm', NPM_STUB],
@@ -144,7 +178,7 @@ export function exec(
     chmodSync(join(bin, name), 0o755)
   }
   const scriptFile = join(dir, 'step.sh')
-  writeFileSync(scriptFile, script())
+  writeFileSync(scriptFile, EE_PREFIX + (opts.transform ? opts.transform(script()) : script()))
   const r = spawnSync('bash', [...RUNNER_BASH_ARGS, scriptFile], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
@@ -164,6 +198,7 @@ export function exec(
       STUB_REC_RC: String(audit.recRc ?? 0),
       STUB_SEEDS: seed.list ?? '',
       STUB_LIST_RC: String(seed.listRc ?? 0),
+      STUB_LIST_ERR: seed.listErr ?? '',
       STUB_SEED_AUDIT_OUT: seedAuditOut,
       STUB_SEED_AUDIT_RC: String(seed.auditRc ?? npmRc(seedAuditOut)),
       STUB_SEED_REC_OUT: seed.rec ?? '',
@@ -176,11 +211,29 @@ export function exec(
       GH_BODY: ghBody,
       STUB_SED_FAIL_ON: opts.sedFailOn ?? '',
       SED_LOG: sedLog,
+      EE_TRACE: eeTrace,
+      EE_END: eeEnd,
     },
   })
   const lines = (f: string) => readFileSync(f, 'utf8').split('\n').filter(Boolean)
   const body = existsSync(ghBody) ? readFileSync(ghBody, 'utf8') : ''
+  const trace: TraceEntry[] = lines(eeTrace).map((l) => {
+    const [flags, line, depth, func] = l.split(':')
+    return { flags, line: Number(line) - EE_PREFIX_LINES, depth: Number(depth), func }
+  })
+  const errexitOff = trace.filter((e) => e.depth === 0 && !e.flags.includes('e'))
+  const subshellOff = trace.filter((e) => e.depth > 0 && !e.flags.includes('e'))
+  const endFlags = existsSync(eeEnd) ? readFileSync(eeEnd, 'utf8') : undefined
+  if (!opts.allowErrexitOff) {
+    expect(trace.length).toBeGreaterThan(0) // presence: the trace was recorded
+    expect(endFlags).toBeDefined() // presence: the EXIT trap ran
+    expect(errexitOff).toEqual([])
+  }
   return {
+    trace,
+    errexitOff,
+    subshellOff,
+    endFlags,
     status: r.status,
     calls: lines(ghLog),
     body,
@@ -190,5 +243,22 @@ export function exec(
     npmCwds: lines(npmCwdLog),
     sedFailures: lines(sedLog),
   }
+}
+/**
+ * The text of an issue-body section: from its `### ` heading line up to the next `### ` or `Run:`
+ * line. `undefined` when the heading is absent, so a missing section is never an empty match.
+ */
+export function section(body: string, heading: string): string | undefined {
+  const lines = body.split('\n')
+  const start = lines.indexOf(heading)
+  if (start < 0) return undefined
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('### ') || lines[i].startsWith('Run:')) {
+      end = i
+      break
+    }
+  }
+  return lines.slice(start, end).join('\n')
 }
 export const verbs = (calls: string[]) => calls.map((c) => c.split(' ').slice(0, 2).join(' '))
