@@ -463,7 +463,18 @@ describe('runQuery — reindex staleness banner (SMI-5793)', () => {
     execFileSync('git', ['-C', repoDir, 'commit', '-m', 'x', '--quiet'], { env })
   }
 
+  // SMI-6985 retro follow-up (cross-family gate, PR #3014): a bare
+  // `toBe('')` here would also pass if the whole reindex-banner call chain
+  // silently stopped executing. Control, mirroring the ruflo-bridge block's
+  // own convention above: seed a failed entry first and confirm it renders,
+  // then remove the entry and confirm the SAME repoDir/env goes silent
+  // specifically because the entry is gone, not because nothing ran.
   it('renders nothing when no reindex.state entry exists', async () => {
+    seedEntry({ success: false, errorReason: 'boom', filesScanned: 0, chunksUpserted: 0 })
+    const control = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(control.additionalContext).toContain('[reindex]')
+
+    rmSync(join(stateDir, 'reindex.state'), { force: true })
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
     expect(result.additionalContext).toBe('')
   })
@@ -508,15 +519,34 @@ describe('runQuery — reindex staleness banner (SMI-5793)', () => {
     expect(result.additionalContext).toContain('possibly hung or not firing')
   })
 
+  // SMI-6985 retro follow-up (cross-family gate, PR #3014): a bare
+  // `toBe('')` here would also pass if the whole reindex-banner call chain
+  // silently stopped executing. Control: seed a failed entry first and
+  // confirm it renders, then change only the health-related fields (via the
+  // SAME seedEntry helper, defaults = success/recent/no-anomaly) and confirm
+  // the SAME repoDir/env goes silent specifically because the entry is now
+  // healthy, not because nothing ran.
   it('renders nothing when healthy (recent run, no anomaly)', async () => {
+    seedEntry({ success: false, errorReason: 'boom', filesScanned: 0, chunksUpserted: 0 })
+    const control = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(control.additionalContext).toContain('[reindex]')
+
     seedEntry()
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
     expect(result.additionalContext).toBe('')
   })
 
+  // SMI-6985 retro follow-up (cross-family gate, PR #3014): a bare
+  // `not.toContain('[reindex]')` here would also pass if the whole
+  // reindex-banner block silently stopped executing. Control: the SAME
+  // seeded entry renders BEFORE the disable flag is set, proving the
+  // suppression below is caused by the flag specifically.
   it('SKILLSMITH_REINDEX_STALENESS_DISABLE=1 suppresses the banner even when the last run failed', async () => {
-    process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE = '1'
     seedEntry({ success: false, errorReason: 'boom', filesScanned: 0, chunksUpserted: 0 })
+    const before = await runQuery({ ...baseArgs, cwd: repoDir })
+    expect(before.additionalContext).toContain('[reindex]')
+
+    process.env.SKILLSMITH_REINDEX_STALENESS_DISABLE = '1'
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
     expect(result.additionalContext).not.toContain('[reindex]')
   })
