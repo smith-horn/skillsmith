@@ -42,8 +42,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudwatch-logs": "3.1125.0",
-    "@opentelemetry/instrumentation-aws-sdk": "0.76.0",
+    "@aws-sdk/client-cloudwatch-logs": "3.1141.0",
+    "@opentelemetry/instrumentation-aws-sdk": "0.77.0",
     "@skillsmith/core": "^0.13.0",
     "jose": "^6.2.2",
     "stripe": "22.6.1",
@@ -52,12 +52,12 @@
   "devDependencies": {
     "@skillsmith/mcp-server": "^0.7.19",
     "@smithy/config-resolver": "4.7.2",
-    "@smithy/core": "3.33.3",
+    "@smithy/core": "3.35.0",
     "@smithy/middleware-endpoint": "4.7.2",
     "@smithy/middleware-retry": "4.8.2",
     "@smithy/protocol-http": "5.6.2",
     "@smithy/smithy-client": "4.15.2",
-    "@smithy/types": "4.17.2",
+    "@smithy/types": "4.19.0",
     "@smithy/util-retry": "4.6.2",
     "vitest": "4.1.11"
   },
