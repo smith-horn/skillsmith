@@ -6,30 +6,74 @@ import { execFileSync } from 'child_process'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
+import { isReleaseBumpSubject } from './release-bump-subject.mjs'
 import { ROOT_DIR } from './version-utils.js'
 
-export function findLastVersionBumpCommit(): string {
-  try {
-    const output = execFileSync('git', ['log', '--oneline', '--format=%H %s', '-50'], {
-      cwd: ROOT_DIR,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim()
+/** How far back the boundary search looks. */
+export const BOUNDARY_SEARCH_DEPTH = 50
 
-    for (const line of output.split('\n')) {
-      const [hash, ...rest] = line.split(' ')
-      const msg = rest.join(' ')
-      if (
-        msg.startsWith('chore(release):') ||
-        msg.startsWith('chore: bump version') ||
-        /^chore:.*bump.*\d+\.\d+\.\d+/.test(msg)
-      ) {
-        return hash
-      }
+/**
+ * SMI-7012: the result of looking for the previous release commit.
+ *
+ * Discriminated on purpose. The previous signature returned a bare string and
+ * yielded the literal `'HEAD~20'` from BOTH the not-found path and the `catch`,
+ * so "I could not establish the boundary" was indistinguishable from "the
+ * boundary is twenty commits back" — and the caller then generated a changelog
+ * over an arbitrary window with full confidence. ADR-177 § 5 forbids that
+ * conflation: "could not inspect" is never "inspected and found nothing".
+ */
+export type ReleaseBoundary =
+  | { readonly ok: true; readonly hash: string }
+  | {
+      readonly ok: false
+      readonly reason: 'no-match-in-window' | 'git-failed'
+      readonly detail: string
     }
-    return 'HEAD~20'
-  } catch {
-    return 'HEAD~20'
+
+/**
+ * Find the commit that the previous release bump landed on.
+ *
+ * Returns a failure rather than a guess. The caller must refuse **before any
+ * write** — see `prepare-release.ts`, where the resolution happens ahead of
+ * Step 5 precisely so a failure here cannot leave a half-written release on
+ * disk.
+ *
+ * Subject matching is a weaker signal than a published tag, which is what
+ * ADR-177 § 4 records as authoritative and what `check-source-version-drift.mjs`
+ * already prefers. Moving this to tags is tracked separately; it was out of
+ * scope for SMI-7012's dated fix.
+ */
+export function findLastVersionBumpCommit(): ReleaseBoundary {
+  let output: string
+  try {
+    output = execFileSync(
+      'git',
+      ['log', '--oneline', '--format=%H %s', `-${BOUNDARY_SEARCH_DEPTH}`],
+      {
+        cwd: ROOT_DIR,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }
+    ).trim()
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'git-failed',
+      detail: `git log failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+    }
+  }
+
+  for (const line of output.split('\n')) {
+    const [hash, ...rest] = line.split(' ')
+    if (isReleaseBumpSubject(rest.join(' '))) {
+      return { ok: true, hash }
+    }
+  }
+
+  return {
+    ok: false,
+    reason: 'no-match-in-window',
+    detail: `no release-bump commit found in the last ${BOUNDARY_SEARCH_DEPTH} commits`,
   }
 }
 

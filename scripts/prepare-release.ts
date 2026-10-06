@@ -163,6 +163,37 @@ function updateServerJson(relPath: string, newVersion: string): void {
 // consumer's pin (e.g. doc-retrieval-mcp -> @skillsmith/core) also gets
 // refreshed, not just the four published packages.
 
+/**
+ * Resolve the changelog boundary, or refuse (SMI-7012).
+ *
+ * Extracted and exported so the refusal is directly testable. `main()` calls it
+ * at Step 4.5 — **before any write** — because the previous arrangement resolved
+ * at Step 7-8, after five write steps, so an unresolvable boundary refused only
+ * after leaving a half-written release on disk.
+ *
+ * Returns `undefined` when `noChangelog` is set, without consulting git at all:
+ * that flag already skipped the lookup, and resolving anyway would make this
+ * refusal fire on runs that were never going to read a range.
+ *
+ * @throws when the boundary cannot be established. A guessed range is worse than
+ * none (ADR-177 § 5), so there is no fallback window.
+ */
+export function resolveChangelogBoundary(noChangelog: boolean): string | undefined {
+  if (noChangelog) return undefined
+
+  const boundary = findLastVersionBumpCommit()
+  if (!boundary.ok) {
+    throw new Error(
+      `Could not establish the previous release boundary: ${boundary.detail}\n` +
+        `    Changelog generation needs a commit range, and a guessed range is worse than ` +
+        `none (ADR-177 section 5).\n` +
+        `    Re-run with --no-changelog to bump versions without generating changelog ` +
+        `entries, then write them by hand.`
+    )
+  }
+  return boundary.hash
+}
+
 // --- Main ---
 
 async function main(): Promise<void> {
@@ -243,6 +274,22 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
+  // Step 4.5: Resolve the changelog boundary BEFORE any write (SMI-7012).
+  //
+  // This used to happen at Step 7-8, after five write steps had already run —
+  // version files, READMEs, workspace dep ranges, the typosquat snapshot and the
+  // lockfile. A boundary that could not be resolved therefore refused only after
+  // leaving a half-written release on disk, which is worse than the arbitrary
+  // range it replaced. Resolving here means a failure costs nothing.
+  //
+  // Gated on `!noChangelog` to match Step 7-8's own condition: that flag already
+  // skipped the lookup, so resolving unconditionally would make this refusal
+  // fire on runs that were never going to read a range.
+  const changelogSince = resolveChangelogBoundary(noChangelog)
+  if (changelogSince) {
+    console.log(`  ✓ Changelog boundary: ${changelogSince.slice(0, 9)}`)
+  }
+
   // Step 5: Write all version locations
   for (const plan of plans) {
     updatePackageJson(plan.spec.packageJsonPath, plan.newVersion)
@@ -311,8 +358,18 @@ async function main(): Promise<void> {
   }
 
   // Step 7-8: Generate and prepend changelogs
+  //
+  // SMI-7012: the boundary was resolved at Step 4.5, before any write. Reaching
+  // here with `changelogSince` unset would mean the two `!noChangelog` guards
+  // disagree, so it is asserted rather than re-resolved.
   if (!noChangelog) {
-    const since = findLastVersionBumpCommit()
+    if (!changelogSince) {
+      throw new Error(
+        'Internal: changelog boundary was not resolved at Step 4.5 but Step 7-8 ran. ' +
+          'The two !noChangelog guards have diverged.'
+      )
+    }
+    const since = changelogSince
     for (const plan of plans) {
       const entries = getCommitsSince(since, plan.spec.dir)
       if (entries.length > 0) {
