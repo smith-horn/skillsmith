@@ -56,6 +56,12 @@ export interface ProbeResult {
   reason:
     | 'healthy'
     | 'outage_marker_present'
+    // SMI-6995 pre-merge gate: the marker file is PRESENT and cannot be
+    // read. Distinct from `outage_marker_present` (a readable marker, whose
+    // own contents say what broke) and emphatically distinct from `healthy`,
+    // which is what this used to report.
+    | 'outage_marker_malformed'
+    | 'outage_marker_unreadable'
     | 'IS_DOCKER_set_on_host'
     | 'binding_unavailable_no_marker'
     | 'no_recent_rows'
@@ -324,14 +330,23 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
 
   const dockerOnHost = isDockerSetOnHost()
   const markerRead = readOutageMarker(input.outageMarkerPath, input.now)
-  // `expired` is deliberately treated the same as `absent` here, matching
-  // the PRE-fix behaviour exactly (both used to collapse to the same
-  // `null`) — the TTL exists precisely so an old marker stops tripping
-  // this branch even if the next write never happens. Only `present`
-  // drives `outage_marker_present`; `malformed`/`unreadable` fall through
-  // too (this function's OWN stale/reason computation is unchanged by
-  // SMI-6995 — see `outageMarkerRead`'s doc comment on `ProbeResult` for
-  // where those two newly surface instead).
+  // `expired` is deliberately treated the same as `absent`, matching the
+  // PRE-fix behaviour exactly (both used to collapse to the same `null`) —
+  // the TTL exists precisely so an old marker stops tripping this branch
+  // even if the next write never happens.
+  //
+  // `malformed` and `unreadable` do NOT fall through. An earlier revision of
+  // SMI-6995 let them, on the reasoning that they "newly surface" via the
+  // `outageMarkerRead` field instead. The pre-merge gate found that reasoning
+  // false: the only consumer of that field is `renderInstrumentationBanner`,
+  // which the caller invokes solely when `stale` is true. Measured against a
+  // healthy baseline (no DB file, zero JSONL sessions), a corrupt marker
+  // returned `stale: false, reason: 'healthy'` and rendered nothing — a
+  // positive health claim about a damaged record, which is the same defect
+  // one level up from the one SMI-6995 exists to fix.
+  //
+  // So they get their own reasons below, and `present` is checked first
+  // because a readable marker is the more specific signal.
   const marker = markerRead.status === 'present' ? markerRead.marker : null
 
   if (marker) {
@@ -340,6 +355,21 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'outage_marker_present',
       lastRealSessionTs: null,
       outageMarker: marker,
+      outageMarkerRead: markerRead,
+      isDockerOnHost: dockerOnHost,
+    }
+  }
+
+  if (markerRead.status === 'malformed' || markerRead.status === 'unreadable') {
+    return {
+      stale: true,
+      reason:
+        markerRead.status === 'malformed' ? 'outage_marker_malformed' : 'outage_marker_unreadable',
+      lastRealSessionTs: null,
+      // `outageMarker` keeps its pre-SMI-6995 contract: non-null only for a
+      // readable `present` marker. The fault detail travels on
+      // `outageMarkerRead`, which the banner reads.
+      outageMarker: null,
       outageMarkerRead: markerRead,
       isDockerOnHost: dockerOnHost,
     }

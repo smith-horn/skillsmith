@@ -210,16 +210,43 @@ describe('assessInstrumentationHealth — outageMarkerRead propagation', () => {
     expect(result.stale).toBe(true)
   })
 
-  it('malformed marker: outageMarkerRead.status is malformed, but outageMarker is STILL null (kept exactly as before) and reason stays healthy', async () => {
+  // SMI-6995 pre-merge gate. This test originally asserted `reason` stays
+  // `healthy` for a present-but-unparseable marker, because the brief it was
+  // written from said to leave the stale/reason computation untouched and let
+  // the fault "surface via outageMarkerRead instead". The gate showed that
+  // reasoning was false: the only consumer of outageMarkerRead is the banner,
+  // and the caller invokes the banner solely when `stale` is true. So the
+  // classification was computed and then discarded, and the system reported
+  // `healthy` about a damaged file.
+  //
+  // The pairing below is what was missing and what let it through: a corrupt
+  // marker and a genuinely absent one, in ONE test body, against the same
+  // code path, asserting they produce DIFFERENT verdicts. Asserting only the
+  // corrupt arm cannot see a reader whose output is thrown away downstream.
+  it('a malformed marker is a fault; an absent one is healthy — same path, different verdicts', async () => {
+    // Arm 1: genuinely absent. The control. Without it, arm 2 proves nothing
+    // about discrimination — only that something non-healthy came back.
+    const absentDir = tmpDir()
+    const absent = await probeWithMarkerDir(absentDir)
+    expect(absent.outageMarkerRead.status).toBe('absent')
+    expect(absent.reason).toBe('healthy')
+    expect(absent.stale).toBe(false)
+
+    // Arm 2: present and unparseable, same helper, same path shape.
     const dir = tmpDir()
     writeFileSync(join(dir, 'retrieval-log.outage.json'), '{ not valid json ')
     const result = await probeWithMarkerDir(dir)
     expect(result.outageMarkerRead.status).toBe('malformed')
-    // The defect this whole module exists to fix: outageMarker alone could
-    // never distinguish this from absent. It still can't — that's by
-    // design (see ProbeResult's own doc comment) — but outageMarkerRead can.
+    // `outageMarker` keeps its pre-SMI-6995 contract — non-null only for a
+    // readable marker — so it still cannot distinguish the two. That is why
+    // the verdict, not this field, is what the assertions below pin.
     expect(result.outageMarker).toBeNull()
-    expect(result.reason).toBe('healthy')
+    expect(result.reason).toBe('outage_marker_malformed')
+    expect(result.stale).toBe(true)
+
+    // The property that actually matters, and the one a single-arm test misses.
+    expect(result.reason).not.toBe(absent.reason)
+    expect(result.stale).not.toBe(absent.stale)
   })
 
   it('unreadable marker: outageMarkerRead.status is unreadable with an EISDIR detail', async () => {
