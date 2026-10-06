@@ -268,13 +268,7 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  // Step 4: Dry run exit
-  if (dryRun) {
-    console.log('[DRY RUN] No files modified.')
-    process.exit(0)
-  }
-
-  // Step 4.5: Resolve the changelog boundary BEFORE any write (SMI-7012).
+  // Step 4: Resolve the changelog boundary BEFORE any write (SMI-7012).
   //
   // This used to happen at Step 7-8, after five write steps had already run —
   // version files, READMEs, workspace dep ranges, the typosquat snapshot and the
@@ -282,12 +276,28 @@ async function main(): Promise<void> {
   // leaving a half-written release on disk, which is worse than the arbitrary
   // range it replaced. Resolving here means a failure costs nothing.
   //
+  // It sits ABOVE the --dry-run exit on purpose, matching Step 3.5's convention
+  // of running its guard in the preview too. A dry run exists to tell an operator
+  // what the real run will do; a refusal it cannot see is a refusal it will meet
+  // for the first time on the real invocation. Resolving here reads git and writes
+  // nothing, so a dry run stays a dry run.
+  //
+  // --check deliberately exits above this. It is a version audit, documented safe
+  // on any branch, and it never reaches changelog generation — so a boundary it
+  // would not use should not be able to fail it.
+  //
   // Gated on `!noChangelog` to match Step 7-8's own condition: that flag already
   // skipped the lookup, so resolving unconditionally would make this refusal
   // fire on runs that were never going to read a range.
   const changelogSince = resolveChangelogBoundary(noChangelog)
   if (changelogSince) {
     console.log(`  ✓ Changelog boundary: ${changelogSince.slice(0, 9)}`)
+  }
+
+  // Step 4.5: Dry run exit
+  if (dryRun) {
+    console.log('[DRY RUN] No files modified.')
+    process.exit(0)
   }
 
   // Step 5: Write all version locations

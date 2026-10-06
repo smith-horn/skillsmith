@@ -32,12 +32,26 @@
  *
  * Three arms, and the two legacy ones are kept on purpose: they match release
  * commits that exist in this repository's history, and removing them would
- * orphan boundaries the matcher can currently find. Dating their removal needs
- * historical-reachability evidence that SMI-7012 does not gather.
+ * orphan boundaries the matcher can currently find. Measured against all 3,351
+ * commits on `main`: arm 1 matches 50, arm 2 matches 6, arm 3 matches 3. None
+ * of the three arms is dead. Dating their removal needs historical-reachability
+ * evidence that SMI-7012 does not gather.
  *
  * The first arm tolerates an optional `!` before the colon. It is scoped to
  * `chore(release)` and so does not admit a bare `chore!:` or an unrelated
  * scope.
+ *
+ * The third arm **excludes the dependency-bump idiom** `… from <version> to
+ * <version>`. Without that exclusion it matched `chore: bump npm from 10.9.4 to
+ * 11.9.0` (8ac96f7a4), a toolchain dependency bump and not a release — and
+ * since the caller takes the FIRST match scanning newest-first, one such commit
+ * landing after a release silently wins over the real boundary. That is the same
+ * wrong-boundary-reported-confidently failure this module exists to remove, so
+ * it is excluded rather than tolerated. Dependabot's own commits are scoped
+ * (`chore(deps):`) and never reached this arm; the one that did was hand-written.
+ * The exclusion is deliberately anchored on `from` followed by a digit, so a
+ * subject that merely contains the word (`chore: bump core 0.5.0 from the
+ * cadence run`) still matches.
  *
  * @param {unknown} subject a commit subject line
  * @returns {boolean}
@@ -47,6 +61,6 @@ export function isReleaseBumpSubject(subject) {
   return (
     /^chore\(release\)!?:/.test(subject) ||
     subject.startsWith('chore: bump version') ||
-    /^chore:.*bump.*\d+\.\d+\.\d+/.test(subject)
+    /^chore:(?!.*\bfrom\s+v?\d).*bump.*\d+\.\d+\.\d+/.test(subject)
   )
 }

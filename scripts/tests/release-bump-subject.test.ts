@@ -62,6 +62,33 @@ describe('isReleaseBumpSubject — the bang (SMI-7012)', () => {
     expect(isReleaseBumpSubject('chore: weekly bump 0.11.4')).toBe(true)
   })
 
+  it('matches the real bare-chore release subjects arm 3 exists for', () => {
+    // Verbatim from `main`. Arm 3's whole justification is that these exist, so
+    // narrowing it must not orphan them.
+    expect(
+      isReleaseBumpSubject('chore: bump core 0.4.16, mcp-server 0.4.4, fix core dep pin')
+    ).toBe(true) // 09ed1c6c6
+    expect(isReleaseBumpSubject('chore: bump core 0.4.10, mcp-server 0.3.20, cli 0.3.8')).toBe(true) // fbf9a4c7f
+    expect(isReleaseBumpSubject('chore: bump mcp-server and cli to v0.2.2')).toBe(true) // adac919ae
+  })
+
+  it('does NOT match a dependency bump that arm 3 used to claim (8ac96f7a4)', () => {
+    // The real subject, verbatim. A toolchain dependency bump is not a release
+    // boundary, and because the caller takes the FIRST match scanning
+    // newest-first, one of these landing after a release silently outranks it.
+    expect(isReleaseBumpSubject('chore: bump npm from 10.9.4 to 11.9.0')).toBe(false)
+    // The same idiom for other packages, bare-scoped so arm 3 is the only arm
+    // that could reach them.
+    expect(isReleaseBumpSubject('chore: bump stripe from 20.2.0 to 22.6.1')).toBe(false)
+    expect(isReleaseBumpSubject('chore: bump deps from v1.2.3 to v2.0.0')).toBe(false)
+  })
+
+  it('still matches a release subject that merely contains the word "from"', () => {
+    // The exclusion is anchored on `from` followed by a digit, not on the bare
+    // word — otherwise it would over-reach onto real releases.
+    expect(isReleaseBumpSubject('chore: bump core 0.5.0 from the cadence run')).toBe(true)
+  })
+
   it('returns false for a non-string rather than throwing', () => {
     expect(isReleaseBumpSubject(undefined)).toBe(false)
     expect(isReleaseBumpSubject(null)).toBe(false)
@@ -201,6 +228,27 @@ describe('ordering: the boundary resolves before any writer runs (SMI-7012)', ()
     for (const [name, re] of writers) {
       expect(boundary, `boundary must resolve before ${name}`).toBeLessThan(lineOf(re))
     }
+  })
+
+  it('resolves the boundary before the --dry-run exit, so the preview sees the refusal', () => {
+    // A dry run exists to report what the real run will do. With the resolution
+    // below the early exit, --dry-run passed clean and the operator met the
+    // refusal for the first time on the real invocation. Step 3.5's npm
+    // collision guard already documents this convention for itself.
+    const boundary = lineOf(/resolveChangelogBoundary\(noChangelog\)/)
+    expect(boundary, 'boundary must resolve before the --dry-run early exit').toBeLessThan(
+      lineOf(/^\s*if \(dryRun\) \{$/)
+    )
+  })
+
+  it('leaves --check exiting above the boundary resolution', () => {
+    // Deliberate, and the inverse of the assertion above: --check is a version
+    // audit that never reaches changelog generation, so a boundary it would not
+    // use must not be able to fail it.
+    const boundary = lineOf(/resolveChangelogBoundary\(noChangelog\)/)
+    expect(lineOf(/^\s*if \(check\) \{$/), '--check exits before the boundary').toBeLessThan(
+      boundary
+    )
   })
 
   it('consumes the retained hash at changelog generation instead of re-resolving', () => {
