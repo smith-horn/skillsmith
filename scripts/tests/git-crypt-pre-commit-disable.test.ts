@@ -65,7 +65,33 @@ function extractSpan(name: string): string {
       `SMI-5983 test span "${name}" not found in .husky/pre-commit -- sentinel comments moved or removed?`
     )
   }
-  return PRE_COMMIT_SRC.slice(startIdx + begin.length, endIdx)
+  // SMI-6973: slice from the end of the sentinel LINE, not the end of the
+  // sentinel NAME. The real sentinel continues past the name with a
+  // " -- scripts/tests/..." pointer, so slicing at `startIdx + begin.length`
+  // made every extracted span start with a stray `-- scripts/tests/...` line.
+  // Plain `sh` tolerates that as a non-fatal 127 and carries on, which is why
+  // the suite passed for its whole life; `sh -e` — the mode husky actually
+  // runs hooks in — dies on it at line 1. Fixing this is a prerequisite for
+  // running these spans in production mode at all.
+  const lineEnd = PRE_COMMIT_SRC.indexOf('\n', startIdx)
+  if (lineEnd === -1 || lineEnd > endIdx) {
+    throw new Error(
+      `SMI-5983 test span "${name}": BEGIN sentinel has no line ending before its END sentinel`
+    )
+  }
+  return PRE_COMMIT_SRC.slice(lineEnd + 1, endIdx)
+}
+
+/**
+ * SMI-6973: the direct assertion the extractor fix needs.
+ *
+ * "The suite is still green" would NOT prove this fix worked — green is what
+ * the suite was before it, with the stray line present and tolerated. The only
+ * thing that distinguishes the two is looking at what extraction actually
+ * produces, so this asserts the property instead of the outcome.
+ */
+function firstNonBlankLine(span: string): string {
+  return span.split('\n').find((l) => l.trim() !== '') ?? ''
 }
 
 const LOCK_HELPERS_SPAN = extractSpan('lock-helpers')
@@ -85,6 +111,36 @@ function runShInRepo(dir: string, script: string) {
   const stderr = result.stderr ?? ''
   return { status: result.status ?? 0, stdout, stderr, combined: stdout + stderr }
 }
+
+describe('SMI-6973: span extraction starts after the sentinel LINE, not the sentinel NAME', () => {
+  const SPANS: Array<[string, string]> = [
+    ['lock-helpers', LOCK_HELPERS_SPAN],
+    ['clear-marker', CLEAR_MARKER_SPAN],
+    ['disabled-precheck', DISABLED_PRECHECK_SPAN],
+    ['restore-definition', RESTORE_DEFINITION_SPAN],
+  ]
+
+  it.each(SPANS)('span %s does not begin with the sentinel’s trailing pointer', (name, span) => {
+    // Known-positive on the fixture itself: an empty span would satisfy the
+    // negative assertion below while proving nothing.
+    expect(span.trim().length, `span ${name} extracted empty`).toBeGreaterThan(0)
+    // The defect: the real sentinel reads
+    //   # SMI-5983-TEST:BEGIN <name> -- scripts/tests/<this file>
+    // so slicing after <name> left " -- scripts/tests/..." as line 1 of every
+    // span. Under plain `sh` that is a non-fatal 127; under `-e` it is fatal.
+    expect(firstNonBlankLine(span).trimStart()).not.toMatch(/^--/)
+  })
+
+  it('every BEGIN sentinel really does carry a trailing pointer', () => {
+    // Without this, the four assertions above could all pass simply because
+    // the sentinels stopped having suffixes — the fix would be untested and
+    // indistinguishable from a no-op. This pins the hazard's existence.
+    const withSuffix = PRE_COMMIT_SRC.split('\n').filter((l) =>
+      /#\s*SMI-5983-TEST:BEGIN\s+\S+\s+--\s+\S/.test(l)
+    )
+    expect(withSuffix).toHaveLength(SPANS.length)
+  })
+})
 
 describe('SMI-5983 (governance follow-up): .husky/pre-commit lock-helpers span', () => {
   it("computes the same physical lock directory scripts/_lib.sh's acquire_git_crypt_filter_lock() targets", () => {
