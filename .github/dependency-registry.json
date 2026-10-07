@@ -682,6 +682,18 @@
       "accepted": "2026-10-03",
       "expires": "2026-11-02",
       "tracking": "SMI-6952"
+    },
+    {
+      "advisory": "GHSA-rj75-hqrm-r3gf",
+      "package": "postcss-selector-parser",
+      "severity": "moderate",
+      "scope": "dev",
+      "tier": "R1",
+      "basis": "Only the 6.0.10 copy remains affected (the 7.x copy under eslint-plugin-astro is fixed at 7.1.6). It is exact-pinned by @tailwindcss/typography, whose latest release 0.5.20 still pins 6.0.10, and no fixed 6.x exists; a fix would force a major the plugin does not declare. Dev-only CSS-selector parsing at website build time (including credentialed deploy jobs) of our own stylesheets, which are trusted input, not outside input.",
+      "owner": "wrsmith108",
+      "accepted": "2026-10-07",
+      "expires": "2026-11-06",
+      "tracking": "SMI-7019"
     }
   ],
   "seeds": {
@@ -724,12 +736,44 @@
           "removeWhen": "`npm ls toml` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 4.2.0 (today @claude-flow/cli declares ^3.0.0). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
         },
         "sharp": {
-          "pin": "0.35.4",
-          "reason": "Dependency Guard finding when the seed landed (SMI-6744 A1.4). @xenova/transformers declares ^0.32.0, whose newest release 0.32.6 has GHSA-f88m-g3jw-g9cj and GHSA-rgj7-g3m4-5g8c (both high, re-confirmed 2026-10-04); @huggingface/transformers already declares ^0.35.4.",
-          "advisories": ["GHSA-f88m-g3jw-g9cj", "GHSA-rgj7-g3m4-5g8c"],
-          "introducedBy": ["SMI-6744", "c786636f5"],
+          "pin": "0.35.5",
+          "reason": "Dependency Guard finding when the seed landed (SMI-6744 A1.4). @xenova/transformers declares ^0.32.0, whose newest release 0.32.6 has GHSA-f88m-g3jw-g9cj and GHSA-rgj7-g3m4-5g8c (both high, re-confirmed 2026-10-04); @huggingface/transformers already declares ^0.35.4. Raised from 0.35.4 to 0.35.5 for GHSA-wq5f-xc86-pv6w (SMI-7017).",
+          "advisories": ["GHSA-f88m-g3jw-g9cj", "GHSA-rgj7-g3m4-5g8c", "GHSA-wq5f-xc86-pv6w"],
+          "introducedBy": ["SMI-6744", "c786636f5", "SMI-7017"],
           "crossesMajor": "forces @xenova/transformers (^0.32.0) from 0.32.x to 0.35.x, a 0.x minor crossing that semver treats as breaking",
-          "removeWhen": "`npm ls sharp` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 0.35.4 (today @xenova/transformers declares ^0.32.0). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+          "removeWhen": "`npm ls sharp` inside scripts/ruflo-seed no longer lists it, or every consumer declares a range that includes 0.35.5 (today @xenova/transformers declares ^0.32.0). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "@modelcontextprotocol/sdk": {
+          "pin": "^1.31.0",
+          "reason": "GHSA-6qxp-vccf-f47h (OAuth credential leak, fixed in 1.31.0) affects the 1.30.1 copy the seed resolved (SMI-7017). agentdb (^1.20.1), fastmcp (^1.24.3), ruvector (^1.30.0) and @google/genai (peer ^1.25.2) all declare ranges that already admit 1.31.0, so the floor stays inside every declared range.",
+          "advisories": ["GHSA-6qxp-vccf-f47h"],
+          "introducedBy": ["SMI-7017"],
+          "crossesMajor": null,
+          "removeWhen": "`npm ls @modelcontextprotocol/sdk` inside scripts/ruflo-seed lists only versions at or above 1.31.0 without this override (a scratch delete leaves the lockfile at or above 1.31.0). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "@modelcontextprotocol/client": {
+          "pin": "^2.2.0",
+          "reason": "GHSA-6qxp-vccf-f47h also affects @modelcontextprotocol/client below 2.2.0; the seed resolved 2.1.0, an optional install via mcp-proxy (^2.0.0), which admits 2.2.0 (SMI-7017).",
+          "advisories": ["GHSA-6qxp-vccf-f47h"],
+          "introducedBy": ["SMI-7017"],
+          "crossesMajor": null,
+          "removeWhen": "`npm ls @modelcontextprotocol/client` inside scripts/ruflo-seed lists only versions at or above 2.2.0 without this override (a scratch delete leaves the lockfile at or above 2.2.0), or the package is no longer in the seed. Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "@opentelemetry/core": {
+          "pin": "^2.8.0",
+          "reason": "GHSA-8988-4f7v-96qf (moderate, <2.8.0) affected 21 seed copies at 2.7.1, exact-pinned by @opentelemetry/sdk-node 0.218.0 and the 2.7.1 otel packages; sdk-node 0.218.x has no release that lifts them, so only an override fixes them (SMI-6980). Raises every 2.x copy to one hoisted 2.12.0, within the major. The 1.x copy is held at 1.30.1 by the nested override below.",
+          "advisories": ["GHSA-8988-4f7v-96qf"],
+          "introducedBy": ["SMI-6980"],
+          "crossesMajor": null,
+          "removeWhen": "Every @opentelemetry/core consumer in scripts/ruflo-seed other than @opentelemetry/resources 1.x (held at 1.30.1 by the nested override below and covered by the GHSA-8988-4f7v-96qf acceptance) declares a range that excludes versions below 2.8.0 (today @opentelemetry/sdk-node 0.218.0 exact-pins 2.7.1). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "@opentelemetry/resources@^1.0.0 > @opentelemetry/core": {
+          "pin": "1.30.1",
+          "reason": "Keeps the unscoped @opentelemetry/core ^2.8.0 override above from forcing @opentelemetry/resources 1.x (1.30.1 today; agentdb requests ^1.25.0) onto a 2.x core, which would cross a major under a 1.x package (SMI-6980). The parent key is a range, not an exact version, so a later 1.x resolution of resources still matches it; an exact key would stop matching silently, and npm ls counts the resulting overridden 2.x edge as valid. The key stays valid when npm validates the tree, because the override never changes resources' own version.",
+          "advisories": [],
+          "introducedBy": ["SMI-6980"],
+          "crossesMajor": null,
+          "removeWhen": "@opentelemetry/resources 1.x is no longer in scripts/ruflo-seed (agentdb stops requesting ^1.25.0), or the @opentelemetry/core override above is removed."
         }
       },
       "acceptances": [
@@ -751,7 +795,7 @@
           "severity": "moderate",
           "scope": "seed",
           "tier": "R3",
-          "basis": "The 1.30.1 copy (under @opentelemetry/resources 1.30.1, which agentdb requests with ^1.25.0) has no 1.x fix. The 21 copies at 2.7.1 are exact-pinned by the 0.218.0 and 2.7.1 otel packages, and @opentelemetry/sdk-node 0.218.x has no release that lifts them, so only a seed override fixes them (SMI-6980, owner decision 2). Every install is optional, and the seed is served with no network and no secrets.",
+          "basis": "Covers only the 1.30.1 copy (under @opentelemetry/resources 1.30.1, which agentdb requests with ^1.25.0); the advisory's fix is 2.8.0 and there is no 1.x fix. The 21 copies that were at 2.7.1 are fixed by the seed's @opentelemetry/core override (SMI-6980). Every install is optional, and the seed is served with no network and no secrets.",
           "owner": "wrsmith108",
           "accepted": "2026-10-04",
           "expires": "2027-01-02",
