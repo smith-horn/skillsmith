@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.14
+
+- **Security**: SMI-7030 -- in `@skillsmith/cli` 0.8.13 and earlier, `skillsmith import-local`
+  (including `--watch`) ran a SKILL.md's frontmatter as JavaScript when its opening line was
+  `---js` or `---javascript`. Importing a directory that contained such a file, including skills
+  installed from third parties under the default `~/.claude/skills/`, ran that code with your
+  privileges. 0.8.14 refuses that frontmatter and runs nothing. **Upgrade to 0.8.14.**
+
 - **Fixed**: SMI-7018 -- `skillsmith import-local` no longer depends on `gray-matter`, which pulled
   `sprintf-js` (GHSA-hp3w-g68c-fv3c, no fixed release) into the CLI's production dependencies.
   SKILL.md frontmatter is now read with the `yaml` package the CLI already uses.
@@ -21,6 +29,11 @@ All notable changes to `@skillsmith/cli` are documented here.
   - An opening line of `---yaml`, `---yml` or `---json` (any case) is read as before. An opening
     line of `---js` or `---javascript` is now reported as a parse failure; previously that
     frontmatter was run as JavaScript during the import. Any other language tag fails, as before.
+  - Tab characters used as YAML indentation, and duplicate keys inside `---json` frontmatter, now
+    make the file a parse failure. Before, tabs were accepted and the last duplicate key won.
+
+  A file that fails to parse is not imported. If that skill was imported before, its existing
+  entry keeps its old values. With `--json`, any failing file makes the command exit 1.
 
 ## v0.8.13
 
