@@ -138,17 +138,18 @@
       "removeWhen": "A scratch delete leaves the postcss under astro's vite at a version outside GHSA-fxqj-rqcc-2cmp, per package-lock.json."
     },
     "sharp": {
-      "pin": "0.35.4",
-      "reason": "Fixes libvips and libheif advisories in sharp; exact pin must match the exact sharp pin in packages/website.",
+      "pin": "0.35.5",
+      "reason": "Fixes libvips, libheif and librsvg advisories in sharp (0.35.5 adds GHSA-wq5f-xc86-pv6w, SMI-7013); exact pin must match the exact sharp pin in packages/website.",
       "advisories": [
         "CVE-2026-33327",
         "CVE-2026-33328",
         "CVE-2026-35590",
         "CVE-2026-35591",
         "GHSA-f88m-g3jw-g9cj",
-        "GHSA-rgj7-g3m4-5g8c"
+        "GHSA-rgj7-g3m4-5g8c",
+        "GHSA-wq5f-xc86-pv6w"
       ],
-      "introducedBy": ["SMI-5799", "SMI-6478", "4e8304cfd"],
+      "introducedBy": ["SMI-5799", "SMI-6478", "4e8304cfd", "SMI-7013"],
       "crossesMajor": "0.x minor crossing (0.34 to 0.35): miniflare (exact 0.34.5) and @huggingface/transformers (^0.34.1)",
       "removeWhen": "@huggingface/transformers and miniflare declare sharp 0.35.4 or higher."
     },
@@ -339,12 +340,12 @@
       "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 2.3.0 or higher."
     },
     "@modelcontextprotocol/sdk > .": {
-      "pin": "^1.27.1",
-      "reason": "Two purposes. Security: forces the SDK onto a version fixing the cross-client data leak (GHSA-345p-7cg4-v4c7, fixed in 1.27.1). Lock stability: the \".\" key keeps Dependabot lockfile regeneration on one SDK copy (docs/internal/implementation/dependabot-mcp-sdk-lock-fix.md). audit:standards fails if this pin drifts from packages/mcp-server's own range.",
-      "advisories": ["GHSA-345p-7cg4-v4c7"],
-      "introducedBy": ["SMI-2330", "352111d0a"],
+      "pin": "^1.31.0",
+      "reason": "Two purposes. Security: forces the SDK onto a version fixing the cross-client data leak (GHSA-345p-7cg4-v4c7, fixed in 1.27.1) and the OAuth credential-leak advisory (GHSA-6qxp-vccf-f47h, fixed in 1.31.0, SMI-7013). Lock stability: the \".\" key keeps Dependabot lockfile regeneration on one SDK copy (docs/internal/implementation/dependabot-mcp-sdk-lock-fix.md). audit:standards fails if this pin drifts from packages/mcp-server's own range.",
+      "advisories": ["GHSA-345p-7cg4-v4c7", "GHSA-6qxp-vccf-f47h"],
+      "introducedBy": ["SMI-2330", "352111d0a", "SMI-7013"],
       "crossesMajor": null,
-      "removeWhen": "Both conditions hold: every consumer declares an SDK range with a minimum of 1.27.1 or higher (already true on 2026-10-03: packages/mcp-server and packages/doc-retrieval-mcp both declare ^1.27.1), and a Dependabot lockfile regeneration without the \".\" key leaves exactly one SDK copy in package-lock.json. Delete the audit:standards drift check in the same change."
+      "removeWhen": "Both conditions hold: every consumer declares an SDK range with a minimum of 1.31.0 or higher (true from SMI-7013: packages/mcp-server and packages/doc-retrieval-mcp both declare ^1.31.0), and a Dependabot lockfile regeneration without the \".\" key leaves exactly one SDK copy in package-lock.json. Delete the audit:standards drift check in the same change."
     },
     "@modelcontextprotocol/sdk > ajv": {
       "pin": "^8.18.0",

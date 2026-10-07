@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@cyclonedx/cyclonedx-library": "10.1.0",
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@skillsmith/core": "^0.13.0",
     "@supabase/supabase-js": "2.117.2",
     "ajv-formats-draft2019": "1.6.1",

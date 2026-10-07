@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@ruvector/core": "0.1.32",
     "@skillsmith/core": "^0.13.0",
     "better-sqlite3": "11.10.0",
