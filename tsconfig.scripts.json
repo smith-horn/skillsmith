@@ -25,12 +25,40 @@
     "noEmit": true,
     "types": ["node"]
   },
-  // .mts/.cts/.tsx included even though today's count is 3/0/0 (vs. 260 .ts),
-  // so a file added later in one of those extensions does not silently fall
-  // outside the gate (finding 4 -- a .ts-only glob was the exact defect).
+  // .mts/.cts/.tsx included alongside .ts so a file added later in one of
+  // those extensions does not silently fall outside the gate (finding 4 -- a
+  // .ts-only glob was the exact defect). Deliberately no file-count claim
+  // here -- a count in this comment rots the moment the tree changes (it
+  // already had: an earlier draft said 3 .mts, which was already 7 by the
+  // time this comment was reviewed). scripts/ci/typecheck-scripts.sh prints
+  // the live discovered/compiler-roots/checked counts every run; that is the
+  // only trustworthy source for "how many", not this file.
   "include": ["scripts/**/*.ts", "scripts/**/*.mts", "scripts/**/*.cts", "scripts/**/*.tsx"],
-  // scripts/tests/** (417 files, 284 errors) is SMI-7006, not this gate --
-  // named here so a reader of this config sees the gate covers a subset
-  // rather than inferring full scripts/ coverage from its name.
-  "exclude": ["node_modules", "dist", "scripts/tests/**"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    // scripts/tests/** is SMI-7006, not this gate -- named here so a reader
+    // of this config sees the gate covers a subset rather than inferring
+    // full scripts/ coverage from its name. No file/error count claim here
+    // either, for the same rot reason as above; the gate reports counts live.
+    "scripts/tests/**",
+    // BLOCKER (cross-family pre-merge review of PR #3022, SMI-6975 follow-up,
+    // 2026-10-06): both `@linear/sdk` and `pg` are NOT installed anywhere in
+    // this repo -- confirmed via `npm ls @linear/sdk`, `npm ls pg` (both
+    // "(empty)"), a repo-wide package.json grep, and a package-lock.json
+    // grep, all empty. The handwritten ambient declarations that used to
+    // make these two scripts typecheck (scripts/pg.d.ts,
+    // scripts/linear/linear-sdk.d.ts, both deleted in this fix) certified a
+    // contract against a module that cannot actually be resolved at runtime
+    // -- the exact "checked something that was never really checked" defect
+    // this whole gate exists to prevent, committed inside the gate's own PR.
+    // A gate must not certify a module it cannot resolve. Excluded here
+    // rather than deleted: deleting a script outright is a bigger call than
+    // this fix should make. See compose_excluded_desc()'s "BLOCKED:" line in
+    // scripts/ci/typecheck-scripts.helpers.sh, which names both paths again
+    // in the gate's own live output -- this exclusion must stay visible
+    // there too, not buried in this config alone.
+    "scripts/linear/create-warning-issues.ts",
+    "scripts/run-sql.ts"
+  ]
 }

@@ -11,6 +11,26 @@
 # --build ... TypeScript check passed (full)", which reads as "checked BECAUSE
 # you touched those files". A wrong instrument does not fail; it answers.
 #
+# SMI-6975 FOLLOW-UP (cross-family pre-merge review of PR #3022, 2026-10-06):
+# this gate's own first PR had the exact defect it exists to prevent. Two
+# scripts (scripts/linear/create-warning-issues.ts, scripts/run-sql.ts) import
+# @linear/sdk and pg -- NEITHER PACKAGE IS INSTALLED -- and PR #3022 shipped
+# handwritten ambient .d.ts files inventing a contract for both, so the gate
+# certified two scripts that cannot actually run. Fixed by excluding both from
+# tsconfig.scripts.json (deleting the invented .d.ts files) and reporting the
+# exclusion explicitly in this script's own "excluded" output, not just in the
+# config -- see build_scripts_inventory()/compose_excluded_desc() in
+# typecheck-scripts.helpers.sh. The same review also found: unchecked
+# find/perl/grep exit status that could turn a real failure into a false PASS
+# (fixed throughout below); two independent scope derivations (this file's
+# find, and tsconfig.scripts.json's include) that silently omitted the same
+# extension category, so a new .js/.jsx file would reconcile and pass
+# unnoticed (fixed via the extension-inventory classification in the helpers
+# file, which fails INCONCLUSIVE on anything it does not explicitly
+# classify); a mktemp wrapper whose cleanup never ran because it updated a
+# subshell's copy of its own bookkeeping array; and a `$?` read one line too
+# late that always evaluated to the wrong command's status.
+#
 # Modelled on scripts/ci/typecheck-edge-functions.sh (read that file's own
 # exit-policy table; this follows its RESULT/VERDICT shape, not a re-derivation
 # of it) with one deliberate simplification: there is no CONTEXT axis here.
@@ -37,70 +57,19 @@ cd "$REPO_ROOT" || exit 1
 CONFIG="tsconfig.scripts.json"
 TSC_BIN="$REPO_ROOT/node_modules/.bin/tsc"
 
-say() { printf '%s\n' "$*"; }
-field() { printf '  %-14s %s\n' "$1" "$2"; }
-
-# RESULT answers "did the check produce a usable answer"; VERDICT answers "is
-# the code clean". Conflating them is how a checker that never ran gets
-# recorded as a checker that found nothing (plan finding 6 / CLAUDE.md
-# SMI-6684's STATE/CAUSE split).
-RESULT="EVALUATED"
-VERDICT=""
-INCONCLUSIVE_WHY=""
-NEXT_ACTION=""
-
-inconclusive() {
-  RESULT="INCONCLUSIVE"
-  INCONCLUSIVE_WHY="$1"
-}
-
-finish() {
-  say ""
-  say "[scripts-typecheck] SMI-6975"
-  field "config" "$CONFIG"
-  field "tsc" "${TSC_VERSION:-unknown}"
-  # Four numbers, printed SEPARATELY, never collapsed into one (finding 1/2).
-  # A plausible "263 files / PASS" proves nothing on its own -- it looks
-  # identical whether tsc read the same include set this shell counted, or a
-  # different one entirely.
-  field "discovered" "${DISCOVERED:-?} (find over scripts/**/*.{ts,mts,cts,tsx}, minus scripts/tests/**)"
-  field "compiler roots" "${COMPILER_ROOTS:-?} (tsc --showConfig's own resolved files[])"
-  field "checked" "${CHECKED:-?} (only set once discovered == compiler roots)"
-  field "excluded" "${EXCLUDED_DESC:-?}"
-  [[ -n "${ERR_FIELD:-}" ]] && field "errors" "$ERR_FIELD"
-  field "RESULT" "$RESULT${INCONCLUSIVE_WHY:+ -- $INCONCLUSIVE_WHY}"
-  field "VERDICT" "${VERDICT:-NONE}"
-  [[ -n "$NEXT_ACTION" ]] && say "  next: $NEXT_ACTION"
-  say ""
-}
-
-# No CONTEXT axis (see header). "Not checked" is not "safe" -- an INCONCLUSIVE
-# result always exits non-zero, matching the plan's checklist item verbatim.
-exit_for_inconclusive() {
-  finish
-  say "FATAL: the check could not run, or could not be trusted. \"Not checked\" is not \"safe\"."
+# Two files, per the 500-line gate (CLAUDE.md "CI Health Requirements"). The
+# guard below fails loudly if the sibling did not load -- with no `set -e`, a
+# failed `source` would NOT abort; it would leave every helper function
+# undefined and surface as "command not found" mid-check instead of a clear
+# fatal message.
+# shellcheck source=scripts/ci/typecheck-scripts.helpers.sh
+source "$REPO_ROOT/scripts/ci/typecheck-scripts.helpers.sh"
+if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
+  || ! declare -F mktemp_or_die >/dev/null || ! declare -F build_scripts_inventory >/dev/null \
+  || ! declare -F count_tests_excluded >/dev/null || ! declare -F compose_excluded_desc >/dev/null; then
+  printf '[scripts-typecheck] FATAL: typecheck-scripts.helpers.sh did not load\n' >&2
   exit 1
-}
-
-# ---------------------------------------------------------------------------
-# Temp files. Explicit creation-failure handling (finding 6's own taxonomy
-# names this), because an unchecked `$(mktemp)` failure leaves the variable
-# empty and every later redirect into "" fails somewhere downstream with a
-# confusing, differently-worded error instead of a named INCONCLUSIVE cause.
-# ---------------------------------------------------------------------------
-TMP_FILES=()
-mktemp_or_die() {
-  local t
-  t="$(mktemp 2>/dev/null)" || true
-  if [[ -z "$t" || ! -f "$t" ]]; then
-    inconclusive "mktemp failed to create a temp file"
-    NEXT_ACTION="check /tmp disk space and permissions"
-    exit_for_inconclusive
-  fi
-  TMP_FILES+=("$t")
-  printf '%s' "$t"
-}
-trap 'rm -f "${TMP_FILES[@]:-}"' EXIT
+fi
 
 # ---------------------------------------------------------------------------
 # Preconditions: tsc present, executable, and recognisable (finding 6).
@@ -118,7 +87,8 @@ TSC_VERSION_RAW="$("$TSC_BIN" --version 2>&1)"
 TSC_VERSION_RC=$?
 if [[ "$TSC_VERSION_RC" -ne 0 ]] || ! printf '%s' "$TSC_VERSION_RAW" | grep -qE '^Version [0-9]+\.[0-9]+\.[0-9]+'; then
   inconclusive "tsc --version produced no recognisable version string"
-  say "--- raw ---"; printf '%s\n' "$TSC_VERSION_RAW" | head -5
+  say "--- raw ---"
+  printf '%s\n' "$TSC_VERSION_RAW" | head -5
   NEXT_ACTION="confirm node_modules/.bin/tsc is a real, uncorrupted TypeScript compiler"
   exit_for_inconclusive
 fi
@@ -136,22 +106,15 @@ if [[ ! -r "$CONFIG" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Discovery, derivation 1: find over the intended roots.
+# Discovery, derivation 1: the classified file inventory (finding 4), plus
+# the separately-scoped scripts/tests/** count, plus the BLOCKER-fix
+# exclusion report (finding 4 / BLOCKER). All three functions exit via
+# exit_for_inconclusive() on their own failure modes; nothing below runs
+# unless all three returned normally.
 # ---------------------------------------------------------------------------
-DISCOVERED_LIST="$(mktemp_or_die)"
-find scripts \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' -o -name '*.tsx' \) -type f \
-  -not -path '*/node_modules/*' -not -path '*/dist/*' \
-  -not -path 'scripts/tests/*' 2>/dev/null | sort > "$DISCOVERED_LIST"
-DISCOVERED="$(wc -l < "$DISCOVERED_LIST" | tr -d ' ')"
-
-# I-3 class (same shape as the reference gate): an empty include matches
-# nothing, tsc reports zero errors, and that is indistinguishable from a clean
-# tree unless a zero denominator is caught and named explicitly first.
-if [[ "$DISCOVERED" -eq 0 ]]; then
-  inconclusive "zero files discovered under scripts/**/*.{ts,mts,cts,tsx} (excluding scripts/tests/**)"
-  NEXT_ACTION="the discovery glob is broken, or the tree moved. This is NOT a clean result."
-  exit_for_inconclusive
-fi
+build_scripts_inventory
+count_tests_excluded
+compose_excluded_desc
 
 # ---------------------------------------------------------------------------
 # Discovery, derivation 2: tsc's OWN resolved file list. `--showConfig` is run
@@ -163,9 +126,13 @@ fi
 # behind the cheap one's success is what keeps "config invalid" a clean
 # INCONCLUSIVE arm instead of a wedged CI job.
 # ---------------------------------------------------------------------------
-SHOWCONFIG_OUT="$(mktemp_or_die)"
-SHOWCONFIG_ERR="$(mktemp_or_die)"
-"$TSC_BIN" --showConfig -p "$CONFIG" > "$SHOWCONFIG_OUT" 2>"$SHOWCONFIG_ERR"
+mktemp_or_die SHOWCONFIG_OUT
+mktemp_or_die SHOWCONFIG_ERR
+# shellcheck disable=SC2153 # SHOWCONFIG_ERR IS assigned, by mktemp_or_die's
+# `printf -v "$__outvar"` above -- shellcheck can't see an assignment made
+# by name through a function argument, and its misspelling heuristic flags
+# the nearby SHOWCONFIG_RC as the "intended" name instead.
+"$TSC_BIN" --showConfig -p "$CONFIG" >"$SHOWCONFIG_OUT" 2>"$SHOWCONFIG_ERR"
 SHOWCONFIG_RC=$?
 if [[ "$SHOWCONFIG_RC" -ne 0 ]]; then
   inconclusive "tsc --showConfig failed (exit $SHOWCONFIG_RC) -- $CONFIG is invalid or unreadable to tsc"
@@ -181,11 +148,11 @@ if [[ "$SHOWCONFIG_RC" -ne 0 ]]; then
   exit_for_inconclusive
 fi
 
-COMPILER_ROOTS_LIST="$(mktemp_or_die)"
+mktemp_or_die COMPILER_ROOTS_LIST
 # Node, not jq/grep: --showConfig emits real JSON and `files` entries are
 # "./scripts/..." -- the leading "./" must be stripped before comparing
 # byte-for-byte against find's un-prefixed output.
-if ! node -e '
+node -e '
   const fs = require("fs");
   let raw, cfg;
   try { raw = fs.readFileSync(process.argv[1], "utf8"); } catch { process.exit(3); }
@@ -193,13 +160,20 @@ if ! node -e '
   if (!cfg || !Array.isArray(cfg.files)) process.exit(5);
   const rel = cfg.files.map((f) => String(f).replace(/^\.\//, "")).sort();
   process.stdout.write(rel.length ? rel.join("\n") + "\n" : "");
-' "$SHOWCONFIG_OUT" > "$COMPILER_ROOTS_LIST" 2>/dev/null; then
-  NODE_PARSE_RC=$?
+' "$SHOWCONFIG_OUT" >"$COMPILER_ROOTS_LIST" 2>/dev/null
+# Finding 8: `NODE_PARSE_RC=$?` used to be read INSIDE `if ! node ...; then`,
+# where `$?` is the exit status of `!`, not of `node` -- `!` negates, so
+# landing in that branch (node genuinely failed) always left `$?` at 0, and
+# the message always printed "node exit 0" regardless of node's real status.
+# Fixed by capturing node's status immediately, THEN branching on the
+# captured value.
+NODE_PARSE_RC=$?
+if [[ "$NODE_PARSE_RC" -ne 0 ]]; then
   inconclusive "could not parse tsc --showConfig output as a files[] array (node exit $NODE_PARSE_RC)"
   NEXT_ACTION="inspect $SHOWCONFIG_OUT's content shape -- this tsc version may have changed --showConfig's output format"
   exit_for_inconclusive
 fi
-COMPILER_ROOTS="$(wc -l < "$COMPILER_ROOTS_LIST" | tr -d ' ')"
+COMPILER_ROOTS="$(wc -l <"$COMPILER_ROOTS_LIST" | tr -d ' ')"
 if [[ "$COMPILER_ROOTS" -eq 0 ]]; then
   inconclusive "tsc --showConfig resolved zero files for $CONFIG"
   NEXT_ACTION="the compiler's own include/exclude resolved to nothing. This is NOT a clean result."
@@ -208,32 +182,20 @@ fi
 
 # ---------------------------------------------------------------------------
 # THE reconciliation (finding 1). Not a count comparison -- a SET comparison.
-# Two different counts that happen to both be 263 would still be a bug; two
+# Two different counts that happen to both be 268 would still be a bug; two
 # IDENTICAL sorted file lists are the only thing that rules out "tsc read a
 # different include, a different config, or ran from a different cwd" while
-# this shell's `find` read what the developer expects.
+# this shell's inventory read what the developer expects.
 # ---------------------------------------------------------------------------
 SET_DIFF="$(diff "$DISCOVERED_LIST" "$COMPILER_ROOTS_LIST" || true)"
 if [[ -n "$SET_DIFF" ]]; then
-  inconclusive "discovered set (find) and compiler roots (tsc --showConfig) disagree -- scope could not be validated"
-  say "--- diff (< find-only, > tsc-only) ---"
+  inconclusive "discovered set (inventory) and compiler roots (tsc --showConfig) disagree -- scope could not be validated"
+  say "--- diff (< inventory-only, > tsc-only) ---"
   printf '%s\n' "$SET_DIFF" | head -20
-  NEXT_ACTION="reconcile $CONFIG's include/exclude against this script's find expression. A set mismatch is not a zero -- it means the thing that ran is not the thing that was intended."
+  NEXT_ACTION="reconcile $CONFIG's include/exclude against this script's inventory. A set mismatch is not a zero -- it means the thing that ran is not the thing that was intended."
   exit_for_inconclusive
 fi
 CHECKED="$DISCOVERED"
-
-# ---------------------------------------------------------------------------
-# Excluded scope, reported rather than implied (finding 3/7 -- a gate named
-# "scripts typecheck" that silently covers a subset reads as covering the
-# whole directory). Measured live every run, not copied from the plan doc --
-# a count written into a comment starts rotting the moment the tree changes.
-# ---------------------------------------------------------------------------
-TESTS_EXCLUDED="$(find scripts/tests \( -name '*.ts' -o -name '*.mts' -o -name '*.cts' -o -name '*.tsx' \) \
-  -type f 2>/dev/null | wc -l | tr -d ' ')"
-MJS_EXCLUDED="$(find scripts -name '*.mjs' -type f -not -path 'scripts/tests/*' 2>/dev/null | wc -l | tr -d ' ')"
-CJS_EXCLUDED="$(find scripts -name '*.cjs' -type f -not -path 'scripts/tests/*' 2>/dev/null | wc -l | tr -d ' ')"
-EXCLUDED_DESC="scripts/tests/** ($TESTS_EXCLUDED .ts-family files, SMI-7006) + $MJS_EXCLUDED non-test .mjs + $CJS_EXCLUDED non-test .cjs (not TypeScript; computed dynamic import()/require() targets are also out of reach of any static resolver -- see the plan's finding 7 audit)"
 
 # ---------------------------------------------------------------------------
 # The check itself. --pretty is not cosmetic here: it is the ONLY tsc output
@@ -245,16 +207,26 @@ EXCLUDED_DESC="scripts/tests/** ($TESTS_EXCLUDED .ts-family files, SMI-7006) + $
 # of how this script parses per-file lines, so the two can actually disagree
 # if either parser is wrong.
 # ---------------------------------------------------------------------------
-TSC_RAW="$(mktemp_or_die)"
-"$TSC_BIN" -p "$CONFIG" --pretty > "$TSC_RAW" 2>&1
+mktemp_or_die TSC_RAW
+"$TSC_BIN" -p "$CONFIG" --pretty >"$TSC_RAW" 2>&1
 TSC_RC=$?
 
-TSC_CLEAN="$(mktemp_or_die)"
+mktemp_or_die TSC_CLEAN
 # Strip ANSI + NUL before any pattern match, for the same reason the edge-
 # function gate does: a NUL byte can make some greps silently stop matching,
 # and --pretty's color codes sit INSIDE diagnostic lines (between "error" and
 # "TSxxxx", measured directly) rather than only around them.
-perl -pe 's/\e\[[0-9;]*m//g; tr/\000//d' "$TSC_RAW" > "$TSC_CLEAN"
+perl -pe 's/\e\[[0-9;]*m//g; tr/\000//d' "$TSC_RAW" >"$TSC_CLEAN"
+# Finding 2: perl's own exit status was never read. A perl crash mid-stream
+# (OOM, killed, disk full writing $TSC_CLEAN) would leave $TSC_CLEAN empty or
+# truncated with nothing downstream the wiser -- checked immediately, not
+# inferred from whatever a later grep happens to find in the damaged output.
+PERL_RC=$?
+if [[ "$PERL_RC" -ne 0 ]]; then
+  inconclusive "the ANSI/NUL-strip (perl) failed (exit $PERL_RC) -- \$TSC_CLEAN cannot be trusted"
+  NEXT_ACTION="re-run; if it persists, perl is broken on this host or $TSC_RAW is unreadable"
+  exit_for_inconclusive
+fi
 
 # A bare `error TSxxxx:` line with NO leading "path:line:col - " prefix is a
 # GLOBAL/structural failure (e.g. TS2688 "Cannot find type definition file for
@@ -263,8 +235,18 @@ perl -pe 's/\e\[[0-9;]*m//g; tr/\000//d' "$TSC_RAW" > "$TSC_CLEAN"
 # the reference gate's module-graph-error check, because the error/attribution
 # counts below would be meaningless if the compiler never got past loading its
 # own configuration.
-if grep -qE '^error TS[0-9]+:' "$TSC_CLEAN"; then
-  inconclusive "module-resolution or global configuration failure (a diagnostic with no file:line:col -- not one of the 37/N per-file findings)"
+grep -qE '^error TS[0-9]+:' "$TSC_CLEAN"
+GLOBAL_ERR_RC=$?
+# grep -q: 0 = matched, 1 = no match (legitimate -- most runs), 2 = a REAL
+# grep error (e.g. an unreadable file). Finding 2: a plain `if grep -q ...;
+# then` cannot tell 1 apart from 2 -- both are "false" to `if`, so a genuine
+# grep failure would have silently taken the "no global error" branch.
+if [[ "$GLOBAL_ERR_RC" -ge 2 ]]; then
+  inconclusive "the global-diagnostic-shape grep failed (exit $GLOBAL_ERR_RC)"
+  exit_for_inconclusive
+fi
+if [[ "$GLOBAL_ERR_RC" -eq 0 ]]; then
+  inconclusive "module-resolution or global configuration failure (a diagnostic with no file:line:col -- not one of the per-file findings)"
   say "--- global diagnostic(s) ---"
   grep -A3 -E '^error TS[0-9]+:' "$TSC_CLEAN" | head -20
   NEXT_ACTION="resolve the global error first; any per-file count below would be meaningless"
@@ -279,20 +261,44 @@ fi
 # "^Found [0-9]+ errors?" matches the leading count in all three without ever
 # trying to parse what follows it.
 FOUND_LINES="$(grep -cE '^Found [0-9]+ errors?\b' "$TSC_CLEAN")"
+FOUND_LINES_RC=$?
+if [[ "$FOUND_LINES_RC" -ge 2 ]]; then
+  inconclusive "the 'Found N errors' summary-line grep failed (exit $FOUND_LINES_RC)"
+  exit_for_inconclusive
+fi
 if [[ "$FOUND_LINES" -eq 0 ]]; then
   if [[ "$TSC_RC" -eq 0 ]]; then
     REPORTED=0
   else
     inconclusive "tsc exited $TSC_RC with no parseable 'Found' total"
-    say "--- raw tail ---"; tail -20 "$TSC_CLEAN"
+    say "--- raw tail ---"
+    tail -20 "$TSC_CLEAN"
     NEXT_ACTION="unrecognised tsc output for this version -- the parser above may need updating"
     exit_for_inconclusive
   fi
 elif [[ "$FOUND_LINES" -eq 1 ]]; then
+  # This pipeline runs INSIDE a command substitution, so PIPESTATUS (set by
+  # a pipeline run directly in the current shell, as above) does not apply
+  # here -- the subshell `$(...)` creates has its own PIPESTATUS, which never
+  # reaches the parent's array. `$?` immediately after the assignment is the
+  # right instrument instead: pipefail (set at the top of this script) is a
+  # shell option, and shell options ARE inherited into command-substitution
+  # subshells, so `$?` already reflects the pipeline's own pipefail-combined
+  # status collapsed to a single value -- sufficient here because, unlike
+  # the grep -c calls above, neither stage has a legitimate non-zero outcome
+  # by construction (FOUND_LINES == 1 already proved exactly one "Found N"
+  # line exists, and that line contains digits by the pattern that found
+  # it), so ANY non-zero is a genuine error.
   REPORTED="$(grep -oE '^Found [0-9]+' "$TSC_CLEAN" | grep -oE '[0-9]+')"
+  REPORTED_RC=$?
+  if [[ "$REPORTED_RC" -ne 0 ]]; then
+    inconclusive "could not extract the error count from the 'Found N' summary line (pipeline exit $REPORTED_RC)"
+    exit_for_inconclusive
+  fi
 else
   inconclusive "$FOUND_LINES 'Found' summary lines -- output shape unexpected, possibly truncated"
-  say "--- raw tail ---"; tail -20 "$TSC_CLEAN"
+  say "--- raw tail ---"
+  tail -20 "$TSC_CLEAN"
   NEXT_ACTION="do not trust a count derived from this; re-run, or update the parser for this tsc version"
   exit_for_inconclusive
 fi
@@ -324,11 +330,33 @@ fi
 # line never starts with "scripts/", so this counts exactly one line per
 # diagnostic block, matching REPORTED's own unit.
 ATTRIB="$(grep -cE '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN")"
-BY_FILE="$(mktemp_or_die)"
+ATTRIB_RC=$?
+if [[ "$ATTRIB_RC" -ge 2 ]]; then
+  inconclusive "the per-file attribution count grep failed (exit $ATTRIB_RC)"
+  exit_for_inconclusive
+fi
+
+mktemp_or_die BY_FILE
 grep -E '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN" \
   | sed -E 's/^(scripts\/[^:]+):.*/\1/' | sort | uniq -c \
-  | awk '{n=$1; $1=""; sub(/^ /, ""); printf "%d\t%s\n", n, $0}' | sort -t$'\t' -k1,1nr > "$BY_FILE"
-ERR_FILES="$(wc -l < "$BY_FILE" | tr -d ' ')"
+  | awk '{n=$1; $1=""; sub(/^ /, ""); printf "%d\t%s\n", n, $0}' | sort -t$'\t' -k1,1nr >"$BY_FILE"
+BY_FILE_STATUS=("${PIPESTATUS[@]}")
+# Finding 2: six stages, each checked. Stage 0 (grep) legitimately returns 1
+# when ATTRIB is 0 -- a clean tree -- so only >=2 there is an error; every
+# other stage (sed/sort/uniq/awk/sort) has no legitimate non-zero outcome at
+# all, so ANY non-zero there is routed to INCONCLUSIVE.
+if [[ "${BY_FILE_STATUS[0]}" -ge 2 ]]; then
+  inconclusive "the per-file attribution grep failed (exit ${BY_FILE_STATUS[0]})"
+  exit_for_inconclusive
+fi
+for _by_file_stage in 1 2 3 4 5; do
+  _by_file_rc="${BY_FILE_STATUS[$_by_file_stage]:-1}"
+  if [[ "$_by_file_rc" -ne 0 ]]; then
+    inconclusive "the per-file attribution pipeline's stage $_by_file_stage (sed/sort/uniq/awk) failed (exit $_by_file_rc)"
+    exit_for_inconclusive
+  fi
+done
+ERR_FILES="$(wc -l <"$BY_FILE" | tr -d ' ')"
 
 # The hard reconciliation itself (finding 1/6). Two independently-derived
 # counts -- tsc's own summary line, and this script's count of diagnostic
@@ -337,7 +365,8 @@ if [[ "$ATTRIB" -ne "$REPORTED" ]]; then
   ERR_FIELD="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [MISMATCH]"
   inconclusive "attribution ($ATTRIB) does not reconcile with tsc's own reported total ($REPORTED)"
   NEXT_ACTION="the header-line parser above is wrong for this tsc version/output shape. Do not trust the per-file numbers."
-  say "--- raw tail, for the parser fix ---"; tail -20 "$TSC_CLEAN"
+  say "--- raw tail, for the parser fix ---"
+  tail -20 "$TSC_CLEAN"
   exit_for_inconclusive
 fi
 

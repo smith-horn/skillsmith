@@ -13,10 +13,18 @@
  * mutation: reverting the one-line fix leaves all 8 of the mocked suite's tests
  * green, and fails this file.
  *
- * Nothing else catches this class: `tsconfig.json` has `"files": []` and
- * references only `packages/`, so `tsc --build` never typechecks `scripts/`,
- * and `eslint.config.js`'s type-aware block is scoped to `packages/**` too.
- * A test that drives the real dependency wiring is the only backstop.
+ * At the time nothing else caught this class: `tsconfig.json` has
+ * `"files": []` and references only `packages/`, so `tsc --build` never
+ * typechecks `scripts/`, and `eslint.config.js`'s type-aware block is scoped
+ * to `packages/**` too. SMI-6975 narrowed that gap: the PRODUCTION file this
+ * test drives (`smi5879-simulate-preflight-estimate.ts`) is a non-test
+ * script, so it is now typechecked on every `npm run typecheck`, and a
+ * regressed `{ headers }`-shaped deps object would be a compile-time error
+ * there too. This test file itself still is not -- `scripts/tests/**` is
+ * SMI-7006's scope, not SMI-6975's -- so a runtime test that drives the real
+ * dependency wiring remains the only backstop for a regression confined to
+ * this file (e.g. a bad mock elsewhere reintroducing the mismatch at the
+ * call boundary this test exercises).
  *
  * @module scripts/tests/indexer/smi5879-preflight-wiring
  */
@@ -79,7 +87,10 @@ const db = {
  * unenforced annotation in an unchecked directory hides a mismatch just as
  * well as a cast does. A first attempt at this omitted four required
  * `MergedEdgeScanResult` fields and still "passed" `npm run typecheck`,
- * because that command never sees `scripts/`. Verify with
+ * because at the time that command never saw `scripts/` at all. SMI-6975
+ * narrowed this: non-test `scripts/` is typechecked now, but THIS file is
+ * under `scripts/tests/**`, still outside that gate's scope (SMI-7006) — so
+ * the same omission here would still "pass" today. Verify with
  * `npx tsc --noEmit --strict ... <file>` directly. Every required field of
  * `ScanSkillBundleResult` is now present, so this genuinely drives
  * `effectiveVerdict` (which prefers `mergedSecurityScan`, falling back to

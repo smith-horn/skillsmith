@@ -1205,10 +1205,14 @@ jobs:
       - name: Type check apps/api-proxy
         run: npx tsc --noEmit -p apps/api-proxy/tsconfig.json
 
-      # SMI-5348: the root `npm run typecheck` (tsc --build) covers only the
-      # packages in root tsconfig references (core/mcp-server/cli/enterprise);
-      # vscode-extension is NOT in that graph, so its `tsc --noEmit` runs
-      # nowhere in CI and type regressions merged green (SMI-5341 / McpStatusBar).
+      # SMI-5348: the root `npm run typecheck` runs TWO checks since SMI-6975
+      # (packages via `tsc --build`, plus non-test scripts/ via a separate
+      # gate -- see scripts/ci/typecheck-all.sh). The PACKAGES half still
+      # covers only the four root tsconfig references
+      # (core/mcp-server/cli/enterprise); vscode-extension is NOT in that
+      # graph (and is not scripts/ either), so its `tsc --noEmit` runs
+      # nowhere else in CI and type regressions merged green (SMI-5341 /
+      # McpStatusBar).
       # vscode-extension has no @skillsmith/* workspace deps, so a standalone
       # typecheck needs no prior Turborepo build. Gated on the affected-dirs
       # matrix (same source as the `test` job, see `mcp-server` at the

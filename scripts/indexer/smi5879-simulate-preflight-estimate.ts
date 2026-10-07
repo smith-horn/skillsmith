@@ -229,10 +229,15 @@ export async function runPreflightEstimate(
   // bug but a hard `TypeError: getHeaders is not a function` on the FIRST row
   // (`retryPrimaryFetch` calls `await getHeaders()`, and `withFetchRetry`
   // rethrows non-`RateLimitError`), i.e. `runPreflightEstimate` could not
-  // complete a single row. Nothing caught it: `tsconfig.json` has
-  // `"files": []` and references only `packages/`, so `tsc --build` never
-  // sees `scripts/`, and `eslint.config.js`'s type-aware block is scoped to
-  // `packages/**` too. Mirrors `smi5879-simulate-full.ts`'s own wiring.
+  // complete a single row. At the time, nothing caught it: `tsconfig.json`
+  // has `"files": []` and references only `packages/`, so `tsc --build`
+  // never sees `scripts/`, and `eslint.config.js`'s type-aware block is
+  // scoped to `packages/**` too. SMI-6975 closed that gap for this file
+  // specifically -- it is a non-test script, so `scripts/ci/typecheck-all.sh`
+  // now type-checks it on every `npm run typecheck`, and a regressed
+  // `{ headers }`-shaped `scanDeps` missing the required `getHeaders` field
+  // would be a compile-time TS2345 here, not just a first-row runtime
+  // throw. Mirrors `smi5879-simulate-full.ts`'s own wiring.
   const getHeaders = () => buildGitHubHeaders('skillsmith-smi5879-preflight-estimate/1.0')
   const scanDeps = { scanPostPort, scanPrePort, telemetry, getHeaders }
 
