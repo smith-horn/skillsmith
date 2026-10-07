@@ -5,8 +5,8 @@
  * on each input (node, repo-root node_modules) before gray-matter was removed.
  * `DELIBERATE` lists the inputs where this parser intentionally differs.
  */
-import { describe, it, expect } from 'vitest'
-import { parseFrontmatter } from './frontmatter.js'
+import { describe, it, expect, vi } from 'vitest'
+import { MAX_FRONTMATTER_BYTES, parseFrontmatter } from './frontmatter.js'
 
 interface Case {
   name: string
@@ -158,6 +158,93 @@ describe('parseFrontmatter: deliberate differences', () => {
   it('---foo on the opening line is not frontmatter (gray-matter threw: unknown engine)', () => {
     const input = '---foo\nname: a\n---\nbody\n'
     expect(parseFrontmatter(input)).toEqual({ data: {}, content: input })
+  })
+
+  it('a closing line of --- then \\r then spaces is not a delimiter (gray-matter closed there)', () => {
+    expect(() => parseFrontmatter('---\nname: a\n---\r  \nbody\n')).toThrow()
+  })
+
+  it('a custom tag resolves to its plain value and emits no warning (gray-matter threw)', () => {
+    const spy = vi.spyOn(process, 'emitWarning')
+    try {
+      expect(parseFrontmatter('---\nname: !foo bar\n---\n').data).toEqual({ name: 'bar' })
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('parseFrontmatter: limits on untrusted input', () => {
+  // One key per line, so the cost the cap exists to bound (yaml's quadratic
+  // duplicate-key scan) grows with the input.
+  const manyKeys = (bytes: number): string => {
+    const lines: string[] = []
+    let size = 0
+    for (let i = 0; size < bytes; i++) {
+      const line = `k${i}: v\n`
+      lines.push(line)
+      size += line.length
+    }
+    return lines.join('')
+  }
+
+  it('rejects a YAML block over MAX_FRONTMATTER_BYTES before parsing it', () => {
+    const yaml = manyKeys(MAX_FRONTMATTER_BYTES + 1)
+    expect(yaml.length).toBeGreaterThan(MAX_FRONTMATTER_BYTES)
+    // Valid YAML, so the only reason to throw is the size check.
+    expect(() => parseFrontmatter(`---\n${yaml}---\nbody\n`)).toThrow(/over the \d+-byte limit/)
+  })
+
+  it('parses a YAML block just under MAX_FRONTMATTER_BYTES', () => {
+    let yaml = manyKeys(MAX_FRONTMATTER_BYTES - 64)
+    while (yaml.length > MAX_FRONTMATTER_BYTES) yaml = yaml.slice(0, yaml.lastIndexOf('k'))
+    const { data } = parseFrontmatter(`---\n${yaml}---\nbody\n`)
+    expect(Object.keys(data).length).toBeGreaterThan(1000)
+  })
+
+  it('applies the limit to an unterminated block too', () => {
+    const yaml = manyKeys(MAX_FRONTMATTER_BYTES + 1)
+    expect(() => parseFrontmatter(`---\n${yaml}`)).toThrow(/over the \d+-byte limit/)
+  })
+
+  it('rejects alias-expansion bombs (yaml caps alias nodes; js-yaml 3 did not)', () => {
+    const levels = ['a: &a [x, x, x, x, x, x, x, x, x, x]']
+    for (let i = 1; i < 8; i++) {
+      const prev = String.fromCharCode(96 + i)
+      const cur = String.fromCharCode(97 + i)
+      levels.push(`${cur}: &${cur} [${Array(10).fill(`*${prev}`).join(', ')}]`)
+    }
+    const bomb = `---\n${levels.join('\n')}\n---\n`
+    expect(bomb.length).toBeLessThan(MAX_FRONTMATTER_BYTES)
+    expect(() => parseFrontmatter(bomb)).toThrow(/alias/i)
+  })
+
+  it('checks the size before parsing: oversized invalid YAML reports the size, not a YAML error', () => {
+    // A YAML error would arrive first if the check ran after yaml.parse.
+    const yaml = 'x: [' + ','.repeat(MAX_FRONTMATTER_BYTES) + ']\n'
+    expect(() => parseFrontmatter(`---\n${yaml}---\n`)).toThrow(/over the \d+-byte limit/)
+  })
+
+  it('measures the YAML block only, not the body', () => {
+    const body = 'x'.repeat(MAX_FRONTMATTER_BYTES * 2)
+    expect(parseFrontmatter(`---\nname: a\n---\n${body}\n`).data).toEqual({ name: 'a' })
+  })
+
+  it('counts UTF-8 bytes, not UTF-16 code units', () => {
+    const yaml = `a: ${'é'.repeat(MAX_FRONTMATTER_BYTES / 2)}\n`
+    expect(yaml.length).toBeLessThan(MAX_FRONTMATTER_BYTES)
+    expect(() => parseFrontmatter(`---\n${yaml}---\n`)).toThrow(/over the \d+-byte limit/)
+  })
+
+  it('accepts a block of exactly MAX_FRONTMATTER_BYTES and rejects one byte more', () => {
+    const at = `a: ${'x'.repeat(MAX_FRONTMATTER_BYTES - 4)}\n`
+    expect(Buffer.byteLength(at)).toBe(MAX_FRONTMATTER_BYTES)
+    expect(parseFrontmatter(`---\n${at}---\n`).data).toEqual({
+      a: 'x'.repeat(MAX_FRONTMATTER_BYTES - 4),
+    })
+    const over = `a: ${'x'.repeat(MAX_FRONTMATTER_BYTES - 3)}\n`
+    expect(() => parseFrontmatter(`---\n${over}---\n`)).toThrow(/over the \d+-byte limit/)
   })
 })
 

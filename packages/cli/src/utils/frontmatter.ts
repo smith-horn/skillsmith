@@ -26,6 +26,25 @@
  *   sexagesimal ints (`1:30`), `0b`/legacy-octal/underscore numbers stay or
  *   become plain strings/numbers differently. Merge keys (`<<`) are enabled
  *   to keep js-yaml's behaviour.
+ * - Unrecognised tags (`!foo`, `!!js/function`) resolve to their plain value
+ *   with no warning, and nothing executes; gray-matter threw on them. Tags
+ *   yaml does know (`!!binary`, `!!set`) yield a Buffer or Set, which
+ *   parseSkillFile ignores because it reads only string values.
+ * - yaml's default `maxAliasCount` (100) bounds alias expansion per anchor:
+ *   100 aliases of one anchor throws, 99 parse. Aliases spread over many
+ *   anchors are not counted together. js-yaml 3 had no limit at all.
+ * - A closing line of `---` then `\r` then spaces is not a delimiter, so the
+ *   rest of the file is parsed as YAML (and fails); gray-matter closed there.
+ * - A lone `\r` inside a value is accepted, and a CR-only (classic Mac) file
+ *   has no frontmatter; gray-matter threw on both.
+ * - YAML longer than MAX_FRONTMATTER_BYTES (counted in UTF-8 bytes) throws
+ *   before parsing. SKILL.md files come from directories the user imports,
+ *   and some yaml costs grow with the square of the input: the duplicate-key
+ *   check (20,000 keys took over a second), and error formatting, which
+ *   rescans a long line once per error (a 64 KiB line of commas took about
+ *   1.8 s). At 16 KiB the worst shapes measured took under 200 ms. Real
+ *   frontmatter is far smaller: across 1,730 SKILL.md files the largest block
+ *   was 2,011 bytes (SMI-7018, 2026-10-07).
  */
 import { parse as parseYaml } from 'yaml'
 
@@ -36,6 +55,9 @@ export interface FrontmatterResult {
 
 const BOM = '\uFEFF'
 const DELIMITER = /^---[ \t]*\r?$/
+
+/** Upper bound on the YAML block, in UTF-8 bytes; see the module header. */
+export const MAX_FRONTMATTER_BYTES = 16 * 1024
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -73,7 +95,15 @@ export function parseFrontmatter(input: string): FrontmatterResult {
     cursor = next
   }
 
-  const parsed: unknown = parseYaml(text.slice(open.next, yamlEnd), {
+  const yamlText = text.slice(open.next, yamlEnd)
+  const size = Buffer.byteLength(yamlText, 'utf8')
+  if (size > MAX_FRONTMATTER_BYTES) {
+    throw new Error(
+      `frontmatter is ${size} bytes, over the ${MAX_FRONTMATTER_BYTES}-byte limit; SKILL.md frontmatter is normally under 2 KB`
+    )
+  }
+
+  const parsed: unknown = parseYaml(yamlText, {
     prettyErrors: true,
     merge: true,
     logLevel: 'error',
