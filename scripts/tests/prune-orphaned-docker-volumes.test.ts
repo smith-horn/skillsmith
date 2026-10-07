@@ -263,7 +263,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(result.dockerCalls.some((c) => c === 'volume rm other-repo_node_modules')).toBe(false)
   })
 
-  it('11. reports an unlabeled orphan as UNCONFIRMED; --include-unlabeled deletes it on re-run', () => {
+  it('11. reports an unlabeled orphan as UNCONFIRMED, and --include-unlabeled still never deletes it (SMI-6981)', () => {
     const fixture = setupFixture('prune-unlabeled')
     tempDirs.push(fixture.tempRoot)
 
@@ -286,7 +286,19 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     const second = runPrune(fixture, ['--include-unlabeled'])
 
     expect(second.status).toBe(0)
-    expect(second.dockerCalls).toContain('volume rm gone-wt_node_modules')
+    // SMI-6981: this assertion used to require the volume be DELETED.
+    // Owner decision 2026-10-07: close the data-loss hole, report-only.
+    // The flag waived the `app.skillsmith.owned` check -- the only
+    // non-circular ownership signal in the script -- and measurably
+    // proposed `intd318_node_modules`, an unrelated project's data on
+    // the same daemon. It is report-only now, so this inverts.
+    // The first-run assertions above are unchanged: they never encoded
+    // the defect, only this one did.
+    //
+    // Presence proof first, so the absence assertion cannot pass on a
+    // run that crashed or never reached the volume (P-7).
+    expect(second.stdout).toContain('UNCONFIRMED ownership: gone-wt_node_modules')
+    expect(second.dockerCalls).not.toContain('volume rm gone-wt_node_modules')
   })
 
   it('12. removes an orphaned image and preserves a live one', () => {
@@ -433,7 +445,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(result.dockerCalls.some((c) => c.startsWith('volume rm'))).toBe(false)
   })
 
-  it('19. reports an unlabeled native-seed orphan as UNCONFIRMED; --include-unlabeled deletes it', () => {
+  it('19. reports an unlabeled native-seed orphan as UNCONFIRMED, and --include-unlabeled still never deletes it (SMI-6981)', () => {
     const fixture = setupFixture('prune-native-unlabeled')
     tempDirs.push(fixture.tempRoot)
 
@@ -458,6 +470,18 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     const second = runPrune(fixture, ['--include-unlabeled'])
 
     expect(second.status).toBe(0)
-    expect(second.dockerCalls).toContain('volume rm gone-wt_native-seed-esbuild-scope')
+    // SMI-6981: this assertion used to require the volume be DELETED.
+    // Same reason as test 11; the backlog it describes is now SMI-7028.
+    // The flag waived the `app.skillsmith.owned` check -- the only
+    // non-circular ownership signal in the script -- and measurably
+    // proposed `intd318_node_modules`, an unrelated project's data on
+    // the same daemon. It is report-only now, so this inverts.
+    // The first-run assertions above are unchanged: they never encoded
+    // the defect, only this one did.
+    //
+    // Presence proof first, so the absence assertion cannot pass on a
+    // run that crashed or never reached the volume (P-7).
+    expect(second.stdout).toContain('UNCONFIRMED ownership: gone-wt_native-seed-esbuild-scope')
+    expect(second.dockerCalls).not.toContain('volume rm gone-wt_native-seed-esbuild-scope')
   })
 })
