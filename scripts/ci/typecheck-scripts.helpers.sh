@@ -167,10 +167,18 @@ build_scripts_inventory() {
   # OWN exit status is captured via PIPESTATUS immediately after, not
   # inferred from the pipeline's combined status (finding 2: a pipeline's
   # status is its LAST command's unless each stage is read separately).
+  # LC_ALL=C is load-bearing, not hygiene. This list is set-compared against one
+  # built by JavaScript's .sort(), which is code-unit order. Shell `sort` uses
+  # locale collation, and the two disagree on punctuation-adjacent names:
+  # measured, en_CA.UTF-8 gives "a_b.ts a-b.ts a.ts A.ts ab.ts" while both
+  # LC_ALL=C and node give "A.ts a-b.ts a.ts a_b.ts ab.ts". Without this, one
+  # such filename pair makes the gate INCONCLUSIVE on a macOS host while CI
+  # (LANG unset) stays green -- it fails closed, so it is a diagnosis cost
+  # rather than a correctness hole, but an expensive one.
   find scripts -type f \
     -not -path '*/node_modules/*' -not -path '*/dist/*' \
     -not -path 'scripts/tests/*' \
-    2>"$all_err" | sort >"$sorted"
+    2>"$all_err" | LC_ALL=C sort >"$sorted"
   local -a inv_status=("${PIPESTATUS[@]}")
   if [[ "${inv_status[0]}" -ne 0 ]]; then
     inconclusive "find over scripts/ failed (exit ${inv_status[0]})"

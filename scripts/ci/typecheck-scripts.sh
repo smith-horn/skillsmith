@@ -128,6 +128,9 @@ compose_excluded_desc
 # ---------------------------------------------------------------------------
 mktemp_or_die SHOWCONFIG_OUT
 mktemp_or_die SHOWCONFIG_ERR
+# Captures the --showConfig parser's stderr. Previously /dev/null, which meant
+# the single run that needed a diagnostic was the one run that discarded it.
+mktemp_or_die NODE_PARSE_ERR
 # shellcheck disable=SC2153 # SHOWCONFIG_ERR IS assigned, by mktemp_or_die's
 # `printf -v "$__outvar"` above -- shellcheck can't see an assignment made
 # by name through a function argument, and its misspelling heuristic flags
@@ -152,6 +155,12 @@ mktemp_or_die COMPILER_ROOTS_LIST
 # Node, not jq/grep: --showConfig emits real JSON and `files` entries are
 # "./scripts/..." -- the leading "./" must be stripped before comparing
 # byte-for-byte against find's un-prefixed output.
+# shellcheck disable=SC2153 # NODE_PARSE_ERR IS assigned, by mktemp_or_die's
+# `printf -v "$__outvar"` above -- the same false positive already documented
+# for SHOWCONFIG_ERR; shellcheck offers the nearby NODE_PARSE_RC as the
+# "intended" spelling. Placed before `node -e`, not before the quote that
+# closes it: that closing quote is the END of this command's single-quoted
+# JS argument, so a comment there lands INSIDE the JavaScript.
 node -e '
   const fs = require("fs");
   let raw, cfg;
@@ -160,7 +169,7 @@ node -e '
   if (!cfg || !Array.isArray(cfg.files)) process.exit(5);
   const rel = cfg.files.map((f) => String(f).replace(/^\.\//, "")).sort();
   process.stdout.write(rel.length ? rel.join("\n") + "\n" : "");
-' "$SHOWCONFIG_OUT" >"$COMPILER_ROOTS_LIST" 2>/dev/null
+' "$SHOWCONFIG_OUT" >"$COMPILER_ROOTS_LIST" 2>"$NODE_PARSE_ERR"
 # Finding 8: `NODE_PARSE_RC=$?` used to be read INSIDE `if ! node ...; then`,
 # where `$?` is the exit status of `!`, not of `node` -- `!` negates, so
 # landing in that branch (node genuinely failed) always left `$?` at 0, and
@@ -170,7 +179,15 @@ node -e '
 NODE_PARSE_RC=$?
 if [[ "$NODE_PARSE_RC" -ne 0 ]]; then
   inconclusive "could not parse tsc --showConfig output as a files[] array (node exit $NODE_PARSE_RC)"
-  NEXT_ACTION="inspect $SHOWCONFIG_OUT's content shape -- this tsc version may have changed --showConfig's output format"
+  # The content is dumped INLINE rather than named by path: $SHOWCONFIG_OUT is
+  # an mktemp file the EXIT trap removes, so a next-action telling the reader
+  # to "inspect" it points at a path that no longer exists by the time they
+  # read the line. The one run that needed a diagnostic must keep it.
+  say "--- node stderr ---"
+  head -20 "$NODE_PARSE_ERR"
+  say "--- first 20 lines of the --showConfig output that could not be parsed ---"
+  head -20 "$SHOWCONFIG_OUT"
+  NEXT_ACTION="compare the shape above against the expected { files: [...] } -- this tsc version may have changed --showConfig's output format"
   exit_for_inconclusive
 fi
 COMPILER_ROOTS="$(wc -l <"$COMPILER_ROOTS_LIST" | tr -d ' ')"
@@ -187,14 +204,29 @@ fi
 # different include, a different config, or ran from a different cwd" while
 # this shell's inventory read what the developer expects.
 # ---------------------------------------------------------------------------
-SET_DIFF="$(diff "$DISCOVERED_LIST" "$COMPILER_ROOTS_LIST" || true)"
-if [[ -n "$SET_DIFF" ]]; then
+# `diff` exits 0 (identical) / 1 (differ) / >=2 (ERROR). The >=2 case writes
+# nothing to stdout, so an earlier `$(diff ... || true)` shape left SET_DIFF
+# empty for TWO different reasons and an emptiness test took the "sets agree"
+# branch -- a silent success on the one comparison this header calls the
+# reconciliation. Reproduced with a `diff` stub exiting 2: the gate printed
+# PASS and claimed `checked 266 (only set once discovered == compiler roots)`
+# when that equality had never been established. Status is now read, not
+# inferred from emptiness.
+SET_DIFF="$(diff "$DISCOVERED_LIST" "$COMPILER_ROOTS_LIST")"
+SET_DIFF_RC=$?
+if [[ "$SET_DIFF_RC" -ge 2 ]]; then
+  inconclusive "the set comparison itself failed (diff exit $SET_DIFF_RC) -- the two file lists were never compared, so scope is unvalidated"
+  NEXT_ACTION="this is a failure of the instrument, not a finding about the tree. Check that both temp lists exist and are readable, then re-run. Do NOT read this as 'the sets agree'."
+  exit_for_inconclusive
+fi
+if [[ "$SET_DIFF_RC" -eq 1 ]]; then
   inconclusive "discovered set (inventory) and compiler roots (tsc --showConfig) disagree -- scope could not be validated"
   say "--- diff (< inventory-only, > tsc-only) ---"
   printf '%s\n' "$SET_DIFF" | head -20
   NEXT_ACTION="reconcile $CONFIG's include/exclude against this script's inventory. A set mismatch is not a zero -- it means the thing that ran is not the thing that was intended."
   exit_for_inconclusive
 fi
+# Reached only on SET_DIFF_RC == 0, i.e. the lists are genuinely identical.
 CHECKED="$DISCOVERED"
 
 # ---------------------------------------------------------------------------
@@ -224,7 +256,10 @@ perl -pe 's/\e\[[0-9;]*m//g; tr/\000//d' "$TSC_RAW" >"$TSC_CLEAN"
 PERL_RC=$?
 if [[ "$PERL_RC" -ne 0 ]]; then
   inconclusive "the ANSI/NUL-strip (perl) failed (exit $PERL_RC) -- \$TSC_CLEAN cannot be trusted"
-  NEXT_ACTION="re-run; if it persists, perl is broken on this host or $TSC_RAW is unreadable"
+  # Same reason as the --showConfig arm: name nothing the trap has deleted.
+  say "--- first 20 lines of the raw tsc output perl could not process ---"
+  head -20 "$TSC_RAW"
+  NEXT_ACTION="re-run; if it persists, perl is broken on this host, or the raw output above is not what perl expected"
   exit_for_inconclusive
 fi
 
@@ -326,19 +361,41 @@ if [[ "$REPORTED" -gt 0 && "$TSC_RC" -ne 2 ]]; then
 fi
 
 # ATTRIB: per-file diagnostic HEADERS only. --pretty's header shape is
-# "path:line:col - error TSxxxx: message" (measured); a continuation/context
-# line never starts with "scripts/", so this counts exactly one line per
-# diagnostic block, matching REPORTED's own unit.
-ATTRIB="$(grep -cE '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN")"
+# "path:line:col - error TSxxxx: message" (measured); continuation and code-frame
+# lines are indented, so requiring a non-whitespace first character counts
+# exactly one line per diagnostic block, matching REPORTED's own unit.
+#
+# The anchor is deliberately ANY path, not '^scripts/'. 16 non-test scripts
+# import ../../packages/core/src/..., so packages/ sources enter the program:
+# measured with --listFiles, 1402 program files of which 110 are non-.d.ts
+# sources under packages/, and skipLibCheck only skips .d.ts, so those 110 are
+# fully checked. A '^scripts/' anchor cannot see a diagnostic in any of them --
+# REPORTED would be 1 and ATTRIB 0, firing the mismatch arm below with a
+# next-action blaming the header parser, which would be correct code and the
+# wrong suspect. Worst case: an error reachable only under this config's
+# options, where tsc --build passes, this half goes INCONCLUSIVE accusing
+# itself, and the real diagnostic is never named.
+ATTRIB_RE='^[^[:space:]][^:]*:[0-9]+:[0-9]+ - error TS[0-9]+:'
+ATTRIB="$(grep -cE "$ATTRIB_RE" "$TSC_CLEAN")"
 ATTRIB_RC=$?
 if [[ "$ATTRIB_RC" -ge 2 ]]; then
   inconclusive "the per-file attribution count grep failed (exit $ATTRIB_RC)"
   exit_for_inconclusive
 fi
 
+# Split for reporting: a diagnostic outside scripts/ is in-program but not in
+# this gate's nominal scope, and saying so is more useful than a bare total.
+ATTRIB_SCRIPTS="$(grep -cE '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN")"
+ATTRIB_SCRIPTS_RC=$?
+if [[ "$ATTRIB_SCRIPTS_RC" -ge 2 ]]; then
+  inconclusive "the scripts/-scoped attribution count grep failed (exit $ATTRIB_SCRIPTS_RC)"
+  exit_for_inconclusive
+fi
+ATTRIB_OUTSIDE=$(( ATTRIB - ATTRIB_SCRIPTS ))
+
 mktemp_or_die BY_FILE
-grep -E '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN" \
-  | sed -E 's/^(scripts\/[^:]+):.*/\1/' | sort | uniq -c \
+grep -E "$ATTRIB_RE" "$TSC_CLEAN" \
+  | sed -E 's/^([^:]+):.*/\1/' | sort | uniq -c \
   | awk '{n=$1; $1=""; sub(/^ /, ""); printf "%d\t%s\n", n, $0}' | sort -t$'\t' -k1,1nr >"$BY_FILE"
 BY_FILE_STATUS=("${PIPESTATUS[@]}")
 # Finding 2: six stages, each checked. Stage 0 (grep) legitimately returns 1
@@ -364,10 +421,17 @@ ERR_FILES="$(wc -l <"$BY_FILE" | tr -d ' ')"
 if [[ "$ATTRIB" -ne "$REPORTED" ]]; then
   ERR_FIELD="$REPORTED total / $ATTRIB attributed across $ERR_FILES files   [MISMATCH]"
   inconclusive "attribution ($ATTRIB) does not reconcile with tsc's own reported total ($REPORTED)"
-  NEXT_ACTION="the header-line parser above is wrong for this tsc version/output shape. Do not trust the per-file numbers."
+  NEXT_ACTION="the header-line parser above is wrong for this tsc version/output shape. Do not trust the per-file numbers. (The anchor matches ANY path, not just scripts/, so a diagnostic in an imported packages/ source is NOT an explanation for this mismatch -- those are counted. See the 'outside scripts/' line if present.)"
   say "--- raw tail, for the parser fix ---"
   tail -20 "$TSC_CLEAN"
   exit_for_inconclusive
+fi
+
+# A diagnostic outside scripts/ is real and checked -- 110 non-.d.ts packages/
+# sources are in this program -- but it is not in the gate's nominal scope, so
+# name it rather than letting it hide inside a bare total.
+if [[ "$ATTRIB_OUTSIDE" -gt 0 ]]; then
+  say "  outside scripts/  $ATTRIB_OUTSIDE of $ATTRIB diagnostic(s) are in imported sources (packages/**), which this config fully type-checks"
 fi
 
 if [[ "$REPORTED" -eq 0 ]]; then
