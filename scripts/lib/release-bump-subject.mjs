@@ -30,37 +30,52 @@
 /**
  * True iff a commit subject is a release-version-bump commit.
  *
- * Three arms, and the two legacy ones are kept on purpose: they match release
- * commits that exist in this repository's history, and removing them would
- * orphan boundaries the matcher can currently find. Measured against all 3,351
- * commits on `main`: arm 1 matches 50, arm 2 matches 6, arm 3 matches 3. None
- * of the three arms is dead. Dating their removal needs historical-reachability
- * evidence that SMI-7012 does not gather.
+ * **Two arms, both exact forms.** There is deliberately no free-text arm.
  *
- * The first arm tolerates an optional `!` before the colon. It is scoped to
- * `chore(release)` and so does not admit a bare `chore!:` or an unrelated
- * scope.
+ * Arm 1 tolerates an optional `!` before the colon. It is scoped to
+ * `chore(release)` and so does not admit a bare `chore!:` or an unrelated scope.
+ * Arm 2 is a literal prefix, kept because `check-source-version-drift.mjs`'s
+ * own tests assert it and the 0.1.x-era releases it matches used that exact
+ * wording.
  *
- * The third arm **excludes the dependency-bump idiom** `… from <version> to
- * <version>`. Without that exclusion it matched `chore: bump npm from 10.9.4 to
- * 11.9.0` (8ac96f7a4), a toolchain dependency bump and not a release — and
- * since the caller takes the FIRST match scanning newest-first, one such commit
- * landing after a release silently wins over the real boundary. That is the same
- * wrong-boundary-reported-confidently failure this module exists to remove, so
- * it is excluded rather than tolerated. Dependabot's own commits are scoped
- * (`chore(deps):`) and never reached this arm; the one that did was hand-written.
- * The exclusion is deliberately anchored on `from` followed by a digit, so a
- * subject that merely contains the word (`chore: bump core 0.5.0 from the
- * cadence run`) still matches.
+ * **A third arm existed and was deleted rather than narrowed a third time.**
+ * It was `/^chore:.*bump.*\d+\.\d+\.\d+/` — any bare `chore:` subject
+ * containing "bump" and something version-shaped. It produced two separate
+ * review findings in two rounds:
+ *
+ *   1. It matched `chore: bump npm from 10.9.4 to 11.9.0` (8ac96f7a4), a
+ *      toolchain dependency bump. Patched with a negative lookahead excluding
+ *      `… from <version> to <version>`.
+ *   2. A cross-family review then measured that the patched arm still accepted
+ *      `chore: bump minimum Node version to 20.1.0`, `chore: bump API docs for
+ *      1.2.3`, `chore: bump lockfile format to 3.0.0` and
+ *      `chore: bump docs for 1.2.3beta`, and that the lookahead had introduced
+ *      a false negative on `chore: bump core from 0.5.0 to 0.6.0`.
+ *
+ * Narrowing it a third time would have been the wrong move. The arm matched
+ * free text a human writes at squash time, and the caller takes the FIRST match
+ * scanning newest-first — so a false positive does not fail, it silently
+ * returns a different boundary. That is the failure this module exists to
+ * remove, and an unconstrained arm reproduces it indefinitely.
+ *
+ * Deleting it was measured to cost nothing. `findLastVersionBumpCommit` searches
+ * `BOUNDARY_SEARCH_DEPTH` (50) commits. Within the most recent 50 commits on
+ * `main`, arm 1 matches 3 and the legacy arms match 0. Across all 3,351 commits,
+ * exactly 9 need a legacy arm and the nearest sits 2,258 commits from HEAD —
+ * roughly 45x beyond any window this function reads. The claim that removing
+ * them "would orphan boundaries the matcher can currently find" was in this
+ * docblock, was never measured, and is false.
+ *
+ * What this costs instead, stated plainly: the matcher now recognises two exact
+ * forms and nothing else, so a release worded some third way is not recognised
+ * rather than guessed at. The caller refuses in that case (ADR-177 section 5)
+ * instead of silently using a wrong boundary. Resolving from published tags is
+ * the real answer and is SMI-7016.
  *
  * @param {unknown} subject a commit subject line
  * @returns {boolean}
  */
 export function isReleaseBumpSubject(subject) {
   if (typeof subject !== 'string') return false
-  return (
-    /^chore\(release\)!?:/.test(subject) ||
-    subject.startsWith('chore: bump version') ||
-    /^chore:(?!.*\bfrom\s+v?\d).*bump.*\d+\.\d+\.\d+/.test(subject)
-  )
+  return /^chore\(release\)!?:/.test(subject) || subject.startsWith('chore: bump version')
 }

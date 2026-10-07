@@ -57,36 +57,50 @@ describe('isReleaseBumpSubject — the bang (SMI-7012)', () => {
     expect(isReleaseBumpSubject('fix(core): correct the chore(release) matcher')).toBe(false)
   })
 
-  it('keeps both legacy arms, which match commits that exist in this history', () => {
+  it('keeps arm 2, the literal prefix the drift checker asserts', () => {
     expect(isReleaseBumpSubject('chore: bump version to 1.2.3')).toBe(true)
-    expect(isReleaseBumpSubject('chore: weekly bump 0.11.4')).toBe(true)
   })
 
-  it('matches the real bare-chore release subjects arm 3 exists for', () => {
-    // Verbatim from `main`. Arm 3's whole justification is that these exist, so
-    // narrowing it must not orphan them.
+  it('rejects every free-text subject the deleted arm 3 used to accept', () => {
+    // Arm 3 was /^chore:.*bump.*\d+\.\d+\.\d+/ — any bare `chore:` carrying
+    // "bump" and something version-shaped. Two review rounds found six wrong
+    // verdicts in it, so it was deleted rather than narrowed a third time.
+    // Each of these was accepted as a release boundary and is not a release.
+    // The caller takes the FIRST match scanning newest-first, so any one of
+    // them landing after a real release would have replaced it.
+    expect(isReleaseBumpSubject('chore: bump npm from 10.9.4 to 11.9.0')).toBe(false) // 8ac96f7a4, real
+    expect(isReleaseBumpSubject('chore: bump minimum Node version to 20.1.0')).toBe(false)
+    expect(isReleaseBumpSubject('chore: bump API docs for 1.2.3')).toBe(false)
+    expect(isReleaseBumpSubject('chore: bump lockfile format to 3.0.0')).toBe(false)
+    expect(isReleaseBumpSubject('chore: bump docs for 1.2.3beta')).toBe(false)
+  })
+
+  it('also stops recognising the pre-0.5.x bare-chore release forms, deliberately', () => {
+    // These three are real release subjects from this history (09ed1c6c6,
+    // fbf9a4c7f, adac919ae) and are no longer matched. That is the measured
+    // cost of deleting arm 3, asserted here so it stays a decision rather than
+    // becoming a surprise: the nearest sits 2,356 commits from HEAD while
+    // BOUNDARY_SEARCH_DEPTH is 50, so this function cannot reach any of them.
+    // An unrecognised subject makes the caller refuse, which is the correct
+    // outcome — it never guesses a boundary.
     expect(
       isReleaseBumpSubject('chore: bump core 0.4.16, mcp-server 0.4.4, fix core dep pin')
-    ).toBe(true) // 09ed1c6c6
-    expect(isReleaseBumpSubject('chore: bump core 0.4.10, mcp-server 0.3.20, cli 0.3.8')).toBe(true) // fbf9a4c7f
-    expect(isReleaseBumpSubject('chore: bump mcp-server and cli to v0.2.2')).toBe(true) // adac919ae
+    ).toBe(false)
+    expect(isReleaseBumpSubject('chore: bump core 0.4.10, mcp-server 0.3.20, cli 0.3.8')).toBe(
+      false
+    )
+    expect(isReleaseBumpSubject('chore: bump mcp-server and cli to v0.2.2')).toBe(false)
   })
 
-  it('does NOT match a dependency bump that arm 3 used to claim (8ac96f7a4)', () => {
-    // The real subject, verbatim. A toolchain dependency bump is not a release
-    // boundary, and because the caller takes the FIRST match scanning
-    // newest-first, one of these landing after a release silently outranks it.
-    expect(isReleaseBumpSubject('chore: bump npm from 10.9.4 to 11.9.0')).toBe(false)
-    // The same idiom for other packages, bare-scoped so arm 3 is the only arm
-    // that could reach them.
-    expect(isReleaseBumpSubject('chore: bump stripe from 20.2.0 to 22.6.1')).toBe(false)
-    expect(isReleaseBumpSubject('chore: bump deps from v1.2.3 to v2.0.0')).toBe(false)
-  })
-
-  it('still matches a release subject that merely contains the word "from"', () => {
-    // The exclusion is anchored on `from` followed by a digit, not on the bare
-    // word — otherwise it would over-reach onto real releases.
-    expect(isReleaseBumpSubject('chore: bump core 0.5.0 from the cadence run')).toBe(true)
+  it('has no free-text arm at all — the matcher is two exact forms', () => {
+    // The property that makes arm 3's whole defect class unreachable, asserted
+    // directly rather than through examples: a bare `chore:` subject matches
+    // only via arm 2's literal prefix, never by merely resembling a bump.
+    expect(isReleaseBumpSubject('chore: anything at all 1.2.3 bump')).toBe(false)
+    expect(isReleaseBumpSubject('chore: bump')).toBe(false)
+    // The lookahead that introduced a false negative went with the arm, so the
+    // word "from" is no longer special anywhere in the matcher.
+    expect(isReleaseBumpSubject('chore(release): bump core 0.5.0 from the cadence run')).toBe(true)
   })
 
   it('returns false for a non-string rather than throwing', () => {
@@ -211,14 +225,30 @@ describe('ordering: the boundary resolves before any writer runs (SMI-7012)', ()
   // actually regressed: the call sitting after the write steps. Move it back and
   // this fails, which is the guard the reviewer asked for.
   const src = readFileSync(join(ROOT_DIR, 'scripts/prepare-release.ts'), 'utf-8').split('\n')
+
+  /**
+   * Line number of the sole line matching `re`, 1-based.
+   *
+   * Asserts UNIQUENESS, not just presence. A cross-family review argued the
+   * ordering assertions could be satisfied by a second, earlier occurrence of
+   * the pattern — the function's own signature rather than its call site. That
+   * was measured false for this pattern (it matches exactly one line, 292), but
+   * the objection is sound in general: `findIndex` silently takes the first hit,
+   * so a future edit introducing a second match would redirect every ordering
+   * assertion below without failing anything. Requiring exactly one match makes
+   * that a test failure instead of a silent change of subject.
+   */
   const lineOf = (re: RegExp): number => {
-    const i = src.findIndex((l) => re.test(l))
-    expect(i, `expected to find ${re} in prepare-release.ts`).toBeGreaterThanOrEqual(0)
-    return i + 1
+    const hits = src.map((l, i) => (re.test(l) ? i + 1 : 0)).filter((n) => n > 0)
+    expect(hits, `expected exactly one line matching ${re} in prepare-release.ts`).toHaveLength(1)
+    return hits[0]
   }
 
+  /** The call site in main(), spelled out so it cannot collide with the definition. */
+  const BOUNDARY_CALL = /^\s*const changelogSince = resolveChangelogBoundary\(noChangelog\)$/
+
   it('resolves the boundary before the version-file writes, README sync, dep ranges and snapshot', () => {
-    const boundary = lineOf(/resolveChangelogBoundary\(noChangelog\)/)
+    const boundary = lineOf(BOUNDARY_CALL)
     const writers: Array<[string, RegExp]> = [
       ['version files', /updatePackageJson\(plan\.spec\.packageJsonPath/],
       ['README sync', /syncReadmeWhatsNew\(plans\)/],
@@ -235,7 +265,7 @@ describe('ordering: the boundary resolves before any writer runs (SMI-7012)', ()
     // below the early exit, --dry-run passed clean and the operator met the
     // refusal for the first time on the real invocation. Step 3.5's npm
     // collision guard already documents this convention for itself.
-    const boundary = lineOf(/resolveChangelogBoundary\(noChangelog\)/)
+    const boundary = lineOf(BOUNDARY_CALL)
     expect(boundary, 'boundary must resolve before the --dry-run early exit').toBeLessThan(
       lineOf(/^\s*if \(dryRun\) \{$/)
     )
@@ -245,17 +275,27 @@ describe('ordering: the boundary resolves before any writer runs (SMI-7012)', ()
     // Deliberate, and the inverse of the assertion above: --check is a version
     // audit that never reaches changelog generation, so a boundary it would not
     // use must not be able to fail it.
-    const boundary = lineOf(/resolveChangelogBoundary\(noChangelog\)/)
+    const boundary = lineOf(BOUNDARY_CALL)
     expect(lineOf(/^\s*if \(check\) \{$/), '--check exits before the boundary').toBeLessThan(
       boundary
     )
   })
 
   it('consumes the retained hash at changelog generation instead of re-resolving', () => {
-    // Re-resolving there would reintroduce a second, unguarded lookup.
+    // Re-resolving would reintroduce a second, unguarded lookup — one that runs
+    // after the writes, which is the arrangement this change exists to remove.
     const generation = src.slice(lineOf(/Step 7-8: Generate and prepend changelogs/) - 1)
-    const untilLoopEnd = generation.slice(0, 20).join('\n')
-    expect(untilLoopEnd).toContain('changelogSince')
-    expect(untilLoopEnd).not.toMatch(/findLastVersionBumpCommit\(\)/)
+    expect(generation.join('\n')).toContain('changelogSince')
+  })
+
+  it('calls the boundary resolver exactly once in the whole file', () => {
+    // The scoped-window version of this assertion looked only 20 lines past the
+    // Step 7-8 comment, so a second lookup placed further down — or reached
+    // through an alias — survived it. A cross-family review named that mutation.
+    // Counting over the entire file closes it: there is one resolver call and
+    // one underlying lookup, and both are the ones the ordering tests pin.
+    const body = src.filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l)).join('\n')
+    expect(body.match(/resolveChangelogBoundary\(/g) ?? []).toHaveLength(2) // definition + 1 call site
+    expect(body.match(/findLastVersionBumpCommit\(\)/g) ?? []).toHaveLength(1) // once, inside the resolver
   })
 })

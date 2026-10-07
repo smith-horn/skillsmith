@@ -131,10 +131,26 @@ describe('semverGt', () => {
 })
 
 describe('isReleaseBumpSubject (countReleasesSince fallback matcher)', () => {
-  it('matches the canonical 3 release-bump commit forms', () => {
+  it('matches the 2 canonical release-bump commit forms', () => {
     expect(isReleaseBumpSubject('chore(release): publish 0.8.0')).toBe(true)
+    expect(isReleaseBumpSubject('chore(release)!: publish 0.8.0')).toBe(true) // SMI-7012: the bang
     expect(isReleaseBumpSubject('chore: bump version to 0.8.0')).toBe(true)
-    expect(isReleaseBumpSubject('chore: bump @skillsmith/core 0.8.0')).toBe(true)
+  })
+
+  it('no longer matches a free-text bare-chore bump (SMI-7012)', () => {
+    // This assertion was `toBe(true)` and the form was called canonical. The
+    // third arm that matched it — /^chore:.*bump.*\d+\.\d+\.\d+/ — was deleted
+    // after two review rounds measured six wrong verdicts in it, including
+    // `chore: bump npm from 10.9.4 to 11.9.0` (a dependency bump) and
+    // `chore: bump minimum Node version to 20.1.0`. No commit of this synthetic
+    // shape exists in this history; the three real ones sit 2,356+ commits from
+    // HEAD while the boundary search reads 50.
+    //
+    // This matcher is also the `countReleasesSince` FALLBACK, used only when
+    // tags are unreadable. Over a baseline reaching past the 0.5.x era that
+    // count can now be lower by at most the 9 legacy-form commits. Stated
+    // rather than left to be discovered.
+    expect(isReleaseBumpSubject('chore: bump @skillsmith/core 0.8.0')).toBe(false)
   })
 
   it('does not match ordinary feature/fix commits', () => {
