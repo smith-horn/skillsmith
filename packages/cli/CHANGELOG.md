@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7018 -- `skillsmith import-local` no longer depends on `gray-matter`, which pulled
+  `sprintf-js` (GHSA-hp3w-g68c-fv3c, no fixed release) into the CLI's production dependencies.
+  SKILL.md frontmatter is now read with the `yaml` package the CLI already uses.
+
+  What changes for a SKILL.md file:
+  - Values are read as YAML 1.2. A bare date, `1:30`, `0b11` or `1_000` now stays text. Before, a
+    date as `name` was ignored, so the folder name was used instead, and a date in `tags` was dropped.
+    Ordinary names, descriptions and tag lists read the same as before.
+  - The closing `---` line must be exactly `---`, optionally followed by spaces or tabs. A line such
+    as `----` or `--- # note` no longer ends the frontmatter, so the rest of the file is read as
+    frontmatter and the file is reported as a parse failure.
+  - Frontmatter over 16 KiB is reported as a parse failure instead of being read. Real SKILL.md
+    frontmatter is a few hundred bytes.
+  - Custom YAML tags such as `!foo` now read as their plain value instead of failing the file.
+  - An opening line of `---yaml`, `---yml` or `---json` (any case) is read as before. An opening
+    line of `---js` or `---javascript` is now reported as a parse failure; previously that
+    frontmatter was run as JavaScript during the import. Any other language tag fails, as before.
+
 ## v0.8.13
 
 - **Fixed**: SMI-6961 / ADR-175 § 1 -- commands no longer proceed against an empty database when
