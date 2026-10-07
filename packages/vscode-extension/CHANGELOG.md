@@ -6,12 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-- **Breaking (minimum VS Code)**: SMI-7008 -- the extension now requires VS Code 1.125 or later
-  (`engines.vscode` `^1.110.0` -> `^1.125.0`). It already compiled against the 1.125 API types
-  (`@types/vscode` 1.125.0), and `vsce` refuses to package an extension whose declared minimum is
-  older than the types it builds against, so the next release could not have been packaged at all.
-  Users on VS Code 1.110 to 1.124 keep the version they have and stop receiving updates; updating
-  VS Code restores them. Measured with vsce 3.9.2's own check: refused before, accepted after.
+- **Breaking**: Skillsmith now requires VS Code 1.125 or later. If you're on an earlier version,
+  you keep the version of Skillsmith you have installed but won't receive updates until you update
+  VS Code. Raising the minimum lets the extension be built and published against the current VS Code
+  API.
 
 - **Docs**: SMI-6532 -- `manifestReader.ts` now states in the file itself that nothing consumes its
   two update-reason tables yet. Its two sibling tables (the MCP one and the parity test in core) each
