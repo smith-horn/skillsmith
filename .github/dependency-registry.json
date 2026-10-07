@@ -685,7 +685,7 @@
       "owner": "wrsmith108",
       "accepted": "2026-10-07",
       "expires": "2026-11-06",
-      "tracking": "SMI-7019"
+      "tracking": "SMI-7026"
     },
     {
       "advisory": "GHSA-hp3w-g68c-fv3c",
@@ -757,7 +757,7 @@
         },
         "@modelcontextprotocol/client": {
           "pin": "^2.2.0",
-          "reason": "GHSA-6qxp-vccf-f47h also affects @modelcontextprotocol/client below 2.2.0; the seed resolved 2.1.0, an optional install via mcp-proxy (^2.0.0), which admits 2.2.0 (SMI-7017).",
+          "reason": "GHSA-6qxp-vccf-f47h also affects @modelcontextprotocol/client below 2.2.0; the seed resolved 2.1.0, an optional install via mcp-proxy (^2.0.0), which admits 2.2.0 (SMI-7017). It also nests its own @modelcontextprotocol/core 2.3.1, while @modelcontextprotocol/server (2.1.0) stays on the hoisted core 2.1.0. Today agentic-flow, the optional package that pulls in fastmcp, mcp-proxy and the MCP v2 packages, does not install in the built seed image, so neither copy ships; if it ever installs, client and server will run on different core copies (measured 2026-10-07, PR #3036).",
           "advisories": ["GHSA-6qxp-vccf-f47h"],
           "introducedBy": ["SMI-7017"],
           "crossesMajor": null,
@@ -803,7 +803,7 @@
           "owner": "wrsmith108",
           "accepted": "2026-10-04",
           "expires": "2027-01-02",
-          "tracking": "SMI-6980"
+          "tracking": "SMI-7027"
         }
       ]
     }
