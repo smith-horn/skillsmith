@@ -106,3 +106,47 @@ _release_git_crypt_lock() {
   [ "$_owner" = "$$" ] && rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
   GIT_CRYPT_LOCK_HELD=""
 }
+
+# SMI-6973: read ONE git config key into the variable named by $1, with the
+# exit status actually examined instead of discarded.
+#
+# This lives here, with the lock, because its failure path IS lock release --
+# it is called from inside the held window and must not abort while holding.
+#
+# THE DEFECT IT REPLACES. The caller used to do a bare
+# `SMUDGE_CMD=$(git config --local <key> 2>/dev/null)` one line after taking
+# the lock. Under the `sh -e` husky invokes every hook with (.husky/_/h:17), a
+# command substitution whose command fails aborts the shell -- and `git config`
+# exits 1 for a key that is merely ABSENT, which is the normal case. So the
+# hook died there, holding a lock whose only cleanup was trapped on INT/TERM,
+# leaking a directory that never self-heals and is shared across the main
+# checkout and every worktree via --git-common-dir.
+#
+# WHY NOT `|| VAR=""`. That is the obvious one-line fix and it is too blunt: it
+# collapses every failure into "absent". Measured exit codes make the
+# distinction available, so it is drawn rather than thrown away:
+#
+#   0    key is set
+#   1    key absent            <- normal; yields empty, proceed
+#   6    bad pattern/arguments <- genuine failure
+#   128  not in a repository   <- genuine failure
+#
+# A genuine failure means this hook cannot classify the filter state it is
+# about to mutate, so it releases the lock and refuses rather than guessing.
+_read_git_crypt_cfg() {
+  _rfc_name="$1"
+  _rfc_key="$2"
+  _rfc_rc=0
+  _rfc_val=$(git config --local "$_rfc_key" 2>/dev/null) || _rfc_rc=$?
+  if [ "$_rfc_rc" -gt 1 ]; then
+    _release_git_crypt_lock
+    echo "${RED}  cannot read $_rfc_key (git config exit $_rfc_rc)${NC}" >&2
+    echo "  Exit 1 would mean the key is simply unset, which is fine. This is not" >&2
+    echo "  that: the read itself failed, so the filter state cannot be classified." >&2
+    echo "  Refusing to disable git-crypt filters on an unknown pre-image." >&2
+    echo "  The lock has been released; no cleanup is needed." >&2
+    exit 1
+  fi
+  # Names are literals supplied by this file's own callers, never user input.
+  eval "$_rfc_name=\$_rfc_val"
+}

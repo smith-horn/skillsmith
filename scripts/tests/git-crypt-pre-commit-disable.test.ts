@@ -113,7 +113,15 @@ const RESTORE_DEFINITION_SPAN = extractSpan('restore-definition')
 
 /** Runs a POSIX sh script with cwd set to the repo dir -- every extracted span relies on this (no `-C`/`git -C`, matching production: git hooks always run with cwd at the repo root, githooks(5)). */
 function runShInRepo(dir: string, script: string) {
-  const result = spawnSync(REAL_SH, ['-c', script], {
+  // SMI-6973 step 3: `-ec`, not `-c`. Husky invokes every hook as `sh -e`
+  // (.husky/_/h:17), so a harness spawning plain `sh` cannot observe the mode
+  // its subject runs in — and red-testing does NOT catch that: mutate the
+  // hook, watch the test go red under plain `sh`, restore, and every step of
+  // the ritual completes while the test still never ran in production's mode.
+  // This had to wait for step 1's extractor fix: before it, every extracted
+  // span began with a stray `-- scripts/tests/...` line that plain `sh`
+  // tolerates as a non-fatal 127 and `-e` dies on at line 1.
+  const result = spawnSync(REAL_SH, ['-ec', script], {
     cwd: dir,
     encoding: 'utf8',
     timeout: 15_000,
@@ -364,7 +372,11 @@ describe('SMI-5983 (governance retro): lock-helpers span self-releases on signal
     async () => {
       const dir = makeRepo()
       const script = `${LOCK_HELPERS_SPAN}\n_acquire_git_crypt_lock\necho LOCK_ACQUIRED\nsleep 5\necho SHOULD_NOT_REACH\n`
-      const child = spawn(REAL_SH, ['-c', script], { cwd: dir, env: GIT_ENV })
+      // SMI-6973 step 3: `-ec` here too. This second spawn site was missed by
+      // the review that found the first one, and a guard keyed on `.husky/`
+      // paths would never have caught either — both pass an extracted span
+      // STRING, not a hook path.
+      const child = spawn(REAL_SH, ['-ec', script], { cwd: dir, env: GIT_ENV })
       let stdout = ''
       child.stdout.on('data', (chunk: Buffer) => {
         stdout += chunk.toString()

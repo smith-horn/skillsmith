@@ -311,22 +311,12 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # message instead. Held only around the classify+disable+marker-write
     # sequence below, released before the checkout, reacquired only for
     # the restore.
-    # SMI-6973: the lock implementation now lives in
-    # scripts/lib/git-crypt-lock.sh. It was inline here, which put this hook 35
-    # lines over the repo's 500-line hard limit and forced the test harness to
-    # slice it out of comment sentinels -- an extractor that silently produced a
-    # stray leading line and so could never run under the `sh -e` husky
-    # actually uses.
-    #
-    # Sourced HERE, inside the branch-mismatch path and immediately before the
-    # first acquisition -- deliberately NOT at the top of the hook. An ordinary
-    # commit never reaches this lock, so a missing library must not wedge it.
-    #
-    # FATAL on absence, unlike this hook's other two sourced libraries, which
-    # degrade with a warning. There is a safe default for "cannot detect
-    # Docker"; there is none for "about to mutate shared git-crypt config
-    # without serialisation". Guarded with -r (readable), matching both existing
-    # call sites -- not -f.
+    # SMI-6973: lock implementation moved to scripts/lib/git-crypt-lock.sh
+    # (read its header for the sourcing contract). Sourced HERE, inside the
+    # branch-mismatch path, not at the top of the hook: an ordinary commit
+    # never reaches this lock, so a missing library must not wedge it. FATAL
+    # on absence, unlike this hook's two other libraries which degrade -- there
+    # is no safe default for mutating shared git-crypt config unserialised.
     GIT_CRYPT_LOCK_LIB="$(dirname "$0")/../scripts/lib/git-crypt-lock.sh"
     if [ ! -r "$GIT_CRYPT_LOCK_LIB" ]; then
       echo "${RED}  git-crypt lock library missing or unreadable:${NC}" >&2
@@ -346,8 +336,10 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # span -- a harness must SOURCE that library before running this span,
     # plus set EXPECTED_BRANCH itself.
     _acquire_git_crypt_lock
-    SMUDGE_CMD=$(git config --local filter.git-crypt.smudge 2>/dev/null)
-    CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
+    # SMI-6973: bare command substitutions here aborted under `sh -e` on a
+    # merely-unset key, leaking the lock. Rationale in git-crypt-lock.sh.
+    _read_git_crypt_cfg SMUDGE_CMD filter.git-crypt.smudge
+    _read_git_crypt_cfg CLEAN_CMD filter.git-crypt.clean
 
     # SMI-5983: hard-fail if filters are ALREADY disabled (both "cat") --
     # the identical corruption bug fixed in scripts/rebase-worktree.sh's
@@ -359,7 +351,10 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # branch, compounding the exact problem this hook exists to prevent.
     if [ "$SMUDGE_CMD" = "cat" ] && [ "$CLEAN_CMD" = "cat" ]; then
       _release_git_crypt_lock
-      _marker=$(git config --local --get skillsmith.git-crypt-disabled-marker 2>/dev/null)
+      # SMI-6973: bare, this aborted on an absent marker (the common case
+      # here), silently deleting every line of recovery guidance below it.
+      _marker=""
+      _marker=$(git config --local --get skillsmith.git-crypt-disabled-marker 2>/dev/null) || true
       echo "${RED}  git-crypt filters are already disabled -- refusing to proceed.${NC}"
       if [ -n "$_marker" ]; then
         echo "  Marker: $_marker (PID TIMESTAMP WORKTREE_PATH_BASE64)"
@@ -454,8 +449,12 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     fi
     # SMI-5983-TEST:END restore-definition
     echo "  ${YELLOW}Running smudge-safe checkout...${NC}"
-    git checkout "$EXPECTED_BRANCH"
-    RESTORE_EXIT=$?
+    # SMI-6973: under errexit the shell aborts ON the failing command, before
+    # `RC=$?` runs -- so a failed checkout never reached RESTORE_EXIT and the
+    # "Auto-restore failed" block below was unreachable. `|| RC=$?` keeps it
+    # observable. Measured: `sh -ec 'false; RC=$?; echo X'` prints nothing.
+    RESTORE_EXIT=0
+    git checkout "$EXPECTED_BRANCH" || RESTORE_EXIT=$?
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
       _restore_smudge_filter
       trap - EXIT INT TERM
