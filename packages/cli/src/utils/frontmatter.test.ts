@@ -121,6 +121,43 @@ const REFERENCE: Case[] = [
     data: { name: 'yes', description: 'on', triggers: ['yes', 'no'], tags: 'off' },
     content: '',
   },
+  // Language tags on the opening line (gray-matter 4.0.3, measured 2026-10-07).
+  {
+    name: '---yaml opener',
+    input: '---yaml\nname: a\n---\nbody\n',
+    data: { name: 'a' },
+    content: 'body\n',
+  },
+  {
+    name: '---yml opener',
+    input: '---yml\nname: a\n---\nbody\n',
+    data: { name: 'a' },
+    content: 'body\n',
+  },
+  {
+    name: '---YAML opener (any case)',
+    input: '---YAML\nname: a\n---\nbody\n',
+    data: { name: 'a' },
+    content: 'body\n',
+  },
+  {
+    name: '--- yaml opener (space before tag)',
+    input: '--- yaml\nname: a\n---\nbody\n',
+    data: { name: 'a' },
+    content: 'body\n',
+  },
+  {
+    name: '---yaml opener with CRLF',
+    input: '---yaml\r\nname: a\r\n---\r\nbody\r\n',
+    data: { name: 'a' },
+    content: 'body\r\n',
+  },
+  {
+    name: '---json opener',
+    input: '---json\n{"name": "a"}\n---\nbody\n',
+    data: { name: 'a' },
+    content: 'body\n',
+  },
 ]
 
 // Measured gray-matter output differs here on purpose; see the module header.
@@ -155,9 +192,41 @@ describe('parseFrontmatter: deliberate differences', () => {
     expect(() => parseFrontmatter('---\nname: a\n----\nbody\n')).toThrow()
   })
 
-  it('---foo on the opening line is not frontmatter (gray-matter threw: unknown engine)', () => {
-    const input = '---foo\nname: a\n---\nbody\n'
+  it('an unknown language tag on the opening line throws (gray-matter threw too)', () => {
+    expect(() => parseFrontmatter('---foo\nname: a\n---\nbody\n')).toThrow(
+      /language "foo" is not supported/
+    )
+  })
+
+  it.each(['js', 'javascript', 'JavaScript'])(
+    '---%s frontmatter throws and never runs (gray-matter executed it)',
+    (lang) => {
+      // If this frontmatter were evaluated as code, it would set the global.
+      const g = globalThis as { __smi7018Executed?: boolean }
+      const payload = '(globalThis.__smi7018Executed = true, { name: "a" })'
+      // Control: the payload really does set the global when evaluated, so the
+      // absence check below can detect execution.
+      delete g.__smi7018Executed
+      new Function(`return ${payload}`)()
+      expect(g.__smi7018Executed).toBe(true)
+
+      delete g.__smi7018Executed
+      const input = `---${lang}\n${payload}\n---\nbody\n`
+      expect(() => parseFrontmatter(input)).toThrow(/executable code/)
+      expect(g.__smi7018Executed).toBeUndefined()
+    }
+  )
+
+  it('---- on the opening line is not frontmatter (gray-matter agreed)', () => {
+    const input = '----\nname: a\n---\nbody\n'
     expect(parseFrontmatter(input)).toEqual({ data: {}, content: input })
+  })
+
+  it('tabs after the opening and closing --- are allowed', () => {
+    expect(parseFrontmatter('---\t\nname: a\n---\t\nbody\n')).toEqual({
+      data: { name: 'a' },
+      content: 'body\n',
+    })
   })
 
   it('a closing line of --- then \\r then spaces is not a delimiter (gray-matter closed there)', () => {

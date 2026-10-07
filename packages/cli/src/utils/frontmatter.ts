@@ -18,8 +18,11 @@
  * - gray-matter closes on any line that merely STARTS with `---` (`----`,
  *   `---foo`) and leaves the remainder in `content`; this parser requires the
  *   whole line to be `---`.
- * - `---foo` / `---json` on the opening line selects a gray-matter "language"
- *   engine (and throws for unknown ones); here it is not frontmatter.
+ * - A language tag on the opening line (`---yaml`, `--- json`) selects how
+ *   gray-matter parses the block. Here `yaml`, `yml` and `json` (any case) are
+ *   parsed as YAML, which covers JSON. `js` and `javascript` throw: gray-matter
+ *   EXECUTES that frontmatter as code, and an imported SKILL.md must never run
+ *   code. Any other tag throws, as it did in gray-matter.
  * - A frontmatter document that is not a mapping (scalar, list, null) yields
  *   `data: {}`; gray-matter returned the raw value.
  * - YAML 1.2 core schema (`yaml` default) instead of js-yaml 3: timestamps,
@@ -55,6 +58,10 @@ export interface FrontmatterResult {
 
 const BOM = '\uFEFF'
 const DELIMITER = /^---[ \t]*\r?$/
+/** Opening line: `---`, optionally followed by one language tag (not starting with `-`). */
+const OPENER = /^---[ \t]*(?:([^\s-]\S*)[ \t]*)?\r?$/
+const YAML_LANGUAGES = new Set(['yaml', 'yml', 'json'])
+const EXECUTABLE_LANGUAGES = new Set(['js', 'javascript'])
 
 /** Upper bound on the YAML block, in UTF-8 bytes; see the module header. */
 export const MAX_FRONTMATTER_BYTES = 16 * 1024
@@ -78,8 +85,17 @@ export function parseFrontmatter(input: string): FrontmatterResult {
   const text = input.startsWith(BOM) ? input.slice(1) : input
 
   const open = readLine(text, 0)
-  if (!DELIMITER.test(open.line)) {
+  const opener = OPENER.exec(open.line)
+  if (!opener) {
     return { data: {}, content: text }
+  }
+  const language = opener[1]?.toLowerCase()
+  if (language !== undefined && !YAML_LANGUAGES.has(language)) {
+    throw new Error(
+      EXECUTABLE_LANGUAGES.has(language)
+        ? `frontmatter language "${opener[1]}" is executable code and is not supported`
+        : `frontmatter language "${opener[1]}" is not supported (use yaml)`
+    )
   }
 
   let cursor = open.next

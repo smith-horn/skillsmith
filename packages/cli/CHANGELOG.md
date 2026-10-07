@@ -18,6 +18,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   - Frontmatter over 16 KiB is reported as a parse failure instead of being read. Real SKILL.md
     frontmatter is a few hundred bytes.
   - Custom YAML tags such as `!foo` now read as their plain value instead of failing the file.
+  - An opening line of `---yaml`, `---yml` or `---json` (any case) is read as before. An opening
+    line of `---js` or `---javascript` is now reported as a parse failure; previously that
+    frontmatter was run as JavaScript during the import. Any other language tag fails, as before.
 
 ## v0.8.13
 
