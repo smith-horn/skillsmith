@@ -10,10 +10,11 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   ATTEMPT_CAP,
@@ -492,5 +493,61 @@ describe('resolveMainRepoKey', () => {
 
   it('returns null when cwd does not exist', () => {
     expect(resolveMainRepoKey('/nonexistent/path/that/does/not/exist')).toBeNull()
+  })
+
+  // SMI-6976. The three tests above assert the RETURN VALUE, which is identical
+  // whether or not `stdio` is set — that is precisely why this defect survived
+  // them. The only thing that differs is live bytes on the parent's stderr, so
+  // this test has to observe a child process rather than a return value.
+  it('does not write git stderr to the parent process (SMI-6976)', () => {
+    const nonRepo = makeFixtureTempDir('autoheal-stderr-leak')
+    tmpDirs.push(nonRepo)
+    const here = dirname(fileURLToPath(import.meta.url))
+    const tsx = join(here, '..', '..', '..', '..', 'node_modules', '.bin', 'tsx')
+    const runner = join(nonRepo, 'probe.mts')
+
+    // The child calls the REAL function, then — as a known-positive control on
+    // the capture itself — makes a deliberately unquieted git call. If the
+    // control's `fatal:` does not arrive, this test cannot see stderr at all
+    // and its absence assertion below would be vacuous.
+    writeFileSync(
+      runner,
+      [
+        `import { execFileSync } from 'node:child_process'`,
+        `const { resolveMainRepoKey } = await import(${JSON.stringify(
+          join(here, 'autoheal-state.ts')
+        )})`,
+        `const r = resolveMainRepoKey(${JSON.stringify(nonRepo)})`,
+        `process.stdout.write('SUBJECT_RESULT=' + String(r) + '\\n')`,
+        `process.stdout.write('SUBJECT_STDERR_END\\n')`,
+        `try {`,
+        `  execFileSync('git', ['-C', ${JSON.stringify(nonRepo)}, 'status'], { encoding: 'utf8' })`,
+        `} catch { /* expected */ }`,
+        `process.stdout.write('CONTROL_DONE\\n')`,
+      ].join('\n')
+    )
+
+    const res = spawnSync(tsx, [runner], { encoding: 'utf8', timeout: 120_000 })
+    const stdout = res.stdout ?? ''
+    const stderr = res.stderr ?? ''
+
+    // Presence proof, paired with the absence assertion below (P-7): the child
+    // must have REACHED the observation. `SUBJECT_RESULT=null` can only be
+    // printed after resolveMainRepoKey ran and took its failing branch, so a
+    // child that crashed or never loaded the module cannot satisfy this.
+    expect(stdout).toContain('SUBJECT_RESULT=null')
+    expect(stdout).toContain('CONTROL_DONE')
+
+    // Known-positive on the instrument: the unquieted control call MUST leak,
+    // or this test is measuring nothing.
+    expect(stderr, 'control did not leak — stderr capture is not working').toMatch(/fatal:/)
+
+    // The actual assertion: everything before the control marker is the
+    // subject's own output, and it must carry no git noise.
+    const subjectStderr = stderr.split('fatal:')[0]
+    expect(subjectStderr).not.toMatch(/not a git repository/)
+    // And exactly one `fatal:` overall — the control's. More than one means the
+    // subject leaked too.
+    expect(stderr.match(/fatal:/g) ?? []).toHaveLength(1)
   })
 })

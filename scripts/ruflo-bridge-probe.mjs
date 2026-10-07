@@ -144,6 +144,12 @@ function resolveHostKey() {
   try {
     return execFileSync('git', ['-C', HERE, 'rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
+      // SMI-6976: same leak as resolveMainRepoKey's. SMI-6976 originally cited
+      // THIS call as already correct and as the reference shape to copy; it was
+      // not — it set no `stdio`, so a git failure printed `fatal:` straight to
+      // the user's terminal. The `catch` below already degrades to a sensible
+      // default, which is exactly why the noise is pure cost.
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim()
   } catch {
     return join(HERE, '..')
