@@ -311,83 +311,40 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # message instead. Held only around the classify+disable+marker-write
     # sequence below, released before the checkout, reacquired only for
     # the restore.
-    # SMI-5983-TEST:BEGIN lock-helpers -- scripts/tests/git-crypt-pre-commit-disable.test.ts
-    # extracts this exact span verbatim (text between these two sentinel
-    # comments) to exercise the real lock helpers in isolation. Keep this
-    # span self-contained (no references to names defined outside it other
-    # than RED/NC, which the test harness stubs) if you edit it.
-    GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
-    GIT_CRYPT_LOCK_HELD=""
-    _acquire_git_crypt_lock() {
-      _wait_i=0
-      while [ "$_wait_i" -lt 50 ]; do
-        if mkdir "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
-          echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null
-          GIT_CRYPT_LOCK_HELD=1
-          # SMI-5983 (governance retro): self-release on a signal landing
-          # between acquire and the caller's own explicit release below --
-          # without this, unlike the bash-side
-          # acquire_git_crypt_filter_lock() (scripts/_lib.sh), which arms an
-          # equivalent trap at acquire time, an ordinary SIGINT/SIGTERM
-          # during the disabled-precheck/restore-definition spans left this
-          # repo-shared lock dangling forever (no auto-reclaim by design),
-          # hard-failing every OTHER worktree's git-crypt filter operation
-          # with the "never auto-reclaims" message below until a human ran
-          # the printed `rmdir` -- confirmed via direct reproduction
-          # (`kill -TERM` mid-lock-hold leaves the lock dir on disk).
-          # INT/TERM only, deliberately NOT EXIT: every code path between
-          # this acquire and the caller's own explicit release is
-          # deterministic, signal-free control flow (the disabled-precheck
-          # span always either hard-fails via an explicit release+exit, or
-          # falls straight through into the restore-definition span, which
-          # always releases explicitly on both its branches) -- there is no
-          # plain/error exit in that window for an EXIT trap to guard
-          # against, and arming one anyway would release the lock on ANY
-          # process exit reachable from inside this function, including a
-          # test harness or a future caller that intentionally checks
-          # intermediate lock state before the real hook continues past this
-          # point (confirmed by exactly this regression when EXIT was
-          # included in an earlier draft of this fix -- see
-          # scripts/tests/git-crypt-pre-commit-disable.test.ts's "proceeds
-          # past the precheck" test). Plain (non-composing) registration is
-          # correct here: this is the first `trap` call anywhere in this
-          # hook, so there is no prior handler to preserve.
-          # `_release_git_crypt_lock` is idempotent (a no-op once
-          # GIT_CRYPT_LOCK_HELD is cleared), so this trap firing again later
-          # -- after the caller's own explicit release (the hard-fail
-          # branch, or the disable sequence's release-before-bigger-trap-
-          # arm), after the bigger
-          # `trap '_restore_smudge_filter' EXIT INT TERM` below overwrites
-          # it outright, or from the re-acquire inside
-          # _restore_smudge_filter() itself -- is always harmless; it only
-          # ever protects the lock's own cleanup, never the filter VALUES
-          # (which the marker + two-signal heal mechanism protects
-          # regardless).
-          trap '_release_git_crypt_lock' INT TERM
-          return 0
-        fi
-        _wait_i=$((_wait_i + 1))
-        sleep 0.2
-      done
-      _holder_pid=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
-      echo "${RED}git-crypt filter lock busy after 10s (holder PID: ${_holder_pid:-unknown}).${NC}" >&2
-      echo "  This lock never auto-reclaims. Confirm via 'ps' that the holder is gone, then:" >&2
-      echo "    rmdir \"$GIT_CRYPT_LOCK_DIR\"" >&2
-      echo "  and retry the commit." >&2
+    # SMI-6973: the lock implementation now lives in
+    # scripts/lib/git-crypt-lock.sh. It was inline here, which put this hook 35
+    # lines over the repo's 500-line hard limit and forced the test harness to
+    # slice it out of comment sentinels -- an extractor that silently produced a
+    # stray leading line and so could never run under the `sh -e` husky
+    # actually uses.
+    #
+    # Sourced HERE, inside the branch-mismatch path and immediately before the
+    # first acquisition -- deliberately NOT at the top of the hook. An ordinary
+    # commit never reaches this lock, so a missing library must not wedge it.
+    #
+    # FATAL on absence, unlike this hook's other two sourced libraries, which
+    # degrade with a warning. There is a safe default for "cannot detect
+    # Docker"; there is none for "about to mutate shared git-crypt config
+    # without serialisation". Guarded with -r (readable), matching both existing
+    # call sites -- not -f.
+    GIT_CRYPT_LOCK_LIB="$(dirname "$0")/../scripts/lib/git-crypt-lock.sh"
+    if [ ! -r "$GIT_CRYPT_LOCK_LIB" ]; then
+      echo "${RED}  git-crypt lock library missing or unreadable:${NC}" >&2
+      echo "    $GIT_CRYPT_LOCK_LIB" >&2
+      echo "  Refusing to disable git-crypt filters without the lock that" >&2
+      echo "  serialises it -- scripts/_lib.sh's bash helpers contend on the" >&2
+      echo "  same lock across every worktree." >&2
+      echo "  Fix: rebase onto a revision containing that file (SMI-6973)." >&2
       exit 1
-    }
-    _release_git_crypt_lock() {
-      [ -n "$GIT_CRYPT_LOCK_HELD" ] || return 0
-      _owner=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
-      [ "$_owner" = "$$" ] && rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
-      GIT_CRYPT_LOCK_HELD=""
-    }
-    # SMI-5983-TEST:END lock-helpers
+    fi
+    # shellcheck source=../scripts/lib/git-crypt-lock.sh
+    . "$GIT_CRYPT_LOCK_LIB"
 
     # SMI-5983-TEST:BEGIN disabled-precheck -- scripts/tests/git-crypt-pre-commit-disable.test.ts
-    # extracts this span too (run immediately after the lock-helpers span
-    # above, in the same sourced shell); depends on the lock-helpers span's
-    # functions plus EXPECTED_BRANCH being set by the caller.
+    # extracts this span too; it depends on the lock helpers, which since
+    # SMI-6973 live in scripts/lib/git-crypt-lock.sh rather than in a sibling
+    # span -- a harness must SOURCE that library before running this span,
+    # plus set EXPECTED_BRANCH itself.
     _acquire_git_crypt_lock
     SMUDGE_CMD=$(git config --local filter.git-crypt.smudge 2>/dev/null)
     CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
@@ -425,7 +382,8 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # SMI-5983-TEST:BEGIN restore-definition -- scripts/tests/git-crypt-pre-commit-disable.test.ts
     # extracts this span too (run immediately after the disabled-precheck
     # span above, in the same sourced shell); depends on SMUDGE_CMD/
-    # CLEAN_CMD from that span plus the lock-helpers span's functions.
+    # CLEAN_CMD from that span, plus the lock helpers that SMI-6973 moved to
+    # scripts/lib/git-crypt-lock.sh (source that library, do not slice it).
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
       # Restore function — called explicitly on success and via trap on crash/signal.
       # SMI-5702: the else-branches used to remove the config key entirely

@@ -94,7 +94,19 @@ function firstNonBlankLine(span: string): string {
   return span.split('\n').find((l) => l.trim() !== '') ?? ''
 }
 
-const LOCK_HELPERS_SPAN = extractSpan('lock-helpers')
+// SMI-6973: the lock helpers are no longer a sliced span. They live in
+// scripts/lib/git-crypt-lock.sh, so the harness SOURCES the real file instead
+// of reconstructing it from text between comment sentinels. This is the whole
+// point of the extraction: there is nothing left to mis-slice here, and every
+// composition site below is unchanged because the constant still expands to
+// shell that defines the same names.
+const GIT_CRYPT_LOCK_LIB = resolve(__dirname, '..', 'lib', 'git-crypt-lock.sh')
+if (!existsSync(GIT_CRYPT_LOCK_LIB)) {
+  throw new Error(
+    `SMI-6973: ${GIT_CRYPT_LOCK_LIB} is missing — the hook sources it, so these tests cannot stand in for it`
+  )
+}
+const LOCK_HELPERS_SPAN = `. ${JSON.stringify(GIT_CRYPT_LOCK_LIB)}\n`
 const CLEAR_MARKER_SPAN = extractSpan('clear-marker')
 const DISABLED_PRECHECK_SPAN = extractSpan('disabled-precheck')
 const RESTORE_DEFINITION_SPAN = extractSpan('restore-definition')
@@ -113,8 +125,12 @@ function runShInRepo(dir: string, script: string) {
 }
 
 describe('SMI-6973: span extraction starts after the sentinel LINE, not the sentinel NAME', () => {
+  // lock-helpers is deliberately absent: SMI-6973 moved it to
+  // scripts/lib/git-crypt-lock.sh, so it is sourced rather than sliced and has
+  // no sentinel left to get wrong. The three below are the spans that remain,
+  // and the extractor fix still has to hold for them — which is exactly why
+  // the extraction did NOT dissolve this problem, only shrink it.
   const SPANS: Array<[string, string]> = [
-    ['lock-helpers', LOCK_HELPERS_SPAN],
     ['clear-marker', CLEAR_MARKER_SPAN],
     ['disabled-precheck', DISABLED_PRECHECK_SPAN],
     ['restore-definition', RESTORE_DEFINITION_SPAN],
@@ -138,6 +154,9 @@ describe('SMI-6973: span extraction starts after the sentinel LINE, not the sent
     const withSuffix = PRE_COMMIT_SRC.split('\n').filter((l) =>
       /#\s*SMI-5983-TEST:BEGIN\s+\S+\s+--\s+\S/.test(l)
     )
+    // SPANS.length is 3 since SMI-6973 removed the lock-helpers sentinel.
+    // Asserting against SPANS.length rather than a literal keeps the two in
+    // step automatically if another span is ever extracted the same way.
     expect(withSuffix).toHaveLength(SPANS.length)
   })
 })
