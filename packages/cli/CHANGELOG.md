@@ -33,7 +33,8 @@ All notable changes to `@skillsmith/cli` are documented here.
     make the file a parse failure. Before, tabs were accepted and the last duplicate key won.
 
   A file that fails to parse is not imported. If that skill was imported before, its existing
-  entry keeps its old values. With `--json`, any failing file makes the command exit 1.
+  entry keeps its old values. With `--json`, a one-shot import exits 1 if any file fails; in
+  `--watch` mode each pass reports its failures in the JSON result and keeps watching.
 
 ## v0.8.13
 
