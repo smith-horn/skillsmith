@@ -30,7 +30,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -131,6 +131,87 @@ function runShInRepo(dir: string, script: string) {
   const stderr = result.stderr ?? ''
   return { status: result.status ?? 0, stdout, stderr, combined: stdout + stderr }
 }
+
+describe('SMI-6973 step 5: the acquisition gap — a failing pid write must not leak the lock', () => {
+  /**
+   * Injects a failing pid write by shadowing `mkdir` with a stub that creates
+   * the directory and then makes it unwritable. That is the only faithful way
+   * to reach the window: between `mkdir` succeeding and the pid write, nothing
+   * in the function is under the test's control.
+   *
+   * This mutation is NOT the author's. Reverting the fix would only re-test the
+   * unset-key path already covered elsewhere; failing a write AFTER successful
+   * acquisition was named by the cross-family review as the attack class the
+   * plan had dismissed, and adopting it is the point of asking.
+   */
+  function runWithFailingPidWrite(dir: string, script: string) {
+    const stubDir = join(dir, 'stub-bin')
+    mkdirSync(stubDir, { recursive: true })
+    const stub = join(stubDir, 'mkdir')
+    // The dir is made unwritable by planting a DIRECTORY where the pid FILE
+    // goes, not by chmod. Measured: these tests run as root (uid 0) in the dev
+    // container, so `chmod 500` is simply ignored and the write succeeds — a
+    // first attempt at this stub used chmod and injected nothing. A directory
+    // at the target path makes the redirect fail with EISDIR for every uid.
+    writeFileSync(
+      stub,
+      [
+        '#!/bin/sh',
+        '/bin/mkdir "$@" || exit $?',
+        'for d in "$@"; do',
+        '  case "$d" in',
+        '    -*) ;;',
+        '    *) [ -d "$d" ] && /bin/mkdir -p "$d/pid" 2>/dev/null ;;',
+        '  esac',
+        'done',
+        'exit 0',
+      ].join('\n')
+    )
+    chmodSync(stub, 0o755)
+    const result = spawnSync(REAL_SH, ['-ec', script], {
+      cwd: dir,
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: { ...GIT_ENV, PATH: `${stubDir}:${GIT_ENV.PATH ?? process.env.PATH ?? ''}` },
+    })
+    return {
+      status: result.status,
+      combined: (result.stdout ?? '') + (result.stderr ?? ''),
+    }
+  }
+
+  const ACQUIRE = `. ${JSON.stringify(GIT_CRYPT_LOCK_LIB)}\nRED=''\nNC=''\n_acquire_git_crypt_lock\necho REACHED_AFTER_ACQUIRE\n`
+
+  it('control: with a normal mkdir, acquire succeeds and records the pid', () => {
+    // Known-positive. Without this, the failure arm below could pass because
+    // acquisition never works at all in this harness.
+    const dir = makeRepo()
+    const result = runShInRepo(dir, ACQUIRE)
+    expect(result.combined).toContain('REACHED_AFTER_ACQUIRE')
+    expect(result.status).toBe(0)
+    const lockDir = join(dir, '.git', 'skillsmith-git-crypt-filter.lock')
+    expect(existsSync(join(lockDir, 'pid'))).toBe(true)
+  })
+
+  it('refuses and releases when the pid write fails after mkdir succeeded', () => {
+    const dir = makeRepo()
+    const result = runWithFailingPidWrite(dir, ACQUIRE)
+
+    // It must NOT proceed as though it holds the lock.
+    expect(result.combined).not.toContain('REACHED_AFTER_ACQUIRE')
+    expect(result.status).not.toBe(0)
+    // It must say what happened rather than aborting mutely, which is what the
+    // pre-fix code did — the `2>/dev/null` on the write hid the diagnostic
+    // while errexit killed the shell.
+    expect(result.combined).toMatch(/could not record ownership/)
+    // And the directory must be GONE. This is the whole finding: pre-fix, it
+    // survived with the flag unset and the trap unarmed, so no trap-based fix
+    // could ever have cleaned it up, and the lock is shared across every
+    // worktree via --git-common-dir.
+    const lockDir = join(dir, '.git', 'skillsmith-git-crypt-filter.lock')
+    expect(existsSync(lockDir), 'lock directory leaked').toBe(false)
+  })
+})
 
 describe('SMI-6973: span extraction starts after the sentinel LINE, not the sentinel NAME', () => {
   // lock-helpers is deliberately absent: SMI-6973 moved it to

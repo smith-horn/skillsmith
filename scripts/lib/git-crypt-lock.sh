@@ -46,8 +46,34 @@ _acquire_git_crypt_lock() {
   _wait_i=0
   while [ "$_wait_i" -lt 50 ]; do
     if mkdir "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
-      echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null
+      # SMI-6973 step 5 -- the acquisition gap. ORDER IS LOAD-BEARING HERE.
+      #
+      # This used to be `echo "$$" > …/pid` and THEN `GIT_CRYPT_LOCK_HELD=1`,
+      # which left a window nothing could clean up. errexit is suppressed for
+      # an `if` CONDITION but NOT inside an `if` BODY (measured:
+      # `sh -ec 'if true; then <failing cmd>; fi'` aborts), so a failing pid
+      # write -- full disk, read-only .git, permissions -- aborted the hook
+      # with the directory CREATED, the flag UNSET, and the trap below NOT YET
+      # ARMED. No trap-based fix reaches that window, and `_release_…`
+      # short-circuits on the empty flag and removes nothing. The `2>/dev/null`
+      # hid the diagnostic without changing the status.
+      #
+      # mkdir succeeding IS acquisition: at that instant this process owns the
+      # directory and nothing else can take it (SMI-5983 deliberately has no
+      # auto-reclaim). So claim it first, before anything that can fail.
       GIT_CRYPT_LOCK_HELD=1
+      # Then record the owner. On failure, release what we just created rather
+      # than leaving a lock no one can attribute. `if !` keeps this exempt from
+      # errexit, so the refusal below is reached instead of an abort.
+      if ! echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null; then
+        rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
+        GIT_CRYPT_LOCK_HELD=""
+        echo "${RED}  acquired the git-crypt filter lock but could not record ownership${NC}" >&2
+        echo "    $GIT_CRYPT_LOCK_DIR/pid" >&2
+        echo "  The lock has been released, so nothing is wedged. This usually means" >&2
+        echo "  a full disk or a read-only .git. Fix that and retry the commit." >&2
+        exit 1
+      fi
       # SMI-5983 (governance retro): self-release on a signal landing
       # between acquire and the caller's own explicit release below --
       # without this, unlike the bash-side
@@ -103,7 +129,30 @@ _acquire_git_crypt_lock() {
 _release_git_crypt_lock() {
   [ -n "$GIT_CRYPT_LOCK_HELD" ] || return 0
   _owner=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
-  [ "$_owner" = "$$" ] && rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
+  # SMI-6973 step 5: release when the pid file names US, **or** when it is
+  # absent or unreadable.
+  #
+  # The empty case is a state step 5 itself introduced, and leaving it out
+  # would have been a second leak inside the fix for the first. Claiming
+  # ownership before writing the pid file means there is now a real instant
+  # where GIT_CRYPT_LOCK_HELD is set and no pid file exists yet. The old
+  # `[ "$_owner" = "$$" ]` test is FALSE there, so the directory would survive
+  # a release that believed it had done its job.
+  #
+  # Releasing on an empty read is safe here, and only here, because
+  # GIT_CRYPT_LOCK_HELD is set by exactly one thing: this process's own
+  # successful `mkdir`. It is never inherited and never set speculatively. And
+  # SMI-5983 deliberately implemented NO auto-reclaim -- an ABA race in an
+  # `mv`-to-tombstone design was found and rejected -- so no other process can
+  # take this directory from us while we hold it, which is what would otherwise
+  # make "pid unreadable" ambiguous between "mine, unrecorded" and "someone
+  # else's now".
+  #
+  # A pid file naming a DIFFERENT process is still refused. That is the case
+  # the original check exists for, and it stays.
+  if [ "$_owner" = "$$" ] || [ -z "$_owner" ]; then
+    rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
+  fi
   GIT_CRYPT_LOCK_HELD=""
 }
 
