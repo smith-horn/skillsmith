@@ -82,7 +82,15 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --include-unlabeled)
+            # SMI-6981: retained but NO LONGER DESTRUCTIVE. It is kept rather
+            # than removed so an operator who passes it is told what changed,
+            # instead of silently getting different behaviour than they expect.
             INCLUDE_UNLABELED=true
+            warn "--include-unlabeled is REPORT-ONLY since SMI-6981 and no longer deletes anything."
+            warn "  It used to waive the app.skillsmith.owned check -- the only non-circular"
+            warn "  ownership signal here -- and so proposed other projects' volumes and images"
+            warn "  on a shared daemon. Unconfirmed resources are now always listed, never removed."
+            warn "  Reclaiming our OWN unlabelled volumes needs the label migration in SMI-7028."
             shift
             ;;
         --report-containers)
@@ -263,9 +271,23 @@ while IFS= read -r vol; do
     [[ "$vol_project_label" == "$project" ]] || continue
     [[ -n "$(docker ps -aq --filter "volume=$vol" 2>/dev/null || true)" ]] && continue
 
+    # SMI-6981: an unconfirmed volume is NEVER a deletion candidate, whatever
+    # --include-unlabeled says. That flag used to waive this check, and since
+    # `app.skillsmith.owned` is the only NON-CIRCULAR ownership signal in this
+    # whole chain, waiving it was the one thing standing between this script
+    # and another project's data. Measured: it proposed `intd318_node_modules`,
+    # an unrelated project's dependency tree on the same daemon.
+    #
+    # The project-label check above cannot substitute. It compares the label
+    # against a $project string classify_volume() parsed out of the candidate's
+    # OWN NAME, so it is a naming-convention consistency check, not an
+    # ownership check -- it passes for any foreign Compose project using the
+    # default `<project>_<key>` naming.
+    #
+    # On a shared daemon, absence of ownership evidence means DO NOT DELETE.
     if [[ "$vol_owned_label" != "true" ]]; then
-        echo "UNCONFIRMED ownership: $vol"
-        [[ "$INCLUDE_UNLABELED" != true ]] && continue
+        echo "UNCONFIRMED ownership: $vol (report only -- never deleted)"
+        continue
     fi
 
     vol_candidates+=("$vol")
@@ -282,6 +304,15 @@ if (( ${#vol_candidates[@]} > 0 )); then
     for vol in "${vol_candidates[@]}"; do
         classify_volume "$vol" || continue
         is_protected "$project" "$protected" && continue
+        # SMI-6981: re-evaluate the FULL safety predicate against the object as
+        # it is now, not just classify_volume + is_protected. Candidate
+        # construction ran earlier; between then and here a volume can have
+        # become attached, or have been removed and a DIFFERENT volume created
+        # under the same name -- which Docker would happily let us delete.
+        # Docker refuses to remove an attached volume, so the attachment re-check
+        # is belt-and-braces; the ownership re-read is not.
+        [[ -n "$(docker ps -aq --filter "volume=$vol" 2>/dev/null || true)" ]] && continue
+        [[ "$(docker volume inspect "$vol" --format '{{index .Labels "app.skillsmith.owned"}}' 2>/dev/null || true)" == "true" ]] || continue
         if [[ "$DRY_RUN" == true ]]; then
             info "[dry-run] would remove volume $vol"
         elif docker volume rm "$vol" >/dev/null 2>&1; then
@@ -304,9 +335,13 @@ while IFS= read -r img; do
     [[ -n "$(docker ps -aq --filter "ancestor=$img" 2>/dev/null || true)" ]] && continue
 
     img_owned_label="$(docker image inspect "$img" --format '{{index .Config.Labels "app.skillsmith.owned"}}' 2>/dev/null || true)"
+    # SMI-6981: images were the half the original report and the first plan both
+    # missed -- --include-unlabeled gated `docker rmi` here exactly as it gated
+    # `volume rm` above, so a foreign `*-dev` image with no attached container
+    # and no ownership label was deletable. Same rule, same reason.
     if [[ "$img_owned_label" != "true" ]]; then
-        echo "UNCONFIRMED ownership: $img"
-        [[ "$INCLUDE_UNLABELED" != true ]] && continue
+        echo "UNCONFIRMED ownership: $img (report only -- never deleted)"
+        continue
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
