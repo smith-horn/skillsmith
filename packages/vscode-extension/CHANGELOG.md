@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Breaking**: Skillsmith now requires VS Code 1.125 or later. If you're on an earlier version,
+  you keep the version of Skillsmith you have installed but won't receive updates until you update
+  VS Code. Raising the minimum lets the extension be built and published against the current VS Code
+  API.
+
 - **Docs**: SMI-6532 -- `manifestReader.ts` now states in the file itself that nothing consumes its
   two update-reason tables yet. Its two sibling tables (the MCP one and the parity test in core) each
   said so in their own headers; this one did not, so a reader opening only this file saw carefully

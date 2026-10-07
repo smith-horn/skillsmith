@@ -14,7 +14,7 @@ vi.mock('vscode', () => ({
       get: getConfigMock,
     }),
   },
-  version: '1.110.0',
+  version: '1.125.0',
 }))
 
 const originalFetch = globalThis.fetch
@@ -120,7 +120,7 @@ describe('Telemetry service (SMI-4194)', () => {
     expect(body.metadata).toMatchObject({
       type: 'basic',
       extension_version: '9.9.9',
-      vscode_version: '1.110.0',
+      vscode_version: '1.125.0',
     })
   })
 

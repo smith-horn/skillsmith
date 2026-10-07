@@ -5,7 +5,7 @@
   "version": "0.7.12",
   "publisher": "skillsmith",
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "Programming Languages",
