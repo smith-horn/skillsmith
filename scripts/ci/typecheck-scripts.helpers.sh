@@ -251,6 +251,7 @@ count_tests_excluded() {
   local rc=$?
   if [[ "$rc" -ne 0 ]]; then
     inconclusive "find over scripts/tests failed (exit $rc)"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. This count only feeds the 'excluded' report, but a wrong value there would misstate what the gate did NOT check -- which is the half a reader trusts silently."
     say "--- stderr ---"
     head -20 "$err"
     exit_for_inconclusive
@@ -263,14 +264,30 @@ count_tests_excluded() {
 # explicitly, not just counted, so the exclusion stays visible in the gate's
 # own output rather than buried only in tsconfig.scripts.json (the BLOCKER
 # fix's own reporting requirement).
+# The reason a given path is blocked, keyed BY PATH rather than stated once
+# for the whole list. The earlier form hardcoded "neither @linear/sdk nor pg is
+# an installed dependency" beside every entry, so a third exclusion added for
+# any other reason would have printed a confidently false explanation next to
+# it -- a wrong instrument answering rather than failing. An unrecognised path
+# says so instead of inheriting someone else's reason.
+_scripts_blocked_reason() {
+  case "$1" in
+    scripts/linear/create-warning-issues.ts) printf '@linear/sdk is not an installed dependency' ;;
+    scripts/run-sql.ts) printf 'pg is not an installed dependency' ;;
+    *) printf 'reason not recorded in _scripts_blocked_reason -- add one' ;;
+  esac
+}
+
 compose_excluded_desc() {
-  local blocked_list=""
+  local blocked_list="" p
   if [[ "${#BLOCKED_PATHS[@]}" -gt 0 ]]; then
     # NOT `IFS=', '; "${arr[*]}"` -- `"$*"` joins with only the FIRST
     # character of IFS, silently dropping the space. printf + trim the
     # trailing separator is the form that actually produces "a, b, c".
-    blocked_list="$(printf '%s, ' "${BLOCKED_PATHS[@]}")"
+    for p in "${BLOCKED_PATHS[@]}"; do
+      blocked_list+="$p ($(_scripts_blocked_reason "$p")), "
+    done
     blocked_list="${blocked_list%, }"
   fi
-  EXCLUDED_DESC="BLOCKED: $BLOCKED_COUNT file(s) excluded as unresolvable -- $blocked_list (neither @linear/sdk nor pg is an installed dependency; see tsconfig.scripts.json) + scripts/tests/** ($TESTS_EXCLUDED .ts-family files, SMI-7006) + $MJS_COUNT non-test .mjs + $CJS_COUNT non-test .cjs (measured, not TypeScript) + $NONCODE_COUNT non-code file(s) (.sh/.md/.sql/etc, measured, out of scope for a typecheck gate) -- computed dynamic import()/require() targets are also out of reach of any static resolver (plan finding 7)"
+  EXCLUDED_DESC="BLOCKED: $BLOCKED_COUNT file(s) excluded as unresolvable -- $blocked_list (see tsconfig.scripts.json) + scripts/tests/** ($TESTS_EXCLUDED .ts-family files, SMI-7006) + $MJS_COUNT non-test .mjs + $CJS_COUNT non-test .cjs (measured, not TypeScript) + $NONCODE_COUNT non-code file(s) (.sh/.md/.sql/etc, measured, out of scope for a typecheck gate) -- computed dynamic import()/require() targets are also out of reach of any static resolver (plan finding 7)"
 }

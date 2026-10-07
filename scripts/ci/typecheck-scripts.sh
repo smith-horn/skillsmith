@@ -278,6 +278,7 @@ GLOBAL_ERR_RC=$?
 # grep failure would have silently taken the "no global error" branch.
 if [[ "$GLOBAL_ERR_RC" -ge 2 ]]; then
   inconclusive "the global-diagnostic-shape grep failed (exit $GLOBAL_ERR_RC)"
+  NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Exit >=2 from grep means grep itself errored (unreadable input, or a pattern this grep build rejects), not 'no match'. Confirm \$TSC_CLEAN is readable and re-run."
   exit_for_inconclusive
 fi
 if [[ "$GLOBAL_ERR_RC" -eq 0 ]]; then
@@ -299,6 +300,7 @@ FOUND_LINES="$(grep -cE '^Found [0-9]+ errors?\b' "$TSC_CLEAN")"
 FOUND_LINES_RC=$?
 if [[ "$FOUND_LINES_RC" -ge 2 ]]; then
   inconclusive "the 'Found N errors' summary-line grep failed (exit $FOUND_LINES_RC)"
+  NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Exit >=2 is a grep error, not a missing summary line -- a missing line is exit 1 and handled separately below. Confirm the cleaned tsc output is readable and re-run."
   exit_for_inconclusive
 fi
 if [[ "$FOUND_LINES" -eq 0 ]]; then
@@ -328,6 +330,7 @@ elif [[ "$FOUND_LINES" -eq 1 ]]; then
   REPORTED_RC=$?
   if [[ "$REPORTED_RC" -ne 0 ]]; then
     inconclusive "could not extract the error count from the 'Found N' summary line (pipeline exit $REPORTED_RC)"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. A 'Found N' line was located just above, so the line exists and only the number extraction failed. \$REPORTED_RC is the pipeline's combined status via pipefail, so either grep stage can be the culprit; inspect the summary line's shape for this tsc version."
     exit_for_inconclusive
   fi
 else
@@ -380,6 +383,7 @@ ATTRIB="$(grep -cE "$ATTRIB_RE" "$TSC_CLEAN")"
 ATTRIB_RC=$?
 if [[ "$ATTRIB_RC" -ge 2 ]]; then
   inconclusive "the per-file attribution count grep failed (exit $ATTRIB_RC)"
+  NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Check \$ATTRIB_RE above is still a valid ERE for this grep build; a pattern error and an unreadable input both surface as >=2."
   exit_for_inconclusive
 fi
 
@@ -389,6 +393,7 @@ ATTRIB_SCRIPTS="$(grep -cE '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TS
 ATTRIB_SCRIPTS_RC=$?
 if [[ "$ATTRIB_SCRIPTS_RC" -ge 2 ]]; then
   inconclusive "the scripts/-scoped attribution count grep failed (exit $ATTRIB_SCRIPTS_RC)"
+  NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. This count is only used to split the total for reporting, but it is not skippable: without it the 'outside scripts/' line would be computed from a bogus subtraction."
   exit_for_inconclusive
 fi
 ATTRIB_OUTSIDE=$(( ATTRIB - ATTRIB_SCRIPTS ))
@@ -404,12 +409,14 @@ BY_FILE_STATUS=("${PIPESTATUS[@]}")
 # all, so ANY non-zero there is routed to INCONCLUSIVE.
 if [[ "${BY_FILE_STATUS[0]}" -ge 2 ]]; then
   inconclusive "the per-file attribution grep failed (exit ${BY_FILE_STATUS[0]})"
+  NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Stage 0 of the by-file pipeline. Exit 1 here is legitimate (no diagnostics) and is NOT routed here; only >=2 is."
   exit_for_inconclusive
 fi
 for _by_file_stage in 1 2 3 4 5; do
   _by_file_rc="${BY_FILE_STATUS[$_by_file_stage]:-1}"
   if [[ "$_by_file_rc" -ne 0 ]]; then
     inconclusive "the per-file attribution pipeline's stage $_by_file_stage (sed/sort/uniq/awk) failed (exit $_by_file_rc)"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Stages 1-5 are sed/sort/uniq/awk/sort, none of which has a legitimate non-zero outcome, so ANY non-zero is routed here. Stage numbering is left-to-right from 0."
     exit_for_inconclusive
   fi
 done

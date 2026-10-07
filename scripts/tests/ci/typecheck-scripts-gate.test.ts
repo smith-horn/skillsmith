@@ -191,6 +191,86 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
     expect(after.status).toBe(0)
   })
 
+  it('every INCONCLUSIVE arm prints a next: action', () => {
+    // M2. The gate models typecheck-edge-functions.sh's contract, whose own
+    // CLAUDE.md row promises "Every state prints one next action". Seven arms
+    // in the main script and one in the helpers printed none, so a reader hit
+    // "could not run" with nothing to do about it.
+    //
+    // Asserted statically over the source rather than by running every arm:
+    // several are only reachable by breaking a system tool, and a test that
+    // can only cover the arms that are easy to trigger would leave exactly the
+    // obscure ones unprotected — which is where they were.
+    const files = ['typecheck-scripts.sh', 'typecheck-scripts.helpers.sh']
+    const offenders: string[] = []
+    let armCount = 0
+    for (const f of files) {
+      const lines = readFileSync(join(REPO_ROOT, 'scripts', 'ci', f), 'utf8').split('\n')
+      lines.forEach((line, i) => {
+        if (!/\binconclusive "/.test(line)) return
+        armCount += 1
+        let hasNext = false
+        for (let j = i + 1; j < Math.min(i + 25, lines.length); j += 1) {
+          if (lines[j].includes('NEXT_ACTION=')) hasNext = true
+          if (lines[j].includes('exit_for_inconclusive')) break
+        }
+        if (!hasNext) offenders.push(`${f}:${i + 1}`)
+      })
+    }
+    // Known-positive on the scanner itself: if it found no arms at all it is
+    // matching nothing, and an empty offenders list would mean nothing.
+    expect(armCount).toBeGreaterThan(10)
+    expect(offenders).toEqual([])
+  })
+
+  it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {
+    // M5. An exclusion is the gate declining to check something, so it is the
+    // one list that must not be editable without someone noticing. There are
+    // two independently-maintained copies -- the shell classifier and the
+    // tsconfig `exclude` -- and the set-diff reconciliation only catches a
+    // divergence BETWEEN them, not a deliberate addition to BOTH. Nothing
+    // refuses growth. The sibling edge-function gate has a baseline ratchet;
+    // this is the equivalent, pinned here rather than in a second data file.
+    //
+    // Adding an exclusion is allowed. Adding one WITHOUT updating this list
+    // is not: that is the whole point.
+    const PINNED = ['scripts/linear/create-warning-issues.ts', 'scripts/run-sql.ts'].sort()
+
+    const helpers = readFileSync(
+      join(REPO_ROOT, 'scripts', 'ci', 'typecheck-scripts.helpers.sh'),
+      'utf8'
+    )
+    const caseLine = /_scripts_is_blocked_path\(\)\s*\{[\s\S]*?\n\s*(.+?)\)\s*return 0/.exec(
+      helpers
+    )
+    expect(
+      caseLine,
+      '_scripts_is_blocked_path case arm not found — did it change shape?'
+    ).not.toBeNull()
+    const fromShell = (caseLine as RegExpExecArray)[1]
+      .split('|')
+      .map((s) => s.trim())
+      .sort()
+    expect(fromShell).toEqual(PINNED)
+
+    // The tsconfig side. Strip // comments before parsing; this file is JSONC.
+    const tsconfigRaw = readFileSync(join(REPO_ROOT, 'tsconfig.scripts.json'), 'utf8')
+    const tsconfig = JSON.parse(tsconfigRaw.replace(/^\s*\/\/.*$/gm, '')) as {
+      exclude?: string[]
+    }
+    const fromTsconfig = (tsconfig.exclude ?? [])
+      .filter((e) => /\.(ts|mts|cts|tsx)$/.test(e))
+      .sort()
+    expect(fromTsconfig).toEqual(PINNED)
+
+    // And every blocked path must carry its OWN reason, not inherit a reason
+    // stated once for the whole list — which is what the output did before.
+    for (const p of PINNED) {
+      expect(helpers).toContain(p)
+    }
+    expect(helpers).not.toContain('neither @linear/sdk nor pg is an installed dependency')
+  })
+
   it('H2 regression: the attribution anchor matches diagnostics outside scripts/', () => {
     // 16 non-test scripts import ../../packages/core/src/..., so packages/
     // sources enter the program: measured with --listFiles, 1402 program files
