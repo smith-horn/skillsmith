@@ -330,14 +330,61 @@ docker info
 #    no need to manually `docker compose up -d` per worktree.
 
 # 5. Reclaim disk space — this is the actual fix, not just the restart
-docker system df                        # see what's reclaimable
+docker system df                        # see what's reclaimable (NOT host bytes — see below)
 docker system prune -a -f --volumes     # removes unused images/volumes/build cache/networks
-df -h / /System/Volumes/Data            # confirm space recovered
+df -h / /System/Volumes/Data            # a reading HERE understates the gain — see below
 
 # Routine cleanup (when Docker is healthy): `./scripts/prune-orphaned-docker-volumes.sh` is the safe, concurrency-safe targeted path; reserve the aggressive `docker system prune -a -f --volumes` for the incident-recovery scenario above.
 ```
 
 **Caveat**: `docker system prune -a -f --volumes` removes ANY volume/image not attached to a currently-running container — including cached `node_modules` volumes for worktrees that exist but whose containers are temporarily stopped, forcing a slower next start (native-module rebuild) for those. Safe to run without hesitation only when Docker Desktop itself is already down for everyone (no live containers to disrupt, as in this failure mode). If Docker is otherwise healthy and you just want routine cleanup, prefer `./scripts/remove-worktree.sh --prune` (safe subset: networks + dangling images + build cache) and only reach for the aggressive `--volumes` prune when you've confirmed via `docker ps` that no other worktree session needs to resume.
+
+### Reclaiming host disk space: what Docker's numbers do and do not tell you (SMI-6989)
+
+Two instructions. Both bind whenever the host disk is tight enough to matter, which is
+exactly when the obvious instrument misleads.
+
+**1. Docker's reported reclaim is not host bytes. When the disk is genuinely tight, stop
+what is actively writing before reaching for a prune.**
+
+A deleted image layer or pruned build cache frees space *inside* Docker Desktop's VM disk
+image. That file is sparse and does not shrink, so the host may see little or none of the
+figure Docker reports. A **running** container's writable layer and a **live** database
+volume are real host bytes, and stopping them returns roughly their nominal size.
+
+So the priority order when you need space back now is: stop live containers and release
+their volumes first; prune build cache last. A prune reporting tens of gigabytes can
+return a fraction of that in the same window, while stopping one live service returns what
+it says.
+
+**2. Do not conclude from a `df` taken immediately after a Docker prune.**
+
+Docker's reported reclaim and the host's free space are different clocks, and **nobody has
+characterised the gap.** It is not a known delay you can wait out by a stated amount — it
+is unquantified. If you need to know whether space actually came back, measure again
+later, and bracket each action with its own before/after reading rather than taking one
+measurement at the start and one at the end.
+
+That bracketing is the part that is easy to skip and expensive to skip. SMI-6989 records a
+case where a ~31Gi recovery was attributed to a teardown that had not happened yet — the
+other session's own baseline showed the space was already free before it acted. One
+reading before, one after, and an action in between is correlation, not attribution.
+
+**The `~31Gi` in that incident remains unattributed**, and is recorded that way rather than
+explained. Candidates that the available data cannot separate: a prune settling late,
+another session's build releasing temp space, or APFS reclaiming asynchronously.
+
+Evidence, the bracketed per-action measurements and the caveats on their precision are in
+SMI-6989. They are deliberately not reproduced here: the instructions above rest on a
+storage mechanism and a priority ordering, not on magnitudes that would rot.
+
+**Related: `docker system df` failing is not the daemon failing.** If you see
+`snapshotter.Usage failed … lstat … no such file or directory`, that error is scoped to
+`docker system df`'s per-container usage walk over a missing snapshot path. `docker
+images`, `docker ps`, `docker inspect`, `docker rm` and `docker stop` all keep working.
+Measured across two sessions. Do not read it as a degrading daemon and do not escalate to
+the force-quit recipe above on its strength alone — you lose the Docker-side figure, not
+the daemon.
 
 ### Orphaned Agent Processes
 
