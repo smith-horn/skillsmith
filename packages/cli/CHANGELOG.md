@@ -8,7 +8,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   `...`, `skillsmith import-local` now names the problem instead of showing a YAML library message
   telling you to call `YAML.parseAllDocuments()`. The message says that line starts a second YAML
   document and gives both fixes: if it was meant to end the frontmatter, change it to exactly
-  `---`; otherwise remove it.
+  `---`; otherwise remove it. It offers both because the parser can't tell which you meant: a
+  horizontal rule (`---`) later in the body looks like the end of the frontmatter, so a mistyped
+  closing line followed by a horizontal rule would otherwise get the wrong advice.
 
 ## v0.8.14
 
