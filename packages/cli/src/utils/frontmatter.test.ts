@@ -6,6 +6,7 @@
  * `DELIBERATE` lists the inputs where this parser intentionally differs.
  */
 import { describe, it, expect, vi } from 'vitest'
+import { YAMLParseError } from 'yaml'
 import { MAX_FRONTMATTER_BYTES, parseFrontmatter } from './frontmatter.js'
 
 interface Case {
@@ -243,6 +244,31 @@ describe('parseFrontmatter: deliberate differences', () => {
     (_label, input) => {
       expect(() => parseFrontmatter(input)).toThrow(/closing line must be exactly `---`/)
       expect(() => parseFrontmatter(input)).not.toThrow(/parseAllDocuments/)
+    }
+  )
+
+  it('a closed block that contains a document marker says so, not "not closed"', () => {
+    // The final bare `---` closes the block, but `--- # second` inside it starts a
+    // second YAML document.
+    const input = '---\nname: first\n--- # second YAML document\nname: second\n---\nbody\n'
+    expect(() => parseFrontmatter(input)).toThrow(/contains more than one YAML document/)
+    expect(() => parseFrontmatter(input)).not.toThrow(/not closed/)
+  })
+
+  it.each([
+    ['duplicate keys', '---\nname: a\nname: b\n---\n', 'DUPLICATE_KEY'],
+    ['malformed flow sequence', '---\nname: [unclosed\n---\nbody\n', 'BAD_INDENT'],
+  ])(
+    'other YAML errors are rethrown unchanged: %s keeps its YAMLParseError class and code',
+    (_label, input, code) => {
+      let caught: unknown
+      try {
+        parseFrontmatter(input)
+      } catch (error) {
+        caught = error
+      }
+      expect(caught).toBeInstanceOf(YAMLParseError)
+      expect((caught as YAMLParseError).code).toBe(code)
     }
   )
 

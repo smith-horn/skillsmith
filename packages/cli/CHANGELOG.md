@@ -4,10 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
-- **Fixed**: SMI-7018 -- when a SKILL.md's frontmatter ends with a line that looks like a closing
-  `---` but isn't one (for example `--- # note` or `...`), `skillsmith import-local` now reports
-  "frontmatter is not closed: the closing line must be exactly `---`" instead of a YAML library
-  message telling you to call `YAML.parseAllDocuments()`.
+- **Fixed**: SMI-7018 -- when a SKILL.md's frontmatter contains a line such as `--- # note` or
+  `...`, `skillsmith import-local` now names the problem instead of showing a YAML library message
+  telling you to call `YAML.parseAllDocuments()`. If no line that is exactly `---` follows, it
+  reports "frontmatter is not closed: the closing line must be exactly `---`". If one does, it
+  reports that the frontmatter contains more than one YAML document and asks you to remove that
+  line.
 
 ## v0.8.14
 
