@@ -230,7 +230,29 @@ describe('parseFrontmatter: deliberate differences', () => {
   })
 
   it('a closing line of --- then \\r then spaces is not a delimiter (gray-matter closed there)', () => {
-    expect(() => parseFrontmatter('---\nname: a\n---\r  \nbody\n')).toThrow()
+    expect(() => parseFrontmatter('---\nname: a\n---\r  \nbody\n')).toThrow(
+      /closing line must be exactly `---`/
+    )
+  })
+
+  it.each([
+    ['--- # note', '---\nname: a\n--- # note\nbody\n'],
+    ['...', '---\nname: a\n...\nbody\n'],
+  ])(
+    'a near-miss closing line (%s) gets an error naming the file problem, not a yaml API',
+    (_label, input) => {
+      expect(() => parseFrontmatter(input)).toThrow(/closing line must be exactly `---`/)
+      expect(() => parseFrontmatter(input)).not.toThrow(/parseAllDocuments/)
+    }
+  )
+
+  it("other YAML errors keep yaml's own message (only the multiple-documents case is reworded)", () => {
+    expect(() => parseFrontmatter('---\nname: a\nname: b\n---\n')).toThrow(
+      /Map keys must be unique/
+    )
+    expect(() => parseFrontmatter('---\nname: [unclosed\n---\nbody\n')).not.toThrow(
+      /closing line must be exactly/
+    )
   })
 
   it('a custom tag resolves to its plain value and emits no warning (gray-matter threw)', () => {

@@ -49,7 +49,7 @@
  *   frontmatter is far smaller: across 1,730 SKILL.md files the largest block
  *   was 2,011 bytes (SMI-7018, 2026-10-07).
  */
-import { parse as parseYaml } from 'yaml'
+import { parse as parseYaml, YAMLParseError } from 'yaml'
 
 export interface FrontmatterResult {
   data: Record<string, unknown>
@@ -119,11 +119,22 @@ export function parseFrontmatter(input: string): FrontmatterResult {
     )
   }
 
-  const parsed: unknown = parseYaml(yamlText, {
-    prettyErrors: true,
-    merge: true,
-    logLevel: 'error',
-  })
+  let parsed: unknown
+  try {
+    parsed = parseYaml(yamlText, { prettyErrors: true, merge: true, logLevel: 'error' })
+  } catch (error) {
+    // A bare `---` line has already closed the block, so a second YAML document
+    // here means a near-miss closing line such as `--- # note` or `...`.
+    // yaml's own message ("please use YAML.parseAllDocuments()") names a library
+    // call, not the problem in the user's file.
+    if (error instanceof YAMLParseError && error.code === 'MULTIPLE_DOCS') {
+      throw new Error(
+        'frontmatter is not closed: the closing line must be exactly `---` ' +
+          '(a line such as `--- # note` or `...` does not close it)'
+      )
+    }
+    throw error
+  }
   return {
     data: isPlainObject(parsed) ? parsed : {},
     content: text.slice(contentStart),
