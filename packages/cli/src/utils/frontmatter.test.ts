@@ -261,7 +261,8 @@ describe('parseFrontmatter: deliberate differences', () => {
         message = (error as Error).message
       }
       expect(message).toMatch(/starts a second YAML document/)
-      expect(message).toMatch(/change it to exactly `---`/)
+      // The whole conditional, so the condition can't drift from the fix it selects.
+      expect(message).toMatch(/if it was meant to end the frontmatter, change it to exactly `---`/)
       expect(message).toMatch(/otherwise remove it/)
       expect(message).not.toMatch(/parseAllDocuments|not closed/)
     }
