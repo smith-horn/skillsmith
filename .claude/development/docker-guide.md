@@ -330,14 +330,88 @@ docker info
 #    no need to manually `docker compose up -d` per worktree.
 
 # 5. Reclaim disk space — this is the actual fix, not just the restart
-docker system df                        # see what's reclaimable
+docker system df                        # see what's reclaimable (NOT host bytes — see below)
 docker system prune -a -f --volumes     # removes unused images/volumes/build cache/networks
-df -h / /System/Volumes/Data            # confirm space recovered
+df -h / /System/Volumes/Data            # a reading HERE understates the gain — see below
 
 # Routine cleanup (when Docker is healthy): `./scripts/prune-orphaned-docker-volumes.sh` is the safe, concurrency-safe targeted path; reserve the aggressive `docker system prune -a -f --volumes` for the incident-recovery scenario above.
 ```
 
 **Caveat**: `docker system prune -a -f --volumes` removes ANY volume/image not attached to a currently-running container — including cached `node_modules` volumes for worktrees that exist but whose containers are temporarily stopped, forcing a slower next start (native-module rebuild) for those. Safe to run without hesitation only when Docker Desktop itself is already down for everyone (no live containers to disrupt, as in this failure mode). If Docker is otherwise healthy and you just want routine cleanup, prefer `./scripts/remove-worktree.sh --prune` (safe subset: networks + dangling images + build cache) and only reach for the aggressive `--volumes` prune when you've confirmed via `docker ps` that no other worktree session needs to resume.
+
+### Reclaiming host disk space: what Docker's numbers mean (SMI-6989)
+
+**Docker Desktop reclaims host space automatically, asynchronously, and only when a
+container is REMOVED.** That is the mechanism everything below follows from, and it is
+measured from Docker Desktop's own VM log
+(`~/Library/Containers/com.docker.docker/Data/log/vm/init.log*`):
+
+```
+04:17:37  A container has been removed: will run the action at least once more
+04:17:47  Running /sbin/fstrim -v /var/lib/docker
+04:17:51  /var/lib/docker: 22 GiB (23660498944 bytes) trimmed
+```
+
+`Docker.raw` is sparse **and it does shrink** — `diskTRIM` is on by default and a dedicated
+`trim` service runs `fstrim` inside the VM. The trigger→`fstrim` gap is a hard ~10s
+debounce, so host blocks come back roughly 10–15s after the removal.
+
+**1. `docker system df`'s RECLAIMABLE is not host bytes delivered at that instant.** It is
+a Docker-internal figure for what a prune *could* free. The host sees it after the next
+trim, not when the command returns.
+
+**2. Do not conclude from a `df` taken immediately after a prune.** Wait ~15s, then
+re-read. Confirm against the trim log rather than guessing:
+
+```bash
+grep -h '"component":"trim"' ~/Library/Containers/com.docker.docker/Data/log/vm/init.log* | tail -5
+```
+
+If Resource Saver has paused the VM (`useResourceSaver`, default 300s idle), the debounce
+does not run until it resumes — that is a concrete, nameable reason a `df` can lag.
+
+**3. Removal frees space; stopping does not.** A stopped container's writable layer
+persists until `docker rm`, and a volume until `docker volume rm`. The trim trigger is
+literally *"A container has been removed"* — stopping fires nothing and frees nothing.
+
+**4. Under pressure, the prune-reachable pool is the big one — measured on this host:**
+
+| | |
+| -- | -- |
+| prune-reachable (images + containers + volumes + build cache RECLAIMABLE) | **~56 GB** |
+| live containers' writable layers | **~1.2 GB** |
+| volumes in use | **~8 GB** |
+
+So `./scripts/prune-orphaned-docker-volumes.sh` (the safe targeted path — see the Caveat
+above) and the prune family are where the space is. **Do not reach for stopping or removing
+live worktree containers to recover space**: it releases on the order of a gigabyte, and
+this repo has measured container *recreation* at ~14 GiB against ~239–250 MB reclaimed by
+retiring one. That trade is net-negative on the exact axis you are trying to fix. Check
+`docker ps` for other sessions' live containers first, as the Caveat above already requires.
+
+**5. Bracket each action with its own before/after reading.** One reading before, one
+after, and an action in between is correlation, not attribution. SMI-6989 records a case
+where a ~31Gi recovery was credited to a teardown that had not happened yet — the other
+session's own baseline showed the space was already free before it acted.
+
+**What is genuinely uncharacterised**, and worth not guessing about: whether removing an
+image, a volume or build cache **alone** triggers a trim. Container removal is the only
+trigger shape present in the logs. `docker system prune -a` removes stopped containers and
+so does fire one, but `docker builder prune` or `docker volume prune` on their own may not.
+
+> **Caveat if you read the trim log for attribution.** `fstrim` discards all currently-free
+> blocks on every run, so consecutive figures overlap heavily and **must not be summed**.
+> Two runs reporting 22 GiB and 21.3 GiB thirty-seven seconds apart are mostly the same
+> blocks.
+
+**Related: `docker system df` failing is not by itself evidence of the hang failure mode.**
+If you see `snapshotter.Usage failed … lstat … no such file or directory`, do **not**
+force-quit Docker on its strength alone — that recipe takes every session's container with
+it. The error means containerd's snapshotter metadata references a path missing on the VM
+filesystem, and `docker system df` walks every snapshot so it trips first; that is
+detection order, not proof the rest of the daemon is healthy. It is also transient — it did
+not reproduce on a later run. Diagnose by whether the operations you actually need succeed,
+not by this message.
 
 ### Orphaned Agent Processes
 
