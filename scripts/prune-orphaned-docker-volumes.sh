@@ -38,28 +38,55 @@
 # native-seed-<module> volume declaration in _lib.sh's
 # enumerate_native_module_volumes, by this same change). A candidate that
 # passes the generic checks but lacks that label is REPORT-ONLY ("UNCONFIRMED
-# ownership") unless --include-unlabeled is passed explicitly.
+# ownership") unconditionally -- no flag waives it (SMI-6981). Reclaiming our
+# OWN unlabelled volumes needs the label migration in SMI-7028.
+#
+# What that label does NOT establish (SMI-7033): it proves a resource was
+# Skillsmith-BUILT, not that it belongs to a live worktree. Those two
+# propositions come apart for any Compose project of ours that is not a
+# worktree, and the safety predicate above can only reason about worktrees.
+# See risk 3.
 #
 # Residual risks (accepted, NOT eliminated -- see docs/internal/implementation/
 # smi-5750-targeted-volume-prune.md § Shared-State audit):
 #   1. TOCTOU -- narrowed, not eliminated. The protected set is re-derived
-#      immediately before the delete loop, but this is NOT a locking
-#      mechanism: a concurrent create-worktree.sh can still register a
-#      worktree after that re-scan and before `docker volume rm` /
+#      immediately before each of the two delete loops (three samplings in
+#      total, counting the one before candidate construction), but this is NOT
+#      a locking mechanism: a concurrent create-worktree.sh can still register
+#      a worktree after a re-scan and before `docker volume rm` /
 #      `docker rmi` runs. Worst case: a just-created worktree's still-empty
 #      volume is deleted and silently recreated empty by its next
 #      `compose up` -- one redundant native-module rebuild, no data loss.
-#   2. Cross-repo -- another repo's `*_node_modules` / `*_native-seed-*`
-#      volume or `*-dev` image that happens to pass the generic Compose-shape
-#      checks is never auto-deleted (the ownership gate above). The residual
-#      is confined to explicit --include-unlabeled runs, where the operator
-#      reviews the reported UNCONFIRMED list first, and the deleted artifact
-#      is always a rebuildable dependency cache, never data.
+#   2. Cross-repo -- ELIMINATED by SMI-6981, and kept in this list rather than
+#      deleted because the reasoning that once made it merely "residual" was
+#      wrong and is worth not repeating. Another repo's `*_node_modules` /
+#      `*_native-seed-*` volume or `*-dev` image that passes the generic
+#      Compose-shape checks is never auto-deleted, and no flag waives that.
+#      The earlier text here called the residual acceptable because "the
+#      deleted artifact is always a rebuildable dependency cache, never data."
+#      That is false: a foreign project's dependency tree IS that project's
+#      data, and --include-unlabeled measurably proposed deleting
+#      `intd318_node_modules` on this daemon.
+#   3. OUR OWN non-worktree Compose projects are unprotected, and this one is
+#      OPEN -- not narrowed, not eliminated (SMI-7033). Risk 2's elimination is
+#      scoped to another REPO's resources; it says nothing about ours. A
+#      Skillsmith-built project that is not a worktree carries
+#      app.skillsmith.owned=true, passes every gate here, and cannot be
+#      protected, because the safety predicate's only question is "is this a
+#      live worktree?". Measured live: `skillsmith-eval-cron_node_modules` and
+#      `skillsmith-eval-cron-dev` are owned, unattached, and absent from both
+#      `git worktree list` and `.worktrees/` -- so a no-flag run deletes them,
+#      and remove-worktree.sh invokes exactly that on every removal. Until
+#      SMI-7033 gates it, pass --no-orphan-prune (remove-worktree.sh) or
+#      SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 when the eval cron matters.
 #
 # Usage: ./scripts/prune-orphaned-docker-volumes.sh [--dry-run] [--include-unlabeled] [--report-containers]
 #   --dry-run             Report what would be deleted; delete nothing.
-#   --include-unlabeled   Also delete UNCONFIRMED-ownership candidates (the
-#                          one-time pre-label backlog escape hatch).
+#   --include-unlabeled   REPORT-ONLY since SMI-6981; deletes nothing. Retained
+#                          so that passing it warns, rather than silently
+#                          behaving differently than an operator expects.
+#   --report-containers   Report live-old, excessive, and orphaned Skillsmith
+#                          dev containers; mutate nothing.
 #
 # Opt-out: SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 skips the prune entirely (exit
 # 0), used when invoked from remove-worktree.sh. Registered in
@@ -72,7 +99,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 
 DRY_RUN=false
-INCLUDE_UNLABELED=false
 REPORT_CONTAINERS=false
 
 while [[ $# -gt 0 ]]; do
@@ -85,7 +111,9 @@ while [[ $# -gt 0 ]]; do
             # SMI-6981: retained but NO LONGER DESTRUCTIVE. It is kept rather
             # than removed so an operator who passes it is told what changed,
             # instead of silently getting different behaviour than they expect.
-            INCLUDE_UNLABELED=true
+            # Deliberately sets no variable: nothing in this script reads one,
+            # and dead state a later reader assumes is live is its own hazard.
+            # SMI-7028 is where a reader would legitimately reappear.
             warn "--include-unlabeled is REPORT-ONLY since SMI-6981 and no longer deletes anything."
             warn "  It used to waive the app.skillsmith.owned check -- the only non-circular"
             warn "  ownership signal here -- and so proposed other projects' volumes and images"
@@ -99,6 +127,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "Usage: $(basename "$0") [--dry-run] [--include-unlabeled] [--report-containers]"
+            echo "  --dry-run            Report what would be deleted; delete nothing."
+            echo "  --include-unlabeled  REPORT-ONLY since SMI-6981; deletes nothing (see SMI-7028)."
             echo "  --report-containers  Report live-old, excessive, and orphaned Skillsmith dev containers; mutate nothing."
             exit 0
             ;;
@@ -139,7 +169,7 @@ report_containers() {
 
     local worktrees now count=0 shown=0
     worktrees="$(git -C "$main_repo" worktree list --porcelain 2>/dev/null |
-        awk '/^worktree / { sub(/^worktree /, ""); print }' || true)"
+        sed -n 's/^worktree //p' || true)"
     now="$(date +%s)"
     local -a findings=()
     local id name created path created_epoch age_hours class normalized
@@ -208,7 +238,11 @@ derive_protected() {
         [[ -z "$wt_path" ]] && continue
         base="$(basename "$wt_path")"
         sanitize_project_name "$base"
-    done < <(git -C "$main_repo" worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2 }')
+    # `sed`, never `awk '{print $2}'`: awk's $2 stops at the first space, so a
+    # worktree path containing one truncates and a LIVE worktree reads as
+    # unprotected -- its volume is deleted while every guard here passes.
+    # Tests 1e/1f pin both extraction sites. Siblings: SMI-7034.
+    done < <(git -C "$main_repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
 
     if [[ -d "$main_repo/.worktrees" ]]; then
         local d
@@ -217,6 +251,85 @@ derive_protected() {
             sanitize_project_name "$(basename "${d%/}")"
         done
     fi
+}
+
+# derive_protected() fails OPEN, which is the wrong direction for a function
+# whose output is the only thing standing between this script and a deletion.
+# `git worktree list`'s failure is swallowed (2>/dev/null, inside the process
+# substitution), so the function returns rc=0 with EMPTY stdout -- and
+# is_protected's `grep -qxF "$x" <<< ""` then matches nothing, so EVERY
+# candidate reads as unprotected. Measured with a git shim failing only
+# `worktree list`: the run deletes the main checkout's own volume and image,
+# prints "Removed ...", and exits 0.
+#
+# A POSITIVE CONTROL, not a non-emptiness test, and that distinction is the
+# whole point. derive_protected draws on two sources -- `git worktree list`
+# and a `.worktrees/*/` scan -- and only the first can yield the main
+# checkout's own name, since the scan enumerates subdirectories. So a failed
+# enumeration leaves the set NON-EMPTY and missing the main checkout, and an
+# emptiness sentinel answers "proceed" for both states it exists to tell
+# apart. Requiring the main checkout's own name is satisfiable only by a
+# working enumeration, and reading the control from the very source whose
+# health it certifies is deliberate: a control drawn from elsewhere certifies
+# nothing about this one.
+#
+# The implication runs ONE way: the control proves the FIRST entry was
+# recovered, not that EVERY entry was. A worktree whose
+# `.git/worktrees/<name>/gitdir` is corrupt is dropped silently with exit 0,
+# costing one redundant rebuild -- the worst case risk 1 already accepts.
+# SMI-6981 holds the measurements behind all of this.
+#
+# Every sampling routes through this wrapper rather than the call sites being
+# guarded individually, so a fourth sampling added later inherits the check.
+#
+# Fails closed via error(), which exits 1. remove-worktree.sh wraps its
+# invocation in `|| warn "... (continuing)"`, so a refusal degrades to a
+# warning there instead of aborting a removal -- the intended tradeoff.
+# The control name comes from `git worktree list`'s OWN first entry -- the
+# canonical arm -- not from $main_repo, and that choice closes three distinct
+# holes at once:
+#
+#   * A final-component symlink. git reports the PHYSICAL path while
+#     $main_repo is built from bash's LOGICAL pwd, so invoking through an
+#     aliased directory made the two basenames differ and the guard refused a
+#     healthy run.
+#   * The directory scan supplying its own answer. A `.worktrees/<same name as
+#     the main checkout>/` directory -- which nothing prevents, and which a
+#     stray empty dir from a crashed removal satisfies, since `[[ -d ]]` is the
+#     only test -- put the control name in the set WITHOUT the canonical arm
+#     working, restoring the full fail-open this guard exists to close.
+#   * Total enumeration failure reading as success. Checked explicitly below.
+#
+# Reading the control from the same source whose health it certifies is the
+# point: a positive control drawn from a different source certifies nothing
+# about this one.
+derive_self_project() {
+    local first
+    first="$(git -C "$main_repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    [[ -n "$first" ]] || return 1
+    sanitize_project_name "$(basename "$first")"
+}
+
+derive_protected_or_die() {
+    local out self
+    out="$(derive_protected)"
+
+    if ! self="$(derive_self_project)"; then
+        error "\`git worktree list\` produced no worktree entry for this checkout -- refusing to prune. Measured: the canonical enumeration returned nothing, so no protected set can be trusted."
+    fi
+    # A basename composed entirely of characters sanitize_project_name strips
+    # leaves this empty -- and `<<<` always appends a newline, so an empty
+    # pattern MATCHES an empty set and the guard would pass in the state of
+    # maximum danger while refusing when something was protected. Measured:
+    # `grep -qxF "" <<< ""` matches; against "wt-a" it does not.
+    if [[ -z "$self" ]]; then
+        error "this checkout's project name sanitizes to the empty string -- refusing to prune, because an empty pattern would match an empty protected set and pass vacuously."
+    fi
+
+    if ! grep -qxF "$self" <<< "$out"; then
+        error "the derived protected set does not contain this checkout's own project name ('$self') -- refusing to prune. That is the measurement, not the cause: \`git worktree list\` always lists the main checkout, so either that enumeration failed or this script's recovery of its output did. The set is not necessarily empty -- a populated .worktrees/ directory still contributes entries -- which is why emptiness is not what is being checked."
+    fi
+    printf '%s\n' "$out"
 }
 
 is_protected() {
@@ -254,7 +367,7 @@ classify_volume() {
     fi
 }
 
-protected="$(derive_protected)"
+protected="$(derive_protected_or_die)"
 
 # --- volumes: build candidates against the initial protected snapshot ---
 declare -a vol_candidates=()
@@ -298,14 +411,17 @@ done < <(docker volume ls --format '{{.Name}}' 2>/dev/null || true)
 # concurrent create-worktree.sh can still register a worktree after this
 # re-scan and before `volume rm` -- that residual window is accepted, not
 # closed. This is a narrowing measure, not a locking mechanism.
-protected="$(derive_protected)"
+protected="$(derive_protected_or_die)"
 
 if (( ${#vol_candidates[@]} > 0 )); then
     for vol in "${vol_candidates[@]}"; do
         classify_volume "$vol" || continue
         is_protected "$project" "$protected" && continue
-        # SMI-6981: re-evaluate the FULL safety predicate against the object as
-        # it is now, not just classify_volume + is_protected. Candidate
+        # SMI-6981: re-evaluate attachment and ownership against the object as
+        # it is now -- the two NON-CIRCULAR components. The shape and project
+        # labels are deliberately not re-read: both are consistency checks
+        # derived from the candidate's own name (see the note at the ownership
+        # gate above), so re-reading them would establish nothing. Candidate
         # construction ran earlier; between then and here a volume can have
         # become attached, or have been removed and a DIFFERENT volume created
         # under the same name -- which Docker would happily let us delete.
@@ -324,6 +440,12 @@ if (( ${#vol_candidates[@]} > 0 )); then
 fi
 
 # --- images: same existence + ownership checks, against the re-derived set ---
+# SMI-6981: re-derive AGAIN here. The pre-volume-loop snapshot is two loops
+# stale by now, and that loop makes an unbounded number of deletions. This
+# buys SYMMETRY -- each loop decides from a snapshot taken immediately before
+# it -- NOT per-candidate worktree freshness, which neither loop has.
+protected="$(derive_protected_or_die)"
+
 while IFS= read -r img; do
     [[ -z "$img" || "$img" == "<none>" ]] && continue
     [[ "$img" == *-dev ]] || continue

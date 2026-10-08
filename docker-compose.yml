@@ -8,7 +8,9 @@ services:
       # can distinguish a Skillsmith-built `<project>-dev` image from another
       # repo's generically-shaped `dev` service image sharing the same Compose
       # conventions. Applies at build time only -- pre-existing images stay
-      # unlabeled (report-only "UNCONFIRMED ownership" until --include-unlabeled).
+      # unlabeled, and are therefore report-only ("UNCONFIRMED ownership")
+      # unconditionally; no flag waives that, as of SMI-6981. Relabeling the
+      # pre-existing backlog is SMI-7028.
       labels:
         app.skillsmith.owned: 'true'
     container_name: skillsmith-dev-1
