@@ -230,30 +230,43 @@ describe('parseFrontmatter: deliberate differences', () => {
     })
   })
 
-  it('a closing line of --- then \\r then spaces is not a delimiter (gray-matter closed there)', () => {
-    expect(() => parseFrontmatter('---\nname: a\n---\r  \nbody\n')).toThrow(
-      /closing line must be exactly `---`/
-    )
-  })
-
+  // Every shape that reaches yaml's MULTIPLE_DOCS gets one message that offers both
+  // fixes, because whether a later bare `---` "closed" the block does not say which
+  // fix applies: a markdown horizontal rule in the body is also a bare `---`.
   it.each([
-    ['--- # note', '---\nname: a\n--- # note\nbody\n'],
-    ['...', '---\nname: a\n...\nbody\n'],
+    ['near-miss closer, nothing after', '---\nname: a\n--- # note\nbody\n'],
+    ['--- then \\r then spaces as closer', '---\nname: a\n---\r  \nbody\n'],
+    ['... as closer', '---\nname: a\n...\nbody\n'],
+    [
+      'closed block with an inner marker',
+      '---\nname: first\n--- # second\nname: second\n---\nbody\n',
+    ],
+    [
+      'near-miss closer, then a markdown hr in the body',
+      '---\nname: a\n--- # end\nSome intro text.\n\n---\n\nmore\n',
+    ],
+    [
+      // Plain text before the hr: a `# heading` there would read as a YAML comment
+      // and no second document would form, so it would not reach this path.
+      '... as closer, then a markdown hr in the body',
+      '---\nname: a\n...\nSome intro text.\n\n---\n\nmore\n',
+    ],
   ])(
-    'a near-miss closing line (%s) gets an error naming the file problem, not a yaml API',
+    'a second YAML document (%s) gets one message offering both fixes, naming no yaml API',
     (_label, input) => {
-      expect(() => parseFrontmatter(input)).toThrow(/closing line must be exactly `---`/)
-      expect(() => parseFrontmatter(input)).not.toThrow(/parseAllDocuments/)
+      let message = ''
+      try {
+        parseFrontmatter(input)
+      } catch (error) {
+        message = (error as Error).message
+      }
+      expect(message).toMatch(/starts a second YAML document/)
+      // The whole conditional, so the condition can't drift from the fix it selects.
+      expect(message).toMatch(/if it was meant to end the frontmatter, change it to exactly `---`/)
+      expect(message).toMatch(/otherwise remove it/)
+      expect(message).not.toMatch(/parseAllDocuments|not closed/)
     }
   )
-
-  it('a closed block that contains a document marker says so, not "not closed"', () => {
-    // The final bare `---` closes the block, but `--- # second` inside it starts a
-    // second YAML document.
-    const input = '---\nname: first\n--- # second YAML document\nname: second\n---\nbody\n'
-    expect(() => parseFrontmatter(input)).toThrow(/contains more than one YAML document/)
-    expect(() => parseFrontmatter(input)).not.toThrow(/not closed/)
-  })
 
   it.each([
     ['duplicate keys', '---\nname: a\nname: b\n---\n', 'DUPLICATE_KEY'],
@@ -277,7 +290,7 @@ describe('parseFrontmatter: deliberate differences', () => {
       /Map keys must be unique/
     )
     expect(() => parseFrontmatter('---\nname: [unclosed\n---\nbody\n')).not.toThrow(
-      /closing line must be exactly/
+      /starts a second YAML document/
     )
   })
 

@@ -101,13 +101,11 @@ export function parseFrontmatter(input: string): FrontmatterResult {
   let cursor = open.next
   let yamlEnd = text.length
   let contentStart = text.length
-  let closed = false
   while (cursor < text.length) {
     const { line, next } = readLine(text, cursor)
     if (DELIMITER.test(line)) {
       yamlEnd = cursor
       contentStart = next
-      closed = true
       break
     }
     cursor = next
@@ -129,15 +127,15 @@ export function parseFrontmatter(input: string): FrontmatterResult {
     // `--- # note` or `...`: yaml treats it as a document marker, but only a
     // line that is exactly `---` ends the frontmatter. yaml's own message
     // ("please use YAML.parseAllDocuments()") names a library call, not the
-    // problem in the user's file, so name the problem instead. Whether the block
-    // was closed by a later bare `---` decides which problem it is.
+    // problem in the user's file, so name the problem instead. Whether a later bare
+    // `---` closed the block does not tell us which fix the user needs: a markdown
+    // horizontal rule in the body also reads as a bare `---`, so a near-miss
+    // closer followed by an hr looks "closed". One message covers both fixes.
     if (error instanceof YAMLParseError && error.code === 'MULTIPLE_DOCS') {
       throw new Error(
-        closed
-          ? 'frontmatter contains more than one YAML document: a line such as `--- # note` ' +
-              'or `...` inside it starts a new one; remove that line'
-          : 'frontmatter is not closed: the closing line must be exactly `---` ' +
-              '(a line such as `--- # note` or `...` does not close it)'
+        'frontmatter has a line such as `--- # note` or `...` that starts a second YAML ' +
+          'document; if it was meant to end the frontmatter, change it to exactly `---`, ' +
+          'otherwise remove it'
       )
     }
     throw error
