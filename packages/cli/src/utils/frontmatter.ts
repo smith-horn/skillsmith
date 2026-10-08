@@ -49,7 +49,7 @@
  *   frontmatter is far smaller: across 1,730 SKILL.md files the largest block
  *   was 2,011 bytes (SMI-7018, 2026-10-07).
  */
-import { parse as parseYaml } from 'yaml'
+import { parse as parseYaml, YAMLParseError } from 'yaml'
 
 export interface FrontmatterResult {
   data: Record<string, unknown>
@@ -101,11 +101,13 @@ export function parseFrontmatter(input: string): FrontmatterResult {
   let cursor = open.next
   let yamlEnd = text.length
   let contentStart = text.length
+  let closed = false
   while (cursor < text.length) {
     const { line, next } = readLine(text, cursor)
     if (DELIMITER.test(line)) {
       yamlEnd = cursor
       contentStart = next
+      closed = true
       break
     }
     cursor = next
@@ -119,11 +121,27 @@ export function parseFrontmatter(input: string): FrontmatterResult {
     )
   }
 
-  const parsed: unknown = parseYaml(yamlText, {
-    prettyErrors: true,
-    merge: true,
-    logLevel: 'error',
-  })
+  let parsed: unknown
+  try {
+    parsed = parseYaml(yamlText, { prettyErrors: true, merge: true, logLevel: 'error' })
+  } catch (error) {
+    // A second YAML document inside the block comes from a line such as
+    // `--- # note` or `...`: yaml treats it as a document marker, but only a
+    // line that is exactly `---` ends the frontmatter. yaml's own message
+    // ("please use YAML.parseAllDocuments()") names a library call, not the
+    // problem in the user's file, so name the problem instead. Whether the block
+    // was closed by a later bare `---` decides which problem it is.
+    if (error instanceof YAMLParseError && error.code === 'MULTIPLE_DOCS') {
+      throw new Error(
+        closed
+          ? 'frontmatter contains more than one YAML document: a line such as `--- # note` ' +
+              'or `...` inside it starts a new one; remove that line'
+          : 'frontmatter is not closed: the closing line must be exactly `---` ' +
+              '(a line such as `--- # note` or `...` does not close it)'
+      )
+    }
+    throw error
+  }
   return {
     data: isPlainObject(parsed) ? parsed : {},
     content: text.slice(contentStart),
