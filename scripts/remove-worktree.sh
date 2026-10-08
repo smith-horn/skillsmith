@@ -39,10 +39,14 @@ Options:
                   cache (aggressive image -a / volume prune stay manual — see
                   the post-removal reclaimable report)
   --keep-docker   Preserve the per-worktree Docker image and node_modules volume
-                  (default: both are removed alongside the worktree)
+                  (default: both are removed alongside the worktree). Also
+                  skips the automatic orphan prune, which would otherwise
+                  delete them as soon as the worktree is deregistered
   --no-orphan-prune
                   Skip the automatic targeted orphan prune (SMI-5750) that
-                  otherwise runs on every removal (see also
+                  otherwise runs on every removal (it may delete only the
+                  removed worktree's own Compose project; other orphans are
+                  report-only) (see also
                   SKILLSMITH_ORPHAN_PRUNE_DISABLE=1)
   -h, --help      Show this help message and exit
 
@@ -133,6 +137,12 @@ main() {
     if [[ ! "$worktree_path" = /* ]]; then
         worktree_path="$repo_root/$worktree_path"
     fi
+
+    # The Compose project this removal may prune, derived with the SAME sanitizer
+    # the Compose project name uses and BEFORE anything is removed. It is the only
+    # project the orphan prune (Step 3.5) is allowed to delete from.
+    local orphan_project
+    orphan_project="$(sanitize_project_name "$(basename "$worktree_path")")"
 
     # Check worktree exists
     if [[ ! -d "$worktree_path" ]]; then
@@ -248,10 +258,20 @@ Commit or discard them first, or re-run with --force to discard:
     # aggressive-reclaim fixtures assert on positionally. Skipped entirely
     # (the call is never attempted) when --no-orphan-prune was passed or
     # SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 is set.
-    if [[ "$no_orphan_prune" == true || "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
+    #
+    # --keep-docker also skips it: Step 1 already ran `compose down`, so the
+    # kept volumes/image are unattached, owned, and no longer protected by a
+    # registered worktree -- exactly what the pruner deletes. --keep-docker must
+    # never delete this worktree's resources.
+    if [[ "$keep_docker" == true ]]; then
+        info "Skipping targeted orphan prune (--keep-docker: the kept volumes are now unattached and would be pruned)"
+    elif [[ "$no_orphan_prune" == true || "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
         info "Skipping targeted orphan prune (--no-orphan-prune or SKILLSMITH_ORPHAN_PRUNE_DISABLE=1)"
+    elif [[ -z "$orphan_project" ]]; then
+        info "Skipping targeted orphan prune (worktree name yields no Compose project name)"
     else
-        "$SCRIPT_DIR/prune-orphaned-docker-volumes.sh" || warn "targeted orphan prune returned non-zero (continuing)"
+        # Only THIS worktree's project is deletable; every other orphan is report-only.
+        "$SCRIPT_DIR/prune-orphaned-docker-volumes.sh" --only-project "$orphan_project" || warn "targeted orphan prune returned non-zero (continuing)"
     fi
 
     echo ""
