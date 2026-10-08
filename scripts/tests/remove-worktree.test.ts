@@ -483,7 +483,7 @@ describe('SMI-5145: reclaimable Docker report + safe --prune', () => {
 })
 
 describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)', () => {
-  it('a default --force run invokes the targeted orphan prune (docker volume ls)', () => {
+  it('a default --force run invokes the targeted orphan prune (docker info)', () => {
     const tempRoot = makeTempDir('rmwt-orphan-prune')
     tempDirs.push(tempRoot)
     const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-orphanprune')
@@ -496,13 +496,26 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
 
     expect(result.status).toBe(0)
     // Step 3.5 shells out to prune-orphaned-docker-volumes.sh, which sources
-    // the same docker shim on PATH -- its `docker volume ls --format
-    // '{{.Name}}'` call (scripts/prune-orphaned-docker-volumes.sh:174) shows
-    // up positionally-appended in the same recorded dockerCalls array.
-    expect(result.dockerCalls).toContain('volume ls --format {{.Name}}')
+    // the same docker shim on PATH, so its calls land in this dockerCalls
+    // array. `docker info` is the invocation proxy: the pruner runs it before
+    // any git enumeration, so it proves the wiring regardless of whether the
+    // prune then proceeds.
+    //
+    // This assertion USED to be `volume ls --format {{.Name}}` and that was
+    // passing through a defect (SMI-6981). These tests run inside the dev
+    // container, where `/app/.git` is a gitfile pointing at a host path that
+    // does not exist there -- so `git worktree list` always fails and the
+    // protected set comes back EMPTY. The pruner used to treat that as
+    // "nothing needs protecting" and enumerate volumes anyway; only the stub
+    // docker made it harmless. It now refuses, correctly, so `volume ls` is
+    // never reached in-container and the old assertion could only be restored
+    // by restoring the fail-open. Measured: info 1 / volume ls 0 with the
+    // prune wired, info 0 / volume ls 0 with --no-orphan-prune -- so `info`
+    // discriminates where `volume ls` no longer does.
+    expect(result.dockerCalls).toContain('info')
   })
 
-  it('--no-orphan-prune suppresses the targeted orphan prune (no volume ls call)', () => {
+  it('--no-orphan-prune suppresses the targeted orphan prune (pruner never runs)', () => {
     const tempRoot = makeTempDir('rmwt-no-orphan-prune')
     tempDirs.push(tempRoot)
     const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noorphanprune')
@@ -519,6 +532,11 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
     )
 
     expect(result.status).toBe(0)
+    // Asserting absence of `volume ls` became decorative for the reason given
+    // in the sibling test above: in-container it is absent either way, so this
+    // passed whether or not --no-orphan-prune did anything. `info` is absent
+    // only when the pruner genuinely never ran.
+    expect(result.dockerCalls.some((c) => c === 'info')).toBe(false)
     expect(result.dockerCalls.some((c) => c.includes('volume ls'))).toBe(false)
   })
 })

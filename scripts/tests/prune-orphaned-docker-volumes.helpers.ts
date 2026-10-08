@@ -7,7 +7,16 @@
  */
 
 import { execSync, spawnSync } from 'child_process'
-import { rmSync, existsSync, writeFileSync, chmodSync, readFileSync, mkdirSync, cpSync } from 'fs'
+import {
+  rmSync,
+  existsSync,
+  writeFileSync,
+  chmodSync,
+  readFileSync,
+  readdirSync,
+  mkdirSync,
+  cpSync,
+} from 'fs'
 import { dirname, join } from 'path'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
@@ -77,6 +86,19 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '',
     'emit() {',
     '  key="$1"',
+    // A `<key>.seq` file, if present, is CONSUMED one line per call: the first
+    // line is emitted and removed. This is the only way to test a value that
+    // CHANGES between two reads within a single run -- which is exactly what
+    // the SMI-6981 ownership re-check exists to catch. With a static response
+    // both reads return the same value, so the re-check's `|| continue` can be
+    // changed to `|| true` with nothing observing it (round-2 finding T2).
+    // Running the sequence dry emits nothing, i.e. the label has vanished.
+    '  if [ -n "$key" ] && [ -f "$RESP_DIR/$key.seq" ]; then',
+    '    head -n 1 "$RESP_DIR/$key.seq"',
+    '    tail -n +2 "$RESP_DIR/$key.seq" > "$RESP_DIR/$key.seq.next"',
+    '    mv "$RESP_DIR/$key.seq.next" "$RESP_DIR/$key.seq"',
+    '    return 0',
+    '  fi',
     '  if [ -n "$key" ] && [ -f "$RESP_DIR/$key" ]; then',
     '    cat "$RESP_DIR/$key"',
     '  fi',
@@ -182,11 +204,24 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
  * into its own scripts/ dir (see file header for why this is required), plus
  * a docker shim wired up on a dedicated bin dir.
  */
-export function setupFixture(prefix: string): FixtureRepo {
+/**
+ * @param opts.spacedPath nest the repo under a directory whose name contains a
+ *   space, so the MAIN CHECKOUT's own path has whitespace in it.
+ *
+ *   No fixture could reach this before: `makeFixtureTempDir` builds on
+ *   `tmpdir()`, which is space-free, so every fixture's main checkout sat at a
+ *   clean path and the `awk '{print $2}'` truncation was invisible on that
+ *   side. It is the worse side -- when the MAIN checkout's path is truncated,
+ *   the control name is derived from the same truncation, so every arm of the
+ *   enumeration guard agrees and the main checkout's own volume is deletable.
+ */
+export function setupFixture(prefix: string, opts: { spacedPath?: boolean } = {}): FixtureRepo {
   const tempRoot = makeTempDir(prefix)
-  const repoDir = join(tempRoot, 'repo')
+  const repoParent = opts.spacedPath ? join(tempRoot, 'My Projects') : tempRoot
+  if (opts.spacedPath) mkdirSync(repoParent, { recursive: true })
+  const repoDir = join(repoParent, 'repo')
 
-  git(tempRoot, `init "${repoDir}"`)
+  git(repoParent, `init "${repoDir}"`)
   sh(`touch "${join(repoDir, 'README.md')}"`)
   git(repoDir, 'add README.md')
   git(repoDir, 'commit -m "initial"')
@@ -221,6 +256,24 @@ function setResponse(responsesDir: string, key: string, value: string): void {
 
 export function volumeListResponse(fixture: FixtureRepo, names: string[]): void {
   setResponse(fixture.responsesDir, 'volume_ls', names.join('\n'))
+}
+
+/**
+ * Serve a DIFFERENT value for each successive read of one volume label, so a
+ * test can model a label that changes mid-run. Takes precedence over any
+ * static value set by `volumeLabels` for the same label.
+ *
+ * Pass fewer values than there are reads to model the label VANISHING: once
+ * the sequence runs dry, `emit` produces nothing, which is what `docker volume
+ * inspect` yields for an absent label.
+ */
+export function volumeLabelSequence(
+  fixture: FixtureRepo,
+  vol: string,
+  label: 'volume' | 'project' | 'owned',
+  values: string[]
+): void {
+  setResponse(fixture.responsesDir, `volume_inspect__${vol}__${label}.seq`, values.join('\n'))
 }
 
 export function imagesResponse(fixture: FixtureRepo, repos: string[]): void {
@@ -266,6 +319,56 @@ export function setVolumeRmExit(fixture: FixtureRepo, vol: string, code: number)
 
 export function resetLog(fixture: FixtureRepo): void {
   if (existsSync(fixture.logPath)) rmSync(fixture.logPath)
+  // Also clear any sequenced responses. `.seq` files are CONSUMED, so one left
+  // over from a previous runPrune in the same test would be dry on the next
+  // call and read as "label absent" -- which is the BLOCKING outcome, so a
+  // two-run test combining `.seq` with resetLog would pass for the wrong
+  // reason. Clearing here means a sequence is scoped to one run unless the
+  // test deliberately re-arms it.
+  for (const f of readdirSync(fixture.responsesDir)) {
+    if (f.endsWith('.seq') || f.endsWith('.seq.next')) {
+      rmSync(join(fixture.responsesDir, f))
+    }
+  }
+}
+
+/**
+ * Make `git worktree list` fail while leaving every other git subcommand
+ * working, by shadowing `git` on the fixture's PATH.
+ *
+ * This is the failure mode `derive_protected_or_die` exists for, and it is NOT
+ * the same as "the protected set is empty": the `.worktrees/*` scan still
+ * contributes entries, so the set comes back non-empty but WITHOUT the main
+ * checkout's own name. Pass `withWorktreeDirs` to reproduce that shape.
+ */
+export function breakGitWorktreeList(fixture: FixtureRepo, withWorktreeDirs: string[] = []): void {
+  for (const name of withWorktreeDirs) {
+    mkdirSync(join(fixture.repoDir, '.worktrees', name), { recursive: true })
+  }
+  const shim = [
+    '#!/usr/bin/env bash',
+    '# Fail ONLY `worktree list`; delegate everything else to the real git, so',
+    '# the fixture repo still works and the test isolates one failure.',
+    // Require `list` to be the arg IMMEDIATELY after `worktree`, not merely
+    // somewhere after it. A looser scan also rejects `worktree add -b list
+    // <path>` and `worktree remove list` -- unreachable from this script, which
+    // runs neither, but a shim that fails more than the one call it names
+    // cannot isolate anything.
+    'prev=""',
+    'for a in "$@"; do',
+    '  if [ "$prev" = "worktree" ] && [ "$a" = "list" ]; then',
+    '    echo "fatal: simulated worktree-list failure" >&2',
+    '    exit 128',
+    '  fi',
+    '  prev="$a"',
+    'done',
+    '# Strip this shim dir from PATH so the lookup finds the real binary.',
+    'CLEAN_PATH="$(printf %s "$PATH" | tr ":" "\\n" | grep -vxF "$(dirname "$0")" | paste -sd: -)"',
+    'exec env PATH="$CLEAN_PATH" git "$@"',
+  ].join('\n')
+  const p = join(fixture.binDir, 'git')
+  writeFileSync(p, `${shim}\n`)
+  chmodSync(p, 0o755)
 }
 
 export function containerResponses(
