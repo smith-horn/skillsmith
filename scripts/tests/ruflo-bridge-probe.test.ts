@@ -24,9 +24,18 @@
  * effect (spawn the launcher, take the bridge lock, write state). See that
  * file's own comment at the bottom for why the guard was added.
  */
+import { spawnSync } from 'node:child_process'
+import { statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
+import { makeFixtureEnv } from './_lib/git-fixture-env.js'
+import { PROBE_COMMAND } from '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import { extractLearningCounters, isProducerPresent } from '../ruflo-bridge-probe.mjs'
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 describe('isProducerPresent — agentdb.totalEntries arm (SMI-6967 H-A: shared isValidCount, not a second Number.isFinite copy)', () => {
   it('arms on an integer totalEntries > 0', () => {
@@ -158,4 +167,77 @@ describe('extractLearningCounters (SMI-6985 Medium)', () => {
       trajectoriesRecorded: null,
     })
   })
+})
+
+describe('SMI-7032: PROBE_COMMAND names a command that can actually load the probe', () => {
+  // This lives HERE, not beside the constant in
+  // packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.test.ts,
+  // and the placement is the point. That file is reached by
+  // `Test (<package>)`, gated on `affected_count != '0'`. Measured with the
+  // repo's own classifier (scripts/ci/detect-affected.ts), with controls:
+  //
+  //   scripts/ruflo-bridge-probe.mjs        -> affected_count=0   job SKIPS
+  //   ...retrieval-log/*.render.ts          -> affected_count=1   job runs
+  //   README.md                             -> affected_count=0
+  //
+  // So a PR editing only the probe's own imports — the change most likely to
+  // break this again — would skip that job entirely. `Test (root)` runs this
+  // file unconditionally on any `code`-tier diff.
+  //
+  // What it asserts: the command every [ruflo-bridge] banner tells its reader
+  // to run can load the probe's module graph. Two tests previously asserted
+  // only that the banner CONTAINED the command string, which is why a command
+  // that exited 1 with ERR_MODULE_NOT_FOUND for everyone, every time, lived
+  // its whole life green.
+  //
+  // Importing the probe is side-effect-free: under `-e` its argv[1] is
+  // undefined, so is-main-module's guard returns false and nothing spawns,
+  // locks, or writes state. Verified by snapshotting ~/.skillsmith across both
+  // arms.
+  const tokens = PROBE_COMMAND.trim().split(/\s+/)
+  const scriptRel = tokens[tokens.length - 1]
+  const runner = tokens.slice(0, -1)
+
+  // One budget, derived, rather than two literals that disagree: the old
+  // version declared 120s per spawn while vitest's own testTimeout is 15s
+  // (vitest.preset.ts), so the larger number could never be reached and the
+  // smaller one was unstated. Measured runtime is 324-568ms per spawn.
+  const SPAWN_BUDGET_MS = 4_000
+  const TEST_BUDGET_MS = 2 * SPAWN_BUDGET_MS + 2_000
+
+  const run = (argv: string[], importExpr: string) =>
+    spawnSync(argv[0], [...argv.slice(1), '-e', importExpr], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: SPAWN_BUDGET_MS,
+      env: makeFixtureEnv(),
+    })
+
+  it(
+    'resolves under the named runner, and NOT under bare node',
+    () => {
+      expect(runner.length).toBeGreaterThan(0)
+
+      const probeAbs = join(REPO_ROOT, scriptRel)
+      // isFile, not merely exists: `existsSync(join(REPO_ROOT, ''))` is true
+      // for the repo root itself, so a degenerate PROBE_COMMAND would pass an
+      // existence check while naming no script.
+      expect(statSync(probeAbs).isFile()).toBe(true)
+
+      const importExpr = `import(${JSON.stringify(
+        `file://${probeAbs}`
+      )}).then(()=>console.log('RESOLVED')).catch((e)=>console.log('ERRCODE='+e.code))`
+
+      const viaCommand = run(runner, importExpr)
+      expect(viaCommand.stdout ?? '').toContain('RESOLVED')
+
+      // Known-negative control, same execution. Without it this test would
+      // pass for any runner at all, including one that resolved nothing —
+      // it is what makes the positive result above evidence.
+      const viaBareNode = run(['node'], importExpr)
+      expect(viaBareNode.stdout ?? '').toContain('ERRCODE=ERR_MODULE_NOT_FOUND')
+      expect(viaBareNode.stdout ?? '').not.toContain('RESOLVED')
+    },
+    TEST_BUDGET_MS
+  )
 })

@@ -45,7 +45,26 @@ function line(stateText: string, nextAction: string, now: Date): string {
 
 const RECONNECT_HINT = '/mcp > ruflo > Reconnect'
 const START_COMMAND = './scripts/ruflo-service-up.sh'
-const PROBE_COMMAND = 'node scripts/ruflo-bridge-probe.mjs'
+
+/**
+ * The command every `[ruflo-bridge]` banner tells its reader to run.
+ *
+ * Must go through `tsx`, not bare `node`. The probe is a `.mjs` file that
+ * imports a sibling with a `.js` specifier that only resolves under a
+ * TypeScript loader (the NodeNext convention: `ruflo-bridge-state.ts` is
+ * named as `.js`). Bare `node` therefore exits 1 with ERR_MODULE_NOT_FOUND
+ * every single time, for everyone. `.husky/post-merge` — the probe's only
+ * real trigger — has always invoked it through `tsx`, so the mechanism was
+ * healthy and only this advice was wrong (SMI-7032).
+ *
+ * `--no-install` keeps it offline: tsx resolves from the local tree, in the
+ * main checkout and in a worktree alike (both verified).
+ *
+ * Exported so `scripts/session-priming-query.ts` can render the same string
+ * rather than keeping its own copy. It held one, and that is how the two
+ * surfaces came to disagree.
+ */
+export const PROBE_COMMAND = 'npx --no-install tsx scripts/ruflo-bridge-probe.mjs'
 
 /** The not-evaluated text for a verdict that is not-evaluated/unrecognized/malformed(detector)/unknown-token. */
 function detectorNotEvaluatedText(entry: BridgeEntry): { state: string; action: string } {

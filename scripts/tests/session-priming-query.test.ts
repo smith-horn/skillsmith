@@ -13,6 +13,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// SMI-7032: assert against the shared constant, not a literal copy of it.
+// The vi.mock below is a passthrough spread of the real module, so this
+// resolves to the genuine value rather than a stub.
+import { PROBE_COMMAND } from '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
+
 const { searchMock, logRetrievalEventMock, tmpHolder, bridgeReaderShouldThrow } = vi.hoisted(
   () => ({
     searchMock: vi.fn(),
@@ -666,7 +671,14 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
     const result = await runQuery({ ...baseArgs, cwd: repoDir })
     expect(result.additionalContext).toContain('[ruflo-bridge]')
     expect(result.additionalContext).toContain('bridge degraded')
-    expect(result.additionalContext).toContain('node scripts/ruflo-bridge-probe.mjs')
+    // Follows the shared constant rather than a literal. This used to pin the
+    // string 'node scripts/ruflo-bridge-probe.mjs', which named a command that
+    // could never run (SMI-7032) -- and that this file and the package test
+    // BOTH pinned the same wrong literal is how the defect survived. The
+    // command's runnability is asserted once, where the constant lives:
+    // ruflo-bridge-state.test.ts's SMI-7032 case executes it, with bare node
+    // as a known-negative control.
+    expect(result.additionalContext).toContain(PROBE_COMMAND)
   })
 
   // SMI-6985 M-3 follow-up (coordinator-found, round 2): a bare
