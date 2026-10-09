@@ -150,6 +150,25 @@ describe('recordRegistryAudit() — the RPC call', () => {
     expect(sent).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
   })
 
+  it('never sends a lone surrogate, high or low, even under the length bound', async () => {
+    const rpc = vi.fn(async (_fn: string, _params?: Record<string, unknown>) => ({ error: null }))
+    await recordRegistryAudit(
+      { rpc },
+      { ...event, skillId: 'ns/a\uD800b', detail: 'x\uDC00y', version: '\uD800' }
+    )
+
+    expect(rpc).toHaveBeenCalledTimes(1)
+    const params = rpc.mock.calls[0][1] as Record<string, string>
+    expect(params.p_skill_id).toBe('ns/a�b')
+    expect(params.p_detail).toBe('x�y')
+    expect(params.p_version).toBe('�')
+    for (const v of [params.p_skill_id, params.p_detail, params.p_version]) {
+      expect(v).not.toMatch(
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+      )
+    }
+  })
+
   it('bounds p_file_count to what the RPC accepts (0..100000, integer) or NULL', async () => {
     const cases: Array<[number, number | null]> = [
       [250000, 100000],

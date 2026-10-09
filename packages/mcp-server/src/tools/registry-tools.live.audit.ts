@@ -288,16 +288,19 @@ const AUDIT_BOUNDS = {
 } as const
 
 /**
- * Truncates by code points, which is what Postgres `char_length` counts, so the bound is exact and
+ * Makes the value well-formed UTF-16 first (a lone surrogate becomes U+FFFD, which Postgres can
+ * store; a lone surrogate escape can make the request fail to parse and drop the row), then
+ * truncates by code points, which is what Postgres `char_length` counts, so the bound is exact and
  * a surrogate pair is never split. Code points <= UTF-16 units, so the array is only built when
  * the UTF-16 length already exceeds `max`.
  */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
+
 function clamp<T extends string | null | undefined>(value: T, max: number): T {
-  return (
-    typeof value === 'string' && value.length > max
-      ? Array.from(value).slice(0, max).join('')
-      : value
-  ) as T
+  if (typeof value !== 'string') return value
+  // String.prototype.toWellFormed() is ES2024; this package compiles against ES2022.
+  const wellFormed = value.replace(LONE_SURROGATE, '�')
+  return (wellFormed.length > max ? Array.from(wellFormed).slice(0, max).join('') : wellFormed) as T
 }
 
 /** The RPC refuses a file count outside 0..MAX_FILE_COUNT or a non-integer, dropping the row. */
