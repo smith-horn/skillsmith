@@ -38,11 +38,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -56,6 +57,12 @@ const GATE = join(REPO_ROOT, 'scripts', 'ci', 'typecheck-scripts.sh')
 
 /** Every arm gets the same budget; a hang is a failure, not a slow pass. */
 const RUN_TIMEOUT_MS = 120_000
+
+/** For tests that spawn several full gate runs (the preset default is 15s). */
+const MULTI_RUN_TIMEOUT_MS = 6 * 60_000
+
+/** tsconfig.scripts.json is parked under this name by the missing-config arm. */
+const CONFIG_ASIDE = 'zz-smi6975-tsconfig-aside.json'
 
 interface GateRun {
   status: number
@@ -95,28 +102,52 @@ function runGate(
 }
 
 /**
+ * Marks every line that is part of a heredoc (body and terminator). A
+ * `NEXT_ACTION=` or `exit_for_inconclusive` inside one is text handed to a
+ * command, never executed by the shell, so the scan must not count it.
+ */
+function heredocMask(lines: string[]): boolean[] {
+  const mask = lines.map(() => false)
+  let end: string | null = null
+  lines.forEach((line, i) => {
+    if (end !== null) {
+      mask[i] = true
+      if (line.trim() === end) end = null
+      return
+    }
+    if (/^\s*#/.test(line)) return
+    const m = /(?<!<)<<-?\s*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|\\?([A-Za-z_]\w*))/.exec(line)
+    if (m) end = m[1] ?? m[2] ?? m[3]
+  })
+  return mask
+}
+
+/**
  * Scans shell source lines for `inconclusive "` arms. Each arm must reach its
- * own `exit_for_inconclusive` (matched as code, never inside a comment) before
- * any other arm begins, and the last NEXT_ACTION assignment before that exit
- * must carry text. Offenders are returned as `<line> [reason]`.
+ * own `exit_for_inconclusive` (matched as code, never inside a comment or a
+ * heredoc) before any other arm begins, and the last NEXT_ACTION assignment
+ * before that exit must carry text. Offenders are returned as `<line> [reason]`.
  */
 function scanInconclusiveArms(lines: string[]): { armCount: number; offenders: string[] } {
+  const hd = heredocMask(lines)
   const isComment = (l: string): boolean => /^\s*#/.test(l)
-  const isArm = (l: string): boolean => !isComment(l) && /\binconclusive "/.test(l)
-  const isExit = (l: string): boolean => /^\s*exit_for_inconclusive\b(?!\s*\(\))/.test(l)
+  const isArm = (i: number): boolean =>
+    !hd[i] && !isComment(lines[i]) && /\binconclusive "/.test(lines[i])
+  const isExit = (i: number): boolean =>
+    !hd[i] && /^\s*exit_for_inconclusive\b(?!\s*\(\))/.test(lines[i])
   const offenders: string[] = []
   let armCount = 0
   lines.forEach((line, i) => {
-    if (!isArm(line)) return
+    if (!isArm(i)) return
     armCount += 1
     // The LAST NEXT_ACTION assignment before the exit is the one finish()
     // renders, so it is the one that must carry text.
     let last: string | null = null
     let reachedExit = false
     for (let j = i + 1; j < lines.length; j += 1) {
-      if (isArm(lines[j])) break
-      if (/^\s*(NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\b)/.test(lines[j])) last = lines[j]
-      if (isExit(lines[j])) {
+      if (isArm(j)) break
+      if (!hd[j] && /^\s*(NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\b)/.test(lines[j])) last = lines[j]
+      if (isExit(j)) {
         reachedExit = true
         break
       }
@@ -144,23 +175,27 @@ function scanInconclusiveArms(lines: string[]): { armCount: number; offenders: s
 function assignsNextAction(line: string): boolean {
   // `printf -v NEXT_ACTION "fmt" args` is an assignment too; its format and
   // arguments are scanned exactly like an `=` value.
-  const m = /^\s*(?:NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\s+)(.*)$/.exec(line)
+  const m = /^\s*(NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\s+)(.*)$/.exec(line)
   if (!m) return false
+  const isPrintf = m[1].startsWith('printf')
   // $(...) is stripped innermost-first until stable, so nested substitutions
   // like $(echo $(date)) are removed whole rather than leaving ")" behind. A
   // value that is ONLY command substitutions is rejected even if the command
   // prints literal text (e.g. $(printf 'run foo')): its rendered text cannot be
   // shown from the source, so this errs toward flagging (the behavioural test
   // checks what actually rendered).
-  let v = m[1].replace(/`[^`]*`/g, '') // `cmd`
+  let v = m[2].replace(/`[^`]*`/g, '') // `cmd`
   for (let prev = ''; prev !== v; ) {
     prev = v
     v = v.replace(/\$\([^()]*\)/g, '') // innermost $(cmd)
   }
-  const literal = v
+  let literal = v
     .replace(/\$\{[^}]*\}/g, '') // ${X}, ${X:-}
     .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, '') // $X
     .replace(/["']/g, '') // quote characters carry no text
+  // printf's first operand is a format: its %s/%d/... conversions print their
+  // arguments, not text of their own, so `'%s' "${X:-}"` renders empty.
+  if (isPrintf) literal = literal.replace(/%[-+ #0-9.]*[A-Za-z]/g, '')
   return /\S/.test(literal)
 }
 
@@ -182,6 +217,76 @@ function makeStub(dir: string, name: string, body: string): void {
 /** A tsc stand-in that records that it ran, then defers to the real compiler. */
 function markingStub(marker: string, real: string): string {
   return `#!/bin/sh\ntouch '${marker}'\nexec ${real} "$@"\n`
+}
+
+/** Plants a file under REPO_ROOT (creating parents); its path carries a zz-smi6975- segment. */
+function plant(rel: string, content: string): string {
+  const abs = join(REPO_ROOT, rel)
+  mkdirSync(dirname(abs), { recursive: true })
+  writeFileSync(abs, content)
+  return abs
+}
+
+/** Removes every zz-smi6975- entry anywhere under `dir`; leftovers of a killed run. */
+function sweepPlanted(dir: string): void {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    if (e.name.startsWith('zz-smi6975-')) rmSync(p, { recursive: true, force: true })
+    else if (e.isDirectory() && e.name !== 'node_modules') sweepPlanted(p)
+  }
+}
+
+/**
+ * Line numbers of every `\b` that sits inside a quoted string of shell source,
+ * wherever the string is used. Scans the whole text as one stream so a string
+ * spanning lines keeps its state; `balanced` is false when a quote never closed,
+ * which means the scanner desynchronised and its answer cannot be trusted.
+ */
+function quotedWordBoundaryLines(src: string): { hits: number[]; balanced: boolean } {
+  const hits: number[] = []
+  let q: "'" | '"' | null = null
+  let line = 1
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src[i]
+    if (c === '\n') line += 1
+    else if (q === null) {
+      if (c === '#' && (i === 0 || /\s/.test(src[i - 1]))) {
+        while (i + 1 < src.length && src[i + 1] !== '\n') i += 1
+      } else if (c === '\\') {
+        i += 1
+        if (src[i] === '\n') line += 1
+      } else if (c === "'" || c === '"') q = c
+    } else if (q === "'") {
+      if (c === "'") q = null
+      else if (c === '\\') {
+        if (src[i + 1] === 'b') hits.push(line)
+        else if (src[i + 1] === '\\') i += 1
+      }
+    } else if (c === '"') q = null
+    else if (c === '\\') {
+      const n = src[i + 1]
+      // In double quotes `\\b` reaches the program as `\b` too.
+      if (n === 'b' || (n === '\\' && src[i + 2] === 'b')) hits.push(line)
+      if (n === '\n') line += 1
+      if (n === '\\' || n === '"' || n === '$' || n === '`' || n === '\n') i += 1
+    }
+  }
+  return { hits, balanced: q === null }
+}
+
+/** The patterns of every `return 0` arm of the `case` in shell function `fn`. */
+function caseArmsReturningZero(src: string, fn: string): string[] {
+  const body = new RegExp(`${fn}\\(\\)\\s*\\{([\\s\\S]*?)\\n\\}`).exec(src)?.[1]
+  const cases = body === undefined ? null : /case\s+[^\n]*\s+in([\s\S]*?)\besac\b/.exec(body)
+  if (cases === null) throw new Error(`${fn}: no case statement found -- did it change shape?`)
+  const patterns: string[] = []
+  for (const chunk of cases[1].split(';;')) {
+    if (chunk.trim() === '') continue
+    const arm = /^\s*([^)]+)\)([\s\S]*)$/.exec(chunk)
+    if (arm === null) throw new Error(`${fn}: unparseable case arm: ${chunk.trim()}`)
+    if (/\breturn 0\b/.test(arm[2])) patterns.push(...arm[1].split('|').map((x) => x.trim()))
+  }
+  return patterns.sort()
 }
 
 const scratch: string[] = []
@@ -209,8 +314,13 @@ afterEach(() => {
 // run are swept before the first test.
 beforeAll(() => {
   const dir = join(REPO_ROOT, 'scripts')
-  for (const f of readdirSync(dir)) {
-    if (f.startsWith('zz-smi6975-')) rmSync(join(dir, f), { force: true })
+  sweepPlanted(dir)
+  // A killed run can leave tsconfig.scripts.json parked under CONFIG_ASIDE.
+  const cfg = join(REPO_ROOT, 'tsconfig.scripts.json')
+  const aside = join(REPO_ROOT, CONFIG_ASIDE)
+  if (existsSync(aside)) {
+    if (existsSync(cfg)) rmSync(aside, { force: true })
+    else renameSync(aside, cfg)
   }
   // Backstop copies embed their writer's pid and creation time. Remove a copy
   // when its pid is gone, or when it is older than any run could last: a live
@@ -296,6 +406,32 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(r.out).toContain('first 20 lines of the raw tsc output')
   })
 
+  it('when perl strips PARTIAL output then exits non-zero, the gate is INCONCLUSIVE, never FAIL', () => {
+    // A perl that wrote usable output and then failed must not be trusted: a
+    // check that treats the failure as fatal only when the output is empty would
+    // read the partial output as a verdict (here, FAIL for the planted error).
+    const name = `zz-smi6975-perlpartial-${process.pid}.ts`
+    const dir = scratchDir('perl-partial')
+    makeStub(dir, 'perl', '#!/bin/sh\n/usr/bin/perl "$@"\nexit 13\n')
+    // Known-positive on the stub: it really emits output AND exits 13.
+    const probe = spawnSync(join(dir, 'perl'), ['-e', 'print "partial"'], { encoding: 'utf8' })
+    expect(probe.stdout).toBe('partial')
+    expect(probe.status).toBe(13)
+    const file = plant(`scripts/${name}`, "export const planted: number = 'not a number'\n")
+    try {
+      const r = runGate(dir)
+      expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'cause').toContain('exit 13')
+      expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
+      expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
+      expect(r.out, 'not a fail').not.toContain('VERDICT        FAIL')
+      expect(r.status, 'exit').not.toBe(0)
+    } finally {
+      rmSync(file, { force: true })
+    }
+    expect(existsSync(file)).toBe(false)
+  })
+
   it('an unclassified extension under scripts/ is INCONCLUSIVE and names the file', () => {
     // The inventory classifies every file against a closed table. Anything it
     // does not recognise must stop the gate rather than be silently dropped
@@ -331,6 +467,31 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(after.status).toBe(0)
   })
 
+  it('an extensionless file and a .TS file under scripts/ are each INCONCLUSIVE and named', () => {
+    // Run one at a time: with both planted, the .TS file alone would make the
+    // run INCONCLUSIVE and hide an inventory that skips extensionless files.
+    const cases = [`zz-smi6975-noext-${process.pid}`, `zz-smi6975-upper-${process.pid}.TS`]
+    const planted: string[] = []
+    try {
+      for (const name of cases) {
+        const file = plant(`scripts/${name}`, '# planted by typecheck-scripts-gate.test.ts\n')
+        planted.push(file)
+        const r = runGate()
+        expect(r.out, `${name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, `${name}: cause`).toContain('extension this gate does not classify')
+        const listed = r.out.slice(r.out.indexOf('--- unclassified ---'))
+        expect(listed, `${name}: listed as unclassified`).toContain(`scripts/${name}`)
+        expect(r.out, `${name}: next`).toMatch(/^ {2}next: \S/m)
+        expect(r.status, `${name}: exit`).not.toBe(0)
+        expect(r.out, `${name}: verdict`).not.toContain('VERDICT        PASS')
+        rmSync(file, { force: true })
+      }
+    } finally {
+      for (const f of planted) rmSync(f, { force: true })
+    }
+    for (const f of planted) expect(existsSync(f)).toBe(false)
+  })
+
   it('no grep -E pattern in the gate uses \\b, which POSIX ERE does not define', () => {
     // The gate runs under GNU grep (container, CI) and BSD grep (macOS host).
     const usesWordBoundary = (l: string): boolean => /\bgrep\b[^\n]*\s-[A-Za-z]*E[\s\S]*\\b/.test(l)
@@ -354,6 +515,30 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     }
     expect(scanned, 'no grep lines found -- wrong files?').toBeGreaterThan(0)
     expect(offenders).toEqual([])
+
+    // The word boundary can also be held in a variable and reach grep later, so
+    // every quoted string in a non-comment position is scanned, grep or not.
+    const hits = (src: string) => quotedWordBoundaryLines(src).hits
+    expect(hits(String.raw`FOUND_RE='^Found [0-9]+\b'`), 'variable, single-quoted').toEqual([1])
+    expect(
+      hits('x=1\nFOUND_RE="^Found\\b"\ngrep -cE "$FOUND_RE" f'),
+      'variable, double-quoted'
+    ).toEqual([2])
+    expect(hits(String.raw`FOUND_RE="^Found\\b"`), 'double-quoted, escaped backslash').toEqual([1])
+    expect(hits("X='a\nb\\b'"), 'string spanning lines').toEqual([2])
+    expect(hits(String.raw`# FOUND_RE='x\b'`), 'comment').toEqual([])
+    expect(hits(String.raw`x=1 # y='\b'`), 'trailing comment').toEqual([])
+    expect(hits(String.raw`grep -E \b f`), 'unquoted').toEqual([])
+    expect(hits(String.raw`X='\\b'`), 'single-quoted escaped backslash').toEqual([])
+    expect(hits(`X='^Found([^[:alnum:]_]|$)'`), 'bracket-expression boundary').toEqual([])
+    for (const f of ['typecheck-scripts.sh', 'typecheck-scripts.helpers.sh']) {
+      const r = quotedWordBoundaryLines(readFileSync(join(REPO_ROOT, 'scripts', 'ci', f), 'utf8'))
+      expect(r.balanced, `${f}: scanner ended inside a quote`).toBe(true)
+      expect(
+        r.hits.map((n) => `${f}:${n}`),
+        `${f}: \\b in a quoted string`
+      ).toEqual([])
+    }
   })
 
   it('every INCONCLUSIVE arm prints a next: action', () => {
@@ -399,6 +584,41 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       ]).offenders,
       'comment-only exit flagged'
     ).toHaveLength(1)
+    // A NEXT_ACTION= inside a heredoc is text for a command, not an assignment.
+    expect(
+      scanInconclusiveArms([
+        'inconclusive "only"',
+        'cat <<EOF',
+        'NEXT_ACTION="written inside a heredoc"',
+        'EOF',
+        '  exit_for_inconclusive',
+      ]).offenders,
+      'heredoc-only assignment flagged'
+    ).toHaveLength(1)
+    // ...but a real assignment after the heredoc ends counts, as does a quoted
+    // or dash-form delimiter, and a here-string is not a heredoc.
+    for (const open of ["cat <<'EOF'", 'cat <<"EOF"', 'cat <<-EOF']) {
+      expect(
+        scanInconclusiveArms([
+          open,
+          'NEXT_ACTION="heredoc text"',
+          'EOF',
+          'inconclusive "ok"',
+          'NEXT_ACTION="real"',
+          '  exit_for_inconclusive',
+        ]),
+        `real assignment after ${open}`
+      ).toEqual({ armCount: 1, offenders: [] })
+    }
+    expect(
+      scanInconclusiveArms([
+        'cat <<<"$X"',
+        'inconclusive "ok"',
+        'NEXT_ACTION="real"',
+        'exit_for_inconclusive',
+      ]).offenders,
+      'here-string does not open a heredoc'
+    ).toEqual([])
     // A normal arm passes.
     expect(
       scanInconclusiveArms(['inconclusive "ok"', 'NEXT_ACTION="x"', '  exit_for_inconclusive'])
@@ -424,6 +644,13 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(assignsNextAction('    printf -v NEXT_ACTION "re-run %s" "$X"')).toBe(true)
     expect(assignsNextAction('    printf -v NEXT_ACTION "$UNSET"')).toBe(false)
     expect(assignsNextAction('    printf -v OTHER "re-run"')).toBe(false)
+    // A printf format's conversions print arguments, not text: an expansion-only
+    // argument renders empty however many conversions wrap it.
+    expect(assignsNextAction(`    printf -v NEXT_ACTION '%s' "\${X:-}"`)).toBe(false)
+    expect(assignsNextAction('    printf -v NEXT_ACTION "%s %s" "$A" "$B"')).toBe(false)
+    expect(assignsNextAction('    printf -v NEXT_ACTION "%-10s%5d" "$A" "$B"')).toBe(false)
+    expect(assignsNextAction(`    printf -v NEXT_ACTION '%s' "re-run"`)).toBe(true)
+    expect(assignsNextAction('    NEXT_ACTION="100% sure"')).toBe(true)
     // Command-substitution-only values are rejected, including a nested one and
     // one whose command prints literal text (deliberately errs toward flagging).
     expect(assignsNextAction('    NEXT_ACTION="$(printf \'run foo\')"')).toBe(false)
@@ -499,6 +726,21 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       rmSync(file, { force: true })
     }
     expect(existsSync(file)).toBe(false)
+
+    // And the missing-config arm, driven by moving the real config aside.
+    const cfg = join(REPO_ROOT, 'tsconfig.scripts.json')
+    const aside = join(REPO_ROOT, CONFIG_ASIDE)
+    try {
+      renameSync(cfg, aside)
+      const r = runGate()
+      expect(r.out, 'missing config: RESULT').toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'missing config: cause').toContain('missing tsconfig.scripts.json')
+      expect(r.out, 'missing config: next line').toMatch(/^ {2}next: \S/m)
+    } finally {
+      if (existsSync(aside)) renameSync(aside, cfg)
+    }
+    expect(existsSync(cfg), 'config restored').toBe(true)
+    expect(existsSync(aside), 'aside copy gone').toBe(false)
   })
 
   it('scope regression: a SWAPPED root set with the SAME total is INCONCLUSIVE, never PASS', () => {
@@ -605,19 +847,36 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     // 4294967296 and the 20-digit value pass a naive ^[1-9][0-9]*$ check but
     // wrap (or are rejected) inside perl's alarm(), which would arm no alarm at
     // all; 86401 is the first value past the documented maximum.
-    for (const v of ['0', '4294967296', '12345678901234567890', '86401']) {
-      const marker = join(dir, `invoked-${v}`)
-      makeStub(dir, `tsc-mark-${v}`, markingStub(marker, real))
+    // The rest are values a lenient pattern would accept: surrounding space, a
+    // trailing newline, a sign, a leading zero, and a non-ASCII digit. An EMPTY
+    // value is deliberately absent: the gate reads it with `:-600`, so it is the
+    // unset case and runs with the default budget rather than being refused.
+    const badValues = [
+      '0',
+      '4294967296',
+      '12345678901234567890',
+      '86401',
+      ' 5',
+      '5 ',
+      '5\n',
+      '+5',
+      '05',
+      '\u0665',
+    ]
+    for (const [idx, v] of badValues.entries()) {
+      const marker = join(dir, `invoked-${idx}`)
+      makeStub(dir, `tsc-mark-${idx}`, markingStub(marker, real))
       const bad = runGate(undefined, {
-        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-mark-${v}`),
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-mark-${idx}`),
         SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: v,
       })
-      expect(bad.out, `${v}: RESULT`).toContain('RESULT         INCONCLUSIVE')
-      expect(bad.out, `${v}: cause`).toContain('1..86400')
-      expect(bad.out, `${v}: next`).toMatch(/^ {2}next: \S/m)
-      expect(bad.status, `${v}: exit`).not.toBe(0)
+      const label = JSON.stringify(v)
+      expect(bad.out, `${label}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(bad.out, `${label}: cause`).toContain('1..86400')
+      expect(bad.out, `${label}: next`).toMatch(/^ {2}next: \S/m)
+      expect(bad.status, `${label}: exit`).not.toBe(0)
       // The refusal came before any compiler call, not after a run it ignored.
-      expect(existsSync(marker), `${v}: compiler never invoked`).toBe(false)
+      expect(existsSync(marker), `${label}: compiler never invoked`).toBe(false)
     }
   })
 
@@ -700,6 +959,29 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     }
   })
 
+  it("the operator's raw tail keeps tsc's own lines visible past --listFiles' absolute paths", () => {
+    // --listFiles prints one absolute path per program file. Without filtering
+    // them out, the 20-line tail shown on a shape failure is all paths and the
+    // line that explains the failure is hidden.
+    const dir = scratchDir('tail-listfiles')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    const marker = `TAIL-MARKER-${process.pid}`
+    // The compile call prints the marker, then the REAL program list (so the
+    // compiled-roots check passes), then exits 2 with no 'Found' summary.
+    makeStub(
+      dir,
+      'tsc-tail',
+      `#!/bin/sh\ncase "$*" in *--pretty*) echo '${marker}'; ${real} -p tsconfig.scripts.json --listFilesOnly; exit 2 ;; esac\nexec ${real} "$@"\n`
+    )
+    const r = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-tail') })
+    expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+    expect(r.out, 'cause').toContain("no parseable 'Found' total")
+    expect(r.out, 'tail section printed').toContain('--- raw tail ---')
+    expect(r.out, 'marker visible in the tail').toContain(marker)
+    const tail = r.out.split('--- raw tail ---')[1] ?? ''
+    expect(tail, 'absolute program paths filtered from the tail').not.toMatch(/^\//m)
+  })
+
   it('a compiler killed by a signal, or exiting 127, is INCONCLUSIVE with a named cause', () => {
     // --version and --showConfig pass through to the real tsc so only the full
     // compile (the --pretty call) misbehaves. A stub that exits 127 stands in
@@ -758,6 +1040,18 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(honoured.out, 'substitution printed').toContain(`tsc binary     ${stub}`)
     expect(honoured.out, 'substitution flagged').toContain('SUBSTITUTED')
     expect(honoured.out, 'no ignored line').not.toContain('ignored: it is honoured only')
+
+    // Only the exact string 'true' honours it: a falsy-looking or merely
+    // non-empty VITEST must not switch a stub compiler into a PASS.
+    for (const v of ['false', '1']) {
+      rmSync(marker, { force: true })
+      const r = runGate(undefined, { VITEST: v, SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub })
+      expect(r.out, `VITEST=${v}: ignored line`).toMatch(
+        /SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST ignored: it is honoured only under vitest/
+      )
+      expect(existsSync(marker), `VITEST=${v}: stub never invoked`).toBe(false)
+      expect(r.out, `VITEST=${v}: no substitution`).not.toContain('SUBSTITUTED')
+    }
   })
 
   it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {
@@ -777,17 +1071,24 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       join(REPO_ROOT, 'scripts', 'ci', 'typecheck-scripts.helpers.sh'),
       'utf8'
     )
-    const caseLine = /_scripts_is_blocked_path\(\)\s*\{[\s\S]*?\n\s*(.+?)\)\s*return 0/.exec(
-      helpers
-    )
+    // EVERY `return 0` arm of the case, not the first: a second arm such as
+    // `scripts/e2e/*) return 0 ;;` would otherwise exclude a directory unseen.
+    // Known-positive on the extractor first, so an extractor that only reads the
+    // first arm cannot satisfy the pin below.
+    const twoArms = [
+      '_scripts_is_blocked_path() {',
+      '  case "$1" in',
+      '    scripts/a.ts) return 0 ;;',
+      '    scripts/e2e/*) return 0 ;;',
+      '    *) return 1 ;;',
+      '  esac',
+      '}',
+    ].join('\n')
     expect(
-      caseLine,
-      '_scripts_is_blocked_path case arm not found — did it change shape?'
-    ).not.toBeNull()
-    const fromShell = (caseLine as RegExpExecArray)[1]
-      .split('|')
-      .map((s) => s.trim())
-      .sort()
+      caseArmsReturningZero(twoArms, '_scripts_is_blocked_path'),
+      'extractor sees arm 2'
+    ).toEqual(['scripts/a.ts', 'scripts/e2e/*'])
+    const fromShell = caseArmsReturningZero(helpers, '_scripts_is_blocked_path')
     expect(fromShell).toEqual(PINNED)
 
     // The tsconfig side. Strip // comments before parsing; this file is JSONC.
@@ -799,6 +1100,13 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       .filter((e) => /\.(ts|mts|cts|tsx)$/.test(e))
       .sort()
     expect(fromTsconfig).toEqual(PINNED)
+    // The whole exclude list, not just its file entries: a directory or glob
+    // entry (`scripts/e2e`) narrows scope exactly as a blocked file does.
+    const ALLOWED_EXCLUDES = ['node_modules', 'dist', 'scripts/tests/**', ...PINNED]
+    expect(
+      (tsconfig.exclude ?? []).filter((e) => !ALLOWED_EXCLUDES.includes(e)),
+      'tsconfig exclude entries outside the pinned set'
+    ).toEqual([])
 
     // And every blocked path must carry its OWN reason, not inherit a reason
     // stated once for the whole list — which is what the output did before.
@@ -991,8 +1299,254 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(
       grepMatches("packages/core/src/x.ts:1:14 - error TS2322: Type 'string' is not assignable.")
     ).toBe(true)
+    // A path may contain ':' -- the anchor is the `:line:col - error` suffix.
+    expect(
+      grepMatches("scripts/zz-a:b.ts:1:14 - error TS2322: Type 'string' is not assignable.")
+    ).toBe(true)
     // Known-negative: an indented continuation line must NOT match, or the
     // count would exceed one per diagnostic block and stop reconciling.
     expect(grepMatches("  2 const x: number = 'y';")).toBe(false)
+  })
+
+  it(
+    'scope: a type error under scripts/e2e, ci, lib and indexer/_shared is FAIL and each file is named',
+    () => {
+      // A scope that is wrong CONSISTENTLY -- the inventory's find and the
+      // tsconfig both skipping a directory -- reconciles perfectly and PASSES, so
+      // only a planted error in each directory can see it.
+      const dirs = ['scripts/e2e', 'scripts/ci', 'scripts/lib', 'scripts/indexer/_shared']
+      const files = dirs.map((d) => `${d}/zz-smi6975-scope-${process.pid}.ts`)
+      try {
+        for (const f of files) plant(f, "export const planted: number = 'not a number'\n")
+        const r = runGate()
+        expect(r.out, 'RESULT').not.toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, 'RESULT').toContain('RESULT         EVALUATED')
+        expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
+        expect(r.status, 'exit').toBe(1)
+        for (const f of files) expect(r.out, `names ${f}`).toContain(f)
+        const m = /(\d+) total \/ (\d+) attributed/.exec(r.out)
+        expect(m, 'reconciliation line present').not.toBeNull()
+        expect(Number((m as RegExpExecArray)[1]), 'one error per directory').toBeGreaterThanOrEqual(
+          dirs.length
+        )
+      } finally {
+        for (const f of files) rmSync(join(REPO_ROOT, f), { force: true })
+      }
+      for (const f of files) expect(existsSync(join(REPO_ROOT, f))).toBe(false)
+    },
+    MULTI_RUN_TIMEOUT_MS
+  )
+
+  it(
+    'depth: a valid file and a type error 4+ levels under scripts/ are PASS-in-scope and FAIL',
+    () => {
+      // An include of depth-limited globs (scripts/*/*/*.ts ...) agrees with an
+      // equally shallow inventory and never sees a deeper file.
+      const top = `scripts/zz-smi6975-deep-${process.pid}`
+      const deep = `${top}/d1/d2/d3/d4`
+      try {
+        const base = /discovered\s+(\d+)/.exec(runGate().out)?.[1]
+        expect(base, 'baseline discovered count').toBeDefined()
+        plant(`${deep}/ok.ts`, 'export const ok: number = 1\n')
+        const ok = runGate()
+        expect(ok.out, 'valid: RESULT').toContain('RESULT         EVALUATED')
+        expect(ok.out, 'valid: VERDICT').toContain('VERDICT        PASS')
+        expect(ok.status, 'valid: exit').toBe(0)
+        expect(Number(/discovered\s+(\d+)/.exec(ok.out)?.[1]), 'valid: file is in scope').toBe(
+          Number(base) + 1
+        )
+        expect(/compiler roots\s+(\d+)/.exec(ok.out)?.[1], 'valid: tsc roots agree').toBe(
+          String(Number(base) + 1)
+        )
+        rmSync(join(REPO_ROOT, `${deep}/ok.ts`), { force: true })
+
+        plant(`${deep}/bad.ts`, "export const bad: number = 'not a number'\n")
+        const bad = runGate()
+        expect(bad.out, 'error: RESULT').toContain('RESULT         EVALUATED')
+        expect(bad.out, 'error: VERDICT').toContain('VERDICT        FAIL')
+        expect(bad.out, 'error: names the file').toContain(`${deep}/bad.ts`)
+        expect(bad.status, 'error: exit').toBe(1)
+      } finally {
+        rmSync(join(REPO_ROOT, top), { recursive: true, force: true })
+      }
+      expect(existsSync(join(REPO_ROOT, top))).toBe(false)
+    },
+    MULTI_RUN_TIMEOUT_MS
+  )
+
+  it('a path containing ":" is attributed: EVALUATED/FAIL naming the file, not a false INCONCLUSIVE', () => {
+    // A `[^:]*` path in the attribution pattern cannot span the colon, so the
+    // header goes uncounted and REPORTED (1) disagrees with ATTRIB (0).
+    const name = `zz-smi6975-a:b-${process.pid}.ts`
+    const file = plant(`scripts/${name}`, "export const planted: number = 'not a number'\n")
+    try {
+      const r = runGate()
+      expect(r.out, 'RESULT').not.toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'RESULT').toContain('RESULT         EVALUATED')
+      expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
+      expect(r.out, 'no mismatch').not.toContain('[MISMATCH]')
+      expect(r.out, 'names the whole path').toContain(`scripts/${name}`)
+      expect(r.status, 'exit').toBe(1)
+    } finally {
+      rmSync(file, { force: true })
+    }
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('a compiler that forks a survivor cannot hold the gate past its budget (no pipe on the compile)', () => {
+    // The full compile's output goes to a file. Through a pipe (`| tee`), a
+    // surviving child keeps the write end open after the alarm kills the
+    // compiler, and the gate waits for it: here 40s instead of ~2s.
+    const dir = scratchDir('fork')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    makeStub(
+      dir,
+      'tsc-fork',
+      `#!/bin/sh\ncase "$*" in *--pretty*) sleep 40 & sleep 40; exit 0 ;; esac\nexec ${real} "$@"\n`
+    )
+    const t0 = Date.now()
+    const r = runGate(undefined, {
+      SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-fork'),
+      SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
+    })
+    const elapsed = Date.now() - t0
+    expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+    expect(r.out, 'cause').toMatch(/did not finish within 2s/)
+    expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
+    // Well under the 40s survivor, with room for a loaded host's real tsc runs.
+    expect(elapsed, 'returned without waiting for the survivor').toBeLessThan(15_000)
+  })
+
+  it('a compiler that prints valid output and THEN hangs on --version or --showConfig is INCONCLUSIVE', () => {
+    // Skipping the timeout guard whenever output is non-empty would accept these.
+    const dir = scratchDir('hang-after-output')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    for (const [idx, call] of ['--version', '--showConfig'].entries()) {
+      makeStub(
+        dir,
+        `tsc-late-${idx}`,
+        `#!/bin/sh\ncase "$*" in *${call}*) ${real} "$@"; exec sleep 600 ;; esac\nexec ${real} "$@"\n`
+      )
+      const t0 = Date.now()
+      const r = runGate(undefined, {
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-late-${idx}`),
+        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
+      })
+      expect(r.out, `${call}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, `${call}: cause names the call`).toContain(
+        `tsc ${call} did not finish within 2s`
+      )
+      expect(r.out, `${call}: next`).toMatch(/^ {2}next: \S/m)
+      expect(r.out, `${call}: not a pass`).not.toContain('VERDICT        PASS')
+      expect(r.status, `${call}: exit`).not.toBe(0)
+      expect(Date.now() - t0, `${call}: bounded`).toBeLessThan(60_000)
+    }
+  })
+
+  it('a compiler exiting 126 or 255 is INCONCLUSIVE as an unexpected status, not as a signal', () => {
+    // 255 is not 128+127 and 126 is not a signal: only 129..192 is 128+signal.
+    const dir = scratchDir('odd-status')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    for (const code of [126, 255]) {
+      makeStub(
+        dir,
+        `tsc-exit${code}`,
+        `#!/bin/sh\ncase "$*" in *--pretty*) exit ${code} ;; esac\nexec ${real} "$@"\n`
+      )
+      const r = runGate(undefined, {
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-exit${code}`),
+      })
+      expect(r.out, `${code}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, `${code}: cause`).toContain(`unexpected exit status ${code}`)
+      expect(r.out, `${code}: not called a signal`).not.toContain('128+')
+      expect(r.out, `${code}: not called a signal`).not.toContain('killed by a signal')
+      expect(r.out, `${code}: next`).toMatch(/^ {2}next: \S/m)
+      expect(r.status, `${code}: exit`).not.toBe(0)
+      expect(r.out, `${code}: not a pass`).not.toContain('VERDICT        PASS')
+    }
+  })
+
+  it(
+    'a discovered file removed between the inventory and the compile is INCONCLUSIVE',
+    () => {
+      // tsc re-expands `include` when it compiles, so a root deleted after the
+      // inventory simply vanishes from the program; only the compiled-file list
+      // shows it. The stub deletes the file immediately before the real compile.
+      const name = `zz-smi6975-vanish-${process.pid}.ts`
+      const file = join(REPO_ROOT, 'scripts', name)
+      const dir = scratchDir('vanish')
+      const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+      makeStub(
+        dir,
+        'tsc-vanish',
+        `#!/bin/sh\ncase "$*" in *--pretty*) rm -f '${file}' ;; esac\nexec ${real} "$@"\n`
+      )
+      makeStub(dir, 'tsc-keep', `#!/bin/sh\nexec ${real} "$@"\n`)
+      try {
+        plant(`scripts/${name}`, 'export const vanishing: number = 1\n')
+        // Known-positive control: the same file, not deleted, is a root of an
+        // EVALUATED run -- so the INCONCLUSIVE below is caused by the deletion.
+        const keep = runGate(undefined, {
+          SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-keep'),
+        })
+        expect(keep.out, 'control: RESULT').toContain('RESULT         EVALUATED')
+        const r = runGate(undefined, {
+          SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-vanish'),
+        })
+        expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, 'cause').toContain('tsc did not read 1 discovered file(s)')
+        expect(r.out, 'names the file').toContain(`scripts/${name}`)
+        expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
+        expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
+        expect(r.status, 'exit').not.toBe(0)
+      } finally {
+        rmSync(file, { force: true })
+      }
+      expect(existsSync(file)).toBe(false)
+    },
+    MULTI_RUN_TIMEOUT_MS
+  )
+
+  it('scope regression: swapping a root for a different path with the SAME basename is INCONCLUSIVE', () => {
+    // Same count AND same basename: only a comparison of full paths sees it. The
+    // swapped-in file sits under scripts/tests/ (outside the inventory) and shares
+    // its name with the root dropped from scripts/lib.
+    const configPath = join(REPO_ROOT, 'tsconfig.scripts.json')
+    const original = readFileSync(configPath)
+    const text = original.toString('utf8')
+    const dropped = readdirSync(join(REPO_ROOT, 'scripts', 'lib')).find(
+      (f) => f.endsWith('.ts') && !f.endsWith('.d.ts') && !f.includes('.test.')
+    )
+    expect(dropped, 'no scripts/lib/*.ts to drop').toBeDefined()
+    const droppedPath = `scripts/lib/${dropped}`
+    const added = `scripts/tests/zz-smi6975-swap-${process.pid}/${dropped}`
+    expect(basename(added), 'premise: same basename').toBe(basename(droppedPath))
+    expect(added, 'premise: different path').not.toBe(droppedPath)
+    expect(text.includes('"exclude": ['), 'exclude array not found').toBe(true)
+    const planted = plant(added, 'export {}\n')
+    try {
+      writeFileSync(
+        configPath,
+        text
+          .replace('"exclude": [', `"exclude": [\n    "${droppedPath}",`)
+          .replace('"include":', `"files": ["${added}"],\n  "include":`)
+      )
+      const r = runGate()
+      const discovered = /discovered\s+(\d+)/.exec(r.out)?.[1]
+      const roots = /compiler roots\s+(\d+)/.exec(r.out)?.[1]
+      expect(discovered, 'discovered count printed').toBeDefined()
+      expect(roots, 'premise: equal totals').toBe(discovered)
+      expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'cause').toContain('disagree -- scope could not be validated')
+      expect(r.out, 'names the dropped path').toContain(droppedPath)
+      expect(r.out, 'names the swapped-in path').toContain(added)
+      expect(r.status, 'exit').not.toBe(0)
+      expect(r.out, 'verdict').not.toContain('VERDICT        PASS')
+    } finally {
+      writeFileSync(configPath, original)
+      rmSync(dirname(planted), { recursive: true, force: true })
+    }
+    expect(readFileSync(configPath).equals(original)).toBe(true)
+    expect(existsSync(planted)).toBe(false)
   })
 })

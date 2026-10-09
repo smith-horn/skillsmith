@@ -132,6 +132,69 @@ check_tsc_ready() {
   TSC_VERSION="$(head -1 "$TSC_VERSION_OUT")"
 }
 
+# Classifies the full compile's exit status ($1), after the timeout check. tsc
+# returns 0 (clean) or 1/2 (diagnostics); 127 is perl's exec failure; 129..192 is
+# 128 + a signal number. Any other value (126, 255, ...) is not a status tsc or a
+# signal produces, so it is reported as unexpected rather than called a signal.
+classify_compile_status() {
+  local rc="$1"
+  if [[ "$rc" -ge 129 && "$rc" -le 192 ]]; then
+    inconclusive "tsc was killed by a signal (exit $rc = 128+$((rc - 128)))"
+    NEXT_ACTION="something terminated the compiler (OOM killer, a manual kill); re-run and check host memory"
+    exit_for_inconclusive
+  fi
+  if [[ "$rc" -eq 127 ]]; then
+    inconclusive "could not exec tsc via /usr/bin/perl (exit 127)"
+    NEXT_ACTION="confirm /usr/bin/perl exists and $TSC_BIN is executable"
+    exit_for_inconclusive
+  fi
+  if [[ "$rc" -gt 2 ]]; then
+    inconclusive "tsc exited with unexpected exit status $rc (not 0, 1 or 2, and not a signal)"
+    NEXT_ACTION="the compiler did not complete as tsc does; re-run, and confirm $TSC_BIN is an executable TypeScript compiler (126 = not executable)"
+    exit_for_inconclusive
+  fi
+}
+
+# Prints the last 20 lines of the cleaned tsc output for an operator. The
+# --listFiles program paths are absolute and would otherwise fill the tail;
+# tsc's own diagnostics and summary print relative paths, so they stay visible.
+print_tsc_tail() {
+  grep -v '^/' "$TSC_CLEAN" | tail -20
+}
+
+# Every discovered file must be in the program tsc compiled (--listFiles, from
+# $TSC_CLEAN). tsc re-expands `include` at compile time, so a file removed after
+# the inventory is dropped silently; only the compiled-file list shows it.
+verify_compiler_read_roots() {
+  local listed missing l n
+  mktemp_or_die listed
+  mktemp_or_die missing
+  while IFS= read -r l; do
+    if [[ "$l" == "$REPO_ROOT/scripts/"* ]]; then printf '%s\n' "${l#"$REPO_ROOT"/}"; fi
+  done <"$TSC_CLEAN" | LC_ALL=C sort >"$listed"
+  local -a st=("${PIPESTATUS[@]}")
+  if [[ "${st[0]}" -ne 0 || "${st[1]}" -ne 0 ]]; then
+    inconclusive "could not extract the compiled-file list from tsc --listFiles output (exit ${st[0]}/${st[1]})"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Re-run; if it persists the cleaned tsc output is unreadable."
+    exit_for_inconclusive
+  fi
+  LC_ALL=C comm -23 "$DISCOVERED_LIST" "$listed" >"$missing"
+  n=$?
+  if [[ "$n" -ne 0 ]]; then
+    inconclusive "the discovered-vs-compiled comparison failed (comm exit $n) -- it was never established that tsc read every discovered file"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Re-run."
+    exit_for_inconclusive
+  fi
+  n="$(wc -l <"$missing" | tr -d ' ')"
+  if [[ "$n" -gt 0 ]]; then
+    inconclusive "tsc did not read $n discovered file(s) -- removed or excluded between the inventory and the compile"
+    say "--- discovered but not compiled ---"
+    head -20 "$missing"
+    NEXT_ACTION="re-run once the tree is stable; if it persists, $CONFIG resolves a different file set at compile time than at --showConfig"
+    exit_for_inconclusive
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Temp files (finding 7). `TMP_FILES+=("$t")` used to run inside a
 # `VAR="$(mktemp_or_die)"` command SUBSTITUTION -- bash runs the right-hand

@@ -71,7 +71,9 @@ source "$REPO_ROOT/scripts/ci/typecheck-scripts.helpers.sh"
 if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
   || ! declare -F mktemp_or_die >/dev/null || ! declare -F build_scripts_inventory >/dev/null \
   || ! declare -F count_tests_excluded >/dev/null || ! declare -F compose_excluded_desc >/dev/null \
-  || ! declare -F run_bounded >/dev/null || ! declare -F check_tsc_ready >/dev/null; then
+  || ! declare -F run_bounded >/dev/null || ! declare -F check_tsc_ready >/dev/null \
+  || ! declare -F classify_compile_status >/dev/null || ! declare -F verify_compiler_read_roots >/dev/null \
+  || ! declare -F print_tsc_tail >/dev/null; then
   printf '[scripts-typecheck] FATAL: typecheck-scripts.helpers.sh did not load\n' >&2
   exit 1
 fi
@@ -236,20 +238,13 @@ CHECKED="$DISCOVERED"
 # if either parser is wrong.
 # ---------------------------------------------------------------------------
 mktemp_or_die TSC_RAW
-# Bounded by run_bounded (perl alarm); see its definition for why.
-run_bounded "$TSC_BIN" -p "$CONFIG" --pretty >"$TSC_RAW" 2>&1
+# Bounded by run_bounded (perl alarm); see its definition for why. Output goes to
+# a file, never a pipe: a compiler that forks a survivor would hold a pipe open
+# past the alarm. --listFiles records the program this run actually compiled.
+run_bounded "$TSC_BIN" -p "$CONFIG" --pretty --listFiles >"$TSC_RAW" 2>&1
 TSC_RC=$?
 exit_if_bounded_timeout "$TSC_RC" "the full tsc compile"
-if [[ "$TSC_RC" -gt 128 ]]; then
-  inconclusive "tsc was killed by a signal (exit $TSC_RC = 128+$((TSC_RC - 128)))"
-  NEXT_ACTION="something terminated the compiler (OOM killer, a manual kill); re-run and check host memory"
-  exit_for_inconclusive
-fi
-if [[ "$TSC_RC" -eq 127 ]]; then
-  inconclusive "could not exec tsc via /usr/bin/perl (exit 127)"
-  NEXT_ACTION="confirm /usr/bin/perl exists and $TSC_BIN is executable"
-  exit_for_inconclusive
-fi
+classify_compile_status "$TSC_RC"
 
 mktemp_or_die TSC_CLEAN
 # Strip ANSI + NUL before any pattern match, for the same reason the edge-
@@ -297,6 +292,11 @@ if [[ "$GLOBAL_ERR_RC" -eq 0 ]]; then
   exit_for_inconclusive
 fi
 
+# Every discovered root must be in the program tsc compiled: tsc re-expands
+# `include` at compile time, so a file removed since the inventory is dropped
+# silently and the run would still PASS.
+verify_compiler_read_roots
+
 # REPORTED: tsc's own total, from the "Found N error(s) ..." line. Measured
 # across three distinct shapes on TS 5.9.3 -- "Found 1 error in <path>:<line>"
 # (singular, ALWAYS this form for exactly one error, regardless of project
@@ -319,7 +319,7 @@ if [[ "$FOUND_LINES" -eq 0 ]]; then
   else
     inconclusive "tsc exited $TSC_RC with no parseable 'Found' total"
     say "--- raw tail ---"
-    tail -20 "$TSC_CLEAN"
+    print_tsc_tail
     NEXT_ACTION="unrecognised tsc output for this version -- the parser above may need updating"
     exit_for_inconclusive
   fi
@@ -346,7 +346,7 @@ elif [[ "$FOUND_LINES" -eq 1 ]]; then
 else
   inconclusive "$FOUND_LINES 'Found' summary lines -- output shape unexpected, possibly truncated"
   say "--- raw tail ---"
-  tail -20 "$TSC_CLEAN"
+  print_tsc_tail
   NEXT_ACTION="do not trust a count derived from this; re-run, or update the parser for this tsc version"
   exit_for_inconclusive
 fi
@@ -389,7 +389,10 @@ fi
 # wrong suspect. Worst case: an error reachable only under this config's
 # options, where tsc --build passes, this half goes INCONCLUSIVE accusing
 # itself, and the real diagnostic is never named.
-ATTRIB_RE='^[^[:space:]][^:]*:[0-9]+:[0-9]+ - error TS[0-9]+:'
+#
+# A path can contain ':', so the anchor is the `:line:col - error TS` suffix, not
+# the first colon. The by-file sed below cuts at that same suffix.
+ATTRIB_RE='^[^[:space:]].*:[0-9]+:[0-9]+ - error TS[0-9]+:'
 ATTRIB="$(grep -cE "$ATTRIB_RE" "$TSC_CLEAN")"
 ATTRIB_RC=$?
 if [[ "$ATTRIB_RC" -ge 2 ]]; then
@@ -400,7 +403,7 @@ fi
 
 # Split for reporting: a diagnostic outside scripts/ is in-program but not in
 # this gate's nominal scope, and saying so is more useful than a bare total.
-ATTRIB_SCRIPTS="$(grep -cE '^scripts/[^:]+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN")"
+ATTRIB_SCRIPTS="$(grep -cE '^scripts/.+:[0-9]+:[0-9]+ - error TS[0-9]+:' "$TSC_CLEAN")"
 ATTRIB_SCRIPTS_RC=$?
 if [[ "$ATTRIB_SCRIPTS_RC" -ge 2 ]]; then
   inconclusive "the scripts/-scoped attribution count grep failed (exit $ATTRIB_SCRIPTS_RC)"
@@ -411,7 +414,7 @@ ATTRIB_OUTSIDE=$(( ATTRIB - ATTRIB_SCRIPTS ))
 
 mktemp_or_die BY_FILE
 grep -E "$ATTRIB_RE" "$TSC_CLEAN" \
-  | sed -E 's/^([^:]+):.*/\1/' | sort | uniq -c \
+  | sed -E 's/:[0-9]+:[0-9]+ - error TS[0-9]+:.*$//' | sort | uniq -c \
   | awk '{n=$1; $1=""; sub(/^ /, ""); printf "%d\t%s\n", n, $0}' | sort -t$'\t' -k1,1nr >"$BY_FILE"
 BY_FILE_STATUS=("${PIPESTATUS[@]}")
 # Finding 2: six stages, each checked. Stage 0 (grep) legitimately returns 1
@@ -441,7 +444,7 @@ if [[ "$ATTRIB" -ne "$REPORTED" ]]; then
   inconclusive "attribution ($ATTRIB) does not reconcile with tsc's own reported total ($REPORTED)"
   NEXT_ACTION="the header-line parser above is wrong for this tsc version/output shape. Do not trust the per-file numbers. (The anchor matches ANY path, not just scripts/, so a diagnostic in an imported packages/ source is NOT an explanation for this mismatch -- those are counted. See the 'outside scripts/' line if present.)"
   say "--- raw tail, for the parser fix ---"
-  tail -20 "$TSC_CLEAN"
+  print_tsc_tail
   exit_for_inconclusive
 fi
 
