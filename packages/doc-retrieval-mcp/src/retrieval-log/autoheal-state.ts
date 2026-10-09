@@ -107,6 +107,16 @@ export function resolveMainRepoKey(cwd: string): string | null {
     const out = execFileSync('git', ['-C', cwd, 'worktree', 'list', '--porcelain'], {
       encoding: 'utf8',
       timeout: 2000,
+      // SMI-6976: without this, Node writes the failing child's stderr straight
+      // to the PARENT's stderr — default options are not quiet. This function
+      // runs on every SessionStart (startup, compact and resume) via
+      // scripts/session-priming-query.ts, whose output is injected into the
+      // model's context, so a git failure here puts raw `fatal:` lines in front
+      // of the user from a mechanism whose entire job is to fail quietly and
+      // let the banner report the problem in its own words. The return value
+      // and the thrown error are identical either way; only the live bytes
+      // differ.
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
     for (const line of out.split('\n')) {
       if (line.startsWith('worktree ')) return line.slice('worktree '.length).trim()
