@@ -392,7 +392,7 @@ fi
 #
 # A path can contain ':', so the anchor is the `:line:col - error TS` suffix, not
 # the first colon. The by-file sed below cuts at that same suffix.
-ATTRIB_RE='^[^[:space:]].*:[0-9]+:[0-9]+ - error TS[0-9]+:'
+ATTRIB_RE='^[^[:space:][:digit:]].*:[0-9]+:[0-9]+ - error TS[0-9]+:'
 ATTRIB="$(grep -cE "$ATTRIB_RE" "$TSC_CLEAN")"
 ATTRIB_RC=$?
 if [[ "$ATTRIB_RC" -ge 2 ]]; then

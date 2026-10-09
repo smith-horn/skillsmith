@@ -165,17 +165,32 @@ print_tsc_tail() {
 # Every discovered file must be in the program tsc compiled (--listFiles, from
 # $TSC_CLEAN). tsc re-expands `include` at compile time, so a file removed after
 # the inventory is dropped silently; only the compiled-file list shows it.
+# The prefix comes from node's process.cwd(), the call tsc itself uses, not from
+# bash: on a case-insensitive filesystem bash keeps the case the caller typed
+# (~/documents/...) while tsc prints the case on disk, and a bash-derived prefix
+# then matches nothing.
 verify_compiler_read_roots() {
-  local listed missing l n
+  local listed missing l n tsc_root
+  tsc_root="$(node -p 'process.cwd()' 2>/dev/null)"
+  if [[ $? -ne 0 || "$tsc_root" != /* ]]; then
+    inconclusive "could not read the compiler's working directory (node -p 'process.cwd()')"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Confirm node is on PATH and re-run."
+    exit_for_inconclusive
+  fi
   mktemp_or_die listed
   mktemp_or_die missing
   while IFS= read -r l; do
-    if [[ "$l" == "$REPO_ROOT/scripts/"* ]]; then printf '%s\n' "${l#"$REPO_ROOT"/}"; fi
+    if [[ "$l" == "$tsc_root/scripts/"* ]]; then printf '%s\n' "${l#"$tsc_root"/}"; fi
   done <"$TSC_CLEAN" | LC_ALL=C sort >"$listed"
   local -a st=("${PIPESTATUS[@]}")
   if [[ "${st[0]}" -ne 0 || "${st[1]}" -ne 0 ]]; then
     inconclusive "could not extract the compiled-file list from tsc --listFiles output (exit ${st[0]}/${st[1]})"
     NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Re-run; if it persists the cleaned tsc output is unreadable."
+    exit_for_inconclusive
+  fi
+  if [[ ! -s "$listed" ]]; then
+    inconclusive "tsc --listFiles named no file under $tsc_root/scripts/ -- the compiled-file list could not be read"
+    NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Compare the paths tsc printed with $tsc_root."
     exit_for_inconclusive
   fi
   LC_ALL=C comm -23 "$DISCOVERED_LIST" "$listed" >"$missing"
@@ -185,8 +200,8 @@ verify_compiler_read_roots() {
     NEXT_ACTION="an instrument failure, not a finding about the tree -- do NOT read it as a clean result. Re-run."
     exit_for_inconclusive
   fi
-  n="$(wc -l <"$missing" | tr -d ' ')"
-  if [[ "$n" -gt 0 ]]; then
+  if [[ -s "$missing" ]]; then
+    n="$(wc -l <"$missing" | tr -d ' ')"
     inconclusive "tsc did not read $n discovered file(s) -- removed or excluded between the inventory and the compile"
     say "--- discovered but not compiled ---"
     head -20 "$missing"

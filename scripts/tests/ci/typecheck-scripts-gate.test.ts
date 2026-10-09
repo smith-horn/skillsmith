@@ -554,15 +554,23 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     const files = ['typecheck-scripts.sh', 'typecheck-scripts.helpers.sh']
     const offenders: string[] = []
     let armCount = 0
+    let plainCount = 0
     for (const f of files) {
       const lines = readFileSync(join(REPO_ROOT, 'scripts', 'ci', f), 'utf8').split('\n')
       const r = scanInconclusiveArms(lines)
       armCount += r.armCount
+      plainCount += lines.filter((l) => !/^\s*#/.test(l) && /\binconclusive "/.test(l)).length
       for (const o of r.offenders) offenders.push(`${f}:${o}`)
     }
     // Known-positive on the scanner itself: if it found no arms at all it is
     // matching nothing, and an empty offenders list would mean nothing.
     expect(armCount).toBeGreaterThan(10)
+    // The scan masks heredoc bodies. A mis-detected heredoc start would hide
+    // every later arm, so the scan must see exactly the arms a plain line
+    // count sees.
+    expect(armCount, 'scan saw fewer arms than a plain count -- heredoc mask overreached').toBe(
+      plainCount
+    )
     // Known-positive / known-negative on the scan: an arm with no exit of its
     // own must not borrow the NEXT_ACTION and exit of the arm after it.
     const borrowing = [
@@ -961,6 +969,25 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       expect(r.status, `${call}: exit`).not.toBe(0)
       expect(Date.now() - t0, `${call}: bounded`).toBeLessThan(60_000)
     }
+  })
+
+  it('an unreadable compiled-file list is an instrument failure, not every file reported missing', () => {
+    // If tsc's --listFiles paths share no prefix with the compiler's own
+    // working directory, nothing under scripts/ is extracted. That must read
+    // as "the list could not be read", not as N files tsc skipped.
+    const dir = scratchDir('listfiles-empty')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    makeStub(
+      dir,
+      'tsc-nolist',
+      `#!/bin/sh\ncase "$*" in *--pretty*) exit 0 ;; esac\nexec ${real} "$@"\n`
+    )
+    const r = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-nolist') })
+    expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+    expect(r.out, 'cause').toContain('tsc --listFiles named no file under')
+    expect(r.out, 'not misreported as skipped files').not.toContain('did not read')
+    expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
+    expect(r.status, 'exit').not.toBe(0)
   })
 
   it("the operator's raw tail keeps tsc's own lines visible past --listFiles' absolute paths", () => {
@@ -1396,6 +1423,28 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
       expect(r.out, 'no mismatch').not.toContain('[MISMATCH]')
       expect(r.out, 'names the whole path').toContain(`scripts/${name}`)
+      expect(r.status, 'exit').toBe(1)
+    } finally {
+      rmSync(file, { force: true })
+    }
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('a code-frame line that looks like a diagnostic is not counted as one', () => {
+    // --pretty echoes the offending source line under each diagnostic,
+    // prefixed by its line number. A source line containing text shaped like
+    // `x:1:2 - error TS1:` must not be counted as a second diagnostic.
+    const name = `zz-smi6975-frame-${process.pid}.ts`
+    const file = plant(
+      `scripts/${name}`,
+      "export const planted: number = 'x:1:2 - error TS1: looks like a diagnostic'\n"
+    )
+    try {
+      const r = runGate()
+      expect(r.out, 'one diagnostic, counted once').toMatch(/\b1 total \/ 1 attributed\b/)
+      expect(r.out, 'no mismatch').not.toContain('[MISMATCH]')
+      expect(r.out, 'RESULT').toContain('RESULT         EVALUATED')
+      expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
       expect(r.status, 'exit').toBe(1)
     } finally {
       rmSync(file, { force: true })
