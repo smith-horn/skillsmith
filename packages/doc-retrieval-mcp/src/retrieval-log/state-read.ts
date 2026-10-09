@@ -69,10 +69,9 @@ export type StateReadResult<T> =
 /**
  * Hard ceiling on how large a state file {@link readRawState} will read,
  * checked via `fstatSync` on an already-open descriptor BEFORE any
- * `readSync`/`JSON.parse` call (SMI-6995 finding 12, round 2 — this read
- * runs synchronously on a `SessionStart` hook path, where an unbounded read
- * of a huge or attacker-controlled file could stall the hook or exhaust
- * memory). These files hold a handful of small JSON entries keyed by repo
+ * `readSync`/`JSON.parse` call (this read runs synchronously on a
+ * `SessionStart` hook path, where an unbounded read of a huge or
+ * attacker-controlled file could stall the hook or exhaust memory). These files hold a handful of small JSON entries keyed by repo
  * path — a real entry is low hundreds of bytes, so even a few hundred
  * concurrent worktrees land nowhere near six figures of total bytes. 1 MiB
  * is roughly three orders of magnitude over that realistic ceiling:
@@ -87,13 +86,12 @@ export const MAX_STATE_FILE_BYTES = 1_048_576 // 1 MiB
  * `readRawState` (now deleted there in favor of this one): `ENOENT` is
  * `missing`; any other open/stat/read errno is `unreadable`, carrying that
  * errno (or the error's own message when the errno is absent); a file over
- * {@link MAX_STATE_FILE_BYTES} is `unreadable` WITHOUT being read at all
- * (finding 12, round 2); a `JSON.parse` throw is `malformed`, carrying the
- * parse error's message; a value that parses but is falsy, not an object,
+ * {@link MAX_STATE_FILE_BYTES} is `unreadable` WITHOUT being read at all;
+ * a `JSON.parse` throw is `malformed`, carrying the parse error's message; a value that parses but is falsy, not an object,
  * or an array is also `malformed` — a state file is always a JSON object
  * keyed by repo path, never a bare array or scalar.
  *
- * **Single descriptor, open to close (SMI-6995 round-4 finding 4).** `path`
+ * **Single descriptor, open to close.** `path`
  * is opened exactly once. The size check (`fstatSync`) and the bounded read
  * below both run against that one descriptor — never a second
  * `statSync(path)`/`readFileSync(path)` pair that re-resolves the pathname
@@ -144,7 +142,7 @@ export function readRawState<S extends object>(
       return {
         ok: false,
         kind: 'unreadable',
-        detail: `state file is ${size} bytes, over the ${MAX_STATE_FILE_BYTES}-byte limit — refusing to read without parsing (SMI-6995 finding 12)`,
+        detail: `state file is ${size} bytes, over the ${MAX_STATE_FILE_BYTES}-byte limit — refusing to read without parsing`,
       }
     }
 
@@ -169,7 +167,7 @@ export function readRawState<S extends object>(
       return {
         ok: false,
         kind: 'unreadable',
-        detail: `state file grew past the ${MAX_STATE_FILE_BYTES}-byte limit between the size check and the read — refusing to read further (SMI-6995 finding 4)`,
+        detail: `state file grew past the ${MAX_STATE_FILE_BYTES}-byte limit between the size check and the read — refusing to read further`,
       }
     }
 
@@ -207,23 +205,22 @@ export function readRawState<S extends object>(
  * field a renderer actually reads (a `typeof` spot-check accepts garbage
  * like `{lastVerdict: "banana"}`, which then reads as `ok` and renders
  * nothing — the exact collapse this module exists to remove, recreated one
- * layer down; SMI-6995 plan review finding 1) and returns an error string,
+ * layer down) and returns an error string,
  * or `null` when the candidate is valid. A `missing` result covers BOTH "the
  * file itself is absent" and "the file is fine but this key isn't in it" —
  * those are the same fact to a caller deciding whether to render ("has not
  * run yet"), unlike `malformed`/`unreadable`, which are always worth saying
  * something about. A present entry whose value is literally JSON `null` is
- * also `missing`, not `malformed` (finding 5 — `candidate === undefined ||
+ * also `missing`, not `malformed` (`candidate === undefined ||
  * candidate === null`, not `undefined` alone: the two mean the same thing
  * to a caller, "there is nothing usable here yet," and only one of them is
  * reachable by writing JSON at all).
  *
  * `validate` is caller-supplied and therefore untrusted to behave: a
  * throwing validator must not take down the "never fails" promise this
- * function makes to its own callers (finding 1) — caught and reported as
+ * function makes to its own callers — caught and reported as
  * `malformed`, naming that the validator itself threw. `errMessage` below is
- * what renders that thrown value into text; it is itself hardened (SMI-6995
- * round-4 finding 5) so a validator that throws something hostile — a plain
+ * what renders that thrown value into text; it is itself hardened so a validator that throws something hostile — a plain
  * string, `null`, or an object whose own `toString` throws — still cannot
  * escape as an uncaught exception from HERE either.
  */
@@ -253,24 +250,22 @@ export function readEntryResult<T>(
 
 /**
  * The producer's read-modify-write counterpart to {@link readEntryResult}:
- * same `validate` contract (including the finding-1 try/catch around it —
- * see that function's doc comment), but it never fails and it tells the
- * caller whether it is about to discard history rather than silently doing
- * so.
+ * same `validate` contract (including the try/catch around it — see that
+ * function's doc comment), but it never fails and it reports whether the
+ * prior state was readable, so the caller knows whether writing would
+ * discard history.
  *
  * `priorWasCorrupt` is `true` exactly when the file OR this key's own entry
  * could not be read cleanly — a malformed/unreadable whole file (every key's
- * history is at risk, not just this one), a present entry rejected by `validate`, OR a
- * `validate` call that itself threw (finding 1). It is `false` for a
+ * history is at risk, not just this one), a present entry rejected by
+ * `validate`, OR a `validate` call that itself threw. It is `false` for a
  * genuinely missing file, for a file that parses fine but simply has never
  * had this key, and for a present entry whose value is literally JSON
- * `null` (finding 5 — same `undefined`-or-`null` test as
- * {@link readEntryResult}, so the two functions never disagree about what
- * counts as "nothing here yet" for the same file) — none of those is a
- * loss, there was nothing there to lose. A caller that sees
- * `priorWasCorrupt: true` should log that it is discarding prior history
- * before overwriting (SMI-6995 plan review finding 2) rather than
- * proceeding silently.
+ * `null` (same `undefined`-or-`null` test as {@link readEntryResult}, so
+ * the two functions never disagree about what counts as "nothing here yet"
+ * for the same file) — none of those is a loss, there was nothing there to
+ * lose. This function only classifies; it does not copy aside or otherwise
+ * preserve the corrupt bytes — the writer that does is tracked in SMI-7041.
  */
 export function readEntryForUpdate<T>(
   key: string,
@@ -296,23 +291,18 @@ export function readEntryForUpdate<T>(
 }
 
 /**
- * The producer's whole-state read, replacing the old `readStateFailSoft`
- * (SMI-6995 finding 3 — removed from this module's public surface
- * entirely, not deprecated-in-place, because leaving it reachable would
- * leave the exact defect it names reachable too). `readStateFailSoft`
- * returned `{}` on every failure and threw away WHY, so a caller physically
- * could not know it needed to quarantine before overwriting. This function
- * is now the ONLY whole-state producer read, so a caller cannot lose the
- * signal by forgetting a step: `classification` is always present, and
- * `needsQuarantine` is a derived convenience — `true` for `malformed` and
- * `unreadable`, `false` for `ok`/`missing` — specifically so a caller does
- * not have to re-derive that policy itself and get it wrong at a call site.
- * `state` is always a usable `S` (`{}` when the file could not be read), so
- * a caller can merge into it unconditionally without its own null check;
- * `detail` is `null` only when `classification` is `'ok'`.
+ * The producer's whole-state read. It is the only whole-state producer
+ * read, and it always reports WHY a read failed, so a caller cannot lose
+ * the failure signal: `classification` is always present. `state` is
+ * always a usable `S` (`{}` when the file could not be read), so a caller
+ * can merge into it unconditionally without its own null check; `detail` is
+ * `null` only when `classification` is `'ok'`.
  *
- * Never throws, matching the function it replaces — see {@link readRawState}
- * for why a corrupt read must never become an exception on this path.
+ * This function only classifies; it does not preserve corrupt bytes before
+ * a caller overwrites them — the writer that does is tracked in SMI-7041.
+ *
+ * Never throws — see {@link readRawState} for why a corrupt read must never
+ * become an exception on this path.
  */
 export function readStateWithClassification<S extends object>(
   path: string
@@ -320,18 +310,12 @@ export function readStateWithClassification<S extends object>(
   state: S
   classification: 'ok' | 'missing' | 'malformed' | 'unreadable'
   detail: string | null
-  needsQuarantine: boolean
 } {
   const raw = readRawState<S>(path)
   if (raw.ok) {
-    return { state: raw.state, classification: 'ok', detail: null, needsQuarantine: false }
+    return { state: raw.state, classification: 'ok', detail: null }
   }
-  return {
-    state: {} as S,
-    classification: raw.kind,
-    detail: raw.detail,
-    needsQuarantine: raw.kind === 'malformed' || raw.kind === 'unreadable',
-  }
+  return { state: {} as S, classification: raw.kind, detail: raw.detail }
 }
 
 // ---- internal helpers ------------------------------------------------------
