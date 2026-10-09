@@ -25,14 +25,27 @@
  * file's own comment at the bottom for why the guard was added.
  */
 import { spawnSync } from 'node:child_process'
-import { statSync } from 'node:fs'
+import { createHash, randomInt, randomUUID } from 'node:crypto'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { makeFixtureEnv } from './_lib/git-fixture-env.js'
-import { PROBE_COMMAND } from '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import {
+  BRIDGE_PROBE_DISABLE_VAR,
+  PROBE_COMMAND,
+} from '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import { extractLearningCounters, isProducerPresent } from '../ruflo-bridge-probe.mjs'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -185,58 +198,345 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
   // file unconditionally on any `code`-tier diff.
   //
   // What it asserts: the command every [ruflo-bridge] banner tells its reader
-  // to run can load the probe's module graph. Two tests previously asserted
-  // only that the banner CONTAINED the command string, which is why a command
-  // that exited 1 with ERR_MODULE_NOT_FOUND for everyone, every time, lived
-  // its whole life green.
+  // to run, tokenized and executed as written, actually runs the probe. Two
+  // tests previously asserted only that the banner CONTAINED the command
+  // string, which is why a command that exited 1 with ERR_MODULE_NOT_FOUND for
+  // everyone, every time, lived its whole life green.
   //
-  // Importing the probe is side-effect-free: under `-e` its argv[1] is
-  // undefined, so is-main-module's guard returns false and nothing spawns,
-  // locks, or writes state. Verified by snapshotting ~/.skillsmith across both
-  // arms.
+  // Sandbox: HOME, TMPDIR, XDG_*_HOME and SKILLSMITH_STATE_DIR_OVERRIDE all
+  // point inside ONE temp root, and the seeded state makes main() take its
+  // debounce path. Asserted, not assumed, for what is measured:
+  //   - launcher boundary: the probe's test-only seam
+  //     (SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST) records every launcher spawn;
+  //     a debounced run must record none.
+  //   - docker contact: a `docker` shim first on PATH records PATH-resolved
+  //     calls (an absolute-path docker call would NOT be seen by it).
+  //   - filesystem: every pre-existing file under the sandbox root keeps its
+  //     sha256, mode and size; the only additions are the log dir + file.
+  // Not measured: writes outside the sandbox root, or network calls.
   const tokens = PROBE_COMMAND.trim().split(/\s+/)
-  const scriptRel = tokens[tokens.length - 1]
-  const runner = tokens.slice(0, -1)
 
-  // One budget, derived, rather than two literals that disagree: the old
-  // version declared 120s per spawn while vitest's own testTimeout is 15s
-  // (vitest.preset.ts), so the larger number could never be reached and the
-  // smaller one was unstated. Measured runtime is 324-568ms per spawn.
-  const SPAWN_BUDGET_MS = 4_000
-  const TEST_BUDGET_MS = 2 * SPAWN_BUDGET_MS + 2_000
+  // One budget, measured: each test spawns once. A cold `npx --no-install tsx`
+  // run of the debounce path took 252-294ms in the dev container (5 runs), so
+  // 5s is ~17x the slowest. vitest's own testTimeout is 15s (vitest.preset.ts),
+  // and spawn + slack stays well under it.
+  const SPAWN_BUDGET_MS = 5_000
+  const TEST_BUDGET_MS = SPAWN_BUDGET_MS + 2_000
 
-  const run = (argv: string[], importExpr: string) =>
-    spawnSync(argv[0], [...argv.slice(1), '-e', importExpr], {
+  // path -> signature for every file and directory under root. Files: mode,
+  // size and sha256 of the bytes (mtime deliberately excluded: a same-size
+  // rewrite with a restored mtime must still be caught). Directories: mode only
+  // (their mtime legitimately moves when an entry is added).
+  const snapshot = (root: string): Map<string, string> => {
+    const out = new Map<string, string>()
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name)
+        const st = statSync(full)
+        const mode = (st.mode & 0o7777).toString(8)
+        const sig = st.isDirectory()
+          ? `dir:${mode}`
+          : `file:${mode}:${st.size}:${createHash('sha256').update(readFileSync(full)).digest('hex')}`
+        out.set(full.slice(root.length), sig)
+        if (st.isDirectory()) walk(full)
+      }
+    }
+    walk(root)
+    return out
+  }
+
+  // Executes argv EXACTLY as given (no `-e`, no substituted entry point)
+  // against a debounced fixture, so the probe's own main() runs end to end
+  // without contacting any server. The fixture pre-seeds a fresh entry for an
+  // invocation-unique key whose evaluatedAt is also invocation-unique; main()
+  // then logs `debounced — prior entry at <evaluatedAt>`. Only the probe's own
+  // code reading the seeded state can produce that line, so a command that
+  // merely prints something (e.g. `echo RESOLVED ...`) cannot forge it.
+  const runAdvertised = (argv: string[]) => {
+    const sandbox = makeFixtureTempDir('smi-7032-probe')
+    const stateDir = join(sandbox, 'state')
+    for (const d of ['state', 'home', 'tmp', 'xdg']) mkdirSync(join(sandbox, d))
+    // Pre-existing decoys so the hash comparison has bytes to protect.
+    writeFileSync(join(stateDir, 'decoy.txt'), 'smi-7032 decoy AAAA')
+    writeFileSync(join(sandbox, 'home', 'decoy.txt'), 'smi-7032 home decoy')
+    const key = `smi-7032-key-${randomUUID()}`
+    // Unique per invocation, still well inside the 24h debounce window.
+    const evaluatedAt = new Date(Date.now() - (60_000 + randomInt(1, 3_600_000))).toISOString()
+    const statePath = join(stateDir, 'ruflo-bridge.state')
+    writeFileSync(
+      statePath,
+      JSON.stringify({ [key]: { verdict: 'ok', evaluatedAt, reason: 'smi-7032 fixture' } })
+    )
+    const stateBefore = readFileSync(statePath)
+    // `docker` shim, outside stateDir so its record never enters the snapshot.
+    const shimDir = makeFixtureTempDir('smi-7032-shim')
+    const dockerLog = join(shimDir, 'docker-invocations.log')
+    const launcherLog = join(shimDir, 'launcher-invocations.log')
+    mkdirSync(join(shimDir, 'bin'))
+    const shim = join(shimDir, 'bin', 'docker')
+    writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${dockerLog}"\nexit 1\n`)
+    chmodSync(shim, 0o755)
+    const before = snapshot(sandbox)
+    const result = spawnSync(argv[0], [...argv.slice(1), '--key', key], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       timeout: SPAWN_BUDGET_MS,
-      env: makeFixtureEnv(),
+      env: makeFixtureEnv({
+        HOME: join(sandbox, 'home'),
+        TMPDIR: join(sandbox, 'tmp'),
+        XDG_CONFIG_HOME: join(sandbox, 'xdg'),
+        XDG_CACHE_HOME: join(sandbox, 'xdg'),
+        XDG_DATA_HOME: join(sandbox, 'xdg'),
+        XDG_STATE_HOME: join(sandbox, 'xdg'),
+        SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST: launcherLog,
+        VITEST: 'true',
+        PATH: `${join(shimDir, 'bin')}:${process.env.PATH ?? ''}`,
+        // Pin npx's own cache OUTSIDE the snapshot root. Otherwise it lands in
+        // $HOME/.npm whenever the runner did not export npm_config_cache: true
+        // under pre-push (vitest run directly), not under `npx vitest`. That
+        // made this test pass or fail depending on how it was invoked.
+        npm_config_cache: join(shimDir, 'npm-cache'),
+        SKILLSMITH_STATE_DIR_OVERRIDE: stateDir,
+        [BRIDGE_PROBE_DISABLE_VAR]: '',
+      }),
     })
+    const logDir = join(stateDir, 'logs')
+    const logText = existsSync(logDir)
+      ? readdirSync(logDir)
+          .map((f) => readFileSync(join(logDir, f), 'utf8'))
+          .join('\n')
+      : ''
+    const after = snapshot(sandbox)
+    const launcherCalls = existsSync(launcherLog) ? readFileSync(launcherLog, 'utf8') : ''
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    const stateUnchanged = readFileSync(statePath).equals(stateBefore)
+    return {
+      result,
+      logText,
+      evaluatedAt,
+      stateDir,
+      sandbox,
+      shimDir,
+      before,
+      after,
+      launcherCalls,
+      dockerCalls,
+      stateUnchanged,
+    }
+  }
 
   it(
-    'resolves under the named runner, and NOT under bare node',
+    'executing PROBE_COMMAND as written runs the probe script itself',
     () => {
-      expect(runner.length).toBeGreaterThan(0)
+      expect(tokens.length).toBeGreaterThan(1)
+      const scriptRel = tokens[tokens.length - 1]
+      // isFile, not merely exists: join(REPO_ROOT, '') is the root itself.
+      expect(statSync(join(REPO_ROOT, scriptRel)).isFile()).toBe(true)
 
-      const probeAbs = join(REPO_ROOT, scriptRel)
-      // isFile, not merely exists: `existsSync(join(REPO_ROOT, ''))` is true
-      // for the repo root itself, so a degenerate PROBE_COMMAND would pass an
-      // existence check while naming no script.
-      expect(statSync(probeAbs).isFile()).toBe(true)
+      const run = runAdvertised(tokens)
+      const { result, logText, evaluatedAt, sandbox, shimDir } = run
+      try {
+        expect(result.error).toBeUndefined()
+        expect(result.signal).toBeNull()
+        expect(result.status).toBe(0)
+        expect(logText).toContain(`debounced — prior entry at ${evaluatedAt}`)
+        // Debounce must PREVENT the work, not merely be reached: no launcher
+        // spawn (observed at the launcher boundary itself), no PATH-resolved
+        // docker call, and no state write.
+        expect(run.launcherCalls).toBe('')
+        expect(run.dockerCalls).toBe('')
+        expect(run.stateUnchanged).toBe(true)
+        // Every pre-existing path under the sandbox root keeps its bytes
+        // (sha256), mode and size; the only additions are the log dir + file,
+        // plus the TOOLCHAIN's own caches under TMPDIR (tsx's per-uid dir and
+        // node's compile cache, written because TMPDIR points into the sandbox;
+        // measured: the only other additions in a real run).
+        for (const [path, sig] of run.before) expect(run.after.get(path)).toBe(sig)
+        const toolchainCache = /^\/tmp\/(tsx-\d+|node-compile-cache)(\/|$)/
+        const added = [...run.after.keys()]
+          .filter((p) => !run.before.has(p) && !toolchainCache.test(p))
+          .sort()
+        expect(added).toHaveLength(2)
+        expect(added[0]).toBe('/state/logs')
+        expect(added[1]).toMatch(/^\/state\/logs\/ruflo-bridge-probe-\d{4}-\d{2}-\d{2}\.log$/)
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+        rmSync(shimDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
 
-      const importExpr = `import(${JSON.stringify(
-        `file://${probeAbs}`
-      )}).then(()=>console.log('RESOLVED')).catch((e)=>console.log('ERRCODE='+e.code))`
+  it('the launcher-record seam is test-only: absent from the advertised command and read in exactly one place', () => {
+    const SEAM = 'SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST'
+    expect(PROBE_COMMAND).not.toContain(SEAM)
+    const probeSrc = readFileSync(join(REPO_ROOT, tokens[tokens.length - 1]), 'utf8')
+    // One definition of the name, one env read: the seam is a no-op when unset.
+    expect(probeSrc.split(SEAM).length - 1).toBe(1)
+    expect(probeSrc.split('process.env[LAUNCHER_INVOKE_LOG_TEST_VAR]').length - 1).toBe(1)
+    // No git hook launches the probe with the seam set.
+    const huskyDir = join(REPO_ROOT, '.husky')
+    for (const name of readdirSync(huskyDir)) {
+      const full = join(huskyDir, name)
+      if (statSync(full).isFile()) expect(readFileSync(full, 'utf8')).not.toContain(SEAM)
+    }
+  })
 
-      const viaCommand = run(runner, importExpr)
-      expect(viaCommand.stdout ?? '').toContain('RESOLVED')
+  it(
+    'bare node on the same script does NOT run the probe (known-negative control)',
+    () => {
+      const scriptRel = tokens[tokens.length - 1]
+      const run = runAdvertised(['node', scriptRel])
+      const { result, stateDir, sandbox, shimDir } = run
+      try {
+        expect(result.error).toBeUndefined()
+        expect(result.status).not.toBe(0)
+        expect(result.stderr ?? '').toContain('ERR_MODULE_NOT_FOUND')
+        // The import fails before main() exists: no log at all (not merely
+        // "no line with this timestamp"), and nothing in the state dir moved.
+        expect(run.logText).toBe('')
+        expect(existsSync(join(stateDir, 'logs'))).toBe(false)
+        expect(run.after).toEqual(run.before)
+        expect(run.stateUnchanged).toBe(true)
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+        rmSync(shimDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
 
-      // Known-negative control, same execution. Without it this test would
-      // pass for any runner at all, including one that resolved nothing —
-      // it is what makes the positive result above evidence.
-      const viaBareNode = run(['node'], importExpr)
-      expect(viaBareNode.stdout ?? '').toContain('ERRCODE=ERR_MODULE_NOT_FOUND')
-      expect(viaBareNode.stdout ?? '').not.toContain('RESOLVED')
+  // INVARIANT (final review): the launcher-record seam can never change whether
+  // the real launcher runs, whatever the variable holds. These runs take the
+  // NON-debounce path (no seeded state), so the probe really spawns the
+  // launcher, whose first docker call is `docker ps ...` -> recorded by the shim.
+  const runLaunching = (opts: { seam?: string; dropVitest?: boolean; vitest?: string }) => {
+    const sandbox = makeFixtureTempDir('smi-7032-launch')
+    const shimDir = makeFixtureTempDir('smi-7032-launch-shim')
+    for (const d of ['state', 'home', 'tmp', 'xdg']) mkdirSync(join(sandbox, d))
+    const dockerLog = join(shimDir, 'docker-invocations.log')
+    mkdirSync(join(shimDir, 'bin'))
+    const shim = join(shimDir, 'bin', 'docker')
+    writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${dockerLog}"\nexit 1\n`)
+    chmodSync(shim, 0o755)
+    const env = makeFixtureEnv({
+      HOME: join(sandbox, 'home'),
+      TMPDIR: join(sandbox, 'tmp'),
+      XDG_CONFIG_HOME: join(sandbox, 'xdg'),
+      XDG_CACHE_HOME: join(sandbox, 'xdg'),
+      XDG_DATA_HOME: join(sandbox, 'xdg'),
+      XDG_STATE_HOME: join(sandbox, 'xdg'),
+      PATH: `${join(shimDir, 'bin')}:${process.env.PATH ?? ''}`,
+      npm_config_cache: join(shimDir, 'npm-cache'),
+      SKILLSMITH_STATE_DIR_OVERRIDE: join(sandbox, 'state'),
+      [BRIDGE_PROBE_DISABLE_VAR]: '',
+      VITEST: opts.vitest ?? 'true',
+      ...(opts.seam === undefined ? {} : { SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST: opts.seam }),
+    })
+    if (opts.dropVitest) delete env.VITEST
+    const result = spawnSync(
+      tokens[0],
+      [...tokens.slice(1), '--key', `smi-7032-launch-${randomUUID()}`],
+      { cwd: REPO_ROOT, encoding: 'utf8', timeout: SPAWN_BUDGET_MS, env }
+    )
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    return { result, dockerCalls, sandbox, shimDir }
+  }
+  const cleanup = (r: { sandbox: string; shimDir: string }) => {
+    rmSync(r.sandbox, { recursive: true, force: true })
+    rmSync(r.shimDir, { recursive: true, force: true })
+  }
+
+  it(
+    'a seam pointing at an unwritable path never stops the launcher from running, and stderr names the variable',
+    () => {
+      const run = runLaunching({ seam: '/nonexistent-smi-7032-dir/sub/launcher.log' })
+      try {
+        expect(run.result.error).toBeUndefined()
+        expect(run.result.signal).toBeNull()
+        // The real launcher ran: its first docker call is `ps ...`.
+        expect(run.dockerCalls).toMatch(/^ps /m)
+        expect(run.result.stderr).toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
+        expect(run.result.stderr).toContain('launching anyway')
+      } finally {
+        cleanup(run)
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  it(
+    'outside vitest the seam is ignored: no seam file is written, the launcher still runs, stderr names the variable',
+    () => {
+      const probeLog = join(makeFixtureTempDir('smi-7032-seam'), 'seam.log')
+      const run = runLaunching({ seam: probeLog, dropVitest: true })
+      try {
+        expect(run.result.error).toBeUndefined()
+        expect(run.dockerCalls).toMatch(/^ps /m)
+        expect(existsSync(probeLog)).toBe(false)
+        expect(run.result.stderr).toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
+        expect(run.result.stderr).toContain('ignored')
+      } finally {
+        cleanup(run)
+        rmSync(dirname(probeLog), { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  it(
+    'with VITEST=true and a valid seam path the launcher invocation is recorded exactly once (positive pair for the debounce zero-call assertion)',
+    () => {
+      const seamDir = makeFixtureTempDir('smi-7032-seam-pos')
+      const seamLog = join(seamDir, 'seam.log')
+      const run = runLaunching({ seam: seamLog, vitest: 'true' })
+      try {
+        expect(run.result.error).toBeUndefined()
+        expect(run.dockerCalls).toMatch(/^ps /m)
+        const recorded = existsSync(seamLog) ? readFileSync(seamLog, 'utf8') : ''
+        expect(recorded.split('launcher invoked: ').length - 1).toBe(1)
+      } finally {
+        cleanup(run)
+        rmSync(seamDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  it(
+    'VITEST=false does not count as under vitest: the seam is ignored and the launcher still runs',
+    () => {
+      const seamDir = makeFixtureTempDir('smi-7032-seam-false')
+      const seamLog = join(seamDir, 'seam.log')
+      const run = runLaunching({ seam: seamLog, vitest: 'false' })
+      try {
+        expect(run.result.error).toBeUndefined()
+        expect(run.dockerCalls).toMatch(/^ps /m)
+        expect(existsSync(seamLog)).toBe(false)
+        expect(run.result.stderr).toContain('ignored')
+      } finally {
+        cleanup(run)
+        rmSync(seamDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  it(
+    'with the seam absent the launcher runs and no seam file or seam note appears anywhere',
+    () => {
+      const run = runLaunching({})
+      try {
+        expect(run.result.error).toBeUndefined()
+        expect(run.dockerCalls).toMatch(/^ps /m)
+        expect(run.result.stderr).not.toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
+        const stray = [...snapshot(run.sandbox).keys(), ...snapshot(run.shimDir).keys()].filter(
+          (p) => /launcher.*\.log$/.test(p)
+        )
+        expect(stray).toEqual([])
+      } finally {
+        cleanup(run)
+      }
     },
     TEST_BUDGET_MS
   )

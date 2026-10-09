@@ -676,7 +676,7 @@ describe('runQuery — ruflo-bridge banner (SMI-6744 A5.5.2 delta)', () => {
     // could never run (SMI-7032) -- and that this file and the package test
     // BOTH pinned the same wrong literal is how the defect survived. The
     // command's runnability is asserted once, where the constant lives:
-    // ruflo-bridge-state.test.ts's SMI-7032 case executes it, with bare node
+    // scripts/tests/ruflo-bridge-probe.test.ts executes it, with bare node
     // as a known-negative control.
     expect(result.additionalContext).toContain(PROBE_COMMAND)
   })
