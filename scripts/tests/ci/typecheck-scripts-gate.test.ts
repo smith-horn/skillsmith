@@ -95,6 +95,42 @@ function runGate(
 }
 
 /**
+ * Scans shell source lines for `inconclusive "` arms. Each arm must reach its
+ * own `exit_for_inconclusive` (matched as code, never inside a comment) before
+ * any other arm begins, and the last NEXT_ACTION assignment before that exit
+ * must carry text. Offenders are returned as `<line> [reason]`.
+ */
+function scanInconclusiveArms(lines: string[]): { armCount: number; offenders: string[] } {
+  const isComment = (l: string): boolean => /^\s*#/.test(l)
+  const isArm = (l: string): boolean => !isComment(l) && /\binconclusive "/.test(l)
+  const isExit = (l: string): boolean => /^\s*exit_for_inconclusive\b(?!\s*\(\))/.test(l)
+  const offenders: string[] = []
+  let armCount = 0
+  lines.forEach((line, i) => {
+    if (!isArm(line)) return
+    armCount += 1
+    // The LAST NEXT_ACTION assignment before the exit is the one finish()
+    // renders, so it is the one that must carry text.
+    let last: string | null = null
+    let reachedExit = false
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (isArm(lines[j])) break
+      if (/^\s*(NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\b)/.test(lines[j])) last = lines[j]
+      if (isExit(lines[j])) {
+        reachedExit = true
+        break
+      }
+    }
+    if (!reachedExit) {
+      offenders.push(`${i + 1} (no exit_for_inconclusive before the next arm or end of file)`)
+      return
+    }
+    if (last === null || !assignsNextAction(last)) offenders.push(`${i + 1}`)
+  })
+  return { armCount, offenders }
+}
+
+/**
  * True only for a line that is an actual `NEXT_ACTION=` assignment whose value
  * carries literal text. A bare `includes('NEXT_ACTION=')` is satisfied by a
  * comment, an `echo`, or an empty assignment; and a source-level non-empty
@@ -289,33 +325,40 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     let armCount = 0
     for (const f of files) {
       const lines = readFileSync(join(REPO_ROOT, 'scripts', 'ci', f), 'utf8').split('\n')
-      lines.forEach((line, i) => {
-        if (!/\binconclusive "/.test(line)) return
-        armCount += 1
-        // The LAST NEXT_ACTION assignment before exit_for_inconclusive is the
-        // one finish() renders, so it is the one that must carry text: an
-        // earlier good assignment followed by NEXT_ACTION="" renders nothing.
-        // No look-ahead window: scan to the arm's own exit_for_inconclusive,
-        // and an arm that never reaches one is itself an offender.
-        let last: string | null = null
-        let reachedExit = false
-        for (let j = i + 1; j < lines.length; j += 1) {
-          if (/^\s*(NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\b)/.test(lines[j])) last = lines[j]
-          if (lines[j].includes('exit_for_inconclusive')) {
-            reachedExit = true
-            break
-          }
-        }
-        if (!reachedExit) {
-          offenders.push(`${f}:${i + 1} (no exit_for_inconclusive after this arm)`)
-          return
-        }
-        if (last === null || !assignsNextAction(last)) offenders.push(`${f}:${i + 1}`)
-      })
+      const r = scanInconclusiveArms(lines)
+      armCount += r.armCount
+      for (const o of r.offenders) offenders.push(`${f}:${o}`)
     }
     // Known-positive on the scanner itself: if it found no arms at all it is
     // matching nothing, and an empty offenders list would mean nothing.
     expect(armCount).toBeGreaterThan(10)
+    // Known-positive / known-negative on the scan: an arm with no exit of its
+    // own must not borrow the NEXT_ACTION and exit of the arm after it.
+    const borrowing = [
+      'inconclusive "first"',
+      'NEXT_ACTION="x"',
+      'inconclusive "second"',
+      'NEXT_ACTION="y"',
+      'exit_for_inconclusive',
+    ]
+    const borrowed = scanInconclusiveArms(borrowing).offenders
+    expect(borrowed, 'borrowing arm flagged').toHaveLength(1)
+    expect(borrowed[0]).toMatch(/^1 /)
+    // A comment that merely mentions exit_for_inconclusive is not an exit.
+    expect(
+      scanInconclusiveArms([
+        'inconclusive "only"',
+        'NEXT_ACTION="x"',
+        '# falls through to exit_for_inconclusive below',
+      ]).offenders,
+      'comment-only exit flagged'
+    ).toHaveLength(1)
+    // A normal arm passes.
+    expect(
+      scanInconclusiveArms(['inconclusive "ok"', 'NEXT_ACTION="x"', '  exit_for_inconclusive'])
+        .offenders,
+      'normal arm clean'
+    ).toEqual([])
     // Known-positive / known-negative on the predicate: the forgeries a plain
     // substring test accepts must be rejected, and a real assignment accepted.
     expect(assignsNextAction('    NEXT_ACTION="re-run the gate"')).toBe(true)
@@ -530,6 +573,38 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       // The refusal came before any compiler call, not after a run it ignored.
       expect(existsSync(marker), `${v}: compiler never invoked`).toBe(false)
     }
+  })
+
+  it('a compiler that hangs is still INCONCLUSIVE when the parent ignores SIGALRM', () => {
+    // An inherited SIG_IGN for ALRM survives exec, and perl's alarm() then
+    // cannot kill the command: the bound is silently lost. run_bounded resets
+    // the disposition before arming. Spawned via `trap '' ALRM; exec bash gate`
+    // so the gate inherits the ignore, as any wrapper could pass it.
+    const dir = scratchDir('hang-ignored-alrm')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    makeStub(
+      dir,
+      'tsc-hang',
+      `#!/bin/sh\ncase "$*" in *--pretty*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
+    )
+    const t0 = Date.now()
+    const r = spawnSync('bash', ['-c', `trap '' ALRM; exec bash "${GATE}"`], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: RUN_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        VITEST: 'true',
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-hang'),
+        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
+      },
+    })
+    const out = (r.stdout ?? '') + (r.stderr ?? '')
+    expect(r.status, `exit (signal ${r.signal})`).toBe(1)
+    expect(out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+    expect(out, 'cause').toMatch(/did not finish within 2s/)
+    expect(out, 'not a pass').not.toContain('VERDICT        PASS')
+    expect(Date.now() - t0, 'bounded by the alarm, not the harness budget').toBeLessThan(30_000)
   })
 
   it('a compiler that hangs on --version or --showConfig is INCONCLUSIVE, within the bound', () => {
@@ -767,6 +842,54 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       expect(existsSync(file)).toBe(false)
       expect(runGate().status).toBe(0)
     }
+  )
+
+  it(
+    'backstop: an INCONCLUSIVE arm that falls through never reaches VERDICT PASS',
+    () => {
+      // Plants a non-exiting arm into two copies of the gate, beside the original
+      // so REPO_ROOT resolves to the real tree. The control copy also deletes the
+      // backstop and must reach VERDICT PASS / exit 0, proving the planted arm
+      // really falls through to the verdict. The subject copy must not.
+      const src = readFileSync(GATE, 'utf8')
+      const anchor = 'if [[ "$ATTRIB_OUTSIDE" -gt 0 ]]; then'
+      expect(src.includes(anchor), 'plant anchor not found -- did the gate change shape?').toBe(
+        true
+      )
+      const planted = src.replace(anchor, `inconclusive "planted fall-through"\n${anchor}`)
+      const backstopRe = /\nif \[\[ "\$RESULT" != "EVALUATED" \]\]; then\n[\s\S]*?\nfi\n/
+      expect(backstopRe.test(planted), 'backstop block not found').toBe(true)
+      const control = planted.replace(backstopRe, '\n')
+      const dir = join(REPO_ROOT, 'scripts', 'ci')
+      const tag = `${process.pid}-${Date.now()}`
+      const subjectPath = join(dir, `.backstop-subject-${tag}.sh`)
+      const controlPath = join(dir, `.backstop-control-${tag}.sh`)
+      const run = (p: string) => {
+        const r = spawnSync('bash', [p], {
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+          timeout: RUN_TIMEOUT_MS,
+        })
+        if (r.status === null) throw new Error(`gate copy terminated by ${r.signal ?? 'unknown'}`)
+        return { status: r.status, out: (r.stdout ?? '') + (r.stderr ?? '') }
+      }
+      try {
+        writeFileSync(controlPath, control)
+        writeFileSync(subjectPath, planted)
+        const c = run(controlPath)
+        expect(c.out, 'control: planted arm reaches the verdict').toMatch(/VERDICT\s+PASS/)
+        expect(c.status, 'control exit').toBe(0)
+        const s = run(subjectPath)
+        expect(s.out, 'subject: no PASS').not.toMatch(/VERDICT\s+PASS/)
+        expect(s.out, 'subject: names the gate bug').toContain('gate bug')
+        expect(s.out, 'subject: RESULT').toMatch(/RESULT\s+INCONCLUSIVE/)
+        expect(s.status, 'subject exit').not.toBe(0)
+      } finally {
+        rmSync(subjectPath, { force: true })
+        rmSync(controlPath, { force: true })
+      }
+    },
+    2 * RUN_TIMEOUT_MS + 30_000
   )
 
   it('H2 regression: the attribution anchor matches diagnostics outside scripts/', () => {

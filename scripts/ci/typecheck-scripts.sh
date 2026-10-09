@@ -450,6 +450,14 @@ if [[ "$ATTRIB_OUTSIDE" -gt 0 ]]; then
   say "  outside scripts/  $ATTRIB_OUTSIDE of $ATTRIB diagnostic(s) are in imported sources (packages/**), which this config fully type-checks"
 fi
 
+# Backstop: every path that sets RESULT=INCONCLUSIVE must have exited above. If
+# one fell through, a PASS here would read RESULT INCONCLUSIVE / VERDICT PASS /
+# exit 0. Refuse rather than render it.
+if [[ "$RESULT" != "EVALUATED" ]]; then
+  NEXT_ACTION="gate bug: an INCONCLUSIVE arm fell through to the verdict without exiting; report it, do not trust this run"
+  exit_for_inconclusive
+fi
+
 if [[ "$REPORTED" -eq 0 ]]; then
   ERR_FIELD="0 total / 0 attributed   [RECONCILED]"
   VERDICT="PASS"
