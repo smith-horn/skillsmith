@@ -534,55 +534,193 @@ describe('writeEntryWithRecovery', () => {
     expect(tmpSiblings(path)).toEqual([])
   })
 
-  it('never follows a symlink planted at the predictable temp name — the sentinel it points at is untouched (SMI-6995 S4)', () => {
+  it('two writes in one process use DIFFERENT temp pathnames (invariant H: per-attempt, not per-process)', () => {
+    // Expected failure if the random suffix is replaced by a constant: both
+    // captured names are identical, so the `not.toBe` below fails.
+    const path = statePath()
+    const names: string[] = []
+    const hooks = { onTempCreated: (t: string) => names.push(t) }
+
+    writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: '1' }, { testHooks: hooks })
+    writeEntryWithRecovery<State, Entry>(path, 'key-b', { foo: '2' }, { testHooks: hooks })
+
+    expect(names).toHaveLength(2)
+    expect(names[0]).not.toBe(names[1])
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('a regular file at the OLD pid-only temp name is never unlinked or truncated, and the write succeeds (invariant H)', () => {
+    // Expected failure if unlink-on-EEXIST is restored AND the name is
+    // pid-only: the planted file would be deleted. With the per-attempt name
+    // the planted file is never even a candidate, so this pins that no
+    // code path touches it: its inode and bytes must be unchanged.
+    const dir = tmpDir()
+    const path = join(dir, 'test.state')
+    const planted = `${path}.tmp.${process.pid}`
+    writeFileSync(planted, 'ANOTHER LIVE WRITER partial bytes')
+    const inoBefore = lstatSync(planted).ino
+
+    const result = writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
+
+    expect(result.priorWasCorrupt).toBe(false)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
+    expect(lstatSync(planted).ino).toBe(inoBefore)
+    expect(readFileSync(planted, 'utf8')).toBe('ANOTHER LIVE WRITER partial bytes')
+  })
+
+  it('on EEXIST at a candidate temp name it draws a NEW name and never unlinks the existing file (invariant H)', () => {
+    // Expected failure if unlink-on-EEXIST is restored: the planted file at
+    // the first candidate is deleted, so existsSync / the content check fail.
+    const dir = tmpDir()
+    const path = join(dir, 'test.state')
+    const planted = `${path}.tmp.${process.pid}.taken`
+    writeFileSync(planted, 'IN-FLIGHT bytes of another writer')
+    const inoBefore = lstatSync(planted).ino
+    const suffixes = ['taken', 'fresh']
+    const used: string[] = []
+
+    writeEntryWithRecovery<State, Entry>(
+      path,
+      'key-a',
+      { foo: 'bar' },
+      {
+        testHooks: {
+          tempSuffix: () => suffixes.shift() ?? 'exhausted',
+          onTempCreated: (t) => used.push(t),
+        },
+      }
+    )
+
+    expect(used).toEqual([`${path}.tmp.${process.pid}.fresh`])
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
+    expect(lstatSync(planted).ino).toBe(inoBefore)
+    expect(readFileSync(planted, 'utf8')).toBe('IN-FLIGHT bytes of another writer')
+  })
+
+  it('never follows a symlink planted at a candidate temp name — the sentinel is untouched and the symlink itself is not unlinked (invariant H)', () => {
     // Expected failure if the temp file is opened with plain 'w': openSync
-    // follows the planted symlink and truncates the sentinel, so the
-    // sentinel assertion below sees '' instead of its original bytes.
+    // follows the symlink and truncates the sentinel. If unlink-on-EEXIST is
+    // restored: the symlink is removed, so the lstat below throws.
     const dir = tmpDir()
     const path = join(dir, 'test.state')
     const sentinel = join(dir, 'sentinel.txt')
     writeFileSync(sentinel, 'SENTINEL — must never be truncated')
-    symlinkSync(sentinel, `${path}.tmp.${process.pid}`)
+    const planted = `${path}.tmp.${process.pid}.taken`
+    symlinkSync(sentinel, planted)
+    const suffixes = ['taken']
 
-    const result = writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
+    const result = writeEntryWithRecovery<State, Entry>(
+      path,
+      'key-a',
+      { foo: 'bar' },
+      { testHooks: { tempSuffix: () => suffixes.shift() ?? 'exhausted' } }
+    )
 
     expect(result.priorWasCorrupt).toBe(false)
     expect(readFileSync(sentinel, 'utf8')).toBe('SENTINEL — must never be truncated')
+    expect(lstatSync(planted).isSymbolicLink()).toBe(true)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
-    expect(tmpSiblings(path)).toEqual([])
   })
 
-  it('removes a stale regular temp file left by a crashed earlier run and still writes the right state (SMI-6995 S4)', () => {
-    // Expected failure if the unlink-then-retry step is removed: the second
-    // exclusive open hits EEXIST and writeEntryWithRecovery throws
-    // RecoveryWriteError where this test expects success.
-    const dir = tmpDir()
-    const path = join(dir, 'test.state')
-    writeFileSync(`${path}.tmp.${process.pid}`, 'STALE bytes from a crashed run')
-
-    const result = writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
-
-    expect(result.priorWasCorrupt).toBe(false)
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
-    expect(tmpSiblings(path)).toEqual([])
-  })
-
-  // Behaviour pin only: no separate directory check exists, because unlink(2)
-  // itself refuses a directory (EISDIR/EPERM), so no mutation of this code
-  // distinguishes "checked" from "attempted and failed".
-  it('refuses, as RecoveryWriteError, when a directory stands at the temp name — path untouched (SMI-6995 S4)', () => {
+  it('refuses, as RecoveryWriteError, when EVERY candidate temp name is taken — nothing is unlinked, path untouched (invariant H)', () => {
+    // Expected failure if the bound is removed or unlink-on-EEXIST restored:
+    // either the call does not throw, or the planted file disappears.
     const dir = tmpDir()
     const path = join(dir, 'test.state')
     writeFileSync(path, `${JSON.stringify({ orig: { foo: 'o' } })}\n`)
-    mkdirSync(`${path}.tmp.${process.pid}`)
+    const planted = `${path}.tmp.${process.pid}.same`
+    mkdirSync(planted)
+    writeFileSync(join(planted, 'inner.txt'), 'x')
 
     const thrown = catchError(() =>
-      writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
+      writeEntryWithRecovery<State, Entry>(
+        path,
+        'key-a',
+        { foo: 'bar' },
+        { testHooks: { tempSuffix: () => 'same' } }
+      )
     )
 
     expect(thrown).toBeInstanceOf(RecoveryWriteError)
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ orig: { foo: 'o' } })
-    expect(lstatSync(`${path}.tmp.${process.pid}`).isDirectory()).toBe(true)
+    expect(lstatSync(planted).isDirectory()).toBe(true)
+    expect(readFileSync(join(planted, 'inner.txt'), 'utf8')).toBe('x')
+  })
+
+  it('reports a temp file it could not remove on the thrown error instead of swallowing it (invariant F)', () => {
+    // Expected failure if the cleanup catch swallows the failure again:
+    // `tempLeft` is [] so the toEqual([tmp]) below fails.
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ orig: { foo: 'o' } })}\n`)
+    let tmpName = ''
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(
+        path,
+        'key-a',
+        { foo: 'bar' },
+        {
+          testHooks: {
+            onTempCreated: (t) => {
+              tmpName = t
+            },
+            // The rename fails (non-empty directory at `path`) ...
+            afterCommitCheck: () => {
+              rmSync(path)
+              mkdirSync(path)
+              writeFileSync(join(path, 'inner.txt'), 'x')
+            },
+            // ... and the cleanup unlink fails too: a real EISDIR/EPERM, because
+            // a non-empty directory now stands at the temp name.
+            beforeTempCleanup: (t) => {
+              rmSync(t)
+              mkdirSync(t)
+              writeFileSync(join(t, 'inner.txt'), 'y')
+            },
+          },
+        }
+      )
+    )
+
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    expect(tmpName).not.toBe('')
+    expect((thrown as RecoveryWriteError).tempLeft).toEqual([tmpName])
+    expect((thrown as RecoveryWriteError).message).toContain(tmpName)
+    expect(lstatSync(tmpName).isDirectory()).toBe(true)
+  })
+
+  it('reports every temp file it could not remove across retried attempts, each under a distinct name (invariant F + H)', () => {
+    // Expected failure if leftovers are not collected across the 'changed'
+    // retry path: the final error carries fewer than RECOVERY_WRITE_MAX_ATTEMPTS
+    // entries. If names repeat across attempts the Set size check fails.
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ orig: { foo: 'o' } })}\n`)
+    let n = 0
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(
+        path,
+        'key-a',
+        { foo: 'bar' },
+        {
+          testHooks: {
+            // Another writer commits after the temp exists, so the pre-rename
+            // identity check returns 'changed' on every attempt.
+            onTempCreated: () => commitLikeAnotherWriter(path, { other: { foo: String(++n) } }),
+            beforeTempCleanup: (t) => {
+              rmSync(t)
+              mkdirSync(t)
+              writeFileSync(join(t, 'inner.txt'), 'y')
+            },
+          },
+        }
+      )
+    )
+
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    const left = (thrown as RecoveryWriteError).tempLeft
+    expect(left).toHaveLength(RECOVERY_WRITE_MAX_ATTEMPTS)
+    expect(new Set(left).size).toBe(RECOVERY_WRITE_MAX_ATTEMPTS)
   })
 
   it('removes its temp file when the final rename fails inside a real call (PR #3020 finding 2)', () => {

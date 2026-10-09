@@ -14,8 +14,10 @@
  * `path`. Every failure before that rename leaves `path` exactly as it was.
  *
  * **(E) No committed state is lost or mislabelled by a concurrent writer
- * that commits between this writer's read and its rename** (PR #3020
- * cross-family review, finding 1). The writer records the identity of what
+ * that commits between this writer's read and its final pre-rename identity
+ * check** (PR #3020 cross-family review, finding 1). The interval protected
+ * ends at that check, NOT at the rename: the stat-to-rename gap is the
+ * residual window named below. The writer records the identity of what
  * it read (`dev`, `ino`, `size`, `mtimeNs`, `ctimeNs`, taken before AND
  * after the read so the bytes provably belong to that identity), and:
  *
@@ -51,8 +53,20 @@
  * temp+rename) is caught; an in-place rewrite is caught only if it changes
  * the size or crosses a timestamp tick.
  *
- * **(F) The temp file never outlives a failed call** (finding 2): it is
- * removed in a `finally` unless the final rename succeeded.
+ * **(F) The temp file is removed on every failure path, best effort, and a
+ * failed removal is reported** (finding 2; round 3, finding 3): an unlink
+ * that fails is carried on the thrown {@link RecoveryWriteError}'s
+ * `tempLeft` and named in its message, never swallowed (including leftovers
+ * from earlier `'changed'` retries).
+ *
+ * **(H) A writer only ever unlinks or renames a temp file it created itself
+ * in this attempt, and two attempts never share a temp pathname** (round 3,
+ * finding 1). The name is per-ATTEMPT (`${path}.tmp.<pid>.<16 hex>`), opened
+ * `'wx'`; on `EEXIST` a NEW name is drawn (bounded by
+ * {@link TEMP_NAME_MAX_ATTEMPTS}) and the existing entry is NEVER unlinked,
+ * truncated or followed, since it may be a live writer's in-flight file
+ * (threads and re-entrant calls share a pid). Cost: a crash-orphaned temp
+ * file is never reclaimed by this code.
  *
  * **(G) The corrupt-bytes copy cannot be redirected through a symlink**
  * (finding 3). The source is opened ONCE with `O_NOFOLLOW`, validated with
@@ -64,6 +78,7 @@
  * (including an Invalid Date `now`).
  */
 
+import { randomBytes } from 'node:crypto'
 import {
   closeSync,
   constants as fsConstants,
@@ -99,6 +114,9 @@ export const QUARANTINE_DEST_MAX_ATTEMPTS = 50
  */
 export const RECOVERY_WRITE_MAX_ATTEMPTS = 5
 
+/** Fresh temp names {@link openExclusiveTemp} draws on `EEXIST` before failing closed (invariant H). */
+export const TEMP_NAME_MAX_ATTEMPTS = 8
+
 /**
  * Test-only interleaving points. Each hook runs synchronously at the named
  * point so a test can commit a competing write exactly where a concurrent
@@ -111,6 +129,12 @@ export interface RecoveryTestHooks {
   afterRead?: (attempt: number) => void
   /** writer: after the pre-rename identity check passed, before the rename — the residual window. */
   afterCommitCheck?: (attempt: number) => void
+  /** writer: right after this attempt's temp file was created, with its pathname. */
+  onTempCreated?: (tmp: string) => void
+  /** writer: replaces the random temp-name suffix (invariant H tests only). */
+  tempSuffix?: () => string
+  /** writer: just before the failure-path temp cleanup unlink (invariant F tests only). */
+  beforeTempCleanup?: (tmp: string) => void
 }
 
 /** What `path` named at one instant. `null` = nothing there; a string = stat failed with that code. */
@@ -272,11 +296,14 @@ export function copyCorruptStateAside(
  */
 export class RecoveryWriteError extends Error {
   readonly quarantinedTo: string | null
+  /** Temp files this call created and could not remove (invariant F). Empty when cleanup succeeded. */
+  readonly tempLeft: readonly string[]
 
-  constructor(message: string, quarantinedTo: string | null) {
+  constructor(message: string, quarantinedTo: string | null, tempLeft: readonly string[] = []) {
     super(message)
     this.name = 'RecoveryWriteError'
     this.quarantinedTo = quarantinedTo
+    this.tempLeft = tempLeft
   }
 }
 
@@ -300,28 +327,36 @@ export function finalizeAtomicWrite(tmp: string, path: string, quarantinedTo: st
 }
 
 /**
- * Creates `tmp` with exclusive-create (`'wx'`) so a symlink planted at the
- * predictable `${path}.tmp.<pid>` name is never followed (and its target never
- * truncated). A leftover entry at that name is unlinked first (a symlink is
- * unlinked itself, never its target); `unlink(2)` refuses a directory on every
- * platform, which surfaces as the failure below. The retry is again
- * exclusive, so a re-plant in between fails closed. Any failure surfaces as {@link RecoveryWriteError}, `path` untouched.
+ * Creates a temp file for THIS attempt with exclusive-create (`'wx'`) under a
+ * per-attempt unpredictable name (invariant H). `'wx'` never follows a
+ * symlink planted at the name and never truncates an existing file; on
+ * `EEXIST` a new name is drawn and the existing entry is left strictly alone.
+ * Any other failure, or exhausting {@link TEMP_NAME_MAX_ATTEMPTS}, surfaces
+ * as {@link RecoveryWriteError} with `path` untouched.
  */
-function openExclusiveTemp(tmp: string): number {
-  try {
+function openExclusiveTemp(
+  path: string,
+  hooks: RecoveryTestHooks | undefined
+): { tmp: string; fd: number } {
+  let lastTmp = path
+  for (let n = 0; n < TEMP_NAME_MAX_ATTEMPTS; n++) {
+    const suffix = hooks?.tempSuffix?.() ?? randomBytes(8).toString('hex')
+    const tmp = `${path}.tmp.${process.pid}.${suffix}`
+    lastTmp = tmp
     try {
-      return openSync(tmp, 'wx')
+      return { tmp, fd: openSync(tmp, 'wx') }
     } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err
+      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') continue
+      throw new RecoveryWriteError(
+        `refusing to write: could not create the temp file ${tmp} exclusively: ${errMessage(err)}`,
+        null
+      )
     }
-    unlinkSync(tmp)
-    return openSync(tmp, 'wx')
-  } catch (err) {
-    throw new RecoveryWriteError(
-      `refusing to write: could not create the temp file ${tmp} exclusively: ${errMessage(err)}`,
-      null
-    )
   }
+  throw new RecoveryWriteError(
+    `refusing to write: every one of ${TEMP_NAME_MAX_ATTEMPTS} candidate temp names beside ${lastTmp} already exists (none is ever unlinked: it may belong to a live writer)`,
+    null
+  )
 }
 
 type RecoveryResult = { quarantinedTo: string | null; priorWasCorrupt: boolean }
@@ -337,7 +372,8 @@ function attemptRecoveryWrite<S extends object, T>(
   entry: T,
   now: Date,
   attempt: number,
-  hooks: RecoveryTestHooks | undefined
+  hooks: RecoveryTestHooks | undefined,
+  tempLeft: string[]
 ): RecoveryResult | 'changed' {
   // Identity before AND after the read: equal means the bytes classified
   // below belong to `snapshot` and no other incarnation of `path`.
@@ -350,12 +386,15 @@ function attemptRecoveryWrite<S extends object, T>(
   const state: S = raw.ok ? raw.state : ({} as S)
   ;(state as Record<string, unknown>)[key] = entry
 
-  const tmp = `${path}.tmp.${process.pid}`
-  let tmpCreated = false
+  // Set only after THIS attempt's own exclusive create succeeded, so the
+  // cleanup below can never unlink a name it did not create (invariant H).
+  let tmp: string | null = null
   let committed = false
   try {
-    const fd = openExclusiveTemp(tmp)
-    tmpCreated = true
+    const opened = openExclusiveTemp(path, hooks)
+    const fd = opened.fd
+    tmp = opened.tmp
+    hooks?.onTempCreated?.(tmp)
     try {
       writeFileSync(fd, `${JSON.stringify(state, null, 2)}\n`)
       fsyncSync(fd)
@@ -386,11 +425,12 @@ function attemptRecoveryWrite<S extends object, T>(
     committed = true
     return { quarantinedTo, priorWasCorrupt }
   } finally {
-    if (tmpCreated && !committed) {
+    if (tmp !== null && !committed) {
       try {
+        hooks?.beforeTempCleanup?.(tmp)
         unlinkSync(tmp)
       } catch {
-        // best-effort; invariant F is asserted by tests on every failure path
+        tempLeft.push(tmp) // invariant F: reported, not swallowed
       }
     }
   }
@@ -400,7 +440,7 @@ function attemptRecoveryWrite<S extends object, T>(
  * The producer's whole-file read-modify-write, coordinated into one call.
  * Each attempt: identity-bracketed `readRawState(path)`; build the new
  * state (the parsed state when `ok`, else `{}`) with `state[key] = entry`;
- * write and fsync it to `${path}.tmp.<pid>`; if the prior state was
+ * write and fsync it to a per-attempt `${path}.tmp.<pid>.<random>` (H); if the prior state was
  * `malformed`/`unreadable`, copy those exact bytes aside (throwing
  * {@link RecoveryWriteError} with `quarantinedTo: null`, `path` untouched,
  * when that is impossible); re-check `path`'s identity; rename.
@@ -410,9 +450,10 @@ function attemptRecoveryWrite<S extends object, T>(
  * corrupt bytes, or `null` when nothing needed preserving — never `null`
  * alongside `priorWasCorrupt: true`, which throws instead).
  *
- * Concurrency: invariant E in this file's top comment — a writer committing
- * between read and rename forces a retry rather than being overwritten,
- * except in the residual two-syscall window that comment names.
+ * Concurrency: invariant E in this file's top comment. A writer committing
+ * before the final pre-rename identity check forces a retry rather than
+ * being overwritten; one committing in the stat-to-rename gap after it is
+ * still overwritten (the residual window that comment names).
  */
 export function writeEntryWithRecovery<S extends object, T>(
   path: string,
@@ -422,12 +463,36 @@ export function writeEntryWithRecovery<S extends object, T>(
 ): RecoveryResult {
   const now = opts?.now ?? new Date()
   mkdirSync(dirname(path), { recursive: true })
+  const tempLeft: string[] = []
+  const withLeft = (e: RecoveryWriteError): RecoveryWriteError =>
+    tempLeft.length === 0
+      ? e
+      : new RecoveryWriteError(
+          `${e.message} (could not remove temp file(s): ${tempLeft.join(', ')})`,
+          e.quarantinedTo,
+          [...tempLeft]
+        )
   for (let attempt = 1; attempt <= RECOVERY_WRITE_MAX_ATTEMPTS; attempt++) {
-    const outcome = attemptRecoveryWrite<S, T>(path, key, entry, now, attempt, opts?.testHooks)
+    let outcome: RecoveryResult | 'changed'
+    try {
+      outcome = attemptRecoveryWrite<S, T>(
+        path,
+        key,
+        entry,
+        now,
+        attempt,
+        opts?.testHooks,
+        tempLeft
+      )
+    } catch (err) {
+      throw err instanceof RecoveryWriteError ? withLeft(err) : err
+    }
     if (outcome !== 'changed') return outcome
   }
-  throw new RecoveryWriteError(
-    `refusing to write ${path}: it changed under this write on each of ${RECOVERY_WRITE_MAX_ATTEMPTS} attempts, and writing anyway would overwrite another writer's committed state`,
-    null
+  throw withLeft(
+    new RecoveryWriteError(
+      `refusing to write ${path}: it changed under this write on each of ${RECOVERY_WRITE_MAX_ATTEMPTS} attempts, and writing anyway would overwrite another writer's committed state`,
+      null
+    )
   )
 }

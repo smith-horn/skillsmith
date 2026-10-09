@@ -46,8 +46,8 @@
  *   defined in `state-read.quarantine.ts` and re-exported here — see that
  *   file's own top comment for why) — let a producer satisfy its own
  *   "always overwritable" contract WITHOUT losing the corrupt bytes, and
- *   without overwriting a state another process committed after this
- *   writer's read (see `state-read.quarantine.ts`'s invariant E for exactly
+ *   without overwriting a state another process committed before this
+ *   writer's final pre-rename identity check (see `state-read.quarantine.ts`'s invariant E for exactly
  *   what that identity check does and the residual window it does not
  *   close).
  *
@@ -128,6 +128,7 @@ export {
   RecoveryWriteError,
   QUARANTINE_DEST_MAX_ATTEMPTS,
   RECOVERY_WRITE_MAX_ATTEMPTS,
+  TEMP_NAME_MAX_ATTEMPTS,
   type RecoveryTestHooks,
 } from './state-read.quarantine.js'
 
