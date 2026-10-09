@@ -44,6 +44,13 @@
  * that holds such a lock (e.g. inside `withLock`) and calls this from
  * inside it gets full serialization against the writers that share it.
  *
+ * Also not closed: an in-place same-size rewrite of `path` that lands inside
+ * one timestamp tick of the filesystem. `dev`, `ino`, `size`, `mtimeNs` and
+ * `ctimeNs` all stay equal, so the identity compare sees no change. A writer
+ * that replaces the file (new inode, as every producer here does via
+ * temp+rename) is caught; an in-place rewrite is caught only if it changes
+ * the size or crosses a timestamp tick.
+ *
  * **(F) The temp file never outlives a failed call** (finding 2): it is
  * removed in a `finally` unless the final rename succeeded.
  *
@@ -53,7 +60,8 @@
  * second name resolution for a swap to race. A platform without
  * `O_NOFOLLOW` refuses the copy rather than copying unguarded.
  *
- * `copyCorruptStateAside` never throws; every refusal and failure is `null`.
+ * `copyCorruptStateAside` never throws; every refusal and failure is `null`
+ * (including an Invalid Date `now`).
  */
 
 import {
@@ -145,7 +153,14 @@ function sameIdentity(a: Identity, b: Identity): boolean {
  * when every candidate is taken or on any other failure.
  */
 function allocateQuarantineDest(path: string, now: Date): { dest: string; fd: number } | null {
-  const base = `${path}.corrupt-${now.toISOString().replace(/[:.]/g, '-')}`
+  let base: string
+  try {
+    // An Invalid Date makes toISOString throw RangeError; that must collapse
+    // to `null` like every other refusal, never escape a never-throws path.
+    base = `${path}.corrupt-${now.toISOString().replace(/[:.]/g, '-')}`
+  } catch {
+    return null
+  }
   for (let attempt = 0; attempt < QUARANTINE_DEST_MAX_ATTEMPTS; attempt++) {
     const dest = attempt === 0 ? base : `${base}-${attempt + 1}`
     try {
@@ -284,6 +299,31 @@ export function finalizeAtomicWrite(tmp: string, path: string, quarantinedTo: st
   }
 }
 
+/**
+ * Creates `tmp` with exclusive-create (`'wx'`) so a symlink planted at the
+ * predictable `${path}.tmp.<pid>` name is never followed (and its target never
+ * truncated). A leftover entry at that name is unlinked first (a symlink is
+ * unlinked itself, never its target); `unlink(2)` refuses a directory on every
+ * platform, which surfaces as the failure below. The retry is again
+ * exclusive, so a re-plant in between fails closed. Any failure surfaces as {@link RecoveryWriteError}, `path` untouched.
+ */
+function openExclusiveTemp(tmp: string): number {
+  try {
+    try {
+      return openSync(tmp, 'wx')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') throw err
+    }
+    unlinkSync(tmp)
+    return openSync(tmp, 'wx')
+  } catch (err) {
+    throw new RecoveryWriteError(
+      `refusing to write: could not create the temp file ${tmp} exclusively: ${errMessage(err)}`,
+      null
+    )
+  }
+}
+
 type RecoveryResult = { quarantinedTo: string | null; priorWasCorrupt: boolean }
 
 /**
@@ -314,7 +354,7 @@ function attemptRecoveryWrite<S extends object, T>(
   let tmpCreated = false
   let committed = false
   try {
-    const fd = openSync(tmp, 'w')
+    const fd = openExclusiveTemp(tmp)
     tmpCreated = true
     try {
       writeFileSync(fd, `${JSON.stringify(state, null, 2)}\n`)

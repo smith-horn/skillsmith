@@ -165,21 +165,35 @@ describe('copyCorruptStateAside', () => {
     expect(result).toBeNull()
   })
 
-  it('never throws when lstat on the source path itself fails for a reason other than ENOENT (ENAMETOOLONG)', () => {
+  it('never throws when the destination reservation fails for a reason other than EEXIST (ENAMETOOLONG)', () => {
     // Measured (not inferred, per CLAUDE.md's measure-don't-reason rule):
-    // lstatSync on a path exceeding PATH_MAX throws ENAMETOOLONG
-    // synchronously, independent of uid — confirmed live in this container
-    // before writing this test. copyCorruptStateAside's lstat happens
-    // FIRST, before any destination logic, so this is a DIFFERENT failure
-    // than the missing-path case above (lstat throws ENOENT there; a
-    // different errno here) — both must collapse to the same swallowed
-    // `null`, never a throw.
+    // a path exceeding PATH_MAX makes openSync(dest, 'wx') throw
+    // ENAMETOOLONG synchronously, independent of uid. The code no longer
+    // calls lstat; the destination reservation (allocateQuarantineDest)
+    // runs first and is where this fails, so this is a DIFFERENT failure
+    // than the missing-path case above (the reservation succeeds there and
+    // opening the source throws ENOENT) — both must collapse to the same
+    // swallowed `null`, never a throw.
     const longPath = `${statePath()}-${'a'.repeat(5000)}`
     let result: string | null | undefined
     expect(() => {
       result = copyCorruptStateAside(longPath)
     }).not.toThrow()
     expect(result).toBeNull()
+  })
+
+  it('never throws on an Invalid Date clock — toISOString RangeError collapses to null, path untouched (SMI-6995 S3)', () => {
+    // Expected failure if allocateQuarantineDest computes the name outside
+    // its try: copyCorruptStateAside throws RangeError ("Invalid time
+    // value") at the toISOString call, failing the not.toThrow below.
+    const path = statePath()
+    writeFileSync(path, 'corrupt{{{')
+    let result: string | null | undefined
+    expect(() => {
+      result = copyCorruptStateAside(path, new Date(Number.NaN))
+    }).not.toThrow()
+    expect(result).toBeNull()
+    expect(readFileSync(path, 'utf8')).toBe('corrupt{{{')
   })
 
   it('allocates a different destination when the derived one already exists, preserving what was already there AND leaving path intact (finding 2)', () => {
@@ -287,38 +301,43 @@ describe('copyCorruptStateAside', () => {
     }
   })
 
-  it('does not leak a file descriptor per call — the reservation fd is closed from a finally, not a combined expression a mutation could drop silently (finding 6)', () => {
-    const dir = tmpDir()
-    const path = join(dir, 'test.state')
-    const countOpenFds = () => readdirSync('/proc/self/fd').length
+  // Skipped (not failed) where /proc/self/fd does not exist: the descriptor
+  // count is a Linux-only measurement, so a non-Linux host has nothing to count.
+  it.skipIf(!existsSync('/proc/self/fd'))(
+    'does not leak a file descriptor per call — the reservation fd is closed from a finally, not a combined expression a mutation could drop silently (finding 6)',
+    () => {
+      const dir = tmpDir()
+      const path = join(dir, 'test.state')
+      const countOpenFds = () => readdirSync('/proc/self/fd').length
 
-    // Warm up once so one-time costs (module init, first-call lazy work)
-    // don't pollute the baseline measurement.
-    writeFileSync(path, 'warm-up')
-    copyCorruptStateAside(path, new Date('2026-06-06T06:06:06.000Z'))
+      // Warm up once so one-time costs (module init, first-call lazy work)
+      // don't pollute the baseline measurement.
+      writeFileSync(path, 'warm-up')
+      copyCorruptStateAside(path, new Date('2026-06-06T06:06:06.000Z'))
 
-    const before = countOpenFds()
-    const iterations = 200
-    for (let i = 0; i < iterations; i++) {
-      // A distinct millisecond per iteration means allocateQuarantineDest
-      // always succeeds on its first candidate — no collision-retry noise
-      // in this measurement, and `path` is never removed by a prior
-      // iteration (design decision C), so it never needs rewriting.
-      const now = new Date(Date.UTC(2026, 5, 7, 7, 7, 7, i))
-      const dest = copyCorruptStateAside(path, now)
-      expect(dest).not.toBeNull()
+      const before = countOpenFds()
+      const iterations = 200
+      for (let i = 0; i < iterations; i++) {
+        // A distinct millisecond per iteration means allocateQuarantineDest
+        // always succeeds on its first candidate — no collision-retry noise
+        // in this measurement, and `path` is never removed by a prior
+        // iteration (design decision C), so it never needs rewriting.
+        const now = new Date(Date.UTC(2026, 5, 7, 7, 7, 7, i))
+        const dest = copyCorruptStateAside(path, now)
+        expect(dest).not.toBeNull()
+      }
+      const after = countOpenFds()
+
+      // PR #3020 review finding 6: the old `< iterations / 2` bound let a
+      // mutation leaking every third descriptor (~66 here) pass. Vitest runs
+      // each test file in its own forked process and this loop is fully
+      // synchronous, so nothing else can open a descriptor between the two
+      // counts: a correct implementation's delta is exactly 0 (measured).
+      // Asserting exactly 0 (measured stable across repeated runs) is what
+      // makes a leak of even one call in 200 fail; a slack would hide it.
+      expect(after - before).toBe(0)
     }
-    const after = countOpenFds()
-
-    // PR #3020 review finding 6: the old `< iterations / 2` bound let a
-    // mutation leaking every third descriptor (~66 here) pass. Vitest runs
-    // each test file in its own forked process and this loop is fully
-    // synchronous, so nothing else can open a descriptor between the two
-    // counts: a correct implementation's delta is exactly 0 (measured).
-    // The slack of 2 only absorbs a lazily-opened runtime descriptor; any
-    // per-call leak, even one call in a hundred, exceeds it.
-    expect(after - before).toBeLessThanOrEqual(2)
-  })
+  )
 
   it('copies from the descriptor it validated, so swapping path to a symlink mid-copy cannot redirect what is preserved (PR #3020 finding 3)', () => {
     const dir = tmpDir()
@@ -492,6 +511,78 @@ describe('writeEntryWithRecovery', () => {
     expect((thrown as RecoveryWriteError).quarantinedTo).toBeNull()
     expect(readFileSync(path, 'utf8')).toBe('corrupt{{{')
     expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('surfaces an Invalid Date clock as RecoveryWriteError (not a raw RangeError) when the prior state is corrupt; path untouched, no temp file (SMI-6995 S3)', () => {
+    // Expected failure if the toISOString call escapes: the thrown value is a
+    // RangeError, so toBeInstanceOf(RecoveryWriteError) fails.
+    const path = statePath()
+    writeFileSync(path, 'corrupt{{{')
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(
+        path,
+        'key-a',
+        { foo: 'bar' },
+        { now: new Date(Number.NaN) }
+      )
+    )
+
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    expect((thrown as RecoveryWriteError).quarantinedTo).toBeNull()
+    expect(readFileSync(path, 'utf8')).toBe('corrupt{{{')
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('never follows a symlink planted at the predictable temp name — the sentinel it points at is untouched (SMI-6995 S4)', () => {
+    // Expected failure if the temp file is opened with plain 'w': openSync
+    // follows the planted symlink and truncates the sentinel, so the
+    // sentinel assertion below sees '' instead of its original bytes.
+    const dir = tmpDir()
+    const path = join(dir, 'test.state')
+    const sentinel = join(dir, 'sentinel.txt')
+    writeFileSync(sentinel, 'SENTINEL — must never be truncated')
+    symlinkSync(sentinel, `${path}.tmp.${process.pid}`)
+
+    const result = writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
+
+    expect(result.priorWasCorrupt).toBe(false)
+    expect(readFileSync(sentinel, 'utf8')).toBe('SENTINEL — must never be truncated')
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('removes a stale regular temp file left by a crashed earlier run and still writes the right state (SMI-6995 S4)', () => {
+    // Expected failure if the unlink-then-retry step is removed: the second
+    // exclusive open hits EEXIST and writeEntryWithRecovery throws
+    // RecoveryWriteError where this test expects success.
+    const dir = tmpDir()
+    const path = join(dir, 'test.state')
+    writeFileSync(`${path}.tmp.${process.pid}`, 'STALE bytes from a crashed run')
+
+    const result = writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
+
+    expect(result.priorWasCorrupt).toBe(false)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  // Behaviour pin only: no separate directory check exists, because unlink(2)
+  // itself refuses a directory (EISDIR/EPERM), so no mutation of this code
+  // distinguishes "checked" from "attempted and failed".
+  it('refuses, as RecoveryWriteError, when a directory stands at the temp name — path untouched (SMI-6995 S4)', () => {
+    const dir = tmpDir()
+    const path = join(dir, 'test.state')
+    writeFileSync(path, `${JSON.stringify({ orig: { foo: 'o' } })}\n`)
+    mkdirSync(`${path}.tmp.${process.pid}`)
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' })
+    )
+
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ orig: { foo: 'o' } })
+    expect(lstatSync(`${path}.tmp.${process.pid}`).isDirectory()).toBe(true)
   })
 
   it('removes its temp file when the final rename fails inside a real call (PR #3020 finding 2)', () => {
