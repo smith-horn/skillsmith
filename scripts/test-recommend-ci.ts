@@ -5,6 +5,7 @@
  */
 
 import { SkillRepository, createDatabase, closeDatabase } from '@skillsmith/core'
+import type { Skill } from '@skillsmith/core'
 import * as path from 'path'
 import * as os from 'os'
 
@@ -33,8 +34,14 @@ async function main() {
   const db = createDatabase(dbPath)
   const repo = new SkillRepository(db)
 
-  // Get all skills from repository
-  const allSkills = await repo.findAll({ limit: 200 })
+  // Get all skills from repository. findAll() returns PaginatedResults<Skill>
+  // (an { items, total, limit, offset, hasMore } envelope), not a bare array --
+  // the array itself is `.items`. SMI-6975: `allSkills` used to be the whole
+  // envelope with no type annotation (implicit any from the `await`'s inferred
+  // type being treated as array-like downstream), so `.length`/`.filter` below
+  // silently resolved to `undefined`/a missing method at runtime rather than
+  // failing -- strict mode now catches the shape mismatch at compile time.
+  const allSkills: Skill[] = (await repo.findAll({ limit: 200 })).items
 
   console.log(`Found ${allSkills.length} skills in database\n`)
 
@@ -64,7 +71,12 @@ async function main() {
   ]
 
   const relevantSkills = allSkills.filter((skill) => {
-    const searchText = `${skill.name} ${skill.description} ${skill.category}`.toLowerCase()
+    // SMI-6975: `Skill` has no `category` field (that's `SearchOptions.category`,
+    // a query filter, not a row property) -- `skill.category` was always
+    // `undefined` here under the prior implicit-any typing. `tags` is the real
+    // per-skill classification data, so it replaces the dead reference rather
+    // than being silenced with `any`.
+    const searchText = `${skill.name} ${skill.description} ${skill.tags.join(' ')}`.toLowerCase()
     return keywords.some((kw) => searchText.includes(kw))
   })
 
@@ -82,7 +94,7 @@ async function main() {
     relevantSkills.slice(0, 15).forEach((skill, i) => {
       console.log(`${i + 1}. ${skill.id}`)
       console.log(`   Name: ${skill.name}`)
-      console.log(`   Category: ${skill.category}`)
+      console.log(`   Tags: ${skill.tags.join(', ') || 'none'}`)
       console.log(`   Trust: ${skill.trustTier}`)
       console.log(`   Description: ${skill.description?.substring(0, 100)}...`)
       console.log('')

@@ -216,21 +216,25 @@ function mannWhitneyU(group1: number[], group2: number[]): number | null {
 
   const n1 = group1.length
   const n2 = group2.length
-  const combined = [
-    ...group1.map((v) => ({ value: v, group: 1 })),
-    ...group2.map((v) => ({ value: v, group: 2 })),
+  // SMI-6975: `rank` is assigned a line below via a mutating `as` conversion
+  // between two object types with no overlapping properties -- TS2352,
+  // correctly, since that is not a widening, it's a lie about the object's
+  // shape. The real fix is declaring `rank` as part of the shape from the
+  // start (it is always assigned before being read) rather than converting
+  // the type after construction.
+  const combined: { value: number; group: 1 | 2; rank: number }[] = [
+    ...group1.map((v) => ({ value: v, group: 1 as const, rank: 0 })),
+    ...group2.map((v) => ({ value: v, group: 2 as const, rank: 0 })),
   ].sort((a, b) => a.value - b.value)
 
   // Assign ranks
   let rank = 1
   for (const item of combined) {
-    ;(item as { rank: number }).rank = rank++
+    item.rank = rank++
   }
 
   // Sum of ranks for group 1
-  const r1 = combined
-    .filter((x) => x.group === 1)
-    .reduce((sum, x) => sum + (x as { rank: number }).rank, 0)
+  const r1 = combined.filter((x) => x.group === 1).reduce((sum, x) => sum + x.rank, 0)
 
   // U statistic
   const u1 = n1 * n2 + (n1 * (n1 + 1)) / 2 - r1
@@ -578,7 +582,16 @@ async function transformSkill(
     )
   }
 
-  const { TransformationService } = await import(distPath)
+  // SMI-6975: distPath is a computed import() target, so its module type is
+  // `any` and no static resolver can check the call below. The cast states the
+  // contract this script relies on (a sync transformWithoutCache returning this
+  // file's TransformationResult) so a drift in this file's own types is at
+  // least a compile error here; the real class is still only verified at runtime.
+  const { TransformationService } = (await import(distPath)) as {
+    TransformationService: new () => {
+      transformWithoutCache: (name: string, desc: string, content: string) => TransformationResult
+    }
+  }
   const service = new TransformationService()
   return service.transformWithoutCache(skillName, description, content)
 }

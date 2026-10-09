@@ -290,10 +290,14 @@ function validateRow(
       // boolean`, NOT a type predicate, so it does not narrow. Using it alone
       // here widened these to `unknown` and made the object un-assignable to
       // `SimRowResult` (TS2322). That went unnoticed for one review round
-      // because `tsconfig.json` is `"files": []` + `packages/` references, so
-      // `npm run typecheck` never sees `scripts/` — the same blind spot as
-      // SMI-6486, hit while fixing SMI-6481. Verify changes here with
-      // `npx tsc --noEmit --strict ... <file>` directly, not `npm run typecheck`.
+      // because, at the time, `tsconfig.json` was `"files": []` +
+      // `packages/` references only, so `npm run typecheck` never saw
+      // `scripts/` at all — the same blind spot as SMI-6486, hit while
+      // fixing SMI-6481. SMI-6975 closed that for this file: it is a
+      // non-test script, so `npm run typecheck` now typechecks it (via
+      // `scripts/ci/typecheck-all.sh`'s scripts half) and a regression of
+      // this exact shape would be a compile error there, not just in a
+      // manual `npx tsc --noEmit --strict ... <file>` run.
       ...(typeof prePortRiskScore === 'number' && Number.isFinite(prePortRiskScore)
         ? { prePortRiskScore }
         : {}),
