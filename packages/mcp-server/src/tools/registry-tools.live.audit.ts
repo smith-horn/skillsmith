@@ -30,45 +30,51 @@
  * single row the checkout webhook created for the *purchaser*, then shared with the team, so it
  * names the buyer rather than the caller.
  *
- * SMI-6114: COMMITTED MUTATIONS ARE NOT AUDITED HERE ANY MORE.
+ * SMI-6114: COMMITTED MUTATIONS ARE NOT AUDITED HERE, AND NOTHING HERE USES A SERVICE-ROLE KEY.
  *
- * This module writes through `getSupabaseAdminClient()`, which needs `SUPABASE_SERVICE_ROLE_KEY`.
- * The public MCP server never carries that key, so in production every row this module tried to
- * write was dropped with a stderr line, and prod held zero `private_registry:publish`/`approve`/
- * `reject`/`deprecate` rows while real publishes and reviews had happened (measured 2026-09-13).
- * A committed publish, approve, reject, deprecate or undeprecate is now recorded by the database
- * itself: `trg_prs_audit` (migration 20260913000000_private_registry_audit_trigger.sql) writes one
- * `audit_logs` row per state change, in the same transaction, for every caller (this server, the
- * website dashboard, anything else). This module therefore refuses a `success` row for a mutation
- * operation (see `recordRegistryAudit()`), both so a service-role-configured host cannot write a
- * duplicate and so the old, never-delivered path cannot quietly come back.
+ * This module used to write `audit_logs` through the service-role Supabase client, which needs
+ * `SUPABASE_SERVICE_ROLE_KEY`. The public MCP server never carries that key, so in production every
+ * row this module tried to write was dropped with a stderr line, and prod held zero
+ * `private_registry:publish`/`approve`/`reject`/`deprecate` rows while real publishes and reviews
+ * had happened (measured 2026-09-13). A committed publish, approve, reject, deprecate or
+ * undeprecate is recorded by the database itself: `trg_prs_audit` (migration
+ * 20260913000000_private_registry_audit_trigger.sql) writes one `audit_logs` row per state change,
+ * in the same transaction. This module therefore refuses a `success` row for a mutation operation
+ * (see `recordRegistryAudit()`).
  *
- * What still flows through here, best-effort: reads (`list`/`get`/`namespace`/`content_read`) and
- * mutation ATTEMPTS that did not commit (`denied`/`not_found`/`error`). Neither can be recorded by
- * a trigger (a read writes nothing; a denied UPDATE matches zero rows and a refused review RPC
- * rolls back). On a host without a service-role key — which includes every production MCP host —
- * these rows are NOT written; the only trace is the stderr line below. Do not read their absence
- * from `audit_logs` as evidence that no attempt happened.
+ * What flows through here: reads (`list`/`get`/`namespace`) and mutation or content-read ATTEMPTS
+ * that did not commit (`denied`/`not_found`/`error`). A trigger cannot see those (a read writes
+ * nothing; a denied UPDATE matches zero rows; a refused review RPC rolls back). They are now
+ * written by `record_private_registry_audit_attempt()` (migration
+ * 20261008000000_private_registry_audit_attempt_rpc.sql, ADR-178), called with the SAME
+ * authenticated client that already authorized the caller's own operation. No new credential
+ * enters the server. The RPC derives the actor from `auth.uid()`, so a row's actor is the identity
+ * the database verified, not one decoded from an unverified token.
+ *
+ * Rows the RPC writes are authenticated CLIENT REPORTS (`audit_source: 'client_reported'`), never
+ * member-visible and never carrying a `team_id` key. A `content_read` success/denied/not_found is
+ * written only by `release_private_registry_skill_content()`, so this module can only report a
+ * `content_read` as `error`; the type makes anything else unrepresentable and the RPC refuses it.
+ *
+ * LOCALLY-OBSERVABLE-ONLY FAILURES. A failure before an authenticated client exists (no signed-in
+ * user, token unavailable) cannot be recorded by an authenticated RPC. Those are passed as a `null`
+ * client: the RPC is skipped and the only trace is the stderr line, whose `reason` is
+ * `no_authenticated_client`. A failure AFTER the client was bound is recordable and is recorded.
  *
  * ONE ACTOR PER PATH, NEVER THE WRONG ONE (cross-provider review finding #3).
  *
  * `deprecate`/`undeprecate`/`publish` all run through the signed-in user's own JWT, so the license
- * key does **not** authorize them — `private_registry_skills_admin_update` /
- * `private_registry_skills_member_insert` do, against a real `auth.uid()`. Writing
- * `license_key:<fingerprint>` as the `actor` for those rows would name a credential that had no
- * say in the decision, which is a materially misleading security record. The `actor` is therefore
- * chosen by `authPath`: the JWT's own subject on the `user_jwt` path, the key fingerprint on the
- * `license_key` path. When the JWT path cannot yield a subject the row says `user_jwt:unknown` —
- * explicitly unattributed, never attributed to the wrong principal. The fingerprint is still
- * recorded in `metadata` on both paths, because "which key was present" stays useful for
- * correlation even when it is not the authorizing credential.
+ * key does **not** authorize them. Since ADR-178 the actor is not chosen client-side at all: the
+ * RPC records `user:<auth.uid()>`. The license-key fingerprint is still sent, as a correlation
+ * token only ("which key was present"), never as an identity.
  *
  * Fail-soft by construction: an audit write must never turn a successful publish into a failed
- * one. Failures are logged to stderr (the MCP transport's log channel) and swallowed.
+ * one. But fail-soft is NOT silent (ADR-178 § 4): a resolved `{ error }` from the RPC and a thrown
+ * call each emit exactly one structured stderr line naming the operation, result, detail and
+ * reason, and are then swallowed.
  */
 
 import { createHash } from 'node:crypto'
-import { getSupabaseAdminClient } from '../supabase-client.js'
 // SMI-6622 round 2: readRegistryCredential() also covers ~/.skillsmith/config.json, unlike
 // team-resolver.ts's env-only readLicenseKey() this replaced — see registry-tools.team.ts's own
 // doc comment on the export.
@@ -117,22 +123,34 @@ const MUTATION_OPERATIONS: ReadonlySet<string> = new Set<RegistryMutationOperati
 ])
 
 /**
- * Which credential authorized the call.
+ * Which credential authorized the call. READ-ONLY since ADR-178: the RPC always records
+ * `user_jwt`, so `license_key` can no longer be written; the arm is kept so historical rows read
+ * unambiguously.
  * - `license_key`: the shared team license key (team-scoped, no per-user identity).
  * - `user_jwt`: the signed-in user's own token, so RLS authorized it against a real `auth.uid()`.
  */
 export type RegistryAuditAuthPath = 'license_key' | 'user_jwt'
 
 /**
- * SMI-6114: a mutation operation cannot carry `result: 'success'` — the committed change is
- * audited server-side by `trg_prs_audit`. The type makes a new success call site a compile error;
- * `recordRegistryAudit()` also refuses one at runtime for untyped callers.
+ * SMI-6114: a mutation operation cannot carry `result: 'success'` (the committed change is audited
+ * server-side by `trg_prs_audit`), and `content_read` can only be reported as `error` (its other
+ * outcomes are written by `release_private_registry_skill_content()`). The types make a new call
+ * site that sends either a compile error; `recordRegistryAudit()` also refuses both at runtime for
+ * untyped callers, and the RPC refuses them with 22023 as the non-bypassable third layer.
  */
-export type RegistryAuditEvent = RegistryReadAuditEvent | RegistryMutationAuditEvent
+export type RegistryAuditEvent =
+  | RegistryReadAuditEvent
+  | RegistryContentReadAuditEvent
+  | RegistryMutationAuditEvent
 
 export type RegistryReadAuditEvent = RegistryAuditEventFields & {
-  operation: RegistryReadOperation
+  operation: Exclude<RegistryReadOperation, 'content_read'>
   result: 'success' | 'denied' | 'not_found' | 'error'
+}
+
+export type RegistryContentReadAuditEvent = RegistryAuditEventFields & {
+  operation: 'content_read'
+  result: 'error'
 }
 
 export type RegistryMutationAuditEvent = RegistryAuditEventFields & {
@@ -148,9 +166,8 @@ export interface RegistryAuditEventFields {
   version?: string
   authPath: RegistryAuditAuthPath
   /**
-   * The authenticated user's id (the JWT `sub`), on the `user_jwt` path only. Null/absent means
-   * no subject could be read from the presented token — recorded as explicitly unattributed
-   * rather than backfilled with the license-key actor, which did not authorize the call.
+   * The authenticated user's id (the JWT `sub`). Local context only since ADR-178: the RPC
+   * derives the recorded actor from `auth.uid()` and accepts no actor argument.
    */
   actorUserId?: string | null
   /**
@@ -211,11 +228,11 @@ export function licenseKeyFingerprint(licenseKey?: string): string | null {
  * Read the `sub` (user id) claim out of a Supabase access token, for audit attribution.
  *
  * Deliberately does NOT verify the signature, and must never be used to authorize anything. It is
- * only ever called on a token this process is *already presenting* to PostgREST, which verifies
- * the signature itself before RLS resolves `auth.uid()` from the same claim. So for a row whose
- * `result` is `success` or `denied`, the value recorded here is the identity the database actually
- * evaluated; for `error` it is the identity that was claimed. Either way it is strictly more
- * accurate than naming a license key that authorized nothing.
+ * only ever called on a token this process is *already presenting* to PostgREST. Since ADR-178 the
+ * audit row's actor is derived by the RPC from `auth.uid()` (the identity the database verified),
+ * so this value is local context only and no longer the recorded identity; the gap between "the
+ * identity that was claimed" and "the identity the database evaluated" is closed for every row
+ * the RPC writes.
  *
  * @param accessToken - a Supabase user access token (`skillsmith login`, SMI-4402)
  * @returns the `sub` claim, or null when the token is not a decodable three-part JWT
@@ -234,124 +251,122 @@ export function accessTokenSubject(accessToken: string): string | null {
   }
 }
 
-/**
- * Pick the `actor` string for one audit row.
- *
- * The authorizing credential differs per path, so the actor must too — see the module docstring.
- */
-function resolveActor(event: RegistryAuditEvent, fingerprint: string | null): string {
-  if (event.authPath === 'user_jwt') {
-    return event.actorUserId ? `user:${event.actorUserId}` : 'user_jwt:unknown'
+/** The RPC's own refusals (22023) mirrored client-side so an untyped caller cannot reach them. */
+function refusedPairing(event: RegistryAuditEvent): string | null {
+  if (MUTATION_OPERATIONS.has(event.operation) && (event.result as string) === 'success') {
+    return 'committed mutations are audited server-side by trg_prs_audit'
   }
-  // No user identity exists on the license-key path — say so explicitly rather than leaving
-  // `actor` NULL, which would be indistinguishable from "never recorded".
-  return fingerprint ? `license_key:${fingerprint}` : 'license_key:unknown'
+  if (event.operation === 'content_read' && (event.result as string) !== 'error') {
+    return 'content_read success/denied/not_found is written by the release RPC only'
+  }
+  return null
 }
 
 /**
- * SMI-6114 untag rule, client-side half. `audit_logs_team_scoped_read` shows a row to every member
- * of `metadata.team_id`, so that key is written only when the row describes something every member
- * can already read: a successful read (RLS-gated to approved rows, or team-wide), or a deprecate/
- * undeprecate refused for a non-admin, which `setDeprecated()` only reports after the member-read
- * probe saw the rows. Anything else may name a pending submission (a refused approve/reject, a
- * failed publish, a `get`/`content_read` miss), so it carries the team only as `registry_team_id`,
- * readable by BYPASSRLS roles alone.
- *
- * The Edge Function now applies the same rule (SMI-6651). It used to tag post-read outcomes as
- * member-visible — a `denied`/`error`/`not_found` `content_read` row written *after* its RLS-gated
- * metadata read had already returned an approved row — which made the MCP side the stricter of the
- * two. Since SMI-6651 both transports untag every non-`success` read: `private-registry-get`'s
- * `recordAudit()` carries its own `isMemberVisible()` with this predicate, and the outcomes that
- * used to be written there are written by `release_private_registry_skill_content()` instead, in
- * the same transaction as the read. Rows written before that migration keep the old tagging, so a
- * query spanning the cutover sees both conventions.
+ * The structural slice of an authenticated Supabase client this module needs. Any
+ * `MinimalSupabaseClient` satisfies it; tests inject a plain object.
  */
-function isMemberVisible(event: RegistryAuditEvent): boolean {
-  if (!MUTATION_OPERATIONS.has(event.operation)) return event.result === 'success'
-  return (
-    (event.operation === 'deprecate' || event.operation === 'undeprecate') &&
-    event.result === 'denied'
+export interface AuditRpcClient {
+  rpc: (
+    fn: string,
+    params?: Record<string, unknown>
+  ) => PromiseLike<{ error: { code?: string; message?: string } | null }>
+}
+
+const AUDIT_RPC = 'record_private_registry_audit_attempt'
+
+/** Reason recorded when no authenticated client existed to call the RPC with. */
+export const NO_AUTHENTICATED_CLIENT = 'no_authenticated_client'
+
+/**
+ * One structured stderr line per lost audit event (ADR-178 § 4). The stderr line is the ONLY trace
+ * of an audit write that failed, so it names the operation, result, detail and reason.
+ */
+function logAuditFailure(event: RegistryAuditEvent, reason: string): void {
+  console.error(
+    `[skillsmith] private-registry audit write failed ${JSON.stringify({
+      operation: event.operation,
+      result: event.result,
+      detail: event.detail ?? null,
+      reason,
+    })}`
   )
 }
 
-interface AuditInsertClient {
-  from: (table: string) => {
-    insert: (row: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }>
-  }
-}
-
 /**
- * Best-effort `audit_logs` row for a private-registry read, or for a mutation attempt that did not
- * commit. Needs a service-role key, so it is a stderr-only no-op on production MCP hosts — see the
- * module docstring (SMI-6114).
+ * Best-effort `audit_logs` row for a private-registry read, or for a mutation/content-read attempt
+ * that did not commit, written by `record_private_registry_audit_attempt()` over the caller's own
+ * authenticated client (ADR-178).
+ *
+ * @param client - the client that authorized the caller's own operation, or `null` when client
+ *   creation itself failed (the RPC is skipped and the stderr line says `no_authenticated_client`)
  *
  * Never throws: the caller's operation has already succeeded or failed on its own terms, and an
- * audit-transport problem must not change that outcome.
+ * audit-transport problem must not change that outcome. A resolved `{ error }` and a thrown call
+ * are each logged exactly once.
  */
-export async function recordRegistryAudit(event: RegistryAuditEvent): Promise<void> {
-  // SMI-6114: a committed mutation is audited by trg_prs_audit in the same transaction. Writing it
-  // here as well would duplicate that row on any host that does hold a service-role key.
-  if (MUTATION_OPERATIONS.has(event.operation) && (event.result as string) === 'success') {
+export async function recordRegistryAudit(
+  client: AuditRpcClient | null,
+  event: RegistryAuditEvent
+): Promise<void> {
+  const refusal = refusedPairing(event)
+  if (refusal) {
     console.error(
-      `[skillsmith] private-registry audit: not writing a client-side success row for ` +
-        `"${event.operation}" — committed mutations are audited server-side by trg_prs_audit`
+      `[skillsmith] private-registry audit: not writing a client-side row for ` +
+        `"${event.operation}"/"${event.result}" — ${refusal}`
     )
     return
   }
+  if (!client) {
+    logAuditFailure(event, NO_AUTHENTICATED_CLIENT)
+    return
+  }
+  // The failure reason is captured inside the try and logged AFTER it, so a resolved `{ error }`
+  // and a throw can never both log for one event.
+  let failure: string | null = null
   try {
-    const fingerprint = licenseKeyFingerprint()
-    const client = (await getSupabaseAdminClient()) as AuditInsertClient
-    // SMI-6109: list/namespace carry no single skillId — fall back to a team-wide (or, for
-    // namespace, teams-table) resource string rather than embedding "undefined" in it.
-    const resource = !event.skillId
-      ? event.operation === 'namespace'
-        ? `teams/${event.teamId}`
-        : `private_registry_skills/${event.teamId}`
-      : event.version
-        ? `private_registry_skills/${event.teamId}/${event.skillId}@${event.version}`
-        : `private_registry_skills/${event.teamId}/${event.skillId}`
-
-    const { error } = await client.from('audit_logs').insert({
-      event_type: `private_registry:${event.operation}`,
-      actor: resolveActor(event, fingerprint),
-      resource,
-      action: event.operation,
-      result: event.result,
-      metadata: {
-        ...(isMemberVisible(event) ? { team_id: event.teamId } : {}),
-        registry_team_id: event.teamId,
-        member_visible: isMemberVisible(event),
-        skill_id: event.skillId ?? null,
-        version: event.version ?? null,
-        auth_path: event.authPath,
-        // Kept on BOTH paths: on the user_jwt path the key is no longer the actor, but "which key
-        // was present when this ran" is still the only way to correlate a user's admin action with
-        // the team key their session was configured with.
-        license_key_fingerprint: fingerprint,
-        actor_user_id: event.actorUserId ?? null,
-        auth_role: event.authRole ?? null,
-        // Distinguishes these rows from the `private-registry-get` Edge Function's, which write
-        // the same event_type with `transport: 'edge_function'` (SMI-5905 Wave 2).
-        transport: 'mcp_server',
-        // Count and digest only — the content map itself is never recorded.
-        file_count: event.fileCount ?? null,
-        content_hash: event.contentHash ?? null,
-        // Recorded per-row so a future reader can tell an unattributed row from one written
-        // before published_by existed, without diffing migration timestamps.
-        published_by_available: event.authPath === 'user_jwt',
-        detail: event.detail ?? null,
-      },
+    const { error } = await client.rpc(AUDIT_RPC, {
+      p_operation: event.operation,
+      p_result: event.result,
+      p_skill_id: event.skillId ?? null,
+      p_version: event.version ?? null,
+      p_detail: event.detail ?? null,
+      p_file_count: event.fileCount ?? null,
+      p_content_hash: event.contentHash ?? null,
+      p_team_id: event.teamId,
+      p_license_key_fingerprint: licenseKeyFingerprint(),
+      p_auth_role: event.authRole ?? null,
     })
-
-    if (error) {
-      console.error(
-        `[skillsmith] private-registry audit write failed (${event.operation}): ${error.message ?? 'unknown error'}`
-      )
-    }
+    if (error) failure = error.message ?? error.code ?? 'unknown error'
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error'
-    console.error(
-      `[skillsmith] private-registry audit write failed (${event.operation}): ${message}`
-    )
+    failure = err instanceof Error ? err.message : 'unknown error'
+  }
+  if (failure !== null) logAuditFailure(event, failure)
+}
+
+/** Event for a site whose getter failed: the operation's identity, minus result and detail. */
+export type NoClientAuditContext = Omit<RegistryAuditEventFields, 'detail'> & {
+  operation: RegistryAuditOperation
+}
+
+/**
+ * Run an authenticated-client getter; if it throws, record the failure with a `null` client (so
+ * only the stderr line survives, reason `no_authenticated_client`) and rethrow the ORIGINAL error
+ * unchanged. Wraps ONLY the getter: a failure after it returns is not recorded here, so it cannot
+ * be recorded twice.
+ */
+export async function withNoClientAudit<T>(
+  context: NoClientAuditContext,
+  getter: () => Promise<T>
+): Promise<T> {
+  try {
+    return await getter()
+  } catch (err) {
+    await recordRegistryAudit(null, {
+      ...context,
+      result: 'error',
+      detail: NO_AUTHENTICATED_CLIENT,
+    } as RegistryAuditEvent)
+    throw err
   }
 }

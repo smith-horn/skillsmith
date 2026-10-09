@@ -5375,8 +5375,9 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   // SUPABASE_SERVICE_ROLE_KEY, which neither pattern below actually matches, so it never needed
   // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
   const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
-    'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
-      'best-effort audit-log write for reads and uncommitted attempts only — fail-soft, a no-op without the key; committed mutations are audited by the trg_prs_audit trigger (SMI-6114)',
+    // registry-tools.live.audit.ts's entry was removed here (SMI-6114, ADR-178): it reports audit
+    // events through record_private_registry_audit_attempt() over the caller's own client, so no
+    // getSupabaseAdminClient() call remains in that file.
     // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
     // getContent()/install() entitlement check now uses check_registry_team_entitlement(), a
     // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in

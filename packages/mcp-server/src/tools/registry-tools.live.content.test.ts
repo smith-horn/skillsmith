@@ -28,13 +28,13 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createLiveRegistryService } from './registry-tools.live.js'
+import { AUDIT_RPC } from './registry-tools.live.test-helpers.js'
 
 /** Realistically-shaped token so `accessTokenSubject()` has a real `sub` to read. */
-const { FAKE_USER_ID, FAKE_JWT } = vi.hoisted(() => {
+const { FAKE_JWT } = vi.hoisted(() => {
   const userId = '11111111-2222-3333-4444-555555555555'
   const seg = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url')
   return {
-    FAKE_USER_ID: userId,
     FAKE_JWT: `${seg({ alg: 'HS256', typ: 'JWT' })}.${seg({ sub: userId, role: 'authenticated' })}.sig`,
   }
 })
@@ -104,6 +104,7 @@ interface Recorded {
 }
 
 let deprecateRows: DeprecateRow[] = []
+/** Params of every audit RPC call (ADR-178): the client-reported rows. */
 let auditRows: Record<string, unknown>[] = []
 let userCalls: Recorded[] = []
 let adminRegistryQueries = 0
@@ -122,6 +123,10 @@ function resolveRpc(
   params: Record<string, unknown> | undefined
 ): { data: unknown; error: unknown } {
   rpcCalls.push({ kind, fn, params: params ?? {} })
+  if (fn === AUDIT_RPC) {
+    auditRows.push(params ?? {})
+    return { data: null, error: null }
+  }
   if (fn !== 'release_private_registry_skill_content') return { data: null, error: null }
   if (releaseRpcError) return { data: null, error: releaseRpcError }
   return { data: releaseResult, error: null }
@@ -149,10 +154,6 @@ function resolveTableQuery(
     }
     // setDeprecated()'s follow-up probe (`.select('id')`) when the update affected 0 rows.
     return { data: matches.map((m) => ({ id: m.id })), error: null }
-  }
-  if (r.table === 'audit_logs' && r.op === 'insert') {
-    auditRows.push(r.payload ?? {})
-    return { data: [], error: null }
   }
   return { data: [], error: null }
 }
@@ -193,8 +194,7 @@ async function installClients(): Promise<void> {
   vi.mocked(getSupabaseUserClient).mockResolvedValue(createClient('user'))
 }
 
-const lastAuditMetadata = (): Record<string, unknown> =>
-  auditRows[auditRows.length - 1].metadata as Record<string, unknown>
+const lastAudit = (): Record<string, unknown> => auditRows[auditRows.length - 1]
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -255,8 +255,8 @@ describe('getAdminUserClient / getMemberUserClient are never swapped at a call s
     await expect(createLiveRegistryService().getContent(TEAM_A, SKILL)).rejects.toThrow(
       /Failed to read registry skill content/i
     )
-    expect(lastAuditMetadata().auth_role).toBe('member')
-    expect(auditRows[auditRows.length - 1].event_type).toBe('private_registry:content_read')
+    expect(lastAudit().p_auth_role).toBe('member')
+    expect(lastAudit().p_operation).toBe('content_read')
 
     // SMI-6114: a successful deprecate writes no client-side row (trg_prs_audit records it), so
     // observe the admin binding on a deprecate the database refused instead.
@@ -266,7 +266,7 @@ describe('getAdminUserClient / getMemberUserClient are never swapped at a call s
     await expect(createLiveRegistryService().deprecate(TEAM_A, SKILL)).rejects.toThrow(
       /JWT expired/
     )
-    expect(lastAuditMetadata().auth_role).toBe('admin')
+    expect(lastAudit().p_auth_role).toBe('admin')
   })
 
   it('reaches the release RPC through the user-bound client and never touches the table directly', async () => {
@@ -394,9 +394,10 @@ describe('getContent() maps release RPC outcomes', () => {
       /Failed to read registry skill content: connection refused/
     )
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0].result).toBe('error')
-    expect(auditRows[0].actor).toBe(`user:${FAKE_USER_ID}`)
-    expect(lastAuditMetadata().detail).toBe('release_rpc_failed')
+    expect(auditRows[0].p_result).toBe('error')
+    // ADR-178: the actor is the database's; what is checked is WHICH client reported it.
+    expect(rpcCalls.filter((c) => c.fn === AUDIT_RPC).map((c) => c.kind)).toEqual(['user'])
+    expect(lastAudit().p_detail).toBe('release_rpc_failed')
   })
 
   // The RPC always returns jsonb; `data: null, error: null` means something broke server-side,
@@ -409,8 +410,8 @@ describe('getContent() maps release RPC outcomes', () => {
       /Failed to read registry skill content: release_rpc_no_data/
     )
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0].result).toBe('error')
-    expect(lastAuditMetadata().detail).toBe('release_rpc_no_data')
+    expect(auditRows[0].p_result).toBe('error')
+    expect(lastAudit().p_detail).toBe('release_rpc_no_data')
   })
 
   // An unrecognized `status` and a malformed `content` payload are different failure shapes and
@@ -421,8 +422,8 @@ describe('getContent() maps release RPC outcomes', () => {
       /release_rpc_unrecognized_status/
     )
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0].result).toBe('error')
-    expect(lastAuditMetadata().detail).toBe('release_rpc_unrecognized_status')
+    expect(auditRows[0].p_result).toBe('error')
+    expect(lastAudit().p_detail).toBe('release_rpc_unrecognized_status')
   })
 
   it('a released response with malformed content throws and audits with detail content_malformed_after_release', async () => {
@@ -431,8 +432,8 @@ describe('getContent() maps release RPC outcomes', () => {
       /content_malformed_after_release/
     )
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0].result).toBe('error')
-    expect(lastAuditMetadata().detail).toBe('content_malformed_after_release')
+    expect(auditRows[0].p_result).toBe('error')
+    expect(lastAudit().p_detail).toBe('content_malformed_after_release')
   })
 
   // The DB's own CHECK only requires a non-empty string SKILL.md; every other content key can be
@@ -444,8 +445,8 @@ describe('getContent() maps release RPC outcomes', () => {
       /content_malformed_after_release/
     )
     expect(auditRows).toHaveLength(1)
-    expect(auditRows[0].result).toBe('error')
-    expect(lastAuditMetadata().detail).toBe('content_malformed_after_release')
+    expect(auditRows[0].p_result).toBe('error')
+    expect(lastAudit().p_detail).toBe('content_malformed_after_release')
   })
 
   it('never records the content payload in the RPC-error audit row', async () => {

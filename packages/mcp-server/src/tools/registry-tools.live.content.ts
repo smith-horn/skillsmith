@@ -41,7 +41,10 @@
  * read it for the RPC's LOGIC, not for its comments.
  */
 
-import { recordRegistryAudit, type RegistryReadAuditEvent } from './registry-tools.live.audit.js'
+import {
+  recordRegistryAudit,
+  type RegistryContentReadAuditEvent,
+} from './registry-tools.live.audit.js'
 import type { RegistrySkillContent } from './registry-tools.content.types.js'
 import type { SkillContent } from './registry-tools.js'
 import type { UserClientBinding } from './registry-tools.live.auth.js'
@@ -78,7 +81,7 @@ export interface GetSkillContentParams {
 }
 
 /** Shared audit fields for every outcome of one `getContent()` call. */
-function auditBase(params: GetSkillContentParams): RegistryReadAuditEvent & { result: 'error' } {
+function auditBase(params: GetSkillContentParams): RegistryContentReadAuditEvent {
   return {
     operation: OPERATION,
     teamId: params.teamId,
@@ -130,7 +133,7 @@ export async function getSkillContent(
   if (resp.error) {
     // The only outcome this function still audits itself: the RPC call failing outright is a
     // transport/outage error, never a business outcome the RPC could have recorded.
-    await recordRegistryAudit({ ...audit, detail: 'release_rpc_failed' })
+    await recordRegistryAudit(binding.client, { ...audit, detail: 'release_rpc_failed' })
     throw new Error(
       `Failed to read registry skill content: ${resp.error.message ?? 'unknown error'}`
     )
@@ -141,7 +144,7 @@ export async function getSkillContent(
     // The RPC always returns jsonb; null data with no error means something broke server-side
     // (a transport/driver anomaly), never a legitimate "nothing to see here" — an outage must
     // never be reported as not-found.
-    await recordRegistryAudit({ ...audit, detail: 'release_rpc_no_data' })
+    await recordRegistryAudit(binding.client, { ...audit, detail: 'release_rpc_no_data' })
     throw new Error('Failed to read registry skill content: release_rpc_no_data')
   }
 
@@ -163,7 +166,10 @@ export async function getSkillContent(
     // Defensive: the RPC's own `status` values are a closed set. Anything else here is not a
     // business outcome the RPC could have audited, so this function must, with its own detail so
     // it can be told apart from a malformed `content` payload in `audit_logs`.
-    await recordRegistryAudit({ ...audit, detail: 'release_rpc_unrecognized_status' })
+    await recordRegistryAudit(binding.client, {
+      ...audit,
+      detail: 'release_rpc_unrecognized_status',
+    })
     throw new Error('Failed to read registry skill content: release_rpc_unrecognized_status')
   }
 
@@ -185,7 +191,7 @@ export async function getSkillContent(
     Array.isArray(content) ||
     !Object.values(content).every((value) => typeof value === 'string')
   ) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(binding.client, {
       ...audit,
       version: result.version,
       detail: 'content_malformed_after_release',
