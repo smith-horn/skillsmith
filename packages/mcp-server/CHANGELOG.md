@@ -10,12 +10,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   `record_private_registry_audit_attempt()` database function with the caller's own login. The
   database derives the actor from that login, and no row it writes is visible in a team's
   activity feed (ADR-178).
-  - A getter failure in `deprecate`, `undeprecate`, `publish`, `install` or `review` is now recorded
-    too, and the original error is still thrown.
+  - A getter failure (no signed-in user or no token) in `deprecate`, `undeprecate`, `publish`,
+    `install` or `review` is now logged to stderr with reason `no_authenticated_client` -- no
+    audit row can be written without an authenticated client -- and the original error is still
+    thrown.
   - Values are clamped to the database function's limits, so an oversized skill id or error
     message can no longer drop an audit record.
   - The review-queue read (`submissions`) is still not audited (SMI-7035).
-  - Requires migration `20261008000000_private_registry_audit_attempt_rpc.sql`.
+  - Requires migration `20261008000000_private_registry_audit_attempt_rpc.sql`; until it is
+    applied, audit writes fail soft with a stderr line.
 
 ## v0.7.19
 
