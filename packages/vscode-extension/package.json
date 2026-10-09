@@ -384,13 +384,13 @@
   "dependencies": {
     "cross-spawn": "7.0.6",
     "marked": "15.0.7",
-    "sanitize-html": "2.17.7"
+    "sanitize-html": "2.18.0"
   },
   "devDependencies": {
     "@types/cross-spawn": "6.0.6",
     "@types/mocha": "10.0.10",
     "@types/node": "^25.9.3",
-    "@types/sanitize-html": "2.16.1",
+    "@types/sanitize-html": "2.16.2",
     "@types/vscode": "1.125.0",
     "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "3.9.2",
