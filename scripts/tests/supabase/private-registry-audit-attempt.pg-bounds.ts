@@ -10,15 +10,11 @@ import {
   TEAM_A,
   U_MEMBER,
   attempt,
-  scalar,
   snapshot,
   sqlstate,
+  totalRows,
   type PsqlSession,
 } from './private-registry-audit-attempt.test-helpers.ts'
-
-async function totalRows(ctl: PsqlSession): Promise<string | null> {
-  return scalar((await ctl.send('SELECT count(*) FROM audit_logs;')).stdout)
-}
 
 const text = (ch: string, n: number) => ch.repeat(n)
 let bndSeq = 0

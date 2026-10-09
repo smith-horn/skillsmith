@@ -32,6 +32,7 @@ import {
   scalar,
   snapshot,
   sqlstate,
+  totalRows,
   type Ctx,
   type PsqlSession,
 } from './private-registry-audit-attempt.test-helpers.ts'
@@ -41,8 +42,26 @@ import {
   assertValueBound,
 } from './private-registry-audit-attempt.pg-bounds.ts'
 
-async function totalRows(ctl: PsqlSession): Promise<string | null> {
-  return scalar((await ctl.send('SELECT count(*) FROM audit_logs;')).stdout)
+export async function assertCatalogShape(ctl: PsqlSession) {
+  const q = (sql: string) => ctl.send(sql)
+  const cnt = await q(
+    "SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'record_private_registry_audit_attempt';"
+  )
+  expect(scalar(cnt.stdout), 'exactly one function of that name').toBe('1')
+  const names = await q(
+    "SELECT array_to_json(proargnames) FROM pg_proc WHERE proname = 'record_private_registry_audit_attempt';"
+  )
+  expect(JSON.parse(scalar(names.stdout)!), 'proargnames element for element').toEqual([
+    ...EXPECTED_ARGNAMES,
+  ])
+  const flags = await q(
+    "SELECT prosecdef, provolatile, proconfig::text, EXISTS (SELECT 1 FROM unnest(proargtypes::oid[]) t WHERE t = 'jsonb'::regtype) FROM pg_proc WHERE proname = 'record_private_registry_audit_attempt';"
+  )
+  const [secdef, vol, cfg, hasJsonb] = scalar(flags.stdout)!.split('|')
+  expect(secdef, 'prosecdef').toBe('t')
+  expect(vol, "provolatile = 'v'").toBe('v')
+  expect(cfg, 'pinned search_path').toContain('search_path=public, pg_temp')
+  expect(hasJsonb, 'no jsonb parameter').toBe('f')
 }
 
 /** Member call for one accepted pairing; list/namespace pass NULL skill. */
@@ -292,25 +311,7 @@ export function registerRpcTests(ctx: Ctx) {
 
   describe('catalog, privileges, authentication', () => {
     it('exactly one function, argument names element for element, SECURITY DEFINER, pinned search_path, VOLATILE, no jsonb', async () => {
-      const q = (sql: string) => ctl().send(sql)
-      const cnt = await q(
-        "SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'record_private_registry_audit_attempt';"
-      )
-      expect(scalar(cnt.stdout), 'exactly one function of that name').toBe('1')
-      const names = await q(
-        "SELECT array_to_json(proargnames) FROM pg_proc WHERE proname = 'record_private_registry_audit_attempt';"
-      )
-      expect(JSON.parse(scalar(names.stdout)!), 'proargnames element for element').toEqual([
-        ...EXPECTED_ARGNAMES,
-      ])
-      const flags = await q(
-        "SELECT prosecdef, provolatile, proconfig::text, EXISTS (SELECT 1 FROM unnest(proargtypes::oid[]) t WHERE t = 'jsonb'::regtype) FROM pg_proc WHERE proname = 'record_private_registry_audit_attempt';"
-      )
-      const [secdef, vol, cfg, hasJsonb] = scalar(flags.stdout)!.split('|')
-      expect(secdef, 'prosecdef').toBe('t')
-      expect(vol, "provolatile = 'v'").toBe('v')
-      expect(cfg, 'pinned search_path').toContain('search_path=public, pg_temp')
-      expect(hasJsonb, 'no jsonb parameter').toBe('f')
+      await assertCatalogShape(ctl())
     })
 
     it('monitor function is service_role-only and STABLE', async () => {
@@ -338,6 +339,12 @@ export function registerRpcTests(ctx: Ctx) {
         "SELECT public.record_private_registry_audit_attempt(p_operation => 'get', p_result => 'error');"
       )
       expect(sqlstate(res), 'service_role call is permission denied').toBe('42501')
+      expect(res.stderr, 'refused by the ACL, not by the body').toMatch(
+        /permission denied for function/
+      )
+      expect(res.stderr, 'never reaches the not_authenticated check').not.toContain(
+        'not_authenticated'
+      )
     })
 
     it('rows the RPC writes are invisible to team members through the real RLS policy', async () => {

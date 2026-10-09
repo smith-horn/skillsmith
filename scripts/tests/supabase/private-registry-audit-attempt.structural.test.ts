@@ -46,6 +46,10 @@ const VARIANTS: RevertVariant[] = [
   'team-id-key-added',
   'octet-length-bound',
   'service-role-revoke-removed',
+  'having-ge',
+  'content-read-refusal-removed',
+  'actor-parameter-added',
+  'utc-pin-removed',
 ]
 
 const rpcBody = (sql: string) =>
@@ -81,7 +85,16 @@ describe.skipIf(migrationTextLocked())('SMI-6114 -- attempt RPC (PG-free)', () =
     expect(body).not.toMatch(/'member_visible', true/)
     expect(body).toMatch(/'user:' \|\| v_uid::text/)
     expect(body).not.toMatch(/p_actor/)
-    expect(body).not.toMatch(/\bEXCEPTION\s+WHEN\b/)
+    const handler = /\bEXCEPTION\s+WHEN\b/i
+    expect(
+      handler.test(`${body}\nEXCEPTION WHEN OTHERS THEN NULL;`),
+      'known-positive control: the handler regex matches an injected handler'
+    ).toBe(true)
+    expect(
+      handler.test(`${body}\nexception when others then null;`),
+      'known-positive control: case-insensitive'
+    ).toBe(true)
+    expect(body).not.toMatch(handler)
   })
 
   it('known-negative: the team_id-key mutation DOES trip the same text check', () => {
@@ -132,7 +145,7 @@ describe.skipIf(migrationTextLocked())('SMI-6114 -- attempt RPC (PG-free)', () =
     expect(stripComments(extractFunction(NEW_MIGRATION, MON))).not.toBe('')
   })
 
-  it('the paired rollback drops both functions and the schema_version row', () => {
+  it('the paired rollback drops both functions; the schema_version DELETE stays commented out', () => {
     const p = join(
       process.cwd(),
       'supabase/rollbacks/20261008000000_private_registry_audit_attempt_rpc_down.sql'

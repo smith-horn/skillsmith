@@ -35,6 +35,10 @@ export type RevertVariant =
   | 'team-id-key-added'
   | 'octet-length-bound'
   | 'service-role-revoke-removed'
+  | 'having-ge'
+  | 'content-read-refusal-removed'
+  | 'actor-parameter-added'
+  | 'utc-pin-removed'
 
 const OP_CHECK =
   '  IF p_operation IS NULL OR char_length(p_operation) > 32 OR p_operation NOT IN\n' +
@@ -140,6 +144,64 @@ export function brokenMigrationSql(variant: RevertVariant): string {
         real,
         MUTATION_SUCCESS_REFUSAL,
         '  -- SMI-6114 REVERT-TEST: mutation-success refusal removed\n',
+        variant
+      )
+    case 'having-ge':
+      return replaceExactlyOnce(
+        real,
+        '  HAVING count(*) > p_threshold;',
+        '  HAVING count(*) >= p_threshold; -- SMI-6114 REVERT-TEST: >= instead of >',
+        variant
+      )
+    case 'content-read-refusal-removed':
+      return replaceExactlyOnce(
+        real,
+        "  IF p_operation = 'content_read' AND p_result <> 'error' THEN\n" +
+          "    RAISE EXCEPTION 'content_read success/denied/not_found is written by the release RPC only'\n" +
+          "      USING ERRCODE = '22023';\n" +
+          '  END IF;\n',
+        '  -- SMI-6114 REVERT-TEST: content_read refusal removed\n',
+        variant
+      )
+    case 'actor-parameter-added': {
+      // A caller-chosen actor parameter: the signature grows to 11 arguments. Every signature
+      // spelling in the file is widened so the migration still applies, and the smoke block's
+      // argument-name check is blinded -- otherwise the migration refuses itself before this
+      // suite's own catalog assertion gets to speak.
+      const widen = (s: string, from: string, to: string, id: string) => {
+        if (!s.includes(from)) throw new Error(`SMI-6114 revert (${variant}/${id}): anchor missing`)
+        return s.split(from).join(to)
+      }
+      let sql = replaceExactlyOnce(
+        real,
+        '  p_auth_role               TEXT    DEFAULT NULL\n)',
+        '  p_auth_role               TEXT    DEFAULT NULL,\n  p_actor                   TEXT    DEFAULT NULL\n)',
+        variant + '/param'
+      )
+      sql = widen(
+        sql,
+        'TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, TEXT, TEXT',
+        'TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, TEXT, TEXT, TEXT',
+        'sig'
+      )
+      sql = widen(
+        sql,
+        '(text,text,text,text,text,integer,text,text,text,text)',
+        '(text,text,text,text,text,integer,text,text,text,text,text)',
+        'regproc'
+      )
+      return replaceExactlyOnce(
+        sql,
+        'IF v_count <> 1 OR v_names IS DISTINCT FROM ARRAY[',
+        'IF FALSE AND v_names IS DISTINCT FROM ARRAY[ -- REVERT-TEST: smoke names check blinded\n',
+        variant + '/smoke'
+      )
+    }
+    case 'utc-pin-removed':
+      return replaceExactlyOnce(
+        real,
+        "date_trunc('hour', p_now AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+        "date_trunc('hour', p_now) AT TIME ZONE 'UTC'",
         variant
       )
     case 'service-role-revoke-removed':

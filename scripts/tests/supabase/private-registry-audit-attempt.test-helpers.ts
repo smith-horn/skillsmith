@@ -21,6 +21,9 @@
  * `ALTER DEFAULT PRIVILEGES ... GRANT EXECUTE ... TO anon`, which hosted Supabase does implicitly:
  * without it `REVOKE ... FROM anon` would be a no-op and its red-test could not bite.
  *
+ * DIAGNOSTIC ENV: SMI6114_REDS_VERBOSE=1 makes each revert-then-restore red-test print the first
+ * line of the failure it provoked (`[RED <variant>] ...`), so a run shows WHICH assertion fired.
+ *
  * @module scripts/tests/supabase/private-registry-audit-attempt.test-helpers
  */
 
@@ -86,6 +89,7 @@ export const U_PEER = '61140000-0000-0000-0000-000000000002' // second member of
 export const U_OUTSIDER = '61140000-0000-0000-0000-000000000003' // member of TEAM_B only
 export const U_LONER = '61140000-0000-0000-0000-000000000004' // member of no team
 export const U_ACTOR_A = '61140000-0000-0000-0000-00000000000a' // monitor: 201 client rows
+export const U_ACTOR_C = '61140000-0000-0000-0000-00000000000c' // monitor: exactly 200 client rows
 export const U_ACTOR_B = '61140000-0000-0000-0000-00000000000b' // monitor: 5 client + trigger rows
 export const TEAM_A = 'smi6114-team-a'
 export const TEAM_B = 'smi6114-team-b'
@@ -195,8 +199,14 @@ $ar$;
 DROP TABLE IF EXISTS audit_logs, private_registry_skills, team_members, teams, schema_version CASCADE;
 DROP FUNCTION IF EXISTS audit_private_registry_skills_change() CASCADE;
 DROP FUNCTION IF EXISTS user_team_ids() CASCADE;
-DROP FUNCTION IF EXISTS public.record_private_registry_audit_attempt(TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT, TEXT, TEXT) CASCADE;
-DROP FUNCTION IF EXISTS public.registry_audit_volume_over_threshold(INTEGER, TIMESTAMPTZ) CASCADE;
+-- Drop EVERY overload by name, not one signature: a revert variant that changes the signature
+-- (actor-parameter-added) would otherwise leave its overload behind to poison the restore build.
+DO $drop$ DECLARE r RECORD; BEGIN
+  FOR r IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('record_private_registry_audit_attempt', 'registry_audit_volume_over_threshold')
+  LOOP EXECUTE 'DROP FUNCTION ' || r.sig || ' CASCADE'; END LOOP;
+END $drop$;
 
 CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT NOT NULL, skill_namespace TEXT NOT NULL UNIQUE);
 CREATE TABLE team_members (
@@ -395,4 +405,13 @@ export function sqlstate(res: { stderr: string }): string | null {
 export function scalar(stdout: string): string | null {
   const l = stdout.split('\n').find((x) => x.trim().length > 0)
   return l === undefined ? null : l.trim()
+}
+
+/** Row count of audit_logs. THROWS on a null scalar, so a before/after comparison can never pass
+ *  as `null === null` when the query itself returned nothing. */
+export async function totalRows(ctl: PsqlSession): Promise<string> {
+  const res = await ctl.send('SELECT count(*) FROM audit_logs;')
+  const n = scalar(res.stdout)
+  if (n === null) throw new Error(`totalRows: no scalar returned (stderr: ${res.stderr})`)
+  return n
 }

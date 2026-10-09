@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest'
 import {
   U_ACTOR_A,
   U_ACTOR_B,
+  U_ACTOR_C,
   TEAM_A,
   callAs,
   claims,
@@ -109,6 +110,8 @@ export async function seedVolume(ctl: PsqlSession) {
     `SELECT public.record_private_registry_audit_attempt(p_operation => 'get', p_result => 'error', p_detail => '${tag}-' || g) FROM generate_series(1, ${n}) g;`
   const a = await callAs(ctl, 'authenticated', U_ACTOR_A, rpc(201, 'volA'))
   expect(a.stderr, 'actor A RPC rows').not.toMatch(/ERROR/)
+  const c = await callAs(ctl, 'authenticated', U_ACTOR_C, rpc(200, 'volC'))
+  expect(c.stderr, 'actor C RPC rows (exactly 200)').not.toMatch(/ERROR/)
   const b = await callAs(ctl, 'authenticated', U_ACTOR_B, rpc(5, 'volB'))
   expect(b.stderr, 'actor B RPC rows').not.toMatch(/ERROR/)
   await ctl.send('RESET ROLE;')
@@ -139,15 +142,68 @@ export async function assertVolumeAB(ctl: PsqlSession) {
     out.lines.find((l) => l.startsWith(`user:${U_ACTOR_A}|`)),
     'actor A bucket and count'
   ).toBe(`user:${U_ACTOR_A}|2026-03-10T13:00|201`)
+  expect(got.has(`user:${U_ACTOR_C}`), 'C absent at threshold 200 (exactly 200 rows)').toBe(false)
   expect(got.has(`user:${U_ACTOR_B}`), 'B not returned (5 client rows + 205 trigger rows)').toBe(
     false
   )
   expect(out.lines.length, 'result set is exactly actor A').toBe(1)
+  // Same fixture, threshold one lower: C (exactly 200) crosses, A stays, B still does not.
+  const low = await callMonitor(ctl, 199, P_NOW)
+  expect(low.stderr, 'monitor call at 199 must not error').not.toMatch(/ERROR/)
+  const gotLow = actorsOf(low.lines)
+  expect(gotLow.has(`user:${U_ACTOR_C}`), 'C present at threshold 199').toBe(true)
+  expect(gotLow.has(`user:${U_ACTOR_A}`), 'A still present at threshold 199').toBe(true)
+  expect(gotLow.has(`user:${U_ACTOR_B}`), 'B still absent at threshold 199').toBe(false)
+  expect(low.lines.length, 'result set at 199 is exactly A and C').toBe(2)
+}
+
+/** Under a non-UTC fractional-offset session zone the monitor returns the identical result set. */
+export async function assertKathmanduSameBoundaries(ctl: PsqlSession) {
+  await seedBoundaries(ctl)
+  const utc = await callMonitor(ctl, 0, P_NOW)
+  try {
+    await ctl.send(`SET TIME ZONE 'Asia/Kathmandu';`)
+    const tz = await ctl.send(`SELECT current_setting('TimeZone');`)
+    expect(scalar(tz.stdout), 'control: the session zone is really in force').toBe('Asia/Kathmandu')
+    const naive = await ctl.send(
+      `SELECT to_char(date_trunc('hour', '${P_NOW}'::timestamptz) AT TIME ZONE 'UTC', 'HH24:MI');`
+    )
+    expect(scalar(naive.stdout), 'control: a session-local hour bucket would start at :15Z').toBe(
+      '14:15'
+    )
+    const npt = await callMonitor(ctl, 0, P_NOW)
+    expect(npt.stderr).not.toMatch(/ERROR/)
+    expect(npt.lines, 'identical result set under Asia/Kathmandu').toEqual(utc.lines)
+    expect(npt.lines.length, 'and it is not vacuously empty').toBe(4)
+  } finally {
+    await ctl.send(`SET TIME ZONE 'UTC';`)
+  }
+}
+
+/** One REAL INSERT through the REAL trg_prs_audit: exactly one row for that resource, and it is the
+ *  trigger's own (audit_source = trg_prs_audit) -- paired presence, so "one" is not "one of nothing". */
+export async function assertNoDoubleWrite(ctl: PsqlSession) {
+  await ctl.send('RESET ROLE;')
+  await ctl.send(claims(U_ACTOR_B))
+  const res = await ctl.send(`${realAuditTriggerSql()}
+    INSERT INTO private_registry_skills (team_id, skill_id, version, content, content_hash)
+      VALUES ('${TEAM_A}', 'nsa6114/dw', '1.0.0', '{"SKILL.md":"x"}'::jsonb, 'h-dw');
+    DROP TRIGGER trg_prs_audit ON private_registry_skills;`)
+  expect(res.stderr, 'trigger install + real INSERT + drop').not.toMatch(/ERROR/)
+  const r = await ctl.send(
+    `SELECT count(*), count(*) FILTER (WHERE metadata->>'audit_source' = 'trg_prs_audit' AND event_type = 'private_registry:publish') FROM audit_logs WHERE resource = 'private_registry_skills/${TEAM_A}/nsa6114/dw@1.0.0';`
+  )
+  const [total, marked] = (scalar(r.stdout) ?? '').split('|')
+  expect(marked, 'paired presence: the trigger wrote its own publish row').toBe('1')
+  expect(total, 'exactly one row for the committed mutation').toBe('1')
 }
 
 export function registerMonitorTests(ctx: Ctx) {
   const ctl = () => ctx.ctl()
   describe('registry_audit_volume_over_threshold()', () => {
+    it('a committed mutation through the real trigger writes exactly one row (no double write)', async () => {
+      await assertNoDoubleWrite(ctl())
+    })
     it('window boundaries: presence and absence in one result set', async () => {
       await assertBoundaries(ctl())
     })
@@ -155,28 +211,7 @@ export function registerMonitorTests(ctx: Ctx) {
       await assertVolumeAB(ctl())
     })
     it('a session TimeZone of Asia/Kathmandu gives the same UTC boundaries', async () => {
-      await seedBoundaries(ctl())
-      const utc = await callMonitor(ctl(), 0, P_NOW)
-      try {
-        await ctl().send(`SET TIME ZONE 'Asia/Kathmandu';`)
-        const tz = await ctl().send(`SELECT current_setting('TimeZone');`)
-        expect(scalar(tz.stdout), 'control: the session zone is really in force').toBe(
-          'Asia/Kathmandu'
-        )
-        const naive = await ctl().send(
-          `SELECT to_char(date_trunc('hour', '${P_NOW}'::timestamptz) AT TIME ZONE 'UTC', 'HH24:MI');`
-        )
-        expect(
-          scalar(naive.stdout),
-          'control: a session-local hour bucket would start at :15Z'
-        ).toBe('14:15')
-        const npt = await callMonitor(ctl(), 0, P_NOW)
-        expect(npt.stderr).not.toMatch(/ERROR/)
-        expect(npt.lines, 'identical result set under Asia/Kathmandu').toEqual(utc.lines)
-        expect(npt.lines.length, 'and it is not vacuously empty').toBe(4)
-      } finally {
-        await ctl().send(`SET TIME ZONE 'UTC';`)
-      }
+      await assertKathmanduSameBoundaries(ctl())
     })
     it('two consecutive hourly boundaries both include the intervening bucket', async () => {
       await insertRow(ctl(), 'user:mid', '2026-03-10 13:30:00+00')
