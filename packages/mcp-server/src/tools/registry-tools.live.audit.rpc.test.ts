@@ -112,6 +112,42 @@ describe('recordRegistryAudit() — the RPC call', () => {
     expect(stderr).not.toHaveBeenCalled()
   })
 
+  it('clamps every bounded parameter to the RPC bound (22023 would drop the row)', async () => {
+    const rpc = vi.fn(async (_fn: string, _params?: Record<string, unknown>) => ({ error: null }))
+    const long = {
+      detail: 'd'.repeat(5000),
+      skillId: 's'.repeat(300),
+      version: 'v'.repeat(100),
+      contentHash: 'h'.repeat(200),
+      teamId: 't'.repeat(200),
+    }
+    await recordRegistryAudit({ rpc }, { ...event, ...long })
+
+    expect(rpc).toHaveBeenCalledTimes(1)
+    const params = rpc.mock.calls[0][1] as Record<string, string>
+    const expected: Array<[string, string, number]> = [
+      ['p_detail', long.detail, 1024],
+      ['p_skill_id', long.skillId, 256],
+      ['p_version', long.version, 64],
+      ['p_content_hash', long.contentHash, 128],
+      ['p_team_id', long.teamId, 128],
+    ]
+    for (const [key, input, bound] of expected) {
+      expect(params[key], key).toHaveLength(bound)
+      expect(input.startsWith(params[key]), key).toBe(true)
+    }
+    expect(stderr).not.toHaveBeenCalled()
+  })
+
+  it('clamps detail in the stderr failure line too', async () => {
+    const rpc = vi.fn(async () => ({ error: { message: 'refused' } }))
+    await recordRegistryAudit({ rpc }, { ...event, detail: 'x'.repeat(5000) })
+    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(stderr).toHaveBeenCalledTimes(1)
+    expect(stderrLines()[0]).toContain(`"detail":"${'x'.repeat(1024)}"`)
+    expect(stderrLines()[0]).not.toContain('x'.repeat(1025))
+  })
+
   it('sends NULL, not undefined, for omitted optional fields', async () => {
     const rpc = vi.fn(async (_fn: string, _params?: Record<string, unknown>) => ({ error: null }))
     await recordRegistryAudit(

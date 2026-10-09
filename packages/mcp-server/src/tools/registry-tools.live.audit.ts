@@ -275,6 +275,23 @@ export interface AuditRpcClient {
 
 const AUDIT_RPC = 'record_private_registry_audit_attempt'
 
+/**
+ * The RPC's length bounds (migration 20261008000000), which it enforces with 22023. An over-length
+ * value would drop the whole audit row, so every bounded argument is clamped to them first.
+ */
+const AUDIT_BOUNDS = {
+  skillId: 256,
+  version: 64,
+  detail: 1024,
+  contentHash: 128,
+  teamId: 128,
+} as const
+
+/** Truncates by `.length` (UTF-16 units >= characters), so it can only over-trim, never exceed. */
+function clamp<T extends string | null | undefined>(value: T, max: number): T {
+  return (typeof value === 'string' && value.length > max ? value.slice(0, max) : value) as T
+}
+
 /** Reason recorded when no authenticated client existed to call the RPC with. */
 export const NO_AUTHENTICATED_CLIENT = 'no_authenticated_client'
 
@@ -287,7 +304,7 @@ function logAuditFailure(event: RegistryAuditEvent, reason: string): void {
     `[skillsmith] private-registry audit write failed ${JSON.stringify({
       operation: event.operation,
       result: event.result,
-      detail: event.detail ?? null,
+      detail: clamp(event.detail, AUDIT_BOUNDS.detail) ?? null,
       reason,
     })}`
   )
@@ -328,12 +345,12 @@ export async function recordRegistryAudit(
     const { error } = await client.rpc(AUDIT_RPC, {
       p_operation: event.operation,
       p_result: event.result,
-      p_skill_id: event.skillId ?? null,
-      p_version: event.version ?? null,
-      p_detail: event.detail ?? null,
+      p_skill_id: clamp(event.skillId, AUDIT_BOUNDS.skillId) ?? null,
+      p_version: clamp(event.version, AUDIT_BOUNDS.version) ?? null,
+      p_detail: clamp(event.detail, AUDIT_BOUNDS.detail) ?? null,
       p_file_count: event.fileCount ?? null,
-      p_content_hash: event.contentHash ?? null,
-      p_team_id: event.teamId,
+      p_content_hash: clamp(event.contentHash, AUDIT_BOUNDS.contentHash) ?? null,
+      p_team_id: clamp(event.teamId, AUDIT_BOUNDS.teamId),
       p_license_key_fingerprint: licenseKeyFingerprint(),
       p_auth_role: event.authRole ?? null,
     })
