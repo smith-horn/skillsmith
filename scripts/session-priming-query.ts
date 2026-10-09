@@ -57,6 +57,7 @@ import {
   BRIDGE_VERDICT_SHADOW_VAR,
   isValidCount,
   LIVENESS_DAYS_VAR,
+  PROBE_COMMAND,
   readEntryResult as readBridgeEntryResult,
   renderBridgeBanner,
   resolveBridgeLogPath,
@@ -319,7 +320,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       fault = `the bridge-verdict reader failed: ${msg}`
     }
     const rendered = fault
-      ? `**[ruflo-bridge]** verdict not evaluated: ${fault} — run: node scripts/ruflo-bridge-probe.mjs — disable: SKILLSMITH_RUFLO_VERDICT_DISABLE=1`
+      ? `**[ruflo-bridge]** verdict not evaluated: ${fault} — run: ${PROBE_COMMAND} — disable: SKILLSMITH_RUFLO_VERDICT_DISABLE=1`
       : computed
     if (rendered) {
       const shadow = process.env[BRIDGE_VERDICT_SHADOW_VAR] !== '0'
