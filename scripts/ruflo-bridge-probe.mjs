@@ -134,7 +134,7 @@ const SECOND_CALL_MS = 8_000
 // first `worktree` line of `git worktree list --porcelain`, run against THIS
 // SCRIPT's own directory (never process.cwd(), and never a container-side
 // computation) — the main checkout regardless of which worktree invoked it.
-function resolveHostKey() {
+export function resolveHostKey() {
   const override = process.argv.includes('--key')
     ? process.argv[process.argv.indexOf('--key') + 1]
     : null

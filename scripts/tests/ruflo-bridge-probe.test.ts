@@ -24,6 +24,12 @@
  * effect (spawn the launcher, take the bridge lock, write state). See that
  * file's own comment at the bottom for why the guard was added.
  */
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 import { extractLearningCounters, isProducerPresent } from '../ruflo-bridge-probe.mjs'
@@ -157,5 +163,81 @@ describe('extractLearningCounters (SMI-6985 Medium)', () => {
       patternsLearned: 4,
       trajectoriesRecorded: null,
     })
+  })
+})
+
+// SMI-6976. `resolveHostKey`'s `rev-parse` fallback used to set no `stdio`, so a
+// git failure printed `fatal:` to the user's terminal. Its return value is the
+// same either way, so only live bytes on stderr can tell -- observed here from a
+// child process with a fake `git` first on PATH. The fake records its argv
+// (proof the fallback actually ran git), then writes a unique token and
+// unrelated git-style noise to stderr and exits non-zero. Both git calls in
+// `resolveHostKey` (`worktree list` inside `resolveMainRepoKey`, then the
+// `rev-parse` fallback) hit the fake, so the recorded argv must show BOTH.
+describe('resolveHostKey -- git stderr stays off the parent terminal (SMI-6976)', () => {
+  it('quiets the rev-parse fallback and still returns the default key', () => {
+    const work = mkdtempSync(join(tmpdir(), 'bridge-probe-stderr-'))
+    try {
+      const here = dirname(fileURLToPath(import.meta.url))
+      const repoRoot = join(here, '..', '..')
+      const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx')
+      const token = `LEAK_TOKEN_${process.pid}_${Date.now()}`
+      const binDir = join(work, 'bin')
+      const callsLog = join(work, 'git-calls.log')
+      mkdirSync(binDir)
+      writeFileSync(
+        join(binDir, 'git'),
+        [
+          '#!/bin/sh',
+          `echo "$@" >> '${callsLog}'`,
+          `echo 'warning: unable to read git configuration' >&2`,
+          `echo '${token}' >&2`,
+          'exit 1',
+          '',
+        ].join('\n'),
+        { mode: 0o755 }
+      )
+      const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      const probe = JSON.stringify(join(repoRoot, 'scripts', 'ruflo-bridge-probe.mjs'))
+      const run = (name: string, body: string) => {
+        const runner = join(work, `${name}.mts`)
+        writeFileSync(runner, body)
+        return spawnSync(tsx, [runner], { encoding: 'utf8', timeout: 120_000, env })
+      }
+
+      const subject = run(
+        'subject',
+        [
+          `const { resolveHostKey } = await import(${probe})`,
+          `process.stdout.write('KEY=' + resolveHostKey() + '\\n')`,
+        ].join('\n')
+      )
+      const calls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8') : ''
+
+      // Presence proofs for the absence assertion: the child reached the
+      // observation, and the rev-parse fallback specifically ran git.
+      expect(subject.status, `subject child failed: ${subject.stderr}`).toBe(0)
+      expect(subject.stdout).toMatch(/^KEY=.+/m)
+      expect(calls, 'worktree-list call never reached git').toMatch(/worktree list --porcelain/)
+      expect(calls, 'rev-parse fallback never reached git').toMatch(/rev-parse --show-toplevel/)
+
+      // Exactly empty: any git noise at all is a leak.
+      expect(subject.stderr).toBe('')
+
+      // Positive control on the instrument: the same fake, unquieted, must put
+      // the token on the parent's stderr.
+      const control = run(
+        'control',
+        [
+          `import { execFileSync } from 'node:child_process'`,
+          `try { execFileSync('git', ['rev-parse'], { encoding: 'utf8' }) } catch { /* expected */ }`,
+        ].join('\n')
+      )
+      expect(control.stderr, 'control did not leak -- stderr capture is not working').toContain(
+        token
+      )
+    } finally {
+      rmSync(work, { recursive: true, force: true })
+    }
   })
 })

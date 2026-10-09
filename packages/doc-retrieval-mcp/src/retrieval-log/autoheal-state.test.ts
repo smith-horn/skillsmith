@@ -11,7 +11,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -498,56 +498,77 @@ describe('resolveMainRepoKey', () => {
   // SMI-6976. The three tests above assert the RETURN VALUE, which is identical
   // whether or not `stdio` is set — that is precisely why this defect survived
   // them. The only thing that differs is live bytes on the parent's stderr, so
-  // this test has to observe a child process rather than a return value.
+  // this test observes child processes rather than a return value.
+  //
+  // A fake `git` first on PATH makes the failure deterministic and attributable:
+  // it records its argv to a file (proof git RAN — a `return null` stub never
+  // invokes it), then writes a unique token plus unrelated git-style noise to
+  // stderr and exits non-zero. The subject and a positive control run as SEPARATE
+  // child processes so the subject's stderr can be asserted EXACTLY empty rather
+  // than filtered by pattern, and the control independently proves the capture
+  // can see the token at all.
   it('does not write git stderr to the parent process (SMI-6976)', () => {
-    const nonRepo = makeFixtureTempDir('autoheal-stderr-leak')
-    tmpDirs.push(nonRepo)
+    const work = makeFixtureTempDir('autoheal-stderr-leak')
+    tmpDirs.push(work)
     const here = dirname(fileURLToPath(import.meta.url))
     const tsx = join(here, '..', '..', '..', '..', 'node_modules', '.bin', 'tsx')
-    const runner = join(nonRepo, 'probe.mts')
-
-    // The child calls the REAL function, then — as a known-positive control on
-    // the capture itself — makes a deliberately unquieted git call. If the
-    // control's `fatal:` does not arrive, this test cannot see stderr at all
-    // and its absence assertion below would be vacuous.
+    const token = `LEAK_TOKEN_${process.pid}_${Date.now()}`
+    const binDir = join(work, 'bin')
+    const callsLog = join(work, 'git-calls.log')
+    mkdirSync(binDir)
     writeFileSync(
-      runner,
+      join(binDir, 'git'),
+      [
+        '#!/bin/sh',
+        `echo "$@" >> '${callsLog}'`,
+        `echo 'warning: unable to read git configuration' >&2`,
+        `echo '${token}' >&2`,
+        'exit 1',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    )
+    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+    const stateModule = JSON.stringify(join(here, 'autoheal-state.ts'))
+
+    const run = (name: string, body: string) => {
+      const runner = join(work, `${name}.mts`)
+      writeFileSync(runner, body)
+      return spawnSync(tsx, [runner], { encoding: 'utf8', timeout: 120_000, env })
+    }
+
+    const subject = run(
+      'subject',
+      [
+        `const { resolveMainRepoKey } = await import(${stateModule})`,
+        `process.stdout.write('SUBJECT_RESULT=' + String(resolveMainRepoKey(${JSON.stringify(work)})) + '\\n')`,
+      ].join('\n')
+    )
+    const subjectCalls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8') : ''
+
+    // Presence proofs for the absence assertion (P-7): the subject child reached
+    // the observation, and git — the fake — was actually invoked by it.
+    expect(subject.status, `subject child failed: ${subject.stderr}`).toBe(0)
+    expect(subject.stdout).toContain('SUBJECT_RESULT=null')
+    expect(subjectCalls, 'resolveMainRepoKey never invoked git').toMatch(
+      /worktree list --porcelain/
+    )
+
+    // Exactly empty: any git noise at all, not one chosen pattern, is a leak.
+    expect(subject.stderr).toBe('')
+
+    // Positive control on the instrument: the same fake, called WITHOUT the
+    // quieting, must put the token on the parent's stderr, or the empty-stderr
+    // assertion above would be vacuous.
+    const control = run(
+      'control',
       [
         `import { execFileSync } from 'node:child_process'`,
-        `const { resolveMainRepoKey } = await import(${JSON.stringify(
-          join(here, 'autoheal-state.ts')
-        )})`,
-        `const r = resolveMainRepoKey(${JSON.stringify(nonRepo)})`,
-        `process.stdout.write('SUBJECT_RESULT=' + String(r) + '\\n')`,
-        `process.stdout.write('SUBJECT_STDERR_END\\n')`,
-        `try {`,
-        `  execFileSync('git', ['-C', ${JSON.stringify(nonRepo)}, 'status'], { encoding: 'utf8' })`,
-        `} catch { /* expected */ }`,
+        `try { execFileSync('git', ['worktree', 'list'], { encoding: 'utf8' }) } catch { /* expected */ }`,
         `process.stdout.write('CONTROL_DONE\\n')`,
       ].join('\n')
     )
-
-    const res = spawnSync(tsx, [runner], { encoding: 'utf8', timeout: 120_000 })
-    const stdout = res.stdout ?? ''
-    const stderr = res.stderr ?? ''
-
-    // Presence proof, paired with the absence assertion below (P-7): the child
-    // must have REACHED the observation. `SUBJECT_RESULT=null` can only be
-    // printed after resolveMainRepoKey ran and took its failing branch, so a
-    // child that crashed or never loaded the module cannot satisfy this.
-    expect(stdout).toContain('SUBJECT_RESULT=null')
-    expect(stdout).toContain('CONTROL_DONE')
-
-    // Known-positive on the instrument: the unquieted control call MUST leak,
-    // or this test is measuring nothing.
-    expect(stderr, 'control did not leak — stderr capture is not working').toMatch(/fatal:/)
-
-    // The actual assertion: everything before the control marker is the
-    // subject's own output, and it must carry no git noise.
-    const subjectStderr = stderr.split('fatal:')[0]
-    expect(subjectStderr).not.toMatch(/not a git repository/)
-    // And exactly one `fatal:` overall — the control's. More than one means the
-    // subject leaked too.
-    expect(stderr.match(/fatal:/g) ?? []).toHaveLength(1)
+    expect(control.stdout).toContain('CONTROL_DONE')
+    expect(control.stderr, 'control did not leak — stderr capture is not working').toContain(token)
   })
 })
