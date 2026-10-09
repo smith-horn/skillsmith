@@ -139,6 +139,35 @@ describe('recordRegistryAudit() — the RPC call', () => {
     expect(stderr).not.toHaveBeenCalled()
   })
 
+  it('clamps by code points, never leaving a lone surrogate', async () => {
+    const rpc = vi.fn(async (_fn: string, _params?: Record<string, unknown>) => ({ error: null }))
+    await recordRegistryAudit({ rpc }, { ...event, skillId: 'a'.repeat(255) + '\u{1F600}' + 'b' })
+
+    expect(rpc).toHaveBeenCalledTimes(1)
+    const sent = rpc.mock.calls[0][1]?.p_skill_id as string
+    expect(sent).toBe('a'.repeat(255) + '\u{1F600}')
+    expect(Array.from(sent)).toHaveLength(256)
+    expect(sent).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  })
+
+  it('bounds p_file_count to what the RPC accepts (0..100000, integer) or NULL', async () => {
+    const cases: Array<[number, number | null]> = [
+      [250000, 100000],
+      [-1, null],
+      [1.5, null],
+      [NaN, null],
+      [42, 42],
+    ]
+    for (const [input, expected] of cases) {
+      const rpc = vi.fn(async (_fn: string, _params?: Record<string, unknown>) => ({
+        error: null,
+      }))
+      await recordRegistryAudit({ rpc }, { ...event, fileCount: input })
+      expect(rpc, String(input)).toHaveBeenCalledTimes(1)
+      expect(rpc.mock.calls[0][1]?.p_file_count, String(input)).toBe(expected)
+    }
+  })
+
   it('clamps detail in the stderr failure line too', async () => {
     const rpc = vi.fn(async () => ({ error: { message: 'refused' } }))
     await recordRegistryAudit({ rpc }, { ...event, detail: 'x'.repeat(5000) })

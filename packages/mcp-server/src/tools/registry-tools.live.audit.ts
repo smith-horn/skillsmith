@@ -287,9 +287,24 @@ const AUDIT_BOUNDS = {
   teamId: 128,
 } as const
 
-/** Truncates by `.length` (UTF-16 units >= characters), so it can only over-trim, never exceed. */
+/**
+ * Truncates by code points, which is what Postgres `char_length` counts, so the bound is exact and
+ * a surrogate pair is never split. Code points <= UTF-16 units, so the array is only built when
+ * the UTF-16 length already exceeds `max`.
+ */
 function clamp<T extends string | null | undefined>(value: T, max: number): T {
-  return (typeof value === 'string' && value.length > max ? value.slice(0, max) : value) as T
+  return (
+    typeof value === 'string' && value.length > max
+      ? Array.from(value).slice(0, max).join('')
+      : value
+  ) as T
+}
+
+/** The RPC refuses a file count outside 0..MAX_FILE_COUNT or a non-integer, dropping the row. */
+const MAX_FILE_COUNT = 100000
+
+function clampFileCount(n: number | undefined): number | null {
+  return n !== undefined && Number.isInteger(n) && n >= 0 ? Math.min(n, MAX_FILE_COUNT) : null
 }
 
 /** Reason recorded when no authenticated client existed to call the RPC with. */
@@ -348,7 +363,7 @@ export async function recordRegistryAudit(
       p_skill_id: clamp(event.skillId, AUDIT_BOUNDS.skillId) ?? null,
       p_version: clamp(event.version, AUDIT_BOUNDS.version) ?? null,
       p_detail: clamp(event.detail, AUDIT_BOUNDS.detail) ?? null,
-      p_file_count: event.fileCount ?? null,
+      p_file_count: clampFileCount(event.fileCount),
       p_content_hash: clamp(event.contentHash, AUDIT_BOUNDS.contentHash) ?? null,
       p_team_id: clamp(event.teamId, AUDIT_BOUNDS.teamId),
       p_license_key_fingerprint: licenseKeyFingerprint(),
