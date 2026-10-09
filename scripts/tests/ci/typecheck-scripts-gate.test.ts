@@ -659,89 +659,93 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(offenders).toEqual([])
   })
 
-  it('behavioural: every arm the harness can drive RENDERS a non-empty next: line', () => {
-    // The static test above reads source; this one reads what was printed. An
-    // assignment that expands empty passes the former and fails this. Arms are
-    // driven by stubbing the one tool each depends on, with a stub that execs
-    // the real binary for every other call so only the targeted call fails.
-    //
-    // NOT driven here (each needs the compiler, the filesystem or mktemp itself
-    // broken rather than one pipeline stage): tsc missing/unrecognised, config
-    // missing/unreadable, mktemp failure, find-over-scripts failure, the
-    // --showConfig node-parse arm, the zero-roots arm (unreachable on this tsc),
-    // the Found-line extraction/shape arms, the by-file pipeline stage arms, the
-    // status-vs-output contract arms, and the attribution-mismatch arm. Those
-    // stay covered by the static test only.
-    const arms: Array<{ name: string; tool: string; body: string; cause: string }> = [
-      {
-        name: 'diff',
-        tool: 'diff',
-        body: '#!/bin/sh\nexit 2\n',
-        cause: 'the set comparison itself failed',
-      },
-      {
-        name: 'perl',
-        tool: 'perl',
-        body: '#!/bin/sh\nexit 13\n',
-        cause: 'the ANSI/NUL-strip (perl) failed',
-      },
-      {
-        name: 'global-grep',
-        tool: 'grep',
-        body: `#!/bin/sh\ncase "$*" in *'^error TS'*) exit 2 ;; esac\nexec ${realTool('grep')} "$@"\n`,
-        cause: 'the global-diagnostic-shape grep failed',
-      },
-      {
-        name: 'tests-find',
-        tool: 'find',
-        body: `#!/bin/sh\n[ "$1" = scripts/tests ] && exit 2\nexec ${realTool('find')} "$@"\n`,
-        cause: 'find over scripts/tests failed',
-      },
-      {
-        name: 'inventory-sort',
-        tool: 'sort',
-        body: '#!/bin/sh\ncat >/dev/null\nexit 2\n',
-        cause: 'sort of the scripts/ file inventory failed',
-      },
-    ]
-    for (const a of arms) {
-      const dir = scratchDir(`next-${a.name}`)
-      makeStub(dir, a.tool, a.body)
-      const r = runGate(dir)
-      // Failure clause first: if the arm did not fire, the next: assertion below
-      // would be about a different arm entirely.
-      expect(r.out, `${a.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
-      expect(r.out, `${a.name}: cause`).toContain(a.cause)
-      expect(r.status, `${a.name}: exit`).not.toBe(0)
-      expect(r.out, `${a.name}: next line`).toMatch(/^ {2}next: \S/m)
-    }
-    // And an arm driven by a real input rather than a stub.
-    const file = join(REPO_ROOT, 'scripts', `zz-smi6975-next-${process.pid}.probeext`)
-    try {
-      writeFileSync(file, 'x\n')
-      const r = runGate()
-      expect(r.out, 'unclassified ext: RESULT').toContain('RESULT         INCONCLUSIVE')
-      expect(r.out, 'unclassified ext: next line').toMatch(/^ {2}next: \S/m)
-    } finally {
-      rmSync(file, { force: true })
-    }
-    expect(existsSync(file)).toBe(false)
+  it(
+    'behavioural: every arm the harness can drive RENDERS a non-empty next: line',
+    () => {
+      // The static test above reads source; this one reads what was printed. An
+      // assignment that expands empty passes the former and fails this. Arms are
+      // driven by stubbing the one tool each depends on, with a stub that execs
+      // the real binary for every other call so only the targeted call fails.
+      //
+      // NOT driven here (each needs the compiler, the filesystem or mktemp itself
+      // broken rather than one pipeline stage): tsc missing/unrecognised, config
+      // missing/unreadable, mktemp failure, find-over-scripts failure, the
+      // --showConfig node-parse arm, the zero-roots arm (unreachable on this tsc),
+      // the Found-line extraction/shape arms, the by-file pipeline stage arms, the
+      // status-vs-output contract arms, and the attribution-mismatch arm. Those
+      // stay covered by the static test only.
+      const arms: Array<{ name: string; tool: string; body: string; cause: string }> = [
+        {
+          name: 'diff',
+          tool: 'diff',
+          body: '#!/bin/sh\nexit 2\n',
+          cause: 'the set comparison itself failed',
+        },
+        {
+          name: 'perl',
+          tool: 'perl',
+          body: '#!/bin/sh\nexit 13\n',
+          cause: 'the ANSI/NUL-strip (perl) failed',
+        },
+        {
+          name: 'global-grep',
+          tool: 'grep',
+          body: `#!/bin/sh\ncase "$*" in *'^error TS'*) exit 2 ;; esac\nexec ${realTool('grep')} "$@"\n`,
+          cause: 'the global-diagnostic-shape grep failed',
+        },
+        {
+          name: 'tests-find',
+          tool: 'find',
+          body: `#!/bin/sh\n[ "$1" = scripts/tests ] && exit 2\nexec ${realTool('find')} "$@"\n`,
+          cause: 'find over scripts/tests failed',
+        },
+        {
+          name: 'inventory-sort',
+          tool: 'sort',
+          body: '#!/bin/sh\ncat >/dev/null\nexit 2\n',
+          cause: 'sort of the scripts/ file inventory failed',
+        },
+      ]
+      for (const a of arms) {
+        const dir = scratchDir(`next-${a.name}`)
+        makeStub(dir, a.tool, a.body)
+        const r = runGate(dir)
+        // Failure clause first: if the arm did not fire, the next: assertion below
+        // would be about a different arm entirely.
+        expect(r.out, `${a.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, `${a.name}: cause`).toContain(a.cause)
+        expect(r.status, `${a.name}: exit`).not.toBe(0)
+        expect(r.out, `${a.name}: next line`).toMatch(/^ {2}next: \S/m)
+      }
+      // And an arm driven by a real input rather than a stub.
+      const file = join(REPO_ROOT, 'scripts', `zz-smi6975-next-${process.pid}.probeext`)
+      try {
+        writeFileSync(file, 'x\n')
+        const r = runGate()
+        expect(r.out, 'unclassified ext: RESULT').toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, 'unclassified ext: next line').toMatch(/^ {2}next: \S/m)
+      } finally {
+        rmSync(file, { force: true })
+      }
+      expect(existsSync(file)).toBe(false)
 
-    // And the missing-config arm, driven by moving the real config aside.
-    const cfg = join(REPO_ROOT, 'tsconfig.scripts.json')
-    const aside = join(REPO_ROOT, CONFIG_ASIDE)
-    try {
-      renameSync(cfg, aside)
-      const r = runGate()
-      expect(r.out, 'missing config: RESULT').toContain('RESULT         INCONCLUSIVE')
-      expect(r.out, 'missing config: cause').toContain('missing tsconfig.scripts.json')
-      expect(r.out, 'missing config: next line').toMatch(/^ {2}next: \S/m)
-    } finally {
-      if (existsSync(aside)) renameSync(aside, cfg)
-    }
-    expect(existsSync(cfg), 'config restored').toBe(true)
-    expect(existsSync(aside), 'aside copy gone').toBe(false)
-  })
+      // And the missing-config arm, driven by moving the real config aside.
+      const cfg = join(REPO_ROOT, 'tsconfig.scripts.json')
+      const aside = join(REPO_ROOT, CONFIG_ASIDE)
+      try {
+        renameSync(cfg, aside)
+        const r = runGate()
+        expect(r.out, 'missing config: RESULT').toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, 'missing config: cause').toContain('missing tsconfig.scripts.json')
+        expect(r.out, 'missing config: next line').toMatch(/^ {2}next: \S/m)
+      } finally {
+        if (existsSync(aside)) renameSync(aside, cfg)
+      }
+      expect(existsSync(cfg), 'config restored').toBe(true)
+      expect(existsSync(aside), 'aside copy gone').toBe(false)
+    },
+    MULTI_RUN_TIMEOUT_MS
+  )
 
   it('scope regression: a SWAPPED root set with the SAME total is INCONCLUSIVE, never PASS', () => {
     // "Wrong scope, right total". The three variants above change the COUNT, so
@@ -1014,45 +1018,51 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     }
   })
 
-  it('the tsc test seam is ignored outside vitest and printed when honoured', () => {
-    const dir = scratchDir('seam')
-    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
-    const marker = join(dir, 'invoked')
-    makeStub(dir, 'tsc-seam', markingStub(marker, real))
-    const stub = join(dir, 'tsc-seam')
+  it(
+    'the tsc test seam is ignored outside vitest and printed when honoured',
+    () => {
+      const dir = scratchDir('seam')
+      const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+      const marker = join(dir, 'invoked')
+      makeStub(dir, 'tsc-seam', markingStub(marker, real))
+      const stub = join(dir, 'tsc-seam')
 
-    // VITEST unset in the child: the seam is ignored, the REAL tsc runs.
-    const ignored = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub }, ['VITEST'])
-    expect(ignored.out, 'ignored line').toMatch(
-      /SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST ignored: it is honoured only under vitest/
-    )
-    expect(existsSync(marker), 'stub never invoked').toBe(false)
-    expect(ignored.out, 'no substitution printed').not.toContain('SUBSTITUTED')
-    expect(ignored.out, 'real tsc ran').toMatch(/^ {2}tsc {12}Version \d+\.\d+\.\d+/m)
-    expect(ignored.out, 'evaluated').toContain('RESULT         EVALUATED')
-
-    // VITEST=true: honoured, and the substitution is visible in the output.
-    const honoured = runGate(undefined, {
-      VITEST: 'true',
-      SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub,
-    })
-    expect(existsSync(marker), 'stub invoked').toBe(true)
-    expect(honoured.out, 'substitution printed').toContain(`tsc binary     ${stub}`)
-    expect(honoured.out, 'substitution flagged').toContain('SUBSTITUTED')
-    expect(honoured.out, 'no ignored line').not.toContain('ignored: it is honoured only')
-
-    // Only the exact string 'true' honours it: a falsy-looking or merely
-    // non-empty VITEST must not switch a stub compiler into a PASS.
-    for (const v of ['false', '1']) {
-      rmSync(marker, { force: true })
-      const r = runGate(undefined, { VITEST: v, SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub })
-      expect(r.out, `VITEST=${v}: ignored line`).toMatch(
+      // VITEST unset in the child: the seam is ignored, the REAL tsc runs.
+      const ignored = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub }, [
+        'VITEST',
+      ])
+      expect(ignored.out, 'ignored line').toMatch(
         /SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST ignored: it is honoured only under vitest/
       )
-      expect(existsSync(marker), `VITEST=${v}: stub never invoked`).toBe(false)
-      expect(r.out, `VITEST=${v}: no substitution`).not.toContain('SUBSTITUTED')
-    }
-  })
+      expect(existsSync(marker), 'stub never invoked').toBe(false)
+      expect(ignored.out, 'no substitution printed').not.toContain('SUBSTITUTED')
+      expect(ignored.out, 'real tsc ran').toMatch(/^ {2}tsc {12}Version \d+\.\d+\.\d+/m)
+      expect(ignored.out, 'evaluated').toContain('RESULT         EVALUATED')
+
+      // VITEST=true: honoured, and the substitution is visible in the output.
+      const honoured = runGate(undefined, {
+        VITEST: 'true',
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub,
+      })
+      expect(existsSync(marker), 'stub invoked').toBe(true)
+      expect(honoured.out, 'substitution printed').toContain(`tsc binary     ${stub}`)
+      expect(honoured.out, 'substitution flagged').toContain('SUBSTITUTED')
+      expect(honoured.out, 'no ignored line').not.toContain('ignored: it is honoured only')
+
+      // Only the exact string 'true' honours it: a falsy-looking or merely
+      // non-empty VITEST must not switch a stub compiler into a PASS.
+      for (const v of ['false', '1']) {
+        rmSync(marker, { force: true })
+        const r = runGate(undefined, { VITEST: v, SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub })
+        expect(r.out, `VITEST=${v}: ignored line`).toMatch(
+          /SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST ignored: it is honoured only under vitest/
+        )
+        expect(existsSync(marker), `VITEST=${v}: stub never invoked`).toBe(false)
+        expect(r.out, `VITEST=${v}: no substitution`).not.toContain('SUBSTITUTED')
+      }
+    },
+    MULTI_RUN_TIMEOUT_MS
+  )
 
   it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {
     // M5. An exclusion is the gate declining to check something, so it is the
