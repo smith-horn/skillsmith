@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.15
+
 - **Fixed**: SMI-7018 -- when a SKILL.md's frontmatter contains a line such as `--- # note` or
   `...`, `skillsmith import-local` now names the problem instead of showing a YAML library message
   telling you to call `YAML.parseAllDocuments()`. The message says that line starts a second YAML
