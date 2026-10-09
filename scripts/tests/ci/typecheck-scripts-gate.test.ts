@@ -212,6 +212,10 @@ beforeAll(() => {
   for (const f of readdirSync(dir)) {
     if (f.startsWith('zz-smi6975-')) rmSync(join(dir, f), { force: true })
   }
+  const ciDir = join(dir, 'ci')
+  for (const f of readdirSync(ciDir)) {
+    if (f.startsWith('.backstop-')) rmSync(join(ciDir, f), { force: true })
+  }
 })
 
 describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when established', () => {
@@ -575,37 +579,58 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     }
   })
 
-  it('a compiler that hangs is still INCONCLUSIVE when the parent ignores SIGALRM', () => {
-    // An inherited SIG_IGN for ALRM survives exec, and perl's alarm() then
-    // cannot kill the command: the bound is silently lost. run_bounded resets
-    // the disposition before arming. Spawned via `trap '' ALRM; exec bash gate`
-    // so the gate inherits the ignore, as any wrapper could pass it.
-    const dir = scratchDir('hang-ignored-alrm')
-    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
-    makeStub(
-      dir,
-      'tsc-hang',
-      `#!/bin/sh\ncase "$*" in *--pretty*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
-    )
-    const t0 = Date.now()
-    const r = spawnSync('bash', ['-c', `trap '' ALRM; exec bash "${GATE}"`], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      timeout: RUN_TIMEOUT_MS,
-      env: {
-        ...process.env,
-        VITEST: 'true',
-        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-hang'),
-        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
-      },
-    })
-    const out = (r.stdout ?? '') + (r.stderr ?? '')
-    expect(r.status, `exit (signal ${r.signal})`).toBe(1)
-    expect(out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
-    expect(out, 'cause').toMatch(/did not finish within 2s/)
-    expect(out, 'not a pass').not.toContain('VERDICT        PASS')
-    expect(Date.now() - t0, 'bounded by the alarm, not the harness budget').toBeLessThan(30_000)
-  })
+  it(
+    'a compiler that hangs is still INCONCLUSIVE when the parent ignores or blocks SIGALRM',
+    () => {
+      // An inherited SIG_IGN for ALRM, or an inherited blocked mask, survives
+      // exec, and perl's alarm() then cannot kill the command: the bound is
+      // silently lost. run_bounded resets the disposition and unblocks the
+      // signal before arming. Each wrapper execs the gate with that state
+      // inherited, as any parent could pass it.
+      const dir = scratchDir('hang-ignored-alrm')
+      const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+      makeStub(
+        dir,
+        'tsc-hang',
+        `#!/bin/sh\ncase "$*" in *--pretty*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
+      )
+      const wrappers: Array<[string, string, string[]]> = [
+        ['ignored', 'bash', ['-c', `trap '' ALRM; exec bash "${GATE}"`]],
+        [
+          'blocked',
+          'perl',
+          [
+            '-MPOSIX',
+            '-e',
+            'sigprocmask(SIG_BLOCK, POSIX::SigSet->new(SIGALRM)); exec @ARGV',
+            'bash',
+            GATE,
+          ],
+        ],
+      ]
+      for (const [label, cmd, args] of wrappers) {
+        const t0 = Date.now()
+        const r = spawnSync(cmd, args, {
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+          timeout: RUN_TIMEOUT_MS,
+          env: {
+            ...process.env,
+            VITEST: 'true',
+            SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-hang'),
+            SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
+          },
+        })
+        const out = (r.stdout ?? '') + (r.stderr ?? '')
+        expect(r.status, `${label}: exit (signal ${r.signal})`).toBe(1)
+        expect(out, `${label}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+        expect(out, `${label}: cause`).toMatch(/did not finish within 2s/)
+        expect(out, `${label}: not a pass`).not.toContain('VERDICT        PASS')
+        expect(Date.now() - t0, `${label}: bounded by the alarm`).toBeLessThan(30_000)
+      }
+    },
+    2 * RUN_TIMEOUT_MS + 30_000
+  )
 
   it('a compiler that hangs on --version or --showConfig is INCONCLUSIVE, within the bound', () => {
     // Only the full compile used to be bounded; these two calls ran unbounded.

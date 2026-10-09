@@ -93,10 +93,11 @@ resolve_tsc_bin() {
 # `gtimeout`, while /usr/bin/perl exists on macOS and in the Linux container/CI.
 # The alarm survives exec, so SIGALRM terminates the command itself and the
 # shell reports 142 (128+14); 127 means exec failed. SIGALRM is reset to its
-# default first: an inherited SIG_IGN (a parent's `trap '' ALRM`) survives exec
-# and would otherwise make the alarm a no-op, silently losing the bound.
+# default AND unblocked first: an inherited SIG_IGN (a parent's `trap '' ALRM`)
+# or an inherited blocked mask both survive exec and would otherwise make the
+# alarm a no-op, silently losing the bound.
 run_bounded() {
-  /usr/bin/perl -e '$SIG{ALRM}="DEFAULT"; alarm shift; exec @ARGV or exit 127' "$TSC_TIMEOUT_SECS" "$@"
+  /usr/bin/perl -e 'use POSIX (); $SIG{ALRM}="DEFAULT"; POSIX::sigprocmask(POSIX::SIG_UNBLOCK(), POSIX::SigSet->new(POSIX::SIGALRM())); alarm shift; exec @ARGV or exit 127' "$TSC_TIMEOUT_SECS" "$@"
 }
 
 # INCONCLUSIVE when a run_bounded call (status $1) was killed by the alarm;
