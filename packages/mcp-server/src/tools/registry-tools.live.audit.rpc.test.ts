@@ -250,6 +250,9 @@ describe('hoisted audit client (list / get / namespace)', () => {
     namespace: (s: ReturnType<typeof createLiveRegistryService>) => s.getNamespace(RESOLVED_TEAM),
   }
 
+  // Mutation inventory, relocation/ordering (PR-16, PR #3048 review): moving
+  // `auditClient = client` below listSkills() in auditedList was declared to fail this arm at
+  // `expect(rpcCalls).toHaveLength(1)` with length 0, and did (1 failed, 22 passed), then restored.
   it.each(['list', 'get', 'namespace'] as const)(
     '%s: getter resolves, then the operation throws -> exactly one rpc on THAT client',
     async (op) => {
