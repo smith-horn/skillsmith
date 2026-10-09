@@ -212,12 +212,16 @@ beforeAll(() => {
   for (const f of readdirSync(dir)) {
     if (f.startsWith('zz-smi6975-')) rmSync(join(dir, f), { force: true })
   }
-  // Backstop copies embed their writer's pid. Remove only those whose writer is
-  // gone, so a concurrent run in the same tree keeps its live copies.
+  // Backstop copies embed their writer's pid and creation time. Remove a copy
+  // when its pid is gone, or when it is older than any run could last: a live
+  // pid alone is best-effort, because pids are reused.
   const ciDir = join(dir, 'ci')
+  const staleMs = 60 * 60 * 1000
   for (const f of readdirSync(ciDir)) {
-    const m = /^\.backstop-(?:subject|control)-(\d+)-\d+\.sh$/.exec(f)
-    if (m && !pidAlive(Number(m[1]))) rmSync(join(ciDir, f), { force: true })
+    const m = /^\.backstop-(?:subject|control)-(\d+)-(\d+)\.sh$/.exec(f)
+    if (m && (!pidAlive(Number(m[1])) || Date.now() - Number(m[2]) > staleMs)) {
+      rmSync(join(ciDir, f), { force: true })
+    }
   }
 })
 
@@ -325,6 +329,31 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     for (const f of planted) expect(existsSync(f)).toBe(false)
     const after = runGate()
     expect(after.status).toBe(0)
+  })
+
+  it('no grep -E pattern in the gate uses \\b, which POSIX ERE does not define', () => {
+    // The gate runs under GNU grep (container, CI) and BSD grep (macOS host).
+    const usesWordBoundary = (l: string): boolean => /\bgrep\b[^\n]*\s-[A-Za-z]*E[\s\S]*\\b/.test(l)
+    expect(usesWordBoundary(`X="$(grep -cE '^Found [0-9]+ errors?\\b' f)"`), 'known positive').toBe(
+      true
+    )
+    expect(
+      usesWordBoundary(`X="$(grep -cE '^Found [0-9]+ errors?([^[:alnum:]_]|$)' f)"`),
+      'known negative'
+    ).toBe(false)
+    const offenders: string[] = []
+    let scanned = 0
+    for (const f of ['typecheck-scripts.sh', 'typecheck-scripts.helpers.sh']) {
+      readFileSync(join(REPO_ROOT, 'scripts', 'ci', f), 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (/^\s*#/.test(line) || !/\bgrep\b/.test(line)) return
+          scanned += 1
+          if (usesWordBoundary(line)) offenders.push(`${f}:${i + 1}`)
+        })
+    }
+    expect(scanned, 'no grep lines found -- wrong files?').toBeGreaterThan(0)
+    expect(offenders).toEqual([])
   })
 
   it('every INCONCLUSIVE arm prints a next: action', () => {

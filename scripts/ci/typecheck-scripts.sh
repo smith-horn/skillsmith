@@ -303,8 +303,10 @@ fi
 # size), "Found N errors in M files." (plural, N>=2), and "Found 1 error."
 # (bare, for a diagnostic with no project-file location at all). The anchor
 # "^Found [0-9]+ errors?" matches the leading count in all three without ever
-# trying to parse what follows it.
-FOUND_LINES="$(grep -cE '^Found [0-9]+ errors?\b' "$TSC_CLEAN")"
+# trying to parse what follows it. The boundary is spelled out as a bracket
+# expression rather than `\b`, which POSIX ERE does not define; this gate runs
+# under both GNU grep (container, CI) and BSD grep (macOS host).
+FOUND_LINES="$(grep -cE '^Found [0-9]+ errors?([^[:alnum:]_]|$)' "$TSC_CLEAN")"
 FOUND_LINES_RC=$?
 if [[ "$FOUND_LINES_RC" -ge 2 ]]; then
   inconclusive "the 'Found N errors' summary-line grep failed (exit $FOUND_LINES_RC)"
