@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6114 -- private-registry denials, failures and reads are now recorded in the
+  audit log on the standard deployment. They were written with the service-role key, which that
+  deployment does not have, so they were dropped. `recordRegistryAudit()` now calls the new
+  `record_private_registry_audit_attempt()` database function with the caller's own login. The
+  database derives the actor from that login, and no row it writes is visible in a team's
+  activity feed (ADR-178).
+  - A getter failure in `deprecate`, `undeprecate`, `publish`, `install` or `review` is now recorded
+    too, and the original error is still thrown.
+  - Values are clamped to the database function's limits, so an oversized skill id or error
+    message can no longer drop an audit record.
+  - The review-queue read (`submissions`) is still not audited (SMI-7035).
+  - Requires migration `20261008000000_private_registry_audit_attempt_rpc.sql`.
+
 ## v0.7.19
 
 - **Fixed**: SMI-6991 -- a corrupt database no longer ends with advice that cannot work. The

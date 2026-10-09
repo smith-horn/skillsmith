@@ -15,9 +15,9 @@
  * user dual-identity-signal gap this credential move introduces is observable rather than
  * invisible: the license key resolves one team, the signed-in user's own membership can silently
  * point at a different one (or none), and RLS fails closed on the mismatch indistinguishably from
- * "genuinely not found." SMI-6114 caveat: that row needs a service-role key, which production MCP
- * hosts never carry, so on those hosts the mismatch is visible only as a stderr line, not in
- * audit_logs (see registry-tools.live.audit.ts's docstring).
+ * "genuinely not found." The row is written by `record_private_registry_audit_attempt()` over the
+ * same member client (ADR-178); if no client could be bound, the mismatch is visible only as a
+ * stderr line (see registry-tools.live.audit.ts's docstring).
  *
  * getNamespace()'s wrapper deliberately swallows a getMemberUserClient() failure and returns null
  * rather than throwing — its documented contract (registry-tools.ts's PrivateRegistryService
@@ -30,7 +30,7 @@
  * the same path `deprecate`/`undeprecate`/`getContent`/`publish` already rely on.
  */
 
-import { recordRegistryAudit } from './registry-tools.live.audit.js'
+import { recordRegistryAudit, type AuditRpcClient } from './registry-tools.live.audit.js'
 import { getMemberUserClient } from './registry-tools.live.auth.js'
 import { listSkills, getSkill } from './registry-tools.live.reads.js'
 import type { RegistrySkill } from './registry-tools.js'
@@ -53,11 +53,14 @@ export async function auditedList(
   includeDeprecated?: boolean
 ): Promise<RegistrySkill[]> {
   let actorUserId: string | null = null
+  // Hoisted like actorUserId: the catch needs the client iff the getter returned (ADR-178 § 3).
+  let auditClient: AuditRpcClient | null = null
   try {
     const { client, actorUserId: uid } = await getMemberUserClient('list')
     actorUserId = uid
+    auditClient = client
     const skills = await listSkills(client, teamId, version, includeDeprecated)
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       operation: 'list',
       teamId,
       result: 'success',
@@ -67,7 +70,7 @@ export async function auditedList(
     })
     return skills
   } catch (err) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(auditClient, {
       operation: 'list',
       teamId,
       result: 'error',
@@ -90,14 +93,17 @@ export async function auditedGet(
   version?: string
 ): Promise<RegistrySkill | null> {
   let actorUserId: string | null = null
+  // Hoisted like actorUserId: the catch needs the client iff the getter returned (ADR-178 § 3).
+  let auditClient: AuditRpcClient | null = null
   try {
     const { client, actorUserId: uid } = await getMemberUserClient('get')
     actorUserId = uid
+    auditClient = client
     const skill = await getSkill(client, teamId, skillId, version)
     // Cross-provider review finding (SMI-6109): a null (genuinely not found / cross-team /
     // pending-and-RLS-invisible) result was previously audited as 'success', which is misleading
     // for a security-observability log — 'not_found' is an available, more accurate result value.
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       operation: 'get',
       teamId,
       skillId,
@@ -109,7 +115,7 @@ export async function auditedGet(
     })
     return skill
   } catch (err) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(auditClient, {
       operation: 'get',
       teamId,
       skillId,
@@ -127,9 +133,12 @@ export async function auditedGet(
 /** SMI-6109. Never throws — see this file's header comment for why. */
 export async function auditedGetNamespace(teamId: string): Promise<string | null> {
   let actorUserId: string | null = null
+  // Hoisted like actorUserId: the catch needs the client iff the getter returned (ADR-178 § 3).
+  let auditClient: AuditRpcClient | null = null
   try {
     const { client, actorUserId: uid } = await getMemberUserClient('namespace')
     actorUserId = uid
+    auditClient = client
     const resp = await client
       .from<{ skill_namespace: string }>('teams')
       .select('skill_namespace')
@@ -142,7 +151,7 @@ export async function auditedGetNamespace(teamId: string): Promise<string | null
     // "success, no namespace" territory; anything else is a real error and must be audited (and
     // returned) as such — matching this file's own not-found/error distinction on auditedGet().
     if (resp.error && !isNoRowsError(resp.error)) {
-      await recordRegistryAudit({
+      await recordRegistryAudit(client, {
         operation: 'namespace',
         teamId,
         result: 'error',
@@ -154,7 +163,7 @@ export async function auditedGetNamespace(teamId: string): Promise<string | null
       return null
     }
     const namespace = resp.error || !resp.data ? null : (resp.data.skill_namespace ?? null)
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       operation: 'namespace',
       teamId,
       result: namespace ? 'success' : 'not_found',
@@ -164,7 +173,7 @@ export async function auditedGetNamespace(teamId: string): Promise<string | null
     })
     return namespace
   } catch (err) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(auditClient, {
       operation: 'namespace',
       teamId,
       result: 'error',

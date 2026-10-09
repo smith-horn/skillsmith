@@ -224,7 +224,7 @@ export async function reviewSubmission(params: {
     actorUserId,
   }
   if (resp.error) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       ...auditBase,
       result: 'denied',
       detail: resp.error.code ?? 'rpc_error',
@@ -233,7 +233,11 @@ export async function reviewSubmission(params: {
   }
   const row = (resp.data ?? [])[0]
   if (!row) {
-    await recordRegistryAudit({ ...auditBase, result: 'error', detail: 'empty_rpc_response' })
+    await recordRegistryAudit(client, {
+      ...auditBase,
+      result: 'error',
+      detail: 'empty_rpc_response',
+    })
     throw new Error(
       `${operation === 'approve' ? 'Approval' : 'Rejection'} of ${skillId}@${version} reported ` +
         'success but returned no row — this should not happen; retry or check with a team admin.'

@@ -122,12 +122,15 @@ describe('private_registry_manage submissions action — SMI-5949 D-5', () => {
   })
 
   it('does not write an audit row — submissions is a metadata read, like list/get', async () => {
-    const { client, calls } = createFakeClient()
+    const { client, calls, rpcCalls } = createFakeClient()
     await mockBothClients(client)
 
     await executePrivateRegistryManage({ action: 'submissions' }, makeContext())
 
+    // Positive control: the submissions RPC itself ran, so "no audit call" is not "nothing ran".
+    expect(rpcCalls.some((c) => c.fn === 'get_private_registry_submissions')).toBe(true)
     expect(calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')).toBeUndefined()
+    expect(rpcCalls.some((c) => c.fn === 'record_private_registry_audit_attempt')).toBe(false)
   })
 
   it('message states this is metadata only, never implying a full content read (finding C1)', async () => {

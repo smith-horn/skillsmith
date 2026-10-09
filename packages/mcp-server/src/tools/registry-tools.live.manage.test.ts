@@ -32,6 +32,7 @@ import {
 import { createLiveRegistryService } from './registry-tools.live.js'
 import {
   RESOLVED_TEAM,
+  auditRpcCalls,
   createFakeClient,
   makeContext,
   mockBothClients,
@@ -113,7 +114,7 @@ describe('private_registry_manage namespace action — SMI-5852 AC-11', () => {
   })
 
   it('surfaces a typed error when the namespace cannot be resolved, and audits a genuine query error as error (not success)', async () => {
-    const { client, calls } = createFakeClient({
+    const { client, rpcCalls } = createFakeClient({
       // No `code` field, so this is NOT PGRST116 (genuine no-rows) — a real query failure
       // (e.g. connection error, RLS denial surfaced as an error), not "no namespace configured".
       singleResponder: () => ({ data: null, error: { message: 'connection failure' } }),
@@ -136,9 +137,9 @@ describe('private_registry_manage namespace action — SMI-5852 AC-11', () => {
     // Cross-provider review finding (SMI-6109): the original draft collapsed this into `null` and
     // audited it as 'success' — a real outage reported as a successful read, in a log whose whole
     // purpose is security observability.
-    const auditInsert = calls.find((c) => c.table === 'audit_logs')
-    expect(auditInsert).toBeDefined()
-    expect(auditInsert!.payload?.result).toBe('error')
+    const audit = auditRpcCalls(rpcCalls)
+    expect(audit).toHaveLength(1)
+    expect(audit[0].params.p_result).toBe('error')
   })
 
   // SMI-6622 round 5 PR-07 finding 2: no live test previously covered a CONFIRMED member whose team
@@ -405,7 +406,7 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
   })
 
   it('get returns null (not-found) for PostgREST’s genuine no-rows code, and audits it as not_found (not success)', async () => {
-    const { client, calls } = createFakeClient({
+    const { client, rpcCalls } = createFakeClient({
       singleResponder: () => ({
         data: null,
         error: {
@@ -423,9 +424,9 @@ describe('private_registry_manage live mode — team scoping — SMI-5816', () =
 
     // Cross-provider review finding (SMI-6109): a not-found get() was previously audited as
     // 'success', which is misleading in a log whose purpose is security observability.
-    const auditInsert = calls.find((c) => c.table === 'audit_logs')
-    expect(auditInsert).toBeDefined()
-    expect(auditInsert!.payload?.result).toBe('not_found')
+    const audit = auditRpcCalls(rpcCalls)
+    expect(audit).toHaveLength(1)
+    expect(audit[0].params.p_result).toBe('not_found')
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/not found/i)

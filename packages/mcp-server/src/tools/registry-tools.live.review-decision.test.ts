@@ -25,7 +25,9 @@ import {
 } from './registry-tools.js'
 import { createLiveRegistryService } from './registry-tools.live.js'
 import {
+  AUDIT_RPC_PARAM_KEYS,
   RESOLVED_TEAM,
+  auditRpcCalls,
   createFakeClient,
   makeContext,
   mockBothClients,
@@ -37,11 +39,10 @@ import {
 // 'user_jwt:unknown' instead of proving the real attribution path (same shape as the FAKE_JWT in
 // registry-tools.live.admin-auth.test.ts). `vi.hoisted` because `vi.mock` factories are hoisted
 // above ordinary `const` declarations.
-const { FAKE_USER_ID, FAKE_JWT } = vi.hoisted(() => {
+const { FAKE_JWT } = vi.hoisted(() => {
   const userId = '11111111-2222-3333-4444-555555555555'
   const seg = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url')
   return {
-    FAKE_USER_ID: userId,
     FAKE_JWT: `${seg({ alg: 'HS256', typ: 'JWT' })}.${seg({ sub: userId, role: 'authenticated' })}.sig`,
   }
 })
@@ -199,7 +200,7 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4, SMI-6114', () =>
   it.each(['approve', 'reject'] as const)(
     'a successful %s writes no client-side audit row (the trigger owns it)',
     async (action) => {
-      const { client, calls } = createFakeClient()
+      const { client, calls, rpcCalls } = createFakeClient()
       await mockBothClients(client)
       const { getSupabaseAdminClient } = await import('../supabase-client.js')
 
@@ -210,12 +211,13 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4, SMI-6114', () =>
 
       expect(result.success).toBe(true)
       expect(calls.some((c) => c.table === 'audit_logs')).toBe(false)
+      expect(auditRpcCalls(rpcCalls)).toHaveLength(0)
       expect(vi.mocked(getSupabaseAdminClient)).not.toHaveBeenCalled()
     }
   )
 
   it('attributes a denied review to the JWT user, never to the license key', async () => {
-    const { client, calls } = createFakeClient(
+    const { client, rpcCalls } = createFakeClient(
       reviewRpcError({ code: '42501', message: 'Only team admins can review submissions.' })
     )
     await mockBothClients(client)
@@ -225,16 +227,19 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4, SMI-6114', () =>
       makeContext()
     )
 
-    const audit = calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit!.payload?.event_type).toBe('private_registry:reject')
-    expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
-    // The license key did not authorize this (D-7 has no service-role fallback), so it must not
-    // appear as the actor — mirrors registry-tools.live.admin-auth.test.ts's assertion.
-    expect(String(audit!.payload?.actor)).not.toContain('license_key')
+    // ADR-178: the actor is derived by the RPC from auth.uid(), so what a client can get wrong is
+    // what it sends: one report on the user client, no actor-shaped parameter, no license key.
+    const audit = auditRpcCalls(rpcCalls)
+    expect(audit).toHaveLength(1)
+    expect(audit[0].params.p_operation).toBe('reject')
+    expect(Object.keys(audit[0].params).sort()).toEqual(AUDIT_RPC_PARAM_KEYS)
+    expect(JSON.stringify(Object.values(audit[0].params))).not.toContain('license_key')
+    expect(JSON.stringify(audit[0].params)).not.toContain('sk_test_fake_license')
+    expect(String(audit[0].params.p_license_key_fingerprint)).toMatch(/^[0-9a-f]{12}$/)
   })
 
   it('writes a denied audit row (not "error") for every documented RPC rejection', async () => {
-    const { client, calls } = createFakeClient(
+    const { client, rpcCalls } = createFakeClient(
       reviewRpcError({ code: '42501', message: 'Only team admins can review submissions.' })
     )
     await mockBothClients(client)
@@ -244,14 +249,14 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4, SMI-6114', () =>
       makeContext()
     )
 
-    const audit = calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit).toBeDefined()
-    expect(audit!.payload?.result).toBe('denied')
-    expect((audit!.payload?.metadata as Record<string, unknown>).detail).toBe('42501')
+    const audit = auditRpcCalls(rpcCalls)
+    expect(audit).toHaveLength(1)
+    expect(audit[0].params.p_result).toBe('denied')
+    expect(audit[0].params.p_detail).toBe('42501')
   })
 
   it('audit rows carry team_id/skill_id/version scoped to this operation', async () => {
-    const { client, calls } = createFakeClient(
+    const { client, rpcCalls } = createFakeClient(
       reviewRpcError({ code: '55000', message: 'this submission is already approved' })
     )
     await mockBothClients(client)
@@ -261,14 +266,18 @@ describe('approve/reject audit rows — SMI-5949 Wave 2 Step 4, SMI-6114', () =>
       makeContext()
     )
 
-    const audit = calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    const metadata = audit!.payload?.metadata as Record<string, unknown>
-    // SMI-6114 untag rule: a refused review names a pending submission, so the team is recorded
-    // only where BYPASSRLS readers see it, never under the `team_id` key members' RLS reads.
-    expect(metadata.registry_team_id).toBe(RESOLVED_TEAM)
-    expect(metadata.team_id).toBeUndefined()
-    expect(metadata.skill_id).toBe('myteam/skill-a')
-    expect(metadata.version).toBe('2.1.0')
-    expect(metadata.auth_path).toBe('user_jwt')
+    // SMI-6114 untag rule is now the RPC's: it never writes a `team_id` key, and no parameter of
+    // the call could ask for one. The client's part is to name the team, skill and version of THIS
+    // operation, plus the member role it called with.
+    const audit = auditRpcCalls(rpcCalls)
+    expect(audit).toHaveLength(1)
+    expect(audit[0].params).toMatchObject({
+      p_operation: 'approve',
+      p_team_id: RESOLVED_TEAM,
+      p_skill_id: 'myteam/skill-a',
+      p_version: '2.1.0',
+      p_auth_role: 'member',
+    })
+    expect(Object.keys(audit[0].params)).not.toContain('team_id')
   })
 })

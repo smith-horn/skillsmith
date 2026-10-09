@@ -41,6 +41,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createLiveRegistryService } from './registry-tools.live.js'
+import { AUDIT_RPC_PARAM_KEYS, auditRpcCalls } from './registry-tools.live.test-helpers.js'
 
 /**
  * A realistically-shaped access token, so `accessTokenSubject()` has a real `sub` to read.
@@ -92,8 +93,13 @@ function createRecorder(
     data: [{ id: 'row-1' }],
     error: null,
   })
-): { client: unknown; calls: Recorded[] } {
+): {
+  client: unknown
+  calls: Recorded[]
+  rpcCalls: Array<{ fn: string; params: Record<string, unknown> }>
+} {
   const calls: Recorded[] = []
+  const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = []
   function makeQuery(table: string) {
     const record: Recorded = { table, op: 'select', filters: [] }
     calls.push(record)
@@ -130,7 +136,8 @@ function createRecorder(
       // SMI-5949 D-5: publish()'s read-back RPC. Derives the returned row from the most recent
       // insert into private_registry_skills rather than a hardcoded fixture, so any test in this
       // file that calls publish() gets a submission row that actually matches what it inserted.
-      rpc: async (fn: string, _params?: Record<string, unknown>) => {
+      rpc: async (fn: string, params: Record<string, unknown> = {}) => {
+        rpcCalls.push({ fn, params })
         if (fn !== 'get_private_registry_submissions') return { data: null, error: null }
         const lastInsert = [...calls]
           .reverse()
@@ -157,6 +164,7 @@ function createRecorder(
       },
     },
     calls,
+    rpcCalls,
   }
 }
 
@@ -164,6 +172,29 @@ async function setClients(userClient: unknown, adminClient: unknown): Promise<vo
   const { getSupabaseAdminClient, getSupabaseUserClient } = await import('../supabase-client.js')
   vi.mocked(getSupabaseAdminClient).mockResolvedValue(adminClient)
   vi.mocked(getSupabaseUserClient).mockResolvedValue(userClient)
+}
+
+/**
+ * ADR-178 form of the old "names the user, never the license key" assertions. The actor, the auth
+ * path and the actor id are now derived by the RPC from `auth.uid()`, so what a client CAN get
+ * wrong is what it sends: exactly one report on the USER client, with exactly the ten named
+ * parameters (no actor-shaped one), the expected values, a 12-hex fingerprint, and the key itself
+ * nowhere. The service-role client takes no part.
+ */
+function expectAttributedToCallerOnly(
+  user: { rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> },
+  admin: { calls: Array<{ table: string }>; rpcCalls: unknown[] },
+  expected: Record<string, unknown>
+): void {
+  const audit = auditRpcCalls(user.rpcCalls)
+  expect(audit).toHaveLength(1)
+  const params = audit[0].params
+  expect(Object.keys(params).sort()).toEqual(AUDIT_RPC_PARAM_KEYS)
+  expect(params).toMatchObject({ p_team_id: TEAM, p_skill_id: SKILL, ...expected })
+  expect(String(params.p_license_key_fingerprint)).toMatch(/^[0-9a-f]{12}$/)
+  expect(JSON.stringify(params)).not.toContain('sk_test_fake_license')
+  expect(admin.calls.some((c) => c.table === 'audit_logs')).toBe(false)
+  expect(admin.rpcCalls).toHaveLength(0)
 }
 
 describe('SMI-5822 — deprecate/undeprecate require a user credential, not the team license key', () => {
@@ -279,10 +310,11 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
       const service = createLiveRegistryService()
       await expect(service[op](TEAM, SKILL)).rejects.toThrow(/cannot tell whether it is missing/i)
 
-      const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-      expect(audit).toBeDefined()
-      expect(audit!.payload?.result).toBe('error')
-      expect((audit!.payload?.metadata as Record<string, unknown>).detail).toBe('PGRST301')
+      const audit = auditRpcCalls(user.rpcCalls)
+      expect(audit).toHaveLength(1)
+      expect(audit[0].params).toMatchObject({ p_result: 'error', p_detail: 'PGRST301' })
+      // The service-role client is no longer an audit path at all (ADR-178).
+      expect(admin.calls.some((c) => c.table === 'audit_logs')).toBe(false)
     }
   )
 
@@ -297,8 +329,10 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
 
     await expect(createLiveRegistryService().deprecate(TEAM, SKILL)).resolves.toBe(false)
 
-    const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit!.payload?.result).toBe('not_found')
+    const audit = auditRpcCalls(user.rpcCalls)
+    expect(audit).toHaveLength(1)
+    expect(audit[0].params.p_result).toBe('not_found')
+    expect(admin.calls.some((c) => c.table === 'audit_logs')).toBe(false)
   })
 
   // ==========================================================================
@@ -325,40 +359,29 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
       /only team admins/i
     )
 
-    const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit).toBeDefined()
-    expect(audit!.payload?.event_type).toBe('private_registry:deprecate')
-    expect(audit!.payload?.result).toBe('denied')
-    expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
-    // The license key did not authorize this, so it must not appear as the actor.
-    expect(String(audit!.payload?.actor)).not.toContain('license_key')
-    expect(String(audit!.payload?.actor)).not.toContain('sk_test_fake_license')
-
-    const metadata = audit!.payload?.metadata as Record<string, unknown>
-    expect(metadata.auth_path).toBe('user_jwt')
-    expect(metadata.actor_user_id).toBe(FAKE_USER_ID)
-    // Still correlatable to the key the session was configured with — as a digest, never the key.
-    expect(metadata.license_key_fingerprint).toMatch(/^[0-9a-f]{12}$/)
-    expect(String(metadata.license_key_fingerprint)).not.toContain('sk_test_fake_license')
+    expectAttributedToCallerOnly(user, admin, {
+      p_operation: 'deprecate',
+      p_result: 'denied',
+      p_auth_role: 'admin',
+    })
   })
 
-  it('records an explicitly-unattributed actor when the user token yields no subject', async () => {
+  it('sends no client-chosen actor even when the user token yields no subject', async () => {
     const { resolveUserAccessToken } = await import('./team-resolver.js')
     vi.mocked(resolveUserAccessToken).mockResolvedValue('not-a-jwt')
 
     // Not-found path (update and probe both match nothing): one of the rows this client still
-    // writes after SMI-6114.
+    // reports after SMI-6114.
     const user = createRecorder(() => ({ data: [], error: null }))
     const admin = createRecorder()
     await setClients(user.client, admin.client)
 
     await expect(createLiveRegistryService().deprecate(TEAM, SKILL)).resolves.toBe(false)
 
-    const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit!.payload?.result).toBe('not_found')
-    // Unknown, never backfilled with the license key that did not authorize it.
-    expect(audit!.payload?.actor).toBe('user_jwt:unknown')
-    expect((audit!.payload?.metadata as Record<string, unknown>).actor_user_id).toBeNull()
+    // ADR-178: the recorded actor is the database's `auth.uid()`, so a token with no readable
+    // `sub` can no longer be "backfilled" client-side with anything — least of all the license key
+    // that did not authorize the call. The property is that no identity leaves this process.
+    expectAttributedToCallerOnly(user, admin, { p_operation: 'deprecate', p_result: 'not_found' })
   })
 
   // SMI-5949 Wave 2 Step 2 (D-7): publish() moved OFF the license-key path onto the signed-in
@@ -392,22 +415,12 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
       admin.calls.some((c) => c.op === 'insert' && c.table === 'private_registry_skills')
     ).toBe(false)
 
-    const audit = admin.calls.find((c) => c.table === 'audit_logs' && c.op === 'insert')
-    expect(audit).toBeDefined()
-    expect(audit!.payload?.event_type).toBe('private_registry:publish')
-    expect(audit!.payload?.result).toBe('error')
-    expect((audit!.payload?.metadata as Record<string, unknown>).detail).toBe('version_immutable')
-    expect(audit!.payload?.actor).toBe(`user:${FAKE_USER_ID}`)
-    // The license key did not authorize this, so it must not appear as the actor.
-    expect(String(audit!.payload?.actor)).not.toContain('license_key')
-    expect(String(audit!.payload?.actor)).not.toContain('sk_test_fake_license')
-
-    const metadata = audit!.payload?.metadata as Record<string, unknown>
-    expect(metadata.auth_path).toBe('user_jwt')
-    expect(metadata.auth_role).toBe('member')
-    expect(metadata.actor_user_id).toBe(FAKE_USER_ID)
-    // Still correlatable to the key the session was configured with — as a digest, never the key.
-    expect(metadata.license_key_fingerprint).toMatch(/^[0-9a-f]{12}$/)
+    expectAttributedToCallerOnly(user, admin, {
+      p_operation: 'publish',
+      p_result: 'error',
+      p_detail: 'version_immutable',
+      p_auth_role: 'member',
+    })
   })
 
   it('publish refuses — and writes nothing — when no user is signed in (D-7)', async () => {
