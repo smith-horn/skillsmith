@@ -115,7 +115,7 @@ export function resolveMainRepoKey(cwd: string): string | null {
       // of the user from a mechanism whose entire job is to fail quietly and
       // let the banner report the problem in its own words. The return value
       // and the thrown error are identical either way; only the live bytes
-      // differ, which is why no test caught it.
+      // differ.
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     for (const line of out.split('\n')) {

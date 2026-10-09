@@ -469,6 +469,12 @@ describe('resolveAutohealStateDir', () => {
 
 // ── resolveMainRepoKey ────────────────────────────────────────────────────────
 
+// Two sequential spawnSync children (subject + control) block the event loop, so
+// the per-test timeout must exceed both spawn ceilings; vitest's default (15 s)
+// would otherwise fire only after the blocked loop is released.
+const SPAWN_TIMEOUT_MS = 60_000
+const TEST_TIMEOUT_MS = 2 * SPAWN_TIMEOUT_MS + 30_000
+
 describe('resolveMainRepoKey', () => {
   it('returns the repo root for a git-init fixture', () => {
     const root = makeFixtureTempDir('autoheal-repo-test')
@@ -507,68 +513,74 @@ describe('resolveMainRepoKey', () => {
   // child processes so the subject's stderr can be asserted EXACTLY empty rather
   // than filtered by pattern, and the control independently proves the capture
   // can see the token at all.
-  it('does not write git stderr to the parent process (SMI-6976)', () => {
-    const work = makeFixtureTempDir('autoheal-stderr-leak')
-    tmpDirs.push(work)
-    const here = dirname(fileURLToPath(import.meta.url))
-    const tsx = join(here, '..', '..', '..', '..', 'node_modules', '.bin', 'tsx')
-    const token = `LEAK_TOKEN_${process.pid}_${Date.now()}`
-    const binDir = join(work, 'bin')
-    const callsLog = join(work, 'git-calls.log')
-    mkdirSync(binDir)
-    writeFileSync(
-      join(binDir, 'git'),
-      [
-        '#!/bin/sh',
-        `echo "$@" >> '${callsLog}'`,
-        `echo 'warning: unable to read git configuration' >&2`,
-        `echo '${token}' >&2`,
-        'exit 1',
-        '',
-      ].join('\n'),
-      { mode: 0o755 }
-    )
-    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` }
-    const stateModule = JSON.stringify(join(here, 'autoheal-state.ts'))
+  it(
+    'does not write git stderr to the parent process (SMI-6976)',
+    () => {
+      const work = makeFixtureTempDir('autoheal-stderr-leak')
+      tmpDirs.push(work)
+      const here = dirname(fileURLToPath(import.meta.url))
+      const tsx = join(here, '..', '..', '..', '..', 'node_modules', '.bin', 'tsx')
+      const token = `LEAK_TOKEN_${process.pid}_${Date.now()}`
+      const binDir = join(work, 'bin')
+      const callsLog = join(work, 'git-calls.log')
+      mkdirSync(binDir)
+      writeFileSync(
+        join(binDir, 'git'),
+        [
+          '#!/bin/sh',
+          `echo "$@" >> '${callsLog}'`,
+          `echo 'warning: unable to read git configuration' >&2`,
+          `echo '${token}' >&2`,
+          'exit 1',
+          '',
+        ].join('\n'),
+        { mode: 0o755 }
+      )
+      const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      const stateModule = JSON.stringify(join(here, 'autoheal-state.ts'))
 
-    const run = (name: string, body: string) => {
-      const runner = join(work, `${name}.mts`)
-      writeFileSync(runner, body)
-      return spawnSync(tsx, [runner], { encoding: 'utf8', timeout: 120_000, env })
-    }
+      const run = (name: string, body: string) => {
+        const runner = join(work, `${name}.mts`)
+        writeFileSync(runner, body)
+        return spawnSync(tsx, [runner], { encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS, env })
+      }
 
-    const subject = run(
-      'subject',
-      [
-        `const { resolveMainRepoKey } = await import(${stateModule})`,
-        `process.stdout.write('SUBJECT_RESULT=' + String(resolveMainRepoKey(${JSON.stringify(work)})) + '\\n')`,
-      ].join('\n')
-    )
-    const subjectCalls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8') : ''
+      const subject = run(
+        'subject',
+        [
+          `const { resolveMainRepoKey } = await import(${stateModule})`,
+          `process.stdout.write('SUBJECT_RESULT=' + String(resolveMainRepoKey(${JSON.stringify(work)})) + '\\n')`,
+        ].join('\n')
+      )
+      const subjectCalls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8') : ''
 
-    // Presence proofs for the absence assertion (P-7): the subject child reached
-    // the observation, and git — the fake — was actually invoked by it.
-    expect(subject.status, `subject child failed: ${subject.stderr}`).toBe(0)
-    expect(subject.stdout).toContain('SUBJECT_RESULT=null')
-    expect(subjectCalls, 'resolveMainRepoKey never invoked git').toMatch(
-      /worktree list --porcelain/
-    )
+      // Presence proofs for the absence assertion (P-7): the subject child reached
+      // the observation, and git — the fake — was actually invoked by it.
+      expect(subject.status, `subject child failed: ${subject.stderr}`).toBe(0)
+      expect(subject.stdout).toContain('SUBJECT_RESULT=null')
+      expect(subjectCalls, 'resolveMainRepoKey never invoked git').toMatch(
+        /worktree list --porcelain/
+      )
 
-    // Exactly empty: any git noise at all, not one chosen pattern, is a leak.
-    expect(subject.stderr).toBe('')
+      // Exactly empty: any git noise at all, not one chosen pattern, is a leak.
+      expect(subject.stderr).toBe('')
 
-    // Positive control on the instrument: the same fake, called WITHOUT the
-    // quieting, must put the token on the parent's stderr, or the empty-stderr
-    // assertion above would be vacuous.
-    const control = run(
-      'control',
-      [
-        `import { execFileSync } from 'node:child_process'`,
-        `try { execFileSync('git', ['worktree', 'list'], { encoding: 'utf8' }) } catch { /* expected */ }`,
-        `process.stdout.write('CONTROL_DONE\\n')`,
-      ].join('\n')
-    )
-    expect(control.stdout).toContain('CONTROL_DONE')
-    expect(control.stderr, 'control did not leak — stderr capture is not working').toContain(token)
-  })
+      // Positive control on the instrument: the same fake, called WITHOUT the
+      // quieting, must put the token on the parent's stderr, or the empty-stderr
+      // assertion above would be vacuous.
+      const control = run(
+        'control',
+        [
+          `import { execFileSync } from 'node:child_process'`,
+          `try { execFileSync('git', ['worktree', 'list'], { encoding: 'utf8' }) } catch { /* expected */ }`,
+          `process.stdout.write('CONTROL_DONE\\n')`,
+        ].join('\n')
+      )
+      expect(control.stdout).toContain('CONTROL_DONE')
+      expect(control.stderr, 'control did not leak — stderr capture is not working').toContain(
+        token
+      )
+    },
+    TEST_TIMEOUT_MS
+  )
 })

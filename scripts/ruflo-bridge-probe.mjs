@@ -134,6 +134,7 @@ const SECOND_CALL_MS = 8_000
 // first `worktree` line of `git worktree list --porcelain`, run against THIS
 // SCRIPT's own directory (never process.cwd(), and never a container-side
 // computation) — the main checkout regardless of which worktree invoked it.
+// Exported for scripts/tests/ruflo-bridge-probe.test.ts (SMI-6976 stderr test).
 export function resolveHostKey() {
   const override = process.argv.includes('--key')
     ? process.argv[process.argv.indexOf('--key') + 1]
@@ -144,11 +145,8 @@ export function resolveHostKey() {
   try {
     return execFileSync('git', ['-C', HERE, 'rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
-      // SMI-6976: same leak as resolveMainRepoKey's. SMI-6976 originally cited
-      // THIS call as already correct and as the reference shape to copy; it was
-      // not — it set no `stdio`, so a git failure printed `fatal:` straight to
-      // the user's terminal. The `catch` below already degrades to a sensible
-      // default, which is exactly why the noise is pure cost.
+      // SMI-6976: stdio must capture stderr so a git failure never reaches the
+      // user's terminal; the `catch` below already degrades to the default key.
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim()
   } catch {
@@ -419,8 +417,8 @@ function flushLog(lines) {
 
 // SMI-6967 PR-gate (H-A) test-gap fix: entry-point guard (scripts/lib/
 // is-main-module.mjs, the same pattern ruflo-bridge-verdict.mjs uses) so
-// importing this module FOR ITS EXPORTS (isProducerPresent, in
-// scripts/tests/ruflo-bridge-probe.test.ts) never also spawns the launcher,
+// importing this module FOR ITS EXPORTS (isProducerPresent and resolveHostKey,
+// in scripts/tests/ruflo-bridge-probe.test.ts) never also spawns the launcher,
 // takes the bridge lock, or writes state as a side effect of the import.
 // `.husky/post-merge`'s `tsx scripts/ruflo-bridge-probe.mjs` invocation sets
 // argv[1] to this file, so main() still runs exactly as before there.
