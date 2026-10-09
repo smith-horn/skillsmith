@@ -664,18 +664,6 @@
       "tracking": null
     },
     {
-      "advisory": "GHSA-ch52-4w7c-c8xp",
-      "package": "http-cache-semantics",
-      "severity": "high",
-      "scope": "dev",
-      "tier": "R1",
-      "basis": "No patched release exists: 4.3.0 (2026-10-04) is latest and leaves the max-stale handling unchanged (diffed against 4.2.0; it changes only Vary handling, a status() method and typings), although the advisory range reads <= 4.2.0. Re-verified 2026-10-09 (SMI-6952). Reached two ways: astro build-time remote image caching (assets/build/remote.js:14,24-28), which never sends max-stale and has no multi-user cache; and got via cacheable-request, which is only on wdio-vscode-service's VS Code Web download path, never selected (e2e/wdio.conf.ts:71).",
-      "owner": "wrsmith108",
-      "accepted": "2026-10-09",
-      "expires": "2026-11-08",
-      "tracking": "SMI-6952"
-    },
-    {
       "advisory": "GHSA-rj75-hqrm-r3gf",
       "package": "postcss-selector-parser",
       "severity": "moderate",
