@@ -310,14 +310,13 @@ const REFRESH_COMMAND = './scripts/retrieval-liveness-check.sh'
  * {@link readEntryResult}, not a bare `LivenessEntry | null` — the whole
  * point of this change. Three branches on the READ axis, never collapsed:
  *
- * - `missing` — "has not run yet," the ordinary steady state for a fresh
- *   checkout or one simply between cron ticks — renders nothing. This is a
- *   DELIBERATE divergence from `ruflo-bridge-state`'s own banner, which
- *   renders on `missing` too (SMI-6985 deleted ITS grace window for
- *   bridge-specific reasons: that writer fires on every merge, so "never
- *   run" is itself informative there). This module's writer is a
- *   fire-and-forget cron with no such per-merge expectation, so silence on
- *   `missing` is correct here and is not copied from the bridge.
+ * - `missing` — "has not run yet" — RENDERS the pre-existing "retrieval
+ *   feed health unknown" line; this renderer is not silent on it (see the
+ *   correction comment in the body for why). Silence on `missing` is the
+ *   session-priming CALLER's policy, not this function's:
+ *   `scripts/session-priming-query.ts` only calls this renderer for a
+ *   `malformed`/`unreadable` read or an `ok` entry whose `lastVerdict` is
+ *   `stale`, so a `missing` read never reaches it from that surface.
  * - `malformed`/`unreadable` — the state file exists but is corrupt or
  *   could not be read — render UNCONDITIONALLY, naming the fault, because
  *   this is exactly the case the old `LivenessEntry | null` signature made

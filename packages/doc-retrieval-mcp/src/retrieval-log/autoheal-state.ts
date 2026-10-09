@@ -274,13 +274,14 @@ export function cooldownDecision(entry: AutohealEntry | null, nowEpoch: number):
  * asymmetric, matching the invariant `state-read.ts`'s own top doc comment
  * states ("a consumer must never render corrupt state as healthy"):
  *
- *   - `missing` ("has not run yet") stays SILENT — the genuinely healthy
- *     steady state, same as `reindex-state.ts`'s `renderReindexBanner`. This
- *     deliberately does NOT copy `ruflo-bridge-state.render.ts`'s choice to
- *     render unconditionally on `missing` — SMI-6985 removed that module's
- *     grace window for reasons specific to a writer that fires on every
- *     merge; autoheal's writer is a fire-and-forget cron/hook, where
- *     "never run yet" is ordinary and not itself informative.
+ *   - `missing` ("has not run yet") RENDERS the pre-existing
+ *     "first run launched" line — this renderer is not silent on it (see the
+ *     correction comment in the body for why). Silence on `missing` is the
+ *     session-priming CALLER's policy, not this function's:
+ *     `scripts/session-priming-query.ts` only calls this renderer for a
+ *     `malformed`/`unreadable` read or an `ok` entry whose `lastVerdict` is
+ *     `fail`, so a `missing` read never reaches it from that surface. The
+ *     `--print-banner` CLI does call it on `missing`, and wants the line.
  *   - `malformed`/`unreadable` RENDER unconditionally — a corrupt or
  *     unreadable state file is a symptom worth surfacing on its own, never
  *     silently treated as "no prior run."

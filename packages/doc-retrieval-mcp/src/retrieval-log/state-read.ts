@@ -27,7 +27,12 @@
  *   malformed or unreadable file renders a banner line naming the fault,
  *   because a corrupt state file is usually itself a symptom, and the
  *   banners exist precisely to surface what a developer cannot otherwise
- *   see. Silent only on genuine absence (`missing` — "has not run yet").
+ *   see. Genuine absence (`missing` — "has not run yet") is reported as its
+ *   own status, never as a fault; whether it renders anything is each
+ *   renderer's and each caller's decision, not this module's. Some renderers
+ *   print a line for it (autoheal's "first run launched", liveness's
+ *   "health unknown") and the session-priming caller suppresses those by
+ *   only rendering on a fault or a failing `ok` entry.
  * - **Producer APIs** — {@link readEntryForUpdate},
  *   {@link readStateWithClassification} — never fail on the READ half (see
  *   each one's own doc comment for exactly what that promise does and does
@@ -41,12 +46,10 @@
  *   defined in `state-read.quarantine.ts` and re-exported here — see that
  *   file's own top comment for why) — let a producer satisfy its own
  *   "always overwritable" contract WITHOUT losing the corrupt bytes, and
- *   without the gap between "we noticed it's corrupt" and "we did something
- *   about it" that a caller doing those as two separate JS-level calls would
- *   leave open for another call on the SAME process to land in (see
- *   `state-read.quarantine.ts`'s own doc comment for exactly what this does
- *   and does not protect against across OS processes — SMI-6995 round-4
- *   design decision D corrects an earlier over-claim here).
+ *   without overwriting a state another process committed after this
+ *   writer's read (see `state-read.quarantine.ts`'s invariant E for exactly
+ *   what that identity check does and the residual window it does not
+ *   close).
  *
  * ## SMI-6995 round-2 adversarial review — this file answers all 12 findings
  *
@@ -60,8 +63,9 @@
  * module exists to remove, reproduced one layer down inside its own first
  * draft. {@link readStateWithClassification} replaces it as the ONLY
  * whole-state producer read, so the signal cannot be lost at a call site.
- * {@link writeEntryWithRecovery} closes the read-then-quarantine TOCTOU by
- * doing read + quarantine + merge + atomic write as ONE call. Findings 2, 7
+ * {@link writeEntryWithRecovery} does read + quarantine + merge + atomic
+ * write as ONE call, re-verifying `path`'s identity before the copy and
+ * before the rename (`state-read.quarantine.ts`, invariant E). Findings 2, 7
  * and 8 (quarantine destination exclusivity, directory refusal, symlink
  * refusal) live in `state-read.quarantine.ts`, re-exported from here so
  * every caller still imports from this one path — the split exists only to
@@ -123,6 +127,8 @@ export {
   finalizeAtomicWrite,
   RecoveryWriteError,
   QUARANTINE_DEST_MAX_ATTEMPTS,
+  RECOVERY_WRITE_MAX_ATTEMPTS,
+  type RecoveryTestHooks,
 } from './state-read.quarantine.js'
 
 // ---- The shared three-way (really four-way) classification --------------
@@ -130,7 +136,8 @@ export {
 /**
  * The consumer-facing result. Four axes, never collapsed into each other:
  * `missing` ("has not run yet" — the healthy, steady-state case for most of
- * these banners, so it renders nothing) is a DIFFERENT fact from `malformed`
+ * these banners; whether anything renders for it is the renderer's and its
+ * caller's choice, see this file's top comment) is a DIFFERENT fact from `malformed`
  * (the bytes are there but don't parse, or don't shape up as JSON) or
  * `unreadable` (the bytes could not even be read — permissions, a directory
  * standing where a file is expected, the size ceiling below, or some other

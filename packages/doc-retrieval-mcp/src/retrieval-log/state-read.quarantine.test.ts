@@ -71,6 +71,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -82,6 +83,7 @@ import { makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 import {
   QUARANTINE_DEST_MAX_ATTEMPTS,
+  RECOVERY_WRITE_MAX_ATTEMPTS,
   RecoveryWriteError,
   copyCorruptStateAside,
   finalizeAtomicWrite,
@@ -308,11 +310,40 @@ describe('copyCorruptStateAside', () => {
     }
     const after = countOpenFds()
 
-    // A leaking close grows the open-fd count by ~1 per call (here, up to
-    // `iterations`); a correct implementation grows it by ~0, modulo
-    // unrelated test-runner noise. This threshold is intentionally far
-    // below `iterations` so it cannot pass by accident.
-    expect(after - before).toBeLessThan(iterations / 2)
+    // PR #3020 review finding 6: the old `< iterations / 2` bound let a
+    // mutation leaking every third descriptor (~66 here) pass. Vitest runs
+    // each test file in its own forked process and this loop is fully
+    // synchronous, so nothing else can open a descriptor between the two
+    // counts: a correct implementation's delta is exactly 0 (measured).
+    // The slack of 2 only absorbs a lazily-opened runtime descriptor; any
+    // per-call leak, even one call in a hundred, exceeds it.
+    expect(after - before).toBeLessThanOrEqual(2)
+  })
+
+  it('copies from the descriptor it validated, so swapping path to a symlink mid-copy cannot redirect what is preserved (PR #3020 finding 3)', () => {
+    const dir = tmpDir()
+    const path = join(dir, 'test.state')
+    const secret = join(dir, 'secret.txt')
+    writeFileSync(path, 'the corrupt bytes{{{')
+    writeFileSync(secret, 'SECRET CONTENT — must never be copied')
+    let swapped = 0
+
+    const dest = copyCorruptStateAside(path, new Date('2026-08-08T08:08:08.000Z'), {
+      afterSourceOpened: () => {
+        // Atomically replace `path` with a symlink to `secret` — what a
+        // racing process could do between a name-based check and a
+        // name-based copy.
+        const link = join(dir, 'swap-link')
+        symlinkSync(secret, link)
+        renameSync(link, path)
+        swapped++
+      },
+    })
+
+    expect(swapped).toBe(1) // the swap really happened at the seam
+    expect(lstatSync(path).isSymbolicLink()).toBe(true)
+    expect(dest).not.toBeNull()
+    expect(dest !== null && readFileSync(dest, 'utf8')).toBe('the corrupt bytes{{{')
   })
 })
 
@@ -440,5 +471,209 @@ describe('writeEntryWithRecovery', () => {
     expect((thrown as RecoveryWriteError).quarantinedTo).toBeNull()
     expect(lstatSync(path).isDirectory()).toBe(true)
     expect(readFileSync(join(path, 'inner.txt'), 'utf8')).toBe('must not be touched')
+    // PR #3020 finding 2: the temp file written before the refusal is gone.
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('removes its temp file when preserving a corrupt regular file fails (every quarantine slot taken), path untouched (PR #3020 finding 2)', () => {
+    const path = statePath()
+    writeFileSync(path, 'corrupt{{{')
+    const now = new Date('2026-09-09T09:09:09.000Z')
+    const base = derivedQuarantineBase(path, now)
+    writeFileSync(base, 'occupied')
+    for (let n = 2; n <= QUARANTINE_DEST_MAX_ATTEMPTS; n++)
+      writeFileSync(`${base}-${n}`, 'occupied')
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(path, 'key-a', { foo: 'bar' }, { now })
+    )
+
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    expect((thrown as RecoveryWriteError).quarantinedTo).toBeNull()
+    expect(readFileSync(path, 'utf8')).toBe('corrupt{{{')
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('removes its temp file when the final rename fails inside a real call (PR #3020 finding 2)', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ orig: { foo: 'o' } })}\n`)
+    let fired = 0
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(
+        path,
+        'key-a',
+        { foo: 'bar' },
+        {
+          testHooks: {
+            // After the identity check passed: a non-empty directory now
+            // stands at `path`, so rename(tmp, path) fails with a real errno.
+            afterCommitCheck: () => {
+              fired++
+              rmSync(path)
+              mkdirSync(path)
+              writeFileSync(join(path, 'inner.txt'), 'x')
+            },
+          },
+        }
+      )
+    )
+
+    expect(fired).toBe(1)
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    expect(lstatSync(path).isDirectory()).toBe(true)
+    expect(tmpSiblings(path)).toEqual([])
+  })
+})
+
+// ── writeEntryWithRecovery: concurrent writers (PR #3020 finding 1) ──────
+
+/** Commits `state` at `path` the way the plain producers do: temp + rename. */
+function commitLikeAnotherWriter(path: string, state: unknown): void {
+  const tmp = `${path}.other-writer`
+  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`)
+  renameSync(tmp, path)
+}
+
+function tmpSiblings(path: string): string[] {
+  const dir = join(path, '..')
+  const base = path.slice(dir.length + 1)
+  return readdirSync(dir).filter((n) => n.startsWith(`${base}.tmp.`))
+}
+
+function corruptSiblings(path: string): string[] {
+  const dir = join(path, '..')
+  const base = path.slice(dir.length + 1)
+  return readdirSync(dir)
+    .filter((n) => n.startsWith(`${base}.corrupt-`))
+    .map((n) => join(dir, n))
+}
+
+function catchError(fn: () => unknown): unknown {
+  try {
+    fn()
+    return undefined
+  } catch (err) {
+    return err
+  }
+}
+
+describe('writeEntryWithRecovery under a concurrent writer', () => {
+  it('a valid state committed between the read and the rename survives: the write retries and merges into it', () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ orig: { foo: 'o' } })}\n`)
+    const calls: number[] = []
+
+    const result = writeEntryWithRecovery<State, Entry>(
+      path,
+      'key-a',
+      { foo: 'bar' },
+      {
+        testHooks: {
+          afterRead: (attempt) => {
+            calls.push(attempt)
+            if (attempt === 1) {
+              commitLikeAnotherWriter(path, { orig: { foo: 'o' }, other: { foo: 'committed' } })
+            }
+          },
+        },
+      }
+    )
+
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      orig: { foo: 'o' },
+      other: { foo: 'committed' },
+      'key-a': { foo: 'bar' },
+    })
+    expect(calls).toEqual([1, 2]) // the interleave fired, then exactly one retry
+    expect(result).toEqual({ quarantinedTo: null, priorWasCorrupt: false })
+    expect(tmpSiblings(path)).toEqual([])
+  })
+
+  it('a corrupt read followed by a concurrent VALID commit: the valid state is neither overwritten nor copied aside as corrupt', () => {
+    const path = statePath()
+    writeFileSync(path, 'not json{{{')
+    const calls: number[] = []
+
+    const result = writeEntryWithRecovery<State, Entry>(
+      path,
+      'key-a',
+      { foo: 'bar' },
+      {
+        now: new Date('2026-10-10T10:10:10.000Z'),
+        testHooks: {
+          afterRead: (attempt) => {
+            calls.push(attempt)
+            if (attempt === 1) commitLikeAnotherWriter(path, { other: { foo: 'committed' } })
+          },
+        },
+      }
+    )
+
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      other: { foo: 'committed' },
+      'key-a': { foo: 'bar' },
+    })
+    // Nothing was copied aside: the copy refused the descriptor whose
+    // identity no longer matched the corrupt read, before writing any byte.
+    expect(corruptSiblings(path)).toEqual([])
+    expect(calls).toEqual([1, 2])
+    expect(result).toEqual({ quarantinedTo: null, priorWasCorrupt: false })
+  })
+
+  it('an in-place rewrite (same inode) after the read is detected, and what gets preserved is the corrupt bytes actually overwritten', () => {
+    const path = statePath()
+    writeFileSync(path, 'first corrupt')
+    const calls: number[] = []
+
+    const result = writeEntryWithRecovery<State, Entry>(
+      path,
+      'key-a',
+      { foo: 'bar' },
+      {
+        now: new Date('2026-11-11T11:11:11.000Z'),
+        testHooks: {
+          afterRead: (attempt) => {
+            calls.push(attempt)
+            if (attempt === 1) writeFileSync(path, 'second, longer corrupt payload')
+          },
+        },
+      }
+    )
+
+    expect(calls).toEqual([1, 2])
+    expect(result.priorWasCorrupt).toBe(true)
+    expect(result.quarantinedTo !== null && readFileSync(result.quarantinedTo, 'utf8')).toBe(
+      'second, longer corrupt payload'
+    )
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'key-a': { foo: 'bar' } })
+  })
+
+  it("gives up after RECOVERY_WRITE_MAX_ATTEMPTS without overwriting, leaving the other writer's last state and no temp file", () => {
+    const path = statePath()
+    writeFileSync(path, `${JSON.stringify({ n: 0 })}\n`)
+    const calls: number[] = []
+
+    const thrown = catchError(() =>
+      writeEntryWithRecovery<State, Entry>(
+        path,
+        'key-a',
+        { foo: 'bar' },
+        {
+          testHooks: {
+            afterRead: (attempt) => {
+              calls.push(attempt)
+              commitLikeAnotherWriter(path, { n: attempt })
+            },
+          },
+        }
+      )
+    )
+
+    expect(thrown).toBeInstanceOf(RecoveryWriteError)
+    expect((thrown as RecoveryWriteError).quarantinedTo).toBeNull()
+    expect(calls).toHaveLength(RECOVERY_WRITE_MAX_ATTEMPTS)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ n: RECOVERY_WRITE_MAX_ATTEMPTS })
+    expect(tmpSiblings(path)).toEqual([])
   })
 })
