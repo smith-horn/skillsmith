@@ -35,7 +35,7 @@
 // Spec: docs/internal/implementation/smi-6744-bridge-verdict-consumer.md.
 
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -151,8 +151,37 @@ function resolveHostKey() {
 }
 
 // ---- Minimal stdio JSON-RPC client (modeled on scripts/ruflo-acceptance/mcp-probe.mjs) ----
+// TEST-ONLY seam (SMI-7032): when set to a file path AND running under vitest
+// (VITEST === 'true', the value vitest sets), every launcher spawn is recorded there first as
+// `launcher invoked: <path>`, so a test can assert ZERO invocations on the
+// debounce path at the launcher boundary itself rather than inferring it from a
+// downstream `docker` call. INVARIANT: the seam can never change whether, when
+// or how the real launcher runs, whatever the variable holds -- outside vitest
+// it is ignored, and a failed write is swallowed. Either way one stderr note
+// names the variable so an accidentally inherited setting is visible.
+const LAUNCHER_INVOKE_LOG_TEST_VAR = 'SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST'
+
+function recordLauncherInvokeForTest() {
+  const invokeLog = process.env[LAUNCHER_INVOKE_LOG_TEST_VAR]
+  if (!invokeLog) return
+  if (process.env.VITEST !== 'true') {
+    process.stderr.write(
+      `[ruflo-bridge-probe] ${LAUNCHER_INVOKE_LOG_TEST_VAR} is set outside vitest; ignored\n`
+    )
+    return
+  }
+  try {
+    appendFileSync(invokeLog, `launcher invoked: ${LAUNCHER}\n`)
+  } catch (err) {
+    process.stderr.write(
+      `[ruflo-bridge-probe] ${LAUNCHER_INVOKE_LOG_TEST_VAR} write failed (${err?.code ?? 'error'}); launching anyway\n`
+    )
+  }
+}
+
 function callMemoryBridgeStatus(timeoutMs) {
   return new Promise((resolve) => {
+    recordLauncherInvokeForTest()
     const child = spawn(LAUNCHER, [], { stdio: ['pipe', 'pipe', 'pipe'] })
     let buf = ''
     let stderr = ''
