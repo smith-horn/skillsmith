@@ -110,6 +110,7 @@ const LOCK_HELPERS_SPAN = `. ${JSON.stringify(GIT_CRYPT_LOCK_LIB)}\n`
 const CLEAR_MARKER_SPAN = extractSpan('clear-marker')
 const DISABLED_PRECHECK_SPAN = extractSpan('disabled-precheck')
 const RESTORE_DEFINITION_SPAN = extractSpan('restore-definition')
+const EXPLICIT_RESTORE_SPAN = extractSpan('explicit-restore')
 
 /** Runs a POSIX sh script with cwd set to the repo dir -- every extracted span relies on this (no `-C`/`git -C`, matching production: git hooks always run with cwd at the repo root, githooks(5)). */
 function runShInRepo(dir: string, script: string) {
@@ -180,7 +181,7 @@ describe('SMI-6973 step 5: the acquisition gap — a failing pid write must not 
     }
   }
 
-  const ACQUIRE = `. ${JSON.stringify(GIT_CRYPT_LOCK_LIB)}\nRED=''\nNC=''\n_acquire_git_crypt_lock\necho REACHED_AFTER_ACQUIRE\n`
+  const ACQUIRE = `. ${JSON.stringify(GIT_CRYPT_LOCK_LIB)}\nRED=''\nNC=''\n_acquire_git_crypt_lock\necho REACHED_AFTER_ACQUIRE\n[ "$(cat "$GIT_CRYPT_LOCK_DIR/pid")" = "$$" ] && echo PID_RECORDED\n`
 
   it('control: with a normal mkdir, acquire succeeds and records the pid', () => {
     // Known-positive. Without this, the failure arm below could pass because
@@ -189,8 +190,9 @@ describe('SMI-6973 step 5: the acquisition gap — a failing pid write must not 
     const result = runShInRepo(dir, ACQUIRE)
     expect(result.combined).toContain('REACHED_AFTER_ACQUIRE')
     expect(result.status).toBe(0)
-    const lockDir = join(dir, '.git', 'skillsmith-git-crypt-filter.lock')
-    expect(existsSync(join(lockDir, 'pid'))).toBe(true)
+    // Observed from INSIDE the script: since SMI-6973 (H1) an EXIT trap
+    // releases the lock, so it is already gone by the time the shell exits.
+    expect(result.combined).toContain('PID_RECORDED')
   })
 
   it('refuses and releases when the pid write fails after mkdir succeeded', () => {
@@ -223,6 +225,7 @@ describe('SMI-6973: span extraction starts after the sentinel LINE, not the sent
     ['clear-marker', CLEAR_MARKER_SPAN],
     ['disabled-precheck', DISABLED_PRECHECK_SPAN],
     ['restore-definition', RESTORE_DEFINITION_SPAN],
+    ['explicit-restore', EXPLICIT_RESTORE_SPAN],
   ]
 
   it.each(SPANS)('span %s does not begin with the sentinel’s trailing pointer', (name, span) => {
@@ -243,7 +246,7 @@ describe('SMI-6973: span extraction starts after the sentinel LINE, not the sent
     const withSuffix = PRE_COMMIT_SRC.split('\n').filter((l) =>
       /#\s*SMI-5983-TEST:BEGIN\s+\S+\s+--\s+\S/.test(l)
     )
-    // SPANS.length is 3 since SMI-6973 removed the lock-helpers sentinel.
+    // SPANS.length is 4 (3 + R4's explicit-restore) since SMI-6973 removed the lock-helpers sentinel.
     // Asserting against SPANS.length rather than a literal keeps the two in
     // step automatically if another span is ever extracted the same way.
     expect(withSuffix).toHaveLength(SPANS.length)
@@ -342,7 +345,7 @@ describe('SMI-5983 (governance follow-up): .husky/pre-commit disabled-precheck s
 
     const result = runShInRepo(
       dir,
-      `EXPECTED_BRANCH=main\n${LOCK_HELPERS_SPAN}\n${DISABLED_PRECHECK_SPAN}\necho REACHED_END\n`
+      `EXPECTED_BRANCH=main\n${LOCK_HELPERS_SPAN}\n${DISABLED_PRECHECK_SPAN}\necho REACHED_END\n[ -d "$GIT_CRYPT_LOCK_DIR" ] && echo LOCK_STILL_HELD\n`
     )
     expect(result.status).toBe(0)
     expect(result.combined).toContain('REACHED_END')
@@ -351,7 +354,9 @@ describe('SMI-5983 (governance follow-up): .husky/pre-commit disabled-precheck s
     // point in the real file (released later, only after the SMI-2747
     // restore-definition block decides what to do) -- confirms this span
     // doesn't prematurely release out from under the caller.
-    expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(true)
+    // Observed from inside the script (LOCK_STILL_HELD): an EXIT trap now
+    // releases it at shell exit (SMI-6973 H1), so the directory is gone after.
+    expect(result.combined).toContain('LOCK_STILL_HELD')
   })
 })
 
@@ -433,6 +438,12 @@ describe('SMI-5983 (governance retro): lock-helpers span self-releases on signal
       `${LOCK_HELPERS_SPAN}\n_acquire_git_crypt_lock\nkill -INT $$\necho AFTER_SIGNAL\n`
     )
     expect(result.combined).not.toMatch(/syntax error/i)
+    // SMI-6973 R2-a: the handler must EXIT with the conventional status, not
+    // return -- a returning handler lets the script run on past the signal
+    // (AFTER_SIGNAL) while still releasing the lock, which the lock-absence
+    // assertion alone cannot tell apart from a correct exit.
+    expect(result.status).toBe(130)
+    expect(result.combined).not.toContain('AFTER_SIGNAL')
     expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(false)
   })
 
@@ -443,6 +454,12 @@ describe('SMI-5983 (governance retro): lock-helpers span self-releases on signal
       `${LOCK_HELPERS_SPAN}\n_acquire_git_crypt_lock\nkill -TERM $$\necho AFTER_SIGNAL\n`
     )
     expect(result.combined).not.toMatch(/syntax error/i)
+    // SMI-6973 R2-a: the handler must EXIT with the conventional status, not
+    // return -- a returning handler lets the script run on past the signal
+    // (AFTER_SIGNAL) while still releasing the lock, which the lock-absence
+    // assertion alone cannot tell apart from a correct exit.
+    expect(result.status).toBe(143)
+    expect(result.combined).not.toContain('AFTER_SIGNAL')
     expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(false)
   })
 
@@ -478,52 +495,25 @@ describe('SMI-5983 (governance retro): lock-helpers span self-releases on signal
         }, 20)
       })
 
-      await new Promise<void>((resolvePromise) => child.once('exit', () => resolvePromise()))
+      const exitCode = await new Promise<number | null>((resolvePromise) =>
+        child.once('exit', (code) => resolvePromise(code))
+      )
 
-      // Not asserting the process terminated on SIGTERM: the fix's own trap
-      // (`trap '_release_git_crypt_lock' INT TERM`) deliberately does not
-      // call `exit` in its handler, matching this file's pre-existing
-      // `trap '_restore_smudge_filter' EXIT INT TERM` convention elsewhere
-      // in the real hook (also handler-only, no explicit exit) -- POSIX sh
-      // continues past the interrupted `sleep` once a signal is trapped
-      // (confirmed via direct reproduction), so "SHOULD_NOT_REACH" DOES
-      // print here; that is expected, not a regression. The only invariant
+      // SMI-6973 (H1): the signal handler now exits after cleanup, so the
+      // shell no longer runs on past the interrupted `sleep`. The invariant
       // this test guards is the lock's own cleanup.
       expect(existsSync(join(dir, '.git', 'skillsmith-git-crypt-filter.lock'))).toBe(false)
+      // SMI-6973 R2-a: exit status 143 and no post-signal output prove the
+      // handler exited rather than returned into the interrupted script.
+      expect(exitCode).toBe(143)
+      expect(stdout).not.toContain('SHOULD_NOT_REACH')
     },
     15_000
   )
 })
 
-describe('SMI-5983 (governance follow-up): regression guard for the trap/lock reentrancy fix', () => {
-  it("releases the disable sequence's lock BEFORE arming the restore trap, not after", () => {
-    // The exact bug this governance pass fixed: _restore_smudge_filter()
-    // itself calls _acquire_git_crypt_lock(), which is not reentrant --
-    // arming `trap '_restore_smudge_filter' EXIT INT TERM` while the
-    // initiating _acquire_git_crypt_lock() call (SMI-5983-TEST:BEGIN
-    // disabled-precheck) was still held meant a signal/error landing
-    // between trap-registration and release made the trap spin against its
-    // own already-held lock for the full wait window, then hard-exit
-    // without ever restoring the real filter values. This is a textual
-    // regression guard on the invariant that causally prevents it --
-    // exercised behaviorally (not just textually) by the disable-then-
-    // restore cycle test above, which would hang/timeout well before its
-    // 15s spawnSync budget if this ordering regressed back to trap-before-
-    // release for the EXIT trap alone (the explicit `_restore_smudge_filter`
-    // call in that test doesn't go through the trap, but a regression here
-    // would still leave the lock held across the marker write for the trap
-    // to fight over on any subsequent real signal).
-    const markerWriteIdx = PRE_COMMIT_SRC.indexOf(
-      'git config --local skillsmith.git-crypt-disabled-marker "$$'
-    )
-    expect(markerWriteIdx).toBeGreaterThan(-1)
-    const releaseIdx = PRE_COMMIT_SRC.indexOf('_release_git_crypt_lock', markerWriteIdx)
-    const trapIdx = PRE_COMMIT_SRC.indexOf(
-      "trap '_restore_smudge_filter' EXIT INT TERM",
-      markerWriteIdx
-    )
-    expect(releaseIdx).toBeGreaterThan(-1)
-    expect(trapIdx).toBeGreaterThan(-1)
-    expect(releaseIdx).toBeLessThan(trapIdx)
-  })
-})
+// SMI-6973 round 3 (F3): the release-before-trap ordering guard that lived here
+// was a textual scan whose comment-strip a trailing `# ...` could satisfy. It is
+// now behavioural, in git-crypt-lock-errexit.test.ts ("the restore trap is armed
+// only after the lock is released"): it delivers a real TERM during the marker
+// write and asserts the filters are restored promptly.

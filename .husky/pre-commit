@@ -281,7 +281,11 @@ fi
 # string in that .ts file's own source text), so this does not trip the
 # SMI-5702 T11 guard the comment above already explains.
 _clear_git_crypt_marker() {
-  git config --local --unset skillsmith.git-crypt-disabled-marker 2>/dev/null || true
+  _cgm_rc=0
+  git config --local --unset skillsmith.git-crypt-disabled-marker 2>/dev/null || _cgm_rc=$?
+  # R4: exit 5 = key absent (measured) = already clear.
+  if [ "$_cgm_rc" -eq 5 ]; then _cgm_rc=0; fi
+  return "$_cgm_rc"
 }
 # SMI-5983-TEST:END clear-marker
 
@@ -302,21 +306,9 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     echo "  Current branch:  ${YELLOW}$CURRENT_BRANCH${NC}"
     echo ""
 
-    # SMI-5983: dedicated git-crypt filter lock, POSIX-sh (this hook is
-    # #!/bin/sh, no `local`/`[[ ]]`/BASH_SOURCE) but the SAME lock directory
-    # path scripts/_lib.sh's bash acquire_git_crypt_filter_lock() uses --
-    # both sides genuinely contend on one lock. No automatic reclaim (an
-    # ABA race in an `mv`-to-tombstone reclaim was found and rejected during
-    # this fix's design review) -- fails closed with a manual-unstick
-    # message instead. Held only around the classify+disable+marker-write
-    # sequence below, released before the checkout, reacquired only for
-    # the restore.
-    # SMI-6973: lock implementation moved to scripts/lib/git-crypt-lock.sh
-    # (read its header for the sourcing contract). Sourced HERE, inside the
-    # branch-mismatch path, not at the top of the hook: an ordinary commit
-    # never reaches this lock, so a missing library must not wedge it. FATAL
-    # on absence, unlike this hook's two other libraries which degrade -- there
-    # is no safe default for mutating shared git-crypt config unserialised.
+    # SMI-5983/SMI-6973: lock library (contract, rationale, why absence is
+    # FATAL): scripts/lib/git-crypt-lock.sh. Held around classify+disable+
+    # marker-write, released before the checkout, reacquired for the restore.
     GIT_CRYPT_LOCK_LIB="$(dirname "$0")/../scripts/lib/git-crypt-lock.sh"
     if [ ! -r "$GIT_CRYPT_LOCK_LIB" ]; then
       echo "${RED}  git-crypt lock library missing or unreadable:${NC}" >&2
@@ -350,7 +342,7 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # mismatch, so advertising a bypass could commit directly on the wrong
     # branch, compounding the exact problem this hook exists to prevent.
     if [ "$SMUDGE_CMD" = "cat" ] && [ "$CLEAN_CMD" = "cat" ]; then
-      _release_git_crypt_lock
+      _release_git_crypt_lock || true # exits 1 below; the EXIT handler retries
       # SMI-6973: bare, this aborted on an absent marker (the common case
       # here), silently deleting every line of recovery guidance below it.
       _marker=""
@@ -380,85 +372,81 @@ if [ -n "$EXPECTED_BRANCH" ]; then
     # CLEAN_CMD from that span, plus the lock helpers that SMI-6973 moved to
     # scripts/lib/git-crypt-lock.sh (source that library, do not slice it).
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
-      # Restore function — called explicitly on success and via trap on crash/signal.
-      # SMI-5702: the else-branches used to remove the config key entirely
-      # when no pre-image was captured (filter.git-crypt.{smudge,clean} was
-      # genuinely MISSING before this hook ran) -- an operator/agent running
-      # that exact removal against this repo-shared config is what broke the
-      # filter for every worktree AND the main checkout at once, twice
-      # (SMI-5702, recurrence SMI-5861). A missing pre-image now heals to
-      # canonical registration instead of restoring "missing" -- a stronger,
-      # loud-by-default outcome (required=true only fails loudly when SOME
-      # filter is configured) than reproducing the exact hazard this fix
-      # exists to eliminate.
-      # The literal fallback values below MUST stay byte-identical to
-      # GIT_CRYPT_CANONICAL_SMUDGE/GIT_CRYPT_CANONICAL_CLEAN in
-      # scripts/_lib.sh (governance finding, SMI-5702 review) -- duplicated
-      # rather than sourced because this hook is POSIX sh (no `local`,
-      # `[[ ]]`, or BASH_SOURCE) and _lib.sh is bash-only.
-      # SMI-5983: also locks and clears the disabled-marker FIRST, before
-      # restoring real values -- same ordering rationale as
-      # scripts/_rebase-git-crypt.sh's restore_filter_config().
+      # SMI-5702: a missing pre-image heals to canonical registration, never to
+      # "key removed" (that removal broke every worktree twice, SMI-5702/5861).
+      # The literal fallbacks below MUST stay byte-identical to
+      # GIT_CRYPT_CANONICAL_SMUDGE/CLEAN in scripts/_lib.sh (duplicated, not
+      # sourced: this hook is POSIX sh, _lib.sh is bash-only).
+      # SMI-5983: clears the disabled-marker FIRST, before restoring real values
+      # (same ordering as scripts/_rebase-git-crypt.sh restore_filter_config()).
       _restore_smudge_filter() {
+        # SMI-6973 (H1): acquiring arms the lock library's own EXIT/INT/TERM
+        # handlers, which REPLACE the `trap '_restore_smudge_filter' ...` set
+        # below. Naming this function as the chained outer handler means a
+        # signal or errexit abort mid-restore releases the lock AND re-runs
+        # the restoration once, instead of losing it.
+        GIT_CRYPT_LOCK_OUTER_TRAP=_restore_smudge_filter
         _acquire_git_crypt_lock
-        _clear_git_crypt_marker
-        if [ -n "$SMUDGE_CMD" ]; then
-          git config --local filter.git-crypt.smudge "$SMUDGE_CMD"
-        else
-          git config --local filter.git-crypt.smudge 'git-crypt smudge'
+        # SMI-6973 (H1, round 3): this also runs AS the final EXIT trap, where
+        # the lock library's re-armed trap never fires -- so no errexit abort
+        # between acquire and release. Failures are collected, not fatal.
+        _rsf_rc=0
+        _rsf_errexit=""
+        case $- in *e*) _rsf_errexit=1 ;; esac
+        set +e
+        _clear_git_crypt_marker || _rsf_rc=1
+        git config --local filter.git-crypt.smudge "${SMUDGE_CMD:-git-crypt smudge}" || _rsf_rc=1
+        git config --local filter.git-crypt.clean "${CLEAN_CMD:-git-crypt clean}" || _rsf_rc=1
+        _release_git_crypt_lock || _rsf_rc=1
+        [ -z "$_rsf_errexit" ] || set -e
+        if [ "$_rsf_rc" -ne 0 ]; then
+          # Outer trap stays set: the EXIT handler re-runs us (R4).
+          echo "${RED}  Failed to restore git-crypt filter config; run: ./scripts/worktree-crypt.sh fix .${NC}" >&2
+          return 1
         fi
-        if [ -n "$CLEAN_CMD" ]; then
-          git config --local filter.git-crypt.clean "$CLEAN_CMD"
-        else
-          git config --local filter.git-crypt.clean 'git-crypt clean'
-        fi
-        _release_git_crypt_lock
+        GIT_CRYPT_LOCK_OUTER_TRAP=""
       }
+      # R4: trap status is discarded, so FINAL retries once, then exits. F7: a
+      # signal restores, then ENDS the hook (130/143), never continues.
+      _restore_smudge_filter_signal() {
+        if _restore_smudge_filter; then trap - EXIT INT TERM; fi
+        exit "$1"
+      }
+      _restore_smudge_filter_final() {
+        _rsf_st=$?
+        _restore_smudge_filter || _restore_smudge_filter || { [ "$_rsf_st" -ne 0 ] || _rsf_st=1; exit "$_rsf_st"; }
+      }
+      # SMI-6973 F1: until the trap below is armed, an abort or signal runs the
+      # lock library's handler. Chain the restore through it NOW, before the
+      # first disabling write, so the lock is released AND filters restored.
+      GIT_CRYPT_LOCK_OUTER_TRAP=_restore_smudge_filter
       git config --local filter.git-crypt.smudge "cat"
       git config --local filter.git-crypt.clean "cat"
-      # Written LAST, after both filter values -- matches
-      # scripts/rebase-worktree.sh's Step 7 ordering.
+      # Written LAST, after both filter values (rebase-worktree.sh Step 7 order).
       _worktree_b64=$(printf '%s' "$(pwd)" | base64 | tr -d '\n')
       git config --local skillsmith.git-crypt-disabled-marker "$$ $(date +%s) $_worktree_b64"
-      # SMI-5983 (governance follow-up): release the disable sequence's lock
-      # BEFORE arming the restore trap, NOT before (the original SMI-2747
-      # ordering had "register trap, then disable+write, then release").
-      # _restore_smudge_filter() itself calls _acquire_git_crypt_lock(),
-      # which is not reentrant -- registering the trap while this lock
-      # instance was still held meant a signal/error landing between
-      # trap-registration and release (i.e. during the two `git config`
-      # writes or the marker write just above) made the trap spin against
-      # its OWN already-held lock for the full GIT_CRYPT_FILTER_LOCK_WAIT
-      # window, then hard-exit ("holder PID: $$") -- filters left disabled,
-      # restore never ran. Mirrors rebase-worktree.sh's own ordering, where
-      # disable_git_crypt_filters_or_fail() fully acquires+writes+releases
-      # its lock before step_disable_filters() arms the outer restore trap
-      # (found via direct trace of this file's ordering during governance
-      # review). Narrowing the trap's coverage to start only after this
-      # release does shrink -- but does not remove -- SMI-2747's original
-      # protection against a mid-write interrupt: an interrupt in that now-
-      # uncovered handful of `git config` calls still leaves the marker's
-      # PID (this process) to go dead, so the existing two-signal auto-heal
-      # (marker dead + no active rebase) is what recovers it instead of the
-      # trap -- exactly the "marker protects the window, lock protects the
-      # mutation" split the plan doc already describes.
-      _release_git_crypt_lock
-      trap '_restore_smudge_filter' EXIT INT TERM
+      # SMI-5983: release BEFORE arming the restore trap (it re-acquires; the
+      # lock is not reentrant). See git-crypt-lock.sh "CALLER ORDERING".
+      _release_git_crypt_lock || true # a failed removal is retried by the EXIT trap
+      trap '_restore_smudge_filter_final' EXIT
+      trap '_restore_smudge_filter_signal 130' INT
+      trap '_restore_smudge_filter_signal 143' TERM
+      GIT_CRYPT_LOCK_OUTER_TRAP=""
     else
-      _release_git_crypt_lock
+      _release_git_crypt_lock || true # failure is already reported; EXIT retries
     fi
     # SMI-5983-TEST:END restore-definition
     echo "  ${YELLOW}Running smudge-safe checkout...${NC}"
-    # SMI-6973: under errexit the shell aborts ON the failing command, before
-    # `RC=$?` runs -- so a failed checkout never reached RESTORE_EXIT and the
-    # "Auto-restore failed" block below was unreachable. `|| RC=$?` keeps it
-    # observable. Measured: `sh -ec 'false; RC=$?; echo X'` prints nothing.
+    # SMI-6973: under errexit a failed checkout aborted before `RC=$?` ran, so
+    # the "Auto-restore failed" block was unreachable; `|| RC=$?` keeps it live.
     RESTORE_EXIT=0
     git checkout "$EXPECTED_BRANCH" || RESTORE_EXIT=$?
+    # SMI-5983-TEST:BEGIN explicit-restore -- git-crypt-lock-errexit.test.ts
     if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
-      _restore_smudge_filter
-      trap - EXIT INT TERM
+      # R4 (H-b): traps are the retry; drop them only on success.
+      if _restore_smudge_filter; then trap - EXIT INT TERM; else RESTORE_EXIT=1; fi
     fi
+    # SMI-5983-TEST:END explicit-restore
     if [ $RESTORE_EXIT -eq 0 ]; then
       rm -f "$(git rev-parse --git-dir)/expected-branch"
       echo "${GREEN}  ✓ Restored to $EXPECTED_BRANCH. Staged changes preserved.${NC}"

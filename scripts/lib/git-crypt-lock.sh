@@ -37,89 +37,142 @@
 # CREATED by the extraction, so handling it is part of extracting correctly
 # rather than a separate improvement.
 #
+# CALLER ORDERING (moved from .husky/pre-commit, SMI-5983 governance follow-up).
+# The hook releases the disable sequence's lock BEFORE arming its own restore
+# trap. The original SMI-2747 order was "arm trap, disable+write, release", but
+# the restore function itself calls `_acquire_git_crypt_lock`, which is not
+# reentrant: arming it while this instance still held the lock meant a signal
+# landing during the two `git config` writes or the marker write made the trap
+# spin against its OWN lock for the whole wait window and then hard-exit, with
+# filters left disabled and the restore never run. The marker protects the
+# write window (a dead-PID marker with no active rebase is what the auto-heal
+# keys on); the lock protects the mutation.
+#
+# SMI-6973 F1 adds the missing half of that split: BEFORE the first disabling
+# write the caller sets GIT_CRYPT_LOCK_OUTER_TRAP to its restore function, so an
+# errexit abort or signal in the window before its own trap is armed still
+# releases the lock AND restores the filters (otherwise the handler released
+# the lock and left the filters disabled, with no marker for the auto-heal).
+#
+# TRAP OWNERSHIP. `_git_crypt_lock_arm` REPLACES any EXIT/INT/TERM trap the
+# caller installed, on every acquire attempt. A caller with its own cleanup must
+# therefore chain it through GIT_CRYPT_LOCK_OUTER_TRAP (a function name or shell
+# text), which a handler runs once per invocation, after the first lock release,
+# and clears before running so it cannot re-enter itself. The lock RELEASE is
+# attempted again afterwards, and a cleanup that re-names itself in the variable
+# (the hook's restore does) can run again from a later handler. Do not assume a
+# trap set earlier survives an acquisition.
+#
 # shellcheck shell=sh
 
 GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
 # See the "ONE DELIBERATE DEVIATION" note above: preserve, do not reset.
 GIT_CRYPT_LOCK_HELD="${GIT_CRYPT_LOCK_HELD-}"
+# A caller that owns its own cleanup (the hook's _restore_smudge_filter) names
+# it here, so the lock's traps CHAIN to it instead of replacing it. Cleared
+# when run, so a handler can never re-enter itself.
+GIT_CRYPT_LOCK_OUTER_TRAP="${GIT_CRYPT_LOCK_OUTER_TRAP-}"
+
+# SMI-6973 (cross-family review, H1/H3). THE INVARIANT: from the instant
+# `mkdir` succeeds until release, EVERY exit path -- plain exit, an errexit
+# abort, INT, TERM -- releases a lock this process owns, and the caller's own
+# cleanup (GIT_CRYPT_LOCK_OUTER_TRAP) still runs.
+#
+# Why EXIT is armed now: the earlier claim here that the held interval has "no
+# plain/error exit" was false. Husky runs hooks as `sh -e`, and a failing
+# command inside an `if` BODY (git config, a command substitution, the marker
+# write) aborts the shell, which skipped the explicit release.
+#
+# Handlers do `set +e` first: they run while the shell is already dying, and
+# one failing cleanup step must not skip the release that follows it.
+_git_crypt_lock_run_outer() {
+  _gcl_outer="$GIT_CRYPT_LOCK_OUTER_TRAP"
+  GIT_CRYPT_LOCK_OUTER_TRAP=""
+  if [ -n "$_gcl_outer" ]; then
+    eval "$_gcl_outer"
+  fi
+}
+_git_crypt_lock_on_exit() {
+  _gcl_status=$?
+  set +e
+  _release_git_crypt_lock
+  # R4: a failed cleanup step is never reported as success. A shell's exit
+  # status survives an EXIT trap unless the trap calls `exit`, so say it so.
+  _git_crypt_lock_run_outer || { [ "$_gcl_status" -ne 0 ] || _gcl_status=1; }
+  # Restoration may itself have taken and released the lock; release again in
+  # case it died holding it, or if the first removal failed. Idempotent. A
+  # removal that STILL fails (it printed the manual rmdir) fails the exit.
+  _release_git_crypt_lock || { [ "$_gcl_status" -ne 0 ] || _gcl_status=1; }
+  exit "$_gcl_status"
+}
+_git_crypt_lock_on_signal() {
+  set +e
+  _release_git_crypt_lock
+  _git_crypt_lock_run_outer
+  _release_git_crypt_lock
+  exit "$1"
+}
+_git_crypt_lock_arm() {
+  trap '_git_crypt_lock_on_exit' EXIT
+  trap '_git_crypt_lock_on_signal 130' INT
+  trap '_git_crypt_lock_on_signal 143' TERM
+}
+
 _acquire_git_crypt_lock() {
-  _wait_i=0
-  while [ "$_wait_i" -lt 50 ]; do
-    if mkdir "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
-      # SMI-6973 step 5 -- the acquisition gap. ORDER IS LOAD-BEARING HERE.
-      #
-      # This used to be `echo "$$" > …/pid` and THEN `GIT_CRYPT_LOCK_HELD=1`,
-      # which left a window nothing could clean up. errexit is suppressed for
-      # an `if` CONDITION but NOT inside an `if` BODY (measured:
-      # `sh -ec 'if true; then <failing cmd>; fi'` aborts), so a failing pid
-      # write -- full disk, read-only .git, permissions -- aborted the hook
-      # with the directory CREATED, the flag UNSET, and the trap below NOT YET
-      # ARMED. No trap-based fix reaches that window, and `_release_…`
-      # short-circuits on the empty flag and removes nothing. The `2>/dev/null`
-      # hid the diagnostic without changing the status.
-      #
-      # mkdir succeeding IS acquisition: at that instant this process owns the
-      # directory and nothing else can take it (SMI-5983 deliberately has no
-      # auto-reclaim). So claim it first, before anything that can fail.
-      GIT_CRYPT_LOCK_HELD=1
-      # Then record the owner. On failure, release what we just created rather
-      # than leaving a lock no one can attribute. `if !` keeps this exempt from
-      # errexit, so the refusal below is reached instead of an abort.
-      if ! echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null; then
-        rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
-        GIT_CRYPT_LOCK_HELD=""
-        echo "${RED}  acquired the git-crypt filter lock but could not record ownership${NC}" >&2
-        echo "    $GIT_CRYPT_LOCK_DIR/pid" >&2
-        echo "  The lock has been released, so nothing is wedged. This usually means" >&2
-        echo "  a full disk or a read-only .git. Fix that and retry the commit." >&2
-        exit 1
-      fi
-      # SMI-5983 (governance retro): self-release on a signal landing
-      # between acquire and the caller's own explicit release below --
-      # without this, unlike the bash-side
-      # acquire_git_crypt_filter_lock() (scripts/_lib.sh), which arms an
-      # equivalent trap at acquire time, an ordinary SIGINT/SIGTERM
-      # during the disabled-precheck/restore-definition spans left this
-      # repo-shared lock dangling forever (no auto-reclaim by design),
-      # hard-failing every OTHER worktree's git-crypt filter operation
-      # with the "never auto-reclaims" message below until a human ran
-      # the printed `rmdir` -- confirmed via direct reproduction
-      # (`kill -TERM` mid-lock-hold leaves the lock dir on disk).
-      # INT/TERM only, deliberately NOT EXIT: every code path between
-      # this acquire and the caller's own explicit release is
-      # deterministic, signal-free control flow (the disabled-precheck
-      # span always either hard-fails via an explicit release+exit, or
-      # falls straight through into the restore-definition span, which
-      # always releases explicitly on both its branches) -- there is no
-      # plain/error exit in that window for an EXIT trap to guard
-      # against, and arming one anyway would release the lock on ANY
-      # process exit reachable from inside this function, including a
-      # test harness or a future caller that intentionally checks
-      # intermediate lock state before the real hook continues past this
-      # point (confirmed by exactly this regression when EXIT was
-      # included in an earlier draft of this fix -- see
-      # scripts/tests/git-crypt-pre-commit-disable.test.ts's "proceeds
-      # past the precheck" test). Plain (non-composing) registration is
-      # correct here: this is the first `trap` call anywhere in this
-      # hook, so there is no prior handler to preserve.
-      # `_release_git_crypt_lock` is idempotent (a no-op once
-      # GIT_CRYPT_LOCK_HELD is cleared), so this trap firing again later
-      # -- after the caller's own explicit release (the hard-fail
-      # branch, or the disable sequence's release-before-bigger-trap-
-      # arm), after the bigger
-      # `trap '_restore_smudge_filter' EXIT INT TERM` below overwrites
-      # it outright, or from the re-acquire inside
-      # _restore_smudge_filter() itself -- is always harmless; it only
-      # ever protects the lock's own cleanup, never the filter VALUES
-      # (which the marker + two-signal heal mechanism protects
-      # regardless).
-      trap '_release_git_crypt_lock' INT TERM
+  # R4 (M): a lock THIS process still holds (a release whose removal failed
+  # leaves HELD set, and the signal handler's chained restore then acquires)
+  # is reused, not re-contended: spinning on our own directory cost the whole
+  # 10s window and exited 1 instead of 130/143. HELD is set only by our own
+  # successful mkdir, so an empty pid file or one naming us is ours.
+  if [ -n "$GIT_CRYPT_LOCK_HELD" ]; then
+    _own=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _own=""
+    if [ "$_own" = "$$" ] || [ -z "$_own" ]; then
       return 0
     fi
+  fi
+  _wait_i=0
+  while [ "$_wait_i" -lt 50 ]; do
+    # H3: the gap between `mkdir` returning and GIT_CRYPT_LOCK_HELD=1 cannot be
+    # closed with a handler -- the handler cannot tell "I just created it" from
+    # "someone else holds it" without the flag. So the window is made
+    # unreachable instead: INT/TERM are IGNORED across exactly the mkdir and
+    # the flag assignment (a signal there is dropped, never leaked), and the
+    # real handlers are armed on both outcomes immediately after.
+    trap '' INT TERM
+    if mkdir "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
+      # mkdir succeeding IS acquisition: nothing else can take the directory
+      # (SMI-5983 deliberately has no auto-reclaim). Claim it FIRST, before
+      # anything that can fail.
+      GIT_CRYPT_LOCK_HELD=1
+      _git_crypt_lock_arm
+      # Then record the owner. errexit is suppressed for an `if` CONDITION but
+      # not an `if` BODY, so this stays a condition.
+      if ! echo "$$" > "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null; then
+        echo "${RED}  acquired the git-crypt filter lock but could not record ownership${NC}" >&2
+        echo "    $GIT_CRYPT_LOCK_DIR/pid" >&2
+        if rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null; then
+          GIT_CRYPT_LOCK_HELD=""
+          echo "  The lock has been released, so nothing is wedged. This usually means" >&2
+          echo "  a full disk or a read-only .git. Fix that and retry the commit." >&2
+        else
+          # Honest: removal failed too. HELD stays set so the exit trap retries.
+          echo "  The lock directory could NOT be removed either, so it may still be on" >&2
+          echo "  disk and wedge every worktree. Once the disk/permission problem is" >&2
+          echo "  fixed, run: rmdir \"$GIT_CRYPT_LOCK_DIR\" (rm -rf if it is not empty)." >&2
+        fi
+        exit 1
+      fi
+      return 0
+    fi
+    _git_crypt_lock_arm
     _wait_i=$((_wait_i + 1))
     sleep 0.2
   done
-  _holder_pid=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
+  # Nothing to release here, and re-running the caller's cleanup would only
+  # wait out this same busy window a second time: drop the chain.
+  GIT_CRYPT_LOCK_OUTER_TRAP=""
+  # `|| var=` : a missing/unreadable pid file must not abort under `sh -e`.
+  _holder_pid=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _holder_pid=""
   echo "${RED}git-crypt filter lock busy after 10s (holder PID: ${_holder_pid:-unknown}).${NC}" >&2
   echo "  This lock never auto-reclaims. Confirm via 'ps' that the holder is gone, then:" >&2
   echo "    rmdir \"$GIT_CRYPT_LOCK_DIR\"" >&2
@@ -128,7 +181,9 @@ _acquire_git_crypt_lock() {
 }
 _release_git_crypt_lock() {
   [ -n "$GIT_CRYPT_LOCK_HELD" ] || return 0
-  _owner=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)
+  # `|| _owner=` : under `sh -e` a bare substitution of a failing `cat` aborts
+  # here, so the empty-owner handling below would never run.
+  _owner=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _owner=""
   # SMI-6973 step 5: release when the pid file names US, **or** when it is
   # absent or unreadable.
   #
@@ -151,7 +206,15 @@ _release_git_crypt_lock() {
   # A pid file naming a DIFFERENT process is still refused. That is the case
   # the original check exists for, and it stays.
   if [ "$_owner" = "$$" ] || [ -z "$_owner" ]; then
-    rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null
+    # A failing rm must not abort under `sh -e`, nor fail silently: say so, with
+    # the manual remedy. SMI-6973 F6: and it must NOT clear the flag -- the EXIT
+    # trap re-enters this function and can only retry while HELD is still set.
+    rm -rf "$GIT_CRYPT_LOCK_DIR" 2>/dev/null || {
+      echo "${RED}  could not remove the git-crypt filter lock: rmdir \"$GIT_CRYPT_LOCK_DIR\"${NC}" >&2
+      # R4 (H-b): NON-zero, so no caller can read this as released and then
+      # drop the traps that are the only remaining retry.
+      return 1
+    }
   fi
   GIT_CRYPT_LOCK_HELD=""
 }
@@ -188,7 +251,7 @@ _read_git_crypt_cfg() {
   _rfc_rc=0
   _rfc_val=$(git config --local "$_rfc_key" 2>/dev/null) || _rfc_rc=$?
   if [ "$_rfc_rc" -gt 1 ]; then
-    _release_git_crypt_lock
+    _release_git_crypt_lock || true # a failed removal must not skip the explanation below
     echo "${RED}  cannot read $_rfc_key (git config exit $_rfc_rc)${NC}" >&2
     echo "  Exit 1 would mean the key is simply unset, which is fine. This is not" >&2
     echo "  that: the read itself failed, so the filter state cannot be classified." >&2
