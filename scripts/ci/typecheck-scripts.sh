@@ -56,6 +56,13 @@ cd "$REPO_ROOT" || exit 1
 
 CONFIG="tsconfig.scripts.json"
 TSC_BIN="$REPO_ROOT/node_modules/.bin/tsc"
+# Test-only seam (SMI-6975): lets the suite substitute a hanging compiler to
+# prove the timeout arm fires. The substitute still has to pass the --version
+# recognition below, so it cannot silently turn the gate into a no-op.
+TSC_BIN="${SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST:-$TSC_BIN}"
+# Wall-clock budget for the full compile, in seconds. A normal run takes ~3s
+# (measured); the default is two orders of magnitude above that.
+TSC_TIMEOUT_SECS="${SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS:-600}"
 
 # Two files, per the 500-line gate (CLAUDE.md "CI Health Requirements"). The
 # guard below fails loudly if the sibling did not load -- with no `set -e`, a
@@ -77,6 +84,12 @@ fi
 # devDependency fails as "not found" rather than npx silently reaching for a
 # network install.
 # ---------------------------------------------------------------------------
+if ! [[ "$TSC_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]]; then
+  inconclusive "SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS='$TSC_TIMEOUT_SECS' is not a positive integer"
+  NEXT_ACTION="unset SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS or set it to a whole number of seconds"
+  exit_for_inconclusive
+fi
+
 if [[ ! -x "$TSC_BIN" ]]; then
   inconclusive "tsc not found or not executable at node_modules/.bin/tsc"
   NEXT_ACTION="npm install from the HOST in the main checkout (never inside a worktree container's node_modules, which is read-only by design)"
@@ -243,8 +256,29 @@ CHECKED="$DISCOVERED"
 # if either parser is wrong.
 # ---------------------------------------------------------------------------
 mktemp_or_die TSC_RAW
-"$TSC_BIN" -p "$CONFIG" --pretty >"$TSC_RAW" 2>&1
+# Bounded with a perl alarm rather than coreutils `timeout`: measured, stock
+# macOS (where pre-commit runs) has neither `timeout` nor `gtimeout`, while
+# /usr/bin/perl exists on macOS and in the Linux container/CI. The alarm
+# survives exec, so SIGALRM terminates the compiler itself and the shell
+# reports 142 (128+14).
+/usr/bin/perl -e 'alarm shift; exec @ARGV or exit 127' "$TSC_TIMEOUT_SECS" \
+  "$TSC_BIN" -p "$CONFIG" --pretty >"$TSC_RAW" 2>&1
 TSC_RC=$?
+if [[ "$TSC_RC" -eq 142 ]]; then
+  inconclusive "tsc did not finish within ${TSC_TIMEOUT_SECS}s (killed by SIGALRM, exit 142) -- timeout"
+  NEXT_ACTION="the compiler hung or the host is badly overloaded; re-run, or raise SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS if the tree legitimately grew"
+  exit_for_inconclusive
+fi
+if [[ "$TSC_RC" -gt 128 ]]; then
+  inconclusive "tsc was killed by a signal (exit $TSC_RC = 128+$((TSC_RC - 128)))"
+  NEXT_ACTION="something terminated the compiler (OOM killer, a manual kill); re-run and check host memory"
+  exit_for_inconclusive
+fi
+if [[ "$TSC_RC" -eq 127 ]]; then
+  inconclusive "could not exec tsc via /usr/bin/perl (exit 127)"
+  NEXT_ACTION="confirm /usr/bin/perl exists and $TSC_BIN is executable"
+  exit_for_inconclusive
+fi
 
 mktemp_or_die TSC_CLEAN
 # Strip ANSI + NUL before any pattern match, for the same reason the edge-
@@ -353,8 +387,9 @@ fi
 # from deno's behaviour or from TypeScript's documentation. Any OTHER pairing
 # -- a crash, a kill signal, a timeout, a version with a different contract --
 # means the run cannot be trusted, which is how "signal or timeout" (finding
-# 6) is covered without a separate `timeout` wrapper: an unexpected status is
-# already everything this check needs to know.
+# 6) is covered here: the compile is bounded by the perl alarm above (timeout
+# and signal kills are classified immediately after it), and any other
+# unexpected status is already everything this check needs to know.
 if [[ "$REPORTED" -eq 0 && "$TSC_RC" -ne 0 ]]; then
   inconclusive "reported 0 errors but exited $TSC_RC -- the compiler did not complete cleanly"
   NEXT_ACTION="a zero-error reading from a non-zero exit is not a clean tree. Re-run; if it persists, tsc is crashing after emitting output."

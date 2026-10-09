@@ -31,7 +31,7 @@
  * fixed path (`$REPO_ROOT/node_modules/.bin/tsc`), and a harness that replaced
  * the compiler would stop testing the thing under test.
  */
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -44,7 +44,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 // Derived from this file's own location, NOT from `git rev-parse`. Under
 // Docker-first the container sees /app as a bind mount whose .git is a FILE
@@ -71,8 +71,8 @@ interface GateRun {
  * that coercion is itself a silent-success bug, and it exists elsewhere in
  * this repo's hook harnesses.
  */
-function runGate(stubDir?: string): GateRun {
-  const env = { ...process.env }
+function runGate(stubDir?: string, extraEnv?: Record<string, string>): GateRun {
+  const env = { ...process.env, ...extraEnv }
   if (stubDir) env.PATH = `${stubDir}:${env.PATH ?? ''}`
   const r = spawnSync('bash', [GATE], {
     cwd: REPO_ROOT,
@@ -103,13 +103,29 @@ function runGate(stubDir?: string): GateRun {
 function assignsNextAction(line: string): boolean {
   const m = /^\s*NEXT_ACTION=(.*)$/.exec(line)
   if (!m) return false
-  const literal = m[1]
+  // $(...) is stripped innermost-first until stable, so nested substitutions
+  // like $(echo $(date)) are removed whole rather than leaving ")" behind. A
+  // value that is ONLY command substitutions is rejected even if the command
+  // prints literal text (e.g. $(printf 'run foo')): its rendered text cannot be
+  // shown from the source, so this errs toward flagging (the behavioural test
+  // checks what actually rendered).
+  let v = m[1].replace(/`[^`]*`/g, '') // `cmd`
+  for (let prev = ''; prev !== v; ) {
+    prev = v
+    v = v.replace(/\$\([^()]*\)/g, '') // innermost $(cmd)
+  }
+  const literal = v
     .replace(/\$\{[^}]*\}/g, '') // ${X}, ${X:-}
-    .replace(/\$\([^)]*\)/g, '') // $(cmd)
-    .replace(/`[^`]*`/g, '') // `cmd`
     .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, '') // $X
     .replace(/["']/g, '') // quote characters carry no text
   return /\S/.test(literal)
+}
+
+/** Absolute path of a real tool, resolved at run time (never hard-coded). */
+function realTool(name: string): string {
+  const p = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim()
+  if (!p.startsWith('/')) throw new Error(`could not resolve ${name} to an absolute path: ${p}`)
+  return p
 }
 
 /** Writes an executable stub that shadows `name` on PATH. */
@@ -138,7 +154,19 @@ afterEach(() => {
   }
 })
 
-describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it established the property', () => {
+// Sequential, and swept: these tests plant files under scripts/ and overwrite
+// tsconfig.scripts.json in the LIVE tree (a temp copy would need node_modules
+// and the packages/ import closure, which is not cheap or faithful). Each test
+// restores in `finally`, but a SIGKILL skips that, so leftovers from a killed
+// run are swept before the first test.
+beforeAll(() => {
+  const dir = join(REPO_ROOT, 'scripts')
+  for (const f of readdirSync(dir)) {
+    if (f.startsWith('zz-smi6975-')) rmSync(join(dir, f), { force: true })
+  }
+})
+
+describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when established', () => {
   it('control: a clean tree PASSES, and the two derivations reconcile', () => {
     const r = runGate()
     // Failure clause first: if this arm is INCONCLUSIVE, every other arm in
@@ -252,12 +280,15 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
       lines.forEach((line, i) => {
         if (!/\binconclusive "/.test(line)) return
         armCount += 1
-        let hasNext = false
+        // The LAST NEXT_ACTION assignment before exit_for_inconclusive is the
+        // one finish() renders, so it is the one that must carry text: an
+        // earlier good assignment followed by NEXT_ACTION="" renders nothing.
+        let last: string | null = null
         for (let j = i + 1; j < Math.min(i + 25, lines.length); j += 1) {
-          if (assignsNextAction(lines[j])) hasNext = true
+          if (/^\s*NEXT_ACTION=/.test(lines[j])) last = lines[j]
           if (lines[j].includes('exit_for_inconclusive')) break
         }
-        if (!hasNext) offenders.push(`${f}:${i + 1}`)
+        if (last === null || !assignsNextAction(last)) offenders.push(`${f}:${i + 1}`)
       })
     }
     // Known-positive on the scanner itself: if it found no arms at all it is
@@ -279,6 +310,11 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
     expect(assignsNextAction('    NEXT_ACTION="$(printf \'\')"')).toBe(false)
     expect(assignsNextAction('    NEXT_ACTION="`true`"')).toBe(false)
     expect(assignsNextAction('    NEXT_ACTION="fix $CONFIG; then re-run"')).toBe(true)
+    // Command-substitution-only values are rejected, including a nested one and
+    // one whose command prints literal text (deliberately errs toward flagging).
+    expect(assignsNextAction('    NEXT_ACTION="$(printf \'run foo\')"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION="$(echo $(date))"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION="fix $(echo $(date)) now"')).toBe(true)
     expect(offenders).toEqual([])
   })
 
@@ -305,19 +341,19 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
       {
         name: 'perl',
         tool: 'perl',
-        body: '#!/bin/sh\nexit 13\n',
+        body: `#!/bin/sh\ncase "$*" in *alarm*) exec /usr/bin/perl "$@" ;; esac\nexit 13\n`,
         cause: 'the ANSI/NUL-strip (perl) failed',
       },
       {
         name: 'global-grep',
         tool: 'grep',
-        body: `#!/bin/sh\ncase "$*" in *'^error TS'*) exit 2 ;; esac\nexec /usr/bin/grep "$@"\n`,
+        body: `#!/bin/sh\ncase "$*" in *'^error TS'*) exit 2 ;; esac\nexec ${realTool('grep')} "$@"\n`,
         cause: 'the global-diagnostic-shape grep failed',
       },
       {
         name: 'tests-find',
         tool: 'find',
-        body: '#!/bin/sh\n[ "$1" = scripts/tests ] && exit 2\nexec /usr/bin/find "$@"\n',
+        body: `#!/bin/sh\n[ "$1" = scripts/tests ] && exit 2\nexec ${realTool('find')} "$@"\n`,
         cause: 'find over scripts/tests failed',
       },
       {
@@ -412,15 +448,49 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
       expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
       expect(r.out, 'VERDICT').not.toContain('VERDICT        PASS')
       expect(r.status, 'exit').toBe(1)
-      expect(r.out, 'errors line').toMatch(
-        /1 total \/ 1 attributed across 1 files\s+\[RECONCILED\]/
-      )
-      expect(r.out, 'names the file').toMatch(new RegExp(`^1\\tscripts/${name}$`, 'm'))
+      // Properties, not the rendered format: the planted file is named in the
+      // by-file output, and the two derivations agree with each other.
+      expect(r.out, 'names the file').toContain(`scripts/${name}`)
+      const m = /(\d+) total \/ (\d+) attributed/.exec(r.out)
+      expect(m, 'reconciliation line present').not.toBeNull()
+      expect((m as RegExpExecArray)[1], 'total == attributed').toBe((m as RegExpExecArray)[2])
+      expect(Number((m as RegExpExecArray)[1]), 'planted error counted').toBeGreaterThan(0)
     } finally {
       rmSync(file, { force: true })
     }
     expect(existsSync(file)).toBe(false)
     expect(runGate().status).toBe(0)
+  })
+
+  it('a compiler that hangs is INCONCLUSIVE (timeout), never PASS and never a hang', () => {
+    // The gate bounds the full compile with a perl alarm (stock macOS has no
+    // `timeout`). The shim answers --version/--showConfig like the real tsc and
+    // hangs only on the full compile, so every earlier precondition passes and
+    // the only thing under test is the timeout arm.
+    const dir = scratchDir('hang')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    makeStub(
+      dir,
+      'tsc-hang',
+      `#!/bin/sh\ncase "$*" in *--pretty*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
+    )
+    const t0 = Date.now()
+    const r = runGate(undefined, {
+      SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-hang'),
+      SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
+    })
+    const elapsed = Date.now() - t0
+    expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+    expect(r.out, 'cause').toMatch(/did not finish within 2s/)
+    expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
+    expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
+    expect(r.status, 'exit').not.toBe(0)
+    // The alarm, not the harness's own 120s budget, ended it.
+    expect(elapsed, 'bounded').toBeLessThan(60_000)
+    // A bad budget value is refused rather than silently disabling the bound.
+    const bad = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '0' })
+    expect(bad.out).toContain('RESULT         INCONCLUSIVE')
+    expect(bad.status).not.toBe(0)
   })
 
   it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {
@@ -514,7 +584,11 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
     expect(includeRe.test(original.toString('utf8')), 'include array not found').toBe(true)
     const variants: Array<{ name: string; include: string; cause: string }> = [
       { name: 'emptied', include: '[]', cause: 'tsc --showConfig failed' },
-      { name: 'non-matching', include: '["zz-nomatch/**/*.ts"]', cause: 'tsc --showConfig failed' },
+      {
+        name: 'non-matching',
+        include: '["zz-nomatch/**/*.ts"]',
+        cause: 'tsc --showConfig failed',
+      },
       {
         name: 'narrowed',
         include: '["scripts/lib/**/*.ts"]',
