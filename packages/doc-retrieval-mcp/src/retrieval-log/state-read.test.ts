@@ -15,11 +15,6 @@
  * reader that returned an error for literally everything (SMI-6995 plan
  * § Verification, assertion 4; CLAUDE.md's measure-don't-reason rule).
  *
- * Quarantine- and writer-specific tests (`copyCorruptStateAside`,
- * `writeEntryWithRecovery`, `finalizeAtomicWrite`) live in
- * `state-read.quarantine.test.ts`, matching the production split (see that
- * module's top doc comment for why it's split at all).
- *
  * Round-2 adversarial review findings answered in this file: 1 (a throwing
  * `validate` must not escape as an exception), 3 (`readStateFailSoft` is
  * gone — `readStateWithClassification` replaces it), 5 (a present entry
@@ -34,7 +29,7 @@
  * - **Finding 4** — `readRawState` reads via a SINGLE file descriptor
  *   (open → fstat → read → close), closing it is proven (not assumed) via
  *   a `/proc/self/fd` count across many calls, the same technique
- *   `state-read.quarantine.test.ts` uses for finding 6 there — this is a
+ *   as any fd-leak test — this is a
  *   real regression risk the round-4 refactor itself introduced, not just
  *   a restatement of the bug it fixes.
  * - **Finding 5** — `errMessage` (now exported) cannot itself throw, even
@@ -508,7 +503,7 @@ describe('readRawState — descriptor hygiene', () => {
     // implementation grows it by ~0, modulo unrelated test-runner noise.
     // This threshold is intentionally far below `iterations` so it cannot
     // pass by accident — the same technique
-    // `state-read.quarantine.test.ts` uses for its own finding-6 test.
+    // as any fd-leak test.
     expect(after - before).toBeLessThan(iterations / 2)
   })
 })

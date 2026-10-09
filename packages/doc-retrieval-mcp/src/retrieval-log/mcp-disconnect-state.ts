@@ -298,8 +298,7 @@ export function readState(path: string = resolveMcpDisconnectStatePath()): McpDi
  * Exported (was private) so `mcp-disconnect-state.read.ts` can share this
  * ONE atomic-write implementation for {@link readAndAckResult}'s ack path
  * (SMI-6995) instead of carrying a second copy — matching the precedent
- * `state-read.ts` set for `errMessage`/`readRawState` when it split out
- * `state-read.quarantine.ts` for the same <500-line reason.
+ * `state-read.ts` set for `errMessage`/`readRawState`.
  */
 export function writeState(
   state: McpDisconnectState,
@@ -438,12 +437,10 @@ export function renderDisconnectBanner(server: McpServerName, entry: McpDisconne
 // Split into `mcp-disconnect-state.read.ts` to stay under this repo's
 // <500-line-per-file convention — re-exported here so every caller still
 // imports from this one path, matching the sibling state modules' split
-// convention (`state-read.ts`/`state-read.quarantine.ts`,
-// `ruflo-bridge-state.ts`/`ruflo-bridge-state.render.ts`). That file imports
-// back from here (`withLock`, `writeState`, `logSkippedWrite`, the path
-// resolvers, `renderDisconnectBanner`) — a deliberate two-way module
-// reference, same as `state-read.ts` already carries with its own
-// `quarantine` split; see this module's own doc comment for why a pure
+// convention (`ruflo-bridge-state.ts`/`ruflo-bridge-state.render.ts`). That
+// file imports back from here (`withLock`, `writeState`, `logSkippedWrite`,
+// the path resolvers, `renderDisconnectBanner`) — a deliberate two-way
+// module reference; see this module's own doc comment for why a pure
 // one-way split cannot work here (its reader also writes).
 export {
   readAndAckResult,

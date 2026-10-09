@@ -2,135 +2,51 @@
  * SMI-6995 — the shared three-way state-file read, lifted out of
  * `ruflo-bridge-state.ts`'s own private `readRawState` (the one reader of
  * the six session-priming state consumers that got this right from the
- * start) and made generic so the other five readers — `reindex-state.ts`,
+ * start) and made generic so the other readers — `reindex-state.ts`,
  * `liveness-state.ts`, `autoheal-state.ts`, `mcp-disconnect-state.ts`,
- * `probe.ts` — can delegate to ONE implementation instead of each carrying
- * its own copy of a `try { readFileSync + JSON.parse } catch { return {} }`
- * block that collapses "never written", "corrupt" and "could not be read"
- * into the same silent null. Six implementations of one read is six chances
- * to collapse it, and five had taken it (SMI-6995 plan, M1/M10). Wave 2
- * wires the functions below into those five modules; this file (Wave 1) is
- * not yet called from production — only its own tests exercise it today.
+ * `probe.ts` — delegate to ONE implementation instead of each carrying
+ * its own `try { readFileSync + JSON.parse } catch { return {} }` block that
+ * collapses "never written", "corrupt" and "could not be read" into the
+ * same silent null.
  *
- * ## The invariant this module exists to hold, stated once
+ * ## The invariant this module exists to hold
  *
  * A producer must always be able to overwrite corrupt state. A consumer must
  * never render corrupt state as healthy. **No function below serves both.**
- * These are two reads of the SAME file with OPPOSITE failure policies, and
- * conflating them is the exact mistake this plan's own first draft made
- * (review finding 2) — "fail-soft so a corrupt file recovers" cannot coexist
- * with "a malformed read must not look like no-prior-run" inside one
- * function. So the names below say which policy they carry, not just what
- * they read:
+ * They are two reads of the SAME file with OPPOSITE failure policies, so the
+ * names say which policy they carry:
  *
- * - **Consumer APIs** — {@link readEntryResult} — report the failure. A
- *   malformed or unreadable file renders a banner line naming the fault,
- *   because a corrupt state file is usually itself a symptom, and the
- *   banners exist precisely to surface what a developer cannot otherwise
- *   see. Genuine absence (`missing` — "has not run yet") is reported as its
- *   own status, never as a fault; whether it renders anything is each
- *   renderer's and each caller's decision, not this module's. Some renderers
- *   print a line for it (autoheal's "first run launched", liveness's
- *   "health unknown") and the session-priming caller suppresses those by
- *   only rendering on a fault or a failing `ok` entry.
+ * - **Consumer API** — {@link readEntryResult} — reports the failure. A
+ *   malformed or unreadable file renders a banner line naming the fault.
+ *   Genuine absence (`missing`) is its own status, never a fault; whether it
+ *   renders anything is each renderer's and each caller's decision.
  * - **Producer APIs** — {@link readEntryForUpdate},
  *   {@link readStateWithClassification} — never fail on the READ half (see
- *   each one's own doc comment for exactly what that promise does and does
- *   not cover). A write path that read corrupt state as an error would
- *   become permanently unwritable, and the module could never recover.
+ *   each one's own doc comment for exactly what that promise covers). A
+ *   write path that read corrupt state as an error would become permanently
+ *   unwritable.
  * - **The shared primitive** — {@link readRawState} — is neither; it is the
- *   one classification both policies are built from, so the five readers it
- *   replaces keep matching the bridge's own four-way split exactly.
- * - **The recovery primitives** — {@link copyCorruptStateAside} and its
- *   single-call writer counterpart {@link writeEntryWithRecovery} (both
- *   defined in `state-read.quarantine.ts` and re-exported here — see that
- *   file's own top comment for why) — let a producer satisfy its own
- *   "always overwritable" contract WITHOUT losing the corrupt bytes, and
- *   without overwriting a state another process committed before this
- *   writer's final pre-rename identity check (see `state-read.quarantine.ts`'s invariant E for exactly
- *   what that identity check does and the residual window it does not
- *   close).
+ *   one classification both policies are built from.
  *
- * ## SMI-6995 round-2 adversarial review — this file answers all 12 findings
+ * A recovery writer (copy corrupt bytes aside, then atomically overwrite)
+ * was removed from this module because nothing in production called it;
+ * SMI-7041 is where it would return, with its first caller.
  *
- * Findings 1 (validator-throw), 5 (null-vs-undefined), 9 (weak assertions)
- * and 12 (unbounded read) are answered in place below, in
- * {@link readRawState}, {@link readEntryResult} and {@link readEntryForUpdate}.
- * Findings 3 and 4 are structural: `readStateFailSoft` — the original
- * producer whole-state read — is GONE. It returned `{}` on every failure
- * and threw away WHY, so a caller had no way to know it needed to
- * quarantine before overwriting — the exact silent-discard shape this whole
- * module exists to remove, reproduced one layer down inside its own first
- * draft. {@link readStateWithClassification} replaces it as the ONLY
- * whole-state producer read, so the signal cannot be lost at a call site.
- * {@link writeEntryWithRecovery} does read + quarantine + merge + atomic
- * write as ONE call, re-verifying `path`'s identity before the copy and
- * before the rename (`state-read.quarantine.ts`, invariant E). Findings 2, 7
- * and 8 (quarantine destination exclusivity, directory refusal, symlink
- * refusal) live in `state-read.quarantine.ts`, re-exported from here so
- * every caller still imports from this one path — the split exists only to
- * stay under CLAUDE.md's 500-line pre-commit gate, not a semantic boundary.
- * Findings 10 and 11 were reviewed as sound; nothing changed for them.
+ * ## Reader properties pinned by tests
  *
- * ## SMI-6995 round-4 adversarial review — findings answered in THIS file
- *
- * Round 4 found 9 further issues against the round-2 fix; this file answers
- * the three whose mechanism lives here (the other six — copy-not-move
- * ordering, the TOCTOU-claim correction, leaked reservation slots, the
- * reservation fd leak, and the untested rename-failure path — live in
- * `state-read.quarantine.ts`, including a design-decision write-up at that
- * file's top that both files' doc comments now point back to):
- *
- * - **Finding 4 — the size bound was bypassable.** The old `readRawState`
- *   called `statSync(path)` and then SEPARATELY `readFileSync(path)` —
- *   re-resolving `path` by NAME a second time. Growth, truncation, or an
- *   outright replacement of whatever sits at `path` in between those two
- *   calls meant the size check and the actual read could observe two
- *   different files, defeating the bound finding 12 (round 2) added. Fixed
- *   by opening `path` exactly ONCE: `fstatSync` and the bounded read below
- *   both run against that SAME descriptor, which keeps referring to the
- *   SAME inode for the rest of this call no matter what later happens to
- *   the pathname — there is no second name resolution left to race. The fd
- *   is always closed via a `finally`, including on every early return, so
- *   this function cannot leak one per call (verified by its own
- *   `/proc/self/fd`-count test, the same technique finding 6 uses).
- * - **Finding 5 — a thrown non-`Error` with a throwing `toString` could
- *   escape this module's own "never throws" promise.** The old
- *   `errMessage` called `String(err)` unconditionally on anything that
- *   wasn't an `Error`, and `String()` on an object calls that object's own
- *   `toString`/`Symbol.toPrimitive` — which a hostile or merely buggy
- *   caller-supplied `validate` function (see {@link readEntryResult}) could
- *   make throw. Fixed: wrapped in its own try/catch with a fixed fallback
- *   string, so `errMessage` itself can never be the thing that turns "the
- *   validator misbehaved" into an uncaught exception. Exported (it was
- *   private before) so `state-read.quarantine.ts` can reuse the same
- *   hardened implementation instead of carrying a second copy of it.
- * - **Finding 8 — a test pinned presentation, not behaviour.** Two tests
- *   asserted the EXACT literal string `'state file is not a JSON object'`.
- *   Relaxed to assert the classification plus a non-empty explanation — the
- *   wording itself was never read by any consumer on that branch (every
- *   caller discards `detail` once it has the `malformed`/`unreadable`
- *   `kind`), so pinning it tested a sentence a copy-edit could break for no
- *   behavioural reason.
- *
- * Finding 9 (round 4) was reviewed as SOUND — the `lstatSync`/`statSync`
- * exception handling, the directory/symlink refusal, and
- * {@link readStateWithClassification}'s `needsQuarantine` derivation were
- * all correct already; nothing here changed for it.
+ * - `readRawState` opens `path` exactly ONCE; the size check (`fstatSync`)
+ *   and the bounded read both run against that descriptor, so there is no
+ *   second name resolution for a replacement to race, and the descriptor is
+ *   closed on every return path.
+ * - `errMessage` cannot itself throw, even for a thrown plain string,
+ *   `null`, or an object whose own `toString` throws, so a misbehaving
+ *   caller-supplied `validate` cannot break this module's never-throws
+ *   promise.
+ * - Assertions pin classification plus a non-empty explanation, not literal
+ *   wording that no consumer reads.
  */
 
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs'
-
-export {
-  copyCorruptStateAside,
-  writeEntryWithRecovery,
-  finalizeAtomicWrite,
-  RecoveryWriteError,
-  QUARANTINE_DEST_MAX_ATTEMPTS,
-  RECOVERY_WRITE_MAX_ATTEMPTS,
-  TEMP_NAME_MAX_ATTEMPTS,
-  type RecoveryTestHooks,
-} from './state-read.quarantine.js'
 
 // ---- The shared three-way (really four-way) classification --------------
 
@@ -344,8 +260,7 @@ export function readEntryResult<T>(
  *
  * `priorWasCorrupt` is `true` exactly when the file OR this key's own entry
  * could not be read cleanly — a malformed/unreadable whole file (every key's
- * history is at risk, not just this one — see {@link copyCorruptStateAside}
- * for why that matters), a present entry rejected by `validate`, OR a
+ * history is at risk, not just this one), a present entry rejected by `validate`, OR a
  * `validate` call that itself threw (finding 1). It is `false` for a
  * genuinely missing file, for a file that parses fine but simply has never
  * had this key, and for a present entry whose value is literally JSON
@@ -391,20 +306,13 @@ export function readEntryForUpdate<T>(
  * signal by forgetting a step: `classification` is always present, and
  * `needsQuarantine` is a derived convenience — `true` for `malformed` and
  * `unreadable`, `false` for `ok`/`missing` — specifically so a caller does
- * not have to re-derive that policy itself and get it wrong at one of
- * several call sites (there will be five, once Wave 2 wires this in).
+ * not have to re-derive that policy itself and get it wrong at a call site.
  * `state` is always a usable `S` (`{}` when the file could not be read), so
  * a caller can merge into it unconditionally without its own null check;
  * `detail` is `null` only when `classification` is `'ok'`.
  *
  * Never throws, matching the function it replaces — see {@link readRawState}
- * for why a corrupt read must never become an exception on this path. A
- * caller that wants to ALSO quarantine before overwriting should prefer
- * {@link writeEntryWithRecovery}, which does the read, the copy-aside, the
- * merge and the atomic write as one call so no OTHER code in this process
- * can interleave between them (finding 4, round 2) — use this function
- * directly only when the caller needs the classification without writing
- * anything yet.
+ * for why a corrupt read must never become an exception on this path.
  */
 export function readStateWithClassification<S extends object>(
   path: string
@@ -429,9 +337,8 @@ export function readStateWithClassification<S extends object>(
 // ---- internal helpers ------------------------------------------------------
 
 /**
- * Renders any thrown value to text — exported (it was private before SMI-
- * 6995 round-4 finding 5) so `state-read.quarantine.ts` can share this one
- * hardened implementation rather than carrying a second copy.
+ * Renders any thrown value to text. Exported so tests (and any sibling
+ * module) share this one hardened implementation.
  *
  * The naive version (`err instanceof Error ? err.message : String(err)`)
  * calls `String(err)` unconditionally on anything that is not an `Error`,

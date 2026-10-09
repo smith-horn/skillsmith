@@ -6,7 +6,7 @@
  * still imports from that one path. This file imports BACK from
  * `mcp-disconnect-state.ts` (`withLock`, `writeState`, `logSkippedWrite`,
  * the path resolvers, `renderDisconnectBanner`), a deliberate circular
- * module reference — the same shape `state-read.ts`/`state-read.quarantine.ts`
+ * module reference — the same shape `mcp-disconnect-state.ts` and this file
  * already carry, and safe for the same reason: every cross-import here is
  * used only inside a function body, never evaluated at module-top-level, so
  * Node/ESM's live-binding semantics resolve it regardless of load order.
