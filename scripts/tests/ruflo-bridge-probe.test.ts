@@ -252,4 +252,71 @@ describe('resolveHostKey -- git stderr stays off the parent terminal (SMI-6976)'
     },
     TEST_TIMEOUT_MS
   )
+
+  // The failure test above cannot see call ORDER: with both calls failing, the
+  // key is the default whichever runs first. Here both succeed with DIFFERENT
+  // answers, so only the documented order -- the main worktree from
+  // `worktree list`, with `rev-parse` never consulted -- yields the main key.
+  it(
+    'prefers the main worktree from `worktree list` and never runs the rev-parse fallback',
+    () => {
+      const work = mkdtempSync(join(tmpdir(), 'bridge-probe-order-'))
+      try {
+        const here = dirname(fileURLToPath(import.meta.url))
+        const repoRoot = join(here, '..', '..')
+        const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx')
+        const mainTree = join(work, 'main-tree')
+        const linkedTree = join(work, 'linked-tree')
+        const binDir = join(work, 'bin')
+        const callsLog = join(work, 'git-calls.log')
+        mkdirSync(binDir)
+        writeFileSync(
+          join(binDir, 'git'),
+          [
+            '#!/bin/sh',
+            `echo "$@" >> '${callsLog}'`,
+            'case "$*" in',
+            `  *"worktree list --porcelain"*) printf 'worktree ${mainTree}\\nHEAD 0000000000000000000000000000000000000000\\nbranch refs/heads/main\\n\\nworktree ${linkedTree}\\n' ;;`,
+            `  *"rev-parse --show-toplevel"*) echo '${linkedTree}' ;;`,
+            '  *) exit 1 ;;',
+            'esac',
+            '',
+          ].join('\n'),
+          { mode: 0o755 }
+        )
+        const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+        const probe = JSON.stringify(join(repoRoot, 'scripts', 'ruflo-bridge-probe.mjs'))
+        const runner = join(work, 'subject.mts')
+        writeFileSync(
+          runner,
+          [
+            `const { resolveHostKey } = await import(${probe})`,
+            `process.stdout.write('KEY=' + resolveHostKey() + '\\n')`,
+          ].join('\n')
+        )
+        const subject = spawnSync(tsx, [runner], {
+          encoding: 'utf8',
+          timeout: SPAWN_TIMEOUT_MS,
+          env,
+        })
+        const calls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8') : ''
+
+        expect(subject.status, `subject child failed: ${subject.stderr}`).toBe(0)
+        // Pinned to `-C <scripts dir>`: without it git resolves from the
+        // process cwd, which is the wrong repo whenever the probe is invoked
+        // from elsewhere.
+        const scriptsDir = join(repoRoot, 'scripts').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        expect(calls, 'worktree-list call never reached git with -C <scripts dir>').toMatch(
+          new RegExp(`-C ${scriptsDir} worktree list --porcelain`)
+        )
+        expect(subject.stdout).toBe(`KEY=${mainTree}\n`)
+        expect(calls, 'rev-parse fallback ran although worktree list answered').not.toMatch(
+          /rev-parse/
+        )
+      } finally {
+        rmSync(work, { recursive: true, force: true })
+      }
+    },
+    SPAWN_TIMEOUT_MS + 30_000
+  )
 })
