@@ -212,11 +212,24 @@ beforeAll(() => {
   for (const f of readdirSync(dir)) {
     if (f.startsWith('zz-smi6975-')) rmSync(join(dir, f), { force: true })
   }
+  // Backstop copies embed their writer's pid. Remove only those whose writer is
+  // gone, so a concurrent run in the same tree keeps its live copies.
   const ciDir = join(dir, 'ci')
   for (const f of readdirSync(ciDir)) {
-    if (f.startsWith('.backstop-')) rmSync(join(ciDir, f), { force: true })
+    const m = /^\.backstop-(?:subject|control)-(\d+)-\d+\.sh$/.exec(f)
+    if (m && !pidAlive(Number(m[1]))) rmSync(join(ciDir, f), { force: true })
   }
 })
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    // EPERM: the process exists but belongs to another user.
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
 
 describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when established', () => {
   it('control: a clean tree PASSES, and the two derivations reconcile', () => {
@@ -587,7 +600,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       // silently lost. run_bounded resets the disposition and unblocks the
       // signal before arming. Each wrapper execs the gate with that state
       // inherited, as any parent could pass it.
-      const dir = scratchDir('hang-ignored-alrm')
+      const dir = scratchDir('hang-alrm-inherited')
       const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
       makeStub(
         dir,
