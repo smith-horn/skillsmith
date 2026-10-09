@@ -582,7 +582,16 @@ async function transformSkill(
     )
   }
 
-  const { TransformationService } = await import(distPath)
+  // SMI-6975: distPath is a computed import() target, so its module type is
+  // `any` and no static resolver can check the call below. The cast states the
+  // contract this script relies on (a sync transformWithoutCache returning this
+  // file's TransformationResult) so a drift in this file's own types is at
+  // least a compile error here; the real class is still only verified at runtime.
+  const { TransformationService } = (await import(distPath)) as {
+    TransformationService: new () => {
+      transformWithoutCache: (name: string, desc: string, content: string) => TransformationResult
+    }
+  }
   const service = new TransformationService()
   return service.transformWithoutCache(skillName, description, content)
 }

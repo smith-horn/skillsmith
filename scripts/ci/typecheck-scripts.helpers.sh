@@ -110,9 +110,10 @@ _scripts_is_known_noncode_ext() {
 # .mjs/.cjs ONLY -- measured present today (135 / 2) and explicitly excluded
 # as "not TypeScript", not inferred from a general "looks like JS" rule.
 # .js/.jsx are deliberately NOT in this set: 0 of either exist today, so
-# pre-classifying them would be guessing, not measuring. The live control for
-# this file (plant scripts/zz-probe.js) must go INCONCLUSIVE, not silently
-# land in this bucket.
+# pre-classifying them would be guessing, not measuring. The live controls in
+# scripts/tests/ci/typecheck-scripts-gate.test.ts plant an unknown extension
+# (.probeext) AND a .js file under scripts/; both must go INCONCLUSIVE, not
+# silently land in this bucket.
 _scripts_is_known_excluded_js_ext() {
   case "$1" in
     .mjs | .cjs) return 0 ;;

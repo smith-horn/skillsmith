@@ -81,6 +81,16 @@ function runGate(stubDir?: string): GateRun {
   return { status: r.status, out: (r.stdout ?? '') + (r.stderr ?? '') }
 }
 
+/**
+ * True only for a line that is an actual, non-empty `NEXT_ACTION=` assignment
+ * statement. A bare `includes('NEXT_ACTION=')` is satisfied by a comment, an
+ * `echo`, or an empty assignment, none of which print a next action -- so an
+ * arm could lose its real assignment and keep passing on a forged mention.
+ */
+function assignsNextAction(line: string): boolean {
+  return /^\s*NEXT_ACTION=(?!""|''|\s*$)\S/.test(line)
+}
+
 /** Writes an executable stub that shadows `name` on PATH. */
 function makeStub(dir: string, name: string, body: string): void {
   mkdirSync(dir, { recursive: true })
@@ -173,20 +183,32 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
     // does not recognise must stop the gate rather than be silently dropped
     // from one of the two derivations — which is how they could agree on a
     // number while both omitting the same category.
-    const planted = join(REPO_ROOT, 'scripts', `zz-smi6975-probe-${process.pid}.probeext`)
+    //
+    // Two extensions, two claims: `.probeext` is an arbitrary unknown; `.js` is
+    // the one the helper's comment singles out as deliberately NOT pre-classified
+    // (0 exist today), so a future edit adding it to the excluded-JS set would
+    // otherwise turn it into a silent exclusion.
+    const planted: string[] = []
     try {
-      writeFileSync(planted, '# planted by typecheck-scripts-gate.test.ts\n')
-      const r = runGate()
-      expect(r.out).toContain('RESULT         INCONCLUSIVE')
-      expect(r.out).toContain('extension this gate does not classify')
-      expect(r.status).not.toBe(0)
-      expect(r.out).not.toContain('VERDICT        PASS')
+      for (const ext of ['.probeext', '.js']) {
+        const name = `zz-smi6975-probe-${process.pid}${ext}`
+        const file = join(REPO_ROOT, 'scripts', name)
+        planted.push(file)
+        writeFileSync(file, '# planted by typecheck-scripts-gate.test.ts\n')
+        const r = runGate()
+        expect(r.out, `${ext}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, `${ext}: cause`).toContain('extension this gate does not classify')
+        expect(r.out, `${ext}: names the file`).toContain(name)
+        expect(r.status, `${ext}: exit`).not.toBe(0)
+        expect(r.out, `${ext}: verdict`).not.toContain('VERDICT        PASS')
+        rmSync(file, { force: true })
+      }
     } finally {
-      rmSync(planted, { force: true })
+      for (const f of planted) rmSync(f, { force: true })
     }
-    // Prove the planted file was the cause and the tree is clean again —
+    // Prove the planted files were the cause and the tree is clean again —
     // otherwise a leaked probe file would break this gate for every later run.
-    expect(existsSync(planted)).toBe(false)
+    for (const f of planted) expect(existsSync(f)).toBe(false)
     const after = runGate()
     expect(after.status).toBe(0)
   })
@@ -211,7 +233,7 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
         armCount += 1
         let hasNext = false
         for (let j = i + 1; j < Math.min(i + 25, lines.length); j += 1) {
-          if (lines[j].includes('NEXT_ACTION=')) hasNext = true
+          if (assignsNextAction(lines[j])) hasNext = true
           if (lines[j].includes('exit_for_inconclusive')) break
         }
         if (!hasNext) offenders.push(`${f}:${i + 1}`)
@@ -220,6 +242,15 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
     // Known-positive on the scanner itself: if it found no arms at all it is
     // matching nothing, and an empty offenders list would mean nothing.
     expect(armCount).toBeGreaterThan(10)
+    // Known-positive / known-negative on the predicate: the forgeries a plain
+    // substring test accepts must be rejected, and a real assignment accepted.
+    expect(assignsNextAction('    NEXT_ACTION="re-run the gate"')).toBe(true)
+    expect(assignsNextAction('NEXT_ACTION=fixed-word')).toBe(true)
+    expect(assignsNextAction('    # NEXT_ACTION="re-run the gate"')).toBe(false)
+    expect(assignsNextAction('    echo "NEXT_ACTION=re-run"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION=""')).toBe(false)
+    expect(assignsNextAction("    NEXT_ACTION=''")).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION=')).toBe(false)
     expect(offenders).toEqual([])
   })
 
@@ -265,11 +296,110 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
 
     // And every blocked path must carry its OWN reason, not inherit a reason
     // stated once for the whole list — which is what the output did before.
-    for (const p of PINNED) {
-      expect(helpers).toContain(p)
+    //
+    // EXECUTED, not grepped: a path merely appearing somewhere in the helper
+    // source is satisfied by a comment, and says nothing about what the
+    // function returns. Source the real helper and ask it for each reason.
+    const HELPERS = join(REPO_ROOT, 'scripts', 'ci', 'typecheck-scripts.helpers.sh')
+    const reasonFor = (path: string): string => {
+      const r = spawnSync(
+        'bash',
+        ['-c', 'source "$1" && _scripts_blocked_reason "$2"', '_', HELPERS, path],
+        {
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+        }
+      )
+      expect(r.status, `_scripts_blocked_reason failed for ${path}: ${r.stderr}`).toBe(0)
+      return r.stdout
     }
+    const EXPECTED_REASONS: Record<string, string> = {
+      'scripts/linear/create-warning-issues.ts': '@linear/sdk is not an installed dependency',
+      'scripts/run-sql.ts': 'pg is not an installed dependency',
+    }
+    expect(Object.keys(EXPECTED_REASONS).sort()).toEqual(PINNED)
+    for (const p of PINNED) {
+      expect(reasonFor(p), `reason for ${p}`).toBe(EXPECTED_REASONS[p])
+    }
+    // Known-negative on the instrument: an unrecorded path must hit the
+    // fallback, and the fallback must not equal either recorded reason --
+    // otherwise the loop above could not distinguish "recorded" from "default".
+    const fallback = reasonFor('scripts/not-a-blocked-path.ts')
+    expect(fallback).toContain('reason not recorded')
+    for (const p of PINNED) expect(fallback).not.toBe(EXPECTED_REASONS[p])
     expect(helpers).not.toContain('neither @linear/sdk nor pg is an installed dependency')
   })
+
+  it('scope regression: an emptied, non-matching, or narrowed include is INCONCLUSIVE, never PASS', () => {
+    // Plan Step 5. Step 4 (a planted type error) tests the code; this tests the
+    // INSTRUMENT -- an `include` that reads fewer files than intended reports
+    // no errors, which is indistinguishable from a clean tree.
+    //
+    // Measured on tsc 5.9.3: an empty or non-matching `include` never reaches
+    // the "zero roots" arm, because `tsc --showConfig` itself exits 1 with
+    // TS18003 first. A NARROWED include is the only variant that reaches the
+    // set-comparison arm, so it is the one that proves reconciliation works.
+    const configPath = join(REPO_ROOT, 'tsconfig.scripts.json')
+    const original = readFileSync(configPath)
+    const includeRe = /"include":\s*\[[^\]]*\]/
+    expect(includeRe.test(original.toString('utf8')), 'include array not found').toBe(true)
+    const variants: Array<{ name: string; include: string; cause: string }> = [
+      { name: 'emptied', include: '[]', cause: 'tsc --showConfig failed' },
+      { name: 'non-matching', include: '["zz-nomatch/**/*.ts"]', cause: 'tsc --showConfig failed' },
+      {
+        name: 'narrowed',
+        include: '["scripts/lib/**/*.ts"]',
+        cause: 'disagree -- scope could not be validated',
+      },
+    ]
+    try {
+      for (const v of variants) {
+        writeFileSync(
+          configPath,
+          original.toString('utf8').replace(includeRe, `"include": ${v.include}`)
+        )
+        const r = runGate()
+        expect(r.out, `${v.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+        expect(r.out, `${v.name}: cause`).toContain(v.cause)
+        expect(r.status, `${v.name}: exit`).not.toBe(0)
+        expect(r.out, `${v.name}: verdict`).not.toContain('VERDICT        PASS')
+        // `checked` is documented as set only once the two derivations agree.
+        expect(r.out, `${v.name}: checked`).not.toMatch(/checked\s+\d+/)
+      }
+    } finally {
+      writeFileSync(configPath, original)
+    }
+    // Restored byte-for-byte, and the gate is green again.
+    expect(readFileSync(configPath).equals(original)).toBe(true)
+    expect(runGate().status).toBe(0)
+  })
+
+  // chmod 000 only denies a non-root reader. Under root (some containers) the
+  // file stays readable, so the premise is false there and the test would
+  // assert about nothing -- skipped by capability, with the probe below proving
+  // the premise on every run where it does execute.
+  it.skipIf(process.getuid?.() === 0)(
+    'an unreadable .ts under scripts/ is INCONCLUSIVE (tsc cannot read it), never PASS',
+    () => {
+      const file = join(REPO_ROOT, 'scripts', `zz-smi6975-unreadable-${process.pid}.ts`)
+      try {
+        writeFileSync(file, 'export const a: number = 1\n')
+        chmodSync(file, 0o000)
+        // Known-positive on the premise: the file really is unreadable here.
+        expect(() => readFileSync(file)).toThrow()
+        const r = runGate()
+        expect(r.out).toContain('RESULT         INCONCLUSIVE')
+        expect(r.out).toContain('module-resolution or global configuration failure')
+        expect(r.status).not.toBe(0)
+        expect(r.out).not.toContain('VERDICT        PASS')
+      } finally {
+        chmodSync(file, 0o644)
+        rmSync(file, { force: true })
+      }
+      expect(existsSync(file)).toBe(false)
+      expect(runGate().status).toBe(0)
+    }
+  )
 
   it('H2 regression: the attribution anchor matches diagnostics outside scripts/', () => {
     // 16 non-test scripts import ../../packages/core/src/..., so packages/

@@ -191,6 +191,9 @@ if [[ "$NODE_PARSE_RC" -ne 0 ]]; then
   exit_for_inconclusive
 fi
 COMPILER_ROOTS="$(wc -l <"$COMPILER_ROOTS_LIST" | tr -d ' ')"
+# Defence in depth: the tsc this repo pins fails inside --showConfig (TS18003)
+# for an empty or non-matching include before this arm is reached, so no test
+# can drive it. It stays for a tsc that reports zero files instead of failing.
 if [[ "$COMPILER_ROOTS" -eq 0 ]]; then
   inconclusive "tsc --showConfig resolved zero files for $CONFIG"
   NEXT_ACTION="the compiler's own include/exclude resolved to nothing. This is NOT a clean result."
