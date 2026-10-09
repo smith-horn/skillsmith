@@ -32,7 +32,15 @@
  * the compiler would stop testing the thing under test.
  */
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -82,13 +90,26 @@ function runGate(stubDir?: string): GateRun {
 }
 
 /**
- * True only for a line that is an actual, non-empty `NEXT_ACTION=` assignment
- * statement. A bare `includes('NEXT_ACTION=')` is satisfied by a comment, an
- * `echo`, or an empty assignment, none of which print a next action -- so an
- * arm could lose its real assignment and keep passing on a forged mention.
+ * True only for a line that is an actual `NEXT_ACTION=` assignment whose value
+ * carries literal text. A bare `includes('NEXT_ACTION=')` is satisfied by a
+ * comment, an `echo`, or an empty assignment; and a source-level non-empty
+ * check is still satisfied by `NEXT_ACTION="$UNSET"` or `"$(printf '')"`,
+ * which RENDER empty (finish() tests the expanded value). So expansions are
+ * stripped first and the remainder must contain a non-space character: a value
+ * made only of expansions is rejected, because its rendered text cannot be
+ * shown to be non-empty from the source. The behavioural test below is the
+ * check on what actually rendered.
  */
 function assignsNextAction(line: string): boolean {
-  return /^\s*NEXT_ACTION=(?!""|''|\s*$)\S/.test(line)
+  const m = /^\s*NEXT_ACTION=(.*)$/.exec(line)
+  if (!m) return false
+  const literal = m[1]
+    .replace(/\$\{[^}]*\}/g, '') // ${X}, ${X:-}
+    .replace(/\$\([^)]*\)/g, '') // $(cmd)
+    .replace(/`[^`]*`/g, '') // `cmd`
+    .replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, '') // $X
+    .replace(/["']/g, '') // quote characters carry no text
+  return /\S/.test(literal)
 }
 
 /** Writes an executable stub that shadows `name` on PATH. */
@@ -251,7 +272,155 @@ describe('SMI-6975 typecheck-scripts.sh — the gate reports PASS only when it e
     expect(assignsNextAction('    NEXT_ACTION=""')).toBe(false)
     expect(assignsNextAction("    NEXT_ACTION=''")).toBe(false)
     expect(assignsNextAction('    NEXT_ACTION=')).toBe(false)
+    // Expansion-only values render empty at runtime (finish() tests the
+    // expanded value) and must not count; literal text around an expansion must.
+    expect(assignsNextAction('    NEXT_ACTION="$UNSET_VAR"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION="${UNSET_VAR:-}"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION="$(printf \'\')"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION="`true`"')).toBe(false)
+    expect(assignsNextAction('    NEXT_ACTION="fix $CONFIG; then re-run"')).toBe(true)
     expect(offenders).toEqual([])
+  })
+
+  it('behavioural: every arm the harness can drive RENDERS a non-empty next: line', () => {
+    // The static test above reads source; this one reads what was printed. An
+    // assignment that expands empty passes the former and fails this. Arms are
+    // driven by stubbing the one tool each depends on, with a stub that execs
+    // the real binary for every other call so only the targeted call fails.
+    //
+    // NOT driven here (each needs the compiler, the filesystem or mktemp itself
+    // broken rather than one pipeline stage): tsc missing/unrecognised, config
+    // missing/unreadable, mktemp failure, find-over-scripts failure, the
+    // --showConfig node-parse arm, the zero-roots arm (unreachable on this tsc),
+    // the Found-line extraction/shape arms, the by-file pipeline stage arms, the
+    // status-vs-output contract arms, and the attribution-mismatch arm. Those
+    // stay covered by the static test only.
+    const arms: Array<{ name: string; tool: string; body: string; cause: string }> = [
+      {
+        name: 'diff',
+        tool: 'diff',
+        body: '#!/bin/sh\nexit 2\n',
+        cause: 'the set comparison itself failed',
+      },
+      {
+        name: 'perl',
+        tool: 'perl',
+        body: '#!/bin/sh\nexit 13\n',
+        cause: 'the ANSI/NUL-strip (perl) failed',
+      },
+      {
+        name: 'global-grep',
+        tool: 'grep',
+        body: `#!/bin/sh\ncase "$*" in *'^error TS'*) exit 2 ;; esac\nexec /usr/bin/grep "$@"\n`,
+        cause: 'the global-diagnostic-shape grep failed',
+      },
+      {
+        name: 'tests-find',
+        tool: 'find',
+        body: '#!/bin/sh\n[ "$1" = scripts/tests ] && exit 2\nexec /usr/bin/find "$@"\n',
+        cause: 'find over scripts/tests failed',
+      },
+      {
+        name: 'inventory-sort',
+        tool: 'sort',
+        body: '#!/bin/sh\ncat >/dev/null\nexit 2\n',
+        cause: 'sort of the scripts/ file inventory failed',
+      },
+    ]
+    for (const a of arms) {
+      const dir = scratchDir(`next-${a.name}`)
+      makeStub(dir, a.tool, a.body)
+      const r = runGate(dir)
+      // Failure clause first: if the arm did not fire, the next: assertion below
+      // would be about a different arm entirely.
+      expect(r.out, `${a.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, `${a.name}: cause`).toContain(a.cause)
+      expect(r.status, `${a.name}: exit`).not.toBe(0)
+      expect(r.out, `${a.name}: next line`).toMatch(/^ {2}next: \S/m)
+    }
+    // And an arm driven by a real input rather than a stub.
+    const file = join(REPO_ROOT, 'scripts', `zz-smi6975-next-${process.pid}.probeext`)
+    try {
+      writeFileSync(file, 'x\n')
+      const r = runGate()
+      expect(r.out, 'unclassified ext: RESULT').toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'unclassified ext: next line').toMatch(/^ {2}next: \S/m)
+    } finally {
+      rmSync(file, { force: true })
+    }
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('scope regression: a SWAPPED root set with the SAME total is INCONCLUSIVE, never PASS', () => {
+    // "Wrong scope, right total". The three variants above change the COUNT, so
+    // a gate that compared counts would still pass them for the wrong reason.
+    // This one keeps the count equal: drop one discovered file from the
+    // compilation (exclude) and add one non-discovered file (files[] ignores
+    // `exclude`). Only a SET comparison can see it.
+    const configPath = join(REPO_ROOT, 'tsconfig.scripts.json')
+    const original = readFileSync(configPath)
+    const text = original.toString('utf8')
+    const dropped = readdirSync(join(REPO_ROOT, 'scripts', 'lib')).find(
+      (f) => f.endsWith('.ts') && !f.endsWith('.d.ts')
+    )
+    expect(dropped, 'no scripts/lib/*.ts to drop').toBeDefined()
+    const added = 'scripts/tests/ci/typecheck-scripts-gate.test.ts'
+    expect(existsSync(join(REPO_ROOT, added)), 'swap-in file must exist').toBe(true)
+    expect(text.includes('"exclude": ['), 'exclude array not found').toBe(true)
+    try {
+      writeFileSync(
+        configPath,
+        text
+          .replace('"exclude": [', `"exclude": [\n    "scripts/lib/${dropped}",`)
+          .replace('"include":', `"files": ["${added}"],\n  "include":`)
+      )
+      const r = runGate()
+      const discovered = /discovered\s+(\d+)/.exec(r.out)?.[1]
+      const roots = /compiler roots\s+(\d+)/.exec(r.out)?.[1]
+      // Known-positive on the premise: the totals really are equal, so only the
+      // membership differs. Otherwise this would be the narrowed variant again.
+      expect(discovered, 'discovered count printed').toBeDefined()
+      expect(roots, 'compiler roots count printed').toBe(discovered)
+      expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'cause').toContain('disagree -- scope could not be validated')
+      expect(r.out, 'names the dropped file').toContain(`scripts/lib/${dropped}`)
+      expect(r.out, 'names the swapped-in file').toContain(added)
+      expect(r.status, 'exit').not.toBe(0)
+      expect(r.out, 'verdict').not.toContain('VERDICT        PASS')
+      expect(r.out, 'checked').not.toMatch(/checked\s+\d+/)
+    } finally {
+      writeFileSync(configPath, original)
+    }
+    expect(readFileSync(configPath).equals(original)).toBe(true)
+    expect(runGate().status).toBe(0)
+  })
+
+  it('an ordinary type error is EVALUATED and FAIL, names the file, and is not INCONCLUSIVE', () => {
+    // The permanent form of the plan's Step 4. Every other test here exercises
+    // an instrument failure; nothing else proves the gate still does its actual
+    // job. A gate that routed every non-zero compile to a generic
+    // "global failure" arm would pass the clean control and the unreadable-file
+    // test, and never say what was wrong with the code.
+    const name = `zz-smi6975-typeerr-${process.pid}.ts`
+    const file = join(REPO_ROOT, 'scripts', name)
+    try {
+      writeFileSync(file, "export const planted: number = 'not a number'\n")
+      const r = runGate()
+      // Failure clause first: INCONCLUSIVE would mean the gate could not say.
+      expect(r.out, 'RESULT').not.toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'RESULT').toContain('RESULT         EVALUATED')
+      expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
+      expect(r.out, 'VERDICT').not.toContain('VERDICT        PASS')
+      expect(r.status, 'exit').toBe(1)
+      expect(r.out, 'errors line').toMatch(
+        /1 total \/ 1 attributed across 1 files\s+\[RECONCILED\]/
+      )
+      expect(r.out, 'names the file').toMatch(new RegExp(`^1\\tscripts/${name}$`, 'm'))
+    } finally {
+      rmSync(file, { force: true })
+    }
+    expect(existsSync(file)).toBe(false)
+    expect(runGate().status).toBe(0)
   })
 
   it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {
