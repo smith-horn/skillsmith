@@ -55,13 +55,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$REPO_ROOT" || exit 1
 
 CONFIG="tsconfig.scripts.json"
-TSC_BIN="$REPO_ROOT/node_modules/.bin/tsc"
-# Test-only seam (SMI-6975): lets the suite substitute a hanging compiler to
-# prove the timeout arm fires. The substitute still has to pass the --version
-# recognition below, so it cannot silently turn the gate into a no-op.
-TSC_BIN="${SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST:-$TSC_BIN}"
-# Wall-clock budget for the full compile, in seconds. A normal run takes ~3s
-# (measured); the default is two orders of magnitude above that.
+# Wall-clock budget, in seconds, for EACH tsc call (--version, --showConfig and
+# the full compile). The default must stay well above a normal run, and a
+# timeout is INCONCLUSIVE, never PASS. Accepted range is checked in
+# validate_timeout_secs().
 TSC_TIMEOUT_SECS="${SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS:-600}"
 
 # Two files, per the 500-line gate (CLAUDE.md "CI Health Requirements"). The
@@ -73,7 +70,8 @@ TSC_TIMEOUT_SECS="${SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS:-600}"
 source "$REPO_ROOT/scripts/ci/typecheck-scripts.helpers.sh"
 if ! declare -F finish >/dev/null || ! declare -F exit_for_inconclusive >/dev/null \
   || ! declare -F mktemp_or_die >/dev/null || ! declare -F build_scripts_inventory >/dev/null \
-  || ! declare -F count_tests_excluded >/dev/null || ! declare -F compose_excluded_desc >/dev/null; then
+  || ! declare -F count_tests_excluded >/dev/null || ! declare -F compose_excluded_desc >/dev/null \
+  || ! declare -F run_bounded >/dev/null || ! declare -F check_tsc_ready >/dev/null; then
   printf '[scripts-typecheck] FATAL: typecheck-scripts.helpers.sh did not load\n' >&2
   exit 1
 fi
@@ -84,28 +82,9 @@ fi
 # devDependency fails as "not found" rather than npx silently reaching for a
 # network install.
 # ---------------------------------------------------------------------------
-if ! [[ "$TSC_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]]; then
-  inconclusive "SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS='$TSC_TIMEOUT_SECS' is not a positive integer"
-  NEXT_ACTION="unset SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS or set it to a whole number of seconds"
-  exit_for_inconclusive
-fi
-
-if [[ ! -x "$TSC_BIN" ]]; then
-  inconclusive "tsc not found or not executable at node_modules/.bin/tsc"
-  NEXT_ACTION="npm install from the HOST in the main checkout (never inside a worktree container's node_modules, which is read-only by design)"
-  exit_for_inconclusive
-fi
-
-TSC_VERSION_RAW="$("$TSC_BIN" --version 2>&1)"
-TSC_VERSION_RC=$?
-if [[ "$TSC_VERSION_RC" -ne 0 ]] || ! printf '%s' "$TSC_VERSION_RAW" | grep -qE '^Version [0-9]+\.[0-9]+\.[0-9]+'; then
-  inconclusive "tsc --version produced no recognisable version string"
-  say "--- raw ---"
-  printf '%s\n' "$TSC_VERSION_RAW" | head -5
-  NEXT_ACTION="confirm node_modules/.bin/tsc is a real, uncorrupted TypeScript compiler"
-  exit_for_inconclusive
-fi
-TSC_VERSION="$(printf '%s' "$TSC_VERSION_RAW" | head -1)"
+validate_timeout_secs
+resolve_tsc_bin
+check_tsc_ready
 
 if [[ ! -f "$CONFIG" ]]; then
   inconclusive "missing $CONFIG"
@@ -148,8 +127,9 @@ mktemp_or_die NODE_PARSE_ERR
 # `printf -v "$__outvar"` above -- shellcheck can't see an assignment made
 # by name through a function argument, and its misspelling heuristic flags
 # the nearby SHOWCONFIG_RC as the "intended" name instead.
-"$TSC_BIN" --showConfig -p "$CONFIG" >"$SHOWCONFIG_OUT" 2>"$SHOWCONFIG_ERR"
+run_bounded "$TSC_BIN" --showConfig -p "$CONFIG" >"$SHOWCONFIG_OUT" 2>"$SHOWCONFIG_ERR"
 SHOWCONFIG_RC=$?
+exit_if_bounded_timeout "$SHOWCONFIG_RC" "tsc --showConfig"
 if [[ "$SHOWCONFIG_RC" -ne 0 ]]; then
   inconclusive "tsc --showConfig failed (exit $SHOWCONFIG_RC) -- $CONFIG is invalid or unreadable to tsc"
   # Measured directly (Step 5 red-test, a zero-matching `include`): tsc's
@@ -256,19 +236,10 @@ CHECKED="$DISCOVERED"
 # if either parser is wrong.
 # ---------------------------------------------------------------------------
 mktemp_or_die TSC_RAW
-# Bounded with a perl alarm rather than coreutils `timeout`: measured, stock
-# macOS (where pre-commit runs) has neither `timeout` nor `gtimeout`, while
-# /usr/bin/perl exists on macOS and in the Linux container/CI. The alarm
-# survives exec, so SIGALRM terminates the compiler itself and the shell
-# reports 142 (128+14).
-/usr/bin/perl -e 'alarm shift; exec @ARGV or exit 127' "$TSC_TIMEOUT_SECS" \
-  "$TSC_BIN" -p "$CONFIG" --pretty >"$TSC_RAW" 2>&1
+# Bounded by run_bounded (perl alarm); see its definition for why.
+run_bounded "$TSC_BIN" -p "$CONFIG" --pretty >"$TSC_RAW" 2>&1
 TSC_RC=$?
-if [[ "$TSC_RC" -eq 142 ]]; then
-  inconclusive "tsc did not finish within ${TSC_TIMEOUT_SECS}s (killed by SIGALRM, exit 142) -- timeout"
-  NEXT_ACTION="the compiler hung or the host is badly overloaded; re-run, or raise SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS if the tree legitimately grew"
-  exit_for_inconclusive
-fi
+exit_if_bounded_timeout "$TSC_RC" "the full tsc compile"
 if [[ "$TSC_RC" -gt 128 ]]; then
   inconclusive "tsc was killed by a signal (exit $TSC_RC = 128+$((TSC_RC - 128)))"
   NEXT_ACTION="something terminated the compiler (OOM killer, a manual kill); re-run and check host memory"

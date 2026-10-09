@@ -71,8 +71,13 @@ interface GateRun {
  * that coercion is itself a silent-success bug, and it exists elsewhere in
  * this repo's hook harnesses.
  */
-function runGate(stubDir?: string, extraEnv?: Record<string, string>): GateRun {
+function runGate(
+  stubDir?: string,
+  extraEnv?: Record<string, string>,
+  unsetEnv: string[] = []
+): GateRun {
   const env = { ...process.env, ...extraEnv }
+  for (const k of unsetEnv) delete env[k]
   if (stubDir) env.PATH = `${stubDir}:${env.PATH ?? ''}`
   const r = spawnSync('bash', [GATE], {
     cwd: REPO_ROOT,
@@ -101,7 +106,9 @@ function runGate(stubDir?: string, extraEnv?: Record<string, string>): GateRun {
  * check on what actually rendered.
  */
 function assignsNextAction(line: string): boolean {
-  const m = /^\s*NEXT_ACTION=(.*)$/.exec(line)
+  // `printf -v NEXT_ACTION "fmt" args` is an assignment too; its format and
+  // arguments are scanned exactly like an `=` value.
+  const m = /^\s*(?:NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\s+)(.*)$/.exec(line)
   if (!m) return false
   // $(...) is stripped innermost-first until stable, so nested substitutions
   // like $(echo $(date)) are removed whole rather than leaving ")" behind. A
@@ -134,6 +141,11 @@ function makeStub(dir: string, name: string, body: string): void {
   const p = join(dir, name)
   writeFileSync(p, body)
   chmodSync(p, 0o755)
+}
+
+/** A tsc stand-in that records that it ran, then defers to the real compiler. */
+function markingStub(marker: string, real: string): string {
+  return `#!/bin/sh\ntouch '${marker}'\nexec ${real} "$@"\n`
 }
 
 const scratch: string[] = []
@@ -283,10 +295,20 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         // The LAST NEXT_ACTION assignment before exit_for_inconclusive is the
         // one finish() renders, so it is the one that must carry text: an
         // earlier good assignment followed by NEXT_ACTION="" renders nothing.
+        // No look-ahead window: scan to the arm's own exit_for_inconclusive,
+        // and an arm that never reaches one is itself an offender.
         let last: string | null = null
-        for (let j = i + 1; j < Math.min(i + 25, lines.length); j += 1) {
-          if (/^\s*NEXT_ACTION=/.test(lines[j])) last = lines[j]
-          if (lines[j].includes('exit_for_inconclusive')) break
+        let reachedExit = false
+        for (let j = i + 1; j < lines.length; j += 1) {
+          if (/^\s*(NEXT_ACTION=|printf\s+-v\s+NEXT_ACTION\b)/.test(lines[j])) last = lines[j]
+          if (lines[j].includes('exit_for_inconclusive')) {
+            reachedExit = true
+            break
+          }
+        }
+        if (!reachedExit) {
+          offenders.push(`${f}:${i + 1} (no exit_for_inconclusive after this arm)`)
+          return
         }
         if (last === null || !assignsNextAction(last)) offenders.push(`${f}:${i + 1}`)
       })
@@ -310,6 +332,9 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(assignsNextAction('    NEXT_ACTION="$(printf \'\')"')).toBe(false)
     expect(assignsNextAction('    NEXT_ACTION="`true`"')).toBe(false)
     expect(assignsNextAction('    NEXT_ACTION="fix $CONFIG; then re-run"')).toBe(true)
+    expect(assignsNextAction('    printf -v NEXT_ACTION "re-run %s" "$X"')).toBe(true)
+    expect(assignsNextAction('    printf -v NEXT_ACTION "$UNSET"')).toBe(false)
+    expect(assignsNextAction('    printf -v OTHER "re-run"')).toBe(false)
     // Command-substitution-only values are rejected, including a nested one and
     // one whose command prints literal text (deliberately errs toward flagging).
     expect(assignsNextAction('    NEXT_ACTION="$(printf \'run foo\')"')).toBe(false)
@@ -341,7 +366,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       {
         name: 'perl',
         tool: 'perl',
-        body: `#!/bin/sh\ncase "$*" in *alarm*) exec /usr/bin/perl "$@" ;; esac\nexit 13\n`,
+        body: '#!/bin/sh\nexit 13\n',
         cause: 'the ANSI/NUL-strip (perl) failed',
       },
       {
@@ -488,9 +513,109 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     // The alarm, not the harness's own 120s budget, ended it.
     expect(elapsed, 'bounded').toBeLessThan(60_000)
     // A bad budget value is refused rather than silently disabling the bound.
-    const bad = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '0' })
-    expect(bad.out).toContain('RESULT         INCONCLUSIVE')
-    expect(bad.status).not.toBe(0)
+    // 4294967296 and the 20-digit value pass a naive ^[1-9][0-9]*$ check but
+    // wrap (or are rejected) inside perl's alarm(), which would arm no alarm at
+    // all; 86401 is the first value past the documented maximum.
+    for (const v of ['0', '4294967296', '12345678901234567890', '86401']) {
+      const marker = join(dir, `invoked-${v}`)
+      makeStub(dir, `tsc-mark-${v}`, markingStub(marker, real))
+      const bad = runGate(undefined, {
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-mark-${v}`),
+        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: v,
+      })
+      expect(bad.out, `${v}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(bad.out, `${v}: cause`).toContain('1..86400')
+      expect(bad.out, `${v}: next`).toMatch(/^ {2}next: \S/m)
+      expect(bad.status, `${v}: exit`).not.toBe(0)
+      // The refusal came before any compiler call, not after a run it ignored.
+      expect(existsSync(marker), `${v}: compiler never invoked`).toBe(false)
+    }
+  })
+
+  it('a compiler that hangs on --version or --showConfig is INCONCLUSIVE, within the bound', () => {
+    // Only the full compile used to be bounded; these two calls ran unbounded.
+    const dir = scratchDir('hang-pre')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    for (const call of ['--version', '--showConfig']) {
+      makeStub(
+        dir,
+        `tsc-hang${call}`,
+        `#!/bin/sh\ncase "$*" in *${call}*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
+      )
+      const t0 = Date.now()
+      const r = runGate(undefined, {
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-hang${call}`),
+        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
+      })
+      expect(r.out, `${call}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, `${call}: cause names the call`).toContain(
+        `tsc ${call} did not finish within 2s`
+      )
+      expect(r.out, `${call}: next`).toMatch(/^ {2}next: \S/m)
+      expect(r.out, `${call}: not a pass`).not.toContain('VERDICT        PASS')
+      expect(r.status, `${call}: exit`).not.toBe(0)
+      expect(Date.now() - t0, `${call}: bounded`).toBeLessThan(60_000)
+    }
+  })
+
+  it('a compiler killed by a signal, or exiting 127, is INCONCLUSIVE with a named cause', () => {
+    // --version and --showConfig pass through to the real tsc so only the full
+    // compile (the --pretty call) misbehaves. A stub that exits 127 stands in
+    // for "could not exec": a real exec failure on the compile call alone is
+    // not reachable through the seam, because --version already exec'd the same
+    // binary. The arm keys on the status, so the stub exercises it honestly.
+    const dir = scratchDir('compile-status')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    const arms = [
+      { name: 'kill9', act: 'kill -9 $$', cause: 'tsc was killed by a signal (exit 137 = 128+9)' },
+      {
+        name: 'exit127',
+        act: 'exit 127',
+        cause: 'could not exec tsc via /usr/bin/perl (exit 127)',
+      },
+    ]
+    for (const a of arms) {
+      makeStub(
+        dir,
+        `tsc-${a.name}`,
+        `#!/bin/sh\ncase "$*" in *--pretty*) ${a.act} ;; esac\nexec ${real} "$@"\n`
+      )
+      const r = runGate(undefined, {
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-${a.name}`),
+      })
+      expect(r.out, `${a.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, `${a.name}: cause`).toContain(a.cause)
+      expect(r.out, `${a.name}: next`).toMatch(/^ {2}next: \S/m)
+      expect(r.status, `${a.name}: exit`).not.toBe(0)
+    }
+  })
+
+  it('the tsc test seam is ignored outside vitest and printed when honoured', () => {
+    const dir = scratchDir('seam')
+    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+    const marker = join(dir, 'invoked')
+    makeStub(dir, 'tsc-seam', markingStub(marker, real))
+    const stub = join(dir, 'tsc-seam')
+
+    // VITEST unset in the child: the seam is ignored, the REAL tsc runs.
+    const ignored = runGate(undefined, { SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub }, ['VITEST'])
+    expect(ignored.out, 'ignored line').toMatch(
+      /SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST ignored: it is honoured only under vitest/
+    )
+    expect(existsSync(marker), 'stub never invoked').toBe(false)
+    expect(ignored.out, 'no substitution printed').not.toContain('SUBSTITUTED')
+    expect(ignored.out, 'real tsc ran').toMatch(/^ {2}tsc {12}Version \d+\.\d+\.\d+/m)
+    expect(ignored.out, 'evaluated').toContain('RESULT         EVALUATED')
+
+    // VITEST=true: honoured, and the substitution is visible in the output.
+    const honoured = runGate(undefined, {
+      VITEST: 'true',
+      SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: stub,
+    })
+    expect(existsSync(marker), 'stub invoked').toBe(true)
+    expect(honoured.out, 'substitution printed').toContain(`tsc binary     ${stub}`)
+    expect(honoured.out, 'substitution flagged').toContain('SUBSTITUTED')
+    expect(honoured.out, 'no ignored line').not.toContain('ignored: it is honoured only')
   })
 
   it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {

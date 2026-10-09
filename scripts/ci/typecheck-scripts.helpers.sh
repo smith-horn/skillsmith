@@ -33,6 +33,9 @@ finish() {
   say "[scripts-typecheck] SMI-6975"
   field "config" "$CONFIG"
   field "tsc" "${TSC_VERSION:-unknown}"
+  # A substituted compiler (test seam) is never silent: a PASS from a stub must
+  # be visibly a PASS from a stub.
+  [[ -n "${TSC_BIN:-}" && "$TSC_BIN" != "${TSC_BIN_DEFAULT:-}" ]] && field "tsc binary" "$TSC_BIN (SUBSTITUTED via SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST)"
   # Four numbers, printed SEPARATELY, never collapsed into one (finding 1/2).
   # A plausible "263 files / PASS" proves nothing on its own -- it looks
   # identical whether tsc read the same include set this shell counted, or a
@@ -55,6 +58,75 @@ exit_for_inconclusive() {
   finish
   say "FATAL: the check could not run, or could not be trusted. \"Not checked\" is not \"safe\"."
   exit 1
+}
+
+# Only a whole number of seconds in 1..86400 is a usable budget. The digit
+# count is capped BEFORE any arithmetic: perl's alarm() wraps at 2**32 (so
+# 4294967296 arms no alarm at all) and rejects 2**31 and above, i.e. an
+# oversized value would silently switch the bound off.
+validate_timeout_secs() {
+  if ! [[ "$TSC_TIMEOUT_SECS" =~ ^[1-9][0-9]{0,4}$ ]] || [[ "$TSC_TIMEOUT_SECS" -gt 86400 ]]; then
+    inconclusive "SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS='$TSC_TIMEOUT_SECS' is not a whole number of seconds in 1..86400"
+    NEXT_ACTION="unset SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS or set it to a whole number of seconds between 1 and 86400"
+    exit_for_inconclusive
+  fi
+}
+
+# Test-only seam: lets the suite substitute a stub compiler. It is honoured
+# ONLY under vitest (VITEST=true), because a stub that passes --version and
+# --showConfig through and exits 0 for the compile turns the gate into a
+# silent PASS. Anywhere else it is ignored with a stderr line, and any
+# honoured substitution is printed by finish().
+resolve_tsc_bin() {
+  TSC_BIN_DEFAULT="$REPO_ROOT/node_modules/.bin/tsc"
+  TSC_BIN="$TSC_BIN_DEFAULT"
+  [[ -n "${SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST:-}" ]] || return 0
+  if [[ "${VITEST:-}" == "true" ]]; then
+    TSC_BIN="$SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST"
+  else
+    printf '[scripts-typecheck] SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST ignored: it is honoured only under vitest (VITEST=true)\n' >&2
+  fi
+}
+
+# Runs "$@" under a perl alarm of $TSC_TIMEOUT_SECS. perl, not coreutils
+# `timeout`: stock macOS (where pre-commit runs) has neither `timeout` nor
+# `gtimeout`, while /usr/bin/perl exists on macOS and in the Linux container/CI.
+# The alarm survives exec, so SIGALRM terminates the command itself and the
+# shell reports 142 (128+14); 127 means exec failed.
+run_bounded() {
+  /usr/bin/perl -e 'alarm shift; exec @ARGV or exit 127' "$TSC_TIMEOUT_SECS" "$@"
+}
+
+# INCONCLUSIVE when a run_bounded call (status $1) was killed by the alarm;
+# $2 names which call, so the cause is not just "tsc".
+exit_if_bounded_timeout() {
+  [[ "$1" -eq 142 ]] || return 0
+  inconclusive "$2 did not finish within ${TSC_TIMEOUT_SECS}s (killed by SIGALRM, exit 142) -- timeout"
+  NEXT_ACTION="the compiler hung or the host is badly overloaded; re-run, or raise SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS (max 86400) if the tree legitimately grew"
+  exit_for_inconclusive
+}
+
+# tsc present, executable and recognisable; sets TSC_VERSION. Output goes to a
+# file, not a command substitution: a hung stub's orphaned child would hold a
+# substitution's pipe open past the alarm.
+check_tsc_ready() {
+  if [[ ! -x "$TSC_BIN" ]]; then
+    inconclusive "tsc not found or not executable at $TSC_BIN"
+    NEXT_ACTION="npm install from the HOST in the main checkout (never inside a worktree container's node_modules, which is read-only by design)"
+    exit_for_inconclusive
+  fi
+  mktemp_or_die TSC_VERSION_OUT
+  run_bounded "$TSC_BIN" --version >"$TSC_VERSION_OUT" 2>&1
+  local rc=$?
+  exit_if_bounded_timeout "$rc" "tsc --version"
+  if [[ "$rc" -ne 0 ]] || ! grep -qE '^Version [0-9]+\.[0-9]+\.[0-9]+' "$TSC_VERSION_OUT"; then
+    inconclusive "tsc --version produced no recognisable version string"
+    say "--- raw ---"
+    head -5 "$TSC_VERSION_OUT"
+    NEXT_ACTION="confirm $TSC_BIN is a real, uncorrupted TypeScript compiler"
+    exit_for_inconclusive
+  fi
+  TSC_VERSION="$(head -1 "$TSC_VERSION_OUT")"
 }
 
 # ---------------------------------------------------------------------------
