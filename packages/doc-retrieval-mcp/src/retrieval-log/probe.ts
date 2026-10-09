@@ -92,10 +92,10 @@ export interface ProbeResult {
    *
    * Carried through on EVERY return path of {@link assessInstrumentationHealth}
    * regardless of which `reason` ultimately wins, because the marker's own
-   * corruption is informative independent of what else made (or didn't
-   * make) the overall probe `stale` — e.g. a `malformed` marker sitting
-   * alongside an otherwise-healthy DB is still worth a banner line, even
-   * though `reason` here is `'healthy'`.
+   * corruption is informative on its own. A `malformed` or `unreadable`
+   * marker decides the probe's outcome by itself: `stale: true` with
+   * reason `outage_marker_malformed` / `outage_marker_unreadable`, even
+   * when the DB is otherwise healthy.
    *
    * On the `probe_disabled` short-circuit this is hardcoded to
    * `{ status: 'absent' }` — that branch does ZERO filesystem reads by
