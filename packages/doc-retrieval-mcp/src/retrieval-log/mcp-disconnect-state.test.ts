@@ -11,7 +11,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,9 +20,12 @@ import {
   MCP_DISCONNECT_DISABLE_VAR,
   probeContainerStatus,
   readAndAck,
+  readAndAckResult,
   readState,
   recordDisconnect,
   renderDisconnectBanner,
+  renderDisconnectBannerResult,
+  resolveMcpDisconnectStatePath,
   resolveServerName,
   withLock,
   type McpDisconnectEntry,
@@ -198,9 +201,20 @@ describe('recordDisconnect / readAndAck — single-process round trip', () => {
     expect(readAndAck('/fake/repo', 'skillsmith')).toBeNull()
   })
 
-  it('a missing/corrupt state file reads as empty rather than throwing', () => {
+  it('a missing state file reads as empty rather than throwing', () => {
     freshHome()
     expect(readState('/definitely/does/not/exist.state')).toEqual({})
+  })
+
+  // The old version of this test (titled as covering "missing/corrupt" but
+  // only ever exercising a nonexistent path) claimed coverage it didn't
+  // have — split out so the corrupt case is actually exercised.
+  it('a genuinely corrupt state file also reads as empty rather than throwing (readState stays fail-soft; readAndAckResult below does not)', () => {
+    freshHome()
+    const d = tmpDir('mcp-disconnect-readstate-corrupt')
+    const path = join(d, 'corrupt.state')
+    writeFileSync(path, '{not valid json')
+    expect(readState(path)).toEqual({})
   })
 })
 
@@ -209,6 +223,146 @@ describe('probeContainerStatus', () => {
     const status = probeContainerStatus()
     expect(['healthy', 'unhealthy-or-starting', 'down', 'unknown']).toContain(status)
   })
+})
+
+// ── SMI-6995: readAndAckResult / renderDisconnectBannerResult ──────────────
+
+describe('readAndAckResult — missing vs malformed, same path, same reader (SMI-6995 cases a + d)', () => {
+  it('missing then malformed on the SAME path, SAME reader: missing status + empty banner, then malformed status + non-empty banner naming it', () => {
+    freshHome()
+    const repoKey = '/fake/repo'
+    const statePath = resolveMcpDisconnectStatePath()
+
+    // (d) genuinely missing — no state file has been written yet.
+    const missing = readAndAckResult(repoKey, 'skillsmith')
+    expect(missing.status).toBe('missing')
+    expect(renderDisconnectBannerResult('skillsmith', missing)).toBe('')
+
+    // (a) SAME path, now written with unparseable bytes.
+    mkdirSync(dirname(statePath), { recursive: true })
+    writeFileSync(statePath, '{not valid json')
+    const malformed = readAndAckResult(repoKey, 'skillsmith')
+    expect(malformed.status).toBe('malformed')
+    const banner = renderDisconnectBannerResult('skillsmith', malformed)
+    expect(banner).not.toBe('')
+    expect(banner).toContain('[mcp-disconnect]')
+    expect(banner).toContain('could not be parsed')
+  })
+})
+
+describe('readAndAckResult — unreadable (SMI-6995 case b)', () => {
+  it('a directory standing where the state file is expected -> unreadable, detail carries the errno, banner non-empty', () => {
+    // EISDIR at ANY uid, including root (this container runs as root —
+    // chmod is a no-op there, which is exactly how another test in this
+    // directory went unasserted for months; see reindex-state.test.ts's and
+    // state-read.test.ts's identical note). Do NOT use chmod here.
+    freshHome()
+    const repoKey = '/fake/repo'
+    const statePath = resolveMcpDisconnectStatePath()
+    mkdirSync(statePath, { recursive: true })
+
+    const result = readAndAckResult(repoKey, 'skillsmith')
+    expect(result.status).toBe('unreadable')
+    expect(result.status === 'unreadable' && result.detail).toContain('EISDIR')
+
+    const banner = renderDisconnectBannerResult('skillsmith', result)
+    expect(banner).not.toBe('')
+    expect(banner).toContain('[mcp-disconnect]')
+    expect(banner).toContain('could not be read')
+    expect(banner).toContain('EISDIR')
+  })
+})
+
+describe('readAndAckResult — valid JSON, invalid entry (SMI-6995 case c)', () => {
+  it('a present entry that fails field validation reports malformed, not ok', () => {
+    freshHome()
+    const repoKey = '/fake/repo'
+    const statePath = resolveMcpDisconnectStatePath()
+    mkdirSync(dirname(statePath), { recursive: true })
+    // `success`-shaped mistake: containerStatus holds a value outside the
+    // documented literal union. A `typeof` spot-check would accept this
+    // (it's a string) and read it as `ok`, recreating the exact collapse
+    // this module exists to remove one layer down.
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        [repoKey]: {
+          skillsmith: {
+            totalCount: 3,
+            sinceAckCount: 1,
+            lastTimestamp: '2026-01-01T00:00:00.000Z',
+            lastTool: 'mcp__skillsmith__search',
+            lastErrorExcerpt: 'transport closed',
+            containerStatus: 'banana',
+          },
+        },
+      })
+    )
+
+    const result = readAndAckResult(repoKey, 'skillsmith')
+    expect(result.status).toBe('malformed')
+
+    const banner = renderDisconnectBannerResult('skillsmith', result)
+    expect(banner).not.toBe('')
+  })
+})
+
+describe('RULE 1 — a malformed or unreadable read must never ack (SMI-6995 case e)', () => {
+  it('a malformed state file is left byte-for-byte identical by readAndAckResult', () => {
+    freshHome()
+    const repoKey = '/fake/repo'
+    const statePath = resolveMcpDisconnectStatePath()
+    mkdirSync(dirname(statePath), { recursive: true })
+    const malformedBytes = '{not valid json'
+    writeFileSync(statePath, malformedBytes)
+    const before = readFileSync(statePath, 'utf8')
+
+    const result = readAndAckResult(repoKey, 'skillsmith')
+    expect(result.status).toBe('malformed')
+
+    const after = readFileSync(statePath, 'utf8')
+    expect(after).toBe(before)
+    expect(after).toBe(malformedBytes)
+  })
+})
+
+describe('RULE 2 — a lock-acquisition timeout reports lock-timeout, never missing (SMI-6995 case f)', () => {
+  it('readAndAckResult reports lock-timeout (distinct from missing) when the lock cannot be acquired in time, reusing the existing hold-lock mechanism', async () => {
+    freshHome()
+    const repoKey = '/fake/repo'
+    // Seed a real, valid, unacknowledged entry while the lock is free — this
+    // proves `lock-timeout` is distinguishable from an unrelated `missing`
+    // read (an empty state file would ALSO look like "nothing to report" if
+    // the two were conflated), not merely the default when nothing is there.
+    recordDisconnect(repoKey, 'skillsmith', {
+      tool: 'mcp__skillsmith__search',
+      errorExcerpt: 'transport closed',
+      timestamp: new Date().toISOString(),
+    })
+
+    process.env.SKILLSMITH_MCP_DISCONNECT_LOCK_ACQUIRE_TIMEOUT_MS = '150'
+    const dir = tmpDir('mcp-disconnect-timeout-result-reader')
+    const ready = join(dir, 'ready')
+    const go = join(dir, 'go')
+    const holder = spawnWorker('hold-lock', ready, go, repoKey, 'skillsmith', ['1000'])
+    await waitForAsync(() => existsSync(ready))
+    writeFileSync(go, '1')
+    await sleep(50) // let the holder acquire before we contend
+
+    const result = readAndAckResult(repoKey, 'skillsmith')
+    expect(result.status).toBe('lock-timeout')
+
+    const banner = renderDisconnectBannerResult('skillsmith', result)
+    expect(banner).not.toBe('')
+    expect(banner).toContain('held the lock')
+    expect(banner.toLowerCase()).not.toContain('missing')
+
+    await holder
+    // Nothing was lost — the seeded entry is still there, unacknowledged,
+    // for the next attempt (same conservation property `readAndAck`'s own
+    // lock-timeout test already proves for the legacy accessor).
+    expect(readState()[repoKey]?.skillsmith?.sinceAckCount).toBe(1)
+  }, 10_000)
 })
 
 // ── Real-concurrency tests (pass-3 C1/C2) ──────────────────────────────────────

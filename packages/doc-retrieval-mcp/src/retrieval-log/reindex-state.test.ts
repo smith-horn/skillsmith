@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,6 +15,7 @@ import {
   DEFAULT_HUNG_STALE_HOURS,
   REINDEX_STALENESS_DISABLE_VAR,
   readEntry,
+  readEntryResult,
   readState,
   recordRun,
   renderReindexBanner,
@@ -24,6 +25,7 @@ import {
   writeEntry,
   type ReindexEntry,
 } from './reindex-state.js'
+import type { StateReadResult } from './state-read.js'
 import { makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -258,18 +260,24 @@ describe('recordRun', () => {
   })
 })
 
-// ── renderReindexBanner — five states ───────────────────────────────────────
+// ── renderReindexBanner — the `ok` sub-states (SMI-5793), plus the SMI-6995 ──
+// `missing`/`malformed`/`unreadable` axis below.
+
+/** Wraps a valid entry as the `ok` variant `renderReindexBanner` now expects. */
+function ok(entry: ReindexEntry): StateReadResult<ReindexEntry> {
+  return { status: 'ok', entry }
+}
 
 describe('renderReindexBanner', () => {
   const now = new Date('2026-07-21T12:00:00.000Z')
 
-  it('no entry (null) → empty string, no steady-state noise', () => {
-    expect(renderReindexBanner(null, { now, currentHeadSha: 'sha-a' })).toBe('')
+  it('missing → empty string, no steady-state noise', () => {
+    expect(renderReindexBanner({ status: 'missing' }, { now, currentHeadSha: 'sha-a' })).toBe('')
   })
 
   it('failed run → contains "last run failed:" + the error reason + disable var + log path', () => {
     const entry = makeEntry({ success: false, errorReason: 'ENOENT: vectors missing' })
-    const banner = renderReindexBanner(entry, { now, currentHeadSha: 'sha-a' })
+    const banner = renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-a' })
     expect(banner).toContain('[reindex]')
     expect(banner).toContain('last run failed: ENOENT: vectors missing')
     expect(banner).toContain(`${REINDEX_STALENESS_DISABLE_VAR}=1`)
@@ -278,13 +286,13 @@ describe('renderReindexBanner', () => {
 
   it('failed run with no errorReason falls back to "unknown"', () => {
     const entry = makeEntry({ success: false, errorReason: undefined })
-    const banner = renderReindexBanner(entry, { now, currentHeadSha: 'sha-a' })
+    const banner = renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-a' })
     expect(banner).toContain('last run failed: unknown')
   })
 
   it('anomaly (streak >= threshold) → names the streak count + SMI-5786 + a verify command + disable var', () => {
     const entry = makeEntry({ consecutiveZeroTouchRuns: ANOMALY_ZERO_TOUCH_THRESHOLD })
-    const banner = renderReindexBanner(entry, { now, currentHeadSha: 'sha-a' })
+    const banner = renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-a' })
     expect(banner).toContain(`${ANOMALY_ZERO_TOUCH_THRESHOLD} consecutive commits scanned 0 files`)
     expect(banner).toContain('SMI-5786')
     expect(banner).toContain('reindex --full')
@@ -297,7 +305,7 @@ describe('renderReindexBanner', () => {
       lastRunTs: now.toISOString(),
       lastRunSha: 'sha-a',
     })
-    expect(renderReindexBanner(entry, { now, currentHeadSha: 'sha-a' })).toBe('')
+    expect(renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-a' })).toBe('')
   })
 
   it('hung (no run in > staleHours despite HEAD advancing) → possibly hung/not firing + docker ps hint', () => {
@@ -305,7 +313,7 @@ describe('renderReindexBanner', () => {
       now.getTime() - (DEFAULT_HUNG_STALE_HOURS + 1) * 3_600_000
     ).toISOString()
     const entry = makeEntry({ lastRunTs: staleTs, lastRunSha: 'sha-old' })
-    const banner = renderReindexBanner(entry, { now, currentHeadSha: 'sha-new' })
+    const banner = renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-new' })
     expect(banner).toContain('possibly hung or not firing')
     expect(banner).toContain('docker ps')
     expect(banner).toContain(`${REINDEX_STALENESS_DISABLE_VAR}=1`)
@@ -314,7 +322,7 @@ describe('renderReindexBanner', () => {
   it('respects a custom staleHours override', () => {
     const staleTs = new Date(now.getTime() - 2 * 3_600_000).toISOString()
     const entry = makeEntry({ lastRunTs: staleTs, lastRunSha: 'sha-old' })
-    const banner = renderReindexBanner(entry, {
+    const banner = renderReindexBanner(ok(entry), {
       now,
       currentHeadSha: 'sha-new',
       staleHours: 1,
@@ -327,7 +335,7 @@ describe('renderReindexBanner', () => {
       now.getTime() - (DEFAULT_HUNG_STALE_HOURS + 1) * 3_600_000
     ).toISOString()
     const entry = makeEntry({ lastRunTs: staleTs, lastRunSha: 'sha-same' })
-    expect(renderReindexBanner(entry, { now, currentHeadSha: 'sha-same' })).toBe('')
+    expect(renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-same' })).toBe('')
   })
 
   it('does NOT flag hung when currentHeadSha is null (detached/shallow edge state)', () => {
@@ -335,7 +343,7 @@ describe('renderReindexBanner', () => {
       now.getTime() - (DEFAULT_HUNG_STALE_HOURS + 1) * 3_600_000
     ).toISOString()
     const entry = makeEntry({ lastRunTs: staleTs, lastRunSha: 'sha-old' })
-    expect(renderReindexBanner(entry, { now, currentHeadSha: null })).toBe('')
+    expect(renderReindexBanner(ok(entry), { now, currentHeadSha: null })).toBe('')
   })
 
   it('healthy/silent (recent run, no anomaly, no hung state) → empty string', () => {
@@ -345,6 +353,91 @@ describe('renderReindexBanner', () => {
       lastRunTs: now.toISOString(),
       lastRunSha: 'sha-a',
     })
-    expect(renderReindexBanner(entry, { now, currentHeadSha: 'sha-a' })).toBe('')
+    expect(renderReindexBanner(ok(entry), { now, currentHeadSha: 'sha-a' })).toBe('')
+  })
+})
+
+// ── readEntryResult / renderReindexBanner — the SMI-6995 two-axis split ─────
+//
+// `readEntry`/`readState` collapse "never written", "corrupt", and
+// "unreadable" into the same null/`{}` by design (see `readEntry`'s own doc
+// comment) — these tests cover the SEPARATE axis `readEntryResult` exists to
+// give the banner, which `readEntry` cannot and must not be asked to give.
+
+describe('readEntryResult / renderReindexBanner — missing vs malformed vs unreadable', () => {
+  const now = new Date('2026-07-21T12:00:00.000Z')
+
+  // Cases (a) and (d) together, in ONE test body, against the SAME path and
+  // the SAME reader/render calls — not two separate paths. An absence
+  // assertion alone (banner === '') passes when nothing ran, and a presence
+  // assertion alone lets a hard-coded string satisfy it; running both
+  // directions against one path, in order, proves `readEntryResult` is
+  // actually responding to the file's real on-disk state rather than
+  // returning a canned answer either way.
+  it('missing then malformed on the SAME path, SAME reader: missing status + empty banner, then malformed status + non-empty banner naming it', () => {
+    const d = tmpDir()
+    const path = join(d, 'transitions.state')
+
+    // The file does not exist yet.
+    const missingRead = readEntryResult('any-key', path)
+    expect(missingRead.status).toBe('missing')
+    expect(renderReindexBanner(missingRead, { now, currentHeadSha: 'sha-a' })).toBe('')
+
+    // SAME path, now written with unparseable bytes.
+    writeFileSync(path, 'NOT JSON{{{', 'utf8')
+    const malformedRead = readEntryResult('any-key', path)
+    expect(malformedRead.status).toBe('malformed')
+    const banner = renderReindexBanner(malformedRead, { now, currentHeadSha: 'sha-a' })
+    expect(banner).not.toBe('')
+    expect(banner).toContain('[reindex]')
+    expect(banner).toContain('state malformed')
+  })
+
+  // Case (b). A directory standing where the state file is expected throws
+  // EISDIR at ANY uid (this container runs as root — chmod is a no-op there,
+  // which is how a sibling module's own `unreadable` test went unasserted
+  // for months; see ruflo-bridge-state.test.ts's identical note).
+  it('a directory standing where the state file is expected → unreadable, detail carries the errno, banner non-empty', () => {
+    const d = tmpDir()
+    const path = join(d, 'as-a-directory.state')
+    mkdirSync(path, { recursive: true })
+
+    const read = readEntryResult('any-key', path)
+    expect(read.status).toBe('unreadable')
+    expect(read.status === 'unreadable' && read.detail).toContain('EISDIR')
+
+    const banner = renderReindexBanner(read, { now, currentHeadSha: 'sha-a' })
+    expect(banner).not.toBe('')
+    expect(banner).toContain('[reindex]')
+    expect(banner).toContain('state unreadable')
+    expect(banner).toContain('EISDIR')
+  })
+
+  // Case (c). Valid JSON, but the entry itself fails validation — the
+  // validator case from readEntryResult's own field-by-field check. A
+  // `typeof`-only spot-check would accept this (`success` is a string, not a
+  // boolean) and read it as `ok`, recreating the collapse one layer down.
+  it('valid JSON but an invalid entry (wrong-typed required field) → malformed, banner non-empty', () => {
+    const d = tmpDir()
+    const path = join(d, 'invalid-entry.state')
+    const badEntry = { ...makeEntry(), success: 'banana' }
+    writeFileSync(path, `${JSON.stringify({ 'my-key': badEntry })}\n`, 'utf8')
+
+    const read = readEntryResult('my-key', path)
+    expect(read.status).toBe('malformed')
+    expect(read.status === 'malformed' && read.detail).toContain('success')
+
+    const banner = renderReindexBanner(read, { now, currentHeadSha: 'sha-a' })
+    expect(banner).not.toBe('')
+    expect(banner).toContain('[reindex]')
+    expect(banner).toContain('state malformed')
+  })
+
+  it('readEntryResult returns ok with the validated entry for a well-formed file', () => {
+    const path = makeTmpStatePath()
+    const entry = makeEntry({ consecutiveZeroTouchRuns: 2 })
+    writeEntry('my-key', entry, path)
+    const read = readEntryResult('my-key', path)
+    expect(read).toEqual({ status: 'ok', entry })
   })
 })

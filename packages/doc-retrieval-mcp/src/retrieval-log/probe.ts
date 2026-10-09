@@ -21,11 +21,17 @@
  *   4. Healthy.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 
+import { readRawState } from './state-read.js'
 import type { RetrievalLogOutageMarker } from './schema.js'
 
-const OUTAGE_MARKER_TTL_DAYS = 7
+/**
+ * Exported (SMI-6995) so `probe.test.ts` can pin the TTL boundary against
+ * the same constant `readOutageMarker` uses, instead of a second hardcoded
+ * "8 days" that would silently drift from this one.
+ */
+export const OUTAGE_MARKER_TTL_DAYS = 7
 
 export interface ProbeInput {
   outageMarkerPath: string
@@ -50,6 +56,12 @@ export interface ProbeResult {
   reason:
     | 'healthy'
     | 'outage_marker_present'
+    // SMI-6995 pre-merge gate: the marker file is PRESENT and cannot be
+    // read. Distinct from `outage_marker_present` (a readable marker, whose
+    // own contents say what broke) and emphatically distinct from `healthy`,
+    // which is what this used to report.
+    | 'outage_marker_malformed'
+    | 'outage_marker_unreadable'
     | 'IS_DOCKER_set_on_host'
     | 'binding_unavailable_no_marker'
     | 'no_recent_rows'
@@ -57,37 +69,160 @@ export interface ProbeResult {
     | 'probe_disabled'
   /** ISO-8601 of the most recent `primed` row, or null if none / unknown. */
   lastRealSessionTs: string | null
-  /** Echoed back to the banner for context. */
+  /**
+   * Echoed back to the banner for context. KEPT with its pre-SMI-6995
+   * meaning and type UNCHANGED (`null` on every status except `present`) so
+   * the renderer's existing `probe.outageMarker?.ts ?? 'absent'` read keeps
+   * working untouched — this fix is additive, not a breaking rewrite of
+   * that call site. But this field alone cannot say WHY it is `null`: that
+   * was always true for "never written" and "expired," and — before this
+   * fix — was *also* true for "present but corrupt," which is the exact
+   * defect SMI-6995 removes. See {@link outageMarkerRead} for the field
+   * that can tell those apart.
+   */
   outageMarker: RetrievalLogOutageMarker | null
+  /**
+   * SMI-6995 — the outage marker's full five-way classification (`absent` /
+   * `expired` / `malformed` / `unreadable` / `present`), additive alongside
+   * {@link outageMarker} rather than replacing it. A renderer that wants to
+   * tell "no marker was ever written" apart from "a marker is there and
+   * unreadable" — the whole point of this fix — must read THIS field, not
+   * {@link outageMarker}'s nullability, which collapses three of the five
+   * statuses into the same `null`.
+   *
+   * Carried through on EVERY return path of {@link assessInstrumentationHealth}
+   * regardless of which `reason` ultimately wins, because the marker's own
+   * corruption is informative on its own. A `malformed` or `unreadable`
+   * marker decides the probe's outcome by itself: `stale: true` with
+   * reason `outage_marker_malformed` / `outage_marker_unreadable`, even
+   * when the DB is otherwise healthy.
+   *
+   * On the `probe_disabled` short-circuit this is hardcoded to
+   * `{ status: 'absent' }` — that branch does ZERO filesystem reads by
+   * design (matching its existing "benign no-op" contract), so it has not
+   * actually looked at the marker file; `absent` is the closest honest
+   * placeholder for "nothing to report," not a claim that the file doesn't
+   * exist.
+   *
+   * `expired` is deliberately NOT surfaced by this function's own
+   * `stale`/`reason` computation (see {@link readOutageMarker}'s doc
+   * comment for why treating it like `absent` there is correct, not a
+   * gap) — only `malformed`/`unreadable` are the NEW statuses a renderer
+   * should act on.
+   */
+  outageMarkerRead: OutageMarkerClassification
   /** Echoed back so the banner can show "set" vs "unset". */
   isDockerOnHost: boolean
 }
 
-function readOutageMarker(path: string, now: Date): RetrievalLogOutageMarker | null {
-  if (!existsSync(path)) return null
-  try {
-    const raw = readFileSync(path, 'utf8')
-    const parsed = JSON.parse(raw) as RetrievalLogOutageMarker
-    if (
-      typeof parsed?.ts !== 'string' ||
-      typeof parsed?.reason !== 'string' ||
-      typeof parsed?.error !== 'string' ||
-      typeof parsed?.hint !== 'string'
-    ) {
-      return null
-    }
-    // Self-clearing TTL — a stale 7d marker stops triggering banners even if
-    // the next write never happens. The writer's own clearOutageMarker()
-    // handles the happy path; this guards the "binding broken forever" case.
-    const markerMs = Date.parse(parsed.ts)
-    if (!Number.isFinite(markerMs)) return null
-    const ageDays = (now.getTime() - markerMs) / (1000 * 60 * 60 * 24)
-    if (ageDays > OUTAGE_MARKER_TTL_DAYS) return null
-    return parsed
-  } catch {
-    // malformed JSON — treat as absent rather than crashing the hook
-    return null
+/**
+ * SMI-6995 — the outage marker's five-way classification, replacing the
+ * pre-fix THREE-way collapse. The defect this type removes: the pre-fix
+ * `readOutageMarker` returned `null` for THREE different, un-distinguishable
+ * situations — "never written"
+ * (now `absent`), "written but past its self-clearing TTL" (now `expired`),
+ * and "present but unusable" (now split into `malformed`/`unreadable`, by
+ * WHICH way it's unusable). That `null` then rendered in
+ * `renderInstrumentationBanner` as `Outage marker: absent` — true for the
+ * first two, FALSE for the last two. Absence is the HEALTHY state for this
+ * one module (unlike the other four SMI-6995 readers, where silence IS the
+ * safe default) — a corrupt-but-present marker is the one case in this
+ * sweep where the old behaviour wasn't just uninformative, it asserted the
+ * opposite of the truth, at the exact moment (`probe.stale` already true)
+ * a developer is reading the banner to find out what's broken.
+ *
+ * - `absent` — no marker file exists. The common, healthy case.
+ * - `expired` — parsed and validated fine, but older than
+ *   {@link OUTAGE_MARKER_TTL_DAYS}. Carries the marker anyway (a caller
+ *   doing its own logging/auditing may still want to know what it said)
+ *   even though {@link assessInstrumentationHealth} treats this exactly
+ *   like `absent` for `stale`/`reason` purposes — see that function.
+ * - `malformed` — present but either the bytes don't parse as JSON, the
+ *   parsed value isn't a JSON object, it's missing a required field
+ *   (`ts`/`reason`/`error`/`hint` must all be strings), or `ts` doesn't
+ *   parse as a date. All four collapse to this ONE status deliberately: a
+ *   banner treats "can't make sense of these bytes" as one fact regardless
+ *   of which check rejected them; `detail` says which.
+ * - `unreadable` — present but could not even be READ (permissions, a
+ *   directory standing where the file is expected, or any other non-ENOENT
+ *   errno — see `readRawState` in `state-read.ts`).
+ * - `present` — a live (within-TTL), structurally valid outage marker.
+ */
+export type OutageMarkerClassification =
+  | { status: 'absent' }
+  | { status: 'expired'; marker: RetrievalLogOutageMarker }
+  | { status: 'malformed'; detail: string }
+  | { status: 'unreadable'; detail: string }
+  | { status: 'present'; marker: RetrievalLogOutageMarker }
+
+/**
+ * Classifies the outage marker file — see {@link OutageMarkerClassification}
+ * for the five statuses and why collapsing any pair of them was wrong.
+ *
+ * Delegates the file-level read to the shared `readRawState` (state-read.ts,
+ * SMI-6995 Wave 1) so `malformed` vs `unreadable` is classified the SAME
+ * way every other SMI-6995 reader classifies it, instead of this module
+ * carrying its own copy of that `try { readFileSync + JSON.parse } catch`
+ * block. This marker file is NOT a keyed-by-repo-path state object like the
+ * other five readers' files — `writeOutageMarker` (writer.ts) writes the
+ * marker directly as the file's whole JSON body — so `readEntryResult`'s
+ * key-based consumer API does not apply here; the file-level `readRawState`
+ * is the right layer to share instead.
+ *
+ * Never throws — every branch returns a classification instead of raising,
+ * matching this function's ORIGINAL goal ("treat as absent rather than
+ * crashing the hook," the comment this replaces). What changes is that
+ * "treat as absent" is no longer what happens on the malformed/unreadable
+ * branches: they now say what they are instead of asserting health.
+ *
+ * Exported (SMI-6995) so `probe.test.ts` can pin each of the five statuses
+ * directly, without the assertion also depending on `assessInstrumentationHealth`'s
+ * unrelated IS_DOCKER/SQLite branches.
+ */
+export function readOutageMarker(path: string, now: Date): OutageMarkerClassification {
+  const raw = readRawState<Record<string, unknown>>(path)
+  if (!raw.ok) {
+    if (raw.kind === 'missing') return { status: 'absent' }
+    // `raw.kind` is narrowed to 'malformed' | 'unreadable' here, matching
+    // this type's own two detail-bearing statuses exactly.
+    return { status: raw.kind, detail: raw.detail }
   }
+
+  const parsed = raw.state
+  if (
+    typeof parsed.ts !== 'string' ||
+    typeof parsed.reason !== 'string' ||
+    typeof parsed.error !== 'string' ||
+    typeof parsed.hint !== 'string'
+  ) {
+    return {
+      status: 'malformed',
+      detail:
+        'outage marker is missing a required field (ts/reason/error/hint must all be strings)',
+    }
+  }
+  const marker = parsed as unknown as RetrievalLogOutageMarker
+
+  const markerMs = Date.parse(marker.ts)
+  if (!Number.isFinite(markerMs)) {
+    return {
+      status: 'malformed',
+      detail: `outage marker's ts does not parse as a date: ${JSON.stringify(marker.ts)}`,
+    }
+  }
+
+  // Self-clearing TTL — a stale 7d marker stops triggering banners even if
+  // the next write never happens. The writer's own clearOutageMarker()
+  // handles the happy path; this guards the "binding broken forever" case.
+  // MUST stay silent in `assessInstrumentationHealth`'s own `stale`/`reason`
+  // computation (SMI-6995) — that would reintroduce exactly the failure
+  // this TTL was added to remove.
+  const ageDays = (now.getTime() - markerMs) / (1000 * 60 * 60 * 24)
+  if (ageDays > OUTAGE_MARKER_TTL_DAYS) {
+    return { status: 'expired', marker }
+  }
+
+  return { status: 'present', marker }
 }
 
 function isDockerSetOnHost(): boolean {
@@ -183,12 +318,36 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'probe_disabled',
       lastRealSessionTs: null,
       outageMarker: null,
+      // This short-circuit does ZERO filesystem reads (its existing "benign
+      // no-op" contract) — it has not looked at the marker file at all, so
+      // `absent` is the closest honest placeholder for "nothing to
+      // report," not a claim that the file doesn't exist. See this field's
+      // own doc comment on `ProbeResult`.
+      outageMarkerRead: { status: 'absent' },
       isDockerOnHost: false,
     }
   }
 
   const dockerOnHost = isDockerSetOnHost()
-  const marker = readOutageMarker(input.outageMarkerPath, input.now)
+  const markerRead = readOutageMarker(input.outageMarkerPath, input.now)
+  // `expired` is deliberately treated the same as `absent`, matching the
+  // PRE-fix behaviour exactly (both used to collapse to the same `null`) —
+  // the TTL exists precisely so an old marker stops tripping this branch
+  // even if the next write never happens.
+  //
+  // `malformed` and `unreadable` do NOT fall through. An earlier revision of
+  // SMI-6995 let them, on the reasoning that they "newly surface" via the
+  // `outageMarkerRead` field instead. The pre-merge gate found that reasoning
+  // false: the only consumer of that field is `renderInstrumentationBanner`,
+  // which the caller invokes solely when `stale` is true. Measured against a
+  // healthy baseline (no DB file, zero JSONL sessions), a corrupt marker
+  // returned `stale: false, reason: 'healthy'` and rendered nothing — a
+  // positive health claim about a damaged record, which is the same defect
+  // one level up from the one SMI-6995 exists to fix.
+  //
+  // So they get their own reasons below, and `present` is checked first
+  // because a readable marker is the more specific signal.
+  const marker = markerRead.status === 'present' ? markerRead.marker : null
 
   if (marker) {
     return {
@@ -196,6 +355,22 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'outage_marker_present',
       lastRealSessionTs: null,
       outageMarker: marker,
+      outageMarkerRead: markerRead,
+      isDockerOnHost: dockerOnHost,
+    }
+  }
+
+  if (markerRead.status === 'malformed' || markerRead.status === 'unreadable') {
+    return {
+      stale: true,
+      reason:
+        markerRead.status === 'malformed' ? 'outage_marker_malformed' : 'outage_marker_unreadable',
+      lastRealSessionTs: null,
+      // `outageMarker` keeps its pre-SMI-6995 contract: non-null only for a
+      // readable `present` marker. The fault detail travels on
+      // `outageMarkerRead`, which the banner reads.
+      outageMarker: null,
+      outageMarkerRead: markerRead,
       isDockerOnHost: dockerOnHost,
     }
   }
@@ -206,6 +381,7 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'IS_DOCKER_set_on_host',
       lastRealSessionTs: null,
       outageMarker: null,
+      outageMarkerRead: markerRead,
       isDockerOnHost: true,
     }
   }
@@ -222,6 +398,7 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'binding_unavailable_no_marker',
       lastRealSessionTs: null,
       outageMarker: null,
+      outageMarkerRead: markerRead,
       isDockerOnHost: false,
     }
   }
@@ -234,6 +411,7 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'no_recent_rows',
       lastRealSessionTs: null,
       outageMarker: null,
+      outageMarkerRead: markerRead,
       isDockerOnHost: false,
     }
   }
@@ -243,6 +421,7 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
       reason: 'low_capture_rate',
       lastRealSessionTs: row.lastTs,
       outageMarker: null,
+      outageMarkerRead: markerRead,
       isDockerOnHost: false,
     }
   }
@@ -252,6 +431,7 @@ export async function assessInstrumentationHealth(input: ProbeInput): Promise<Pr
     reason: 'healthy',
     lastRealSessionTs: row.lastTs,
     outageMarker: null,
+    outageMarkerRead: markerRead,
     isDockerOnHost: false,
   }
 }

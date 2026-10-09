@@ -9,8 +9,8 @@
  * `healthy` and fresh renders nothing; every other state renders
  * unconditionally (SMI-6985 removed the `expectedBy` grace window that used
  * to suppress a `missing` read for a time — see `renderBridgeVerdictLine`'s
- * own doc comment for the full history and why this does NOT copy
- * `renderReindexBanner`'s `if (!entry) return ''`).
+ * own doc comment for the full history, and for why this module renders on
+ * `missing` where its siblings deliberately do not).
  */
 
 import { homedir } from 'node:os'
@@ -66,10 +66,20 @@ function detectorNotEvaluatedText(entry: BridgeEntry): { state: string; action: 
 
 /**
  * The verdict-axis line, or '' when nothing should render (healthy and
- * fresh). Does NOT copy `renderReindexBanner`'s `if (!entry) return ''`
- * (`reindex-state.ts:183`) — a `missing`/`malformed`/`unreadable` READ
- * renders unconditionally, the defect one layer up from D3's that this
- * delta's correction-of-record section names.
+ * fresh). A `missing`/`malformed`/`unreadable` READ renders unconditionally.
+ *
+ * This used to be described as deliberately NOT copying a silent-on-null
+ * shape in the sibling state modules, citing a specific line. SMI-6995
+ * removed that shape: all five siblings now distinguish a failed read from an
+ * absent one, so there is no longer a defect here to avoid copying.
+ *
+ * What remains is a DIVERGENCE, not a correction. The siblings stay silent on
+ * `missing` — each keeping whatever message it already had for "nothing has
+ * run yet" — while this module renders, because a bridge state file that was
+ * never written is itself a finding (SMI-6985 deleted the grace window that
+ * used to suppress it). Described by behaviour rather than by a line number
+ * on purpose: the citation this replaces had already drifted by one line,
+ * which is what a line number does.
  *
  * SMI-6985: this used to gate the `missing` case behind an `expectedBy`
  * grace window, anchored to this checkout's own probe-script install date.

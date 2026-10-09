@@ -31,27 +31,24 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import {
-  readEntry,
+  readEntryResult as readAutohealEntryResult,
   renderAutohealBanner,
   resolveAutohealLogPath,
   resolveMainRepoKey,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/autoheal-state.js'
+import { assessInstrumentationHealth } from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
 import {
-  assessInstrumentationHealth,
-  type ProbeResult,
-} from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
-import {
-  readEntry as readLivenessEntry,
+  readEntryResult as readLivenessEntryResult,
   renderLivenessBanner,
   resolveLivenessLogPath,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/liveness-state.js'
 import {
-  readEntry as readReindexEntry,
+  readEntryResult as readReindexEntryResult,
   renderReindexBanner,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/reindex-state.js'
 import {
-  readAndAck,
-  renderDisconnectBanner,
+  readAndAckResult,
+  renderDisconnectBannerResult,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
 import {
   BRIDGE_VERDICT_SHADOW_VAR,
@@ -74,7 +71,6 @@ import {
   type CliArgs,
   countRecentJsonlSessions,
   extractRecentBullets,
-  formatRelativeAge,
   getCurrentHeadSha,
   loadSearch,
   parseCliArgs,
@@ -91,42 +87,16 @@ export interface PrimingResult {
   additionalContext: string
 }
 
-/**
- * SMI-4549 Wave 2 — render the stale-instrumentation banner. Prepended to
- * the priming markdown when `assessInstrumentationHealth` returns
- * `stale: true`. Uses the same `**bold**` style as `renderPrimingMarkdown`
- * because GitHub `[!WARNING]` callouts render as literal text inside the
- * SessionStart `additionalContext` payload.
- */
-export function renderInstrumentationBanner(
-  probe: ProbeResult,
-  now: Date,
-  autohealLine?: string
-): string {
-  const lastReal =
-    probe.lastRealSessionTs !== null
-      ? `${probe.lastRealSessionTs} (${formatRelativeAge(probe.lastRealSessionTs, now)})`
-      : 'never'
-  const markerTs = probe.outageMarker?.ts ?? 'absent'
-  const dockerLine = probe.isDockerOnHost ? 'set' : 'unset'
-  // D5: when the host auto-heal has a FAILED entry, surface its one-liner in
-  // place of the generic repair hint so the developer knows healing has been
-  // attempted and gets the copy-paste escape hatch. Otherwise keep the static
-  // repair hint for backward compatibility.
-  const repairLine =
-    autohealLine && autohealLine.length > 0
-      ? `- ${autohealLine}`
-      : '- Repair: `./scripts/repair-host-native-deps.sh`'
-  return [
-    '**Warning — SessionStart instrumentation appears stale.**',
-    '',
-    `- Last real-session retrieval_events row: ${lastReal}.`,
-    `- Outage marker: ${markerTs}. Reason: ${probe.reason}.`,
-    `- IS_DOCKER on host: ${dockerLine}.`,
-    repairLine,
-    '',
-  ].join('\n')
-}
+// SMI-6995: `renderInstrumentationBanner` and its `describeOutageMarker` helper
+// moved to ./session-priming-query.banners.ts when this file crossed the
+// 500-line gate. Re-exported so existing importers (including
+// scripts/tests/session-priming-query.test.ts) are unaffected.
+// NOTE: imported AND re-exported, deliberately. A bare `export { x } from '...'`
+// re-exports without binding `x` in this module's own scope, and this file
+// still calls it below. tsc caught that; the test suite did not, because the
+// only call sites are behind `probe.stale` being true.
+import { renderInstrumentationBanner } from './session-priming-query.banners.js'
+export { renderInstrumentationBanner }
 
 export function renderPrimingMarkdown(query: string, hits: SearchHit[]): string {
   const head = '<!-- session-priming v1 — SMI-4451 Wave 1 Step 7 -->'
@@ -168,9 +138,23 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   try {
     const key = resolveMainRepoKey(args.cwd)
     if (key) {
-      const e = readEntry(key)
-      if (e && e.lastVerdict === 'fail') {
-        autohealLine = renderAutohealBanner(e, { now, logPath: resolveAutohealLogPath(now) })
+      // SMI-6995: the predicate is now "the read failed, OR the entry says
+      // what it used to say". The old `e && e.lastVerdict === 'fail'` form
+      // swallowed a malformed/unreadable state file silently, because a failed
+      // read is neither `fail` nor anything else -- a correct reader alone does
+      // not fix that, since the collapse had TWO layers and this is the second.
+      // SMI-6995: admit a read FAULT, not merely "not ok". There are four
+      // statuses and only two are faults. `missing` is not-ok but it is not a
+      // failure -- it means nothing has run yet, which this banner has always
+      // and correctly treated as silence. An earlier revision of this line
+      // used `status !== 'ok'` and so rendered "[autoheal] first run launched"
+      // into the priming banner on every session with no state file. The CLI
+      // (--print-banner) DOES want that message for `missing`; this consumer
+      // does not. Same reader, two consumers, two different policies.
+      const read = readAutohealEntryResult(key)
+      const autohealFault = read.status === 'malformed' || read.status === 'unreadable'
+      if (autohealFault || (read.status === 'ok' && read.entry.lastVerdict === 'fail')) {
+        autohealLine = renderAutohealBanner(read, { now, logPath: resolveAutohealLogPath(now) })
       }
     }
   } catch {
@@ -199,8 +183,15 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   try {
     const livenessKey = resolveMainRepoKey(args.cwd)
     if (livenessKey) {
-      const le = readLivenessEntry(livenessKey)
-      if (le && le.lastVerdict === 'stale') {
+      // SMI-6995: same two-layer collapse as the autoheal block above -- a
+      // malformed read is neither `stale` nor anything else, so the pre-filter
+      // has to admit a failed read or the reader fix changes nothing here.
+      // SMI-6995: same correction as the autoheal block above -- `missing` is
+      // not a fault, and admitting it here rendered "retrieval feed health
+      // unknown" on every session with no state file.
+      const le = readLivenessEntryResult(livenessKey)
+      const livenessFault = le.status === 'malformed' || le.status === 'unreadable'
+      if (livenessFault || (le.status === 'ok' && le.entry.lastVerdict === 'stale')) {
         livenessLine = renderLivenessBanner(le, {
           now,
           logPath: resolveLivenessLogPath(now),
@@ -225,14 +216,17 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     try {
       const reindexKey = resolveMainRepoKey(args.cwd)
       if (reindexKey) {
-        const re = readReindexEntry(reindexKey)
-        if (re) {
-          const currentHeadSha = await getCurrentHeadSha(args.cwd)
-          const staleHoursEnv = Number(process.env.SKILLSMITH_REINDEX_STALE_HOURS)
-          const staleHours =
-            Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
-          reindexLine = renderReindexBanner(re, { now, currentHeadSha, staleHours })
-        }
+        // SMI-6995: no pre-filter at all now. The old `if (re)` skipped the
+        // renderer whenever the read produced nothing, which is exactly the
+        // malformed/unreadable case this issue is about. The renderer itself is
+        // silent on `missing`, so calling it unconditionally is both correct and
+        // simpler -- the decision belongs in one place, not two.
+        const re = readReindexEntryResult(reindexKey)
+        const currentHeadSha = await getCurrentHeadSha(args.cwd)
+        const staleHoursEnv = Number(process.env.SKILLSMITH_REINDEX_STALE_HOURS)
+        const staleHours =
+          Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
+        reindexLine = renderReindexBanner(re, { now, currentHeadSha, staleHours })
       }
     } catch {
       /* fail-soft — must never crash the priming hook */
@@ -251,8 +245,14 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       if (disconnectKey) {
         const lines: string[] = []
         for (const server of ['skillsmith', 'skillsmith-doc-retrieval'] as const) {
-          const entry = readAndAck(disconnectKey, server)
-          if (entry) lines.push(renderDisconnectBanner(server, entry))
+          // SMI-6995: the result-shaped reader. The old `if (entry)` form
+          // swallowed four distinct outcomes -- no state file, no unacked
+          // event, a corrupt file, and a lock-acquisition timeout -- into one
+          // silent branch. Only `missing` should be silent; the renderer owns
+          // that decision now, so there is no pre-filter here.
+          const read = readAndAckResult(disconnectKey, server)
+          const line = renderDisconnectBannerResult(server, read, now)
+          if (line) lines.push(line)
         }
         disconnectLine = lines.join('\n')
       }

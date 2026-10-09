@@ -14,7 +14,6 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -160,13 +159,14 @@ describe('readEntryResult', () => {
     expect(readEntryResult('key-a', path)).toEqual({ status: 'missing' })
   })
 
-  it('returns malformed (not missing) for a truncated/corrupt JSON file', () => {
+  it('returns malformed (not missing), with detail naming the parse failure, for a truncated/corrupt JSON file', () => {
     freshHome()
     const path = resolveBridgeStatePath()
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, '{"key-a": {"verdict": "heal')
     const result = readEntryResult('key-a', path)
     expect(result.status).toBe('malformed')
+    expect(result.status === 'malformed' && result.detail).toContain('does not parse')
   })
 
   it('returns malformed for a present key missing required fields', () => {
@@ -176,21 +176,46 @@ describe('readEntryResult', () => {
     expect(readEntryResult('key-a', path).status).toBe('malformed')
   })
 
-  it('returns unreadable (not missing/malformed) for a permission-denied file', () => {
-    if (process.getuid && process.getuid() === 0) {
-      return // root bypasses file-mode permissions — skip, matching the spec's own uid caveat
-    }
+  it('returns malformed, naming the not-an-object condition, for a state file that is a JSON array', () => {
     freshHome()
     const path = resolveBridgeStatePath()
     mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, `${JSON.stringify({ 'key-a': makeEntry() })}\n`)
-    chmodSync(path, 0o000)
-    try {
-      const result = readEntryResult('key-a', path)
-      expect(result.status).toBe('unreadable')
-    } finally {
-      chmodSync(path, 0o644)
-    }
+    writeFileSync(path, '[]\n')
+    const result = readEntryResult('key-a', path)
+    expect(result.status).toBe('malformed')
+    expect(result.status === 'malformed' && result.detail).toContain('not a JSON object')
+  })
+
+  it('returns malformed for a state file that is a JSON scalar', () => {
+    freshHome()
+    const path = resolveBridgeStatePath()
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, '"hello"\n')
+    expect(readEntryResult('key-a', path).status).toBe('malformed')
+
+    writeFileSync(path, '42\n')
+    expect(readEntryResult('key-a', path).status).toBe('malformed')
+  })
+
+  // SMI-6995 6a: this used to simulate "unreadable" with `chmodSync(path,
+  // 0o000)`, guarded by an early `return` when running as root. Measured
+  // (SMI-6995 plan M3/M7/M8/M9): root bypasses POSIX file-mode checks, and
+  // both the dev container and the CI image run as root with no CI step
+  // overriding the user — so that guard's early return fired on every real
+  // run and the test's own `expect` never executed. It asserted nothing,
+  // anywhere it actually ran, and reported as passed regardless: the exact
+  // invisible-success class this banner exists to catch, reproduced inside
+  // the test meant to prove the banner correct. A directory standing where
+  // the state file is expected throws EISDIR at ANY uid (M4) and is
+  // classified `unreadable` the same way any other non-ENOENT errno is — no
+  // uid guard needed.
+  it('returns unreadable, with detail carrying EISDIR, when a directory stands where the state file is expected', () => {
+    freshHome()
+    const path = resolveBridgeStatePath()
+    mkdirSync(path, { recursive: true })
+    const result = readEntryResult('key-a', path)
+    expect(result.status).toBe('unreadable')
+    expect(result.status === 'unreadable' && result.detail).toContain('EISDIR')
   })
 })
 
