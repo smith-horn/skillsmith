@@ -633,7 +633,7 @@
       "severity": "high",
       "scope": "dev",
       "tier": "R1",
-      "basis": "No patched release exists (3.0.3 is latest); inputs are repo-controlled glob patterns (vercel build, ESLint, secretlint), and mocha watch mode that loads chokidar is never invoked Re-verified 2026-10-09 (SMI-6952): 3.0.3 is still latest (unchanged since 2024-09) and the advisory lists no patched version.",
+      "basis": "No patched release exists (3.0.3 is latest); inputs are repo-controlled glob patterns (vercel build, ESLint, secretlint), and mocha watch mode that loads chokidar is never invoked. Re-verified 2026-10-09 (SMI-6952): 3.0.3 (published 2024-05-21) is still latest and the advisory lists no patched version.",
       "owner": "wrsmith108",
       "accepted": "2026-10-09",
       "expires": "2026-11-08",
