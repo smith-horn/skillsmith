@@ -66,8 +66,17 @@
 # shellcheck shell=sh
 
 GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
-# See the "ONE DELIBERATE DEVIATION" note above: preserve, do not reset.
-GIT_CRYPT_LOCK_HELD="${GIT_CRYPT_LOCK_HELD-}"
+# See the "ONE DELIBERATE DEVIATION" note above: preserve, do not reset --
+# but only a value naming THIS shell. SMI-6973 round 4: HELD holds the pid of
+# the shell whose own mkdir took the lock, never a bare flag. Anything else
+# here (an exported variable from a parent, a harness that sets HELD=1) did not
+# come from our mkdir, and trusting it let release delete, and acquire adopt, a
+# foreign lock caught in its mkdir-to-pid-write window. Re-sourcing in the same
+# shell keeps a live value, which is what the deviation protects.
+case "${GIT_CRYPT_LOCK_HELD-}" in
+  "$$") ;;
+  *) GIT_CRYPT_LOCK_HELD="" ;;
+esac
 # A caller that owns its own cleanup (the hook's _restore_smudge_filter) names
 # it here, so the lock's traps CHAIN to it instead of replacing it. Cleared
 # when run, so a handler can never re-enter itself.
@@ -122,9 +131,10 @@ _acquire_git_crypt_lock() {
   # R4 (M): a lock THIS process still holds (a release whose removal failed
   # leaves HELD set, and the signal handler's chained restore then acquires)
   # is reused, not re-contended: spinning on our own directory cost the whole
-  # 10s window and exited 1 instead of 130/143. HELD is set only by our own
-  # successful mkdir, so an empty pid file or one naming us is ours.
-  if [ -n "$GIT_CRYPT_LOCK_HELD" ]; then
+  # 10s window and exited 1 instead of 130/143. HELD names this shell only
+  # after our own successful mkdir (a foreign value is discarded at source
+  # time), so an empty pid file or one naming us is ours.
+  if [ "$GIT_CRYPT_LOCK_HELD" = "$$" ]; then
     _own=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _own=""
     if [ "$_own" = "$$" ] || [ -z "$_own" ]; then
       return 0
@@ -143,7 +153,7 @@ _acquire_git_crypt_lock() {
       # mkdir succeeding IS acquisition: nothing else can take the directory
       # (SMI-5983 deliberately has no auto-reclaim). Claim it FIRST, before
       # anything that can fail.
-      GIT_CRYPT_LOCK_HELD=1
+      GIT_CRYPT_LOCK_HELD=$$
       _git_crypt_lock_arm
       # Then record the owner. errexit is suppressed for an `if` CONDITION but
       # not an `if` BODY, so this stays a condition.
@@ -180,7 +190,7 @@ _acquire_git_crypt_lock() {
   exit 1
 }
 _release_git_crypt_lock() {
-  [ -n "$GIT_CRYPT_LOCK_HELD" ] || return 0
+  [ "$GIT_CRYPT_LOCK_HELD" = "$$" ] || return 0
   # `|| _owner=` : under `sh -e` a bare substitution of a failing `cat` aborts
   # here, so the empty-owner handling below would never run.
   _owner=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _owner=""
@@ -195,11 +205,14 @@ _release_git_crypt_lock() {
   # a release that believed it had done its job.
   #
   # Releasing on an empty read is safe here, and only here, because
-  # GIT_CRYPT_LOCK_HELD is set by exactly one thing: this process's own
-  # successful `mkdir`. It is never inherited and never set speculatively. And
+  # GIT_CRYPT_LOCK_HELD names this shell only after its own successful `mkdir`:
+  # a value inherited from anywhere else is discarded when the file is sourced,
+  # and nothing sets it speculatively. And
   # SMI-5983 deliberately implemented NO auto-reclaim -- an ABA race in an
   # `mv`-to-tombstone design was found and rejected -- so no other process can
-  # take this directory from us while we hold it, which is what would otherwise
+  # take this directory from us while we hold it (short of an operator's manual
+  # rmdir, which the busy message gates on confirming via ps that the holder is
+  # gone), which is what would otherwise
   # make "pid unreadable" ambiguous between "mine, unrecorded" and "someone
   # else's now".
   #

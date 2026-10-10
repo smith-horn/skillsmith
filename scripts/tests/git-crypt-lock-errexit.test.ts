@@ -259,7 +259,7 @@ describe('SMI-6973 F6: a failed lock removal keeps the flag so the EXIT trap ret
       'FAIL_RM=1; export FAIL_RM',
       // R4: a failed removal is NON-zero (and would abort under -e).
       '_release_git_crypt_lock || echo "RELEASE_RC=$?"',
-      'echo "HELD_AFTER_FAILED_RM=[$GIT_CRYPT_LOCK_HELD]"',
+      'echo "HELD_AFTER_FAILED_RM=[$GIT_CRYPT_LOCK_HELD] SELF=[$$]"',
       '[ -d "$GIT_CRYPT_LOCK_DIR" ] && echo DIR_PRESENT || echo DIR_GONE',
       'unset FAIL_RM',
       '_release_git_crypt_lock',
@@ -269,7 +269,10 @@ describe('SMI-6973 F6: a failed lock removal keeps the flag so the EXIT trap ret
     const r = runWithGitShim(dir, script, ':', { PATH: `${stubDir}:${GIT_ENV.PATH ?? ''}` })
     expect(r.obs, 'rm stub did not fire').toContain('RM_FAILED')
     expect(r.out).toContain('RELEASE_RC=1')
-    expect(r.out).toContain('HELD_AFTER_FAILED_RM=[1]')
+    // Round 4: HELD names the acquiring shell, so "still held" means "equals $$".
+    const held = r.out.match(/HELD_AFTER_FAILED_RM=\[(\d*)\] SELF=\[(\d+)\]/)
+    expect(held, `output: ${r.out}`).not.toBeNull()
+    expect(held?.[1], `output: ${r.out}`).toBe(held?.[2])
     expect(r.out).toContain('DIR_PRESENT\n')
     expect(r.out).toContain('HELD_AFTER_RETRY=[]')
     expect(r.out).toContain('DIR_GONE_2')
@@ -624,5 +627,64 @@ describe('SMI-6973 F8: a failed lock removal on the config-read-error path still
     expect(r.out).toContain('cannot read filter.git-crypt.smudge (git config exit 128)')
     expect(r.out).not.toContain('REACHED_END')
     expect(r.status).toBe(1)
+  })
+})
+
+describe('SMI-6973 round 4 (high): HELD proves ownership only when it names this shell', () => {
+  // A foreign holder caught in its own mkdir-to-pid-write window: the lock
+  // directory exists and no pid file has been written yet.
+  const foreignEmptyLock = (dir: string) => mkdirSync(lockDirOf(dir))
+
+  it('an inherited HELD does not let release remove a foreign lock with an empty pid file', () => {
+    const dir = makeRepo()
+    foreignEmptyLock(dir)
+    const script = [
+      PRELUDE,
+      'echo "HELD_AFTER_SOURCE=[$GIT_CRYPT_LOCK_HELD]"',
+      '_release_git_crypt_lock',
+      '[ -d "$GIT_CRYPT_LOCK_DIR" ] && echo FOREIGN_SURVIVES || echo FOREIGN_REMOVED',
+    ].join('\n')
+    const r = runWithGitShim(dir, script, ':', { GIT_CRYPT_LOCK_HELD: '1' })
+    expect(r.out, `output: ${r.out}`).toContain('HELD_AFTER_SOURCE=[]')
+    expect(r.out, `output: ${r.out}`).toContain('FOREIGN_SURVIVES')
+    expect(r.status).toBe(0)
+  })
+
+  it('an inherited HELD does not let acquire adopt a foreign lock: it contends, then takes the lock with its own mkdir', () => {
+    const dir = makeRepo()
+    foreignEmptyLock(dir)
+    // The foreign holder lets go after ~1s; a real acquire must wait for that.
+    const script = [
+      PRELUDE,
+      `( sleep 1; rmdir ${JSON.stringify(lockDirOf(dir))} ) &`,
+      'START=$(date +%s)',
+      '_acquire_git_crypt_lock',
+      'echo "WAITED_S=$(( $(date +%s) - START ))"',
+      'echo "PID_FILE=[$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)] SELF=[$$]"',
+      'wait',
+      '_release_git_crypt_lock',
+    ].join('\n')
+    const r = runWithGitShim(dir, script, ':', { GIT_CRYPT_LOCK_HELD: '1' })
+    const m = r.out.match(/PID_FILE=\[(\d*)\] SELF=\[(\d+)\]/)
+    expect(m, `output: ${r.out}`).not.toBeNull()
+    expect(m?.[1], `output: ${r.out}`).toBe(m?.[2])
+    expect(r.status, `output: ${r.out}`).toBe(0)
+    expect(existsSync(lockDirOf(dir))).toBe(false)
+  })
+
+  it('control: sourcing the library twice in the same shell keeps live ownership', () => {
+    const dir = makeRepo()
+    const script = [
+      PRELUDE,
+      '_acquire_git_crypt_lock',
+      `. ${JSON.stringify(LOCK_LIB)}`,
+      '[ -n "$GIT_CRYPT_LOCK_HELD" ] && echo STILL_HELD || echo LOST',
+      '_release_git_crypt_lock',
+      '[ -d "$GIT_CRYPT_LOCK_DIR" ] && echo DIR_PRESENT || echo DIR_GONE',
+    ].join('\n')
+    const r = runWithGitShim(dir, script, ':')
+    expect(r.out, `output: ${r.out}`).toContain('STILL_HELD')
+    expect(r.out, `output: ${r.out}`).toContain('DIR_GONE')
+    expect(r.status).toBe(0)
   })
 })
