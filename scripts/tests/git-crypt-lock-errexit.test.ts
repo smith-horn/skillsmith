@@ -760,3 +760,59 @@ describe('SMI-6973 round 5 (high): an EXPORTED HELD is never trusted, even when 
     expect(r.status).toBe(0)
   })
 })
+
+describe('SMI-6973 round 7: acquisition is EXCLUSIVE, not merely "after the holder left"', () => {
+  // A wait-for-absence followed by a non-exclusive `mkdir -p` passes every
+  // test that only checks WHEN acquire returned. The difference shows only in
+  // the race between seeing the directory absent and creating it, so this
+  // stub forces that race: on its FIRST call for the lock path it plays a
+  // rival that creates the directory at that exact instant (and lets go ~1s
+  // later, marking its release BEFORE rmdir), then hands off to the real
+  // mkdir. An exclusive mkdir now fails and must wait for the rival; `-p`
+  // succeeds and takes over the rival's lock.
+  function rivalMkdirStub(dir: string): Record<string, string> {
+    const stubDir = join(dir, 'stub-bin')
+    mkdirSync(stubDir, { recursive: true })
+    const realMkdir = execFileSync('sh', ['-c', 'command -v mkdir'], { encoding: 'utf8' }).trim()
+    writeFileSync(
+      join(stubDir, 'mkdir'),
+      [
+        '#!/bin/sh',
+        'for a in "$@"; do last="$a"; done',
+        // The library's path comes from `git rev-parse --git-common-dir`,
+        // which is relative (.git/...), so match the lock by its name.
+        'case "$last" in *skillsmith-git-crypt-filter.lock)',
+        '  if [ ! -e "$SHIM_DIR/rival-done" ]; then',
+        '    : > "$SHIM_DIR/rival-done"',
+        `    ${JSON.stringify(realMkdir)} "$last" && echo RIVAL_IN >> "$OBS"`,
+        '    ( sleep 1; : > "$SHIM_DIR/rival-released"; rmdir "$last" ) >/dev/null 2>&1 &',
+        '  fi ;;',
+        'esac',
+        `exec ${JSON.stringify(realMkdir)} "$@"`,
+      ].join('\n')
+    )
+    chmodSync(join(stubDir, 'mkdir'), 0o755)
+    return { PATH: `${stubDir}:${GIT_ENV.PATH ?? ''}` }
+  }
+
+  it('a rival that creates the lock directory at the instant of our mkdir makes acquire wait for it', () => {
+    const dir = makeRepo()
+    const env = rivalMkdirStub(dir)
+    const released = JSON.stringify(join(dir, '.shim-bin', 'rival-released'))
+    const script = [
+      PRELUDE,
+      '_acquire_git_crypt_lock',
+      `[ -e ${released} ] && echo ACQUIRED_AFTER_RIVAL || echo ACQUIRED_BEFORE_RIVAL`,
+      'echo "PID_FILE=[$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)] SELF=[$$]"',
+      '_release_git_crypt_lock',
+    ].join('\n')
+    const r = runWithGitShim(dir, script, ':', env)
+    // Presence: the stub really injected the rival, so the race happened.
+    expect(r.obs, `output: ${r.out}`).toContain('RIVAL_IN')
+    expect(r.out, `output: ${r.out}`).toContain('ACQUIRED_AFTER_RIVAL')
+    const m = r.out.match(/PID_FILE=\[(\d*)\] SELF=\[(\d+)\]/)
+    expect(m?.[1], `output: ${r.out}`).toBe(m?.[2])
+    expect(r.status, `output: ${r.out}`).toBe(0)
+    expect(existsSync(lockDirOf(dir))).toBe(false)
+  })
+})

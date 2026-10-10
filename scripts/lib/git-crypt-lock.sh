@@ -231,7 +231,7 @@ _release_git_crypt_lock() {
   # Releasing on an empty read is safe here, and only here, because
   # within the contract GIT_CRYPT_LOCK_HELD equals $$ only after this shell's
   # own successful `mkdir`: an exported or foreign value is discarded when the
-  # file is sourced, and nothing sets it speculatively (the two cases outside
+  # file is sourced, and nothing sets it speculatively (the cases outside
   # the contract are named where HELD is initialised). And
   # SMI-5983 deliberately implemented NO auto-reclaim -- an ABA race in an
   # `mv`-to-tombstone design was found and rejected -- so no other process can
