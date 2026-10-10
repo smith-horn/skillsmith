@@ -31,7 +31,7 @@
  * fixed path (`$REPO_ROOT/node_modules/.bin/tsc`), and a harness that replaced
  * the compiler would stop testing the thing under test.
  */
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync, type SpawnSyncOptions } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -76,12 +76,19 @@ vi.setConfig({ testTimeout: gateBudget(2) })
 const gateRunsThisTest = new Map<string, number>()
 
 /**
- * Every site that spawns the gate calls this -- runGate() and the tests that
- * spawn it directly (SMI-7067: two did, and the guard saw 0 runs for them).
+ * The ONLY way this file runs the gate (SMI-7067): it counts the run, then
+ * spawns it, so a spawn cannot happen uncounted. Two tests used to call
+ * spawnSync on the gate directly, and the guard saw 0 runs for them.
  */
-function countGateRun(): void {
+function spawnGate(cmd: string, args: string[], options: SpawnSyncOptions) {
   const name = expect.getState().currentTestName ?? ''
   gateRunsThisTest.set(name, (gateRunsThisTest.get(name) ?? 0) + 1)
+  return spawnSync(cmd, args, { ...options, encoding: 'utf8' })
+}
+
+/** Gate runs the current test has made so far. */
+function gateRunsSoFar(): number {
+  return gateRunsThisTest.get(expect.getState().currentTestName ?? '') ?? 0
 }
 
 /** tsconfig.scripts.json is parked under this name by the missing-config arm. */
@@ -106,13 +113,11 @@ function runGate(
   extraEnv?: Record<string, string>,
   unsetEnv: string[] = []
 ): GateRun {
-  countGateRun()
   const env = { ...process.env, ...extraEnv }
   for (const k of unsetEnv) delete env[k]
   if (stubDir) env.PATH = `${stubDir}:${env.PATH ?? ''}`
-  const r = spawnSync('bash', [GATE], {
+  const r = spawnGate('bash', [GATE], {
     cwd: REPO_ROOT,
-    encoding: 'utf8',
     timeout: RUN_TIMEOUT_MS,
     env,
   })
@@ -969,10 +974,8 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       ]
       for (const [label, cmd, args] of wrappers) {
         const t0 = Date.now()
-        countGateRun()
-        const r = spawnSync(cmd, args, {
+        const r = spawnGate(cmd, args, {
           cwd: REPO_ROOT,
-          encoding: 'utf8',
           timeout: RUN_TIMEOUT_MS,
           env: {
             ...process.env,
@@ -988,6 +991,8 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         expect(out, `${label}: not a pass`).not.toContain('VERDICT        PASS')
         expect(Date.now() - t0, `${label}: bounded by the alarm`).toBeLessThan(30_000)
       }
+      // Exact, not merely within budget: an uncounted spawn must not hide here.
+      expect(gateRunsSoFar(), 'every wrapper ran the gate through spawnGate').toBe(wrappers.length)
     },
     gateBudget(2)
   )
@@ -1328,10 +1333,8 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       const subjectPath = join(dir, `.backstop-subject-${tag}.sh`)
       const controlPath = join(dir, `.backstop-control-${tag}.sh`)
       const run = (p: string) => {
-        countGateRun()
-        const r = spawnSync('bash', [p], {
+        const r = spawnGate('bash', [p], {
           cwd: REPO_ROOT,
-          encoding: 'utf8',
           timeout: RUN_TIMEOUT_MS,
         })
         if (r.status === null) throw new Error(`gate copy terminated by ${r.signal ?? 'unknown'}`)
@@ -1348,6 +1351,8 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         expect(s.out, 'subject: names the gate bug').toContain('gate bug')
         expect(s.out, 'subject: RESULT').toMatch(/RESULT\s+INCONCLUSIVE/)
         expect(s.status, 'subject exit').not.toBe(0)
+        // Exact, not merely within budget: an uncounted spawn must not hide here.
+        expect(gateRunsSoFar(), 'control and subject both ran through spawnGate').toBe(2)
       } finally {
         rmSync(subjectPath, { force: true })
         rmSync(controlPath, { force: true })

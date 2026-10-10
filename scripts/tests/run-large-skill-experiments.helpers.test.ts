@@ -145,9 +145,14 @@ describe('run-large-skill-experiments.ts wiring', () => {
     const push = src.indexOf('results.push(result)')
     expect(push, 'results.push present').toBeGreaterThan(-1)
     const block = src.slice(check, push)
-    expect(block).toContain('tally.abFailed++')
+    // Order, not just presence: guard < increment < skip < push. An increment
+    // moved after `continue` is unreachable, yet still "present" (SMI-7067).
+    const inc = block.indexOf('tally.abFailed++')
     // A statement on its own line: a comment that merely mentions it does not count.
-    expect(block).toMatch(/^\s*continue\s*$/m)
+    const skip = block.search(/^\s*continue\s*$/m)
+    expect(inc, 'increment inside the failed-A/B block').toBeGreaterThan(-1)
+    expect(skip, 'continue statement inside the failed-A/B block').toBeGreaterThan(-1)
+    expect(inc, 'increment before continue').toBeLessThan(skip)
   })
 
   it('passes the parsed description of the downloaded content to transform()', () => {
