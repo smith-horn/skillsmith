@@ -28,6 +28,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import type { TransformationService as TransformationServiceClass } from '@skillsmith/core'
+import { experimentExitCode, skillDescription } from './run-large-skill-experiments.helpers.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -253,7 +254,7 @@ async function transformSkill(skillPath: string, skillName: string): Promise<Tra
     const service = new TransformationService()
     // transform(skillId, skillName, description, content). The downloaded
     // file is a SKILL.md, so its frontmatter carries the description.
-    const description = /^description:\s*(.+)$/m.exec(originalContent)?.[1]?.trim() ?? ''
+    const description = skillDescription(originalContent)
     const result = await service.transform(skillName, skillName, description, originalContent)
 
     return {
@@ -722,6 +723,7 @@ async function main(): Promise<void> {
   log('')
 
   const results: ABTestResult[] = []
+  const tally = { attempted: 0, transformFailed: 0 }
 
   for (const skill of skills) {
     log(`\n========== ${skill.name} (${skill.lines} lines) ==========\n`)
@@ -733,8 +735,10 @@ async function main(): Promise<void> {
     // Transform
     log('Transforming with Skillsmith...')
     const transform = await transformSkill(skillPath, skill.name)
+    tally.attempted++
 
     if (!transform.success) {
+      tally.transformFailed++
       log(`Transformation failed: ${transform.error}`, 'error')
       continue
     }
@@ -776,7 +780,11 @@ async function main(): Promise<void> {
     generateReport(results, args.output)
   }
 
-  log('\nExperiments complete!')
+  log(
+    `\nExperiments complete: ${tally.attempted} attempted, ` +
+      `${tally.transformFailed} transformation(s) failed, ${results.length} A/B test(s) completed`
+  )
+  process.exitCode = experimentExitCode(tally)
 }
 
 main().catch((error) => {
