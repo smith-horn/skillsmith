@@ -431,9 +431,12 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       trap '_restore_smudge_filter_final' EXIT
       trap '_restore_smudge_filter_signal 130' INT
       trap '_restore_smudge_filter_signal 143' TERM
-      # Read by the EXIT/INT/TERM handler in scripts/lib/git-crypt-lock.sh,
-      # which shellcheck does not follow; clearing it stops that handler
-      # chaining a second restore now that the traps above own it.
+      # Defensive: nothing reads this value today. The traps above replaced the
+      # lock library's handlers, and the only path that re-arms them
+      # (_restore_smudge_filter) sets the variable itself before acquiring.
+      # Clearing it means a lock acquired later in this hook would not chain a
+      # restore it never asked for. The reader is in scripts/lib/git-crypt-lock.sh,
+      # which shellcheck does not follow from here.
       # shellcheck disable=SC2034
       GIT_CRYPT_LOCK_OUTER_TRAP=""
     else
