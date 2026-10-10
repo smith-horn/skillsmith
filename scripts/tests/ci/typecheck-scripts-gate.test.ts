@@ -45,7 +45,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 // Derived from this file's own location, NOT from `git rev-parse`. Under
 // Docker-first the container sees /app as a bind mount whose .git is a FILE
@@ -60,6 +60,15 @@ const RUN_TIMEOUT_MS = 120_000
 
 /** For tests that spawn several full gate runs (the preset default is 15s). */
 const MULTI_RUN_TIMEOUT_MS = 6 * 60_000
+
+/**
+ * SMI-7061: this file's default, so no test inherits vitest's 15s. A test that
+ * runs the REAL compiler can take 10-30s under CI load, and the 15s default
+ * killed one mid-compile while runGate's own bound (RUN_TIMEOUT_MS) had plenty
+ * left. Sized for two bounded gate runs, the most any test makes without
+ * declaring MULTI_RUN_TIMEOUT_MS itself.
+ */
+vi.setConfig({ testTimeout: 2 * RUN_TIMEOUT_MS + 30_000 })
 
 /** tsconfig.scripts.json is parked under this name by the missing-config arm. */
 const CONFIG_ASIDE = 'zz-smi6975-tsconfig-aside.json'
