@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { experimentExitCode, skillDescription } from '../run-large-skill-experiments.helpers.ts'
+import {
+  abTestFailed,
+  experimentExitCode,
+  skillDescription,
+} from '../run-large-skill-experiments.helpers.ts'
 
 describe('skillDescription', () => {
   const fm = (yaml: string) => `---\n${yaml}\n---\n\n# Body\n`
@@ -68,16 +72,43 @@ describe('skillDescription', () => {
 })
 
 describe('experimentExitCode', () => {
-  it('control: no failed transformation exits 0', () => {
-    expect(experimentExitCode({ attempted: 3, transformFailed: 0 })).toBe(0)
+  it('control: no failed transformation and no failed A/B test exits 0', () => {
+    expect(experimentExitCode({ attempted: 3, transformFailed: 0, abFailed: 0 })).toBe(0)
   })
 
   it('every transformation failing exits non-zero', () => {
-    expect(experimentExitCode({ attempted: 3, transformFailed: 3 })).toBe(1)
+    expect(experimentExitCode({ attempted: 3, transformFailed: 3, abFailed: 0 })).toBe(1)
   })
 
   it('a single failed transformation exits non-zero', () => {
-    expect(experimentExitCode({ attempted: 3, transformFailed: 1 })).toBe(1)
+    expect(experimentExitCode({ attempted: 3, transformFailed: 1, abFailed: 0 })).toBe(1)
+  })
+
+  it('a failed A/B test exits non-zero even when every transformation succeeded', () => {
+    expect(experimentExitCode({ attempted: 3, transformFailed: 0, abFailed: 1 })).toBe(1)
+  })
+})
+
+describe('abTestFailed', () => {
+  const ab = (orig: number[], opt: number[]) => ({
+    original: { tokens: orig },
+    optimized: { tokens: opt },
+  })
+
+  it('control: samples on both sides is not a failure', () => {
+    expect(abTestFailed(ab([100], [80]))).toBe(false)
+  })
+
+  it('no original samples is a failure', () => {
+    expect(abTestFailed(ab([], [80]))).toBe(true)
+  })
+
+  it('no optimized samples is a failure', () => {
+    expect(abTestFailed(ab([100], []))).toBe(true)
+  })
+
+  it('no samples at all is a failure', () => {
+    expect(abTestFailed(ab([], []))).toBe(true)
   })
 })
 
@@ -93,14 +124,30 @@ describe('run-large-skill-experiments.ts wiring', () => {
   it('sets the exit status from the run tally, once, after the tally is updated', () => {
     const assign = 'process.exitCode = experimentExitCode(tally)'
     expect(src.split(assign).length - 1, 'exactly one assignment').toBe(1)
-    expect(src.split('const tally = { attempted: 0, transformFailed: 0 }').length - 1).toBe(1)
+    expect(
+      src.split('const tally = { attempted: 0, transformFailed: 0, abFailed: 0 }').length - 1
+    ).toBe(1)
     // After the loop's last tally update, so it sees the run's real counts.
     // Presence first: lastIndexOf returns -1 for a deleted increment, which
     // would let the ordering check below pass while proving nothing.
     expect(src).toContain('tally.transformFailed++')
     expect(src).toContain('tally.attempted++')
+    expect(src).toContain('tally.abFailed++')
     expect(src.indexOf(assign)).toBeGreaterThan(src.lastIndexOf('tally.transformFailed++'))
     expect(src.indexOf(assign)).toBeGreaterThan(src.lastIndexOf('tally.attempted++'))
+    expect(src.indexOf(assign)).toBeGreaterThan(src.lastIndexOf('tally.abFailed++'))
+  })
+
+  it('counts a failed A/B test and keeps it out of the report', () => {
+    // The check guards the push: a failed A/B test is counted, then skipped.
+    const check = src.indexOf('if (abTestFailed(result)) {')
+    expect(check, 'abTestFailed check present').toBeGreaterThan(-1)
+    const push = src.indexOf('results.push(result)')
+    expect(push, 'results.push present').toBeGreaterThan(-1)
+    const block = src.slice(check, push)
+    expect(block).toContain('tally.abFailed++')
+    // A statement on its own line: a comment that merely mentions it does not count.
+    expect(block).toMatch(/^\s*continue\s*$/m)
   })
 
   it('passes the parsed description of the downloaded content to transform()', () => {

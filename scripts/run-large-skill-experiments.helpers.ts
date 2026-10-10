@@ -23,14 +23,32 @@ export interface ExperimentTally {
   attempted: number
   /** Of those, how many transformations failed. */
   transformFailed: number
+  /** A/B tests that produced no successful sample on one side or both. */
+  abFailed: number
+}
+
+/** The sample arrays an A/B test result carries, one per variant. */
+export interface ABSamples {
+  original: { tokens: number[] }
+  optimized: { tokens: number[] }
 }
 
 /**
- * The process exit status for a finished run. Any failed transformation fails
- * the run: a run where every transformation failed used to print
- * "Experiments complete!" and exit 0, which is how a broken transform() call
- * (SMI-7060) went unnoticed.
+ * True when an A/B test has nothing to compare: runABTest keeps only
+ * successful Claude invocations, so a missing `claude` binary, or every call
+ * failing, leaves a side empty while still returning a result (SMI-7067).
+ */
+export function abTestFailed(result: ABSamples): boolean {
+  return result.original.tokens.length === 0 || result.optimized.tokens.length === 0
+}
+
+/**
+ * The process exit status for a finished run. Any failed transformation or
+ * failed A/B test fails the run: a run where every transformation failed used
+ * to print "Experiments complete!" and exit 0, which is how a broken
+ * transform() call (SMI-7060) went unnoticed, and an A/B test with no samples
+ * was counted as completed (SMI-7067).
  */
 export function experimentExitCode(tally: ExperimentTally): number {
-  return tally.transformFailed > 0 ? 1 : 0
+  return tally.transformFailed > 0 || tally.abFailed > 0 ? 1 : 0
 }

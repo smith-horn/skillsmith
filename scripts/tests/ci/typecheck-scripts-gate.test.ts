@@ -58,15 +58,12 @@ const GATE = join(REPO_ROOT, 'scripts', 'ci', 'typecheck-scripts.sh')
 /** Every arm gets the same budget; a hang is a failure, not a slow pass. */
 const RUN_TIMEOUT_MS = 120_000
 
-/** For tests that spawn several full gate runs (the preset default is 15s). */
-const MULTI_RUN_TIMEOUT_MS = 6 * 60_000
-
 /**
  * SMI-7061: a test's timeout must cover every gate run it makes, because each
- * runGate() is bounded only by RUN_TIMEOUT_MS. Under CI load a REAL compile
- * takes 10-30s, and vitest's 15s default killed one mid-compile. Give a test
- * that makes more than two runs gateBudget(<its run count>); the afterEach
- * guard below fails any test whose runs outgrow its timeout.
+ * run is bounded only by RUN_TIMEOUT_MS. Under CI load a REAL compile can
+ * outlast vitest's 15s default, which killed one mid-compile. Give a test that
+ * makes more than two runs gateBudget(<its run count>); the afterEach guard
+ * below fails any test whose runs outgrow its timeout.
  */
 function gateBudget(runs: number): number {
   return runs * RUN_TIMEOUT_MS + 30_000
@@ -75,8 +72,17 @@ function gateBudget(runs: number): number {
 /** This file's default: two bounded gate runs. */
 vi.setConfig({ testTimeout: gateBudget(2) })
 
-/** runGate() calls made by the test currently running, for the guard below. */
+/** Gate runs made by the test currently running, for the guard below. */
 const gateRunsThisTest = new Map<string, number>()
+
+/**
+ * Every site that spawns the gate calls this -- runGate() and the tests that
+ * spawn it directly (SMI-7067: two did, and the guard saw 0 runs for them).
+ */
+function countGateRun(): void {
+  const name = expect.getState().currentTestName ?? ''
+  gateRunsThisTest.set(name, (gateRunsThisTest.get(name) ?? 0) + 1)
+}
 
 /** tsconfig.scripts.json is parked under this name by the missing-config arm. */
 const CONFIG_ASIDE = 'zz-smi6975-tsconfig-aside.json'
@@ -100,8 +106,7 @@ function runGate(
   extraEnv?: Record<string, string>,
   unsetEnv: string[] = []
 ): GateRun {
-  const name = expect.getState().currentTestName ?? ''
-  gateRunsThisTest.set(name, (gateRunsThisTest.get(name) ?? 0) + 1)
+  countGateRun()
   const env = { ...process.env, ...extraEnv }
   for (const k of unsetEnv) delete env[k]
   if (stubDir) env.PATH = `${stubDir}:${env.PATH ?? ''}`
@@ -964,6 +969,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       ]
       for (const [label, cmd, args] of wrappers) {
         const t0 = Date.now()
+        countGateRun()
         const r = spawnSync(cmd, args, {
           cwd: REPO_ROOT,
           encoding: 'utf8',
@@ -983,7 +989,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         expect(Date.now() - t0, `${label}: bounded by the alarm`).toBeLessThan(30_000)
       }
     },
-    2 * RUN_TIMEOUT_MS + 30_000
+    gateBudget(2)
   )
 
   it('a compiler that hangs on --version or --showConfig is INCONCLUSIVE, within the bound', () => {
@@ -1322,6 +1328,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       const subjectPath = join(dir, `.backstop-subject-${tag}.sh`)
       const controlPath = join(dir, `.backstop-control-${tag}.sh`)
       const run = (p: string) => {
+        countGateRun()
         const r = spawnSync('bash', [p], {
           cwd: REPO_ROOT,
           encoding: 'utf8',
@@ -1346,7 +1353,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         rmSync(controlPath, { force: true })
       }
     },
-    2 * RUN_TIMEOUT_MS + 30_000
+    gateBudget(2)
   )
 
   it('H2 regression: the attribution anchor matches diagnostics outside scripts/', () => {
@@ -1416,7 +1423,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       }
       for (const f of files) expect(existsSync(join(REPO_ROOT, f))).toBe(false)
     },
-    MULTI_RUN_TIMEOUT_MS
+    gateBudget(1)
   )
 
   it(
@@ -1608,7 +1615,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       }
       expect(existsSync(file)).toBe(false)
     },
-    MULTI_RUN_TIMEOUT_MS
+    gateBudget(2)
   )
 
   it('scope regression: swapping a root for a different path with the SAME basename is INCONCLUSIVE', () => {
