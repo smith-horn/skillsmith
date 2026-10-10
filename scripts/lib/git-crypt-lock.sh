@@ -24,6 +24,10 @@
 #   - SOURCE it (`. "$LIB"`), never execute it;
 #   - never wrap the source or an acquisition in a subshell;
 #   - GIT_CRYPT_LOCK_DIR and GIT_CRYPT_LOCK_HELD must stay GLOBAL;
+#   - GIT_CRYPT_LOCK_HELD is PRIVATE to this file: a caller must never assign,
+#     export or pre-seed it. Its value means "this shell's own mkdir took the
+#     lock" only because nothing else writes it -- a caller that sets it to $$
+#     before sourcing looks exactly like a re-source and would be trusted;
 #   - source it only AFTER RED/NC are defined -- the busy message uses them.
 #
 # ONE DELIBERATE DEVIATION from the inline original, and the reason matters.
@@ -68,9 +72,9 @@
 GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
 # See the "ONE DELIBERATE DEVIATION" note above: preserve, do not reset --
 # but only a shell-local value naming THIS shell. HELD holds the pid of the
-# shell whose own mkdir took the lock (SMI-6973 round 4), and anything else did
-# not come from that mkdir: trusting it let release delete, and acquire adopt,
-# a foreign lock caught in its mkdir-to-pid-write window.
+# shell whose own mkdir took the lock (SMI-6973 round 4). A value naming any
+# other process cannot be that, and trusting it let release delete, and
+# acquire adopt, a foreign lock caught in its mkdir-to-pid-write window.
 #
 # Round 5: equality with $$ is not enough on its own. `exec` keeps the pid, so
 # a parent can export HELD=<the pid the hook will run as> and hand over a value
@@ -78,13 +82,18 @@ GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git
 # can cross an exec, and this file never exports HELD, so an exported HELD is
 # discarded. `unset` (not `=""`) also drops the export attribute; otherwise our
 # own later HELD=$$ would ride it into every child and a re-source would then
-# discard live ownership. Re-sourcing in the same shell keeps a live,
-# unexported value, which is what the deviation protects.
+# discard live ownership. That holds while allexport is off: under `set -a`
+# every assignment is exported again, so a re-source would discard live
+# ownership and leak the lock (the hook never enables it). Re-sourcing in the
+# same shell keeps a live, unexported value, which is what the deviation
+# protects.
 #
-# Two cases this cannot see, both outside the contract: a SUBSHELL of the
-# holding shell shares its $$ and HELD (the header forbids subshells), and an
-# operator's manual rmdir followed by another holder's mkdir replaces the
-# directory under us (the busy message gates rmdir on the holder being gone).
+# This check establishes "shell-local and equal to $$", not "set by our own
+# mkdir". Three cases pass it without that mkdir, all outside the contract
+# (header): a caller that pre-seeds HELD=$$; a SUBSHELL of the holding shell,
+# which shares its $$ and HELD; and an operator's manual rmdir followed by
+# another holder's mkdir, which replaces the directory under us (the busy
+# message gates rmdir on the holder being gone).
 if [ "${GIT_CRYPT_LOCK_HELD-}" != "$$" ] ||
   export -p | grep -Eq '^(export|declare -x) GIT_CRYPT_LOCK_HELD(=|$)'; then
   unset GIT_CRYPT_LOCK_HELD
@@ -145,9 +154,10 @@ _acquire_git_crypt_lock() {
   # leaves HELD set, and the signal handler's chained restore then acquires)
   # is reused, not re-contended: spinning on our own directory cost the whole
   # 10s window and exited 1 instead of 130/143. Within the contract (no
-  # subshells, no manual rmdir while held) HELD equals $$ only after this
-  # shell's own successful mkdir -- an exported or foreign value is discarded
-  # at source time -- so an empty pid file or one naming us is ours.
+  # caller writes HELD, no subshells, no manual rmdir while held) HELD equals
+  # $$ only after this shell's own successful mkdir -- an exported or foreign
+  # value is discarded at source time -- so an empty pid file or one naming
+  # us is ours.
   if [ "$GIT_CRYPT_LOCK_HELD" = "$$" ]; then
     _own=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _own=""
     if [ "$_own" = "$$" ] || [ -z "$_own" ]; then

@@ -656,15 +656,18 @@ describe('SMI-6973 round 4 (high): HELD proves ownership only when it names this
     // The foreign holder lets go after ~1s; a real acquire must wait for that.
     const script = [
       PRELUDE,
-      `( sleep 1; rmdir ${JSON.stringify(lockDirOf(dir))} ) &`,
-      'START=$(date +%s)',
+      // The holder marks its release BEFORE rmdir, so an acquire that really
+      // waited for it always sees the marker; one that took the lock any other
+      // way (adopted it, or removed the foreign directory) does not.
+      `( sleep 1; : > ${JSON.stringify(join(dir, '.holder-released'))}; rmdir ${JSON.stringify(lockDirOf(dir))} ) &`,
       '_acquire_git_crypt_lock',
-      'echo "WAITED_S=$(( $(date +%s) - START ))"',
+      `[ -e ${JSON.stringify(join(dir, '.holder-released'))} ] && echo ACQUIRED_AFTER_HOLDER || echo ACQUIRED_BEFORE_HOLDER`,
       'echo "PID_FILE=[$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)] SELF=[$$]"',
       'wait',
       '_release_git_crypt_lock',
     ].join('\n')
     const r = runWithGitShim(dir, script, ':', { GIT_CRYPT_LOCK_HELD: '1' })
+    expect(r.out, `output: ${r.out}`).toContain('ACQUIRED_AFTER_HOLDER')
     const m = r.out.match(/PID_FILE=\[(\d*)\] SELF=\[(\d+)\]/)
     expect(m, `output: ${r.out}`).not.toBeNull()
     expect(m?.[1], `output: ${r.out}`).toBe(m?.[2])
@@ -724,12 +727,14 @@ describe('SMI-6973 round 5 (high): an EXPORTED HELD is never trusted, even when 
     const dir = makeRepo()
     mkdirSync(lockDirOf(dir))
     const r = execForged(dir, [
-      `( sleep 1; rmdir ${JSON.stringify(lockDirOf(dir))} ) &`,
+      `( sleep 1; : > ${JSON.stringify(join(dir, '.holder-released'))}; rmdir ${JSON.stringify(lockDirOf(dir))} ) &`,
       '_acquire_git_crypt_lock',
+      `[ -e ${JSON.stringify(join(dir, '.holder-released'))} ] && echo ACQUIRED_AFTER_HOLDER || echo ACQUIRED_BEFORE_HOLDER`,
       'echo "PID_FILE=[$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)] SELF=[$$]"',
       'wait',
       '_release_git_crypt_lock',
     ])
+    expect(r.out, `output: ${r.out}`).toContain('ACQUIRED_AFTER_HOLDER')
     const m = r.out.match(/PID_FILE=\[(\d*)\] SELF=\[(\d+)\]/)
     expect(m, `output: ${r.out}`).not.toBeNull()
     expect(m?.[1], `output: ${r.out}`).toBe(m?.[2])
