@@ -433,9 +433,12 @@ function resolveStaleWindowMs() {
   const raw = testSeamEnv('RUFLO_GUARD_TEST_STALE_WINDOW_MS')
   if (raw === undefined) return RUNTIME_LOCK_STALE_MS
   if (!/^\d+$/.test(raw) || Number(raw) > RUNTIME_LOCK_STALE_MS) {
+    // The value is echoed quoted and capped, so a newline or a huge value
+    // can't split or flood the line; a cut is marked.
+    const shown = JSON.stringify(raw.slice(0, 40)) + (raw.length > 40 ? ' (truncated)' : '')
     fail(
       7,
-      `RUFLO_GUARD_TEST_STALE_WINDOW_MS=${JSON.stringify(raw.slice(0, 40))} is not an integer in ` +
+      `RUFLO_GUARD_TEST_STALE_WINDOW_MS=${shown} is not an integer in ` +
         `[0, ${RUNTIME_LOCK_STALE_MS}] -- a test seam, never set in production`
     )
   }

@@ -519,7 +519,7 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       //     lock itself on its first contended acquire. SMI-7025: the window
       //     is shortened to SIXA_WINDOW_MS through the vitest-gated seam, so
       //     this proves the arithmetic, the real sleep and the ordering
-      //     without sleeping 20 s. Arm 6c pins the REAL 30 s window.
+      //     without sleeping ~28.5 s. Arm 6c pins the REAL 30 s window.
       const youngCwd = scratchCwd()
       const youngCli = makeCliPath(youngCwd)
       const youngLock = realLockPathOf(youngCwd)
@@ -556,11 +556,11 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       expect(young.elapsed, `output: ${young.output}`).toBeGreaterThanOrEqual(owed)
       // 6. Ordering: it was still sleeping AFTER announcing the wait. A
       //    guard that slept first and printed last passes 1-5 unchanged,
-      //    with a gap near 0. The margin is half the owed time, not a few
-      //    hundred ms: a stall in THIS vitest worker (the poller) delays
-      //    when the line is noticed and so SHORTENS the measured gap. With
-      //    ~4.4 s owed, a fixed 1 s floor tolerates a ~3.4 s worker stall,
-      //    and the sleep-last mutant (gap near 0) still fails.
+      //    with a gap near 0. The floor is a fixed 1 s: a stall in THIS
+      //    vitest worker (the poller) delays when the line is noticed and so
+      //    SHORTENS the measured gap, and a slow guard start ages the lock
+      //    and shrinks owed. With ~4.4 s owed, the floor tolerates about
+      //    3.4 s of the two combined; the sleep-last mutant still fails.
       expect(
         waitLineSeenAt,
         `wait line only appeared at exit; output: ${young.output}`
@@ -676,11 +676,25 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
         const r = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_STALE_WINDOW_MS: bad })
         note(`arm V (${JSON.stringify(bad)}): exit=${r.status}`)
         expect(r.status, `value ${JSON.stringify(bad)}; output: ${r.output}`).toBe(7)
-        expect(r.output).toContain('RUFLO_GUARD_TEST_STALE_WINDOW_MS')
+        // Echoed quoted, so '1\n' can't split the line.
+        expect(r.output, `output: ${r.output}`).toContain(
+          `RUFLO_GUARD_TEST_STALE_WINDOW_MS=${JSON.stringify(bad)} is not an integer`
+        )
         expect(existsSync(mutexPathOf(cwd)), `value ${JSON.stringify(bad)} reached the mutex`).toBe(
           false
         )
       }
+      // A long value is capped at 40 characters, and the cut is marked.
+      const long = '9'.repeat(50)
+      const longCwd = scratchCwd()
+      const longRun = await runGuard(longCwd, makeCliPath(longCwd), {
+        RUFLO_GUARD_TEST_STALE_WINDOW_MS: long,
+      })
+      expect(longRun.status, `output: ${longRun.output}`).toBe(7)
+      expect(longRun.output, `output: ${longRun.output}`).toContain(
+        `=${JSON.stringify('9'.repeat(40))} (truncated) is not an integer`
+      )
+      expect(longRun.output, `output: ${longRun.output}`).not.toContain('9'.repeat(41))
       // Presence controls: both inclusive bounds are accepted (a `>=` bounds
       // check would reject 30000), and a run that gets past the check DOES
       // create the mutex db -- the partner for the absence assertion above.
