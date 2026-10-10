@@ -28,7 +28,11 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import type { TransformationService as TransformationServiceClass } from '@skillsmith/core'
-import { experimentExitCode, skillDescription } from './run-large-skill-experiments.helpers.ts'
+import {
+  abTestFailed,
+  experimentExitCode,
+  skillDescription,
+} from './run-large-skill-experiments.helpers.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -723,7 +727,7 @@ async function main(): Promise<void> {
   log('')
 
   const results: ABTestResult[] = []
-  const tally = { attempted: 0, transformFailed: 0 }
+  const tally = { attempted: 0, transformFailed: 0, abFailed: 0 }
 
   for (const skill of skills) {
     log(`\n========== ${skill.name} (${skill.lines} lines) ==========\n`)
@@ -767,6 +771,18 @@ async function main(): Promise<void> {
       args.iterations
     )
 
+    // An A/B test with no successful sample on a side has nothing to compare:
+    // count it as failed and keep it out of the report (SMI-7067).
+    if (abTestFailed(result)) {
+      tally.abFailed++
+      log(
+        `A/B test failed for ${skill.name}: ${result.original.tokens.length} original and ` +
+          `${result.optimized.tokens.length} optimized successful invocation(s)`,
+        'error'
+      )
+      continue
+    }
+
     results.push(result)
 
     log(`\nResult for ${skill.name}:`)
@@ -782,7 +798,8 @@ async function main(): Promise<void> {
 
   log(
     `\nExperiments complete: ${tally.attempted} attempted, ` +
-      `${tally.transformFailed} transformation(s) failed, ${results.length} A/B test(s) completed`
+      `${tally.transformFailed} transformation(s) failed, ${tally.abFailed} A/B test(s) failed, ` +
+      `${results.length} A/B test(s) completed`
   )
   process.exitCode = experimentExitCode(tally)
 }
