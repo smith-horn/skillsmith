@@ -75,8 +75,8 @@ scripts/indexer/indexer-runners.ts
 packages/cli/tests/author.test.ts
 
 # SMI-7011 — context for all three entries below. On origin/main these were
-# already 1109, 811 and 776 lines before SMI-6975's typecheck gate required
-# small type-only edits (+4, +4, +19). Not new debt introduced by that PR. The
+# already over the limit before SMI-6975's typecheck gate required small
+# type-only edits to them. Not new debt introduced by that PR. The
 # natural first extraction is the Mann-Whitney U code duplicated between the
 # two ab-test files, which SMI-6975 had to fix identically in both.
 # NOTE: each path below carries its OWN single-line `# SMI-7011 split

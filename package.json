@@ -24,7 +24,6 @@
     "format:check": "prettier --check .",
     "typecheck": "bash scripts/ci/typecheck-all.sh",
     "typecheck:packages": "tsc --build",
-    "posttypecheck": "chmod +x packages/mcp-server/dist/src/index.js 2>/dev/null || true",
     "typecheck:watch": "tsc --build --watch",
     "typecheck:scripts": "bash scripts/ci/typecheck-scripts.sh",
     "typecheck:scripts:watch": "tsc -p tsconfig.scripts.json --watch",
