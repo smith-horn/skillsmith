@@ -229,7 +229,7 @@ function runGuard(cwd: string, cliPath: string, extraEnv: GuardEnv = {}) {
 
 /** Windows injected through RUFLO_GUARD_TEST_STALE_WINDOW_MS. Every assertion
  * pins to these constants, never to what was actually sent. */
-const SIXA_WINDOW_MS = 4000
+const SIXA_WINDOW_MS = 6000
 const NINE_WINDOW_MS = 3000
 
 /**
@@ -558,7 +558,9 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       //    guard that slept first and printed last passes 1-5 unchanged,
       //    with a gap near 0. The margin is half the owed time, not a few
       //    hundred ms: a stall in THIS vitest worker (the poller) delays
-      //    when the line is noticed and so SHORTENS the measured gap.
+      //    when the line is noticed and so SHORTENS the measured gap. With
+      //    ~4.4 s owed, a fixed 1 s floor tolerates a ~3.4 s worker stall,
+      //    and the sleep-last mutant (gap near 0) still fails.
       expect(
         waitLineSeenAt,
         `wait line only appeared at exit; output: ${young.output}`
@@ -566,7 +568,7 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       expect(
         young.endedAt - (waitLineSeenAt as number),
         `output: ${young.output}`
-      ).toBeGreaterThanOrEqual(owed / 2)
+      ).toBeGreaterThanOrEqual(1000)
       expect(young.status, `output: ${young.output}`).toBe(0)
       expect(young.output).toContain('never deletes state.lock')
       expect(readFileSync(youngLock, 'utf8'), `output: ${young.output}`).toBe(youngRaw)
@@ -606,12 +608,13 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
       const lockPath = realLockPathOf(cwd)
-      // 27 s old: inside the real window, so about 3 s is owed. A container
-      // stall over ~3 s flips the guard into the no-wait branch and fails
-      // the first assertion loudly -- a flake, never a false pass.
-      const raw = writeStaleLock(lockPath, 27000)
+      // 25 s old: inside the real window, so about 5 s is owed. Only a
+      // container stall over ~5 s flips the guard into the no-wait branch,
+      // and that fails the first assertion loudly -- a flake, never a
+      // false pass.
+      const raw = writeStaleLock(lockPath, 25000)
       const r = await runGuard(cwd, cliPath)
-      note(`arm 6c (mtime 27s old, no override): exit=${r.status} elapsed=${r.elapsed}ms`)
+      note(`arm 6c (mtime 25s old, no override): exit=${r.status} elapsed=${r.elapsed}ms`)
       const wait = parseWait(r.output)
       expect(wait, `output: ${r.output}`).not.toBeNull()
       // Absence, paired with the presence above from the same run.
@@ -643,7 +646,8 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
       const lockPath = realLockPathOf(cwd)
-      writeStaleLock(lockPath, 27000)
+      // 25 s old: ~5 s of stall margin before the real window lapses.
+      writeStaleLock(lockPath, 25000)
       const r = await runGuard(cwd, cliPath, {
         RUFLO_GUARD_TEST_STALE_WINDOW_MS: String(SIXA_WINDOW_MS),
         VITEST: vitest,
@@ -666,7 +670,7 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
   it.skipIf(!canRun)(
     `arm V: under vitest a malformed stale-window value exits 7 before the mutex; 0 is accepted (${skipReason})`,
     async () => {
-      for (const bad of ['30001', 'abc', '-1', '1.5', '']) {
+      for (const bad of ['30001', 'abc', '-1', '1.5', '', ' 1', '1 ', '1\n']) {
         const cwd = scratchCwd()
         const cliPath = makeCliPath(cwd)
         const r = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_STALE_WINDOW_MS: bad })
@@ -698,15 +702,17 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
   it.skipIf(!canRun).each([
     {
       seam: 'RUFLO_GUARD_TEST_HOLD_MS',
-      value: '5000',
+      // Honoured, this holds 15 s; ignored, the run takes well under 10 s
+      // even with a multi-second container stall.
+      value: '15000',
       check: (r: GuardRun) =>
-        expect(r.elapsed, `held anyway; output: ${r.output}`).toBeLessThan(4000),
+        expect(r.elapsed, `held anyway; output: ${r.output}`).toBeLessThan(10000),
     },
     {
       seam: 'RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS',
-      value: '5000',
+      value: '15000',
       check: (r: GuardRun) =>
-        expect(r.elapsed, `paused anyway; output: ${r.output}`).toBeLessThan(4000),
+        expect(r.elapsed, `paused anyway; output: ${r.output}`).toBeLessThan(10000),
     },
     {
       seam: 'RUFLO_GUARD_TEST_STDERR_PAD_BYTES',
@@ -735,7 +741,7 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       check(r)
       expect(r.status, `output: ${r.output}`).toBe(0)
     },
-    20000
+    30000
   )
 
   it.skipIf(!canRun)(

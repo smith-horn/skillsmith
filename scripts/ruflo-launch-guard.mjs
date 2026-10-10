@@ -435,7 +435,7 @@ function resolveStaleWindowMs() {
   if (!/^\d+$/.test(raw) || Number(raw) > RUNTIME_LOCK_STALE_MS) {
     fail(
       7,
-      `RUFLO_GUARD_TEST_STALE_WINDOW_MS='${raw}' is not an integer in ` +
+      `RUFLO_GUARD_TEST_STALE_WINDOW_MS=${JSON.stringify(raw.slice(0, 40))} is not an integer in ` +
         `[0, ${RUNTIME_LOCK_STALE_MS}] -- a test seam, never set in production`
     )
   }
