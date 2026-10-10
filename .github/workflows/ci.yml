@@ -1564,7 +1564,11 @@ jobs:
   test-root:
     name: Test (root)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # SMI-7025: 15, not 10. The test step takes ~2.5 min; the docker-image
+    # artifact download ahead of it varied 21s to 4m09s across six measured
+    # attempts and twice pushed the job past 10 min with no failing test.
+    # Matches Test (root colocated) below. Contention itself: SMI-7052.
+    timeout-minutes: 15
     needs: [docker-build, classify]
     # Run when code/deps tier and changes include non-package files
     if: |
