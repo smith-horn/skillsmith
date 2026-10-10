@@ -62,13 +62,21 @@ const RUN_TIMEOUT_MS = 120_000
 const MULTI_RUN_TIMEOUT_MS = 6 * 60_000
 
 /**
- * SMI-7061: this file's default, so no test inherits vitest's 15s. A test that
- * runs the REAL compiler can take 10-30s under CI load, and the 15s default
- * killed one mid-compile while runGate's own bound (RUN_TIMEOUT_MS) had plenty
- * left. Sized for two bounded gate runs, the most any test makes without
- * declaring MULTI_RUN_TIMEOUT_MS itself.
+ * SMI-7061: a test's timeout must cover every gate run it makes, because each
+ * runGate() is bounded only by RUN_TIMEOUT_MS. Under CI load a REAL compile
+ * takes 10-30s, and vitest's 15s default killed one mid-compile. Give a test
+ * that makes more than two runs gateBudget(<its run count>); the afterEach
+ * guard below fails any test whose runs outgrow its timeout.
  */
-vi.setConfig({ testTimeout: 2 * RUN_TIMEOUT_MS + 30_000 })
+function gateBudget(runs: number): number {
+  return runs * RUN_TIMEOUT_MS + 30_000
+}
+
+/** This file's default: two bounded gate runs. */
+vi.setConfig({ testTimeout: gateBudget(2) })
+
+/** runGate() calls made by the test currently running, for the guard below. */
+const gateRunsThisTest = new Map<string, number>()
 
 /** tsconfig.scripts.json is parked under this name by the missing-config arm. */
 const CONFIG_ASIDE = 'zz-smi6975-tsconfig-aside.json'
@@ -92,6 +100,8 @@ function runGate(
   extraEnv?: Record<string, string>,
   unsetEnv: string[] = []
 ): GateRun {
+  const name = expect.getState().currentTestName ?? ''
+  gateRunsThisTest.set(name, (gateRunsThisTest.get(name) ?? 0) + 1)
   const env = { ...process.env, ...extraEnv }
   for (const k of unsetEnv) delete env[k]
   if (stubDir) env.PATH = `${stubDir}:${env.PATH ?? ''}`
@@ -309,6 +319,20 @@ function scratchDir(tag: string): string {
   return d
 }
 
+// SMI-7061: counted at RUNTIME, because a static count misses gate runs made
+// inside loops (it did, twice). A test whose runs outgrow its own timeout
+// fails here, deterministically, instead of timing out later under load.
+afterEach((ctx) => {
+  const name = expect.getState().currentTestName ?? ''
+  const runs = gateRunsThisTest.get(name) ?? 0
+  gateRunsThisTest.delete(name)
+  expect(
+    gateBudget(runs),
+    `"${ctx.task.name}" made ${runs} gate run(s), which need ${gateBudget(runs)}ms, ` +
+      `but its timeout is ${ctx.task.timeout}ms -- give it gateBudget(${runs})`
+  ).toBeLessThanOrEqual(ctx.task.timeout ?? 0)
+})
+
 afterEach(() => {
   while (scratch.length) {
     const d = scratch.pop()
@@ -441,40 +465,44 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(existsSync(file)).toBe(false)
   })
 
-  it('an unclassified extension under scripts/ is INCONCLUSIVE and names the file', () => {
-    // The inventory classifies every file against a closed table. Anything it
-    // does not recognise must stop the gate rather than be silently dropped
-    // from one of the two derivations — which is how they could agree on a
-    // number while both omitting the same category.
-    //
-    // Two extensions, two claims: `.probeext` is an arbitrary unknown; `.js` is
-    // the one the helper's comment singles out as deliberately NOT pre-classified
-    // (0 exist today), so a future edit adding it to the excluded-JS set would
-    // otherwise turn it into a silent exclusion.
-    const planted: string[] = []
-    try {
-      for (const ext of ['.probeext', '.js']) {
-        const name = `zz-smi6975-probe-${process.pid}${ext}`
-        const file = join(REPO_ROOT, 'scripts', name)
-        planted.push(file)
-        writeFileSync(file, '# planted by typecheck-scripts-gate.test.ts\n')
-        const r = runGate()
-        expect(r.out, `${ext}: RESULT`).toContain('RESULT         INCONCLUSIVE')
-        expect(r.out, `${ext}: cause`).toContain('extension this gate does not classify')
-        expect(r.out, `${ext}: names the file`).toContain(name)
-        expect(r.status, `${ext}: exit`).not.toBe(0)
-        expect(r.out, `${ext}: verdict`).not.toContain('VERDICT        PASS')
-        rmSync(file, { force: true })
+  it(
+    'an unclassified extension under scripts/ is INCONCLUSIVE and names the file',
+    () => {
+      // The inventory classifies every file against a closed table. Anything it
+      // does not recognise must stop the gate rather than be silently dropped
+      // from one of the two derivations — which is how they could agree on a
+      // number while both omitting the same category.
+      //
+      // Two extensions, two claims: `.probeext` is an arbitrary unknown; `.js` is
+      // the one the helper's comment singles out as deliberately NOT pre-classified
+      // (0 exist today), so a future edit adding it to the excluded-JS set would
+      // otherwise turn it into a silent exclusion.
+      const planted: string[] = []
+      try {
+        for (const ext of ['.probeext', '.js']) {
+          const name = `zz-smi6975-probe-${process.pid}${ext}`
+          const file = join(REPO_ROOT, 'scripts', name)
+          planted.push(file)
+          writeFileSync(file, '# planted by typecheck-scripts-gate.test.ts\n')
+          const r = runGate()
+          expect(r.out, `${ext}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+          expect(r.out, `${ext}: cause`).toContain('extension this gate does not classify')
+          expect(r.out, `${ext}: names the file`).toContain(name)
+          expect(r.status, `${ext}: exit`).not.toBe(0)
+          expect(r.out, `${ext}: verdict`).not.toContain('VERDICT        PASS')
+          rmSync(file, { force: true })
+        }
+      } finally {
+        for (const f of planted) rmSync(f, { force: true })
       }
-    } finally {
-      for (const f of planted) rmSync(f, { force: true })
-    }
-    // Prove the planted files were the cause and the tree is clean again —
-    // otherwise a leaked probe file would break this gate for every later run.
-    for (const f of planted) expect(existsSync(f)).toBe(false)
-    const after = runGate()
-    expect(after.status).toBe(0)
-  })
+      // Prove the planted files were the cause and the tree is clean again —
+      // otherwise a leaked probe file would break this gate for every later run.
+      for (const f of planted) expect(existsSync(f)).toBe(false)
+      const after = runGate()
+      expect(after.status).toBe(0)
+    },
+    gateBudget(3)
+  )
 
   it('an extensionless file and a .TS file under scripts/ are each INCONCLUSIVE and named', () => {
     // Run one at a time: with both planted, the .TS file alone would make the
@@ -761,7 +789,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       expect(existsSync(cfg), 'config restored').toBe(true)
       expect(existsSync(aside), 'aside copy gone').toBe(false)
     },
-    MULTI_RUN_TIMEOUT_MS
+    gateBudget(7)
   )
 
   it('scope regression: a SWAPPED root set with the SAME total is INCONCLUSIVE, never PASS', () => {
@@ -839,67 +867,71 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(runGate().status).toBe(0)
   })
 
-  it('a compiler that hangs is INCONCLUSIVE (timeout), never PASS and never a hang', () => {
-    // The gate bounds the full compile with a perl alarm (stock macOS has no
-    // `timeout`). The shim answers --version/--showConfig like the real tsc and
-    // hangs only on the full compile, so every earlier precondition passes and
-    // the only thing under test is the timeout arm.
-    const dir = scratchDir('hang')
-    const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
-    makeStub(
-      dir,
-      'tsc-hang',
-      `#!/bin/sh\ncase "$*" in *--pretty*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
-    )
-    const t0 = Date.now()
-    const r = runGate(undefined, {
-      SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-hang'),
-      SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
-    })
-    const elapsed = Date.now() - t0
-    expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
-    expect(r.out, 'cause').toMatch(/did not finish within 2s/)
-    expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
-    expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
-    expect(r.status, 'exit').not.toBe(0)
-    // The alarm, not the harness's own 120s budget, ended it.
-    expect(elapsed, 'bounded').toBeLessThan(60_000)
-    // A bad budget value is refused rather than silently disabling the bound.
-    // 4294967296 and the 20-digit value pass a naive ^[1-9][0-9]*$ check but
-    // wrap (or are rejected) inside perl's alarm(), which would arm no alarm at
-    // all; 86401 is the first value past the documented maximum.
-    // The rest are values a lenient pattern would accept: surrounding space, a
-    // trailing newline, a sign, a leading zero, and a non-ASCII digit. An EMPTY
-    // value is deliberately absent: the gate reads it with `:-600`, so it is the
-    // unset case and runs with the default budget rather than being refused.
-    const badValues = [
-      '0',
-      '4294967296',
-      '12345678901234567890',
-      '86401',
-      ' 5',
-      '5 ',
-      '5\n',
-      '+5',
-      '05',
-      '\u0665',
-    ]
-    for (const [idx, v] of badValues.entries()) {
-      const marker = join(dir, `invoked-${idx}`)
-      makeStub(dir, `tsc-mark-${idx}`, markingStub(marker, real))
-      const bad = runGate(undefined, {
-        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-mark-${idx}`),
-        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: v,
+  it(
+    'a compiler that hangs is INCONCLUSIVE (timeout), never PASS and never a hang',
+    () => {
+      // The gate bounds the full compile with a perl alarm (stock macOS has no
+      // `timeout`). The shim answers --version/--showConfig like the real tsc and
+      // hangs only on the full compile, so every earlier precondition passes and
+      // the only thing under test is the timeout arm.
+      const dir = scratchDir('hang')
+      const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
+      makeStub(
+        dir,
+        'tsc-hang',
+        `#!/bin/sh\ncase "$*" in *--pretty*) exec sleep 600 ;; esac\nexec ${real} "$@"\n`
+      )
+      const t0 = Date.now()
+      const r = runGate(undefined, {
+        SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, 'tsc-hang'),
+        SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: '2',
       })
-      const label = JSON.stringify(v)
-      expect(bad.out, `${label}: RESULT`).toContain('RESULT         INCONCLUSIVE')
-      expect(bad.out, `${label}: cause`).toContain('1..86400')
-      expect(bad.out, `${label}: next`).toMatch(/^ {2}next: \S/m)
-      expect(bad.status, `${label}: exit`).not.toBe(0)
-      // The refusal came before any compiler call, not after a run it ignored.
-      expect(existsSync(marker), `${label}: compiler never invoked`).toBe(false)
-    }
-  })
+      const elapsed = Date.now() - t0
+      expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
+      expect(r.out, 'cause').toMatch(/did not finish within 2s/)
+      expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
+      expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
+      expect(r.status, 'exit').not.toBe(0)
+      // The alarm, not the harness's own 120s budget, ended it.
+      expect(elapsed, 'bounded').toBeLessThan(60_000)
+      // A bad budget value is refused rather than silently disabling the bound.
+      // 4294967296 and the 20-digit value pass a naive ^[1-9][0-9]*$ check but
+      // wrap (or are rejected) inside perl's alarm(), which would arm no alarm at
+      // all; 86401 is the first value past the documented maximum.
+      // The rest are values a lenient pattern would accept: surrounding space, a
+      // trailing newline, a sign, a leading zero, and a non-ASCII digit. An EMPTY
+      // value is deliberately absent: the gate reads it with `:-600`, so it is the
+      // unset case and runs with the default budget rather than being refused.
+      const badValues = [
+        '0',
+        '4294967296',
+        '12345678901234567890',
+        '86401',
+        ' 5',
+        '5 ',
+        '5\n',
+        '+5',
+        '05',
+        '\u0665',
+      ]
+      for (const [idx, v] of badValues.entries()) {
+        const marker = join(dir, `invoked-${idx}`)
+        makeStub(dir, `tsc-mark-${idx}`, markingStub(marker, real))
+        const bad = runGate(undefined, {
+          SKILLSMITH_TYPECHECK_SCRIPTS_TSC_TEST: join(dir, `tsc-mark-${idx}`),
+          SKILLSMITH_TYPECHECK_SCRIPTS_TIMEOUT_SECS: v,
+        })
+        const label = JSON.stringify(v)
+        expect(bad.out, `${label}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+        expect(bad.out, `${label}: cause`).toContain('1..86400')
+        expect(bad.out, `${label}: next`).toMatch(/^ {2}next: \S/m)
+        expect(bad.status, `${label}: exit`).not.toBe(0)
+        // The refusal came before any compiler call, not after a run it ignored.
+        expect(existsSync(marker), `${label}: compiler never invoked`).toBe(false)
+      }
+    },
+    gateBudget(11)
+  )
 
   it(
     'a compiler that hangs is still INCONCLUSIVE when the parent ignores or blocks SIGALRM',
@@ -1097,7 +1129,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         expect(r.out, `VITEST=${v}: no substitution`).not.toContain('SUBSTITUTED')
       }
     },
-    MULTI_RUN_TIMEOUT_MS
+    gateBudget(4)
   )
 
   it('ratchet: the BLOCKED exclusion set cannot grow silently, and both sides agree', () => {
@@ -1190,53 +1222,57 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     expect(helpers).not.toContain('neither @linear/sdk nor pg is an installed dependency')
   })
 
-  it('scope regression: an emptied, non-matching, or narrowed include is INCONCLUSIVE, never PASS', () => {
-    // Plan Step 5. Step 4 (a planted type error) tests the code; this tests the
-    // INSTRUMENT -- an `include` that reads fewer files than intended reports
-    // no errors, which is indistinguishable from a clean tree.
-    //
-    // Measured on tsc 5.9.3: an empty or non-matching `include` never reaches
-    // the "zero roots" arm, because `tsc --showConfig` itself exits 1 with
-    // TS18003 first. A NARROWED include is the only variant that reaches the
-    // set-comparison arm, so it is the one that proves reconciliation works.
-    const configPath = join(REPO_ROOT, 'tsconfig.scripts.json')
-    const original = readFileSync(configPath)
-    const includeRe = /"include":\s*\[[^\]]*\]/
-    expect(includeRe.test(original.toString('utf8')), 'include array not found').toBe(true)
-    const variants: Array<{ name: string; include: string; cause: string }> = [
-      { name: 'emptied', include: '[]', cause: 'tsc --showConfig failed' },
-      {
-        name: 'non-matching',
-        include: '["zz-nomatch/**/*.ts"]',
-        cause: 'tsc --showConfig failed',
-      },
-      {
-        name: 'narrowed',
-        include: '["scripts/lib/**/*.ts"]',
-        cause: 'disagree -- scope could not be validated',
-      },
-    ]
-    try {
-      for (const v of variants) {
-        writeFileSync(
-          configPath,
-          original.toString('utf8').replace(includeRe, `"include": ${v.include}`)
-        )
-        const r = runGate()
-        expect(r.out, `${v.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
-        expect(r.out, `${v.name}: cause`).toContain(v.cause)
-        expect(r.status, `${v.name}: exit`).not.toBe(0)
-        expect(r.out, `${v.name}: verdict`).not.toContain('VERDICT        PASS')
-        // `checked` is documented as set only once the two derivations agree.
-        expect(r.out, `${v.name}: checked`).not.toMatch(/checked\s+\d+/)
+  it(
+    'scope regression: an emptied, non-matching, or narrowed include is INCONCLUSIVE, never PASS',
+    () => {
+      // Plan Step 5. Step 4 (a planted type error) tests the code; this tests the
+      // INSTRUMENT -- an `include` that reads fewer files than intended reports
+      // no errors, which is indistinguishable from a clean tree.
+      //
+      // Measured on tsc 5.9.3: an empty or non-matching `include` never reaches
+      // the "zero roots" arm, because `tsc --showConfig` itself exits 1 with
+      // TS18003 first. A NARROWED include is the only variant that reaches the
+      // set-comparison arm, so it is the one that proves reconciliation works.
+      const configPath = join(REPO_ROOT, 'tsconfig.scripts.json')
+      const original = readFileSync(configPath)
+      const includeRe = /"include":\s*\[[^\]]*\]/
+      expect(includeRe.test(original.toString('utf8')), 'include array not found').toBe(true)
+      const variants: Array<{ name: string; include: string; cause: string }> = [
+        { name: 'emptied', include: '[]', cause: 'tsc --showConfig failed' },
+        {
+          name: 'non-matching',
+          include: '["zz-nomatch/**/*.ts"]',
+          cause: 'tsc --showConfig failed',
+        },
+        {
+          name: 'narrowed',
+          include: '["scripts/lib/**/*.ts"]',
+          cause: 'disagree -- scope could not be validated',
+        },
+      ]
+      try {
+        for (const v of variants) {
+          writeFileSync(
+            configPath,
+            original.toString('utf8').replace(includeRe, `"include": ${v.include}`)
+          )
+          const r = runGate()
+          expect(r.out, `${v.name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
+          expect(r.out, `${v.name}: cause`).toContain(v.cause)
+          expect(r.status, `${v.name}: exit`).not.toBe(0)
+          expect(r.out, `${v.name}: verdict`).not.toContain('VERDICT        PASS')
+          // `checked` is documented as set only once the two derivations agree.
+          expect(r.out, `${v.name}: checked`).not.toMatch(/checked\s+\d+/)
+        }
+      } finally {
+        writeFileSync(configPath, original)
       }
-    } finally {
-      writeFileSync(configPath, original)
-    }
-    // Restored byte-for-byte, and the gate is green again.
-    expect(readFileSync(configPath).equals(original)).toBe(true)
-    expect(runGate().status).toBe(0)
-  })
+      // Restored byte-for-byte, and the gate is green again.
+      expect(readFileSync(configPath).equals(original)).toBe(true)
+      expect(runGate().status).toBe(0)
+    },
+    gateBudget(4)
+  )
 
   // chmod 000 only denies a non-root reader. Under root (some containers) the
   // file stays readable, so the premise is false there and the test would
@@ -1417,7 +1453,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       }
       expect(existsSync(join(REPO_ROOT, top))).toBe(false)
     },
-    MULTI_RUN_TIMEOUT_MS
+    gateBudget(3)
   )
 
   it('a path containing ":" is attributed: EVALUATED/FAIL naming the file, not a false INCONCLUSIVE', () => {
