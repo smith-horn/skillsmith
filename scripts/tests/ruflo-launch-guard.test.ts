@@ -158,16 +158,28 @@ interface GuardRun {
  * stderr, and an arm asserting a success-path message would read '' if
  * stderr were dropped.
  */
-function launchGuard(cwd: string, cliPath: string, extraEnv: Record<string, string> = {}) {
+/** Child env for one guard run. An `extraEnv` value of `undefined` DELETES that
+ * key, so an arm can run the guard with VITEST removed (SMI-7025 arm G). */
+type GuardEnv = Record<string, string | undefined>
+
+function guardEnv(cliPath: string, extraEnv: GuardEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    RUFLO_GUARD_CLI_PATH: cliPath,
+    ...(sqliteModule ? { RUFLO_GUARD_SQLITE_MODULE: sqliteModule } : {}),
+  }
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (value === undefined) delete env[key]
+    else env[key] = value
+  }
+  return env
+}
+
+function launchGuard(cwd: string, cliPath: string, extraEnv: GuardEnv = {}) {
   const startedAt = Date.now()
   const child = spawn('node', [GUARD_PATH], {
     cwd,
-    env: {
-      ...process.env,
-      RUFLO_GUARD_CLI_PATH: cliPath,
-      ...(sqliteModule ? { RUFLO_GUARD_SQLITE_MODULE: sqliteModule } : {}),
-      ...extraEnv,
-    },
+    env: guardEnv(cliPath, extraEnv),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
@@ -209,8 +221,68 @@ async function waitForOutput(
   throw new Error(`guard never printed ${JSON.stringify(marker)}; saw: ${guard.seen()}`)
 }
 
-function runGuard(cwd: string, cliPath: string, extraEnv: Record<string, string> = {}) {
+function runGuard(cwd: string, cliPath: string, extraEnv: GuardEnv = {}) {
   return launchGuard(cwd, cliPath, extraEnv).done
+}
+
+// ---- SMI-7025: the stale-window test seam --------------------------------
+
+/** Windows injected through RUFLO_GUARD_TEST_STALE_WINDOW_MS. Every assertion
+ * pins to these constants, never to what was actually sent. */
+const SIXA_WINDOW_MS = 4000
+const NINE_WINDOW_MS = 3000
+
+/**
+ * Red-test knob (SMI-7025), read by THIS FILE ONLY, never by the guard: when
+ * set, it replaces the value sent to the guard while every expectation stays
+ * pinned to the constants above. It announces itself, so a red run whose
+ * output lacks `[redtest] injecting` never reached this code and proves
+ * nothing. Same family as RUFLO_GUARD_TEST_OVERRIDE_PATH.
+ */
+function injectedStaleWindow(intended: number): string {
+  const red = process.env.RUFLO_GUARD_REDTEST_STALE_MS
+  if (red === undefined) return String(intended)
+  process.stdout.write(`    [redtest] injecting ${red} in place of ${intended}\n`)
+  return red
+}
+
+const SEAM_ACTIVE = /TEST SEAM ACTIVE: stale-lock window overridden to \d+ms/
+const STALE_SEAM_IGNORED = 'RUFLO_GUARD_TEST_STALE_WINDOW_MS is set outside vitest; ignored'
+
+/** The guard's wait line, parsed. Both figures are the ones the guard itself
+ * computed and slept on (age rounded once; remaining = clamp(window - age)). */
+function parseWait(output: string): { age: number; owed: number; window: number } | null {
+  const m = output.match(
+    /only (-?\d+)ms old(?: \(mtime is in the FUTURE by \d+ms\))?; waiting (\d+)ms for the (?:runtime's own )?(\d+)ms (?:test-seam )?staleness window/
+  )
+  return m ? { age: Number(m[1]), owed: Number(m[2]), window: Number(m[3]) } : null
+}
+
+/** Writes a stale (dead-pid) state.lock whose mtime is `ageMs` in the past
+ * (negative = future) and returns its exact bytes. */
+function writeStaleLock(lockPath: string, ageMs: number): string {
+  const raw = JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 })
+  writeFileSync(lockPath, raw)
+  const when = new Date(Date.now() - ageMs)
+  utimesSync(lockPath, when, when)
+  return raw
+}
+
+/** Polls a running guard for `marker` and returns the wall-clock time it was
+ * first seen, or null if the guard exited first. */
+async function timeMarkerSeen(
+  guard: { seen: () => string; done: Promise<GuardRun> },
+  marker: string
+): Promise<number | null> {
+  let finished = false
+  void guard.done.then(() => {
+    finished = true
+  })
+  while (!finished) {
+    if (guard.seen().includes(marker)) return Date.now()
+    await delay(20)
+  }
+  return null
 }
 
 /**
@@ -443,40 +515,61 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     `arm 6: a stale state.lock is WAITED OUT, never deleted (${skipReason})`,
     async () => {
       // (a) young stale lock: the guard must wait out the remainder of the
-      //     runtime's 30s staleness window so the server it is about to
-      //     exec clears the lock itself on its first contended acquire.
+      //     staleness window so the server it is about to exec clears the
+      //     lock itself on its first contended acquire. SMI-7025: the window
+      //     is shortened to SIXA_WINDOW_MS through the vitest-gated seam, so
+      //     this proves the arithmetic, the real sleep and the ordering
+      //     without sleeping 20 s. Arm 6c pins the REAL 30 s window.
       const youngCwd = scratchCwd()
       const youngCli = makeCliPath(youngCwd)
       const youngLock = realLockPathOf(youngCwd)
-      writeFileSync(youngLock, JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 }))
-      const tenSecondsAgo = new Date(Date.now() - 10000)
-      utimesSync(youngLock, tenSecondsAgo, tenSecondsAgo)
-      const young = await runGuard(youngCwd, youngCli)
-      note(`arm 6a (mtime 10s old): exit=${young.status} elapsed=${young.elapsed}ms`)
-      expect(young.status, `output: ${young.output}`).toBe(0)
-      // Two assertions, because they can fail independently.
-      // (a) the ARITHMETIC: 10s of the 30s window had already elapsed, so
-      //     ~20s is owed -- NOT the full 30s, and not zero. Read from the
-      //     guard's own printed figure, which no container stall can move.
-      // The fraction is deliberately OPTIONAL in this pattern. The arm is
-      // asserting the guard's ARITHMETIC, not its number formatting, and a
-      // `\d+ms`-only pattern silently failed whenever statSync's float
-      // mtimeMs produced "19954.9990234375ms" -- an instrument that
-      // reported a defect in the subject when the defect was in the
-      // instrument.
-      const owed = young.output.match(/waiting (\d+(?:\.\d+)?)ms/)
-      expect(owed, `output: ${young.output}`).not.toBeNull()
-      const owedMs = Number((owed as RegExpMatchArray)[1])
-      note(`arm 6a: guard computed a ${owedMs}ms wait (expected ~${RUNTIME_LOCK_STALE_MS - 10000})`)
-      expect(owedMs, `output: ${young.output}`).toBeGreaterThan(RUNTIME_LOCK_STALE_MS - 11500)
-      expect(owedMs, `output: ${young.output}`).toBeLessThanOrEqual(RUNTIME_LOCK_STALE_MS - 9500)
-      // (b) it actually SLEPT that long rather than only printing it. A
-      //     container stall can only push this up, never down.
-      expect(young.elapsed, `output: ${young.output}`).toBeGreaterThanOrEqual(
-        RUNTIME_LOCK_STALE_MS - 10000 - 1000
+      const youngRaw = writeStaleLock(youngLock, 1500)
+      const youngGuard = launchGuard(youngCwd, youngCli, {
+        RUFLO_GUARD_TEST_STALE_WINDOW_MS: injectedStaleWindow(SIXA_WINDOW_MS),
+      })
+      const waitLineSeenAt = await timeMarkerSeen(youngGuard, '; waiting ')
+      const young = await youngGuard.done
+      note(
+        `arm 6a (mtime 1.5s old, window ${SIXA_WINDOW_MS}ms): exit=${young.status} elapsed=${young.elapsed}ms`
       )
+      // 1. The override reached the guard. Presence only: the VALUE is
+      //    pinned by the identity in 3, so a wrong injected value fails
+      //    there, not here.
+      expect(young.output, `output: ${young.output}`).toMatch(SEAM_ACTIVE)
+      // 2. It took the wait branch.
+      const wait = parseWait(young.output)
+      expect(wait, `output: ${young.output}`).not.toBeNull()
+      const { age, owed } = wait as NonNullable<typeof wait>
+      note(`arm 6a: guard computed age=${age}ms owed=${owed}ms`)
+      // 3. The effective window, read from arithmetic the guard performed:
+      //    age is rounded once and both figures use it, so for
+      //    0 <= age <= W the printed sum is exactly W whatever the jitter.
+      expect(age + owed, `output: ${young.output}`).toBe(SIXA_WINDOW_MS)
+      // The wait line names the shortened window as the test seam's, never
+      // as "the runtime's own" (the runtime's rule is still 30 s).
+      expect(young.output, `output: ${young.output}`).toContain(
+        `for the ${SIXA_WINDOW_MS}ms test-seam staleness window`
+      )
+      // 4. Something was actually owed.
+      expect(owed, `output: ${young.output}`).toBeGreaterThan(0)
+      // 5. It actually SLEPT the owed time. A stall only pushes this up.
+      expect(young.elapsed, `output: ${young.output}`).toBeGreaterThanOrEqual(owed)
+      // 6. Ordering: it was still sleeping AFTER announcing the wait. A
+      //    guard that slept first and printed last passes 1-5 unchanged,
+      //    with a gap near 0. The margin is half the owed time, not a few
+      //    hundred ms: a stall in THIS vitest worker (the poller) delays
+      //    when the line is noticed and so SHORTENS the measured gap.
+      expect(
+        waitLineSeenAt,
+        `wait line only appeared at exit; output: ${young.output}`
+      ).not.toBeNull()
+      expect(
+        young.endedAt - (waitLineSeenAt as number),
+        `output: ${young.output}`
+      ).toBeGreaterThanOrEqual(owed / 2)
+      expect(young.status, `output: ${young.output}`).toBe(0)
       expect(young.output).toContain('never deletes state.lock')
-      expect(existsSync(youngLock), `output: ${young.output}`).toBe(true)
+      expect(readFileSync(youngLock, 'utf8'), `output: ${young.output}`).toBe(youngRaw)
 
       // (b) old stale lock: already past the window, so no wait at all --
       //     and still no deletion.
@@ -502,7 +595,176 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       expect(old.output, `output: ${old.output}`).not.toMatch(/waiting \d+ms/)
       expect(readFileSync(oldLock, 'utf8')).toBe(oldRaw)
     },
-    60000
+    30000
+  )
+
+  // ---- 6c, G, V: the SMI-7025 seam cannot reach production -------------
+
+  it.skipIf(!canRun)(
+    `arm 6c: with no override, production waits on the REAL ${RUNTIME_LOCK_STALE_MS}ms window (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const lockPath = realLockPathOf(cwd)
+      // 27 s old: inside the real window, so about 3 s is owed. A container
+      // stall over ~3 s flips the guard into the no-wait branch and fails
+      // the first assertion loudly -- a flake, never a false pass.
+      const raw = writeStaleLock(lockPath, 27000)
+      const r = await runGuard(cwd, cliPath)
+      note(`arm 6c (mtime 27s old, no override): exit=${r.status} elapsed=${r.elapsed}ms`)
+      const wait = parseWait(r.output)
+      expect(wait, `output: ${r.output}`).not.toBeNull()
+      // Absence, paired with the presence above from the same run.
+      expect(r.output, `output: ${r.output}`).not.toMatch(SEAM_ACTIVE)
+      const { age, owed } = wait as NonNullable<typeof wait>
+      note(`arm 6c: guard computed age=${age}ms owed=${owed}ms`)
+      // The effective window, from the guard's own arithmetic -- not a
+      // constant this file copies. A changed production default fails here.
+      expect(age + owed, `output: ${r.output}`).toBe(RUNTIME_LOCK_STALE_MS)
+      // The operator-facing production wording is unchanged by SMI-7025.
+      expect(r.output, `output: ${r.output}`).toContain(
+        `for the runtime's own ${RUNTIME_LOCK_STALE_MS}ms staleness window (this guard never deletes state.lock)`
+      )
+      expect(owed, `output: ${r.output}`).toBeGreaterThan(0)
+      expect(r.elapsed, `output: ${r.output}`).toBeGreaterThanOrEqual(owed)
+      expect(r.status, `output: ${r.output}`).toBe(0)
+      expect(readFileSync(lockPath, 'utf8')).toBe(raw)
+    },
+    20000
+  )
+
+  it.skipIf(!canRun).each([
+    { label: 'VITEST deleted', vitest: undefined },
+    // The only row that catches a truthiness gate (`if (process.env.VITEST)`).
+    { label: "VITEST='false'", vitest: 'false' },
+  ])(
+    `arm G: outside vitest ($label) the stale-window seam is ignored and the real window holds (${skipReason})`,
+    async ({ label, vitest }) => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      const lockPath = realLockPathOf(cwd)
+      writeStaleLock(lockPath, 27000)
+      const r = await runGuard(cwd, cliPath, {
+        RUFLO_GUARD_TEST_STALE_WINDOW_MS: String(SIXA_WINDOW_MS),
+        VITEST: vitest,
+      })
+      note(`arm G (${label}): exit=${r.status} elapsed=${r.elapsed}ms`)
+      expect(r.output, `output: ${r.output}`).toContain(STALE_SEAM_IGNORED)
+      // Absence, paired with the two presences around it.
+      expect(r.output, `output: ${r.output}`).not.toMatch(SEAM_ACTIVE)
+      const wait = parseWait(r.output)
+      expect(wait, `output: ${r.output}`).not.toBeNull()
+      const { age, owed } = wait as NonNullable<typeof wait>
+      expect(age + owed, `output: ${r.output}`).toBe(RUNTIME_LOCK_STALE_MS)
+      expect(r.elapsed, `output: ${r.output}`).toBeGreaterThanOrEqual(owed)
+      // Ignored, not refused: the server still starts.
+      expect(r.status, `output: ${r.output}`).toBe(0)
+    },
+    20000
+  )
+
+  it.skipIf(!canRun)(
+    `arm V: under vitest a malformed stale-window value exits 7 before the mutex; 0 is accepted (${skipReason})`,
+    async () => {
+      for (const bad of ['30001', 'abc', '-1', '1.5', '']) {
+        const cwd = scratchCwd()
+        const cliPath = makeCliPath(cwd)
+        const r = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_STALE_WINDOW_MS: bad })
+        note(`arm V (${JSON.stringify(bad)}): exit=${r.status}`)
+        expect(r.status, `value ${JSON.stringify(bad)}; output: ${r.output}`).toBe(7)
+        expect(r.output).toContain('RUFLO_GUARD_TEST_STALE_WINDOW_MS')
+        expect(existsSync(mutexPathOf(cwd)), `value ${JSON.stringify(bad)} reached the mutex`).toBe(
+          false
+        )
+      }
+      // Presence controls: both inclusive bounds are accepted (a `>=` bounds
+      // check would reject 30000), and a run that gets past the check DOES
+      // create the mutex db -- the partner for the absence assertion above.
+      for (const good of ['0', String(RUNTIME_LOCK_STALE_MS)]) {
+        const cwd = scratchCwd()
+        const cliPath = makeCliPath(cwd)
+        const ok = await runGuard(cwd, cliPath, { RUFLO_GUARD_TEST_STALE_WINDOW_MS: good })
+        note(`arm V (${JSON.stringify(good)}): exit=${ok.status}`)
+        expect(ok.status, `value ${JSON.stringify(good)}; output: ${ok.output}`).toBe(0)
+        expect(ok.output, `output: ${ok.output}`).toMatch(SEAM_ACTIVE)
+        expect(existsSync(mutexPathOf(cwd)), `output: ${ok.output}`).toBe(true)
+      }
+    },
+    20000
+  )
+
+  // ---- OD-5: every RUFLO_GUARD_TEST_* seam is gated on VITEST -----------
+
+  it.skipIf(!canRun).each([
+    {
+      seam: 'RUFLO_GUARD_TEST_HOLD_MS',
+      value: '5000',
+      check: (r: GuardRun) =>
+        expect(r.elapsed, `held anyway; output: ${r.output}`).toBeLessThan(4000),
+    },
+    {
+      seam: 'RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS',
+      value: '5000',
+      check: (r: GuardRun) =>
+        expect(r.elapsed, `paused anyway; output: ${r.output}`).toBeLessThan(4000),
+    },
+    {
+      seam: 'RUFLO_GUARD_TEST_STDERR_PAD_BYTES',
+      value: '3000',
+      check: (r: GuardRun) => expect(r.output).not.toContain('test-seam padding line follows'),
+    },
+    {
+      // The dangerous one: 100 would fake the fail-closed getconf PASS.
+      // 7 would refuse with exit 1 if honoured.
+      seam: 'RUFLO_GUARD_TEST_CLK_TCK',
+      value: '7',
+      check: (r: GuardRun) => expect(r.output).not.toContain('measured 7'),
+    },
+  ])(
+    `OD-5: $seam set outside vitest is ignored, with one line (${skipReason})`,
+    async ({ seam, value, check }) => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      // The PAUSE seam only runs once a state.lock is classified.
+      if (seam.includes('PAUSE')) writeStaleLock(realLockPathOf(cwd), 120000)
+      const r = await runGuard(cwd, cliPath, { [seam]: value, VITEST: undefined })
+      note(`OD-5 ${seam}: exit=${r.status} elapsed=${r.elapsed}ms`)
+      const ignoredLine = `${seam} is set outside vitest; ignored`
+      expect(r.output, `output: ${r.output}`).toContain(ignoredLine)
+      expect(r.output.split(ignoredLine).length - 1, `output: ${r.output}`).toBe(1)
+      check(r)
+      expect(r.status, `output: ${r.output}`).toBe(0)
+    },
+    20000
+  )
+
+  it.skipIf(!canRun)(
+    `OD-5: RUFLO_GUARD_TEST_PROBE_SUFFIX set outside vitest is ignored -- a pre-created sentinel survives (${skipReason})`,
+    async () => {
+      const cwd = scratchCwd()
+      const cliPath = makeCliPath(cwd)
+      // If the suffix were honoured, the guard's EEXIST retry would unlink
+      // these (the L-6 behaviour). A "no file" check without sentinels
+      // would pass either way.
+      const suffix = `od5-${process.pid}-${Date.now()}`
+      const sentinels = [policyDirOf(cwd), join(cwd, '.swarm'), cwd].map((dir) =>
+        join(dir, `.ruflo-guard-probe-${suffix}`)
+      )
+      for (const f of sentinels) writeFileSync(f, 'sentinel')
+      const r = await runGuard(cwd, cliPath, {
+        RUFLO_GUARD_TEST_PROBE_SUFFIX: suffix,
+        VITEST: undefined,
+      })
+      note(`OD-5 PROBE_SUFFIX: exit=${r.status}`)
+      const ignoredLine = 'RUFLO_GUARD_TEST_PROBE_SUFFIX is set outside vitest; ignored'
+      expect(r.output, `output: ${r.output}`).toContain(ignoredLine)
+      // probeWritable() reads the seam once per directory; it is announced once.
+      expect(r.output.split(ignoredLine).length - 1, `output: ${r.output}`).toBe(1)
+      for (const f of sentinels)
+        expect(readFileSync(f, 'utf8'), `${f}; output: ${r.output}`).toBe('sentinel')
+      expect(r.status, `output: ${r.output}`).toBe(0)
+    },
+    20000
   )
 
   it.skipIf(!canRun)(
@@ -569,48 +831,49 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
   // ---- 9: a future-dated stale lock's wait is CLAMPED, not open-ended ---
 
   it.skipIf(!canRun)(
-    `arm 9: a stale state.lock with a FUTURE mtime waits at most the ${RUNTIME_LOCK_STALE_MS}ms window, never longer (${skipReason})`,
+    `arm 9: a stale state.lock with a FUTURE mtime waits exactly the clamped window, never longer (${skipReason})`,
     async () => {
       const cwd = scratchCwd()
       const cliPath = makeCliPath(cwd)
       const lockPath = realLockPathOf(cwd)
-      // Unclamped, `RUNTIME_LOCK_STALE_MS - (now - mtimeMs)` goes negative
-      // minus negative here and balloons to ~330s (5 min of "age" plus the
-      // full 30s window) -- proving the clamp actually bites, not merely
-      // that a normal wait completed quickly.
-      writeFileSync(lockPath, JSON.stringify({ pid: DEAD_PID, acquiredAt: Date.now() - 600000 }))
-      const fiveMinFuture = new Date(Date.now() + 5 * 60 * 1000)
-      utimesSync(lockPath, fiveMinFuture, fiveMinFuture)
-      const guard = launchGuard(cwd, cliPath)
-      // A hard kill at 40s, independent of vitest's own per-test timeout, so
-      // a regression that removes the clamp fails this arm in ~40s instead
-      // of the ~5.5 minutes the unclamped arithmetic actually sleeps for
-      // (measured against a scratch mutant with the clamp reverted: it had
-      // to be SIGKILLed after 40s, having printed a computed wait of
-      // ~329000ms).
+      // Unclamped, `window - (now - mtimeMs)` balloons to 5 min of negative
+      // "age" plus the window -- proving the clamp bites, not merely that a
+      // normal wait completed quickly. SMI-7025: the window is shortened to
+      // NINE_WINDOW_MS through the vitest-gated seam; the clamp is the same
+      // code whatever the window.
+      writeStaleLock(lockPath, -5 * 60 * 1000)
+      const guard = launchGuard(cwd, cliPath, {
+        RUFLO_GUARD_TEST_STALE_WINDOW_MS: injectedStaleWindow(NINE_WINDOW_MS),
+      })
+      // A hard kill independent of vitest's per-test timeout, so a missing
+      // clamp (~303 s of sleep) fails this arm in seconds.
+      const killAfterMs = NINE_WINDOW_MS + 10000
       const killer = setTimeout(() => {
         try {
           guard.child.kill('SIGKILL')
         } catch {
           // already gone
         }
-      }, 40000)
+      }, killAfterMs)
       const r = await guard.done
       clearTimeout(killer)
       note(`arm 9: exit=${r.status} signal=${r.signal} elapsed=${r.elapsed}ms`)
       expect(
         r.signal,
-        `guard had to be killed after 40s -- clamp missing? output: ${r.output}`
+        `guard had to be killed after ${killAfterMs}ms -- clamp missing? output: ${r.output}`
       ).toBe(null)
       expect(r.status, `output: ${r.output}`).toBe(0)
-      // The clamp's ceiling, not the (here negative) raw arithmetic: at most
-      // the runtime's own window plus generous scheduling slack, never the
-      // ~330s the unclamped formula would actually produce.
-      expect(r.elapsed, `output: ${r.output}`).toBeLessThanOrEqual(31000)
       expect(r.output, `output: ${r.output}`).toContain('mtime is in the FUTURE')
+      // The clamp ceiling, from the guard's own printed figure.
+      expect(parseWait(r.output)?.owed, `output: ${r.output}`).toBe(NINE_WINDOW_MS)
+      // It really waited the whole clamped window (a lower bound the arm
+      // lacked before SMI-7025)...
+      expect(r.elapsed, `output: ${r.output}`).toBeGreaterThanOrEqual(NINE_WINDOW_MS)
+      // ...and no longer than the window plus container-stall slack.
+      expect(r.elapsed, `output: ${r.output}`).toBeLessThanOrEqual(NINE_WINDOW_MS + 10000)
       expect(readFileSync(lockPath, 'utf8')).toContain(String(DEAD_PID))
     },
-    45000
+    30000
   )
 
   // ---- 10: recovery hints name a command this image actually has --------
@@ -860,6 +1123,59 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
       }
     }
   )
+
+  // ---- S: static -- nothing that configures the served container sets a
+  //      test seam or VITEST (SMI-7025). Platform-independent: runs on the
+  //      macOS host too, where every arm above skips.
+  it('arm S: no launcher exec line, compose file, Dockerfile or MCP config sets a RUFLO_GUARD_TEST_* seam or VITEST', () => {
+    const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
+    const seamRef = /RUFLO_GUARD_TEST_/
+    const vitestAssign = /\bVITEST\s*[:=]/
+    const offends = (text: string) => seamRef.test(text) || vitestAssign.test(text)
+
+    // Controls first: the matchers must see a known positive and pass a
+    // known negative, or a clean result below means nothing.
+    expect(offends('docker exec -i -e RUFLO_GUARD_TEST_STALE_WINDOW_MS=0 cid node -')).toBe(true)
+    expect(offends('      - VITEST=true')).toBe(true)
+    expect(offends('docker exec -i -e RUFLO_GUARD_CLI_PATH="$CLI_PATH" "$cid" node -')).toBe(false)
+
+    // The launcher: only the commands that actually run `docker exec`.
+    // Backslash continuations are joined first, so a `-e VAR=...` on a
+    // continuation line is still part of its exec command.
+    const execCommands = (script: string) =>
+      script
+        .replace(/\\\n/g, ' ')
+        .split('\n')
+        .filter((l) => /\bdocker exec\b/.test(l) && !/^\s*#/.test(l))
+    const split = execCommands('docker exec -i \\\n  -e VITEST=true "$cid" node -\n')
+    expect(split, 'control: a two-line exec must be seen as one command').toHaveLength(1)
+    expect(offends(split[0]), 'control: a seam on a continuation line must be caught').toBe(true)
+    const launcher = readFileSync(join(repoRoot, 'scripts', 'mcp-ruflo-launcher.sh'), 'utf8')
+    const execLines = execCommands(launcher)
+    expect(
+      execLines.length,
+      'denominator: no docker exec lines found in the launcher'
+    ).toBeGreaterThan(0)
+    for (const line of execLines) expect(offends(line), line).toBe(false)
+
+    // Whole files. Every docker-compose*.yml present is scanned (the
+    // gitignored per-worktree override too, when it exists), but only
+    // docker-compose.yml is required, since CI has no override.
+    const composeFiles = readdirSync(repoRoot).filter((n) => /^docker-compose.*\.ya?ml$/.test(n))
+    expect(composeFiles, 'denominator: docker-compose.yml missing').toContain('docker-compose.yml')
+    const scanned = [
+      ...composeFiles,
+      'Dockerfile',
+      join('scripts', 'ruflo-service-up.sh'),
+      '.mcp.json',
+    ]
+    for (const rel of scanned) {
+      const text = readFileSync(join(repoRoot, rel), 'utf8')
+      expect(text.length, `denominator: ${rel} is empty`).toBeGreaterThan(0)
+      expect(offends(text), `${rel} sets a test seam or VITEST`).toBe(false)
+    }
+    note(`arm S: ${execLines.length} launcher exec line(s), ${scanned.length} file(s) scanned`)
+  })
 
   if (!canRun) {
     it(`prints its skip reason (${skipReason})`, () => {

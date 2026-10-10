@@ -148,7 +148,9 @@
  *     for any uncaught exception from main(), and for a better-sqlite3
  *     that cannot be loaded at all -- which is an image defect, not a
  *     refusal, and must NOT be answered with exit 4's "delete the
- *     database file" advice)
+ *     database file" advice). Also a malformed
+ *     RUFLO_GUARD_TEST_STALE_WINDOW_MS under vitest (SMI-7025), which
+ *     production cannot reach: outside vitest that seam is ignored.
  *
  * Test seams (no-ops in production, all read from the environment):
  *   RUFLO_GUARD_SQLITE_MODULE -- absolute path to better-sqlite3;
@@ -180,6 +182,15 @@
  *     of racing the spawn to write the leaked file at a pid this process
  *     had not been assigned yet. No-op (falls back to process.pid) unless
  *     set.
+ *   RUFLO_GUARD_TEST_STALE_WINDOW_MS -- shorten the stale-lock window this
+ *     guard waits out (SMI-7025), so the stale-lock arms need not sleep the
+ *     real 30 s. A plain integer in [0, 30000]; anything else exits 7. It
+ *     can only shorten the wait, and it announces itself on stderr.
+ *
+ *   Every RUFLO_GUARD_TEST_* seam above is honoured ONLY when VITEST=true
+ *   (testSeamEnv, SMI-7025). Outside vitest a set seam is ignored with one
+ *   stderr line. RUFLO_GUARD_SQLITE_MODULE is not a test seam and is not
+ *   gated.
  */
 import {
   closeSync,
@@ -386,12 +397,61 @@ function sleepMs(ms) {
   }
 }
 
+/**
+ * SMI-7025: every RUFLO_GUARD_TEST_* seam is read through here, so each one
+ * is honoured only under vitest (VITEST === 'true', the exact value vitest
+ * sets). Outside vitest a set seam is ignored with one stderr line, which
+ * reaches the /mcp log, and the guard behaves as if it were unset. The
+ * launcher passes no host env through `docker exec`, so this is a second
+ * layer, not the first: it stops a stray variable in the served container
+ * from faking the CLK_TCK check or shortening the stale-lock wait.
+ * RUFLO_GUARD_SQLITE_MODULE is an operator escape hatch and does NOT go
+ * through here.
+ */
+const announcedIgnoredSeams = new Set()
+function testSeamEnv(name) {
+  const value = process.env[name]
+  if (value === undefined) return undefined
+  if (process.env.VITEST !== 'true') {
+    if (!announcedIgnoredSeams.has(name)) {
+      announcedIgnoredSeams.add(name)
+      note(`${name} is set outside vitest; ignored`)
+    }
+    return undefined
+  }
+  return value
+}
+
+/**
+ * SMI-7025: the stale-lock window this guard waits out. Production always
+ * uses RUNTIME_LOCK_STALE_MS. Under vitest, RUFLO_GUARD_TEST_STALE_WINDOW_MS
+ * may SHORTEN it (a plain integer in [0, RUNTIME_LOCK_STALE_MS]) so the
+ * stale-lock arms need not sleep 30 s in real time; anything else exits 7.
+ * The runtime's own 30 s rule is unchanged -- only this guard's wait is.
+ */
+function resolveStaleWindowMs() {
+  const raw = testSeamEnv('RUFLO_GUARD_TEST_STALE_WINDOW_MS')
+  if (raw === undefined) return RUNTIME_LOCK_STALE_MS
+  if (!/^\d+$/.test(raw) || Number(raw) > RUNTIME_LOCK_STALE_MS) {
+    fail(
+      7,
+      `RUFLO_GUARD_TEST_STALE_WINDOW_MS='${raw}' is not an integer in ` +
+        `[0, ${RUNTIME_LOCK_STALE_MS}] -- a test seam, never set in production`
+    )
+  }
+  note(
+    `TEST SEAM ACTIVE: stale-lock window overridden to ${Number(raw)}ms ` +
+      `(production uses ${RUNTIME_LOCK_STALE_MS}ms)`
+  )
+  return Number(raw)
+}
+
 function testSeamHold() {
-  sleepMs(Number(process.env.RUFLO_GUARD_TEST_HOLD_MS || 0))
+  sleepMs(Number(testSeamEnv('RUFLO_GUARD_TEST_HOLD_MS') || 0))
 }
 
 function testSeamPauseAfterRealLockClassify() {
-  sleepMs(Number(process.env.RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS || 0))
+  sleepMs(Number(testSeamEnv('RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS') || 0))
 }
 
 /** No-op unless RUFLO_GUARD_TEST_STDERR_PAD_BYTES is set. Emits one line of
@@ -399,7 +459,7 @@ function testSeamPauseAfterRealLockClassify() {
  * message, so a test can prove a line that size survives the pipe intact --
  * see emitLine()'s doc comment. */
 function testSeamStderrPad() {
-  const bytes = Number(process.env.RUFLO_GUARD_TEST_STDERR_PAD_BYTES || 0)
+  const bytes = Number(testSeamEnv('RUFLO_GUARD_TEST_STDERR_PAD_BYTES') || 0)
   if (!(bytes > 0)) return
   note(`test-seam padding line follows: ${'x'.repeat(bytes)}`)
 }
@@ -435,7 +495,7 @@ function probeWritable(dir) {
   // pid.
   const p = join(
     dir,
-    `.ruflo-guard-probe-${process.env.RUFLO_GUARD_TEST_PROBE_SUFFIX ?? process.pid}`
+    `.ruflo-guard-probe-${testSeamEnv('RUFLO_GUARD_TEST_PROBE_SUFFIX') ?? process.pid}`
   )
   let fd
   try {
@@ -720,7 +780,7 @@ function withLauncherMutex(dbPath, decide) {
  * spawned. NEVER writes, renames, or unlinks it -- see the header for why
  * that is the whole point of this revision.
  */
-function checkRealLock(lockPath) {
+function checkRealLock(lockPath, staleWindowMs) {
   const existing = readRecord(lockPath)
   if (!existing.present) {
     note(`no state.lock at ${lockPath} -- authorized`)
@@ -763,8 +823,10 @@ function checkRealLock(lockPath) {
     return
   }
   // stale: proven no live owner. The runtime clears it itself once its
-  // mtime clears the 30 s window, so wait out whatever is left of that
-  // window rather than deleting a file a successor may have just written.
+  // mtime clears the runtime's 30 s window, so wait out whatever is left of
+  // that window (staleWindowMs: the same 30 s in production, shorter only
+  // under the vitest-gated SMI-7025 seam) rather than deleting a file a
+  // successor may have just written.
   if (mtimeMs === null) {
     note(`state.lock ${lockPath} is stale (${verdict.reason}); proceeding, mtime unreadable`)
     return
@@ -774,30 +836,38 @@ function checkRealLock(lockPath) {
   // here (not at print time) also keeps the figure printed and the figure
   // actually slept identical.
   const age = Math.round(Date.now() - mtimeMs)
-  // Clamped to [0, RUNTIME_LOCK_STALE_MS]: `age` can be NEGATIVE when the
-  // lock's mtime is in the future (clock skew, a manually-touched file, or a
-  // filesystem that rounds mtimes forward), and an unclamped
-  // `RUNTIME_LOCK_STALE_MS - age` then exceeds the runtime's own 30s window
-  // -- this guard would wait longer than the thing it is waiting FOR. The
-  // ceiling side is symmetric and free: a correct `age` never drives
-  // `remaining` above RUNTIME_LOCK_STALE_MS in the first place, so clamping
-  // it costs nothing on the normal path.
+  // Clamped to [0, staleWindowMs], the effective window (RUNTIME_LOCK_STALE_MS
+  // in production): `age` can be NEGATIVE when the lock's mtime is in the
+  // future (clock skew, a manually-touched file, or a filesystem that rounds
+  // mtimes forward), and an unclamped `staleWindowMs - age` then exceeds the
+  // window itself -- this guard would wait longer than the thing it is
+  // waiting FOR. The ceiling side is symmetric and free: a correct `age`
+  // never drives `remaining` above staleWindowMs in the first place, so
+  // clamping it costs nothing on the normal path.
   const mtimeInFuture = age < 0
-  const remaining = Math.min(RUNTIME_LOCK_STALE_MS, Math.max(0, RUNTIME_LOCK_STALE_MS - age))
+  const remaining = Math.min(staleWindowMs, Math.max(0, staleWindowMs - age))
+  // Every figure printed below is the window actually used. Under the
+  // SMI-7025 seam the lines say so, rather than calling a shortened window
+  // "the runtime's own"; in production they are unchanged.
+  const shortened = staleWindowMs !== RUNTIME_LOCK_STALE_MS
+  const windowWait = shortened
+    ? `the ${staleWindowMs}ms test-seam staleness window (the runtime's own is ${RUNTIME_LOCK_STALE_MS}ms)`
+    : `the runtime's own ${staleWindowMs}ms staleness window`
+  const windowPast = shortened
+    ? `the ${staleWindowMs}ms test-seam staleness window`
+    : `the runtime's ${staleWindowMs}ms staleness window`
   if (remaining > 0) {
     note(
       `state.lock ${lockPath} is stale (${verdict.reason}) but only ${age}ms old` +
         (mtimeInFuture ? ` (mtime is in the FUTURE by ${-age}ms)` : '') +
-        `; waiting ${remaining}ms for the runtime's own ${RUNTIME_LOCK_STALE_MS}ms staleness ` +
-        `window (this guard never deletes state.lock)`
+        `; waiting ${remaining}ms for ${windowWait} (this guard never deletes state.lock)`
     )
     sleepMs(remaining)
     return
   }
   note(
-    `state.lock ${lockPath} is stale (${verdict.reason}) and ${age}ms old, past the runtime's ` +
-      `${RUNTIME_LOCK_STALE_MS}ms staleness window; proceeding without waiting ` +
-      `(this guard never deletes state.lock)`
+    `state.lock ${lockPath} is stale (${verdict.reason}) and ${age}ms old, past ${windowPast}; ` +
+      `proceeding without waiting (this guard never deletes state.lock)`
   )
 }
 
@@ -811,7 +881,7 @@ function checkRealLock(lockPath) {
  * getconf CLK_TCK is confirmed 100).
  */
 function verifyUserHz() {
-  const override = process.env.RUFLO_GUARD_TEST_CLK_TCK
+  const override = testSeamEnv('RUFLO_GUARD_TEST_CLK_TCK')
   let raw
   if (override !== undefined) {
     raw = override
@@ -874,7 +944,10 @@ function main() {
   cleanupLegacySibling(join(policyDir, 'state.lock.launcher'))
   const mutexPath = join(policyDir, 'state.lock.launcher.db')
   const realLockPath = join(policyDir, 'state.lock')
-  withLauncherMutex(mutexPath, () => checkRealLock(realLockPath))
+  // Resolved before the mutex so a malformed seam value (exit 7) never
+  // reaches the mutex at all.
+  const staleWindowMs = resolveStaleWindowMs()
+  withLauncherMutex(mutexPath, () => checkRealLock(realLockPath, staleWindowMs))
 
   testSeamStderrPad()
   process.exit(0)
