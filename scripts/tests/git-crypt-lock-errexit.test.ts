@@ -32,15 +32,30 @@ const LOCK_LIB = resolve(__dirname, '..', 'lib', 'git-crypt-lock.sh')
 const REAL_SH = execFileSync('sh', ['-c', 'command -v sh'], { encoding: 'utf8' }).trim()
 const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim()
 
-function extractSpan(name: string): string {
+// Takes the source as a parameter so the malformed-sentinel guard below can be
+// tested on a fixture (SMI-7059); extractSpan() is the hook-bound form.
+function extractSpanFrom(src: string, name: string): string {
   const begin = `# SMI-5983-TEST:BEGIN ${name}`
   const end = `# SMI-5983-TEST:END ${name}`
-  const startIdx = PRE_COMMIT_SRC.indexOf(begin)
-  const endIdx = PRE_COMMIT_SRC.indexOf(end)
+  const startIdx = src.indexOf(begin)
+  const endIdx = src.indexOf(end)
   if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
     throw new Error(`test span "${name}" not found in .husky/pre-commit`)
   }
-  return PRE_COMMIT_SRC.slice(PRE_COMMIT_SRC.indexOf('\n', startIdx) + 1, endIdx)
+  // Same guard as git-crypt-pre-commit-disable.test.ts: with no line ending
+  // before END, the slice would start on the sentinel line itself, or at the
+  // top of the source when indexOf returns -1, instead of failing.
+  const lineEnd = src.indexOf('\n', startIdx)
+  if (lineEnd === -1 || lineEnd > endIdx) {
+    throw new Error(
+      `test span "${name}": BEGIN sentinel has no line ending before its END sentinel`
+    )
+  }
+  return src.slice(lineEnd + 1, endIdx)
+}
+
+function extractSpan(name: string): string {
+  return extractSpanFrom(PRE_COMMIT_SRC, name)
 }
 
 const PRELUDE = `EXPECTED_BRANCH=main\nRED=''\nNC=''\nYELLOW=''\nGREEN=''\n. ${JSON.stringify(LOCK_LIB)}\n`
@@ -307,8 +322,8 @@ describe('SMI-6973 H2 (round 3): the EXIT trap retries a failed lock removal', (
   })
 })
 
-describe('SMI-6973 F3 (round 3): the restore trap is armed only after the lock is released', () => {
-  it('a TERM landing during the marker write restores the filters promptly instead of spinning on its own lock', () => {
+describe('SMI-6973 F3 (round 3): a TERM during the marker write restores promptly', () => {
+  it('a TERM landing during the marker write restores the filters, releases the lock and exits 143 within 5s', () => {
     const dir = repoWithRealFilters()
     const shim = [
       'case "$*" in',
@@ -319,8 +334,10 @@ describe('SMI-6973 F3 (round 3): the restore trap is armed only after the lock i
     const started = Date.now()
     const r = runWithGitShim(dir, `${FULL_CYCLE}\necho REACHED_END\n`, shim)
     expect(r.obs, 'signal was not sent').toContain('SIGNALLED')
-    // Wrong order (trap armed while the lock is held) makes the trap acquire
-    // against its own lock: ~10s of spinning, then exit 1 with filters disabled.
+    // This once also pinned the hook's release-before-trap ORDER: with the
+    // trap armed while the lock was held, the restore spun ~10s on its own
+    // lock. Since SMI-6973 round 4 acquire reuses a lock this shell holds, so
+    // both orders pass (measured, SMI-7059). It now pins the outcome only.
     expect(Date.now() - started).toBeLessThan(5_000)
     expect(r.out).not.toContain('REACHED_END')
     expect(r.status).toBe(143)
@@ -814,5 +831,23 @@ describe('SMI-6973 round 7: acquisition is EXCLUSIVE, not merely "after the hold
     expect(m?.[1], `output: ${r.out}`).toBe(m?.[2])
     expect(r.status, `output: ${r.out}`).toBe(0)
     expect(existsSync(lockDirOf(dir))).toBe(false)
+  })
+})
+
+describe('SMI-7059: extractSpan refuses a BEGIN sentinel with no line ending before END', () => {
+  const B = '# SMI-5983-TEST:BEGIN demo'
+  const E = '# SMI-5983-TEST:END demo'
+  const GUARD = /BEGIN sentinel has no line ending before its END sentinel/
+
+  it('control: a well-formed span returns exactly its body', () => {
+    expect(extractSpanFrom(`top\n${B} -- pointer\nbody line\n${E}\n`, 'demo')).toBe('body line\n')
+  })
+
+  it('BEGIN and END on one line, newline after: throws instead of slicing from the sentinel line', () => {
+    expect(() => extractSpanFrom(`top\n${B} ${E}\nafter\n`, 'demo')).toThrow(GUARD)
+  })
+
+  it('BEGIN and END on one line, no newline anywhere after BEGIN: throws instead of slicing from the top', () => {
+    expect(() => extractSpanFrom(`top\n${B} ${E}`, 'demo')).toThrow(GUARD)
   })
 })

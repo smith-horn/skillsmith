@@ -43,14 +43,16 @@
 #
 # CALLER ORDERING (moved from .husky/pre-commit, SMI-5983 governance follow-up).
 # The hook releases the disable sequence's lock BEFORE arming its own restore
-# trap. The original SMI-2747 order was "arm trap, disable+write, release", but
-# the restore function itself calls `_acquire_git_crypt_lock`, which is not
-# reentrant: arming it while this instance still held the lock meant a signal
-# landing during the two `git config` writes or the marker write made the trap
-# spin against its OWN lock for the whole wait window and then hard-exit, with
-# filters left disabled and the restore never run. The marker protects the
-# write window (a dead-PID marker with no active rebase is what the auto-heal
-# keys on); the lock protects the mutation.
+# trap. SMI-5983 chose that order because `_acquire_git_crypt_lock` was not
+# reentrant then: with the trap armed while this instance still held the lock,
+# a signal during the `git config` writes or the marker write made the trap's
+# restore spin against its OWN lock for the whole wait window. Since SMI-6973
+# round 4, acquire REUSES a lock this shell already holds, so that hazard is
+# gone and the order is no longer load-bearing -- measured: with the old
+# "arm trap, then release" order restored, the F3 test still passes. The order
+# is kept because it is harmless, not because anything depends on it. The
+# marker protects the write window (a dead-PID marker with no active rebase is
+# what the auto-heal keys on); the lock protects the mutation.
 #
 # SMI-6973 F1 adds the missing half of that split: BEFORE the first disabling
 # write the caller sets GIT_CRYPT_LOCK_OUTER_TRAP to its restore function, so an
@@ -59,7 +61,9 @@
 # the lock and left the filters disabled, with no marker for the auto-heal).
 #
 # TRAP OWNERSHIP. `_git_crypt_lock_arm` REPLACES any EXIT/INT/TERM trap the
-# caller installed, on every acquire attempt. A caller with its own cleanup must
+# caller installed, on every acquire attempt -- except when acquire reuses a
+# lock this shell already holds, which returns before arming and leaves the
+# caller's traps in place. A caller with its own cleanup must
 # therefore chain it through GIT_CRYPT_LOCK_OUTER_TRAP (a function name or shell
 # text), which a handler runs once per invocation, after the first lock release,
 # and clears before running so it cannot re-enter itself. The lock RELEASE is
@@ -166,7 +170,7 @@ _acquire_git_crypt_lock() {
   fi
   _wait_i=0
   while [ "$_wait_i" -lt 50 ]; do
-    # H3: the gap between `mkdir` returning and GIT_CRYPT_LOCK_HELD=1 cannot be
+    # H3: the gap between `mkdir` returning and GIT_CRYPT_LOCK_HELD=$$ cannot be
     # closed with a handler -- the handler cannot tell "I just created it" from
     # "someone else holds it" without the flag. So the window is made
     # unreachable instead: INT/TERM are IGNORED across exactly the mkdir and
@@ -278,8 +282,12 @@ _release_git_crypt_lock() {
 #
 #   0    key is set
 #   1    key absent            <- normal; yields empty, proceed
-#   6    bad pattern/arguments <- genuine failure
-#   128  not in a repository   <- genuine failure
+#   128  not in a repository, or .git/config unparsable <- genuine failure
+#
+# Anything above 1 is treated as a genuine failure. An INVALID key name also
+# exits 1, so it would read as "absent" -- safe here only because both keys
+# this reads are hard-coded. (Exit 6 is git's bad value-regex status, which
+# this call never passes.)
 #
 # A genuine failure means this hook cannot classify the filter state it is
 # about to mutate, so it releases the lock and refuses rather than guessing.
