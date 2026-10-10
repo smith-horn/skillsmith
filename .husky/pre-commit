@@ -382,7 +382,8 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       _restore_smudge_filter() {
         # SMI-6973 (H1): acquiring arms the lock library's own EXIT/INT/TERM
         # handlers, which REPLACE the `trap '_restore_smudge_filter' ...` set
-        # below. Naming this function as the chained outer handler means a
+        # below (unless acquire reuses a lock this shell already holds, which
+        # leaves those traps in place). Naming this function as the chained outer handler means a
         # signal or errexit abort mid-restore releases the lock AND re-runs
         # the restoration once, instead of losing it.
         GIT_CRYPT_LOCK_OUTER_TRAP=_restore_smudge_filter
@@ -425,8 +426,9 @@ if [ -n "$EXPECTED_BRANCH" ]; then
       # Written LAST, after both filter values (rebase-worktree.sh Step 7 order).
       _worktree_b64=$(printf '%s' "$(pwd)" | base64 | tr -d '\n')
       git config --local skillsmith.git-crypt-disabled-marker "$$ $(date +%s) $_worktree_b64"
-      # SMI-5983: release BEFORE arming the restore trap (it re-acquires; the
-      # lock is not reentrant). See git-crypt-lock.sh "CALLER ORDERING".
+      # SMI-5983: release BEFORE arming the restore trap. Kept, but no longer
+      # load-bearing: acquire now reuses a lock this shell holds (SMI-6973
+      # round 4). See git-crypt-lock.sh "CALLER ORDERING".
       _release_git_crypt_lock || true # a failed removal is retried by the EXIT trap
       trap '_restore_smudge_filter_final' EXIT
       trap '_restore_smudge_filter_signal 130' INT
