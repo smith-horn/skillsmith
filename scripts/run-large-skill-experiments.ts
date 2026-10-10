@@ -27,6 +27,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
+import type { TransformationService as TransformationServiceClass } from '@skillsmith/core'
+import { experimentExitCode, skillDescription } from './run-large-skill-experiments.helpers.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -205,7 +207,7 @@ interface TransformResult {
   error?: string
 }
 
-async function transformSkill(skillPath: string): Promise<TransformResult> {
+async function transformSkill(skillPath: string, skillName: string): Promise<TransformResult> {
   const originalContent = readFileSync(skillPath, 'utf-8')
   const originalLines = originalContent.split('\n').length
 
@@ -215,25 +217,14 @@ async function transformSkill(skillPath: string): Promise<TransformResult> {
     join(PROJECT_ROOT, 'packages/core/dist/services/TransformationService.js'),
   ]
 
-  // SMI-6975: TransformationService is loaded via a COMPUTED dynamic
-  // import(p) (p is a variable, not a literal) -- no static resolver can
-  // know its real type (this is finding 7's computed-import category, named
-  // rather than fixed: the plan treats this class of import as a named
-  // limitation of the gate, not something to synthesize a fake type for).
-  // The constructor type below already encodes "we don't know the real
-  // class" via `unknown` args; this interface encodes the same honesty for
-  // its INSTANCE -- not the real TransformationService shape, just the
-  // subset of fields this function actually reads off a transform() result.
-  interface TransformationServiceInstance {
-    transform(content: string): Promise<{
-      optimized?: { content?: string }
-      stats?: { tokenReductionPercent?: number }
-      subagent?: { content?: string }
-    }>
-  }
-
-  let TransformationService: (new (...args: unknown[]) => TransformationServiceInstance) | null =
-    null
+  // The class is LOADED through a computed dynamic import(p), because the
+  // built core can sit at either path above. Its TYPE comes from core's own
+  // export (SMI-7060), the same one batch-transform-skills.ts imports, so the
+  // scripts typecheck gate checks every call below against the real
+  // signature. A hand-written stand-in (SMI-6975) declared transform(content)
+  // returning { optimized }, which matched nothing: every call threw and every
+  // skill was reported as a failed transformation.
+  let TransformationService: typeof TransformationServiceClass | null = null
   for (const p of possiblePaths) {
     if (existsSync(p)) {
       try {
@@ -261,17 +252,18 @@ async function transformSkill(skillPath: string): Promise<TransformResult> {
 
   try {
     const service = new TransformationService()
-    const result = await service.transform(originalContent)
-
-    const optimizedLines = result.optimized?.content?.split('\n').length || originalLines
+    // transform(skillId, skillName, description, content). The downloaded
+    // file is a SKILL.md, so its frontmatter carries the description.
+    const description = skillDescription(originalContent)
+    const result = await service.transform(skillName, skillName, description, originalContent)
 
     return {
       success: true,
       originalLines,
-      optimizedLines,
-      predictedReduction: result.stats?.tokenReductionPercent || 0,
-      optimizedContent: result.optimized?.content || originalContent,
-      subagentGenerated: !!result.subagent?.content,
+      optimizedLines: result.stats.optimizedLines,
+      predictedReduction: result.stats.tokenReductionPercent,
+      optimizedContent: result.mainSkillContent,
+      subagentGenerated: result.stats.subagentGenerated,
     }
   } catch (error) {
     return {
@@ -731,6 +723,7 @@ async function main(): Promise<void> {
   log('')
 
   const results: ABTestResult[] = []
+  const tally = { attempted: 0, transformFailed: 0 }
 
   for (const skill of skills) {
     log(`\n========== ${skill.name} (${skill.lines} lines) ==========\n`)
@@ -741,9 +734,11 @@ async function main(): Promise<void> {
 
     // Transform
     log('Transforming with Skillsmith...')
-    const transform = await transformSkill(skillPath)
+    const transform = await transformSkill(skillPath, skill.name)
+    tally.attempted++
 
     if (!transform.success) {
+      tally.transformFailed++
       log(`Transformation failed: ${transform.error}`, 'error')
       continue
     }
@@ -785,7 +780,11 @@ async function main(): Promise<void> {
     generateReport(results, args.output)
   }
 
-  log('\nExperiments complete!')
+  log(
+    `\nExperiments complete: ${tally.attempted} attempted, ` +
+      `${tally.transformFailed} transformation(s) failed, ${results.length} A/B test(s) completed`
+  )
+  process.exitCode = experimentExitCode(tally)
 }
 
 main().catch((error) => {

@@ -37,10 +37,11 @@ async function main() {
   // Get all skills from repository. findAll() returns PaginatedResults<Skill>
   // (an { items, total, limit, offset, hasMore } envelope), not a bare array --
   // the array itself is `.items`. SMI-6975: `allSkills` used to be the whole
-  // envelope with no type annotation (implicit any from the `await`'s inferred
-  // type being treated as array-like downstream), so `.length`/`.filter` below
-  // silently resolved to `undefined`/a missing method at runtime rather than
-  // failing -- strict mode now catches the shape mismatch at compile time.
+  // envelope. findAll was always typed as PaginatedResults<Skill>, so this was
+  // a type error nothing was checking -- and at runtime `.filter` on the
+  // envelope threw a TypeError, so the script crashed (SMI-7060 corrects an
+  // earlier comment that said it failed silently). The scripts typecheck gate
+  // now catches the shape mismatch at compile time.
   const allSkills: Skill[] = (await repo.findAll({ limit: 200 })).items
 
   console.log(`Found ${allSkills.length} skills in database\n`)
