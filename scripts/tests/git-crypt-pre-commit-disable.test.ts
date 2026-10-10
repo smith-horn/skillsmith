@@ -218,7 +218,7 @@ describe('SMI-6973 step 5: the acquisition gap — a failing pid write must not 
 describe('SMI-6973: span extraction starts after the sentinel LINE, not the sentinel NAME', () => {
   // lock-helpers is deliberately absent: SMI-6973 moved it to
   // scripts/lib/git-crypt-lock.sh, so it is sourced rather than sliced and has
-  // no sentinel left to get wrong. The three below are the spans that remain,
+  // no sentinel left to get wrong. The four below are the spans that remain,
   // and the extractor fix still has to hold for them — which is exactly why
   // the extraction did NOT dissolve this problem, only shrink it.
   const SPANS: Array<[string, string]> = [

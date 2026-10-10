@@ -40,7 +40,16 @@ function extractSpan(name: string): string {
   if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
     throw new Error(`test span "${name}" not found in .husky/pre-commit`)
   }
-  return PRE_COMMIT_SRC.slice(PRE_COMMIT_SRC.indexOf('\n', startIdx) + 1, endIdx)
+  // Same guard as git-crypt-pre-commit-disable.test.ts: with no line ending
+  // before END, indexOf returns -1 and the slice would start at the top of
+  // the hook instead of failing.
+  const lineEnd = PRE_COMMIT_SRC.indexOf('\n', startIdx)
+  if (lineEnd === -1 || lineEnd > endIdx) {
+    throw new Error(
+      `test span "${name}": BEGIN sentinel has no line ending before its END sentinel`
+    )
+  }
+  return PRE_COMMIT_SRC.slice(lineEnd + 1, endIdx)
 }
 
 const PRELUDE = `EXPECTED_BRANCH=main\nRED=''\nNC=''\nYELLOW=''\nGREEN=''\n. ${JSON.stringify(LOCK_LIB)}\n`
@@ -307,8 +316,8 @@ describe('SMI-6973 H2 (round 3): the EXIT trap retries a failed lock removal', (
   })
 })
 
-describe('SMI-6973 F3 (round 3): the restore trap is armed only after the lock is released', () => {
-  it('a TERM landing during the marker write restores the filters promptly instead of spinning on its own lock', () => {
+describe('SMI-6973 F3 (round 3): a TERM during the marker write restores promptly', () => {
+  it('a TERM landing during the marker write restores the filters, releases the lock and exits 143 within 5s', () => {
     const dir = repoWithRealFilters()
     const shim = [
       'case "$*" in',
@@ -319,8 +328,10 @@ describe('SMI-6973 F3 (round 3): the restore trap is armed only after the lock i
     const started = Date.now()
     const r = runWithGitShim(dir, `${FULL_CYCLE}\necho REACHED_END\n`, shim)
     expect(r.obs, 'signal was not sent').toContain('SIGNALLED')
-    // Wrong order (trap armed while the lock is held) makes the trap acquire
-    // against its own lock: ~10s of spinning, then exit 1 with filters disabled.
+    // This once also pinned the hook's release-before-trap ORDER: with the
+    // trap armed while the lock was held, the restore spun ~10s on its own
+    // lock. Since SMI-6973 round 4 acquire reuses a lock this shell holds, so
+    // both orders pass (measured, SMI-7059). It now pins the outcome only.
     expect(Date.now() - started).toBeLessThan(5_000)
     expect(r.out).not.toContain('REACHED_END')
     expect(r.status).toBe(143)
