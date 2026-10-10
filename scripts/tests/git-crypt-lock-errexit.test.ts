@@ -688,3 +688,70 @@ describe('SMI-6973 round 4 (high): HELD proves ownership only when it names this
     expect(r.status).toBe(0)
   })
 })
+
+describe('SMI-6973 round 5 (high): an EXPORTED HELD is never trusted, even when it equals $$', () => {
+  // `exec` keeps the pid, so a parent can export HELD=<the pid the hook will
+  // run as> and hand it over. That value equals $$ in the hook shell without
+  // that shell ever running mkdir.
+  function execForged(dir: string, childBody: string[]) {
+    const child = join(dir, '.child.sh')
+    writeFileSync(child, [PRELUDE, ...childBody].join('\n'))
+    return runWithGitShim(
+      dir,
+      [
+        'GIT_CRYPT_LOCK_HELD=$$',
+        'export GIT_CRYPT_LOCK_HELD',
+        `exec ${JSON.stringify(REAL_SH)} -e ${JSON.stringify(child)}`,
+      ].join('\n'),
+      ':'
+    )
+  }
+
+  it('exec-forged HELD=$$: release leaves a foreign empty-pid lock alone', () => {
+    const dir = makeRepo()
+    mkdirSync(lockDirOf(dir))
+    const r = execForged(dir, [
+      'echo "HELD_AFTER_SOURCE=[$GIT_CRYPT_LOCK_HELD]"',
+      '_release_git_crypt_lock',
+      '[ -d "$GIT_CRYPT_LOCK_DIR" ] && echo FOREIGN_SURVIVES || echo FOREIGN_REMOVED',
+    ])
+    expect(r.out, `output: ${r.out}`).toContain('HELD_AFTER_SOURCE=[]')
+    expect(r.out, `output: ${r.out}`).toContain('FOREIGN_SURVIVES')
+    expect(r.status).toBe(0)
+  })
+
+  it('exec-forged HELD=$$: acquire contends for a foreign empty-pid lock, then takes it with its own mkdir', () => {
+    const dir = makeRepo()
+    mkdirSync(lockDirOf(dir))
+    const r = execForged(dir, [
+      `( sleep 1; rmdir ${JSON.stringify(lockDirOf(dir))} ) &`,
+      '_acquire_git_crypt_lock',
+      'echo "PID_FILE=[$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null)] SELF=[$$]"',
+      'wait',
+      '_release_git_crypt_lock',
+    ])
+    const m = r.out.match(/PID_FILE=\[(\d*)\] SELF=\[(\d+)\]/)
+    expect(m, `output: ${r.out}`).not.toBeNull()
+    expect(m?.[1], `output: ${r.out}`).toBe(m?.[2])
+    expect(r.status, `output: ${r.out}`).toBe(0)
+    expect(existsSync(lockDirOf(dir))).toBe(false)
+  })
+
+  it('an inherited exported HELD loses its export attribute, so our own HELD=$$ stays local: re-sourcing keeps ownership and release removes the lock', () => {
+    const dir = makeRepo()
+    const script = [
+      PRELUDE,
+      '_acquire_git_crypt_lock',
+      "export -p | grep -Eq '^(export|declare -x) GIT_CRYPT_LOCK_HELD(=|$)' && echo HELD_EXPORTED || echo HELD_LOCAL",
+      `. ${JSON.stringify(LOCK_LIB)}`,
+      '_release_git_crypt_lock',
+      '[ -d "$GIT_CRYPT_LOCK_DIR" ] && echo DIR_PRESENT || echo DIR_GONE',
+    ].join('\n')
+    // Inherited exported HELD from the environment: the case that must not
+    // leave the export attribute behind for our own value to ride on.
+    const r = runWithGitShim(dir, script, ':', { GIT_CRYPT_LOCK_HELD: '1' })
+    expect(r.out, `output: ${r.out}`).toContain('HELD_LOCAL')
+    expect(r.out, `output: ${r.out}`).toContain('DIR_GONE')
+    expect(r.status).toBe(0)
+  })
+})

@@ -67,16 +67,29 @@
 
 GIT_CRYPT_LOCK_DIR="$(git rev-parse --git-common-dir 2>/dev/null)/skillsmith-git-crypt-filter.lock"
 # See the "ONE DELIBERATE DEVIATION" note above: preserve, do not reset --
-# but only a value naming THIS shell. SMI-6973 round 4: HELD holds the pid of
-# the shell whose own mkdir took the lock, never a bare flag. Anything else
-# here (an exported variable from a parent, a harness that sets HELD=1) did not
-# come from our mkdir, and trusting it let release delete, and acquire adopt, a
-# foreign lock caught in its mkdir-to-pid-write window. Re-sourcing in the same
-# shell keeps a live value, which is what the deviation protects.
-case "${GIT_CRYPT_LOCK_HELD-}" in
-  "$$") ;;
-  *) GIT_CRYPT_LOCK_HELD="" ;;
-esac
+# but only a shell-local value naming THIS shell. HELD holds the pid of the
+# shell whose own mkdir took the lock (SMI-6973 round 4), and anything else did
+# not come from that mkdir: trusting it let release delete, and acquire adopt,
+# a foreign lock caught in its mkdir-to-pid-write window.
+#
+# Round 5: equality with $$ is not enough on its own. `exec` keeps the pid, so
+# a parent can export HELD=<the pid the hook will run as> and hand over a value
+# that equals $$ without this shell ever running mkdir. Only an EXPORTED value
+# can cross an exec, and this file never exports HELD, so an exported HELD is
+# discarded. `unset` (not `=""`) also drops the export attribute; otherwise our
+# own later HELD=$$ would ride it into every child and a re-source would then
+# discard live ownership. Re-sourcing in the same shell keeps a live,
+# unexported value, which is what the deviation protects.
+#
+# Two cases this cannot see, both outside the contract: a SUBSHELL of the
+# holding shell shares its $$ and HELD (the header forbids subshells), and an
+# operator's manual rmdir followed by another holder's mkdir replaces the
+# directory under us (the busy message gates rmdir on the holder being gone).
+if [ "${GIT_CRYPT_LOCK_HELD-}" != "$$" ] ||
+  export -p | grep -Eq '^(export|declare -x) GIT_CRYPT_LOCK_HELD(=|$)'; then
+  unset GIT_CRYPT_LOCK_HELD
+  GIT_CRYPT_LOCK_HELD=""
+fi
 # A caller that owns its own cleanup (the hook's _restore_smudge_filter) names
 # it here, so the lock's traps CHAIN to it instead of replacing it. Cleared
 # when run, so a handler can never re-enter itself.
@@ -131,9 +144,10 @@ _acquire_git_crypt_lock() {
   # R4 (M): a lock THIS process still holds (a release whose removal failed
   # leaves HELD set, and the signal handler's chained restore then acquires)
   # is reused, not re-contended: spinning on our own directory cost the whole
-  # 10s window and exited 1 instead of 130/143. HELD names this shell only
-  # after our own successful mkdir (a foreign value is discarded at source
-  # time), so an empty pid file or one naming us is ours.
+  # 10s window and exited 1 instead of 130/143. Within the contract (no
+  # subshells, no manual rmdir while held) HELD equals $$ only after this
+  # shell's own successful mkdir -- an exported or foreign value is discarded
+  # at source time -- so an empty pid file or one naming us is ours.
   if [ "$GIT_CRYPT_LOCK_HELD" = "$$" ]; then
     _own=$(cat "$GIT_CRYPT_LOCK_DIR/pid" 2>/dev/null) || _own=""
     if [ "$_own" = "$$" ] || [ -z "$_own" ]; then
@@ -205,9 +219,10 @@ _release_git_crypt_lock() {
   # a release that believed it had done its job.
   #
   # Releasing on an empty read is safe here, and only here, because
-  # GIT_CRYPT_LOCK_HELD names this shell only after its own successful `mkdir`:
-  # a value inherited from anywhere else is discarded when the file is sourced,
-  # and nothing sets it speculatively. And
+  # within the contract GIT_CRYPT_LOCK_HELD equals $$ only after this shell's
+  # own successful `mkdir`: an exported or foreign value is discarded when the
+  # file is sourced, and nothing sets it speculatively (the two cases outside
+  # the contract are named where HELD is initialised). And
   # SMI-5983 deliberately implemented NO auto-reclaim -- an ABA race in an
   # `mv`-to-tombstone design was found and rejected -- so no other process can
   # take this directory from us while we hold it (short of an operator's manual
