@@ -73,12 +73,18 @@ function assertThrowawayRoot(dir) {
   } catch (err) {
     return fail(`--gray-matter-root ${dir} is not readable: ${err.message}`)
   }
-  const repoRoot = realpathSync.native(resolve(HERE, '..', '..', '..', '..'))
+  let repoRoot
+  let tmp
+  try {
+    repoRoot = realpathSync.native(resolve(HERE, '..', '..', '..', '..'))
+    tmp = realpathSync.native(tmpdir())
+  } catch (err) {
+    return fail(`cannot resolve the repository root or OS temp directory: ${err.message}`)
+  }
   if (isInside(real, repoRoot))
     fail(`--gray-matter-root ${real} is inside the repository ${repoRoot}`)
-  const tmp = realpathSync.native(tmpdir())
   if (!isStrictChild(real, tmp)) {
-    fail(`--gray-matter-root ${real} is not a directory under the OS temp directory ${tmp}`)
+    fail(`--gray-matter-root ${real} is not strictly under the OS temp directory ${tmp}`)
   }
 }
 
