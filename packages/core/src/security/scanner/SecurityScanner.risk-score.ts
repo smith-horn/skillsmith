@@ -16,14 +16,17 @@
  */
 
 import type { SecurityFinding, RiskScoreBreakdown, FindingConfidence } from './types.js'
-import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
+import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS, CATEGORY_COEFFICIENTS } from './weights.js'
 
 /**
  * SMI-685: Calculate risk score from findings
  * SMI-1513: Accounts for confidence levels (low confidence = reduced weight)
  * Aggregates multiple findings into a risk score from 0-100
  */
-export function calculateRiskScore(findings: SecurityFinding[]): {
+export function calculateRiskScore(
+  findings: SecurityFinding[],
+  coefficients: Readonly<Record<keyof RiskScoreBreakdown, number>> = CATEGORY_COEFFICIENTS
+): {
   total: number
   breakdown: RiskScoreBreakdown
 } {
@@ -47,6 +50,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     pasteHostFetch: 0,
     encodedPayload: 0,
     decoyMisdirection: 0,
+    executableFrontmatter: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -123,6 +127,9 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       case 'decoy_misdirection':
         breakdown.decoyMisdirection += score
         break
+      case 'executable_frontmatter':
+        breakdown.executableFrontmatter += score
+        break
     }
   }
 
@@ -146,6 +153,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.pasteHostFetch = Math.min(100, breakdown.pasteHostFetch)
   breakdown.encodedPayload = Math.min(100, breakdown.encodedPayload)
   breakdown.decoyMisdirection = Math.min(100, breakdown.decoyMisdirection)
+  breakdown.executableFrontmatter = Math.min(100, breakdown.executableFrontmatter)
 
   // SMI-5359 Wave 4.2: the two new categories use a 0.40 coefficient and are ADDITIVE
   // (the original eleven coefficients sum to 1.0; these add on top). No code assumes the
@@ -164,31 +172,15 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   // encodedPayload is likewise ADDITIVE, at the 0.04 coefficient (the same
   // advisory tier as sensitivePaths/externalUrls/ssrf/typosquat) — see
   // weights.ts's CATEGORY_WEIGHTS.encoded_payload comment.
-  const total = Math.min(
-    100,
-    Math.round(
-      breakdown.jailbreak * 0.2 +
-        breakdown.socialEngineering * 0.11 +
-        breakdown.promptLeaking * 0.11 +
-        breakdown.dataExfiltration * 0.08 +
-        breakdown.privilegeEscalation * 0.11 +
-        breakdown.suspiciousCode * 0.07 +
-        breakdown.sensitivePaths * 0.04 +
-        breakdown.externalUrls * 0.04 +
-        breakdown.aiDefence * 0.12 +
-        breakdown.ssrf * 0.04 +
-        breakdown.pii * 0.08 +
-        breakdown.codeExecution * 0.4 +
-        breakdown.obfuscatedDirective * 0.4 +
-        breakdown.typosquat * 0.04 +
-        breakdown.gatekeeperBypass * 0.4 +
-        breakdown.archiveEvasion * 0.4 +
-        breakdown.pasteHostFetch * 0.4 +
-        breakdown.encodedPayload * 0.04 +
-        // SMI-6033 Wave 4 (Gap 6): additive 0.04, same advisory tier as encodedPayload/typosquat.
-        breakdown.decoyMisdirection * 0.04
-    )
-  )
+  // SMI-7030 (rev 7): the coefficients live in weights.ts's CATEGORY_COEFFICIENTS,
+  // declared in the order the former inline sum added them (float addition is
+  // order-sensitive), and are added left to right here. executableFrontmatter's
+  // coefficient is exactly 0 (flag-only).
+  let sum = 0
+  for (const k of Object.keys(coefficients) as Array<keyof RiskScoreBreakdown>) {
+    sum += breakdown[k] * coefficients[k]
+  }
+  const total = Math.min(100, Math.round(sum))
 
   return { total, breakdown }
 }

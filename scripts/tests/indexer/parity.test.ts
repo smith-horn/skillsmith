@@ -94,6 +94,26 @@ const NODE_SCANNER_EXEC = resolve(
   REPO_ROOT,
   'scripts/indexer/_shared/security-scanner-edge.exec.ts'
 )
+// SMI-7030: the category weight/coefficient maps moved out of .context.ts into a
+// .weights.ts twin, and the executable-frontmatter detector is its own twin.
+// Drift in either means the two indexers would score or flag the same SKILL.md
+// differently.
+const DENO_SCANNER_WEIGHTS = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.weights.ts'
+)
+const NODE_SCANNER_WEIGHTS = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.weights.ts'
+)
+const DENO_SCANNER_FRONTMATTER = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.frontmatter.ts'
+)
+const NODE_SCANNER_FRONTMATTER = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.frontmatter.ts'
+)
 // SMI-5402: the five high-risk pattern arrays were extracted to a sibling twin
 // (500-line limit). Drift here means the two indexers would match different
 // jailbreak / suspicious / exfil / priv-esc / prompt-injection patterns.
@@ -416,6 +436,25 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
       const node = normalizeWs(extractBody(NODE_SCANNER_CONTEXT, fn))
       expect(node).toBe(deno)
     })
+  }
+
+  // SMI-7030: the weights and executable-frontmatter twins — whole-body
+  // byte-identity from the first section marker.
+  for (const [label, denoPath, nodePath] of [
+    ['security-scanner-edge.weights.ts', DENO_SCANNER_WEIGHTS, NODE_SCANNER_WEIGHTS],
+    ['security-scanner-edge.frontmatter.ts', DENO_SCANNER_FRONTMATTER, NODE_SCANNER_FRONTMATTER],
+  ] as const) {
+    it.skipIf(isGitCryptEncrypted(denoPath))(
+      `${label} body is byte-identical from the first section marker (normalized whitespace)`,
+      () => {
+        const deno = normalizeWs(extractScannerBody(denoPath))
+        const node = normalizeWs(extractScannerBody(nodePath))
+        expect(
+          node,
+          `${label} drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins`
+        ).toBe(deno)
+      }
+    )
   }
 
   // SMI-5359 Wave 4.2c: the code_execution + obfuscated_directive detector twin —

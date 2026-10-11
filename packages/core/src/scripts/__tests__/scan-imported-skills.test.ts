@@ -96,6 +96,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -155,6 +156,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -189,6 +191,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -223,6 +226,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -257,6 +261,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 

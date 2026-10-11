@@ -1,0 +1,324 @@
+{
+  "header": {
+    "fixture": "gray-matter-4.0.3.cases",
+    "grayMatter": {
+      "version": "4.0.3",
+      "integrity": "sha512-5v6yZd4JK3eMI3FqqCouswVqwugaA9r4dNZB1wwcmrD02QkV5H0y7XBQW8QwQqEaZY1pM9aqORSORhJRdNK44Q=="
+    },
+    "jsYaml": {
+      "version": "3.15.2"
+    },
+    "columns": {
+      "input": "SKILL.md text fed to gray-matter",
+      "A": "gray-matter's own opener and language detection resolves its javascript engine",
+      "eval": "the real javascript engine's parse() was invoked"
+    }
+  },
+  "cases": [
+    {
+      "input": "---js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---javascript\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "--- js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---  js  \n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\tjs\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---JS\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---JavaScript\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\r\n{\"name\":\"fmt\"}\r\n---\r\n# Fmt\r\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "\ufeff---js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\u00a0js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\u00a0\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\u3000js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\ufeffjs\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\fjs\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\f\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\u000bjs\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\u000b\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\u2028js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\u2028\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\u2029js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\u2029\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---\u205fjs\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\u205f\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---jsX",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---javascriptX",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "--- javascriptX",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---JSX",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\n// comment\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---javascript\n// comment\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\n/* block */\n---\n# Fmt\n",
+      "A": true,
+      "eval": true
+    },
+    {
+      "input": "---js\n# comment\n---\n# Fmt\n",
+      "A": true,
+      "eval": false
+    },
+    {
+      "input": "---js\n---\n# Fmt\n",
+      "A": true,
+      "eval": false
+    },
+    {
+      "input": "",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "-",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "--",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "\ufeff\ufeff---js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "\ufeff ---js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "\n---js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": " ---js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---\u0000js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---js\u0000\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---\u200bjs\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "----js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "----javascript\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "-----js\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "------javascript\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "----",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---js",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---javascript",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---js;payload\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---javascript\r{\"name\":\"fmt\"}\r---\r# Fmt\r",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---json\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---yaml\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---yml\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---toml\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---coffee\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---constructor\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---\n{\"name\":\"fmt\"}\n---\n# Fmt\n",
+      "A": false,
+      "eval": false
+    },
+    {
+      "input": "---\nname: fmt\n---\n# Fmt\n\n---js\n",
+      "A": false,
+      "eval": false
+    }
+  ]
+}
