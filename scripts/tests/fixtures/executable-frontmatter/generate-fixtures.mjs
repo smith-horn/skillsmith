@@ -59,22 +59,26 @@ function readJson(path) {
 }
 
 const isInside = (child, parent) => child === parent || child.startsWith(parent + sep)
+const isStrictChild = (child, parent) => child.startsWith(parent + sep)
 
 // The generator evals case inputs by design, so the gray-matter install must be a
-// throwaway directory under the OS temp dir and never inside this repository.
-// Both sides are realpath'd first (macOS /var vs /private/var).
+// throwaway directory strictly under the OS temp dir and never inside this
+// repository. Every side goes through realpathSync.native, which also returns the
+// filesystem's canonical casing, so a differently-cased path on a case-insensitive
+// volume cannot slip past the prefix checks (macOS /var vs /private/var too).
 function assertThrowawayRoot(dir) {
   let real
   try {
-    real = realpathSync(dir)
+    real = realpathSync.native(dir)
   } catch (err) {
     return fail(`--gray-matter-root ${dir} is not readable: ${err.message}`)
   }
-  const repoRoot = realpathSync(resolve(HERE, '..', '..', '..', '..'))
+  const repoRoot = realpathSync.native(resolve(HERE, '..', '..', '..', '..'))
   if (isInside(real, repoRoot))
     fail(`--gray-matter-root ${real} is inside the repository ${repoRoot}`)
-  if (!isInside(real, realpathSync(tmpdir()))) {
-    fail(`--gray-matter-root ${real} is not under the OS temp directory ${realpathSync(tmpdir())}`)
+  const tmp = realpathSync.native(tmpdir())
+  if (!isStrictChild(real, tmp)) {
+    fail(`--gray-matter-root ${real} is not a directory under the OS temp directory ${tmp}`)
   }
 }
 

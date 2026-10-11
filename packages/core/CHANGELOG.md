@@ -13,7 +13,8 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Added**: SMI-7030 -- `calculateRiskScore` accepts an optional second `coefficients` argument.
   It is a test seam; production callers pass one argument, and a lowered map would weaken the
   quarantine gate.
-- **Added**: SMI-7030 -- `CATEGORY_COEFFICIENTS` is now exported from `weights.ts`.
+- **Added**: SMI-7030 -- `CATEGORY_COEFFICIENTS` is exported from the internal `weights.ts` module
+  (not re-exported from the scanner index, so not part of the package's public API).
 
 ## v0.13.0
 
