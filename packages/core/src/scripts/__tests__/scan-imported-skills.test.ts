@@ -533,6 +533,20 @@ A helpful skill for formatting code.
       ])
 
       expect(shouldQuarantine(report, undefined, allowlist)).toBe(false)
+
+      // Specificity: the pattern must clear THIS finding, not anything. An
+      // unrelated privilege_escalation finding for the same skill, whose message
+      // never says "escalation", must not be allowed -- an overbroad pattern
+      // ('.*') would pass the assertion above but fail here (SMI-7070 gate).
+      const skillId = 'github/leksman/ai-security-guard'
+      const unrelated: SecurityFinding = {
+        type: 'privilege_escalation',
+        severity: 'critical',
+        message: 'sudo invoked to modify system files',
+      }
+      expect(allowlist.isAllowed(skillId, unrelated)).toBe(false)
+      // Presence partner, same matcher: a real finding from this scan IS allowed.
+      expect(privFindings.some((f) => allowlist.isAllowed(skillId, f))).toBe(true)
     })
   })
 })
