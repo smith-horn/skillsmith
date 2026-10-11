@@ -34,8 +34,9 @@
 #
 # Fail-closed (SMI-6981): the protected set is used only if `git worktree list`
 # COMPLETED successfully; a failing docker query that gates a deletion means skip.
-# A listing, label read or delete that fails (other than the object being gone)
-# is skipped AND makes the run exit 1, so it never reads as "nothing to prune".
+# A listing or label read that fails is skipped AND makes the run exit 1, so it
+# never reads as "nothing to prune". A DELETE that fails stops the run with exit
+# 1 (C5 below).
 #
 # Concurrency (SMI-6981, ADR-180). Every delete is a critical section under the
 # worktree lifecycle lock (lib/worktree-lifecycle.sh): a kernel-released flock on
@@ -49,12 +50,12 @@
 #       delete); C3 no creator skips the lock (it has no opt-out); C4 the
 #       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
 #       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
-#       outcome the daemon may still execute; the run stops with exit 1). A delete
-#       is DEFINITIVELY refused only when exit 1 carries a first line beginning
-#       "Error response from daemon:" (no such volume, in use, dependent image);
-#       the run records that and continues. EVERY other failure (connection
-#       refused or reset, EOF, no or unrecognised output, a missing binary) is
-#       outcome-unknown and stops the run with exit 1 the same way. An
+#       outcome the daemon may still execute; the run stops with exit 1). ANY
+#       failed delete does the same, whatever the CLI printed: a docker CLI can
+#       send the request, lose the connection and exit nonzero while the daemon
+#       still carries it out, and the output is never trusted to say which. The
+#       cost: one refusal (in use, already gone) ends the run with exit 1 and
+#       the remaining candidates wait for the next run. An
 #       interrupt (INT/TERM/HUP, or this shell dying) mid-delete is forwarded to
 #       the delete's process group and waited out (TERM, 2 s, KILL) before the
 #       lock is released, but SIGKILL of this script releases the lock at once:
@@ -320,6 +321,9 @@ done <<< "$vol_list"
 # one critical section per candidate under the worktree lifecycle lock, with the
 # liveness read and the lock-identity check as the last operations before the one
 # bounded delete. The protected set sampled above only pre-filters candidates.
+# A failed delete never returns here: it exits the run (C5). The `|| OP_FAILED=true`
+# on both calls only keeps the function in an errexit-suppressed `||` context,
+# which its internal `x="$(…)" || error` checks were written and measured under.
 if (( ${#vol_candidates[@]} > 0 )); then
     for vol in "${vol_candidates[@]}"; do
         classify_volume "$vol" || continue

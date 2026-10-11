@@ -330,50 +330,34 @@ worktree_lifecycle_bounded() {
     perl -e "$_WTL_PERL_BOUNDED" -- "$secs" "$@" 7<&- </dev/null
 }
 
-# worktree_lifecycle_rejected STATUS OUTPUT
-#
-# 0 only when the delete was DEFINITIVELY refused by the daemon: exit 1 and the
-# first non-empty line of the output begins "Error response from daemon:" (the
-# prefix the docker CLI puts on an error the daemon itself returned: no such
-# volume/image, volume in use, image has dependent children; measured on CLI
-# 29.7.2). Everything else is outcome-unknown: a connection refused or reset
-# ("Cannot connect to the Docker daemon", "failed to connect to the docker API",
-# "error during connect"), an EOF, an empty or unrecognised message, a signal or
-# missing binary (any status but 1). The request may already have reached the
-# daemon, which can still carry it out after the lock is released.
-worktree_lifecycle_rejected() {
-    local status="$1" first
-    [[ "$status" -eq 1 ]] || return 1
-    first="$(printf '%s\n' "$2" | sed -n '/./{p;q;}')" || return 1
-    [[ "$first" == "Error response from daemon:"* ]]
-}
-
 # worktree_lifecycle_delete MAIN_REPO PROJECT DRY_RUN KIND NAME
 #
 # The ONE critical section for a liveness-keyed Docker delete (KIND is `volume`
 # or `image`). Inside it, the liveness read and the lock-identity check are the
-# LAST operations before the single bounded delete. Returns 0 on removed, gone,
-# live-now or dry-run, 1 on a delete the daemon definitively refused (the caller
-# counts it as failed and may continue). Exits (via error) when the lock, the
-# liveness read or the identity cannot be established, or the delete's outcome is
-# unknown (timeout, or any failure the daemon did not itself answer): nothing
-# further is deleted.
+# LAST operations before the single bounded delete. Returns 0 when the delete
+# succeeded, the object turned out to be live, or in dry-run. EVERY other
+# outcome exits via error(): the lock, the liveness read or the identity cannot
+# be established, or the delete returned ANY nonzero status (timeout, daemon
+# refusal, lost connection, missing binary, signal). A failed request's outcome
+# is not knowable from the CLI -- a docker CLI can send the request, lose the
+# connection and exit nonzero while the daemon still carries it out after the
+# lock is released -- and its output is never used to decide, only to tell the
+# operator what happened. One refusal therefore ends the run with exit 1 and
+# the remaining candidates wait for the next run.
 #
 # This function is always called from a `||` context, which suppresses errexit
 # inside it, so no step below relies on errexit: the re-read is `x="$(...)" ||
 # error ...` and the delete status is captured with if/else.
 worktree_lifecycle_delete() {
     local main_repo="$1" project="$2" dry_run="$3" kind="$4" name="$5"
-    local rc fresh out drc wait_s rm_timeout label
+    local rc fresh out drc wait_s rm_timeout
     local -a rm_cmd
     wait_s="$(_wtl_uint_env SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT 30)"
     rm_timeout="$(_wtl_uint_env SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT 60)"
     if [[ "$kind" == volume ]]; then
         rm_cmd=(docker volume rm "$name")
-        label=Volume
     else
         rm_cmd=(docker rmi "$name")
-        label=Image
     fi
 
     if worktree_lifecycle_lock_acquire "$main_repo" "$wait_s" pruner; then rc=0; else rc=$?; fi
@@ -406,15 +390,7 @@ worktree_lifecycle_delete() {
             error "${rm_cmd[*]} timed out after ${rm_timeout}s: its outcome is UNKNOWN and the daemon may still run it -- deleting nothing further."
             ;;
         *)
-            if ! worktree_lifecycle_rejected "$drc" "$out"; then
-                error "${rm_cmd[*]} failed without an answer from the daemon (exit $drc: ${out:-no output}): its outcome is UNKNOWN and the daemon may still run it -- deleting nothing further."
-            fi
-            if grep -qi "no such $kind" <<< "$out"; then
-                info "  $label $name already gone"
-            else
-                warn "  Could not remove $kind $name (${out:-no output})"
-                return 1
-            fi
+            error "${rm_cmd[*]} failed (exit $drc: ${out:-no output}): the outcome of a failed request is UNKNOWN and the daemon may still run it -- deleting nothing further."
             ;;
     esac
     return 0

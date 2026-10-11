@@ -855,7 +855,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(result.dockerCalls.length).toBe(0)
   })
 
-  it('15. a volume rm failure warns, continues, and makes the run exit 1 (SMI-6981 round 4)', () => {
+  it('15. a volume rm failure stops the run with exit 1 and says why (SMI-6981 round 4)', () => {
     const fixture = setupFixture('prune-rm-fail')
     tempDirs.push(fixture.tempRoot)
 
@@ -865,8 +865,8 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
       project: 'gone-wt',
       owned: 'true',
     })
-    // A daemon-shaped refusal (measured CLI output): a definitive rejection, so
-    // the run records it and goes on. A silent exit 1 is outcome-unknown and stops.
+    // Even a daemon-shaped refusal (measured CLI output) stops the run: the
+    // outcome of a failed request is not knowable from the CLI.
     shimDockerFailures(fixture, [
       {
         glob: 'volume rm gone-wt_node_modules',
@@ -878,7 +878,9 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
 
     expect(result.status).toBe(1)
     expect(result.dockerCalls).toContain('volume rm gone-wt_node_modules')
-    expect(result.stderr).toContain('Could not remove volume gone-wt_node_modules')
+    expect(result.stderr).toContain('docker volume rm gone-wt_node_modules failed (exit 1:')
+    expect(result.stderr).toContain('volume is in use')
+    expect(result.stderr).toContain('outcome of a failed request is UNKNOWN')
   })
 
   // Tests 16-19: the `<project>_native-seed-<module>` convention (_lib.sh's
@@ -1249,7 +1251,7 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     expect(result.status).toBe(0)
   })
 
-  it('F4a. a volume rm that fails for a real reason exits 1 and says why', () => {
+  it('F4a. a volume rm that fails for a real reason stops the run, exit 1, and says why', () => {
     const fixture = volumeFixture('prune-rm-real-fail')
     shimDockerFailures(fixture, [
       {
@@ -1260,12 +1262,12 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     const result = runPrune(fixture, only('gone-wt'))
 
     expect(result.dockerCalls).toContain(`volume rm ${VOL}`)
-    expect(result.stderr).toContain(`Could not remove volume ${VOL}`)
+    expect(result.stderr).toContain(`docker volume rm ${VOL} failed (exit 1:`)
     expect(result.stderr).toContain('volume is in use')
     expect(result.status).toBe(1)
   })
 
-  it('F4b. a volume rm answering "no such volume" is benign: exit 0', () => {
+  it('F4b. a volume rm answering "no such volume" also stops the run: no failure is benign', () => {
     const fixture = volumeFixture('prune-rm-gone')
     shimDockerFailures(fixture, [
       {
@@ -1276,12 +1278,13 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     const result = runPrune(fixture, only('gone-wt'))
 
     expect(result.dockerCalls).toContain(`volume rm ${VOL}`)
-    expect(result.stderr).not.toContain('Could not remove')
-    expect(result.stdout).toContain(`Volume ${VOL} already gone`)
-    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('no such volume')
+    expect(result.stderr).toContain('outcome of a failed request is UNKNOWN')
+    expect(result.stdout).not.toContain('already gone')
+    expect(result.status).toBe(1)
   })
 
-  it('F4c. an image rmi that fails for a real reason exits 1 and says why', () => {
+  it('F4c. an image rmi that fails for a real reason stops the run, exit 1, and says why', () => {
     const fixture = imageFixture('prune-rmi-real-fail')
     shimDockerFailures(fixture, [
       {
@@ -1292,12 +1295,12 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     const result = runPrune(fixture, only('gone-wt'))
 
     expect(result.dockerCalls).toContain(`rmi ${IMG}`)
-    expect(result.stderr).toContain(`Could not remove image ${IMG}`)
+    expect(result.stderr).toContain(`docker rmi ${IMG} failed (exit 1:`)
     expect(result.stderr).toContain('being used by running container')
     expect(result.status).toBe(1)
   })
 
-  it('F4d. an image rmi answering "No such image" is benign: exit 0', () => {
+  it('F4d. an image rmi answering "No such image" also stops the run: no failure is benign', () => {
     const fixture = imageFixture('prune-rmi-gone')
     shimDockerFailures(fixture, [
       { glob: `rmi ${IMG}`, stderr: `Error response from daemon: No such image: ${IMG}:latest` },
@@ -1305,9 +1308,10 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     const result = runPrune(fixture, only('gone-wt'))
 
     expect(result.dockerCalls).toContain(`rmi ${IMG}`)
-    expect(result.stderr).not.toContain('Could not remove')
-    expect(result.stdout).toContain(`Image ${IMG} already gone`)
-    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('No such image')
+    expect(result.stderr).toContain('outcome of a failed request is UNKNOWN')
+    expect(result.stdout).not.toContain('already gone')
+    expect(result.status).toBe(1)
   })
 
   it('R2-PR16a. an image whose ownership label vanishes between scan and rmi is not removed', () => {

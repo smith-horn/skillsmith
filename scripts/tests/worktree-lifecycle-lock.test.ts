@@ -176,45 +176,19 @@ describe('SMI-6981: lifecycle lock primitive', () => {
     })
   })
 
-  describe('T21. worktree_lifecycle_rejected: only a daemon answer is a definitive refusal', () => {
-    // Exit status and stderr are the docker CLI 29.7.2's own, measured.
-    it.each([
-      [1, 'Error response from daemon: get x: no such volume', true],
-      [1, 'Error response from daemon: No such image: x:latest', true],
-      [1, 'Error response from daemon: remove x: volume is in use - [70257c]', true],
-      [1, '\nError response from daemon: leading blank line is skipped', true],
-      [
-        1,
-        'Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?',
-        false,
-      ],
-      [
-        1,
-        'failed to connect to the docker API at unix:///nonexistent.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent.sock: connect: no such file or directory',
-        false,
-      ],
-      [1, 'error during connect: Delete "http://docker.example.com/v1.55/volumes/x": EOF', false],
-      [
-        1,
-        'error during connect: x: stderr=ssh: connect to host 127.0.0.1 port 1: Connection refused',
-        false,
-      ],
-      [1, 'error during connect: EOF\nError response from daemon: not the first line', false],
-      [1, '', false],
-      [1, 'something unrecognised', false],
-      [2, 'Error response from daemon: right text, wrong status', false],
-      [127, 'bash: /nonexistent/docker: No such file or directory', false],
-      [124, '', false],
-      [137, 'Error response from daemon: killed', false],
-    ])('exit %i %j -> definitive: %s', (status, stderr, definitive) => {
-      const { repo } = makeRepo('lk-t21-class')
-      const r = runLib(
-        repo,
-        `if worktree_lifecycle_rejected ${status} "$STDERR"; then echo definitive; else echo unknown; fi`,
-        { STDERR: stderr }
-      )
-      expect(r.stdout.trim()).toBe(definitive ? 'definitive' : 'unknown')
-    })
+  it('T21. there is no output classification: the lib no longer defines one', () => {
+    const { repo } = makeRepo('lk-t21-noclass')
+    const r = runLib(
+      repo,
+      'type worktree_lifecycle_rejected >/dev/null 2>&1 && echo defined || echo absent'
+    )
+    // Presence partner: the delete function it used to serve is loaded.
+    const p = runLib(
+      repo,
+      'type worktree_lifecycle_delete >/dev/null 2>&1 && echo defined || echo absent'
+    )
+    expect(p.stdout.trim()).toBe('defined')
+    expect(r.stdout.trim()).toBe('absent')
   })
 
   describe('T10b. filesystem allow-list (Linux branch; Darwin is covered by the host script)', () => {
