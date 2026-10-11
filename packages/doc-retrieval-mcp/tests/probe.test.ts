@@ -85,12 +85,20 @@ describe('assessInstrumentationHealth', () => {
     expect(result.reason).toBe('healthy')
   })
 
-  it('treats a malformed marker file as absent (falls through)', async () => {
+  // SMI-6995 pre-merge gate: this test used to assert `reason === 'healthy'`
+  // for a marker file that is PRESENT and unparseable, and its title said
+  // "falls through" as though that were the intent. It was the defect, pinned.
+  // The trigger was always right; only the expectation was wrong.
+  it('reports a malformed marker file as a fault, not as healthy', async () => {
     writeFileSync(outageMarkerPath, '{ this is not valid JSON ')
     seedDb([1])
     const result = await probe({ jsonlSessionCount24h: 1 })
+    // `outageMarker` keeps its old contract: non-null only for a READABLE marker.
     expect(result.outageMarker).toBeNull()
-    expect(result.reason).toBe('healthy')
+    // What changed: the fault now reaches the caller, which renders only on `stale`.
+    expect(result.reason).toBe('outage_marker_malformed')
+    expect(result.stale).toBe(true)
+    expect(result.outageMarkerRead.status).toBe('malformed')
   })
 
   it('returns IS_DOCKER_set_on_host when env var set on real host', async () => {
@@ -217,15 +225,19 @@ describe('assessInstrumentationHealth', () => {
     expect(result.reason).toBe('low_capture_rate')
   })
 
-  it('treats a valid-JSON marker missing a required field as absent', async () => {
+  it('reports a valid-JSON marker missing a required field as a fault, not as healthy', async () => {
     // Distinct from the malformed-JSON case: parses cleanly but fails the field
-    // shape check, so it must fall through rather than surface a bogus banner.
+    // shape check. SMI-6995 pre-merge gate: the old expectation was that this
+    // "falls through rather than surface a bogus banner". Surfacing nothing is
+    // not the safe option — the file is there and unusable, and reporting
+    // `healthy` about it is a positive claim that is false.
     writeFileSync(
       outageMarkerPath,
       JSON.stringify({ ts: new Date(NOW.getTime()).toISOString(), reason: 'x', error: 'y' }) // no `hint`
     )
     const result = await probe({ jsonlSessionCount24h: 0 })
     expect(result.outageMarker).toBeNull()
-    expect(result.reason).toBe('healthy')
+    expect(result.reason).toBe('outage_marker_malformed')
+    expect(result.stale).toBe(true)
   })
 })

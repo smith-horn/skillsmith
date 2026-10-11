@@ -18,12 +18,25 @@
  * and reads are fail-soft (a corrupt/missing file reads as "no entry").
  *
  * Spec: docs/internal/implementation/smi-5426-w01-host-autoheal.md §D4/D5.
+ *
+ * SMI-6995: `readState`/`readEntry` below collapse "never written", "corrupt"
+ * and "could not be read" into the same `null` — correct for THEIR callers
+ * (see {@link readEntry}'s own doc comment), but exactly the collapse that
+ * made the banner render nothing for a corrupt state file, indistinguishable
+ * from a healthy system that has simply never run. {@link readEntryResult}
+ * is the consumer-facing counterpart that keeps those three cases apart,
+ * delegating to the shared three-way read in `state-read.ts`;
+ * {@link renderAutohealBanner} now takes that result type directly so a
+ * malformed or unreadable state file renders a banner naming the fault
+ * instead of looking identical to "has not run yet".
  */
 
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+
+import { readEntryResult as readEntryResultShared, type StateReadResult } from './state-read.js'
 
 /** The only pre-consent opt-out for the unattended loop. Surfaced verbatim in every banner. */
 export const AUTOHEAL_DISABLE_VAR = 'SKILLSMITH_RETRIEVAL_AUTOHEAL_DISABLE'
@@ -55,6 +68,9 @@ export interface AutohealEntry {
 }
 
 export type AutohealState = Record<string, AutohealEntry>
+
+/** SMI-6995: the consumer-facing read result for a single entry — see {@link readEntryResult}. */
+export type AutohealReadResult = StateReadResult<AutohealEntry>
 
 export type CooldownDecision =
   | { action: 'run' }
@@ -114,11 +130,76 @@ export function readState(path: string = resolveAutohealStatePath()): AutohealSt
   }
 }
 
+/**
+ * The documented producer/assertion accessor — fail-soft and NULL-COLLAPSING
+ * by design, not an oversight: "never written", "corrupt", and "could not be
+ * read" all return the same `null`, because that is exactly what
+ * `writeEntry`'s read-modify-write, `recordResult`'s prior-entry fold, and
+ * every assertion in this file's own test suite need — a value they can
+ * treat uniformly as "nothing to build on," regardless of WHY. 16 caller
+ * files, six of them tests, depend on that collapse. Do not remove or
+ * "fix" it here (SMI-6995).
+ *
+ * A BANNER consumer wants the opposite policy — telling "never run" apart
+ * from "ran but the file is broken" is the entire point of the banner. That
+ * caller wants {@link readEntryResult}, not this function.
+ */
 export function readEntry(
   key: string,
   path: string = resolveAutohealStatePath()
 ): AutohealEntry | null {
   return readState(path)[key] ?? null
+}
+
+/**
+ * Validates every field {@link renderAutohealBanner} and
+ * {@link cooldownDecision} read from a candidate entry — not a `typeof`
+ * spot-check, which would accept `{lastVerdict: "banana"}` and recreate the
+ * exact collapse this module exists to remove, one layer down: the read
+ * would report `ok`, the renderer's `=== 'fail'` branch would not match a
+ * value that isn't `'ok'` either, and the banner would stay silent on a
+ * genuinely malformed entry (SMI-6995 plan review finding 1, the shape this
+ * task's own brief names explicitly). `lastVerdict` is checked against its
+ * literal union, never `typeof === 'string'`; `lastAttemptEpoch` and
+ * `consecutiveFailures` are checked with `Number.isFinite` so `NaN`,
+ * `Infinity`, and non-numbers are all rejected the same way — each is a
+ * value {@link cooldownDecision}'s own backoff arithmetic would otherwise
+ * silently miscompute on; the three optional diagnostic fields are checked
+ * only when present, and must be strings when they are.
+ */
+function validateAutohealEntry(candidate: unknown): string | null {
+  if (!candidate || typeof candidate !== 'object') return 'entry is not an object'
+  const c = candidate as Record<string, unknown>
+  if (!Number.isFinite(c.lastAttemptEpoch)) return 'entry.lastAttemptEpoch is not a finite number'
+  if (!Number.isFinite(c.consecutiveFailures))
+    return 'entry.consecutiveFailures is not a finite number'
+  if (c.lastVerdict !== 'ok' && c.lastVerdict !== 'fail')
+    return "entry.lastVerdict is not 'ok' or 'fail'"
+  if (c.lastFailureReason !== undefined && typeof c.lastFailureReason !== 'string')
+    return 'entry.lastFailureReason is present but not a string'
+  if (c.lastModule !== undefined && typeof c.lastModule !== 'string')
+    return 'entry.lastModule is present but not a string'
+  if (c.priorAbi !== undefined && typeof c.priorAbi !== 'string')
+    return 'entry.priorAbi is present but not a string'
+  return null
+}
+
+/**
+ * The consumer-facing counterpart to {@link readEntry} (SMI-6995): reports
+ * `missing` / `malformed` / `unreadable` / `ok` as four DIFFERENT facts
+ * instead of collapsing the first three into one `null`, by delegating to
+ * the shared three-way read in `state-read.ts` with
+ * {@link validateAutohealEntry} as the validator. A caller rendering a
+ * banner from this result (see {@link renderAutohealBanner}) can therefore
+ * tell "has not run yet" apart from "ran, but the state file is broken" —
+ * the exact distinction `readEntry`'s `null` cannot make and must keep not
+ * making for ITS OWN callers (see that function's doc comment).
+ */
+export function readEntryResult(
+  key: string,
+  path: string = resolveAutohealStatePath()
+): AutohealReadResult {
+  return readEntryResultShared<AutohealEntry>(key, path, validateAutohealEntry)
 }
 
 /** Atomic (temp + rename) write of a single entry, preserving other keys. */
@@ -186,21 +267,66 @@ export function cooldownDecision(entry: AutohealEntry | null, nowEpoch: number):
  * steady-state noise. The disable var appears verbatim and copy-paste-ready; at
  * the attempt cap a cooldown-reset command is appended (never a bare "re-run the
  * script that just failed"). Same text on both surfaces.
+ *
+ * SMI-6995: takes the shared {@link AutohealReadResult} rather than
+ * `AutohealEntry | null`, so this function can tell apart the three facts
+ * `readEntry`'s `null` used to collapse. The split is intentionally
+ * asymmetric, matching the invariant `state-read.ts`'s own top doc comment
+ * states ("a consumer must never render corrupt state as healthy"):
+ *
+ *   - `missing` ("has not run yet") RENDERS the pre-existing
+ *     "first run launched" line — this renderer is not silent on it (see the
+ *     correction comment in the body for why). Silence on `missing` is the
+ *     session-priming CALLER's policy, not this function's:
+ *     `scripts/session-priming-query.ts` only calls this renderer for a
+ *     `malformed`/`unreadable` read or an `ok` entry whose `lastVerdict` is
+ *     `fail`, so a `missing` read never reaches it from that surface. The
+ *     `--print-banner` CLI does call it on `missing`, and wants the line.
+ *   - `malformed`/`unreadable` RENDER unconditionally — a corrupt or
+ *     unreadable state file is a symptom worth surfacing on its own, never
+ *     silently treated as "no prior run."
+ *   - `ok` preserves the exact prior fail/cap/regressed-launch behaviour,
+ *     unchanged line for line below.
  */
 export function renderAutohealBanner(
-  entry: AutohealEntry | null,
+  read: AutohealReadResult,
   opts: { now: Date; logPath: string }
 ): string {
   const disable = `disable: ${AUTOHEAL_DISABLE_VAR}=1`
   const logHint = `log: ${displayPath(opts.logPath)}`
-  if (!entry) {
+  const reset = `rm ${displayPath(resolveAutohealStatePath())}`
+
+  // SMI-6995 CORRECTION: `missing` is NOT silent here, and making it silent
+  // was a regression this sweep introduced and a test caught. The blanket
+  // rule "render on malformed/unreadable, stay silent on missing" was
+  // generalised from reindex-state, the only one of the three whose null
+  // branch really was `return ''`. This module's null branch always carried a
+  // real message, and that message is correct: the --print-banner CLI is
+  // invoked by the heal script at the moment it launches a heal, when no state
+  // exists yet, and "first run launched" is exactly what the user needs to see.
+  if (read.status === 'missing') {
     return `[autoheal] first run launched — ${logHint} — ${disable}`
   }
+
+  if (read.status === 'malformed') {
+    return (
+      `[autoheal] state malformed at ${displayPath(resolveAutohealStatePath())} — ` +
+      `inspect it, then reset: ${reset} — ${logHint} — ${disable}`
+    )
+  }
+
+  if (read.status === 'unreadable') {
+    return (
+      `[autoheal] state unreadable (${read.detail}) — inspect it, then reset: ${reset} — ` +
+      `${logHint} — ${disable}`
+    )
+  }
+
+  const entry = read.entry
   if (entry.lastVerdict === 'fail') {
     const when = fmtLocalMinute(entry.lastAttemptEpoch)
     const reason = entry.lastFailureReason ?? 'unknown'
     if (entry.consecutiveFailures >= ATTEMPT_CAP) {
-      const reset = `rm ${displayPath(resolveAutohealStatePath())}`
       return (
         `[autoheal] last attempt ${when} failed: ${reason} — cooling down (attempt cap reached) — ` +
         `${logHint} — ${disable} — fix the root cause above, then reset: ${reset}`
