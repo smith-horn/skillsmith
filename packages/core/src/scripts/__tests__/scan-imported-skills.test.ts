@@ -14,7 +14,7 @@ import type { ScanReport, SecurityFinding } from '../../security/index.js'
 import { determineSeverityCategory, type SeverityCategory } from '../skill-scanner/categorizer.js'
 import { shouldQuarantine } from '../skill-scanner/trust-scorer.js'
 import { extractScannableContent } from '../skill-scanner/file-scanner.js'
-import { loadAllowlist } from '../skill-scanner/allowlist.js'
+import { buildMatcher } from '../skill-scanner/allowlist.js'
 import type { ImportedSkill } from '../skill-scanner/types.js'
 
 // ============================================================================
@@ -512,11 +512,25 @@ A helpful skill for formatting code.
       expect(privFindings.some((f) => f.severity === 'critical')).toBe(true)
       expect(shouldQuarantine(report)).toBe(true)
 
-      const allowlistPath = path.resolve(
-        __dirname,
-        '../../../../../data/skills-security-allowlist.json'
-      )
-      const allowlist = loadAllowlist(allowlistPath)
+      // SMI-7070: a FIXTURE allowlist, not data/skills-security-allowlist.json.
+      // Asserting against the live file made this test fail on the calendar date
+      // the real entry expired (2026-10-10), with no code change. The entry below
+      // mirrors that real entry's match fields; its expiry is computed from today,
+      // so renewing, retiring or letting the real entry lapse cannot break this
+      // test. What it pins is unchanged: this content shape's finding is cleared
+      // by an allowlist pattern, and the frontmatter heuristic cannot do it.
+      const inAYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const allowlist = buildMatcher([
+        {
+          skillId: 'github/leksman/ai-security-guard',
+          findingType: 'privilege_escalation',
+          messagePattern: 'escalation',
+          reason: 'SMI-7070 test fixture mirroring the SMI-5666 entry',
+          reviewedBy: 'test-fixture',
+          reviewedAt: new Date().toISOString().slice(0, 10),
+          expiresAt: inAYear,
+        },
+      ])
 
       expect(shouldQuarantine(report, undefined, allowlist)).toBe(false)
     })
