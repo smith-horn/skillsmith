@@ -20,6 +20,7 @@ import {
   cronFnGrantViolations,
   orderedStatements,
   type MigrationFile,
+  UNICODE_ESCAPE_SENTINEL,
 } from './cron-fn-grants.test-helpers.ts'
 
 const NEW_MIGRATION = '20261011000000_lockdown_cron_fn_grants.sql'
@@ -244,6 +245,15 @@ describe('SMI-7075 -- checker mutation cases (synthetic corpora)', () => {
     expect(v).toEqual([
       { fn: 'Foo', reason: expect.stringMatching(/not a case-folded identifier/) },
     ])
+  })
+  // Round 2: a Unicode-escaped identifier can spell any name or schema; it fails closed.
+  it('a U&"..." identifier in a cron command fails closed, as the name or as the schema', () => {
+    for (const call of ['public.U&"\\0046oo"()', 'U&"\\0070ublic".foo()']) {
+      const files = synthetic(ALL3).map((f, i) =>
+        i === 0 ? { ...f, sql: f.sql.replace('$$SELECT public.foo()$$', `$$SELECT ${call}$$`) } : f
+      )
+      expect(fnNames(files)).toEqual([UNICODE_ESCAPE_SENTINEL])
+    }
   })
   it('a revoke naming a different function does not cover foo', () => {
     expect(

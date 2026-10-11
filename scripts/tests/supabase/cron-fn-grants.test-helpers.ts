@@ -24,6 +24,8 @@ const FN_CALL_RE =
   /\b(?:SELECT|PERFORM)\s+(?:(?:public|"public")\s*\.\s*)?("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s*\(/gi
 /** Names the replay can verify: an unquoted, case-folded identifier, minus `$` (a regex metacharacter in its patterns). */
 const FOLDED_NAME_RE = /^[a-z_][a-z0-9_]*$/
+/** Reported in place of a name when a cron command uses a `U&"..."` identifier. Not case-folded. */
+export const UNICODE_ESCAPE_SENTINEL = 'U&"..." (unicode-escaped identifier)'
 /** Postgres identifier rules: an unquoted name folds to lower case; a quoted one is exact. */
 function identName(raw: string): string {
   return raw.startsWith('"') ? raw.slice(1, -1).replace(/""/g, '"') : raw.toLowerCase()
@@ -88,6 +90,10 @@ export function cronCalledFunctions(statements: string[]): Set<string> {
       const open = (m.index ?? 0) + m[0].length - 1
       const region = stmt.slice(open, balancedEnd(stmt, open))
       for (const c of region.matchAll(FN_CALL_RE)) names.add(identName(c[1]))
+      // A Unicode-escaped identifier (`U&"\0046oo"`) can spell any name, including `public`, and
+      // this extractor does not decode it: record a sentinel that fails closed as non-folded
+      // (SMI-7075 cross-family review, round 2).
+      if (/U&"/i.test(region)) names.add(UNICODE_ESCAPE_SENTINEL)
     }
   }
   return names
