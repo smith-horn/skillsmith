@@ -6,10 +6,10 @@
       "skillId": "github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill",
       "findingType": "privilege_escalation",
       "messagePattern": "escalation",
-      "reason": "Prompt-injection scanner skill whose description enumerates adversarial techniques it detects ('role manipulation, privilege escalation, ...'). Bare /escalat(e|ion)/i pattern triggered CRITICAL on a defensive-security tool describing its own subject matter. Wave 2 replaces with contextual patterns (privilege_escalation, escalate to root, exploit-to-escalate). Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate.",
+      "reason": "Prompt-injection scanner skill whose description enumerates adversarial techniques it detects ('role manipulation, privilege escalation, ...'). Bare /escalat(e|ion)/i pattern triggered CRITICAL on a defensive-security tool describing its own subject matter. Wave 2 replaces with contextual patterns (privilege_escalation, escalate to root, exploit-to-escalate). Renewed 2026-07-12 under SMI-5666 (repo re-verified unchanged via gh api) — expiring 2026-07-21 would have re-tripped the weekly gate. Renewed 2026-10-10 under SMI-7072 after re-check: repo unchanged since 2025-11-27; the description still yields only this privilege_escalation FP.",
       "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-07-12",
-      "expiresAt": "2026-10-10"
+      "reviewedAt": "2026-10-10",
+      "expiresAt": "2027-01-08"
     },
     {
       "skillId": "github/straygizmo/mdium",
