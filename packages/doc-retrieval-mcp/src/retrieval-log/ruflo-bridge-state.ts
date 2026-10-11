@@ -401,6 +401,7 @@ export {
 // writer) can import everything from this one module, matching the sibling
 // state modules' single-entry-point shape.
 export {
+  PROBE_COMMAND,
   renderBridgeBanner,
   renderBridgeLivenessLine,
   renderBridgeVerdictLine,
