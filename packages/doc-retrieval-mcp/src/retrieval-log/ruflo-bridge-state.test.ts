@@ -32,6 +32,7 @@ import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 import {
   BRIDGE_VERDICT_DISABLE_VAR,
   LOCK_STALE_MS,
+  PROBE_COMMAND,
   acquireBridgeLock,
   bridgeLockStillHeld,
   foldLiveness,
@@ -253,10 +254,19 @@ describe('renderBridgeVerdictLine', () => {
     })
     const rendered = renderBridgeVerdictLine({ status: 'ok', entry }, { now })
     expect(rendered).toContain("embeddingBackend 'mock'")
-    expect(rendered).toContain('node scripts/ruflo-bridge-probe.mjs')
+    expect(rendered).toContain(PROBE_COMMAND)
     expect(rendered).toContain('/mcp > ruflo > Reconnect')
     expect(rendered).toContain(BRIDGE_VERDICT_DISABLE_VAR)
   })
+
+  // The SMI-7032 test that EXECUTES the command deliberately does not live
+  // here. This file is reached by `Test (<package>)`, gated on
+  // `affected_count != '0'` — and measured with the repo's own classifier, a
+  // change touching only `scripts/ruflo-bridge-probe.mjs` yields
+  // `affected_count=0` (control: a file in this package yields 1). So the one
+  // change most likely to break the command again would skip this whole job.
+  // It lives in `scripts/tests/ruflo-bridge-probe.test.ts`, which `Test (root)`
+  // runs unconditionally.
 
   it('renders not-evaluated for unrecognized, distinct from arm 1 (degraded)', () => {
     const degraded = renderBridgeVerdictLine(
