@@ -61,10 +61,10 @@
       "skillId": "github/leksman/ai-security-guard",
       "findingType": "privilege_escalation",
       "messagePattern": "escalation",
-      "reason": "Defensive LLM-hardening skill (prompt injection / jailbreak / privilege escalation / marker forgery guard) whose GitHub repo description enumerates 'privilege escalation' as one of the threats it defends against — same self-describing-security-tool FP class as github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill (SMI-4396 Wave 2). Verified via SKILL.md: no other finding category present, no sudo/chmod/exec/exfil content. Triaged 2026-07-12 under SMI-5666 — closes GH #1839.",
+      "reason": "Defensive LLM-hardening skill (prompt injection / jailbreak / privilege escalation / marker forgery guard) whose GitHub repo description enumerates 'privilege escalation' as one of the threats it defends against — same self-describing-security-tool FP class as github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill (SMI-4396 Wave 2). Verified via SKILL.md: no other finding category present, no sudo/chmod/exec/exfil content. Triaged 2026-07-12 under SMI-5666 — closes GH #1839. Renewed 2026-10-10 under SMI-7072 after re-check: repo unchanged since 2026-07-08 (before triage); the description still yields only this privilege_escalation FP. A jailbreak match on a full description+SKILL.md scan is tracked separately in SMI-7073.",
       "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-07-12",
-      "expiresAt": "2026-10-10"
+      "reviewedAt": "2026-10-10",
+      "expiresAt": "2027-01-08"
     },
     {
       "skillId": "github/fitz2882/narthex",
