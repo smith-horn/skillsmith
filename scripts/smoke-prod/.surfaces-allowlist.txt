@@ -167,3 +167,12 @@ supabase/functions/sso-link-notify/**
 # (sso:domain_reverify_failed events) and the
 # team_sso_domains.consecutive_failures/last_verify_error columns instead.
 supabase/functions/sso-domain-reverify/**
+
+# SMI-7050: registry-audit-volume-monitor is cron-only (invoked hourly by pg_cron
+# via public.invoke_registry_audit_volume_monitor()). Like sso-domain-reverify it
+# has an internet-reachable HTTP surface (verify_jwt = false) and gates on
+# isServiceRoleCallerBySecretCompare, so a real smoke check would need the
+# service-role key, which the smoke harness does not hold. Verified instead via
+# audit_logs (registry_audit:volume.checked rows) and the
+# registry_audit_volume_monitor_health table.
+supabase/functions/registry-audit-volume-monitor/**
