@@ -210,6 +210,31 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(result.dockerCalls.some((call) => /\b(rm|rmi|stop|kill)\b/.test(call))).toBe(false)
   })
 
+  it('T19. report_containers is handed the main checkout and enumerates with it (SMI-6981)', () => {
+    const fixture = setupFixture('container-report-main-repo')
+    tempDirs.push(fixture.tempRoot)
+    const livePath = join(fixture.repoDir, '.worktrees', 'live-wt')
+    addWorktree(fixture.repoDir, livePath, 'feat-report-main-repo')
+    containerResponses(fixture, [
+      { id: 'live1', name: 'live-dev-1', created: '2000-01-01T00:00:00Z', path: livePath },
+      { id: 'gone1', name: 'gone-dev-1', created: '2000-01-01T00:00:00Z', path: fixture.tempRoot },
+    ])
+
+    const result = runPrune(fixture, ['--report-containers'], {
+      SKILLSMITH_CONTAINER_SPRAWL_MAX_AGE_HOURS: '1',
+      SKILLSMITH_CONTAINER_SPRAWL_MAX_COUNT: '1',
+    })
+
+    expect(result.status).toBe(0)
+    // Presence: the enumeration ran. A live worktree classifies live-old and a
+    // non-worktree path classifies orphaned; neither is possible if it failed.
+    expect(result.stdout).toContain('live-dev-1\tlive-old')
+    expect(result.stdout).toContain('gone-dev-1\torphaned')
+    // The excessive row carries the fixture's main checkout, i.e. the argument.
+    expect(result.stdout).toContain(`all-live\texcessive\t2/1\t${fixture.repoDir}`)
+    expect(result.stdout).not.toContain('not classifying')
+  })
+
   it('1. deletes a labeled orphan volume (no matching worktree, app.skillsmith.owned=true)', () => {
     const fixture = setupFixture('prune-orphan')
     tempDirs.push(fixture.tempRoot)

@@ -4,10 +4,13 @@
 # 500-line gate). Read-only: lists live-old, excessive and orphaned Skillsmith
 # dev containers and mutates nothing.
 #
-# Depends on the sourcing script's enumerate_worktree_paths() and $main_repo,
-# resolved at CALL time, so this file only defines a function.
+# Depends on enumerate_worktree_paths() from lib/worktree-lifecycle.sh,
+# resolved at CALL time, so this file only defines a function. The main
+# checkout is an explicit argument: a bare call under `set -u` would fail
+# inside the `$(...)` below and read as "enumeration failed", a silent pass.
 
 report_containers() {
+    local main_repo="$1"
     local max_age="${SKILLSMITH_CONTAINER_SPRAWL_MAX_AGE_HOURS:-24}"
     local max_count="${SKILLSMITH_CONTAINER_SPRAWL_MAX_COUNT:-3}"
     [[ "$max_age" =~ ^[0-9]+$ ]] || max_age=24
@@ -15,7 +18,7 @@ report_containers() {
 
     local worktrees now count=0 shown=0 ids
     # A failed enumeration would make every owned container read "orphaned".
-    if ! worktrees="$(enumerate_worktree_paths)"; then
+    if ! worktrees="$(enumerate_worktree_paths "$main_repo")"; then
         echo "Skillsmith container inventory: worktree enumeration failed -- not classifying"
         return 0
     fi
@@ -59,7 +62,6 @@ report_containers() {
     done <<< "$ids"
 
     if (( count > max_count )); then
-        # shellcheck disable=SC2154  # main_repo is set by the sourcing script
         findings+=("all-live"$'\t'"excessive"$'\t'"${count}/${max_count}"$'\t'"$main_repo")
     fi
     (( ${#findings[@]} == 0 )) && return 0

@@ -144,25 +144,13 @@ else
     main_repo="$repo_root"
 fi
 
-# The ONE reader of `git worktree list`: every consumer (protected set, control
-# name, container report) goes through here, so the status check below cannot be
-# skipped by a new caller. Output and status are captured SEPARATELY and the
-# listing is emitted only when git exited 0 -- a command that printed some
-# records and then failed would otherwise hand back a partial listing (SMI-6981).
-# `sed`, never `awk '{print $2}'`: awk stops at the first space, so a worktree
-# path containing one truncates and a LIVE worktree reads as unprotected. Tests
-# 1e/1f pin this extraction (live-worktree path / main-checkout path).
-enumerate_worktree_paths() {
-    local raw
-    raw="$(git -C "$main_repo" worktree list --porcelain 2>/dev/null)" || return 1
-    printf '%s\n' "$raw" | sed -n 's/^worktree //p'
-}
-
+# shellcheck source=lib/worktree-lifecycle.sh
+source "$SCRIPT_DIR/lib/worktree-lifecycle.sh"
 # shellcheck source=lib/report-sprawl-containers.sh
 source "$SCRIPT_DIR/lib/report-sprawl-containers.sh"
 
 if [[ "$REPORT_CONTAINERS" == true ]]; then
-    report_containers || exit 1
+    report_containers "$main_repo" || exit 1
     exit 0
 fi
 
@@ -196,71 +184,6 @@ label_of() {
     return 1
 }
 
-# derive_protected(): sanitized project names for the captured listing in $1,
-# UNIONED with a `.worktrees/*/` scan (names sanitizing alike only OVER-protect).
-# sanitize_project_name (_lib.sh) is the single sanitizer; its trailing newline
-# keeps consecutive names on separate lines for is_protected()'s exact match.
-derive_protected() {
-    local wt_paths="$1" wt_path base
-    while IFS= read -r wt_path; do
-        [[ -z "$wt_path" ]] && continue
-        base="$(basename "$wt_path")"
-        sanitize_project_name "$base"
-    done <<< "$wt_paths"
-
-    if [[ -d "$main_repo/.worktrees" ]]; then
-        local d
-        for d in "$main_repo"/.worktrees/*/; do
-            [[ -d "$d" ]] || continue
-            sanitize_project_name "$(basename "${d%/}")"
-        done
-    fi
-}
-
-# The positive control is derived INDEPENDENTLY of the listing it checks, from
-# this checkout's own toplevel (`git rev-parse --show-toplevel`): a control from
-# the same listing as the set cannot fail. Both queries print the PHYSICAL path
-# (measured for a symlinked parent, a final-component symlink and a case-differing
-# invocation) and sanitize lowercases, so a healthy run is not refused.
-derive_checkout_project() {
-    local top
-    top="$(git -C "$main_repo" rev-parse --show-toplevel 2>/dev/null)" || return 1
-    [[ -n "$top" ]] || return 1
-    sanitize_project_name "$(basename "$top")"
-}
-
-# derive_protected() alone fails OPEN: an empty listing makes every candidate
-# read as unprotected. This wrapper is its only caller and fails closed via
-# error() (exit 1; remove-worktree.sh degrades that to a warning). ONE read per
-# derivation feeds both the set and the check. The control is POSITIVE, not an
-# emptiness test: a failed enumeration leaves the set non-empty (the
-# `.worktrees/*/` scan) but missing this checkout's own name.
-derive_protected_or_die() {
-    local out self wt_paths
-    if ! wt_paths="$(enumerate_worktree_paths)"; then
-        error "\`git worktree list\` failed -- refusing to prune. A listing from a failed command may be missing later worktrees, so no protected set derived from it can be trusted."
-    fi
-    out="$(derive_protected "$wt_paths")"
-
-    if [[ -z "$wt_paths" ]]; then
-        error "\`git worktree list\` produced no worktree entry for this checkout -- refusing to prune. The canonical enumeration returned nothing, so no protected set can be trusted."
-    fi
-    if ! self="$(derive_checkout_project)"; then
-        error "could not independently identify this checkout (\`git rev-parse --show-toplevel\` failed) -- refusing to prune, because the protected set has no control to be checked against."
-    fi
-    # A basename made entirely of characters sanitize_project_name strips leaves
-    # this empty, and `grep -qxF "" <<< ""` MATCHES (here-strings append a
-    # newline), so the guard would pass in the state of maximum danger.
-    if [[ -z "$self" ]]; then
-        error "this checkout's project name sanitizes to the empty string -- refusing to prune, because an empty pattern would match an empty protected set and pass vacuously."
-    fi
-
-    if ! grep -qxF "$self" <<< "$out"; then
-        error "the derived protected set does not contain this checkout's own project name ('$self', from \`git rev-parse --show-toplevel\`) -- refusing to prune. \`git worktree list\` always lists this checkout, so this script's recovery of its output failed or the listing is wrong. The set may still be non-empty (a populated .worktrees/ contributes entries), which is why emptiness is not what is checked."
-    fi
-    printf '%s\n' "$out"
-}
-
 # Skillsmith-BUILT Compose projects that are not worktrees (SMI-7033). The
 # ownership label cannot distinguish these from a worktree's resources, and the
 # worktree-existence predicate cannot protect them, so they are named here.
@@ -272,11 +195,6 @@ is_own_non_worktree_project() {
         skillsmith-eval-cron|skillsmith-eval-cron-*) return 0 ;;
         *) return 1 ;;
     esac
-}
-
-is_protected() {
-    local project="$1" protected_set="$2"
-    grep -qxF "$project" <<< "$protected_set"
 }
 
 # Returns 0 (=> caller must SKIP) when containers are attached to the resource
@@ -311,7 +229,7 @@ classify_volume() {
     fi
 }
 
-protected="$(derive_protected_or_die)"
+protected="$(derive_protected_or_die "$main_repo")"
 
 if [[ -n "$ONLY_PROJECT" ]] && is_protected "$ONLY_PROJECT" "$protected"; then
     error "--only-project '$ONLY_PROJECT' is the main checkout or a live worktree -- refusing to prune."
@@ -369,7 +287,7 @@ done <<< "$vol_list"
 # TOCTOU narrowing (NOT elimination): re-derive the protected set immediately
 # before the delete loop. A concurrent create-worktree.sh can still register a
 # worktree after this and before `volume rm` -- accepted residual (risk 1).
-protected="$(derive_protected_or_die)"
+protected="$(derive_protected_or_die "$main_repo")"
 
 if (( ${#vol_candidates[@]} > 0 )); then
     for vol in "${vol_candidates[@]}"; do
@@ -401,7 +319,7 @@ fi
 # SMI-6981: re-derive AGAIN here -- the pre-volume-loop snapshot is a whole
 # deletion loop stale. This buys symmetry (each loop decides from a snapshot
 # taken immediately before it), not per-candidate worktree freshness.
-protected="$(derive_protected_or_die)"
+protected="$(derive_protected_or_die "$main_repo")"
 
 img_list=""
 if ! img_list="$(docker images --format '{{.Repository}}' 2>/dev/null)"; then
