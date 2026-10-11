@@ -275,7 +275,10 @@ async function main() {
     filter: { name: { containsIgnoreCase: 'phase 6' } },
   })
 
-  // SMI-6975: `project` is genuinely optional across this whole sequence (two
+  // SMI-6975, never type-checked: this file is BLOCKED (excluded from the
+  // scripts typecheck gate, because @linear/sdk is not installed), so the
+  // reasoning below is unverified by any compiler run (SMI-7060).
+  // `project` is genuinely optional across this whole sequence (two
   // separate `if (!project)` recovery attempts below) -- the un-annotated
   // `let project = projects.nodes[0]` locked its type to plain `Project`
   // instead (TS does not widen array-index access to `| undefined` here
