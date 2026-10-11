@@ -1,7 +1,9 @@
 /**
  * SMI-6114 — assertion arms for `registry_audit_volume_over_threshold()` (the volume monitor's
- * predicate; the pg_cron job and alert edge function are deferred to SMI-7050, so scheduling is
- * deliberately NOT tested). Exported functions are shared with the revert-then-restore block.
+ * predicate; the pg_cron job and alert edge function are SMI-7050's and are tested there --
+ * supabase/functions/registry-audit-volume-monitor/index.test.ts and
+ * scripts/tests/supabase/registry-audit-volume-*.test.ts -- so scheduling is deliberately NOT
+ * tested here). Exported functions are shared with the revert-then-restore block.
  *
  * @module scripts/tests/supabase/private-registry-audit-attempt.pg-monitor
  */
