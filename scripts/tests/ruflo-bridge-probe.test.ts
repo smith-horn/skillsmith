@@ -24,7 +24,7 @@
  * effect (spawn the launcher, take the bridge lock, write state). See that
  * file's own comment at the bottom for why the guard was added.
  */
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash, randomInt, randomUUID } from 'node:crypto'
 import {
   chmodSync,
@@ -457,9 +457,33 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
         // The real launcher ran: its first docker call is `ps ...`.
         expect(run.dockerCalls).toMatch(/^ps /m)
         expect(run.result.stderr).toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
-        expect(run.result.stderr).toContain('launching anyway')
+        expect(run.result.stderr).toContain('launch unaffected')
       } finally {
         cleanup(run)
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  it(
+    'a seam pointing at a FIFO with no reader cannot block the launch: the launcher runs and the probe exits on its own',
+    () => {
+      // A write that would BLOCK rather than throw (a FIFO with no reader, a
+      // stalled filesystem) is the case a try/catch cannot cover. The seam
+      // records only after spawn() and opens O_NONBLOCK, so the launcher has
+      // already run and the open fails at once with ENXIO (SMI-7032, gate round 3).
+      const fifoDir = makeFixtureTempDir('smi-7032-fifo')
+      const fifo = join(fifoDir, 'seam.fifo')
+      execFileSync('mkfifo', [fifo])
+      const run = runLaunching({ seam: fifo })
+      try {
+        expect(run.dockerCalls).toMatch(/^ps /m)
+        expect(run.result.error).toBeUndefined()
+        expect(run.result.signal).toBeNull()
+        expect(run.result.stderr).toContain('launch unaffected')
+      } finally {
+        cleanup(run)
+        rmSync(fifoDir, { recursive: true, force: true })
       }
     },
     TEST_BUDGET_MS
