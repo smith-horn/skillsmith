@@ -610,6 +610,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // lock-starvation detection for the skill indexer, service-role internal.
   // Mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
   'indexer-lock-starvation-monitor',
+  // SMI-7050: registry-audit-volume-monitor — pg_cron-invoked hourly volume
+  // monitor for client-reported registry audit rows (ADR-178 property 5).
+  // Authenticates its caller in-handler with isServiceRoleCallerBySecretCompare.
+  'registry-audit-volume-monitor',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
