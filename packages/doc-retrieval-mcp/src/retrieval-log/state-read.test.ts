@@ -424,27 +424,33 @@ describe('readEntryForUpdate', () => {
 
 describe('readStateWithClassification', () => {
   it('missing: classification missing, state {}', () => {
-    const result = readStateWithClassification<Record<string, unknown>>(statePath())
-    expect(result.classification).toBe('missing')
-    expect(result.state).toEqual({})
-    expect(typeof result.detail).toBe('string')
+    // Exact equality: pins the whole result shape, so a field reintroduced on
+    // this branch alone fails here, not just a changed value.
+    expect(readStateWithClassification<Record<string, unknown>>(statePath())).toEqual({
+      state: {},
+      classification: 'missing',
+      detail: expect.stringMatching(/\S/),
+    })
   })
 
   it('malformed: classification malformed, state {}', () => {
     const path = statePath()
     writeFileSync(path, 'not json{{{')
-    const result = readStateWithClassification<Record<string, unknown>>(path)
-    expect(result.classification).toBe('malformed')
-    expect(result.state).toEqual({})
-    expect(typeof result.detail).toBe('string')
+    expect(readStateWithClassification<Record<string, unknown>>(path)).toEqual({
+      state: {},
+      classification: 'malformed',
+      detail: expect.stringMatching(/\S/),
+    })
   })
 
   it('unreadable (directory in its place): classification unreadable, state {}', () => {
     const path = statePath()
     mkdirSync(path, { recursive: true })
-    const result = readStateWithClassification<Record<string, unknown>>(path)
-    expect(result.classification).toBe('unreadable')
-    expect(result.state).toEqual({})
+    expect(readStateWithClassification<Record<string, unknown>>(path)).toEqual({
+      state: {},
+      classification: 'unreadable',
+      detail: expect.stringMatching(/\S/),
+    })
   })
 
   it('never throws across every failure axis — the never-fail contract', () => {
