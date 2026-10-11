@@ -106,6 +106,18 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '  fi',
     '}',
     '',
+    // SMI-6981 interleaving seam: a `hook__<key>` file is run ONCE, synchronously,
+    // by the shim at the point the keyed call is made -- inside the pruner's own
+    // child, so it executes at a deterministic point of the run. Consumed by a
+    // rename to `.ran`, which is also the "the hook ran" presence proof.
+    'run_hook() {',
+    '  f="$RESP_DIR/hook__$1"',
+    '  if [ -n "$1" ] && [ -f "$f" ]; then',
+    '    mv "$f" "$f.ran"',
+    '    bash "$f.ran"',
+    '  fi',
+    '}',
+    '',
     // `ps`, `volume ls`, `images` (keys `container_ids`/`volume_ls`/`images`): a nonzero exit code, static (`exit__<key>`) or one per read
     // (`exit__<key>.seq`, consumed like `emit`'s), models a failing daemon query.
     'ps_exit() {',
@@ -147,6 +159,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '      inspect)',
     '        vol="$3"',
     '        fmt="$5"',
+    '        run_hook "volume_inspect__${vol}"',
     '        case "$fmt" in',
     '          *compose.volume*) emit "volume_inspect__${vol}__volume" ;;',
     '          *compose.project*) emit "volume_inspect__${vol}__project" ;;',
@@ -155,6 +168,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        exit 0',
     '        ;;',
     '      rm)',
+    '        run_hook "volume_rm__$3"',
     '        exit_override "volume_rm__$3"',
     '        ;;',
     '    esac',
@@ -180,6 +194,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '    exit 0',
     '    ;;',
     '  rmi)',
+    '    run_hook "rmi__$2"',
     '    exit_override "rmi__$2"',
     '    ;;',
     '  ps)',
@@ -195,6 +210,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        ancestor=*) key="ps_ancestor__${arg#ancestor=}" ;;',
     '      esac',
     '    done',
+    '    run_hook "$key"',
     '    ps_exit "$key"',
     '    emit "$key"',
     '    exit 0',
@@ -355,90 +371,13 @@ export function resetLog(fixture: FixtureRepo): void {
   }
 }
 
-/**
- * Make `git worktree list` fail while leaving every other git subcommand
- * working, by shadowing `git` on the fixture's PATH.
- *
- * This is the failure mode `derive_protected_or_die` exists for, and it is NOT
- * the same as "the protected set is empty": the `.worktrees/*` scan still
- * contributes entries, so the set comes back non-empty but WITHOUT the main
- * checkout's own name. Pass `withWorktreeDirs` to reproduce that shape.
- */
-export function breakGitWorktreeList(fixture: FixtureRepo, withWorktreeDirs: string[] = []): void {
-  for (const name of withWorktreeDirs) {
-    mkdirSync(join(fixture.repoDir, '.worktrees', name), { recursive: true })
-  }
-  const shim = [
-    '#!/usr/bin/env bash',
-    '# Fail ONLY `worktree list`; delegate everything else to the real git, so',
-    '# the fixture repo still works and the test isolates one failure.',
-    // Require `list` to be the arg IMMEDIATELY after `worktree`, not merely
-    // somewhere after it. A looser scan also rejects `worktree add -b list
-    // <path>` and `worktree remove list` -- unreachable from this script, which
-    // runs neither, but a shim that fails more than the one call it names
-    // cannot isolate anything.
-    'prev=""',
-    'for a in "$@"; do',
-    '  if [ "$prev" = "worktree" ] && [ "$a" = "list" ]; then',
-    '    echo "fatal: simulated worktree-list failure" >&2',
-    '    exit 128',
-    '  fi',
-    '  prev="$a"',
-    'done',
-    '# Strip this shim dir from PATH so the lookup finds the real binary.',
-    'CLEAN_PATH="$(printf %s "$PATH" | tr ":" "\\n" | grep -vxF "$(dirname "$0")" | paste -sd: -)"',
-    'exec env PATH="$CLEAN_PATH" git "$@"',
-  ].join('\n')
-  const p = join(fixture.binDir, 'git')
-  writeFileSync(p, `${shim}\n`)
-  chmodSync(p, 0o755)
-}
-
-/**
- * Fail an arbitrary SUBSET of `git worktree list` invocations, by 1-based call
- * index, and count every invocation (SMI-6981).
- *
- * `breakGitWorktreeList` fails EVERY call, which cannot distinguish a script
- * that reads the enumeration once from one that reads it twice and compares
- * the two answers: with all calls failing both reads agree on "nothing" and the
- * guard refuses. The unsafe states only exist when the reads DISAGREE, so the
- * shim has to fail some and not others.
- *
- * Every call (failed or not) appends a line to the count file, which is the
- * presence proof: a test asserting "nothing was deleted" must also show the
- * shim was reached, or it passes when the script never enumerated at all.
- */
-export function failGitWorktreeListCalls(fixture: FixtureRepo, failSet: number[]): void {
-  const shim = [
-    '#!/usr/bin/env bash',
-    `FAIL_SET=",${failSet.join(',')},"`,
-    'COUNT_FILE="$(dirname "$0")/../git-worktree-list.count"',
-    'prev=""',
-    'is_list=0',
-    'for a in "$@"; do',
-    '  if [ "$prev" = "worktree" ] && [ "$a" = "list" ]; then is_list=1; fi',
-    '  prev="$a"',
-    'done',
-    'if [ "$is_list" = 1 ]; then',
-    '  echo x >> "$COUNT_FILE"',
-    '  n="$(wc -l < "$COUNT_FILE" | tr -d " ")"',
-    '  case "$FAIL_SET" in',
-    '    *",$n,"*) echo "fatal: simulated worktree-list failure (call $n)" >&2; exit 128 ;;',
-    '  esac',
-    'fi',
-    'CLEAN_PATH="$(printf %s "$PATH" | tr ":" "\\n" | grep -vxF "$(dirname "$0")" | paste -sd: -)"',
-    'exec env PATH="$CLEAN_PATH" git "$@"',
-  ].join('\n')
-  const p = join(fixture.binDir, 'git')
-  writeFileSync(p, `${shim}\n`)
-  chmodSync(p, 0o755)
-}
-
-/** How many `git worktree list` calls the script made (see failGitWorktreeListCalls). */
-export function worktreeListCallCount(fixture: FixtureRepo): number {
-  const f = join(fixture.tempRoot, 'git-worktree-list.count')
-  return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0
-}
+// The git-failure shims live in the sibling .shims.ts (500-line gate);
+// re-exported here so existing imports keep working.
+export {
+  breakGitWorktreeList,
+  failGitWorktreeListCalls,
+  worktreeListCallCount,
+} from './prune-orphaned-docker-volumes.shims.js'
 
 export function containerResponses(
   fixture: FixtureRepo,

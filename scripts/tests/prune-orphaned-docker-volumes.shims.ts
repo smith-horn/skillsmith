@@ -3,7 +3,7 @@
  * Split from the sibling helpers file to keep it under the 500-line gate.
  */
 
-import { writeFileSync, chmodSync, mkdirSync, existsSync, renameSync } from 'fs'
+import { writeFileSync, chmodSync, mkdirSync, existsSync, readFileSync, renameSync } from 'fs'
 import { join } from 'path'
 
 import type { FixtureRepo } from './prune-orphaned-docker-volumes.helpers.js'
@@ -161,4 +161,89 @@ export function shimDockerFailures(
   const p = join(fixture.binDir, 'docker')
   writeFileSync(p, `${shim}\n`)
   chmodSync(p, 0o755)
+}
+
+/**
+ * Make `git worktree list` fail while leaving every other git subcommand
+ * working, by shadowing `git` on the fixture's PATH.
+ *
+ * This is the failure mode `derive_protected_or_die` exists for, and it is NOT
+ * the same as "the protected set is empty": the `.worktrees/*` scan still
+ * contributes entries, so the set comes back non-empty but WITHOUT the main
+ * checkout's own name. Pass `withWorktreeDirs` to reproduce that shape.
+ */
+export function breakGitWorktreeList(fixture: FixtureRepo, withWorktreeDirs: string[] = []): void {
+  for (const name of withWorktreeDirs) {
+    mkdirSync(join(fixture.repoDir, '.worktrees', name), { recursive: true })
+  }
+  const shim = [
+    '#!/usr/bin/env bash',
+    '# Fail ONLY `worktree list`; delegate everything else to the real git, so',
+    '# the fixture repo still works and the test isolates one failure.',
+    // Require `list` to be the arg IMMEDIATELY after `worktree`, not merely
+    // somewhere after it. A looser scan also rejects `worktree add -b list
+    // <path>` and `worktree remove list` -- unreachable from this script, which
+    // runs neither, but a shim that fails more than the one call it names
+    // cannot isolate anything.
+    'prev=""',
+    'for a in "$@"; do',
+    '  if [ "$prev" = "worktree" ] && [ "$a" = "list" ]; then',
+    '    echo "fatal: simulated worktree-list failure" >&2',
+    '    exit 128',
+    '  fi',
+    '  prev="$a"',
+    'done',
+    '# Strip this shim dir from PATH so the lookup finds the real binary.',
+    'CLEAN_PATH="$(printf %s "$PATH" | tr ":" "\\n" | grep -vxF "$(dirname "$0")" | paste -sd: -)"',
+    'exec env PATH="$CLEAN_PATH" git "$@"',
+  ].join('\n')
+  const p = join(fixture.binDir, 'git')
+  writeFileSync(p, `${shim}\n`)
+  chmodSync(p, 0o755)
+}
+
+/**
+ * Fail an arbitrary SUBSET of `git worktree list` invocations, by 1-based call
+ * index, and count every invocation (SMI-6981).
+ *
+ * `breakGitWorktreeList` fails EVERY call, which cannot distinguish a script
+ * that reads the enumeration once from one that reads it twice and compares
+ * the two answers: with all calls failing both reads agree on "nothing" and the
+ * guard refuses. The unsafe states only exist when the reads DISAGREE, so the
+ * shim has to fail some and not others.
+ *
+ * Every call (failed or not) appends a line to the count file, which is the
+ * presence proof: a test asserting "nothing was deleted" must also show the
+ * shim was reached, or it passes when the script never enumerated at all.
+ */
+export function failGitWorktreeListCalls(fixture: FixtureRepo, failSet: number[]): void {
+  const shim = [
+    '#!/usr/bin/env bash',
+    `FAIL_SET=",${failSet.join(',')},"`,
+    'COUNT_FILE="$(dirname "$0")/../git-worktree-list.count"',
+    'prev=""',
+    'is_list=0',
+    'for a in "$@"; do',
+    '  if [ "$prev" = "worktree" ] && [ "$a" = "list" ]; then is_list=1; fi',
+    '  prev="$a"',
+    'done',
+    'if [ "$is_list" = 1 ]; then',
+    '  echo x >> "$COUNT_FILE"',
+    '  n="$(wc -l < "$COUNT_FILE" | tr -d " ")"',
+    '  case "$FAIL_SET" in',
+    '    *",$n,"*) echo "fatal: simulated worktree-list failure (call $n)" >&2; exit 128 ;;',
+    '  esac',
+    'fi',
+    'CLEAN_PATH="$(printf %s "$PATH" | tr ":" "\\n" | grep -vxF "$(dirname "$0")" | paste -sd: -)"',
+    'exec env PATH="$CLEAN_PATH" git "$@"',
+  ].join('\n')
+  const p = join(fixture.binDir, 'git')
+  writeFileSync(p, `${shim}\n`)
+  chmodSync(p, 0o755)
+}
+
+/** How many `git worktree list` calls the script made (see failGitWorktreeListCalls). */
+export function worktreeListCallCount(fixture: FixtureRepo): number {
+  const f = join(fixture.tempRoot, 'git-worktree-list.count')
+  return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0
 }

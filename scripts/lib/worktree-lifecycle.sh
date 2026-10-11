@@ -97,3 +97,281 @@ is_protected() {
     local project="$1" protected_set="$2"
     grep -qxF "$project" <<< "$protected_set"
 }
+
+# ---------------------------------------------------------------------------
+# The worktree lifecycle lock (SMI-6981, ADR-180)
+#
+# One kernel-released flock(2) on the git COMMON DIRECTORY inode serialises a
+# sanctioned worktree registration (create-worktree.sh) against a per-project
+# Docker delete (the orphan pruner). Bash opens the directory read-only on fd 7;
+# a short perl child flocks that inherited descriptor and exits, and the lock
+# stays with bash's open file description until bash closes fd 7 or dies. No lock
+# file exists, so there is nothing to unlink and no takeover or age-based reclaim:
+# the kernel is the only releaser. Replacing the directory itself is tampering
+# and is DETECTED (fstat of fd 7 against stat of the path) at acquire, at every
+# in-lock check, and as the last operation before each delete.
+#
+# Rules for callers: never run hooks, the pruner or create-worktree.sh while
+# holding it; every child that runs under it closes fd 7 (`7<&-`); a non-zero
+# acquire code is NEVER "acquired". fd 7 is reserved for this lock.
+# ---------------------------------------------------------------------------
+
+WORKTREE_LIFECYCLE_LOCK_HELD=0
+WORKTREE_LIFECYCLE_LOCK_PATH=""
+_WTL_LAST_COMMON=""
+_WTL_LAST_WAIT=""
+_WTL_LAST_WHO=""
+
+# One perl program, three modes. `acquire` and `same` run against the inherited
+# fd 7; `probe` opens the directory independently and must be REFUSED.
+# Exit codes are the acquire/assert codes documented below.
+IFS= read -r -d '' _WTL_PERL_LOCK <<'PERL' || true
+use strict; use warnings;
+use Fcntl qw(:flock);
+use POSIX qw(EWOULDBLOCK EAGAIN);
+use Time::HiRes qw(time sleep);
+my ($mode, $common, $wait) = @ARGV;
+sub same_inode {
+    my @a = stat($_[0]); my @b = stat($common);
+    return (@a && @b && $a[0] == $b[0] && $a[1] == $b[1]) ? 1 : 0;
+}
+sub busy { return ($! == EWOULDBLOCK || $! == EAGAIN) ? 1 : 0; }
+if ($mode eq 'acquire') {
+    open(my $fh, '<&=', 7) or exit 73;
+    my $deadline = time() + $wait;
+    until (flock($fh, LOCK_EX | LOCK_NB)) {
+        exit 73 unless busy();
+        exit 75 if time() >= $deadline;
+        sleep(0.1);
+    }
+    exit(same_inode($fh) ? 0 : 72);
+}
+if ($mode eq 'same') {
+    open(my $fh, '<&=', 7) or exit 70;
+    exit(same_inode($fh) ? 0 : 72);
+}
+if ($mode eq 'probe') {
+    open(my $fh, '<', $common) or exit 73;
+    exit 74 if flock($fh, LOCK_EX | LOCK_NB);
+    exit(busy() ? 0 : 74);
+}
+exit 2;
+PERL
+
+# Fork/TERM/KILL supervisor: runs a command for at most $1 seconds. The child
+# gets its own process group so TERM, then (after a 2 s grace) KILL, reaches
+# anything it spawned. Exit 124 on timeout, 127 if the command cannot be
+# executed, otherwise the child's own status (a signal death becomes 128+n).
+# alarm+exec is NOT usable here: the Go docker CLI ignores SIGALRM (measured).
+IFS= read -r -d '' _WTL_PERL_BOUNDED <<'PERL' || true
+use strict; use warnings; no warnings 'exec';
+use POSIX qw(:sys_wait_h);
+use Time::HiRes qw(time sleep);
+my $secs = shift @ARGV;
+my $pid = fork();
+defined $pid or exit 127;
+if ($pid == 0) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit 127; }
+sub status {
+    my $s = shift;
+    return WIFEXITED($s) ? WEXITSTATUS($s) : (WIFSIGNALED($s) ? 128 + WTERMSIG($s) : 1);
+}
+my $deadline = time() + $secs;
+while (1) {
+    my $r = waitpid($pid, WNOHANG);
+    exit status($?) if $r == $pid;
+    exit 127 if $r < 0;
+    last if time() >= $deadline;
+    sleep(0.05);
+}
+kill 'TERM', -$pid; kill 'TERM', $pid;
+my $grace = time() + 2;
+while (time() < $grace) {
+    my $r = waitpid($pid, WNOHANG);
+    if ($r == $pid || $r < 0) { kill 'KILL', -$pid; exit 124; }
+    sleep(0.05);
+}
+kill 'KILL', -$pid; kill 'KILL', $pid;
+waitpid($pid, 0);
+exit 124;
+PERL
+
+# Allow-list of filesystems whose flock(2) is known to exclude local processes.
+# Darwin: apfs, hfs. Linux: exactly overlayfs and tmpfs, the two strings measured
+# with the lock semantics confirmed; ext4/xfs/btrfs are unmeasured and fail
+# closed until someone measures them. Network and FUSE filesystems are
+# unsupported. Anything unreadable, empty or unlisted returns 1.
+worktree_lifecycle_fs_supported() {
+    local path="$1" fstype="" dev line mp opts mdev
+    case "$(uname -s 2>/dev/null)" in
+        Darwin)
+            dev="$(stat -f %d "$path" 2>/dev/null)" || return 1
+            [[ -n "$dev" ]] || return 1
+            # st_dev matched against each mount point, not a path prefix: safe
+            # across firmlinks. Line shape: "<dev> on <mountpoint> (<type>, <opts>)".
+            while IFS= read -r line; do
+                mp="${line#* on }"
+                mp="${mp% (*}"
+                opts="${line##* (}"
+                mdev="$(stat -f %d "$mp" 2>/dev/null)" || continue
+                if [[ "$mdev" == "$dev" ]]; then
+                    fstype="${opts%%,*}"
+                    fstype="${fstype%)}"
+                    break
+                fi
+            done < <(mount 2>/dev/null)
+            case "$fstype" in apfs|hfs) return 0 ;; esac
+            ;;
+        Linux)
+            fstype="$(stat -f -c %T "$path" 2>/dev/null)" || return 1
+            case "$fstype" in overlayfs|tmpfs) return 0 ;; esac
+            ;;
+    esac
+    return 1
+}
+
+# Acquire codes: 0 acquired; 2 re-entry refused; 72 lock identity changed;
+# 73 common dir unresolvable, not a directory or unopenable; 74 the lock does not
+# exclude (self-probe); 75 busy past the deadline; 76 unsupported filesystem;
+# 127 perl missing. 70 (assert only): fd 7 is not open.
+worktree_lifecycle_lock_acquire() {
+    local main_repo="$1" wait_s="$2" who="$3" common rc
+    _WTL_LAST_COMMON=""
+    _WTL_LAST_WAIT="$wait_s"
+    _WTL_LAST_WHO="$who"
+    [[ "${WORKTREE_LIFECYCLE_LOCK_HELD:-0}" == 1 ]] && return 2
+    command -v perl >/dev/null 2>&1 || return 127
+    common="$(git -C "$main_repo" rev-parse --path-format=absolute --git-common-dir 7<&- 2>/dev/null)" || return 73
+    [[ -n "$common" && -d "$common" ]] || return 73
+    _WTL_LAST_COMMON="$common"
+    worktree_lifecycle_fs_supported "$common" || return 76
+    exec 7<"$common" || return 73
+    if perl -e "$_WTL_PERL_LOCK" -- acquire "$common" "$wait_s" </dev/null; then rc=0; else rc=$?; fi
+    if [[ "$rc" -ne 0 ]]; then
+        exec 7<&-
+        return "$rc"
+    fi
+    # Positive control on every acquire: an independent open must be refused, or
+    # a no-op flock (fcntl emulation, a filesystem that does not exclude) would
+    # read as "held".
+    if ! perl -e "$_WTL_PERL_LOCK" -- probe "$common" 7<&- </dev/null; then
+        exec 7<&-
+        return 74
+    fi
+    WORKTREE_LIFECYCLE_LOCK_HELD=1
+    WORKTREE_LIFECYCLE_LOCK_PATH="$common"
+    return 0
+}
+
+# 0 while fd 7 is still the lock's directory; 70 not held; 72 replaced.
+worktree_lifecycle_lock_assert_held() {
+    [[ "${WORKTREE_LIFECYCLE_LOCK_HELD:-0}" == 1 ]] || return 70
+    perl -e "$_WTL_PERL_LOCK" -- same "$WORKTREE_LIFECYCLE_LOCK_PATH" </dev/null
+}
+
+worktree_lifecycle_lock_release() {
+    exec 7<&-
+    WORKTREE_LIFECYCLE_LOCK_HELD=0
+    WORKTREE_LIFECYCLE_LOCK_PATH=""
+}
+
+# Wait/timeout tunables: a non-negative integer from the environment, else $2.
+_wtl_uint_env() {
+    local value="${!1:-}"
+    if [[ "$value" =~ ^[0-9]+$ ]]; then printf '%s' "$value"; else printf '%s' "$2"; fi
+}
+
+# Diagnostic text for a non-zero acquire/assert code. Never feeds a decision.
+worktree_lifecycle_lock_message() {
+    local rc="$1" common="${_WTL_LAST_COMMON:-<unresolved>}" holders="lsof unavailable"
+    case "$rc" in
+        75)
+            if command -v lsof >/dev/null 2>&1; then
+                holders="$(lsof -t -- "$common" 2>/dev/null | tr '\n' ' ' || true)"
+                holders="PIDs holding it open: ${holders:-none found}"
+            fi
+            echo "the worktree lifecycle lock is busy: another create-worktree.sh or orphan prune holds it (${_WTL_LAST_WHO} waited ${_WTL_LAST_WAIT}s on $common; $holders). The kernel releases it when its holder exits."
+            ;;
+        72) echo "the worktree lifecycle lock identity changed: the git common directory $common was replaced while it was held." ;;
+        73) echo "could not resolve or open the git common directory (${common}) for the worktree lifecycle lock." ;;
+        74) echo "the worktree lifecycle lock on $common does not exclude other processes (a second open acquired it)." ;;
+        76) echo "the git common directory $common is on a filesystem the worktree lifecycle lock does not support (apfs/hfs on macOS; overlayfs/tmpfs on Linux)." ;;
+        127) echo "perl is required for the worktree lifecycle lock and was not found on PATH." ;;
+        2) echo "internal error: the worktree lifecycle lock is already held by this process." ;;
+        *) echo "unexpected worktree lifecycle lock failure (code $rc)." ;;
+    esac
+}
+
+# worktree_lifecycle_bounded SECONDS CMD ARGS... -- see _WTL_PERL_BOUNDED.
+# `7<&-`: the command never inherits the lock.
+worktree_lifecycle_bounded() {
+    local secs="$1"
+    shift
+    perl -e "$_WTL_PERL_BOUNDED" -- "$secs" "$@" 7<&- </dev/null
+}
+
+# worktree_lifecycle_delete MAIN_REPO PROJECT DRY_RUN KIND NAME
+#
+# The ONE critical section for a liveness-keyed Docker delete (KIND is `volume`
+# or `image`). Inside it, the liveness read and the lock-identity check are the
+# LAST operations before the single bounded delete. Returns 0 on removed, gone,
+# live-now or dry-run, 1 on a delete the caller must count as failed. Exits (via
+# error) when the lock, the liveness read or the identity cannot be established,
+# or the delete's outcome is unknown: nothing further is deleted.
+#
+# This function is always called from a `||` context, which suppresses errexit
+# inside it, so no step below relies on errexit: the re-read is `x="$(...)" ||
+# error ...` and the delete status is captured with if/else.
+worktree_lifecycle_delete() {
+    local main_repo="$1" project="$2" dry_run="$3" kind="$4" name="$5"
+    local rc fresh out drc wait_s rm_timeout label
+    local -a rm_cmd
+    wait_s="$(_wtl_uint_env SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT 30)"
+    rm_timeout="$(_wtl_uint_env SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT 60)"
+    if [[ "$kind" == volume ]]; then
+        rm_cmd=(docker volume rm "$name")
+        label=Volume
+    else
+        rm_cmd=(docker rmi "$name")
+        label=Image
+    fi
+
+    if worktree_lifecycle_lock_acquire "$main_repo" "$wait_s" pruner; then rc=0; else rc=$?; fi
+    if [[ "$rc" -ne 0 ]]; then
+        error "$(worktree_lifecycle_lock_message "$rc") Nothing further deleted; re-run once the cause is fixed."
+    fi
+    fresh="$(derive_protected_or_die "$main_repo")" \
+        || error "liveness re-read under the worktree lifecycle lock failed -- deleting nothing further."
+    if is_protected "$project" "$fresh"; then
+        echo "LIVE NOW: $name (a worktree for '$project' appeared) -- not deleted"
+        worktree_lifecycle_lock_release
+        return 0
+    fi
+    if worktree_lifecycle_lock_assert_held; then rc=0; else rc=$?; fi
+    if [[ "$rc" -ne 0 ]]; then
+        error "worktree lifecycle lock identity could not be confirmed (code $rc; was the git common directory replaced?) -- deleting nothing further."
+    fi
+    if [[ "$dry_run" == true ]]; then
+        info "[dry-run] would remove $kind $name"
+        worktree_lifecycle_lock_release
+        return 0
+    fi
+    if out="$(worktree_lifecycle_bounded "$rm_timeout" "${rm_cmd[@]}" 2>&1)"; then drc=0; else drc=$?; fi
+    worktree_lifecycle_lock_release
+    case "$drc" in
+        0)
+            success "  Removed $kind $name"
+            ;;
+        124)
+            error "${rm_cmd[*]} timed out after ${rm_timeout}s: its outcome is UNKNOWN and the daemon may still run it -- deleting nothing further."
+            ;;
+        *)
+            if grep -qi "no such $kind" <<< "$out"; then
+                info "  $label $name already gone"
+            else
+                warn "  Could not remove $kind $name (${out:-no output})"
+                return 1
+            fi
+            ;;
+    esac
+    return 0
+}

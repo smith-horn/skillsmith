@@ -37,11 +37,31 @@
 # A listing, label read or delete that fails (other than the object being gone)
 # is skipped AND makes the run exit 1, so it never reads as "nothing to prune".
 #
+# Concurrency (SMI-6981, ADR-180). Every delete is a critical section under the
+# worktree lifecycle lock (lib/worktree-lifecycle.sh): a kernel-released flock on
+# the git common directory that create-worktree.sh also takes around `git worktree
+# add`. Inside it the liveness read and the lock-identity check are the last
+# operations before the one bounded `docker volume rm` / `rmi`.
+#   G1. A worktree registered by create-worktree.sh is never deleted from after
+#       its registration became observable -- while ALL of these hold: C1 it was
+#       created through create-worktree.sh; C2 the common directory inode is not
+#       replaced (detected at each check, NOT after the final check before the
+#       delete); C3 no creator skips the lock (it has no opt-out); C4 the
+#       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
+#       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
+#       outcome the daemon may still execute; the run stops with exit 1).
+#   G2. A worktree registered WITHOUT the lock (plain `git worktree add`, the
+#       Claude Code harness, any other tool) is not excluded. The in-lock liveness
+#       read shrinks the race to the gap between that read and the delete, which
+#       is not zero and not measured. Inside it this script can DELETE DATA the
+#       new worktree meant to reuse (a populated node_modules or native-seed
+#       volume) or one Compose has already decided exists. Possible data loss,
+#       accepted by design and tracked in SMI-7033 / SMI-7046.
+# Fail-closed: an unobtainable lock, filesystem type, liveness read or identity
+# deletes nothing further and exits 1.
+#
 # Residual risks (accepted, NOT eliminated):
-#   1. TOCTOU -- narrowed, not eliminated. The protected set is re-derived
-#      before each delete loop and attachment + ownership re-read immediately
-#      before each `volume rm` / `rmi`, but nothing locks: a concurrent
-#      create-worktree.sh can register a worktree after the last check.
+#   1. See G2 above.
 #   2. Cross-repo -- eliminated (SMI-6981): another repo's resource is never
 #      auto-deleted, and --only-project cannot name a project into scope that
 #      lacks the ownership label.
@@ -61,7 +81,9 @@
 #                          dev containers; mutate nothing.
 #
 # Opt-out: SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 skips the prune entirely (exit
-# 0), used when invoked from remove-worktree.sh. Registered in
+# 0), used when invoked from remove-worktree.sh. It is the only switch: the lock
+# has no off-switch on either side. Tuning: SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT
+# (seconds per section, default 30), SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT (default 60). Registered in
 # docs/internal/process/guards-and-opt-outs.md (SMI-5418).
 
 set -euo pipefail
@@ -284,15 +306,13 @@ while IFS= read -r vol; do
     vol_candidates+=("$vol")
 done <<< "$vol_list"
 
-# TOCTOU narrowing (NOT elimination): re-derive the protected set immediately
-# before the delete loop. A concurrent create-worktree.sh can still register a
-# worktree after this and before `volume rm` -- accepted residual (risk 1).
-protected="$(derive_protected_or_die "$main_repo")"
-
+# Every delete below runs inside worktree_lifecycle_delete (lib/worktree-lifecycle.sh):
+# one critical section per candidate under the worktree lifecycle lock, with the
+# liveness read and the lock-identity check as the last operations before the one
+# bounded delete. The protected set sampled above only pre-filters candidates.
 if (( ${#vol_candidates[@]} > 0 )); then
     for vol in "${vol_candidates[@]}"; do
         classify_volume "$vol" || continue
-        is_protected "$project" "$protected" && continue
         # SMI-6981: re-evaluate attachment and ownership against the object as it
         # is now -- the two NON-CIRCULAR components. Shape and project labels are
         # not re-read: both derive from the candidate's own name, so re-reading
@@ -302,25 +322,11 @@ if (( ${#vol_candidates[@]} > 0 )); then
         attached_or_unknown "volume=$vol" && continue
         label_of volume "$vol" app.skillsmith.owned recheck_owned || continue
         [[ "$recheck_owned" == "true" ]] || continue
-        if [[ "$DRY_RUN" == true ]]; then
-            info "[dry-run] would remove volume $vol"
-        elif rm_out="$(docker volume rm "$vol" 2>&1)"; then
-            success "  Removed volume $vol"
-        elif grep -qi 'no such volume' <<< "$rm_out"; then
-            info "  Volume $vol already gone"
-        else
-            warn "  Could not remove volume $vol (${rm_out:-no output})"
-            OP_FAILED=true
-        fi
+        worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" volume "$vol" || OP_FAILED=true
     done
 fi
 
-# --- images: same existence + ownership checks, against the re-derived set ---
-# SMI-6981: re-derive AGAIN here -- the pre-volume-loop snapshot is a whole
-# deletion loop stale. This buys symmetry (each loop decides from a snapshot
-# taken immediately before it), not per-candidate worktree freshness.
-protected="$(derive_protected_or_die "$main_repo")"
-
+# --- images: same existence + ownership checks, each delete in its own section ---
 img_list=""
 if ! img_list="$(docker images --format '{{.Repository}}' 2>/dev/null)"; then
     warn "Could not list images (docker images failed) -- no image candidates considered"
@@ -365,16 +371,7 @@ while IFS= read -r img; do
     label_of image "$img" app.skillsmith.owned recheck_owned || continue
     [[ "$recheck_owned" == "true" ]] || continue
 
-    if [[ "$DRY_RUN" == true ]]; then
-        info "[dry-run] would remove image $img"
-    elif rm_out="$(docker rmi "$img" 2>&1)"; then
-        success "  Removed image $img"
-    elif grep -qi 'no such image' <<< "$rm_out"; then
-        info "  Image $img already gone"
-    else
-        warn "  Could not remove image $img (${rm_out:-no output})"
-        OP_FAILED=true
-    fi
+    worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" image "$img" || OP_FAILED=true
 done <<< "$img_list"
 
 if [[ "$LISTING_FAILED" == true || "$OP_FAILED" == true ]]; then

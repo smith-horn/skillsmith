@@ -461,11 +461,12 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
   // the answers sees two matching "nothing"s and refuses -- the disagreement the
   // double read makes possible never occurs. It needs a stray `.worktrees/<main
   // checkout's name>/` directory (so the scan alone can put the control name in
-  // the set) plus a read that fails while the control's read succeeds: with calls
-  // 1 and 3 failing, derivation 1 and 2 each build their SET from the failed read
-  // and their CONTROL from the good one, the guard passes, and a live worktree's
-  // volume is removed. Failing only call 1 is safe (derivation 2 recovers), which
-  // is why a single-index or all-index shim could not find this.
+  // the set) plus a read that fails while the control's read succeeds: with a
+  // double read per derivation, failing alternate calls builds the SET from the
+  // failed read and the CONTROL from the good one, the guard passes, and a live
+  // worktree's volume is removed. The lock design reads once per derivation (the
+  // sample, then one in-lock read per delete-eligible candidate), so the fail
+  // sets below are indexed against THAT sequence: [1,2], [1] and [2].
   const liveVolumeFixture = (name: string) => {
     const fixture = setupFixture(name)
     tempDirs.push(fixture.tempRoot)
@@ -484,7 +485,8 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
   it('1g. a partially failing enumeration never deletes a live worktree volume (read once per derivation)', () => {
     // Known-positive control: healthy enumeration. The orphan IS deleted, so the
     // absence assertions below can observe a deletion, and the shim is reached
-    // exactly once per derivation -- three, for the two volume phases + images.
+    // exactly once per derivation -- two: the :314-style sample plus one in-lock
+    // read for the single delete-eligible candidate (SMI-6981 lock).
     const healthy = liveVolumeFixture('prune-snapshot-control')
     failGitWorktreeListCalls(healthy, [])
     const ok = runPrune(healthy, only('gone'))
@@ -492,7 +494,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(ok.dockerCalls.some((c) => deletesVolume(c, 'gone_node_modules'))).toBe(true)
     expect(ok.dockerCalls.some((c) => deletesVolume(c, 'wt-a_node_modules'))).toBe(false)
 
-    for (const failSet of [[1, 3], [1], [3], [1, 3, 5]]) {
+    for (const failSet of [[1, 2], [1], [2]]) {
       const fixture = liveVolumeFixture('prune-snapshot-failset')
       failGitWorktreeListCalls(fixture, failSet)
       const result = runPrune(fixture, only('gone'))
@@ -507,14 +509,14 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     // The property itself, on the case that defeated the double read: call 1
     // fails, so the first (and only) read is empty and the run refuses.
     const refused = liveVolumeFixture('prune-snapshot-refuse')
-    failGitWorktreeListCalls(refused, [1, 3])
+    failGitWorktreeListCalls(refused, [1, 2])
     const r = runPrune(refused, only('gone'))
     expect(r.status).toBe(1)
     expect(r.stderr).toContain('failed -- refusing to prune')
     expect(worktreeListCallCount(refused)).toBe(1)
     // Last, deliberately: the behavioural assertions above must be what fails
     // first if a second read is reintroduced; this one only pins the mechanism.
-    expect(worktreeListCallCount(healthy)).toBe(3)
+    expect(worktreeListCallCount(healthy)).toBe(2)
   })
 
   it('1i. a listing cut short by a nonzero exit is refused, never used as the protected set (SMI-6981 round 3)', () => {
