@@ -432,7 +432,12 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
       try {
         expect(run.result.error).toBeUndefined()
         expect(run.result.signal).toBeNull()
-        expect(run.dockerCalls).toMatch(/^ps /m)
+        // The launcher's own Check 1 invocation, whole line: a bare `docker ps`
+        // from anywhere else does not satisfy it, so this pins that the
+        // launcher itself ran, not merely that something touched docker.
+        expect(run.dockerCalls.split('\n')).toContain(
+          'ps --filter name=^/skillsmith-ruflo-1$ --filter status=running -q'
+        )
       } finally {
         rmSync(run.sandbox, { recursive: true, force: true })
         rmSync(run.shimDir, { recursive: true, force: true })
