@@ -35,8 +35,7 @@
 // Spec: docs/internal/implementation/smi-6744-bridge-verdict-consumer.md.
 
 import { execFileSync, spawn } from 'node:child_process'
-import { constants as FS, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { open as openFile } from 'node:fs/promises'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -152,54 +151,9 @@ function resolveHostKey() {
 }
 
 // ---- Minimal stdio JSON-RPC client (modeled on scripts/ruflo-acceptance/mcp-probe.mjs) ----
-// TEST-ONLY seam (SMI-7032): when set to a file path AND running under vitest
-// (VITEST === 'true', the value vitest sets), every launcher spawn is recorded there as
-// `launcher invoked: <path>`, so a test can assert ZERO invocations on the
-// debounce path at the launcher boundary itself rather than inferring it from a
-// downstream `docker` call.
-//
-// INVARIANT: the seam can never change whether or when the real launcher
-// starts. That holds by construction, not by care: the record is made only
-// AFTER spawn() has returned, asynchronously, through a file opened
-// O_NONBLOCK (a FIFO with no reader fails at once with ENXIO instead of
-// hanging), and every failure -- including a failing diagnostic write -- is
-// swallowed. Outside vitest the seam is ignored. A stderr note names the
-// variable whenever it is set but ignored or unwritable, so an accidentally
-// inherited setting is visible.
-const LAUNCHER_INVOKE_LOG_TEST_VAR = 'SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST'
-
-/** A diagnostic must never be able to affect the probe: a failing write is dropped. */
-function safeStderr(message) {
-  try {
-    process.stderr.write(message)
-  } catch {
-    // nothing to do: the note is best-effort by design
-  }
-}
-
-/** Call only AFTER spawn() has returned -- see the INVARIANT above. */
-function recordLauncherInvokeForTest() {
-  const invokeLog = process.env[LAUNCHER_INVOKE_LOG_TEST_VAR]
-  if (!invokeLog) return
-  if (process.env.VITEST !== 'true') {
-    safeStderr(
-      `[ruflo-bridge-probe] ${LAUNCHER_INVOKE_LOG_TEST_VAR} is set outside vitest; ignored\n`
-    )
-    return
-  }
-  openFile(invokeLog, FS.O_WRONLY | FS.O_APPEND | FS.O_CREAT | FS.O_NONBLOCK)
-    .then((fh) => fh.appendFile(`launcher invoked: ${LAUNCHER}\n`).finally(() => fh.close()))
-    .catch((err) =>
-      safeStderr(
-        `[ruflo-bridge-probe] ${LAUNCHER_INVOKE_LOG_TEST_VAR} write failed (${err?.code ?? 'error'}); launch unaffected\n`
-      )
-    )
-}
-
 function callMemoryBridgeStatus(timeoutMs) {
   return new Promise((resolve) => {
     const child = spawn(LAUNCHER, [], { stdio: ['pipe', 'pipe', 'pipe'] })
-    recordLauncherInvokeForTest()
     let buf = ''
     let stderr = ''
     const replies = new Map()

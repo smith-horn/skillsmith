@@ -24,7 +24,7 @@
  * effect (spawn the launcher, take the bridge lock, write state). See that
  * file's own comment at the bottom for why the guard was added.
  */
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { createHash, randomInt, randomUUID } from 'node:crypto'
 import {
   chmodSync,
@@ -206,11 +206,13 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
   // Sandbox: HOME, TMPDIR, XDG_*_HOME and SKILLSMITH_STATE_DIR_OVERRIDE all
   // point inside ONE temp root, and the seeded state makes main() take its
   // debounce path. Asserted, not assumed, for what is measured:
-  //   - launcher boundary: the probe's test-only seam
-  //     (SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST) records every launcher spawn;
-  //     a debounced run must record none.
   //   - docker contact: a `docker` shim first on PATH records PATH-resolved
-  //     calls (an absolute-path docker call would NOT be seen by it).
+  //     calls (an absolute-path docker call would NOT be seen by it). The
+  //     launcher's first act is `docker ps`, so a debounced run must make none;
+  //     the launch tests below are the positive control that the shim sees a
+  //     launch at all. (A test-only launcher-record seam used to observe the
+  //     launcher boundary directly; it was removed from the shipped probe,
+  //     SMI-7032 owner decision, because it could itself affect the probe.)
   //   - filesystem: every pre-existing file under the sandbox root keeps its
   //     sha256, mode and size; the only additions are the log dir + file.
   // Not measured: writes outside the sandbox root, or network calls.
@@ -271,7 +273,6 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
     // `docker` shim, outside stateDir so its record never enters the snapshot.
     const shimDir = makeFixtureTempDir('smi-7032-shim')
     const dockerLog = join(shimDir, 'docker-invocations.log')
-    const launcherLog = join(shimDir, 'launcher-invocations.log')
     mkdirSync(join(shimDir, 'bin'))
     const shim = join(shimDir, 'bin', 'docker')
     writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${dockerLog}"\nexit 1\n`)
@@ -288,7 +289,6 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
         XDG_CACHE_HOME: join(sandbox, 'xdg'),
         XDG_DATA_HOME: join(sandbox, 'xdg'),
         XDG_STATE_HOME: join(sandbox, 'xdg'),
-        SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST: launcherLog,
         VITEST: 'true',
         PATH: `${join(shimDir, 'bin')}:${process.env.PATH ?? ''}`,
         // Pin npx's own cache OUTSIDE the snapshot root. Otherwise it lands in
@@ -307,7 +307,6 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
           .join('\n')
       : ''
     const after = snapshot(sandbox)
-    const launcherCalls = existsSync(launcherLog) ? readFileSync(launcherLog, 'utf8') : ''
     const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
     const stateUnchanged = readFileSync(statePath).equals(stateBefore)
     return {
@@ -319,7 +318,6 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
       shimDir,
       before,
       after,
-      launcherCalls,
       dockerCalls,
       stateUnchanged,
     }
@@ -340,10 +338,9 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
         expect(result.signal).toBeNull()
         expect(result.status).toBe(0)
         expect(logText).toContain(`debounced — prior entry at ${evaluatedAt}`)
-        // Debounce must PREVENT the work, not merely be reached: no launcher
-        // spawn (observed at the launcher boundary itself), no PATH-resolved
-        // docker call, and no state write.
-        expect(run.launcherCalls).toBe('')
+        // Debounce must PREVENT the work, not merely be reached: no PATH-resolved
+        // docker call (the launcher's first act is `docker ps`; the launch test
+        // below proves the shim sees one) and no state write.
         expect(run.dockerCalls).toBe('')
         expect(run.stateUnchanged).toBe(true)
         // Every pre-existing path under the sandbox root keeps its bytes
@@ -366,21 +363,6 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
     },
     TEST_BUDGET_MS
   )
-
-  it('the launcher-record seam is test-only: absent from the advertised command and read in exactly one place', () => {
-    const SEAM = 'SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST'
-    expect(PROBE_COMMAND).not.toContain(SEAM)
-    const probeSrc = readFileSync(join(REPO_ROOT, tokens[tokens.length - 1]), 'utf8')
-    // One definition of the name, one env read: the seam is a no-op when unset.
-    expect(probeSrc.split(SEAM).length - 1).toBe(1)
-    expect(probeSrc.split('process.env[LAUNCHER_INVOKE_LOG_TEST_VAR]').length - 1).toBe(1)
-    // No git hook launches the probe with the seam set.
-    const huskyDir = join(REPO_ROOT, '.husky')
-    for (const name of readdirSync(huskyDir)) {
-      const full = join(huskyDir, name)
-      if (statSync(full).isFile()) expect(readFileSync(full, 'utf8')).not.toContain(SEAM)
-    }
-  })
 
   it(
     'bare node on the same script does NOT run the probe (known-negative control)',
@@ -406,11 +388,11 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
     TEST_BUDGET_MS
   )
 
-  // INVARIANT (final review): the launcher-record seam can never change whether
-  // the real launcher runs, whatever the variable holds. These runs take the
-  // NON-debounce path (no seeded state), so the probe really spawns the
-  // launcher, whose first docker call is `docker ps ...` -> recorded by the shim.
-  const runLaunching = (opts: { seam?: string; dropVitest?: boolean; vitest?: string }) => {
+  // POSITIVE CONTROL for the debounce test's zero-docker assertion: on the
+  // NON-debounce path (no seeded state) the probe really spawns the launcher,
+  // whose first docker call is `docker ps ...`, and the same shim records it.
+  // Without this, "no docker calls" could mean the shim sees nothing at all.
+  const runLaunching = () => {
     const sandbox = makeFixtureTempDir('smi-7032-launch')
     const shimDir = makeFixtureTempDir('smi-7032-launch-shim')
     for (const d of ['state', 'home', 'tmp', 'xdg']) mkdirSync(join(sandbox, d))
@@ -430,10 +412,7 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
       npm_config_cache: join(shimDir, 'npm-cache'),
       SKILLSMITH_STATE_DIR_OVERRIDE: join(sandbox, 'state'),
       [BRIDGE_PROBE_DISABLE_VAR]: '',
-      VITEST: opts.vitest ?? 'true',
-      ...(opts.seam === undefined ? {} : { SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST: opts.seam }),
     })
-    if (opts.dropVitest) delete env.VITEST
     const result = spawnSync(
       tokens[0],
       [...tokens.slice(1), '--key', `smi-7032-launch-${randomUUID()}`],
@@ -442,124 +421,18 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
     const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
     return { result, dockerCalls, sandbox, shimDir }
   }
-  const cleanup = (r: { sandbox: string; shimDir: string }) => {
-    rmSync(r.sandbox, { recursive: true, force: true })
-    rmSync(r.shimDir, { recursive: true, force: true })
-  }
 
   it(
-    'a seam pointing at an unwritable path never stops the launcher from running, and stderr names the variable',
+    'positive control: on the non-debounce path the launcher runs and the docker shim records its `ps`',
     () => {
-      const run = runLaunching({ seam: '/nonexistent-smi-7032-dir/sub/launcher.log' })
+      const run = runLaunching()
       try {
         expect(run.result.error).toBeUndefined()
         expect(run.result.signal).toBeNull()
-        // The real launcher ran: its first docker call is `ps ...`.
         expect(run.dockerCalls).toMatch(/^ps /m)
-        expect(run.result.stderr).toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
-        expect(run.result.stderr).toContain('launch unaffected')
       } finally {
-        cleanup(run)
-      }
-    },
-    TEST_BUDGET_MS
-  )
-
-  it(
-    'a seam pointing at a FIFO with no reader cannot block the launch: the launcher runs and the probe exits on its own',
-    () => {
-      // A write that would BLOCK rather than throw (a FIFO with no reader, a
-      // stalled filesystem) is the case a try/catch cannot cover. The seam
-      // records only after spawn() and opens O_NONBLOCK, so the launcher has
-      // already run and the open fails at once with ENXIO (SMI-7032, gate round 3).
-      const fifoDir = makeFixtureTempDir('smi-7032-fifo')
-      const fifo = join(fifoDir, 'seam.fifo')
-      execFileSync('mkfifo', [fifo])
-      const run = runLaunching({ seam: fifo })
-      try {
-        expect(run.dockerCalls).toMatch(/^ps /m)
-        expect(run.result.error).toBeUndefined()
-        expect(run.result.signal).toBeNull()
-        expect(run.result.stderr).toContain('launch unaffected')
-      } finally {
-        cleanup(run)
-        rmSync(fifoDir, { recursive: true, force: true })
-      }
-    },
-    TEST_BUDGET_MS
-  )
-
-  it(
-    'outside vitest the seam is ignored: no seam file is written, the launcher still runs, stderr names the variable',
-    () => {
-      const probeLog = join(makeFixtureTempDir('smi-7032-seam'), 'seam.log')
-      const run = runLaunching({ seam: probeLog, dropVitest: true })
-      try {
-        expect(run.result.error).toBeUndefined()
-        expect(run.dockerCalls).toMatch(/^ps /m)
-        expect(existsSync(probeLog)).toBe(false)
-        expect(run.result.stderr).toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
-        expect(run.result.stderr).toContain('ignored')
-      } finally {
-        cleanup(run)
-        rmSync(dirname(probeLog), { recursive: true, force: true })
-      }
-    },
-    TEST_BUDGET_MS
-  )
-
-  it(
-    'with VITEST=true and a valid seam path the launcher invocation is recorded exactly once (positive pair for the debounce zero-call assertion)',
-    () => {
-      const seamDir = makeFixtureTempDir('smi-7032-seam-pos')
-      const seamLog = join(seamDir, 'seam.log')
-      const run = runLaunching({ seam: seamLog, vitest: 'true' })
-      try {
-        expect(run.result.error).toBeUndefined()
-        expect(run.dockerCalls).toMatch(/^ps /m)
-        const recorded = existsSync(seamLog) ? readFileSync(seamLog, 'utf8') : ''
-        expect(recorded.split('launcher invoked: ').length - 1).toBe(1)
-      } finally {
-        cleanup(run)
-        rmSync(seamDir, { recursive: true, force: true })
-      }
-    },
-    TEST_BUDGET_MS
-  )
-
-  it(
-    'VITEST=false does not count as under vitest: the seam is ignored and the launcher still runs',
-    () => {
-      const seamDir = makeFixtureTempDir('smi-7032-seam-false')
-      const seamLog = join(seamDir, 'seam.log')
-      const run = runLaunching({ seam: seamLog, vitest: 'false' })
-      try {
-        expect(run.result.error).toBeUndefined()
-        expect(run.dockerCalls).toMatch(/^ps /m)
-        expect(existsSync(seamLog)).toBe(false)
-        expect(run.result.stderr).toContain('ignored')
-      } finally {
-        cleanup(run)
-        rmSync(seamDir, { recursive: true, force: true })
-      }
-    },
-    TEST_BUDGET_MS
-  )
-
-  it(
-    'with the seam absent the launcher runs and no seam file or seam note appears anywhere',
-    () => {
-      const run = runLaunching({})
-      try {
-        expect(run.result.error).toBeUndefined()
-        expect(run.dockerCalls).toMatch(/^ps /m)
-        expect(run.result.stderr).not.toContain('SKILLSMITH_RUFLO_PROBE_LAUNCHER_LOG_TEST')
-        const stray = [...snapshot(run.sandbox).keys(), ...snapshot(run.shimDir).keys()].filter(
-          (p) => /launcher.*\.log$/.test(p)
-        )
-        expect(stray).toEqual([])
-      } finally {
-        cleanup(run)
+        rmSync(run.sandbox, { recursive: true, force: true })
+        rmSync(run.shimDir, { recursive: true, force: true })
       }
     },
     TEST_BUDGET_MS
