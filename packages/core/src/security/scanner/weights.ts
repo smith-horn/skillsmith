@@ -95,7 +95,8 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // high-confidence finding scores 15 * 1.2 * 1.0 = 18 -> * 0.04 = 0.72
   // (rounds to ~1); a saturated breakdown (capped at 100) contributes 4 —
   // comfortably under the riskThreshold: 40 quarantine cutoff on its own.
-  decoy_misdirection: 1.2, // SMI-7030: reporting weight only. Flag-only (owner decision 2026-10-09): the
+  decoy_misdirection: 1.2,
+  // SMI-7030: reporting weight only. Flag-only (owner decision 2026-10-09): the
   // paired CATEGORY_COEFFICIENTS entry is exactly 0, so this finding adds
   // nothing to riskScore, alone or in a mixed scan. A lone finding still
   // shows as riskBreakdown.executableFrontmatter = 50 * 1.2 = 60.

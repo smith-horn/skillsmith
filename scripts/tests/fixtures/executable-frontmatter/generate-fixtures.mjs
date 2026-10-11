@@ -28,9 +28,10 @@
 //
 // Output is byte-reproducible: no timestamp, no Node version, stable row order.
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -49,12 +50,39 @@ function parseArgs(argv) {
   return resolve(argv[i + 1])
 }
 
-const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'))
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch (err) {
+    return fail(`cannot read ${path}: ${err.message}`)
+  }
+}
+
+const isInside = (child, parent) => child === parent || child.startsWith(parent + sep)
+
+// The generator evals case inputs by design, so the gray-matter install must be a
+// throwaway directory under the OS temp dir and never inside this repository.
+// Both sides are realpath'd first (macOS /var vs /private/var).
+function assertThrowawayRoot(dir) {
+  let real
+  try {
+    real = realpathSync(dir)
+  } catch (err) {
+    return fail(`--gray-matter-root ${dir} is not readable: ${err.message}`)
+  }
+  const repoRoot = realpathSync(resolve(HERE, '..', '..', '..', '..'))
+  if (isInside(real, repoRoot))
+    fail(`--gray-matter-root ${real} is inside the repository ${repoRoot}`)
+  if (!isInside(real, realpathSync(tmpdir()))) {
+    fail(`--gray-matter-root ${real} is not under the OS temp directory ${realpathSync(tmpdir())}`)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Load gray-matter from the isolated install and refuse unless versions match.
 // ---------------------------------------------------------------------------
 const root = parseArgs(process.argv.slice(2))
+assertThrowawayRoot(root)
 const gmDir = join(root, 'node_modules', 'gray-matter')
 const gmPkg = readJson(join(gmDir, 'package.json'))
 if (gmPkg.version !== WANT_GRAY_MATTER) {

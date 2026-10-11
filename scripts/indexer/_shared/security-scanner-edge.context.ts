@@ -379,6 +379,10 @@ export function classifyMatch(
  * findings (saturation) — exactly the malicious shape we want to keep
  * quarantining. (A single isolated low-confidence finding passing is intentional
  * and matches core/team policy.)
+ *
+ * @param coefficients - Test seam (SMI-7030 R5-1). Production callers pass one
+ *   argument and get CATEGORY_COEFFICIENTS. Passing a lowered map would weaken
+ *   the quarantine gate.
  */
 export function calculateRiskScore(
   findings: SecurityFinding[],

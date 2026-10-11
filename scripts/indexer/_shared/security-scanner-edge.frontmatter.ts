@@ -43,7 +43,7 @@ export function scanExecutableFrontmatter(content: string): SecurityFinding[] {
       type: 'executable_frontmatter',
       severity: 'critical',
       message:
-        'SKILL.md frontmatter opens with an executable language tag (---js / ---javascript); older gray-matter-based importers evaluate it as code',
+        'frontmatter opens with an executable language tag (---js / ---javascript); older gray-matter-based importers evaluate it as code',
       lineNumber: 1,
       confidence: 'high',
     },

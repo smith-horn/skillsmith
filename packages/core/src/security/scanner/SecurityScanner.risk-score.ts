@@ -22,6 +22,10 @@ import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS, CATEGORY_COEFFICIENTS } from './wei
  * SMI-685: Calculate risk score from findings
  * SMI-1513: Accounts for confidence levels (low confidence = reduced weight)
  * Aggregates multiple findings into a risk score from 0-100
+ *
+ * @param coefficients - Test seam (SMI-7030 R5-1). Production callers pass one
+ *   argument and get CATEGORY_COEFFICIENTS. Passing a lowered map would weaken
+ *   the quarantine gate.
  */
 export function calculateRiskScore(
   findings: SecurityFinding[],

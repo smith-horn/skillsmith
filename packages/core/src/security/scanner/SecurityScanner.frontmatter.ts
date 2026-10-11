@@ -39,7 +39,7 @@ export function scanExecutableFrontmatter(content: string): SecurityFinding[] {
       confidence: 'high',
       lineNumber: 1,
       message:
-        'SKILL.md frontmatter opens with an executable "---js" / "---javascript" block; ' +
+        'frontmatter opens with an executable "---js" / "---javascript" block; ' +
         'gray-matter-based parsers (@skillsmith/cli <= 0.8.13 import-local) evaluate it as code',
       location: 'line 1',
     },
