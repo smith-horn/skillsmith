@@ -384,6 +384,25 @@ describe('SMI-5822 — deprecate/undeprecate require a user credential, not the 
     expectAttributedToCallerOnly(user, admin, { p_operation: 'deprecate', p_result: 'not_found' })
   })
 
+  // SMI-7068: the not_found row was the one audit call in setDeprecated() that omitted `authRole`,
+  // so it recorded no role while every sibling row (error, denied) recorded the binding's.
+  it.each(['deprecate', 'undeprecate'] as const)(
+    'records the admin binding’s role on the %s not_found row — SMI-7068',
+    async (op) => {
+      const user = createRecorder(() => ({ data: [], error: null }))
+      const admin = createRecorder()
+      await setClients(user.client, admin.client)
+
+      await expect(createLiveRegistryService()[op](TEAM, SKILL)).resolves.toBe(false)
+
+      expectAttributedToCallerOnly(user, admin, {
+        p_operation: op,
+        p_result: 'not_found',
+        p_auth_role: 'admin',
+      })
+    }
+  )
+
   // SMI-5949 Wave 2 Step 2 (D-7): publish() moved OFF the license-key path onto the signed-in
   // user's own JWT — the mirror image of what this describe block already proves for
   // deprecate/undeprecate. Renamed and rewritten from the pre-D-7 "publish really is
