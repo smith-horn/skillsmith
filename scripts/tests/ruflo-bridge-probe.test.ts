@@ -209,10 +209,13 @@ describe('SMI-7032: PROBE_COMMAND names a command that can actually load the pro
   //   - docker contact: a `docker` shim first on PATH records PATH-resolved
   //     calls (an absolute-path docker call would NOT be seen by it). The
   //     launcher's first act is `docker ps`, so a debounced run must make none;
-  //     the launch tests below are the positive control that the shim sees a
-  //     launch at all. (A test-only launcher-record seam used to observe the
-  //     launcher boundary directly; it was removed from the shipped probe,
-  //     SMI-7032 owner decision, because it could itself affect the probe.)
+  //     the launch test below is the positive control that the shim sees a
+  //     launch at all. What this does NOT observe: a launcher that starts but
+  //     never reaches a PATH-resolved `docker` (it exits, fails or hangs
+  //     first), and launcher-specific behaviour beyond that first `docker ps`.
+  //     (A test-only launcher-record seam used to observe the launcher
+  //     boundary directly; it was removed from the shipped probe, SMI-7032
+  //     owner decision, because it could itself affect the probe.)
   //   - filesystem: every pre-existing file under the sandbox root keeps its
   //     sha256, mode and size; the only additions are the log dir + file.
   // Not measured: writes outside the sandbox root, or network calls.
