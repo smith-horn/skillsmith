@@ -21,7 +21,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
@@ -614,7 +614,7 @@ describe('check-submodule-pointer.sh — evaluation order, gating, and mode sema
     // Register the second mount in .gitmodules and give it an unresolvable
     // (R1-triggering) gitlink — a real FAIL, but on a non-blocking mount.
     const gitmodulesPath = join(f.parentDir, '.gitmodules')
-    const existing = execFileSync('cat', [gitmodulesPath], { encoding: 'utf8' })
+    const existing = readFileSync(gitmodulesPath, 'utf8')
     writeFileSync(
       gitmodulesPath,
       `${existing}\n[submodule ".claude/skills"]\n\tpath = .claude/skills\n\turl = ${strategyRemote}\n\tbranch = skills\n`
