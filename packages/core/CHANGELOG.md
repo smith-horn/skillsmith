@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.13.1
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.13.0).
+
 ## v0.13.0
 
 - **Fix**: SMI-6991 -- a corruption refusal told users to switch to the driver that also refuses it (#3013)

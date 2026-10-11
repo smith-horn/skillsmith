@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.13
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.7.12).
 - **Breaking**: Skillsmith now requires VS Code 1.125 or later. If you're on an earlier version,
   you keep the version of Skillsmith you have installed but won't receive updates until you update
   VS Code. Raising the minimum lets the extension be built and published against the current VS Code
