@@ -176,6 +176,13 @@ process.stdin.on("end", () => {
         declared_volume_keys=("node_modules")
     fi
 
+    # SMI-6981: neither path below takes the worktree lifecycle lock. Against a
+    # concurrent create-worktree.sh they are protected only by its refusal to
+    # register a second worktree for this Docker project (D-1) plus the order in
+    # remove-worktree.sh (this runs before `git worktree remove`, while this
+    # worktree is still registered). They are NOT protected against a plain
+    # `git worktree add` of a same-project name.
+
     # Path B: name-based fallback. Idempotent — these always run, even when
     # Path A succeeded, to catch any image/volume that compose lost track of
     # (e.g. previous partial runs, manually-renamed projects, or the compose

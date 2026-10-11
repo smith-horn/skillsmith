@@ -68,8 +68,9 @@ What this script does:
      this refers only to the BLANKET docker volume prune / image prune -a
      shown in the reclaimable report, which stay manual-only — see item 7
   7. Automatically runs a targeted orphan prune (SMI-5750): deletes only
-     volumes/images belonging to worktrees git no longer knows about, safe at
-     any concurrency level; skip with --no-orphan-prune or
+     volumes/images belonging to worktrees git no longer knows about, safe
+     against a concurrent create-worktree.sh (not against a plain
+     'git worktree add'); skip with --no-orphan-prune or
      SKILLSMITH_ORPHAN_PRUNE_DISABLE=1
 
 EOF

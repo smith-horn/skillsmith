@@ -590,3 +590,51 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
     expect(result.dockerCalls.some((c) => c.includes('volume ls'))).toBe(false)
   })
 })
+
+describe('SMI-6981: Step 1c is protected from create-worktree.sh by D-1 plus ordering', () => {
+  it('T15c. a creator racing Step 1c is refused because the removed worktree is still registered', () => {
+    const tempRoot = makeTempDir('rmwt-d1')
+    tempDirs.push(tempRoot)
+    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'foobar')
+    const binDir = join(tempRoot, 'bin')
+    sh(`mkdir -p "${binDir}"`)
+    const logPath = join(tempRoot, 'docker.log')
+    const hookRc = join(tempRoot, 'hook.rc')
+    const hookErr = join(tempRoot, 'hook.err')
+    const hookList = join(tempRoot, 'hook.list')
+    const hook = join(tempRoot, 'hook.sh')
+    writeFileSync(
+      hook,
+      [
+        'set +e',
+        `cd "${repoDir}"`,
+        `source "${join(__dirname, '..', 'create-worktree.sh')}"`,
+        'USE_EXISTING_BRANCH=false',
+        `( add_worktree_git_entry "${repoDir}/.worktrees/foo.bar" feat-dup HEAD ) 2> "${hookErr}" && rc=0 || rc=$?`,
+        `echo $rc > "${hookRc}"`,
+        `git -C "${repoDir}" worktree list > "${hookList}"`,
+      ].join('\n')
+    )
+    // The hook fires at Step 1c's name-based volume delete for project foobar.
+    const shim = `#!/bin/sh
+echo "$@" >> "${logPath}"
+case "$*" in
+  "volume rm foobar_node_modules") bash "${hook}" ;;
+esac
+exit 0
+`
+    writeFileSync(join(binDir, 'docker'), shim)
+    chmodSync(join(binDir, 'docker'), 0o755)
+
+    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+
+    expect(result.status).toBe(0)
+    // Presence: Step 1c reached the delete and the hook ran inside it.
+    expect(result.dockerCalls).toContain('volume rm foobar_node_modules')
+    expect(existsSync(hookRc)).toBe(true)
+    expect(readFileSync(hookRc, 'utf8').trim()).toBe('1')
+    expect(readFileSync(hookErr, 'utf8')).toContain('already used by a live worktree')
+    expect(readFileSync(hookList, 'utf8')).not.toContain('foo.bar')
+    expect(readFileSync(hookList, 'utf8')).toContain('foobar')
+  })
+})
