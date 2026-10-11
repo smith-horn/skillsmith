@@ -8,8 +8,10 @@
  * FILES in parallel. The PG-free assertions about the migration's text live in
  * ./private-registry-audit-attempt.structural.test.ts, which has no Postgres gate.
  *
- * The pg_cron job and alert edge function are deferred to SMI-7050, so scheduling is not tested;
- * the predicate the job will call is.
+ * The pg_cron job and alert edge function are SMI-7050's and are tested there (the handler in
+ * supabase/functions/registry-audit-volume-monitor/index.test.ts; the state functions, dispatcher
+ * and schedule in scripts/tests/supabase/registry-audit-volume-*.test.ts). This suite tests only
+ * the predicate the job calls.
  */
 
 import { describe, beforeAll, beforeEach, afterAll, expect } from 'vitest'
