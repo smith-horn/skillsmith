@@ -8,7 +8,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v0814)
+- [What's New](#whats-new-in-v0815)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,7 +16,11 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.14
+## What's New in v0.8.15
+
+- **Clearer message for a mistyped frontmatter line**: when a SKILL.md's frontmatter contains a line such as `--- # note` or `...`, `skillsmith import-local` now says that line starts a second YAML document and gives both fixes: change it to exactly `---` if it was meant to end the frontmatter, or remove it. Before, you got a YAML library message telling you to call `YAML.parseAllDocuments()`.
+
+**From 0.8.14 and earlier:**
 
 - **Security fix: upgrade if you use `import-local`**: in 0.8.13 and earlier, `skillsmith import-local` ran a SKILL.md's frontmatter as JavaScript when its first line was `---js` or `---javascript`, including for third-party skills under `~/.claude/skills/`. 0.8.14 refuses that frontmatter and runs nothing. Frontmatter is now read with the `yaml` package; see the CHANGELOG for the small parsing differences.
 - **Multi-client targeting fixed across the board**: `install`, `list`, `remove`, `update`, `sync`, and `search -i`'s install action now all honor `SKILLSMITH_CLIENT`/`--client` consistently — previously several of these silently acted on the Claude Code directory regardless of the flag or env var.

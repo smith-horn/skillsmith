@@ -55,6 +55,22 @@ async function raceWithTimeout<T>(
 }
 
 /**
+ * SMI-6975: the two `raceWithTimeout` call sites below each synthesize a
+ * timeout sentinel that must unify, via `T`, with `supabase.rpc(...)`'s real
+ * `PostgrestSingleResponse<any>` -- a discriminated union whose success/
+ * failure variants each carry base fields (status, statusText, success,
+ * count) neither call site's pre-existing literal supplied, which is exactly
+ * why this file's two TS2739/TS2322 findings exist: nothing ever
+ * typechecked this file before SMI-6975. Both call sites here only ever read
+ * `.error.message` and (the second one) `.data` as a boolean, so rather than
+ * fabricate the full real response shape, `T` is pinned to this narrower
+ * local view -- which the real response satisfies directly (it has every
+ * field this requires, plus more), so the genuine RPC promise needs no cast
+ * at all; only each onTimeout literal gains the field it was missing.
+ */
+type LockRpcResult<D> = { data: D; error: { message: string } | null }
+
+/**
  * SMI-6246: releases the lock with an explicit timeout, retrying once on a
  * timeout before giving up. Never throws — a failed/timed-out release still
  * falls through to the existing 20-minute stale-TTL crash-recovery path
@@ -68,10 +84,10 @@ export async function releaseLockWithTimeout(
 ): Promise<{ error: string | null }> {
   const attempt = async (): Promise<{ error: string | null }> => {
     try {
-      const result = await raceWithTimeout(
+      const result = await raceWithTimeout<LockRpcResult<null>>(
         supabase.rpc('release_indexer_lock', { run_id: runId }),
         timeoutMs,
-        () => ({ error: { message: 'lock release timed out' } })
+        () => ({ data: null, error: { message: 'lock release timed out' } })
       )
       return { error: result.error ? result.error.message : null }
     } catch (err) {
@@ -176,10 +192,15 @@ export async function retryAcquireLock(
     // timer callback, including a 0ms one. This is an ordering guarantee,
     // not a wall-clock speed claim.
     const cappedAttemptTimeoutMs = Math.max(0, Math.min(attemptTimeoutMs, deadline - now()))
-    const result = await raceWithTimeout(
+    // `boolean | null`, not just `boolean`: PostgrestSingleResponse's failure
+    // variant has `data: null` (a literal, not `any`) -- measured directly
+    // (TS2345 "Type 'null' is not assignable to type 'boolean'" against the
+    // narrower instantiation), so the real response's failure branch would
+    // not structurally satisfy a non-nullable `data`.
+    const result = await raceWithTimeout<LockRpcResult<boolean | null>>(
       supabase.rpc('try_indexer_lock', { run_id: runId }),
       cappedAttemptTimeoutMs,
-      () => ({ data: false, error: null }) as { data: boolean; error: { message: string } | null }
+      () => ({ data: false, error: null })
     )
     if (result.error) {
       return { acquired: false, error: result.error.message }
