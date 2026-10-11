@@ -301,7 +301,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
 
   it.each([
     // Nonzero exit: refused by the status check, before any control is derived.
-    ['fail', 'failed -- refusing to prune'],
+    ['fail', 'failed -- refusing to proceed'],
     // Exit 0, nothing printed: only the "no worktree entry" arm can catch it.
     ['empty-ok', 'produced no worktree entry for this checkout'],
   ] as const)(
@@ -449,7 +449,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     // failure. The main checkout's own volume is protected by worktree
     // existence, so it is never even probed for labels.
     expect(result.status).toBe(0)
-    expect(result.stderr).not.toContain('refusing to prune')
+    expect(result.stderr).not.toContain('refusing to proceed')
     expect(result.dockerCalls.some((c) => deletesVolume(c, 'repo_node_modules'))).toBe(false)
     expect(result.dockerCalls.some(destroysInBulk)).toBe(false)
     expect(result.stdout).not.toContain('Removed volume repo_node_modules')
@@ -512,7 +512,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     failGitWorktreeListCalls(refused, [1, 2])
     const r = runPrune(refused, only('gone'))
     expect(r.status).toBe(1)
-    expect(r.stderr).toContain('failed -- refusing to prune')
+    expect(r.stderr).toContain('failed -- refusing to proceed')
     expect(worktreeListCallCount(refused)).toBe(1)
     // Last, deliberately: the behavioural assertions above must be what fails
     // first if a second read is reintroduced; this one only pins the mechanism.
@@ -537,7 +537,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(result.dockerCalls.some(destroysInBulk)).toBe(false)
     expect(result.stdout).not.toContain('Removed volume')
     expect(result.status).toBe(1)
-    expect(result.stderr).toContain('failed -- refusing to prune')
+    expect(result.stderr).toContain('failed -- refusing to proceed')
   })
 
   it('1h. an owned eval-cron volume survives, and the pruner did enumerate it (SMI-7033)', () => {
@@ -1439,7 +1439,7 @@ describe('L1: the positive control is derived independently of the listing it ch
       scriptPath: join(alias, 'scripts', 'prune-orphaned-docker-volumes.sh'),
     })
     expect(result.status).toBe(0)
-    expect(result.stderr).not.toContain('refusing to prune')
+    expect(result.stderr).not.toContain('refusing to proceed')
     // Presence: the run got as far as the docker queries.
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
   })

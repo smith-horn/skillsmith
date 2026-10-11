@@ -49,7 +49,12 @@
 #       delete); C3 no creator skips the lock (it has no opt-out); C4 the
 #       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
 #       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
-#       outcome the daemon may still execute; the run stops with exit 1).
+#       outcome the daemon may still execute; the run stops with exit 1). An
+#       interrupt (INT/TERM/HUP, or this shell dying) mid-delete is forwarded to
+#       the delete's process group and waited out (TERM, 2 s, KILL) before the
+#       lock is released, but SIGKILL of this script releases the lock at once:
+#       the supervisor then notices the lost parent within ~50 ms and kills the
+#       group, which a delete already sent to the daemon can still outlive.
 #   G2. A worktree registered WITHOUT the lock (plain `git worktree add`, the
 #       Claude Code harness, any other tool) is not excluded. The in-lock liveness
 #       read shrinks the race to the gap between that read and the delete, which

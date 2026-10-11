@@ -6,9 +6,10 @@
 # sourced first. Every function takes the main checkout as an explicit
 # $main_repo argument: nothing here reads a caller's global.
 
-# The ONE reader of `git worktree list`: every consumer (protected set, control
-# name, container report) goes through here, so the status check below cannot be
-# skipped by a new caller. Output and status are captured SEPARATELY and the
+# The one reader of `git worktree list` for liveness decisions (pruner, creator,
+# container report): every such consumer (protected set, control name, container
+# report) goes through here, so the status check below cannot be skipped by a
+# new caller. Output and status are captured SEPARATELY and the
 # listing is emitted only when git exited 0 -- a command that printed some
 # records and then failed would otherwise hand back a partial listing (SMI-6981).
 # `sed`, never `awk '{print $2}'`: awk stops at the first space, so a worktree
@@ -56,8 +57,9 @@ derive_checkout_project() {
 }
 
 # derive_protected() alone fails OPEN: an empty listing makes every candidate
-# read as unprotected. This wrapper is its only caller and fails closed via
-# error() (exit 1; remove-worktree.sh degrades that to a warning). ONE read per
+# read as unprotected. This wrapper is what every liveness decision calls (the
+# pruner, the creator) and it fails closed via error() (exit 1; the caller's
+# `|| error` supplies the context). ONE read per
 # derivation feeds both the set and the check. The control is POSITIVE, not an
 # emptiness test: a failed enumeration leaves the set non-empty (the
 # `.worktrees/*/` scan) but missing this checkout's own name.
@@ -70,25 +72,25 @@ derive_checkout_project() {
 derive_protected_or_die() {
     local main_repo="$1" out self wt_paths
     if ! wt_paths="$(enumerate_worktree_paths "$main_repo")"; then
-        error "\`git worktree list\` failed -- refusing to prune. A listing from a failed command may be missing later worktrees, so no protected set derived from it can be trusted."
+        error "\`git worktree list\` failed -- refusing to proceed. A listing from a failed command may be missing later worktrees, so no protected set derived from it can be trusted."
     fi
     out="$(derive_protected "$wt_paths" "$main_repo")"
 
     if [[ -z "$wt_paths" ]]; then
-        error "\`git worktree list\` produced no worktree entry for this checkout -- refusing to prune. The canonical enumeration returned nothing, so no protected set can be trusted."
+        error "\`git worktree list\` produced no worktree entry for this checkout -- refusing to proceed. The canonical enumeration returned nothing, so no protected set can be trusted."
     fi
     if ! self="$(derive_checkout_project "$main_repo")"; then
-        error "could not independently identify this checkout (\`git rev-parse --show-toplevel\` failed) -- refusing to prune, because the protected set has no control to be checked against."
+        error "could not independently identify this checkout (\`git rev-parse --show-toplevel\` failed) -- refusing to proceed, because the protected set has no control to be checked against."
     fi
     # A basename made entirely of characters sanitize_project_name strips leaves
     # this empty, and `grep -qxF "" <<< ""` MATCHES (here-strings append a
     # newline), so the guard would pass in the state of maximum danger.
     if [[ -z "$self" ]]; then
-        error "this checkout's project name sanitizes to the empty string -- refusing to prune, because an empty pattern would match an empty protected set and pass vacuously."
+        error "this checkout's project name sanitizes to the empty string -- refusing to proceed, because an empty pattern would match an empty protected set and pass vacuously."
     fi
 
     if ! grep -qxF "$self" <<< "$out"; then
-        error "the derived protected set does not contain this checkout's own project name ('$self', from \`git rev-parse --show-toplevel\`) -- refusing to prune. \`git worktree list\` always lists this checkout, so this script's recovery of its output failed or the listing is wrong. The set may still be non-empty (a populated .worktrees/ contributes entries), which is why emptiness is not what is checked."
+        error "the derived protected set does not contain this checkout's own project name ('$self', from \`git rev-parse --show-toplevel\`) -- refusing to proceed. \`git worktree list\` always lists this checkout, so this script's recovery of its output failed or the listing is wrong. The set may still be non-empty (a populated .worktrees/ contributes entries), which is why emptiness is not what is checked."
     fi
     printf '%s\n' "$out"
 }
@@ -112,7 +114,8 @@ is_protected() {
 # in-lock check, and as the last operation before each delete.
 #
 # Rules for callers: never run hooks, the pruner or create-worktree.sh while
-# holding it; every child that runs under it closes fd 7 (`7<&-`); a non-zero
+# holding it; every child that could outlive the section (git, docker) closes
+# fd 7 (`7<&-`); short-lived helpers may inherit it; a non-zero
 # acquire code is NEVER "acquired". fd 7 is reserved for this lock.
 # ---------------------------------------------------------------------------
 
@@ -162,6 +165,10 @@ PERL
 # gets its own process group so TERM, then (after a 2 s grace) KILL, reaches
 # anything it spawned. Exit 124 on timeout, 127 if the command cannot be
 # executed, otherwise the child's own status (a signal death becomes 128+n).
+# INT, TERM and HUP, or the death of the parent shell (reparenting), are
+# forwarded to the child's group and waited out (signal, TERM, 2 s, KILL) before
+# exiting 128+n: the group is out of the terminal's foreground group, so
+# without this a Ctrl-C leaves the docker CLI to finish AFTER the lock is gone.
 # alarm+exec is NOT usable here: the Go docker CLI ignores SIGALRM (measured).
 IFS= read -r -d '' _WTL_PERL_BOUNDED <<'PERL' || true
 use strict; use warnings; no warnings 'exec';
@@ -171,27 +178,40 @@ my $secs = shift @ARGV;
 my $pid = fork();
 defined $pid or exit 127;
 if ($pid == 0) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit 127; }
+my %num = (HUP => 1, INT => 2, TERM => 15);
+my ($got, $ppid) = ('', getppid());
+for my $n (keys %num) { my $name = $n; $SIG{$name} = sub { $got ||= $name }; }
 sub status {
     my $s = shift;
     return WIFEXITED($s) ? WEXITSTATUS($s) : (WIFSIGNALED($s) ? 128 + WTERMSIG($s) : 1);
+}
+sub terminate {
+    my $first = shift;
+    kill $first, -$pid; kill $first, $pid;
+    kill 'TERM', -$pid; kill 'TERM', $pid;
+    my $grace = time() + 2;
+    while (time() < $grace) {
+        my $r = waitpid($pid, WNOHANG);
+        last if $r == $pid || $r < 0;
+        sleep(0.05);
+    }
+    kill 'KILL', -$pid; kill 'KILL', $pid;
+    waitpid($pid, 0);
 }
 my $deadline = time() + $secs;
 while (1) {
     my $r = waitpid($pid, WNOHANG);
     exit status($?) if $r == $pid;
     exit 127 if $r < 0;
+    if ($got || getppid() != $ppid) {
+        $got ||= 'HUP';
+        terminate($got);
+        exit 128 + $num{$got};
+    }
     last if time() >= $deadline;
     sleep(0.05);
 }
-kill 'TERM', -$pid; kill 'TERM', $pid;
-my $grace = time() + 2;
-while (time() < $grace) {
-    my $r = waitpid($pid, WNOHANG);
-    if ($r == $pid || $r < 0) { kill 'KILL', -$pid; exit 124; }
-    sleep(0.05);
-}
-kill 'KILL', -$pid; kill 'KILL', $pid;
-waitpid($pid, 0);
+terminate('TERM');
 exit 124;
 PERL
 
@@ -201,23 +221,24 @@ PERL
 # closed until someone measures them. Network and FUSE filesystems are
 # unsupported. Anything unreadable, empty or unlisted returns 1.
 worktree_lifecycle_fs_supported() {
-    local path="$1" fstype="" dev line mp opts mdev
+    local path="$1" fstype="" line mp opts
     case "$(uname -s 2>/dev/null)" in
         Darwin)
-            dev="$(stat -f %d "$path" 2>/dev/null)" || return 1
-            [[ -n "$dev" ]] || return 1
-            # st_dev matched against each mount point, not a path prefix: safe
-            # across firmlinks. Line shape: "<dev> on <mountpoint> (<type>, <opts>)".
+            # The repo's own mount only: `df -P` stats just this path's filesystem,
+            # and `mount` is a kernel listing, so no other mount point is touched
+            # (a hung SMB/NFS/autofs mount cannot stall this). The mount point is
+            # the text after the capacity column, matched as a whole string
+            # against the "on <mountpoint> (<type>, ...)" lines: safe across
+            # firmlinks, and spaces in a mount point survive.
+            line="$(worktree_lifecycle_bounded 5 df -P "$path" 2>/dev/null | sed -n '2p')" || return 1
+            [[ "$line" =~ [0-9]+%[[:space:]]+(/.*)$ ]] || return 1
+            mp="${BASH_REMATCH[1]}"
             while IFS= read -r line; do
-                mp="${line#* on }"
-                mp="${mp% (*}"
+                [[ "$line" == *" on $mp ("* ]] || continue
                 opts="${line##* (}"
-                mdev="$(stat -f %d "$mp" 2>/dev/null)" || continue
-                if [[ "$mdev" == "$dev" ]]; then
-                    fstype="${opts%%,*}"
-                    fstype="${fstype%)}"
-                    break
-                fi
+                fstype="${opts%%,*}"
+                fstype="${fstype%)}"
+                break
             done < <(mount 2>/dev/null)
             case "$fstype" in apfs|hfs) return 0 ;; esac
             ;;

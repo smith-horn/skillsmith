@@ -24,10 +24,20 @@ import {
   startHolder,
   tryAcquire,
   installPerlWrapper,
+  setDockerHook,
+  hookRan,
+  marker,
+  markerPath,
   REPLACE_GIT_DIR,
   type Holder,
 } from './worktree-lifecycle.helpers.js'
-import type { FixtureRepo } from './prune-orphaned-docker-volumes.helpers.js'
+import {
+  setupFixture,
+  volumeListResponse,
+  volumeLabels,
+  runPrune,
+  type FixtureRepo,
+} from './prune-orphaned-docker-volumes.helpers.js'
 
 const SCRIPTS = resolve(__dirname, '..')
 const CREATE = join(SCRIPTS, 'create-worktree.sh')
@@ -277,6 +287,83 @@ describe('SMI-6981: create-worktree.sh under the lifecycle lock', () => {
       branch: 'feat-baz',
     })
     expect(ok.status).toBe(0)
+  })
+
+  it('T15d. the D-1 live-set read happens under the lock, not before it', () => {
+    const fx = makeFx('cw-t15d')
+    installPerlWrapper({ binDir: fx.bin, logPath: fx.log } as FixtureRepo)
+    gitShim(fx, `if [ "$sub" = list ]; then echo "GIT worktree-list" >> "${fx.log}"; fi`)
+    const live = runAdd(fx, {
+      existing: false,
+      path: join(fx.clone, '.worktrees', 'foobar'),
+      branch: 'feat-live',
+    })
+    expect(live.status).toBe(0)
+    rmSync(fx.log)
+
+    const r = runAdd(fx, {
+      existing: false,
+      path: join(fx.clone, '.worktrees', 'foo.bar'),
+      branch: 'feat-dup',
+    })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain("'foobar'")
+    const calls = readFileSync(fx.log, 'utf8').split('\n').filter(Boolean)
+    const firstRead = calls.indexOf('GIT worktree-list')
+    const acquire = calls.indexOf('PERL acquire')
+    // Presence: the refusal came from a live-set read, and a lock was taken.
+    expect(firstRead).toBeGreaterThanOrEqual(0)
+    expect(acquire).toBeGreaterThanOrEqual(0)
+    expect(acquire).toBeLessThan(firstRead)
+  })
+
+  it('T12a. a creator inside a pruner section waits on the lock even with every opt-out set', () => {
+    const f = setupFixture('cw-t12a')
+    tempDirs.push(f.tempRoot)
+    const VOL = 'gone-wt_node_modules'
+    volumeListResponse(f, [VOL])
+    volumeLabels(f, VOL, { volume: 'node_modules', project: 'gone-wt', owned: 'true' })
+    const creator = join(f.tempRoot, 'creator.sh')
+    writeFileSync(
+      creator,
+      [
+        'set -uo pipefail',
+        `source ${JSON.stringify(CREATE)}`,
+        'USE_EXISTING_BRANCH=false',
+        `( add_worktree_git_entry "${f.repoDir}/.worktrees/t12a" feat-t12a HEAD ) 2> "${markerPath(f, 'creator-err')}" && rc=0 || rc=$?`,
+        `echo $rc > "${markerPath(f, 'creator')}"`,
+        'exit $rc',
+      ].join('\n')
+    )
+    setDockerHook(
+      f,
+      `volume_rm__${VOL}`,
+      [
+        'export SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_DISABLE=1 SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT=1',
+        `cd "${f.repoDir}"`,
+        `bash "${creator}" >/dev/null 2>&1`,
+        `git -C "${f.repoDir}" worktree list > "${markerPath(f, 'during')}"`,
+      ].join('\n')
+    )
+    const run = runPrune(f, ['--only-project', 'gone-wt'])
+    expect(run.dockerCalls.some((c) => /volume rm\b/.test(c))).toBe(true)
+    expect(hookRan(f, `volume_rm__${VOL}`)).toBe(true)
+    expect(marker(f, 'creator')).toBe('1')
+    const err = readFileSync(markerPath(f, 'creator-err'), 'utf8')
+    expect(err).toContain('lifecycle lock is busy')
+    expect(err).toContain('create-worktree waited 1s')
+    // Presence partner: the listing was taken in the same run (it names the
+    // fixture checkout), and it does not contain the creator's path.
+    const during = readFileSync(markerPath(f, 'during'), 'utf8')
+    expect(during).toContain(f.repoDir)
+    expect(during).not.toContain('.worktrees/t12a')
+    // Paired positive: outside the section the same creator call succeeds.
+    const after = spawnSync('bash', [creator], {
+      cwd: f.repoDir,
+      encoding: 'utf8',
+      env: makeFixtureEnv(),
+    })
+    expect(after.status).toBe(0)
   })
 
   it('T8. a lock that does not exclude stops the creator before anything is created', () => {

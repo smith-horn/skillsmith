@@ -62,15 +62,18 @@ check "T3 contender after kill -9" 0 "$(contend 2)"
 
 # T17: a child run through the supervisor does not inherit the lock.
 worktree_lifecycle_lock_acquire "$REPO" 0 host
-worktree_lifecycle_bounded 5 /bin/sh -c 'sleep 20 >/dev/null 2>&1 &'
+# shellcheck disable=SC2016  # $! and $0 expand in the child shell
+worktree_lifecycle_bounded 5 /bin/sh -c 'sleep 20 >/dev/null 2>&1 & echo $! > "$0"' "$TMP/sleep-supervised.pid"
 worktree_lifecycle_lock_release
 check "T17 contender after release (supervised child)" 0 "$(contend 1)"
 # Negative control: an UNWRAPPED backgrounded child keeps the lock alive.
 worktree_lifecycle_lock_acquire "$REPO" 0 host
-/bin/sh -c 'sleep 20 >/dev/null 2>&1 &'
+# shellcheck disable=SC2016
+/bin/sh -c 'sleep 20 >/dev/null 2>&1 & echo $! > "$0"' "$TMP/sleep-unwrapped.pid"
 worktree_lifecycle_lock_release
 check "T17 negative control (unwrapped child keeps it)" 75 "$(contend 1)"
-pkill -f 'sleep 20' 2>/dev/null
+# Only the two sleeps this script started, by pid (never a pattern: the host is shared).
+kill "$(cat "$TMP/sleep-supervised.pid")" "$(cat "$TMP/sleep-unwrapped.pid")" 2>/dev/null
 
 # T11c: the supervisor bounds a child that ignores ALRM and TERM, and the real
 # Go docker CLI (alarm+exec does not: measured).

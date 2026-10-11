@@ -196,6 +196,13 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
       .map((c, i) => (c.startsWith('GIT ') ? i : -1))
       .filter((i) => i >= 0)
       .pop()
+    // The liveness read happens INSIDE the section: after this section's acquire
+    // (presence: there is exactly one section, so exactly one acquire) and
+    // before the identity check that is the last operation before the delete.
+    const acquireIdx = calls.indexOf('PERL acquire')
+    expect(calls.filter((c) => c === 'PERL acquire')).toHaveLength(1)
+    expect(lastGit).toBeDefined()
+    expect(acquireIdx).toBeLessThan(lastGit as number)
     expect(lastGit).toBeLessThan(prev)
   })
 

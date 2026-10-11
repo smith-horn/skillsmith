@@ -103,6 +103,62 @@ describe('SMI-6981: lifecycle lock primitive', () => {
     expect(r.stdout).toMatch(/\nend\n$/)
   })
 
+  describe('T20. the supervisor outlives an interrupt until its child group is gone', () => {
+    // The child ignores TERM/INT/HUP, like a CLI mid-delete, so only the KILL
+    // after the grace can end it. $D is a scratch dir the child writes its pid to.
+    const childCmd = `bash -c "echo \\$\\$ > $D/pid; trap '' TERM INT HUP; exec sleep 8"`
+    const waitPid =
+      'for _ in $(seq 1 50); do [ -s "$D/pid" ] && break; sleep 0.1; done; CH=$(cat "$D/pid")'
+    const group = (name: string, cmd: string): string =>
+      `${cmd} && echo ${name}=yes || echo ${name}=no`
+
+    it.each([
+      ['INT', 130],
+      ['TERM', 143],
+      ['HUP', 129],
+    ])('%s is forwarded and waited out (exit %i)', (sig, code) => {
+      const { repo, root } = makeRepo(`lk-t20-${sig}`)
+      const r = runLib(
+        repo,
+        [
+          `export D="${root}"`,
+          `perl -e "$_WTL_PERL_BOUNDED" -- 30 ${childCmd} </dev/null &`,
+          'SUP=$!',
+          waitPid,
+          group('alive-before', 'kill -0 -- "-$CH" 2>/dev/null'),
+          `kill -s ${sig} $SUP`,
+          'wait $SUP; echo rc=$?',
+          group('alive-after', 'kill -0 -- "-$CH" 2>/dev/null'),
+          'kill -9 -- "-$CH" 2>/dev/null; true',
+        ].join('\n')
+      )
+      // Presence first: the group existed before the signal.
+      expect(r.stdout).toContain('alive-before=yes')
+      expect(r.stdout).toContain(`rc=${code}`)
+      expect(r.stdout).toContain('alive-after=no')
+    })
+
+    it('the death of the parent shell takes the child group down too', () => {
+      const { repo, root } = makeRepo('lk-t20-parent')
+      const r = runLib(
+        repo,
+        [
+          `export D="${root}"`,
+          `bash -c 'source "${repo}/scripts/_lib.sh"; source "${repo}/scripts/lib/worktree-lifecycle.sh"; worktree_lifecycle_bounded 30 ${childCmd.replace(/'/g, "'\\''")}; echo done' &`,
+          'PB=$!',
+          waitPid,
+          group('alive-before', 'kill -0 -- "-$CH" 2>/dev/null'),
+          'kill -TERM $PB',
+          'for _ in $(seq 1 60); do kill -0 -- "-$CH" 2>/dev/null || break; sleep 0.1; done',
+          group('alive-after', 'kill -0 -- "-$CH" 2>/dev/null'),
+          'kill -9 -- "-$CH" 2>/dev/null; true',
+        ].join('\n')
+      )
+      expect(r.stdout).toContain('alive-before=yes')
+      expect(r.stdout).toContain('alive-after=no')
+    })
+  })
+
   describe('T10b. filesystem allow-list (Linux branch; Darwin is covered by the host script)', () => {
     const realStat = spawnSync('bash', ['-c', 'command -v stat'], {
       encoding: 'utf8',
@@ -267,6 +323,7 @@ describe('SMI-6981: static scans over the source closure', () => {
       ['|&', /\|&/],
       ['wait -n', /\bwait\s+-n\b/],
       ['printf %(..)T', /%\([^)]*\)T/],
+      ['negative array subscript', /\$\{\w+\[-\d+\]\}/],
     ]
     const hits: string[] = []
     for (const file of closure) {
@@ -277,7 +334,9 @@ describe('SMI-6981: static scans over the source closure', () => {
             if (re.test(line)) hits.push(`${file}:${i + 1} ${name}`)
         })
     }
-    // Positive control: each pattern fires on a sample of its own construct.
+    // Positive control: each pattern fires on the sample written for IT (zipped
+    // by index, not "some pattern matches"), so a broken pattern cannot hide
+    // behind a neighbour.
     const samples = [
       'readarray -t a',
       'mapfile a',
@@ -294,8 +353,12 @@ describe('SMI-6981: static scans over the source closure', () => {
       'a |& b',
       'wait -n',
       "printf '%(%s)T'",
+      '${a[-1]}',
     ]
-    expect(samples.every((s) => FORBIDDEN.some(([, re]) => re.test(s)))).toBe(true)
+    expect(samples).toHaveLength(FORBIDDEN.length)
+    samples.forEach((sample, i) => {
+      expect([FORBIDDEN[i][0], FORBIDDEN[i][1].test(sample)]).toEqual([FORBIDDEN[i][0], true])
+    })
     expect(hits).toEqual([])
   })
 })
