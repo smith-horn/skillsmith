@@ -152,9 +152,12 @@
  *     RUFLO_GUARD_TEST_STALE_WINDOW_MS under vitest (SMI-7025), which
  *     production cannot reach: outside vitest that seam is ignored.
  *
- * Test seams (no-ops in production, all read from the environment):
+ * Operator override (honoured everywhere, NOT a test seam, not gated):
  *   RUFLO_GUARD_SQLITE_MODULE -- absolute path to better-sqlite3;
- *     defaults to the served image's copy.
+ *     defaults to the served image's copy. The exit-7 message for an
+ *     unloadable driver tells operators to set it.
+ *
+ * Test seams (all read from the environment, honoured only under vitest):
  *   RUFLO_GUARD_TEST_HOLD_MS -- hold the mutex this long INSIDE the
  *     transaction, to make contention observable.
  *   RUFLO_GUARD_TEST_PAUSE_AFTER_REALLOCK_CLASSIFY_MS -- pause after
@@ -189,8 +192,9 @@
  *
  *   Every RUFLO_GUARD_TEST_* seam above is honoured ONLY when VITEST=true
  *   (testSeamEnv, SMI-7025). Outside vitest a set seam is ignored with one
- *   stderr line. RUFLO_GUARD_SQLITE_MODULE is not a test seam and is not
- *   gated.
+ *   stderr line. Today the launcher shows the guard's output only when the
+ *   guard refuses, so on a successful launch that line is not yet visible
+ *   in the /mcp log; SMI-7062 forwards it.
  */
 import {
   closeSync,
@@ -400,8 +404,11 @@ function sleepMs(ms) {
 /**
  * SMI-7025: every RUFLO_GUARD_TEST_* seam is read through here, so each one
  * is honoured only under vitest (VITEST === 'true', the exact value vitest
- * sets). Outside vitest a set seam is ignored with one stderr line, which
- * reaches the /mcp log, and the guard behaves as if it were unset. The
+ * sets). Outside vitest a set seam is ignored with one stderr line, and the
+ * guard behaves as if it were unset. On an otherwise successful run that
+ * line does NOT reach the /mcp log yet: mcp-ruflo-launcher.sh prints the
+ * guard's captured output only when the guard exits non-zero (then it
+ * prints all of it, this line included). SMI-7062 forwards it. The
  * launcher passes no host env through `docker exec`, so this is a second
  * layer, not the first: it stops a stray variable in the served container
  * from faking the CLK_TCK check or shortening the stale-lock wait.
