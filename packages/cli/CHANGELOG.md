@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.16
+
+- **Cadence**: Mechanical cadence alignment (no changes since v0.8.15).
+
 ## v0.8.15
 
 - **Fixed**: SMI-7018 -- when a SKILL.md's frontmatter contains a line such as `--- # note` or

@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.7.20
+
 - **Fixed**: SMI-6114 -- private-registry denials, failures and reads are now recorded in the
   audit log on the standard deployment. They were written with the service-role key, which that
   deployment does not have, so they were dropped. `recordRegistryAudit()` now calls the new
