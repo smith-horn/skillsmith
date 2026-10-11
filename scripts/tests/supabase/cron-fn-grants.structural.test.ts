@@ -204,6 +204,47 @@ describe('SMI-7075 -- checker mutation cases (synthetic corpora)', () => {
       )
     ).toEqual(['foo'])
   })
+  // SMI-7075 cross-family review, finding 1: GRANT OPTION FOR leaves EXECUTE in place.
+  it('REVOKE GRANT OPTION FOR (function or schema-wide) is not a revoke: flagged', () => {
+    for (const stmt of [
+      'REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION public.foo() FROM PUBLIC, anon, authenticated;',
+      'REVOKE GRANT OPTION FOR ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC, anon, authenticated;',
+    ]) {
+      expect(flagged(synthetic(stmt))).toEqual(['foo'])
+    }
+  })
+  // Finding 2: the replay keeps one ACL per name, so an overloaded name fails closed.
+  it('an overloaded cron-called name fails closed even when one overload is revoked', () => {
+    const v = cronFnGrantViolations(
+      synthetic(
+        'CREATE FUNCTION public.foo(integer) RETURNS void AS $$ SELECT 1 $$ LANGUAGE sql;\n' +
+          'REVOKE EXECUTE ON FUNCTION public.foo(integer) FROM PUBLIC, anon, authenticated;'
+      )
+    )
+    expect(v).toEqual([{ fn: 'foo', reason: expect.stringMatching(/^overloaded/) }])
+  })
+  // Finding 3: a quoted name is exact. A quoted lower-case name is the same function; any other
+  // quoted name cannot be verified by this guard and fails closed.
+  it('a quoted lower-case cron call is the same function and is verified normally', () => {
+    const files = synthetic(ALL3).map((f, i) =>
+      i === 0
+        ? { ...f, sql: f.sql.replace('$$SELECT public.foo()$$', '$$SELECT "public"."foo"()$$') }
+        : f
+    )
+    expect(cronCalledFunctions(orderedStatements(files))).toEqual(new Set(['foo']))
+    expect(flagged(files)).toEqual([])
+  })
+  it('a quoted mixed-case cron call fails closed', () => {
+    const v = cronFnGrantViolations([
+      {
+        name: '001.sql',
+        sql: `CREATE FUNCTION public."Foo"() RETURNS void AS $$ SELECT 1 $$ LANGUAGE sql;\nSELECT cron.schedule('Foo', '* * * * *', $$SELECT public."Foo"()$$);`,
+      },
+    ])
+    expect(v).toEqual([
+      { fn: 'Foo', reason: expect.stringMatching(/not a case-folded identifier/) },
+    ])
+  })
   it('a revoke naming a different function does not cover foo', () => {
     expect(
       flagged(

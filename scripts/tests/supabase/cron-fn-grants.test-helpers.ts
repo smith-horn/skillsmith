@@ -19,11 +19,19 @@ export const ROLES = ['public', 'anon', 'authenticated'] as const
 type Role = (typeof ROLES)[number]
 
 const CRON_CALL_RE = /\bcron\s*\.\s*schedule(?:_in_database)?\s*\(/gi
-const FN_CALL_RE = /\b(?:SELECT|PERFORM)\s+(?:public\s*\.\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/gi
+// The called name may be bare or double-quoted, optionally qualified with a bare or quoted `public`.
+const FN_CALL_RE =
+  /\b(?:SELECT|PERFORM)\s+(?:(?:public|"public")\s*\.\s*)?("(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)\s*\(/gi
+/** Names the replay can verify: an unquoted, case-folded identifier, minus `$` (a regex metacharacter in its patterns). */
+const FOLDED_NAME_RE = /^[a-z_][a-z0-9_]*$/
+/** Postgres identifier rules: an unquoted name folds to lower case; a quoted one is exact. */
+function identName(raw: string): string {
+  return raw.startsWith('"') ? raw.slice(1, -1).replace(/""/g, '"') : raw.toLowerCase()
+}
 const PRIV = String.raw`(?:EXECUTE|ALL(?:\s+PRIVILEGES)?)`
 const TAIL = String.raw`(?:\s+(?:CASCADE|RESTRICT))?\s*$`
 const REVOKE_RE = new RegExp(
-  String.raw`^\s*REVOKE\s+(?:GRANT\s+OPTION\s+FOR\s+)?${PRIV}\s+ON\s+(?:FUNCTION|ROUTINE)\s+([\s\S]+?)\s+FROM\s+([\s\S]+?)${TAIL}`,
+  String.raw`^\s*REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?${PRIV}\s+ON\s+(?:FUNCTION|ROUTINE)\s+([\s\S]+?)\s+FROM\s+([\s\S]+?)${TAIL}`,
   'i'
 )
 const GRANT_RE = new RegExp(
@@ -31,7 +39,7 @@ const GRANT_RE = new RegExp(
   'i'
 )
 const REVOKE_ALL_RE = new RegExp(
-  String.raw`^\s*REVOKE\s+(?:GRANT\s+OPTION\s+FOR\s+)?${PRIV}\s+ON\s+ALL\s+FUNCTIONS\s+IN\s+SCHEMA\s+public\s+FROM\s+([\s\S]+?)${TAIL}`,
+  String.raw`^\s*REVOKE\s+(GRANT\s+OPTION\s+FOR\s+)?${PRIV}\s+ON\s+ALL\s+FUNCTIONS\s+IN\s+SCHEMA\s+public\s+FROM\s+([\s\S]+?)${TAIL}`,
   'i'
 )
 const GRANT_ALL_RE = new RegExp(
@@ -79,7 +87,7 @@ export function cronCalledFunctions(statements: string[]): Set<string> {
     for (const m of stmt.matchAll(CRON_CALL_RE)) {
       const open = (m.index ?? 0) + m[0].length - 1
       const region = stmt.slice(open, balancedEnd(stmt, open))
-      for (const c of region.matchAll(FN_CALL_RE)) names.add(c[1].toLowerCase())
+      for (const c of region.matchAll(FN_CALL_RE)) names.add(identName(c[1]))
     }
   }
   return names
@@ -108,13 +116,15 @@ function listNames(list: string, fn: string): boolean {
 
 type AclEffect = { roles: Set<Role>; kind: 'revoke' | 'grant' } | null
 
+// `REVOKE GRANT OPTION FOR ...` removes only the right to re-grant; the grantee keeps EXECUTE, so
+// it is no revoke at all for this check (SMI-7075 cross-family review, finding 1).
 function aclEffect(stmt: string, fn: string): AclEffect {
   let m = REVOKE_ALL_RE.exec(stmt)
-  if (m) return { roles: grantees(m[1]), kind: 'revoke' }
+  if (m) return m[1] ? null : { roles: grantees(m[2]), kind: 'revoke' }
   m = GRANT_ALL_RE.exec(stmt)
   if (m) return { roles: grantees(m[1]), kind: 'grant' }
   m = REVOKE_RE.exec(stmt)
-  if (m && listNames(m[1], fn)) return { roles: grantees(m[2]), kind: 'revoke' }
+  if (m && listNames(m[2], fn)) return m[1] ? null : { roles: grantees(m[3]), kind: 'revoke' }
   m = GRANT_RE.exec(stmt)
   if (m && listNames(m[1], fn)) return { roles: grantees(m[2]), kind: 'grant' }
   return null
@@ -162,11 +172,41 @@ function replay(statements: string[], fn: string): string | null {
   )
 }
 
+/**
+ * Distinct argument lists `fn` was ever CREATEd with (lower-cased, whitespace collapsed). The replay
+ * tracks one ACL per NAME, so it cannot tell `foo()` from `foo(integer)`: a revoke on one overload
+ * would read as covering the other (SMI-7075 cross-family review, finding 2). More than one list
+ * fails closed instead. A respelled redeclaration of the same signature also counts as two, which
+ * is the safe direction: a false alarm, never a false pass.
+ */
+function createSignatures(statements: string[], fn: string): Set<string> {
+  const sigs = new Set<string>()
+  for (const stmt of statements) {
+    if (!matchesCreateFunction(stmt, fn)) continue
+    const open = stmt.indexOf('(', stmt.search(new RegExp(`\\b${fn}"?\\s*\\(`, 'i')))
+    const args = stmt.slice(open + 1, balancedEnd(stmt, open) - 1)
+    sigs.add(args.replace(/\s+/g, ' ').trim().toLowerCase())
+  }
+  return sigs
+}
+
 /** Every cron-called function whose final ACL still lets PUBLIC, anon or authenticated execute. */
 export function cronFnGrantViolations(files: MigrationFile[]): Violation[] {
   const statements = orderedStatements(files)
   const out: Violation[] = []
   for (const fn of cronCalledFunctions(statements)) {
+    // Fail closed on what the replay cannot model (SMI-7075 cross-family review, finding 3).
+    if (!FOLDED_NAME_RE.test(fn)) {
+      out.push({ fn, reason: 'name is not a case-folded identifier; this guard cannot verify it' })
+      continue
+    }
+    if (createSignatures(statements, fn).size > 1) {
+      out.push({
+        fn,
+        reason: 'overloaded: CREATEd with more than one argument list; cannot verify',
+      })
+      continue
+    }
     const reason = replay(statements, fn)
     if (reason) out.push({ fn, reason })
   }
