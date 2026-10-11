@@ -18,7 +18,11 @@ import type {
   SecurityFindingType,
   SecuritySeverity,
 } from '../../src/security/scanner/types.js'
-import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from '../../src/security/scanner/weights.js'
+import {
+  SEVERITY_WEIGHTS,
+  CATEGORY_WEIGHTS,
+  CATEGORY_COEFFICIENTS,
+} from '../../src/security/scanner/weights.js'
 import { calculateRiskScore } from '../../src/security/scanner/SecurityScanner.risk-score.js'
 
 // ---- frozen reference: begin ----
@@ -221,6 +225,39 @@ function expectSame(findings: SecurityFinding[]): void {
   // The only breakdown field the refactor adds is the flag-only one, and it is 0 here.
   expect(now.breakdown.executableFrontmatter).toBe(0)
 }
+
+describe('SMI-7030 coefficient map order', () => {
+  // The refactored sum is a left-to-right loop over CATEGORY_COEFFICIENTS' keys.
+  // Float addition is not associative, so a reordered map can move a total by
+  // one ULP and, at an N + 0.5 boundary, by one point after Math.round. The
+  // value table below cannot catch that (a measured adjacent swap survived it),
+  // so pin the declaration order itself: the frozen legacy sum's term order,
+  // then the new flag-only term last.
+  it('iterates in exactly the legacy sum order, with executableFrontmatter last', () => {
+    expect(Object.keys(CATEGORY_COEFFICIENTS)).toEqual([
+      'jailbreak',
+      'socialEngineering',
+      'promptLeaking',
+      'dataExfiltration',
+      'privilegeEscalation',
+      'suspiciousCode',
+      'sensitivePaths',
+      'externalUrls',
+      'aiDefence',
+      'ssrf',
+      'pii',
+      'codeExecution',
+      'obfuscatedDirective',
+      'typosquat',
+      'gatekeeperBypass',
+      'archiveEvasion',
+      'pasteHostFetch',
+      'encodedPayload',
+      'decoyMisdirection',
+      'executableFrontmatter',
+    ])
+  })
+})
 
 describe('SMI-7030 T-equivalence: refactored calculateRiskScore vs frozen legacy', () => {
   it('the table is non-trivial (presence guard, asserted first)', () => {

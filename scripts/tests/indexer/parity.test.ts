@@ -439,16 +439,18 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
   }
 
   // SMI-7030: the weights and executable-frontmatter twins — whole-body
-  // byte-identity from the first section marker.
+  // byte-identity from the first section marker. Compared LITERALLY, not through
+  // normalizeWs: whitespace normalisation would also equate a changed string
+  // literal (e.g. the persisted finding message), which differs at runtime.
   for (const [label, denoPath, nodePath] of [
     ['security-scanner-edge.weights.ts', DENO_SCANNER_WEIGHTS, NODE_SCANNER_WEIGHTS],
     ['security-scanner-edge.frontmatter.ts', DENO_SCANNER_FRONTMATTER, NODE_SCANNER_FRONTMATTER],
   ] as const) {
     it.skipIf(isGitCryptEncrypted(denoPath))(
-      `${label} body is byte-identical from the first section marker (normalized whitespace)`,
+      `${label} body is byte-identical from the first section marker (literal, no normalisation)`,
       () => {
-        const deno = normalizeWs(extractScannerBody(denoPath))
-        const node = normalizeWs(extractScannerBody(nodePath))
+        const deno = extractScannerBody(denoPath)
+        const node = extractScannerBody(nodePath)
         expect(
           node,
           `${label} drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins`
