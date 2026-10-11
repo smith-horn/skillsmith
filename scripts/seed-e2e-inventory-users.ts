@@ -27,7 +27,7 @@
  * Idempotent: re-running is a no-op if users + prefs rows already exist.
  */
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 const STAGING_REF = 'ovhcifugwqnzoebwfuku'
 // Split across two string literals so this file cannot trip the prod-ref grep gate.
@@ -50,7 +50,14 @@ function requireEnv(name: string): string {
  * Returns the resolved user_id. Never errors silently — exits on any API failure.
  */
 async function ensureUser(
-  admin: ReturnType<typeof createClient>,
+  // SMI-6975: `ReturnType<typeof createClient>` resolves `createClient`'s
+  // OVERLOADED signature set to a specific (not necessarily matching)
+  // overload's return type, which disagreed with the real call site's own
+  // inferred generics below (TS2345, measured) -- the bare `SupabaseClient`
+  // type is the established pattern this repo already uses everywhere else
+  // a Supabase client is accepted as a parameter (e.g.
+  // scripts/e2e-smi6362-analytics-db-utils.ts, scripts/batch-transform-skills.pipeline.ts).
+  admin: SupabaseClient,
   email: string,
   password: string
 ): Promise<string> {

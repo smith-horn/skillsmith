@@ -1,0 +1,162 @@
+/**
+ * SMI-7060: the experiment script's description extraction and exit status.
+ */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  abTestFailed,
+  experimentExitCode,
+  skillDescription,
+} from '../run-large-skill-experiments.helpers.ts'
+
+describe('skillDescription', () => {
+  const fm = (yaml: string) => `---\n${yaml}\n---\n\n# Body\n`
+
+  it('reads a plain value', () => {
+    expect(skillDescription(fm('name: x\ndescription: Does a thing'))).toBe('Does a thing')
+  })
+
+  it('reads a quoted value without its quotes', () => {
+    expect(skillDescription(fm('description: "Does a thing"'))).toBe('Does a thing')
+  })
+
+  it('reads a folded value as its text, not the literal ">"', () => {
+    expect(skillDescription(fm('description: >\n  Does a\n  thing'))).toBe('Does a thing')
+  })
+
+  // The value starts on the line after the key. The shared parser still drops
+  // continuation lines when a plain scalar starts ON the key line (SMI-7064);
+  // add that form here once SMI-7064 fixes the parser.
+  it('reads a multi-line plain scalar in full', () => {
+    expect(skillDescription(fm('description:\n  Does a\n  thing well'))).toBe('Does a thing well')
+  })
+
+  it('keeps a colon inside the value', () => {
+    expect(skillDescription(fm('description: Does a: thing'))).toBe('Does a: thing')
+  })
+
+  it('keeps embedded quotes, and strips surrounding single quotes', () => {
+    expect(skillDescription(fm('description: Say "hi" now'))).toBe('Say "hi" now')
+    expect(skillDescription(fm("description: 'Does a thing'"))).toBe('Does a thing')
+  })
+
+  it('keeps the newline in a literal block', () => {
+    expect(skillDescription(fm('description: |\n  line one\n  line two'))).toBe(
+      'line one\nline two'
+    )
+  })
+
+  it('reads a three-line plain scalar in full', () => {
+    expect(skillDescription(fm('description:\n  one\n  two\n  three'))).toBe('one two three')
+  })
+
+  it('is empty for a non-string value (a list)', () => {
+    expect(skillDescription(fm('description:\n  - a\n  - b'))).toBe('')
+  })
+
+  it('is empty when the frontmatter is never closed', () => {
+    expect(skillDescription('---\ndescription: Does a thing\n\n# Body\n')).toBe('')
+  })
+
+  it('is empty when the key is missing', () => {
+    expect(skillDescription(fm('name: x'))).toBe('')
+  })
+
+  it('ignores a description: line in the body when there is no frontmatter', () => {
+    expect(skillDescription('# Title\n\ndescription: not frontmatter\n')).toBe('')
+  })
+})
+
+describe('experimentExitCode', () => {
+  it('control: no failed transformation and no failed A/B test exits 0', () => {
+    expect(experimentExitCode({ attempted: 3, transformFailed: 0, abFailed: 0 })).toBe(0)
+  })
+
+  it('every transformation failing exits non-zero', () => {
+    expect(experimentExitCode({ attempted: 3, transformFailed: 3, abFailed: 0 })).toBe(1)
+  })
+
+  it('a single failed transformation exits non-zero', () => {
+    expect(experimentExitCode({ attempted: 3, transformFailed: 1, abFailed: 0 })).toBe(1)
+  })
+
+  it('a failed A/B test exits non-zero even when every transformation succeeded', () => {
+    expect(experimentExitCode({ attempted: 3, transformFailed: 0, abFailed: 1 })).toBe(1)
+  })
+})
+
+describe('abTestFailed', () => {
+  const ab = (orig: number[], opt: number[]) => ({
+    original: { tokens: orig },
+    optimized: { tokens: opt },
+  })
+
+  it('control: samples on both sides is not a failure', () => {
+    expect(abTestFailed(ab([100], [80]))).toBe(false)
+  })
+
+  it('no original samples is a failure', () => {
+    expect(abTestFailed(ab([], [80]))).toBe(true)
+  })
+
+  it('no optimized samples is a failure', () => {
+    expect(abTestFailed(ab([100], []))).toBe(true)
+  })
+
+  it('no samples at all is a failure', () => {
+    expect(abTestFailed(ab([], []))).toBe(true)
+  })
+})
+
+// The helpers above are only as good as their wiring in main(), which cannot
+// run here: it downloads skills and invokes Claude. These read the script's
+// source and pin the two wiring points the round-2 gate named (SMI-7060).
+describe('run-large-skill-experiments.ts wiring', () => {
+  const src = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'run-large-skill-experiments.ts'),
+    'utf8'
+  )
+
+  it('sets the exit status from the run tally, once, after the tally is updated', () => {
+    const assign = 'process.exitCode = experimentExitCode(tally)'
+    expect(src.split(assign).length - 1, 'exactly one assignment').toBe(1)
+    expect(
+      src.split('const tally = { attempted: 0, transformFailed: 0, abFailed: 0 }').length - 1
+    ).toBe(1)
+    // After the loop's last tally update, so it sees the run's real counts.
+    // Presence first: lastIndexOf returns -1 for a deleted increment, which
+    // would let the ordering check below pass while proving nothing.
+    expect(src).toContain('tally.transformFailed++')
+    expect(src).toContain('tally.attempted++')
+    expect(src).toContain('tally.abFailed++')
+    expect(src.indexOf(assign)).toBeGreaterThan(src.lastIndexOf('tally.transformFailed++'))
+    expect(src.indexOf(assign)).toBeGreaterThan(src.lastIndexOf('tally.attempted++'))
+    expect(src.indexOf(assign)).toBeGreaterThan(src.lastIndexOf('tally.abFailed++'))
+  })
+
+  it('counts a failed A/B test and keeps it out of the report', () => {
+    // The check guards the push: a failed A/B test is counted, then skipped.
+    const check = src.indexOf('if (abTestFailed(result)) {')
+    expect(check, 'abTestFailed check present').toBeGreaterThan(-1)
+    const push = src.indexOf('results.push(result)')
+    expect(push, 'results.push present').toBeGreaterThan(-1)
+    const block = src.slice(check, push)
+    // Order, not just presence: guard < increment < skip < push. An increment
+    // moved after `continue` is unreachable, yet still "present" (SMI-7067).
+    const inc = block.indexOf('tally.abFailed++')
+    // A statement on its own line: a comment that merely mentions it does not count.
+    const skip = block.search(/^\s*continue\s*$/m)
+    expect(inc, 'increment inside the failed-A/B block').toBeGreaterThan(-1)
+    expect(skip, 'continue statement inside the failed-A/B block').toBeGreaterThan(-1)
+    expect(inc, 'increment before continue').toBeLessThan(skip)
+  })
+
+  it('passes the parsed description of the downloaded content to transform()', () => {
+    expect(src).toContain('const description = skillDescription(originalContent)')
+    expect(src).toContain('service.transform(skillName, skillName, description, originalContent)')
+  })
+})

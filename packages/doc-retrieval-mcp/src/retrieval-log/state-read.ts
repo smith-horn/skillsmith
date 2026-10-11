@@ -265,7 +265,7 @@ export function readEntryResult<T>(
  * the two functions never disagree about what counts as "nothing here yet"
  * for the same file) — none of those is a loss, there was nothing there to
  * lose. This function only classifies; it does not copy aside or otherwise
- * preserve the corrupt bytes — the writer that does is tracked in SMI-7041.
+ * preserve the corrupt bytes. A writer that would is proposed in SMI-7041.
  */
 export function readEntryForUpdate<T>(
   key: string,
@@ -299,7 +299,7 @@ export function readEntryForUpdate<T>(
  * `null` only when `classification` is `'ok'`.
  *
  * This function only classifies; it does not preserve corrupt bytes before
- * a caller overwrites them — the writer that does is tracked in SMI-7041.
+ * a caller overwrites them. A writer that would is proposed in SMI-7041.
  *
  * Never throws — see {@link readRawState} for why a corrupt read must never
  * become an exception on this path.

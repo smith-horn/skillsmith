@@ -241,7 +241,14 @@ export async function createLinearIssue(
     errors?: unknown
   }
   try {
-    result = await response.json()
+    // SMI-6975: `@types/node`'s undici-based fetch types declare
+    // Response.json(): Promise<unknown> (unlike lib.dom.d.ts's Promise<any>),
+    // and this tsconfig has no "dom" lib -- so the payload arrives genuinely
+    // untyped. The code below only ever reads it through optional chaining
+    // (result.data?.issueCreate?.success etc.), i.e. it already treats this
+    // as an unverified network response; the `as` below names that existing
+    // trust boundary explicitly instead of silencing it with `any`.
+    result = (await response.json()) as typeof result
   } catch (error) {
     const reason = `Invalid JSON response: ${error instanceof Error ? error.message : String(error)}`
     console.error(reason)

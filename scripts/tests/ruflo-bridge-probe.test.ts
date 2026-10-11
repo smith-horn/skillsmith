@@ -25,14 +25,32 @@
  * file's own comment at the bottom for why the guard was added.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash, randomInt, randomUUID } from 'node:crypto'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import {
+  BRIDGE_PROBE_DISABLE_VAR,
+  PROBE_COMMAND,
+} from '../../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import { extractLearningCounters, isProducerPresent } from '../ruflo-bridge-probe.mjs'
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 describe('isProducerPresent — agentdb.totalEntries arm (SMI-6967 H-A: shared isValidCount, not a second Number.isFinite copy)', () => {
   it('arms on an integer totalEntries > 0', () => {
@@ -318,5 +336,270 @@ describe('resolveHostKey -- git stderr stays off the parent terminal (SMI-6976)'
       }
     },
     SPAWN_TIMEOUT_MS + 30_000
+  )
+})
+
+describe('SMI-7032: PROBE_COMMAND names a command that can actually load the probe', () => {
+  // This lives HERE, not beside the constant in
+  // packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.test.ts,
+  // and the placement is the point. That file is reached by
+  // `Test (<package>)`, gated on `affected_count != '0'`. Measured with the
+  // repo's own classifier (scripts/ci/detect-affected.ts), with controls:
+  //
+  //   scripts/ruflo-bridge-probe.mjs        -> affected_count=0   job SKIPS
+  //   ...retrieval-log/*.render.ts          -> affected_count=1   job runs
+  //   README.md                             -> affected_count=0
+  //
+  // So a PR editing only the probe's own imports — the change most likely to
+  // break this again — would skip that job entirely. `Test (root)` runs this
+  // file unconditionally on any `code`-tier diff.
+  //
+  // What it asserts: the command every [ruflo-bridge] banner tells its reader
+  // to run, tokenized and executed as written, actually runs the probe. Two
+  // tests previously asserted only that the banner CONTAINED the command
+  // string, which is why a command that exited 1 with ERR_MODULE_NOT_FOUND for
+  // everyone, every time, lived its whole life green.
+  //
+  // Sandbox: HOME, TMPDIR, XDG_*_HOME and SKILLSMITH_STATE_DIR_OVERRIDE all
+  // point inside ONE temp root, and the seeded state makes main() take its
+  // debounce path. Asserted, not assumed, for what is measured:
+  //   - docker contact: a `docker` shim first on PATH records PATH-resolved
+  //     calls (an absolute-path docker call would NOT be seen by it). The
+  //     launcher's first act is `docker ps`, so a debounced run must make none;
+  //     the launch test below is the positive control that the shim sees a
+  //     launch at all. What this does NOT observe: a launcher that starts but
+  //     never reaches a PATH-resolved `docker` (it exits, fails or hangs
+  //     first), and launcher-specific behaviour beyond that first `docker ps`.
+  //     (A test-only launcher-record seam used to observe the launcher
+  //     boundary directly; it was removed from the shipped probe, SMI-7032
+  //     owner decision, because it could itself affect the probe.)
+  //   - filesystem: every pre-existing file under the sandbox root keeps its
+  //     sha256, mode and size; the only additions are the log dir + file.
+  // Not measured: writes outside the sandbox root, or network calls.
+  const tokens = PROBE_COMMAND.trim().split(/\s+/)
+
+  // One budget, measured: each test spawns once. A cold `npx --no-install tsx`
+  // run of the debounce path took 252-294ms in the dev container (5 runs), so
+  // 5s is ~17x the slowest. vitest's own testTimeout is 15s (vitest.preset.ts),
+  // and spawn + slack stays well under it.
+  const SPAWN_BUDGET_MS = 5_000
+  const TEST_BUDGET_MS = SPAWN_BUDGET_MS + 2_000
+
+  // path -> signature for every file and directory under root. Files: mode,
+  // size and sha256 of the bytes (mtime deliberately excluded: a same-size
+  // rewrite with a restored mtime must still be caught). Directories: mode only
+  // (their mtime legitimately moves when an entry is added).
+  const snapshot = (root: string): Map<string, string> => {
+    const out = new Map<string, string>()
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name)
+        const st = statSync(full)
+        const mode = (st.mode & 0o7777).toString(8)
+        const sig = st.isDirectory()
+          ? `dir:${mode}`
+          : `file:${mode}:${st.size}:${createHash('sha256').update(readFileSync(full)).digest('hex')}`
+        out.set(full.slice(root.length), sig)
+        if (st.isDirectory()) walk(full)
+      }
+    }
+    walk(root)
+    return out
+  }
+
+  // Executes argv EXACTLY as given (no `-e`, no substituted entry point)
+  // against a debounced fixture, so the probe's own main() runs end to end
+  // without contacting any server. The fixture pre-seeds a fresh entry for an
+  // invocation-unique key whose evaluatedAt is also invocation-unique; main()
+  // then logs `debounced — prior entry at <evaluatedAt>`. Only the probe's own
+  // code reading the seeded state can produce that line, so a command that
+  // merely prints something (e.g. `echo RESOLVED ...`) cannot forge it.
+  const runAdvertised = (argv: string[]) => {
+    const sandbox = makeFixtureTempDir('smi-7032-probe')
+    const stateDir = join(sandbox, 'state')
+    for (const d of ['state', 'home', 'tmp', 'xdg']) mkdirSync(join(sandbox, d))
+    // Pre-existing decoys so the hash comparison has bytes to protect.
+    writeFileSync(join(stateDir, 'decoy.txt'), 'smi-7032 decoy AAAA')
+    writeFileSync(join(sandbox, 'home', 'decoy.txt'), 'smi-7032 home decoy')
+    const key = `smi-7032-key-${randomUUID()}`
+    // Unique per invocation, still well inside the 24h debounce window.
+    const evaluatedAt = new Date(Date.now() - (60_000 + randomInt(1, 3_600_000))).toISOString()
+    const statePath = join(stateDir, 'ruflo-bridge.state')
+    writeFileSync(
+      statePath,
+      JSON.stringify({ [key]: { verdict: 'ok', evaluatedAt, reason: 'smi-7032 fixture' } })
+    )
+    const stateBefore = readFileSync(statePath)
+    // `docker` shim, outside stateDir so its record never enters the snapshot.
+    const shimDir = makeFixtureTempDir('smi-7032-shim')
+    const dockerLog = join(shimDir, 'docker-invocations.log')
+    mkdirSync(join(shimDir, 'bin'))
+    const shim = join(shimDir, 'bin', 'docker')
+    writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${dockerLog}"\nexit 1\n`)
+    chmodSync(shim, 0o755)
+    const before = snapshot(sandbox)
+    const result = spawnSync(argv[0], [...argv.slice(1), '--key', key], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: SPAWN_BUDGET_MS,
+      env: makeFixtureEnv({
+        HOME: join(sandbox, 'home'),
+        TMPDIR: join(sandbox, 'tmp'),
+        XDG_CONFIG_HOME: join(sandbox, 'xdg'),
+        XDG_CACHE_HOME: join(sandbox, 'xdg'),
+        XDG_DATA_HOME: join(sandbox, 'xdg'),
+        XDG_STATE_HOME: join(sandbox, 'xdg'),
+        VITEST: 'true',
+        PATH: `${join(shimDir, 'bin')}:${process.env.PATH ?? ''}`,
+        // Pin npx's own cache OUTSIDE the snapshot root. Otherwise it lands in
+        // $HOME/.npm whenever the runner did not export npm_config_cache: true
+        // under pre-push (vitest run directly), not under `npx vitest`. That
+        // made this test pass or fail depending on how it was invoked.
+        npm_config_cache: join(shimDir, 'npm-cache'),
+        SKILLSMITH_STATE_DIR_OVERRIDE: stateDir,
+        [BRIDGE_PROBE_DISABLE_VAR]: '',
+      }),
+    })
+    const logDir = join(stateDir, 'logs')
+    const logText = existsSync(logDir)
+      ? readdirSync(logDir)
+          .map((f) => readFileSync(join(logDir, f), 'utf8'))
+          .join('\n')
+      : ''
+    const after = snapshot(sandbox)
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    const stateUnchanged = readFileSync(statePath).equals(stateBefore)
+    return {
+      result,
+      logText,
+      evaluatedAt,
+      stateDir,
+      sandbox,
+      shimDir,
+      before,
+      after,
+      dockerCalls,
+      stateUnchanged,
+    }
+  }
+
+  it(
+    'executing PROBE_COMMAND as written runs the probe script itself',
+    () => {
+      expect(tokens.length).toBeGreaterThan(1)
+      const scriptRel = tokens[tokens.length - 1]
+      // isFile, not merely exists: join(REPO_ROOT, '') is the root itself.
+      expect(statSync(join(REPO_ROOT, scriptRel)).isFile()).toBe(true)
+
+      const run = runAdvertised(tokens)
+      const { result, logText, evaluatedAt, sandbox, shimDir } = run
+      try {
+        expect(result.error).toBeUndefined()
+        expect(result.signal).toBeNull()
+        expect(result.status).toBe(0)
+        expect(logText).toContain(`debounced — prior entry at ${evaluatedAt}`)
+        // Debounce must PREVENT the work, not merely be reached: no PATH-resolved
+        // docker call (the launcher's first act is `docker ps`; the launch test
+        // below proves the shim sees one) and no state write.
+        expect(run.dockerCalls).toBe('')
+        expect(run.stateUnchanged).toBe(true)
+        // Every pre-existing path under the sandbox root keeps its bytes
+        // (sha256), mode and size; the only additions are the log dir + file,
+        // plus the TOOLCHAIN's own caches under TMPDIR (tsx's per-uid dir and
+        // node's compile cache, written because TMPDIR points into the sandbox;
+        // measured: the only other additions in a real run).
+        for (const [path, sig] of run.before) expect(run.after.get(path)).toBe(sig)
+        const toolchainCache = /^\/tmp\/(tsx-\d+|node-compile-cache)(\/|$)/
+        const added = [...run.after.keys()]
+          .filter((p) => !run.before.has(p) && !toolchainCache.test(p))
+          .sort()
+        expect(added).toHaveLength(2)
+        expect(added[0]).toBe('/state/logs')
+        expect(added[1]).toMatch(/^\/state\/logs\/ruflo-bridge-probe-\d{4}-\d{2}-\d{2}\.log$/)
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+        rmSync(shimDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  it(
+    'bare node on the same script does NOT run the probe (known-negative control)',
+    () => {
+      const scriptRel = tokens[tokens.length - 1]
+      const run = runAdvertised(['node', scriptRel])
+      const { result, stateDir, sandbox, shimDir } = run
+      try {
+        expect(result.error).toBeUndefined()
+        expect(result.status).not.toBe(0)
+        expect(result.stderr ?? '').toContain('ERR_MODULE_NOT_FOUND')
+        // The import fails before main() exists: no log at all (not merely
+        // "no line with this timestamp"), and nothing in the state dir moved.
+        expect(run.logText).toBe('')
+        expect(existsSync(join(stateDir, 'logs'))).toBe(false)
+        expect(run.after).toEqual(run.before)
+        expect(run.stateUnchanged).toBe(true)
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+        rmSync(shimDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
+  )
+
+  // POSITIVE CONTROL for the debounce test's zero-docker assertion: on the
+  // NON-debounce path (no seeded state) the probe really spawns the launcher,
+  // whose first docker call is `docker ps ...`, and the same shim records it.
+  // Without this, "no docker calls" could mean the shim sees nothing at all.
+  const runLaunching = () => {
+    const sandbox = makeFixtureTempDir('smi-7032-launch')
+    const shimDir = makeFixtureTempDir('smi-7032-launch-shim')
+    for (const d of ['state', 'home', 'tmp', 'xdg']) mkdirSync(join(sandbox, d))
+    const dockerLog = join(shimDir, 'docker-invocations.log')
+    mkdirSync(join(shimDir, 'bin'))
+    const shim = join(shimDir, 'bin', 'docker')
+    writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${dockerLog}"\nexit 1\n`)
+    chmodSync(shim, 0o755)
+    const env = makeFixtureEnv({
+      HOME: join(sandbox, 'home'),
+      TMPDIR: join(sandbox, 'tmp'),
+      XDG_CONFIG_HOME: join(sandbox, 'xdg'),
+      XDG_CACHE_HOME: join(sandbox, 'xdg'),
+      XDG_DATA_HOME: join(sandbox, 'xdg'),
+      XDG_STATE_HOME: join(sandbox, 'xdg'),
+      PATH: `${join(shimDir, 'bin')}:${process.env.PATH ?? ''}`,
+      npm_config_cache: join(shimDir, 'npm-cache'),
+      SKILLSMITH_STATE_DIR_OVERRIDE: join(sandbox, 'state'),
+      [BRIDGE_PROBE_DISABLE_VAR]: '',
+    })
+    const result = spawnSync(
+      tokens[0],
+      [...tokens.slice(1), '--key', `smi-7032-launch-${randomUUID()}`],
+      { cwd: REPO_ROOT, encoding: 'utf8', timeout: SPAWN_BUDGET_MS, env }
+    )
+    const dockerCalls = existsSync(dockerLog) ? readFileSync(dockerLog, 'utf8') : ''
+    return { result, dockerCalls, sandbox, shimDir }
+  }
+
+  it(
+    'positive control: on the non-debounce path the launcher runs and the docker shim records its `ps`',
+    () => {
+      const run = runLaunching()
+      try {
+        expect(run.result.error).toBeUndefined()
+        expect(run.result.signal).toBeNull()
+        // The launcher's own Check 1 invocation, whole line: a bare `docker ps`
+        // from anywhere else does not satisfy it, so this pins that the
+        // launcher itself ran, not merely that something touched docker.
+        expect(run.dockerCalls.split('\n')).toContain(
+          'ps --filter name=^/skillsmith-ruflo-1$ --filter status=running -q'
+        )
+      } finally {
+        rmSync(run.sandbox, { recursive: true, force: true })
+        rmSync(run.shimDir, { recursive: true, force: true })
+      }
+    },
+    TEST_BUDGET_MS
   )
 })
