@@ -193,7 +193,7 @@ describe.skipIf(locked)(
         'known-negative: the same predicate rejects a changed schedule'
       ).not.toMatch(scheduleCall)
       expect(b).toMatch(/SECURITY DEFINER/)
-      expect(b).toMatch(/SET search_path = public, net, vault, extensions/)
+      expect(b).toMatch(/SET search_path = public, net, vault, extensions, pg_temp\n/)
       for (const s of [
         'registry_audit_volume_monitor_functions_base_url',
         'registry_audit_volume_monitor_service_role_key',

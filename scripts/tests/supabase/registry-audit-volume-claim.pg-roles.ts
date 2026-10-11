@@ -89,6 +89,31 @@ export function registerRoleTests(ctx: Ctx): void {
       ])
     })
 
+    // count_stale reports a claim held unsettled for 15 minutes up to 24 hours; each age is
+    // seeded alone (own transaction), so the count is attributable to exactly that row.
+    it.each([
+      ['14 minutes', 0],
+      ['15 minutes', 0],
+      ['15 minutes 1 microsecond', 1],
+      ['20 minutes', 1],
+      ['23 hours', 1],
+      ['24 hours', 1],
+      ['24 hours 1 microsecond', 0],
+      ['3 days', 0],
+    ])('count_stale: a claim %s old counts %i', async (ago, expected) => {
+      const r = await inTxn(ctx.ctl(), [
+        `INSERT INTO registry_audit_volume_alert_state (actor, degraded_since, claim_token, claimed_at) ` +
+          `VALUES ('user:aged', now(), ${q(TOK1)}::uuid, now() - interval ${q(ago)});`,
+        "SELECT 'rows=' || count(*) FROM registry_audit_volume_alert_state WHERE claim_token IS NOT NULL;",
+        "SELECT 'stale=' || public.count_stale_registry_audit_volume_claims();",
+      ])
+      expect(r.stderr).not.toMatch(/ERROR/)
+      expect(r.lines, 'presence: the seeded claim exists, then the count').toEqual([
+        'rows=1',
+        `stale=${expected}`,
+      ])
+    })
+
     for (const role of ['anon', 'authenticated']) {
       it.each(STATE_FNS)(`${role} is refused EXECUTE on %s with 42501`, async (fn) => {
         const r = await inTxnExpectingError(ctx.ctl(), [AS(role), CALLS[fn]])
