@@ -447,10 +447,12 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
     ['security-scanner-edge.frontmatter.ts', DENO_SCANNER_FRONTMATTER, NODE_SCANNER_FRONTMATTER],
   ] as const) {
     it.skipIf(isGitCryptEncrypted(denoPath))(
-      `${label} body is byte-identical from the first section marker (literal, no normalisation)`,
+      `${label} body is identical from the first section marker (literal; line endings only normalised)`,
       () => {
-        const deno = extractScannerBody(denoPath)
-        const node = extractScannerBody(nodePath)
+        // Line endings only are normalised (a CRLF checkout of one twin is not
+        // drift); every other character, inside literals included, must match.
+        const deno = extractScannerBody(denoPath).replace(/\r\n/g, '\n')
+        const node = extractScannerBody(nodePath).replace(/\r\n/g, '\n')
         expect(
           node,
           `${label} drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins`
