@@ -49,7 +49,12 @@
 #       delete); C3 no creator skips the lock (it has no opt-out); C4 the
 #       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
 #       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
-#       outcome the daemon may still execute; the run stops with exit 1). An
+#       outcome the daemon may still execute; the run stops with exit 1). A delete
+#       is DEFINITIVELY refused only when exit 1 carries a first line beginning
+#       "Error response from daemon:" (no such volume, in use, dependent image);
+#       the run records that and continues. EVERY other failure (connection
+#       refused or reset, EOF, no or unrecognised output, a missing binary) is
+#       outcome-unknown and stops the run with exit 1 the same way. An
 #       interrupt (INT/TERM/HUP, or this shell dying) mid-delete is forwarded to
 #       the delete's process group and waited out (TERM, 2 s, KILL) before the
 #       lock is released, but SIGKILL of this script releases the lock at once:

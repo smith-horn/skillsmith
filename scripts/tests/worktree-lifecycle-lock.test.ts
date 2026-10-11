@@ -138,24 +138,82 @@ describe('SMI-6981: lifecycle lock primitive', () => {
       expect(r.stdout).toContain('alive-after=no')
     })
 
-    it('the death of the parent shell takes the child group down too', () => {
+    it('the death of the parent shell takes the child group down, ends the supervisor and frees the lock', () => {
       const { repo, root } = makeRepo('lk-t20-parent')
+      const sources = `source "${repo}/scripts/_lib.sh"; source "${repo}/scripts/lib/worktree-lifecycle.sh"`
+      // A process is alive unless gone or a zombie (a dead supervisor nobody reaps).
+      const alive =
+        'alive() { [ -r "/proc/$1/status" ] && ! grep -q "^State:[[:space:]]*Z" "/proc/$1/status"; }'
       const r = runLib(
         repo,
         [
           `export D="${root}"`,
-          `bash -c 'source "${repo}/scripts/_lib.sh"; source "${repo}/scripts/lib/worktree-lifecycle.sh"; worktree_lifecycle_bounded 30 ${childCmd.replace(/'/g, "'\\''")}; echo done' &`,
+          alive,
+          // The parent shell takes the lock, then supervises the delete.
+          `bash -c '${sources}; worktree_lifecycle_lock_acquire "${repo}" 0 parent || exit 9; worktree_lifecycle_bounded 30 ${childCmd.replace(/'/g, "'\\''")}; echo done' &`,
           'PB=$!',
           waitPid,
-          group('alive-before', 'kill -0 -- "-$CH" 2>/dev/null'),
+          'SUP=$(cat "/proc/$PB/task/$PB/children" | tr -d " ")',
+          group('supervisor-alive-before', 'alive "$SUP"'),
+          group('group-alive-before', 'kill -0 -- "-$CH" 2>/dev/null'),
+          `bash -c '${sources}; worktree_lifecycle_lock_acquire "${repo}" 0 outsider; echo outsider-while-held=$?; true'`,
           'kill -TERM $PB',
           'for _ in $(seq 1 60); do kill -0 -- "-$CH" 2>/dev/null || break; sleep 0.1; done',
-          group('alive-after', 'kill -0 -- "-$CH" 2>/dev/null'),
-          'kill -9 -- "-$CH" 2>/dev/null; true',
+          'for _ in $(seq 1 30); do alive "$SUP" || break; sleep 0.1; done',
+          group('group-alive-after', 'kill -0 -- "-$CH" 2>/dev/null'),
+          group('supervisor-alive-after', 'alive "$SUP"'),
+          'kill -9 -- "-$CH" "$SUP" 2>/dev/null; true',
         ].join('\n')
       )
-      expect(r.stdout).toContain('alive-before=yes')
-      expect(r.stdout).toContain('alive-after=no')
+      // Presence: everything was up before the parent was killed.
+      expect(r.stdout).toContain('supervisor-alive-before=yes')
+      expect(r.stdout).toContain('group-alive-before=yes')
+      expect(r.stdout).toContain('outsider-while-held=75')
+      expect(r.stdout).toContain('group-alive-after=no')
+      expect(r.stdout).toContain('supervisor-alive-after=no')
+      // The kernel released the lock with the parent; nothing else holds it.
+      expect(tryAcquire(repo, 2)).toBe(0)
+    })
+  })
+
+  describe('T21. worktree_lifecycle_rejected: only a daemon answer is a definitive refusal', () => {
+    // Exit status and stderr are the docker CLI 29.7.2's own, measured.
+    it.each([
+      [1, 'Error response from daemon: get x: no such volume', true],
+      [1, 'Error response from daemon: No such image: x:latest', true],
+      [1, 'Error response from daemon: remove x: volume is in use - [70257c]', true],
+      [1, '\nError response from daemon: leading blank line is skipped', true],
+      [
+        1,
+        'Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?',
+        false,
+      ],
+      [
+        1,
+        'failed to connect to the docker API at unix:///nonexistent.sock; check if the path is correct and if the daemon is running: dial unix /nonexistent.sock: connect: no such file or directory',
+        false,
+      ],
+      [1, 'error during connect: Delete "http://docker.example.com/v1.55/volumes/x": EOF', false],
+      [
+        1,
+        'error during connect: x: stderr=ssh: connect to host 127.0.0.1 port 1: Connection refused',
+        false,
+      ],
+      [1, 'error during connect: EOF\nError response from daemon: not the first line', false],
+      [1, '', false],
+      [1, 'something unrecognised', false],
+      [2, 'Error response from daemon: right text, wrong status', false],
+      [127, 'bash: /nonexistent/docker: No such file or directory', false],
+      [124, '', false],
+      [137, 'Error response from daemon: killed', false],
+    ])('exit %i %j -> definitive: %s', (status, stderr, definitive) => {
+      const { repo } = makeRepo('lk-t21-class')
+      const r = runLib(
+        repo,
+        `if worktree_lifecycle_rejected ${status} "$STDERR"; then echo definitive; else echo unknown; fi`,
+        { STDERR: stderr }
+      )
+      expect(r.stdout.trim()).toBe(definitive ? 'definitive' : 'unknown')
     })
   })
 

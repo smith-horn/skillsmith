@@ -330,14 +330,34 @@ worktree_lifecycle_bounded() {
     perl -e "$_WTL_PERL_BOUNDED" -- "$secs" "$@" 7<&- </dev/null
 }
 
+# worktree_lifecycle_rejected STATUS OUTPUT
+#
+# 0 only when the delete was DEFINITIVELY refused by the daemon: exit 1 and the
+# first non-empty line of the output begins "Error response from daemon:" (the
+# prefix the docker CLI puts on an error the daemon itself returned: no such
+# volume/image, volume in use, image has dependent children; measured on CLI
+# 29.7.2). Everything else is outcome-unknown: a connection refused or reset
+# ("Cannot connect to the Docker daemon", "failed to connect to the docker API",
+# "error during connect"), an EOF, an empty or unrecognised message, a signal or
+# missing binary (any status but 1). The request may already have reached the
+# daemon, which can still carry it out after the lock is released.
+worktree_lifecycle_rejected() {
+    local status="$1" first
+    [[ "$status" -eq 1 ]] || return 1
+    first="$(printf '%s\n' "$2" | sed -n '/./{p;q;}')" || return 1
+    [[ "$first" == "Error response from daemon:"* ]]
+}
+
 # worktree_lifecycle_delete MAIN_REPO PROJECT DRY_RUN KIND NAME
 #
 # The ONE critical section for a liveness-keyed Docker delete (KIND is `volume`
 # or `image`). Inside it, the liveness read and the lock-identity check are the
 # LAST operations before the single bounded delete. Returns 0 on removed, gone,
-# live-now or dry-run, 1 on a delete the caller must count as failed. Exits (via
-# error) when the lock, the liveness read or the identity cannot be established,
-# or the delete's outcome is unknown: nothing further is deleted.
+# live-now or dry-run, 1 on a delete the daemon definitively refused (the caller
+# counts it as failed and may continue). Exits (via error) when the lock, the
+# liveness read or the identity cannot be established, or the delete's outcome is
+# unknown (timeout, or any failure the daemon did not itself answer): nothing
+# further is deleted.
 #
 # This function is always called from a `||` context, which suppresses errexit
 # inside it, so no step below relies on errexit: the re-read is `x="$(...)" ||
@@ -386,6 +406,9 @@ worktree_lifecycle_delete() {
             error "${rm_cmd[*]} timed out after ${rm_timeout}s: its outcome is UNKNOWN and the daemon may still run it -- deleting nothing further."
             ;;
         *)
+            if ! worktree_lifecycle_rejected "$drc" "$out"; then
+                error "${rm_cmd[*]} failed without an answer from the daemon (exit $drc: ${out:-no output}): its outcome is UNKNOWN and the daemon may still run it -- deleting nothing further."
+            fi
             if grep -qi "no such $kind" <<< "$out"; then
                 info "  $label $name already gone"
             else

@@ -55,7 +55,6 @@ import {
   worktreeListCallCount,
   imageLabels,
   volumePsResponse,
-  setVolumeRmExit,
   resetLog,
   runPrune,
   containerResponses,
@@ -866,7 +865,14 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
       project: 'gone-wt',
       owned: 'true',
     })
-    setVolumeRmExit(fixture, 'gone-wt_node_modules', 1)
+    // A daemon-shaped refusal (measured CLI output): a definitive rejection, so
+    // the run records it and goes on. A silent exit 1 is outcome-unknown and stops.
+    shimDockerFailures(fixture, [
+      {
+        glob: 'volume rm gone-wt_node_modules',
+        stderr: 'Error response from daemon: remove gone-wt_node_modules: volume is in use - [abc]',
+      },
+    ])
 
     const result = runPrune(fixture, only('gone-wt'))
 
@@ -1246,7 +1252,10 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
   it('F4a. a volume rm that fails for a real reason exits 1 and says why', () => {
     const fixture = volumeFixture('prune-rm-real-fail')
     shimDockerFailures(fixture, [
-      { glob: `volume rm ${VOL}`, stderr: 'volume is in use - [abc123]' },
+      {
+        glob: `volume rm ${VOL}`,
+        stderr: `Error response from daemon: remove ${VOL}: volume is in use - [abc123]`,
+      },
     ])
     const result = runPrune(fixture, only('gone-wt'))
 
@@ -1275,7 +1284,10 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
   it('F4c. an image rmi that fails for a real reason exits 1 and says why', () => {
     const fixture = imageFixture('prune-rmi-real-fail')
     shimDockerFailures(fixture, [
-      { glob: `rmi ${IMG}`, stderr: 'image is being used by running container abc' },
+      {
+        glob: `rmi ${IMG}`,
+        stderr: `Error response from daemon: conflict: unable to delete ${IMG} - image is being used by running container abc`,
+      },
     ])
     const result = runPrune(fixture, only('gone-wt'))
 

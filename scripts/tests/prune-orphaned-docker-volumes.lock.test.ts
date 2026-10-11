@@ -27,6 +27,7 @@ import {
   volumeListResponse,
   volumeLabels,
   runPrune,
+  setVolumeRmExit,
   type FixtureRepo,
 } from './prune-orphaned-docker-volumes.helpers.js'
 import {
@@ -315,6 +316,48 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
     expect(r.stdout).toContain('skipping targeted orphan prune')
     expect(r.status).toBe(0)
     expect(r.dockerCalls).toEqual([])
+  })
+
+  describe('T21. only a daemon refusal lets the run continue past a failed delete', () => {
+    const accepted = (f: FixtureRepo): string => markerPath(f, 'accepted')
+
+    it('a transport-shaped failure after the request was sent stops the run', () => {
+      const f = volumeFixture('lk-t21-unknown', [VOL, VOL2])
+      // The first delete's request was accepted, then the connection is lost:
+      // exit 1 without a daemon answer (measured CLI wording for a refused TCP
+      // connection), so the daemon may still carry the delete out.
+      setDockerHook(
+        f,
+        `volume_rm__${VOL}`,
+        `echo "request accepted" > "${accepted(f)}"\necho 'Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?' >&2`
+      )
+      setVolumeRmExit(f, VOL, 1)
+      const r = runPrune(f, only('gone-wt'))
+      // Presence: the first delete really ran.
+      expect(hookRan(f, `volume_rm__${VOL}`)).toBe(true)
+      expect(r.dockerCalls.filter((c) => deletesVol(c, VOL))).toHaveLength(1)
+      expect(r.status).toBe(1)
+      expect(r.dockerCalls.filter((c) => deletesVol(c, VOL2))).toHaveLength(0)
+      expect(r.stderr).toContain('outcome is UNKNOWN')
+      expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
+    })
+
+    it('control: a definitive daemon refusal is recorded and the run continues', () => {
+      const f = volumeFixture('lk-t21-definitive', [VOL, VOL2])
+      setDockerHook(
+        f,
+        `volume_rm__${VOL}`,
+        `echo "request accepted" > "${accepted(f)}"\necho 'Error response from daemon: remove ${VOL}: volume is in use - [abc123]' >&2`
+      )
+      setVolumeRmExit(f, VOL, 1)
+      const r = runPrune(f, only('gone-wt'))
+      expect(hookRan(f, `volume_rm__${VOL}`)).toBe(true)
+      expect(r.dockerCalls.filter((c) => deletesVol(c, VOL))).toHaveLength(1)
+      expect(r.dockerCalls.filter((c) => deletesVol(c, VOL2))).toHaveLength(1)
+      expect(r.stderr).toContain(`Could not remove volume ${VOL}`)
+      expect(r.stderr).not.toContain('outcome is UNKNOWN')
+      expect(r.status).toBe(1)
+    })
   })
 
   it('T17. a delete child cannot inherit the lock', () => {
