@@ -296,6 +296,7 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
     skillId,
     result: 'not_found',
     authPath: 'user_jwt',
+    authRole: role,
     actorUserId,
   })
   return false
