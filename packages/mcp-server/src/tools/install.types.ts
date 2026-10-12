@@ -31,14 +31,17 @@ const CLIENT_ID_ENUM_VALUES = CLIENT_IDS as unknown as [ClientId, ...ClientId[]]
 /**
  * SMI-1533: Valid trust tier values
  * SMI-1809: Added 'local' for local skills
+ * SMI-7056: all eight `TrustTier` values (adds 'official', 'unverified')
  */
 export const VALID_TRUST_TIERS: readonly TrustTier[] = [
+  'official',
   'verified',
   'curated',
   'community',
   'local',
   'experimental',
   'unknown',
+  'unverified',
 ]
 
 /**

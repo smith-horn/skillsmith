@@ -66,6 +66,10 @@ export function createUpdateCommand(): Command {
     .option('-a, --all', 'Update all installed skills')
     .option('-n, --dry-run', 'Show what would update without installing')
     .option(
+      '-y, --yes',
+      'Confirm updating a skill whose trust tier has not been reviewed (does not skip the security scan)'
+    )
+    .option(
       '--client <id>',
       `update the copy installed for a specific agent (defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
     )

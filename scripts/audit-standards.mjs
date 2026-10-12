@@ -5832,6 +5832,11 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
       "vi.mock('fs/promises') (bare, no factory) auto-mocks every export as a stub — acquireManifestLock/saveManifest/updateManifestSafely never reach real fs regardless of what MANIFEST_PATH resolves to",
     'packages/cli/src/commands/registry-install.action.leak-and-errors.test.ts':
       'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
+    // SMI-7056: the CLI --yes / confirmation-prompt tests pin what the CLI
+    // sends to install(); the real installer is exercised separately by
+    // install-confirmation.contract.test.ts, which passes an explicit manifestPath.
+    'packages/cli/tests/install-confirmation.test.ts':
+      'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
     'packages/cli/src/commands/registry-install.action.test.ts':
       'SkillInstallationService is vi.mock()ed; the assertions are on constructor arguments, not on an install',
     'packages/cli/tests/install-quarantine.test.ts':

@@ -424,6 +424,7 @@ async function updateActionImpl(
   const dbPath = (opts['db'] as string) ?? DEFAULT_DB_PATH
   const updateAll = (opts['all'] as boolean) ?? false
   const dryRun = (opts['dryRun'] as boolean) ?? false
+  const yes = (opts['yes'] as boolean) ?? false
 
   try {
     const client = resolveEffectiveClient(opts['client'] as string | undefined)
@@ -434,9 +435,9 @@ async function updateActionImpl(
         process.exit(1)
         return
       }
-      await updateSkills(undefined, dbPath, dryRun, client, scopeTarget)
+      await updateSkills(undefined, dbPath, dryRun, client, scopeTarget, yes)
     } else if (skillNames.length > 0) {
-      await updateSkills(skillNames, dbPath, dryRun, client, scopeTarget)
+      await updateSkills(skillNames, dbPath, dryRun, client, scopeTarget, yes)
     } else {
       console.log(
         chalk.yellow('Specify one or more skills to update, or pass --all for everything.')

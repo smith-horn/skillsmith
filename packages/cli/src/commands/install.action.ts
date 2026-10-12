@@ -21,7 +21,6 @@ import {
   createApiClient,
   loadStoredAccessToken,
   isQuietModeEnabled,
-  type CoreInstallResult,
   type RegistryLookup,
   type RegistrySkillInfo,
   type DatabaseType,
@@ -39,6 +38,11 @@ import {
 } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
+import { formatJsonResult, displayResult } from './install.display.js'
+import { installWithConfirmation } from './install.confirm.js'
+
+// Re-exported so `install.ts` and external importers keep their existing paths.
+export { formatJsonResult, displayResult }
 
 const logger = getCliLogger()
 
@@ -187,99 +191,6 @@ export async function createApiBackedRegistryLookup(
   }
 }
 
-/**
- * Format install result for --json output
- *
- * SMI-5905 Wave 4: exported so `registry-install.action.ts` can reuse this
- * without duplicating output formatting — `CoreInstallResult` is the same
- * type `SkillInstallationService.installFromContent()` returns.
- */
-export function formatJsonResult(result: CoreInstallResult): string {
-  return JSON.stringify(
-    {
-      success: result.success,
-      skillId: result.skillId,
-      installPath: result.installPath,
-      error: result.error,
-      trustTier: result.trustTier,
-      optimization: result.optimization,
-      tips: result.tips,
-    },
-    null,
-    2
-  )
-}
-
-/**
- * Display install result in human-readable format
- *
- * SMI-5905 Wave 4: exported so `registry-install.action.ts` can reuse this
- * without duplicating output formatting — see `formatJsonResult` above.
- */
-export function displayResult(result: CoreInstallResult, quiet: boolean): void {
-  if (result.success) {
-    console.log(chalk.green('\nSkill installed successfully!'))
-    console.log(chalk.dim(`  Path: ${result.installPath}`))
-
-    if (result.trustTier) {
-      console.log(chalk.dim(`  Trust tier: ${result.trustTier}`))
-    }
-
-    if (result.optimization?.optimized && !quiet) {
-      console.log(chalk.dim(`  Optimized: ${result.optimization.tokenReductionPercent}% reduction`))
-      if (result.optimization.subSkills && result.optimization.subSkills.length > 0) {
-        console.log(chalk.dim(`  Sub-skills: ${result.optimization.subSkills.join(', ')}`))
-      }
-      // SMI-6529 N11 (round 4): `subagentGenerated` is set as soon as content
-      // was GENERATED (applyOptimization, before any disk write is even
-      // attempted) — it stays true even when the actual write was skipped
-      // (M10's companionSkipped: a pre-existing file/symlink already
-      // occupied the target on a fresh install). Gate the message on
-      // `subagentPath` too — writeInstallFiles only sets it when the file
-      // was ACTUALLY written — so this line never claims success for a
-      // write that didn't happen.
-      if (result.optimization.subagentGenerated && result.optimization.subagentPath) {
-        console.log(chalk.dim(`  Companion subagent generated`))
-      }
-    }
-
-    if (result.contentHashMismatch) {
-      console.log(chalk.yellow('\n  Warning: Content has changed since last indexed.'))
-      console.log(chalk.yellow("  Review recent changes at the skill's repository before using."))
-    }
-
-    if (result.tips && result.tips.length > 0 && !quiet) {
-      // Skip the first tip when contentHashMismatch is true — it's the mismatch
-      // warning already displayed as chalk.yellow above (added via tips.unshift)
-      const startIndex = result.contentHashMismatch ? 1 : 0
-      if (startIndex < result.tips.length) {
-        console.log()
-        for (let i = startIndex; i < result.tips.length; i++) {
-          console.log(chalk.dim(`  Tip: ${result.tips[i]}`))
-        }
-      }
-    }
-  } else {
-    logger.error(chalk.red(`\nInstallation failed: ${result.error}`))
-
-    if (result.securityReport && !result.securityReport.passed) {
-      logger.error(chalk.red('  Security scan failed.'))
-      for (const finding of result.securityReport.findings) {
-        if (finding.severity === 'critical' || finding.severity === 'high') {
-          logger.error(chalk.red(`  [${finding.severity}] ${finding.message}`))
-        }
-      }
-    }
-
-    if (result.tips && result.tips.length > 0 && !quiet) {
-      console.log()
-      for (const tip of result.tips) {
-        console.log(chalk.dim(`  ${tip}`))
-      }
-    }
-  }
-}
-
 // SMI-5128: extracted from inline .action() closure to a named function so
 // withTelemetry can wrap it at the export boundary (SMI-5040 coverage gate).
 async function installActionImpl(
@@ -288,6 +199,7 @@ async function installActionImpl(
     force?: boolean
     skipScan?: boolean
     skipOptimize?: boolean
+    yes?: boolean
     quiet?: boolean
     json?: boolean
     db?: string
@@ -406,7 +318,19 @@ async function installActionImpl(
       }
 
       const installStart = Date.now()
-      const result = await service.install(skillId, installOptions)
+      // SMI-7056: `--yes` only answers core's confirmation gate; it never
+      // touches skipScan. Without it, a TTY gets a y/N prompt and anything else
+      // fails with a message naming --yes.
+      const result = await installWithConfirmation(
+        (o) => service.install(skillId, o),
+        installOptions,
+        {
+          yes: opts.yes,
+          allowPrompt: !jsonOutput,
+          beforePrompt: () => spinner?.stop(),
+          beforeRetry: () => spinner?.start(),
+        }
+      )
 
       // SMI-4182 / SMI-4795: fire-and-forget install telemetry —
       // skipped when CLI is unauthenticated (no SKILLSMITH_API_KEY),

@@ -30,6 +30,7 @@ import { openCliDatabase } from '../utils/open-database.js'
 // SMI-5427 hotfix: reuse the quarantine-aware registry lookup from install so the
 // interactive "Install this skill" path does NOT bypass the quarantine gate.
 import { createApiBackedRegistryLookup } from './install.js'
+import { installWithConfirmation } from './install.confirm.js'
 import { isLocalIndexEmpty, formatEmptyIndexHint, searchRemoteOrLocal } from './search.helpers.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { type InteractiveSearchState, type SearchPhase, PAGE_SIZE } from './search-types.js'
@@ -249,7 +250,16 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
                     installSpinner.text = detail
                   },
                 })
-                const installResult = await installService.install(selectedResult.skill.id, {})
+                // SMI-7056: interactive by nature, so an unreviewed trust tier
+                // gets the same y/N prompt as `install` (retry once on yes).
+                const installResult = await installWithConfirmation(
+                  (o) => installService.install(selectedResult.skill.id, o),
+                  {},
+                  {
+                    beforePrompt: () => installSpinner.stop(),
+                    beforeRetry: () => installSpinner.start(),
+                  }
+                )
                 if (installResult.success) {
                   installSpinner.succeed(
                     chalk.green(`Installed "${selectedResult.skill.name}" successfully`)
