@@ -131,7 +131,9 @@ case "$1" in
   network)
     echo "$@" >> "$LOG"
     case "$*" in *--filter*|"network rm"*) fire_effect "$*" ;; esac
-    rc="$(rc_of "network_$2")"
+    # The project-scoped listing has its own exit key (network_ls_filter), so a test
+    # can break the Step 3 report's \`network ls\` without breaking the cleanup's.
+    case "$*" in *--filter*) rc="$(rc_of "network_$2_filter")" ;; *) rc="$(rc_of "network_$2")" ;; esac
     if [ "$rc" != 0 ]; then echo "Cannot connect to the Docker daemon" >&2; exit "$rc"; fi
     # The project-scoped listing: ids from network_filter_out, one per line.
     case "$*" in *--filter*) cat "$RESP/network_filter_out" 2>/dev/null; exit 0 ;; esac

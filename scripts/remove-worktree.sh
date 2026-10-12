@@ -331,15 +331,30 @@ Commit or discard them first, or re-run with --force to discard:
         fi
     fi
 
-    if [[ "$prune_failed" == true ]]; then
+    # Network cleanup Step 1 could not finish does not abort before Step 2 (an
+    # attached network may belong to another checkout's container), but it is an
+    # incomplete cleanup all the same, whichever opt-outs are set (Step 1 runs under
+    # them): it ends the run with the same tail.
+    local net_incomplete="${WPA_NETWORK_INCOMPLETE:-}" _net_line
+    if [[ "$prune_failed" == true || -n "$net_incomplete" ]]; then
         echo ""
+        [[ "$prune_failed" == true ]] || prune_reason="the project's network cleanup did not finish"
         warn "Worktree removed; Docker cleanup incomplete ($prune_reason)."
+        if [[ -n "$net_incomplete" ]]; then
+            warn "  Network(s) left in place:"
+            while IFS= read -r _net_line; do
+                [[ -n "$_net_line" ]] && warn "    $_net_line"
+            done <<< "$net_incomplete"
+            warn "  Inspect them with: docker network ls --filter label=com.docker.compose.project=$orphan_project"
+        fi
         if [[ "$WPA_DOCKER" == unreachable ]]; then
             warn "  The project's containers were NOT stopped or removed either. Inspect them with:"
             warn "    docker ps -a --filter label=com.docker.compose.project=$orphan_project"
         fi
-        warn "  Re-run it once the cause above is fixed (Docker must be reachable):"
-        warn "    $SCRIPT_DIR/prune-orphaned-docker-volumes.sh --only-project $orphan_project"
+        if [[ "$prune_failed" == true ]]; then
+            warn "  Re-run it once the cause above is fixed (Docker must be reachable):"
+            warn "    $SCRIPT_DIR/prune-orphaned-docker-volumes.sh --only-project $orphan_project"
+        fi
         exit 1
     fi
 

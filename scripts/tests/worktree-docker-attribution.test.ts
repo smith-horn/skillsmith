@@ -28,6 +28,8 @@ import {
   setContainers,
   setExit,
   setLabels,
+  setNetworkUsers,
+  setProjectNetworks,
   setPsSequence,
   workdirLabels,
   type AttrFixture,
@@ -252,6 +254,23 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before it removes anyt
     expect(removals(r.dockerCalls)).toEqual([])
     expect(r.dockerCalls.some((c) => c.startsWith('network rm'))).toBe(false)
     expect(text(r)).toContain('dev profile')
+    expect(r.status).toBe(1)
+  })
+
+  it('T24e. a project network that could not be removed: stop prints no success line, names it, exits 1', () => {
+    const fx = mk('wd-t24e')
+    const x = wt(fx, 'foo')
+    primeAttribution(fx, x)
+    ourContainers(fx, x)
+    setProjectNetworks(fx, ['nUsed', 'nFree'])
+    setNetworkUsers(fx, 'nUsed', ['cExited'])
+
+    const r = runDocker(fx, ['stop', x])
+
+    // Presence: the container and the free network were removed.
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1', 'network rm nFree'])
+    expect(text(r)).toContain('nUsed: still used by cExited')
+    expect(text(r)).not.toContain('Docker containers stopped')
     expect(r.status).toBe(1)
   })
 

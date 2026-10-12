@@ -265,6 +265,7 @@ cmd_stop() {
     info "Stopping Docker containers..."
     worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")" "$worktree_path"
 
+    [[ -z "${WPA_NETWORK_INCOMPLETE:-}" ]] || error "Containers removed, but the project's network cleanup is incomplete: ${WPA_NETWORK_INCOMPLETE//$'\n'/; }"
     success "Docker containers stopped."
 }
 

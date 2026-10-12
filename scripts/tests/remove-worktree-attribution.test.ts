@@ -837,6 +837,66 @@ describe('SMI-7089: a copy of the script inside the worktree it would remove', (
   })
 })
 
+describe('SMI-7089: the target is identified by FILE identity, not by how its path is spelled', () => {
+  // The fixture's temp dir reached through a symlink: the worktree's BASENAME is
+  // unchanged (so the symlinked-basename refusal does not fire), but its path string
+  // differs from the physical one git prints.
+  const viaAlias = (fx: AttrFixture, wt: string): string => {
+    const alias = join(fx.tempRoot, 'alias')
+    symlinkSync(fx.tempRoot, alias)
+    return join(alias, wt.slice(fx.tempRoot.length + 1))
+  }
+
+  it('T35. a lone worktree reached through a symlinked parent is found exactly once and removed', () => {
+    const fx = mk('attr-t35')
+    const foo = addWt(fx, 'foo')
+    primeAttribution(fx, foo)
+    ourContainers(fx, foo)
+
+    const r = runRemove(fx, [viaAlias(fx, foo), '--force'])
+
+    expect(text(r)).not.toContain('not listed exactly once')
+    expect(text(r)).not.toContain('is not unique')
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
+    expect(existsSync(foo)).toBe(false)
+    expect(r.status).toBe(0)
+  })
+
+  it('T35b. through the alias a genuine colliding sibling is still the ONLY peer reported, and nothing is removed', () => {
+    const fx = mk('attr-t35b')
+    const foo = addWt(fx, 'foo')
+    const sibling = addWt(fx, '_foo')
+    primeAttribution(fx, foo)
+    ourContainers(fx, foo)
+
+    const r = runRemove(fx, [viaAlias(fx, foo), '--force'])
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual(['info'])
+    expect(removals(r.dockerCalls)).toEqual([])
+    // The sibling is named as a peer; the target itself is not a peer of itself.
+    expect(text(r)).toContain(`registered worktree: ${sibling}`)
+    expect(text(r)).not.toContain(`registered worktree: ${foo}`)
+    expect(text(r)).not.toContain('not listed exactly once')
+    expect(existsSync(foo)).toBe(true)
+  })
+
+  it('T35c. a .worktrees entry that is just another spelling of the target (symlink) is not a peer', () => {
+    const fx = mk('attr-t35c')
+    const foo = addWt(fx, 'foo')
+    primeAttribution(fx, foo)
+    mkdirSync(join(fx.repoDir, '.worktrees'), { recursive: true })
+    // `.foo` sanitizes to `foo`: by name it looks like a second foo, by identity it IS foo.
+    symlinkSync(foo, join(fx.repoDir, '.worktrees', '.foo'))
+
+    const r = runRemove(fx, [foo, '--force'])
+
+    expect(text(r)).not.toContain('unregistered .worktrees directory')
+    expect(existsSync(foo)).toBe(false)
+    expect(r.status).toBe(0)
+  })
+})
+
 describe('SMI-7089: static guarantees', () => {
   const SCRIPTS = join(__dirname, '..')
   const code = (file: string): string =>

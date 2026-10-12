@@ -91,7 +91,7 @@ describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
   })
 
-  it('a network the project cannot drop (Docker refuses while attached) is a warning, never fatal', () => {
+  it('a network Docker refuses to drop does not abort before Step 2, but ends the run incomplete (exit 1)', () => {
     const fx = mk('rmwt-netrm-refused')
     const wt = addWt(fx, 'wt-netrm')
     primeAttribution(fx, wt)
@@ -109,8 +109,14 @@ describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
       false
     )
     expect(result.stderr + result.stdout).toContain('Network n1 was not removed')
+    // The worktree IS removed (a refused network may belong to someone else), then the
+    // run reports the cleanup as incomplete, naming each network and the reason.
     expect(existsSync(wt)).toBe(false)
-    expect(result.status).toBe(0)
+    expect(result.stderr + result.stdout).toContain('n1: docker network rm was refused')
+    expect(result.stderr + result.stdout).toContain('n2: docker network rm was refused')
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
   })
 
   it('refuses to operate on the main repo before any docker call', () => {
@@ -448,11 +454,15 @@ describe('SMI-7089: what remove-worktree removes, and which networks it leaves',
     expect(result.dockerCalls).toContain('ps -aq --no-trunc --filter network=nUsed')
     expect(result.dockerCalls).not.toContain('network rm nUsed')
     expect(result.stderr + result.stdout).toContain('Network nUsed left in place')
-    expect(result.stderr + result.stdout).toContain('cExited')
-    expect(result.status).toBe(0)
+    expect(result.stderr + result.stdout).toContain('nUsed: still used by cExited')
+    expect(result.stderr + result.stdout).not.toContain('nFree: ')
+    expect(existsSync(wt)).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
   })
 
-  it('a failing "who uses this network" query skips that network with a warning', () => {
+  it('a failing "who uses this network" query skips that network and ends the run incomplete (exit 1)', () => {
     const fx = mk('rmwt-net-query-fails')
     const wt = addWt(fx, 'wt-netq')
     primeAttribution(fx, wt)
@@ -464,8 +474,50 @@ describe('SMI-7089: what remove-worktree removes, and which networks it leaves',
     expect(result.dockerCalls).toContain('ps -aq --no-trunc --filter network=n1')
     expect(result.dockerCalls.some((c) => c.startsWith('network rm'))).toBe(false)
     expect(result.stderr + result.stdout).toContain('Network n1 skipped')
+    expect(result.stderr + result.stdout).toContain('n1: could not check which containers use it')
     expect(existsSync(wt)).toBe(false)
-    expect(result.status).toBe(0)
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('a failing project-network LISTING ends the run incomplete too (exit 1)', () => {
+    const fx = mk('rmwt-net-list-fails')
+    const wt = addWt(fx, 'wt-netlist')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
+    setExit(fx, 'network_ls_filter', 1)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: the containers went and the listing was attempted.
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls).toContain(
+      'network ls --filter label=com.docker.compose.project=wt-netlist --format {{.ID}}'
+    )
+    expect(existsSync(wt)).toBe(false)
+    expect(result.stderr + result.stdout).toContain(
+      'project wt-netlist: could not list its networks'
+    )
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('--keep-docker does not excuse a network the stop could not drop (Step 1 runs under it)', () => {
+    const fx = mk('rmwt-net-keepdocker')
+    const wt = addWt(fx, 'wt-netkeep')
+    primeAttribution(fx, wt)
+    setProjectNetworks(fx, ['nUsed'])
+    setNetworkUsers(fx, 'nUsed', ['cOther'])
+
+    const result = runRemove(fx, [wt, '--force', '--keep-docker'])
+
+    expect(result.dockerCalls).not.toContain('network rm nUsed')
+    expect(result.stderr + result.stdout).toContain('nUsed: still used by cOther')
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
   })
 
   it('container ids are listed and removed in FULL (--no-trunc), never as 12-char short ids', () => {

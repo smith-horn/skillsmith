@@ -48,6 +48,10 @@ WPA_CONTAINER_IDS=""
 # The same containers as "<full id> <compose service label>" lines (service may be
 # empty). The stop path keeps only the dev-profile services among them.
 WPA_CONTAINER_SVCS=""
+# Set by worktree_project_remove_approved: one "<network id or project>: <reason>"
+# line per project network it could NOT clean up (listing failed, attachment query
+# failed, still attached, `network rm` refused). Empty = network cleanup complete.
+WPA_NETWORK_INCOMPLETE=""
 
 _wpa_timeout() { _wtl_uint_env SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT 60; }
 
@@ -324,9 +328,13 @@ worktree_path_inside() {
 # A network is removed by ID only when NO container, running or not, is attached to
 # it (`ps -a --filter network=`): Docker itself refuses only while an ACTIVE endpoint
 # exists, so a created/exited container would otherwise silently lose its network.
-# A skipped or refused network is a warning, never fatal, and never forced.
+# A skipped or refused network is never forced and never aborts here (an attached
+# network may belong to another checkout's container): it is warned about AND
+# recorded in WPA_NETWORK_INCOMPLETE, and the caller must turn that into an
+# incomplete (non-zero) outcome. Container-removal failure stays fatal (error()).
 worktree_project_remove_approved() {
     local p="$1" x="${2:-}" t id svc nets users devsvcs line
+    WPA_NETWORK_INCOMPLETE=""
     local -a idv=()
     t="$(_wpa_timeout)"
     if [[ -n "$x" ]]; then
@@ -357,16 +365,20 @@ worktree_project_remove_approved() {
     fi
     if ! nets="$(worktree_lifecycle_bounded "$t" docker network ls --filter "label=com.docker.compose.project=$p" --format '{{.ID}}' 2>/dev/null)"; then
         warn "  Could not list the project's networks (continuing)"
+        WPA_NETWORK_INCOMPLETE+="project $p: could not list its networks"$'\n'
         return 0
     fi
     while IFS= read -r id; do
         [[ -n "$id" ]] || continue
         if ! users="$(worktree_lifecycle_bounded "$t" docker ps -aq --no-trunc --filter "network=$id" 2>/dev/null)"; then
             warn "  Network $id skipped: could not check which containers use it"
+            WPA_NETWORK_INCOMPLETE+="$id: could not check which containers use it"$'\n'
         elif [[ -n "$users" ]]; then
             warn "  Network $id left in place: container(s) still attached ($(printf '%s' "$users" | tr '\n' ' '))"
+            WPA_NETWORK_INCOMPLETE+="$id: still used by $(printf '%s' "$users" | tr '\n' ' ')"$'\n'
         elif ! worktree_lifecycle_bounded "$t" docker network rm "$id" >/dev/null 2>&1; then
             warn "  Network $id was not removed (Docker refused); left in place"
+            WPA_NETWORK_INCOMPLETE+="$id: docker network rm was refused"$'\n'
         fi
     done <<< "$nets"
     return 0
