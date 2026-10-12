@@ -18,7 +18,13 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## What's New in v0.8.16
 
-- **Clearer message for a mistyped frontmatter line**: when a SKILL.md's frontmatter contains a line such as `--- # note` or `...`, `skillsmith import-local` now says that line starts a second YAML document and gives both fixes: change it to exactly `---` if it was meant to end the frontmatter, or remove it. Before, you got a YAML library message telling you to call `YAML.parseAllDocuments()`.
+- **`--yes` for unreviewed skills:** the registry now asks you to confirm installing a skill whose trust tier hasn't been reviewed (for example `unverified`). `skillsmith install` and `skillsmith update` accept `--yes` (`-y`) to confirm. Without it, a terminal asks y/N (default No), and a script or `--json` run exits non-zero with a message naming `--yes`. `--yes` never skips the security scan, and `--skip-scan` is still refused for these tiers. `update --yes` also answers the "Update <skill>?" prompt, so it works from a script.
+- **`errorCode` in `--json`:** a failed `install --json` or `registry install --json` now includes `errorCode` (for example `CONFIRMATION_REQUIRED`) when the failure has one.
+- **Executable frontmatter is refused at install:** the security scan rejects a skill whose SKILL.md opens with `---js` or `---javascript`, unless you skip the scan with `--skip-scan` (allowed only for reviewed tiers).
+
+**From 0.8.15:**
+
+- **Clearer message for a mistyped frontmatter line**: when a SKILL.md's frontmatter contains a line such as `--- # note` or `...`, `skillsmith import-local` now says that line starts a second YAML document and gives both fixes.
 
 **From 0.8.14 and earlier:**
 

@@ -8,16 +8,10 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## What's New in v0.8.0
 
-- **Fix: 0.7.10 was uninstallable** — it imported `@skillsmith/core` exports (`SessionTierAuthError`, `SessionTierTransientError`, `resolveSessionTier`, `getApiBaseUrl`) that only shipped in core 0.12.0, but this package's own dependency floor still allowed the older, broken-for-this-purpose 0.11.7. The `@skillsmith/core` dependency is now `^0.12.0` (SMI-6143). No other changes in this release.
-
-### What's New in v0.7.10
-
-- **Security: `SUPABASE_SERVICE_ROLE_KEY` removed from every MCP-host code path**: `private_registry_manage`'s `list`, `get`, `namespace`, and `install` actions — plus the registry-install path — no longer run on the Supabase service-role client. They now run as the signed-in user (`skillsmith login`) or through a narrowly-scoped `SECURITY DEFINER` RPC, so there's no admin credential left to configure or distribute (SMI-6109/SMI-6111).
-- **Session-login users now get their real subscription tier**: callers authenticated only via `skillsmith login` (no separately-configured `SKILLSMITH_API_KEY`) previously fell back to `community` regardless of actual entitlement, silently blocking Enterprise-gated tools like `private_registry_manage`/`private_registry_publish` (SMI-6098).
-- **`skill_validate` now flags likely typosquats**: warns (non-blocking) when a candidate skill's name is suspiciously close to a high-trust author or top-starred skill (SMI-6033).
-- **`get_skill`/`search`/`skill_recommend` surface a partial-scan caveat**: an informational note when the registry's extended scan couldn't cover every file for a skill — never affects the Security/Installable verdict.
-- **Pricing and quota numbers corrected**: several bundled skills, tool descriptions, and error messages were off by 10x or referenced the unpublished Enterprise price; now consistent with the actual tier table (SMI-5893).
-- **Auto-update notification no longer silently drops** on an invalid `SKILLSMITH_CLIENT` value.
+- **Unreviewed skills need confirmation (behaviour change):** `install_skill` now needs `confirmed: true` for any registry skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). Without it you get `CONFIRMATION_REQUIRED` with the tier and the reason. These skills can't use `skipScan`, and the security scan always runs. Clients that never send `confirmed` can't install them.
+- **`official` skills are now recognised:** an `official` registry skill was treated as `unknown`. All eight trust tiers are now accepted.
+- **Executable frontmatter is refused:** the security scan rejects a skill whose SKILL.md, or a bundled non-doc file other than `package.json`, opens with `---js` or `---javascript`, so `install_skill` refuses it unless the scan is skipped (allowed only for reviewed tiers). `skill_rescan` quarantines an installed skill whose SKILL.md does.
+- **Private-registry audit log fixed:** denials, failures and reads are now recorded on the standard deployment, through a new database function that uses your own login. This needs migration `20261008000000_private_registry_audit_attempt_rpc.sql`; until it's applied, audit writes fail soft.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
@@ -342,11 +336,14 @@ Get detailed information about a specific skill.
 
 ### install_skill
 
-Install a skill to your local environment.
+Install a skill to your local environment. The table lists the common parameters; the tool's input schema has the rest (`skipOptimize`, `conflictAction`, `client`, `alsoLink`, `symlink`, `cwd`, `scope`).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | Yes | Skill ID to install |
+| `skillId` | string | Yes | Registry ID (`author/name`), GitHub path (`owner/repo/skill`) or GitHub URL |
+| `force` | boolean | No | Reinstall if already installed |
+| `skipScan` | boolean | No | Skip the security scan. Refused for any tier other than official, verified, curated, community or local |
+| `confirmed` | boolean | No | Confirm installing a registry skill whose trust tier has not been reviewed (for example `unverified`). Without it, those installs return `CONFIRMATION_REQUIRED`. It never skips the security scan |
 
 ### uninstall_skill
 
