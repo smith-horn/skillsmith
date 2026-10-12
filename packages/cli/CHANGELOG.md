@@ -8,9 +8,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 - **Changed**: SMI-7030 -- `skillsmith install` refuses a skill whose SKILL.md opens with an
   executable `---js` or `---javascript` frontmatter block, because the security scan now flags it.
-  `--skip-scan`, which is allowed only for reviewed tiers, still bypasses the scan.
+  `--skip-scan`, which is allowed only for the official, verified, curated, community or local tiers, still bypasses the scan.
 - **Added**: SMI-7056 -- `skillsmith install` and `skillsmith update` accept `--yes` (`-y`) to
-  confirm installing a registry skill whose trust tier has not been reviewed, such as `unverified`.
+  confirm installing a registry skill whose trust tier is not official, verified, curated, community or local, such as `unverified`.
   The registry now asks for that confirmation, and the CLI had no way to give it. Without `--yes`,
   an interactive terminal shows the skill's trust tier and a warning and asks y/N (default No); a
   script or pipe exits non-zero with a message naming `--yes`. Installing from interactive
