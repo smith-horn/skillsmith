@@ -4,7 +4,16 @@
 import { makeRecord, classifyRecord, aggregateCell } from './result-schema.mjs'
 import { resolveControl, isProbabilistic, CONTROL_SPEC } from './control-spec.mjs'
 import { isC4Cell } from './result-schema.c4.mjs'
-import { check, finish, C4CELL, goodPre, rec, legacyCell, UfInst } from './c4-selftest-helpers.mjs'
+import {
+  check,
+  finish,
+  C4CELL,
+  goodPre,
+  goodUf,
+  rec,
+  legacyCell,
+  UfInst,
+} from './c4-selftest-helpers.mjs'
 
 // control-spec rows for C4.
 const row = (attack, candidate, failed, variant = 'v') => ({
@@ -43,7 +52,10 @@ for (const a of ['A8a-C4', 'A10b-C4', 'A13-C4-OOM']) {
 check('A13-C4 is probabilistic (R6)', isProbabilistic('A13-C4'), true)
 check('A13-C4-OOM is deliberately not probabilistic', isProbabilistic('A13-C4-OOM'), false)
 const aggC4 = aggregateCell(
-  [rec({ outcome: { status: 'kept' } }), rec({ outcome: { status: 'kept' } })],
+  [
+    rec({ cell: { ...C4CELL, target: 2 }, outcome: { status: 'kept' } }),
+    rec({ cell: { ...C4CELL, target: 2 }, outcome: { status: 'kept' } }),
+  ],
   () => false,
   { target: 2, controlFailed: true }
 )
@@ -208,9 +220,112 @@ check(
 )
 
 // --- F5: score from the values that were validated (one read) ---------------
+// --- Sol F6d/e: cell and outcome are snapshotted like precondition/userFiles ---
+const mkWith = (over) => {
+  try {
+    return makeRecord({
+      cell: C4CELL,
+      run: 0,
+      precondition: goodPre(),
+      outcome: { status: 'kept' },
+      userFiles: goodUf(),
+      ...over,
+    })
+  } catch (e) {
+    return e instanceof TypeError ? 'throws' : 'other'
+  }
+}
+check(
+  'F6d positive control: plain cell+outcome build and pass',
+  classifyRecord(mkWith({})),
+  'passed'
+)
+const outGetter = {}
+Object.defineProperty(outGetter, 'status', { enumerable: true, get: () => 'kept' })
+check('F6d outcome with a status getter throws', mkWith({ outcome: outGetter }), 'throws')
+check(
+  'F6d outcome inheriting status throws',
+  mkWith({ outcome: Object.create({ status: 'kept' }) }),
+  'throws'
+)
+class OutInst {
+  constructor() {
+    this.status = 'kept'
+  }
+}
+check('F6d outcome class instance throws', mkWith({ outcome: new OutInst() }), 'throws')
+const outHidden = { status: 'kept' }
+Object.defineProperty(outHidden, 'reason', { value: 'x', enumerable: false })
+check('F6d outcome with a non-enumerable key throws', mkWith({ outcome: outHidden }), 'throws')
+const outProxy = new Proxy(
+  { status: 'kept' },
+  {
+    ownKeys: (t) => [...Reflect.ownKeys(t), 'extra'],
+    getOwnPropertyDescriptor: (t, k) =>
+      k === 'extra'
+        ? { get: () => 1, enumerable: true, configurable: true }
+        : Reflect.getOwnPropertyDescriptor(t, k),
+  }
+)
+check('F6d outcome Proxy accessor descriptor throws', mkWith({ outcome: outProxy }), 'throws')
+class CellInst {
+  constructor() {
+    this.attack = 'A3-C4'
+    this.candidate = 'C4'
+    this.fs = 'f'
+  }
+}
+check('F6d C4 cell class instance throws', mkWith({ cell: new CellInst() }), 'throws')
+const cellInh = Object.create({ fs: 'f' })
+Object.assign(cellInh, { attack: 'A3-C4', candidate: 'C4' })
+check('F6d C4 cell with an inherited field throws', mkWith({ cell: cellInh }), 'throws')
+const cellHidden = { attack: 'A3-C4', candidate: 'C4', fs: 'f' }
+Object.defineProperty(cellHidden, 'runner', { value: 'r', enumerable: false })
+check('F6d C4 cell with a non-enumerable field throws', mkWith({ cell: cellHidden }), 'throws')
+// F6e: the path is chosen from ONE read of the cell.
+const flipCell = (first, then) => {
+  let n = 0
+  const c = { attack: 'A3', fs: 'f', runner: 't' }
+  Object.defineProperty(c, 'candidate', { enumerable: true, get: () => (n++ === 0 ? first : then) })
+  return c
+}
+check(
+  'F6e candidate getter C4 then V2: makeRecord does not take the legacy path (throws)',
+  mkWith({ cell: flipCell('C4', 'V2') }),
+  'throws'
+)
+const legacyFirst = mkWith({ cell: flipCell('V2', 'C4') })
+check(
+  'F6e candidate getter V2 then C4: the stored candidate is the one validated (V2)',
+  legacyFirst.cell.candidate,
+  'V2'
+)
+// classifyRecord on a hand-built record whose cell lies on a second read.
+let reads = 0
+const liar = { attack: 'A3', fs: 'f' }
+Object.defineProperty(liar, 'candidate', {
+  enumerable: true,
+  get: () => (reads++ === 0 ? 'C4' : 'V2'),
+})
+const liarRec = rec({
+  cell: liar,
+  precondition: {
+    hookFired: null,
+    mutationApplied: true,
+    traceMatched: true,
+    controlExpected: true,
+  },
+})
+check(
+  'F6e classifyRecord reads the cell once: C4-then-V2 stays on the strict path',
+  classifyRecord(liarRec),
+  'never-ran'
+)
+check('F6e control: the getter really flips on a second read', liar.candidate, 'V2')
+
 const ufProxy = (descLost, getLost) =>
   new Proxy(
-    { checked: 3, lost: descLost, changed: 0 },
+    { checked: 3, lost: descLost, changed: 0, displaced: descLost, deleted: 0 },
     { get: (t, k) => (k === 'lost' ? getLost : t[k]) }
   )
 check(

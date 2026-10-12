@@ -12,8 +12,18 @@
 
 import path from 'node:path'
 import os from 'node:os'
-import { spawnSync } from 'node:child_process'
-import { existsSync, rmSync, unlinkSync, mkdtempSync } from 'node:fs'
+import { makeRunner, snapshotDir } from './c4-selftest-util.mjs'
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+} from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { makeRecord, classifyRecord } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
@@ -171,6 +181,110 @@ check('A8a C4-naive: quarantined but link missing from trash -> run throws (harn
   return 'did not throw'
 })
 
+// ---- R2-2: A10b hard link moved out of the tree (nlink still 2) -----------------
+for (const arm of ARMS) {
+  check(`A10b ${arm}: hard link moved outside the tree (nlink still 2) -> NEVER-RAN`, () => {
+    const raw = a10.runOnce({
+      harnessRoot,
+      candidate: arm,
+      subcase: 'b',
+      _test: {
+        afterFixture: (fx) =>
+          renameSync(fx.hardlinkAbs, path.join(path.dirname(fx.outsideFile), 'moved-link')),
+      },
+    })
+    const cls = classify(raw, 'A10b-C4', arm)
+    return raw.precondition.mutationApplied === false && cls === 'never-ran' ? true : `class=${cls}`
+  })
+}
+
+for (const arm of ARMS) {
+  check(
+    `A10b ${arm}: tree entry is a symlink to the outside file, not a hard link -> NEVER-RAN`,
+    () => {
+      const raw = a10.runOnce({
+        harnessRoot,
+        candidate: arm,
+        subcase: 'b',
+        _test: {
+          afterFixture: (fx) => {
+            // keep nlink(outside) at 2 via a link elsewhere, so only the identity check can object
+            linkSync(fx.outsideFile, path.join(path.dirname(fx.outsideFile), 'extra-link'))
+            unlinkSync(fx.hardlinkAbs)
+            symlinkSync(fx.outsideFile, fx.hardlinkAbs)
+          },
+        },
+      })
+      const cls = classify(raw, 'A10b-C4', arm)
+      return raw.precondition.mutationApplied === false && cls === 'never-ran'
+        ? true
+        : `class=${cls}`
+    }
+  )
+}
+
+// ---- R2-6: A8a mutation pointing the symlink at the WRONG dir -------------------
+for (const arm of ARMS) {
+  check(`A8a ${arm}: symlink to the wrong directory -> mutationApplied false -> NEVER-RAN`, () => {
+    const raw = a8.runOnce({
+      harnessRoot,
+      candidate: arm,
+      subcase: 'a',
+      _test: {
+        mutate: (sf) => {
+          rmSync(sf.targetAbs, { recursive: true, force: true })
+          symlinkSync(path.dirname(sf.outsideDir), sf.targetAbs)
+        },
+      },
+    })
+    const cls = classify(raw, 'A8a-C4', arm)
+    return raw.precondition.mutationApplied === false && cls === 'never-ran' ? true : `class=${cls}`
+  })
+}
+
+// ---- R2-3: the short-target guard compares file IDENTITY, not spellings ---------
+{
+  const base = mkdtempSync(path.join(os.tmpdir(), 'c4-ident-'))
+  const rawReal = path.join(realpathSync(base), 'raw')
+  mkdirSync(rawReal)
+  mkdirSync(path.join(base, 'raw-x'))
+  symlinkSync(rawReal, path.join(base, 'lnk'))
+  const g = (out) =>
+    shortTargetRefusal({
+      out,
+      requested: 3,
+      modules: [{ name: 'a3', target: 30 }],
+      rawDir: rawReal,
+    })
+  check('guard: --out equal to the corpus dir itself is refused', () =>
+    g(rawReal) ? true : 'allowed'
+  )
+  check('guard: --out in a not-yet-existing subdir of the corpus is refused', () =>
+    g(path.join(rawReal, 'a', 'b', 'x.jsonl')) ? true : 'allowed'
+  )
+  check('guard: --out through a symlink that points at the corpus is refused', () =>
+    g(path.join(base, 'lnk', 'x.jsonl')) ? true : 'allowed'
+  )
+  check(
+    'guard: --out spelled via the non-canonical temp path (e.g. /var vs /private/var) is refused',
+    () => (g(path.join(base, 'raw', 'x.jsonl')) ? true : 'allowed')
+  )
+  if (existsSync(path.join(base, 'RAW'))) {
+    check(
+      'guard: a case-variant spelling of the corpus dir is refused (case-insensitive fs)',
+      () => (g(path.join(base, 'RAW', 'x.jsonl')) ? true : 'allowed')
+    )
+  } else {
+    console.log('SKIP  guard: case-variant spelling (this filesystem is case-sensitive)')
+  }
+  check('guard: a sibling dir and an unrelated dir are still allowed (negative controls)', () =>
+    g(path.join(base, 'raw-x', 'y.jsonl')) === null && g(path.join(base, 'other.jsonl')) === null
+      ? true
+      : 'refused'
+  )
+  rmSync(base, { recursive: true, force: true })
+}
+
 // ---- F8b: short-target guard -------------------------------------------------
 const rawDir = path.join(here, '..', 'results', 'raw')
 const mods = [{ name: 'a3', target: 30 }]
@@ -204,49 +318,75 @@ check('guard: a sibling dir named results/raw-x is not under results/raw', () =>
     ? true
     : 'refused'
 )
-check('guard: run-c4-attacks.mjs exits 2 and writes nothing for a short default --out', () => {
-  const r = spawnSync(
-    process.execPath,
-    [
-      path.join(here, 'run-c4-attacks.mjs'),
-      '--target',
-      '1',
+// End to end through the real runner, with the guard's "corpus" relocated to a
+// scratch dir (C4_RESULTS_RAW_DIR) so a broken guard writes there, not to results/raw.
+const R = makeRunner(here)
+const rawBefore = snapshotDir(rawDir)
+check(
+  'guard: run-c4-attacks.mjs exits 2 and writes nothing for a short --out under the corpus dir',
+  () => {
+    const target = path.join(R.simRaw, 'x.jsonl')
+    const r = R.run('run-c4-attacks.mjs', [
       '--only',
       'a3',
       '--fs-label',
       'selftest-guard',
-    ],
-    { encoding: 'utf8' }
-  )
-  const wrote = existsSync(path.join(rawDir, 'c4-attacks-selftest-guard.jsonl'))
-  if (wrote) rmSync(path.join(rawDir, 'c4-attacks-selftest-guard.jsonl'), { force: true })
-  return r.status === 2 && /refusing --target 1/.test(r.stderr) && !wrote
-    ? true
-    : `status=${r.status} wrote=${wrote} stderr=${r.stderr.slice(0, 200)}`
-})
+      '--out',
+      target,
+    ])
+    const wrote = existsSync(target)
+    return r.status === 2 && /refusing --target 1/.test(r.stderr) && !wrote
+      ? true
+      : `status=${r.status} wrote=${wrote} stderr=${r.stderr.slice(0, 200)}`
+  }
+)
 check(
-  'guard: run-c4-attacks.mjs accepts the same short target with --out outside results/raw',
+  'guard: run-c4-attacks.mjs accepts the same short target with --out outside the corpus dir',
   () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'c4-guard-'))
-    const r = spawnSync(
-      process.execPath,
-      [
-        path.join(here, 'run-c4-attacks.mjs'),
-        '--target',
-        '1',
-        '--only',
-        'a3',
-        '--fs-label',
-        'selftest-guard',
-        '--out',
-        path.join(dir, 'o.jsonl'),
-      ],
-      { encoding: 'utf8' }
-    )
-    rmSync(dir, { recursive: true, force: true })
+    const r = R.run('run-c4-attacks.mjs', ['--only', 'a3', '--fs-label', 'selftest-guard'])
     return r.status === 0 ? true : `status=${r.status} stderr=${r.stderr.slice(0, 200)}`
   }
 )
+check('results/raw is byte-for-byte unchanged by this selftest (names + sizes)', () => {
+  const after = snapshotDir(rawDir)
+  return after === rawBefore ? true : `changed:\n before=${rawBefore}\n after=${after}`
+})
+R.cleanup()
+
+// ---- locateDisplaced wiring: a moved user file is DISPLACED, a missing one DELETED ---
+check('A3 C4-naive: the moved replacement is counted displaced (destination wired through)', () => {
+  const raw = a3.runOnce({ harnessRoot, candidate: 'C4-naive' })
+  const u = raw.userFiles
+  return u.lost === 1 && u.displaced === 1 && u.deleted === 0 ? true : JSON.stringify(u)
+})
+check('A8a C4-naive: outside bytes (lookup through a symlink) are never counted displaced', () => {
+  const raw = a8.runOnce({ harnessRoot, candidate: 'C4-naive', subcase: 'a' })
+  const u = raw.userFiles
+  return u.lost === 0 && u.displaced === 0 && u.deleted === 0 ? true : JSON.stringify(u)
+})
+
+// ---- A7 edit subcases (late-renameover / late-append / late-chmod / late-create) -----
+for (const subcase of a7.EDIT_SUBCASES) {
+  for (const arm of ARMS) {
+    check(`A7 ${subcase} ${arm}: no-op mutation -> mutationApplied false -> NEVER-RAN`, () => {
+      const raw = a7.runOnce({ harnessRoot, candidate: arm, subcase, _test: noop })
+      const cls = classify(raw, 'A7-C4', arm)
+      return raw.precondition.mutationApplied === false && cls === 'never-ran'
+        ? true
+        : `mutationApplied=${raw.precondition.mutationApplied} class=${cls}`
+    })
+    check(
+      `A7 ${subcase} ${arm}: real mutation lands and is NOT never-ran (positive control)`,
+      () => {
+        const raw = a7.runOnce({ harnessRoot, candidate: arm, subcase })
+        const cls = classify(raw, 'A7-C4', arm)
+        return raw.precondition.mutationApplied === true && cls !== 'never-ran'
+          ? true
+          : `class=${cls}`
+      }
+    )
+  }
+}
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

@@ -7,8 +7,16 @@
 //       the name, never the shared inode, so the outside file must stay intact.
 //       onFire is not a no-op: it asserts the hard link really exists
 //       (nlink >= 2 on the outside file) so a fixture without it cannot count.
+//
+// SCOPE OF THE A10b ROW. A10b ('A10b-C4') is a NARROW PROPERTY row: it checks that
+// moving a tree by rename(2) renames one name for a shared inode and does not unlink
+// the other hard-link name (the outside file). Both arms pass by construction, so it
+// says nothing about how well C4's guard detects a mutation. It must stay OUT of
+// comparative safety totals (do not sum it with the controlled rows, and do not
+// count its PASS as C4 beating naive).
 
-import { statSync } from 'node:fs'
+import { lstatSync, statSync } from 'node:fs'
+import path from 'node:path'
 import { makeFixtureRoot } from '../fixture-root.mjs'
 import {
   buildSwapFixture,
@@ -26,6 +34,7 @@ import {
   c4Outcome,
   c4Extra,
   assertReplacementLanded,
+  whereFor,
 } from './c4-score.mjs'
 
 export const id = 'A10-C4'
@@ -63,20 +72,41 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
         assertReplacementLanded(treeRoot, replacementFiles)
         completed = true
       }
-      score = () => scoreUserFiles(fx.root, checkEachFile(treeRoot, replacementFiles))
+      score = (r) =>
+        scoreUserFiles(
+          fx.root,
+          checkEachFile(treeRoot, replacementFiles),
+          whereFor(fx.root, r, treeRoot)
+        )
     } else {
       const fixture = buildHardlinkFixture(fx.root)
-      const { outsideFile } = fixture
+      const { outsideFile, hardlinkAbs, treeRoot } = fixture
       _test?.afterFixture?.(fixture)
       onFire = () => {
-        const nlink = statSync(outsideFile).nlink
-        if (nlink < 2) throw new Error(`hard-link fixture invalid: nlink=${nlink}`)
+        // The link must be a name for the OUTSIDE file's inode and must sit inside
+        // the tree; nlink >= 2 alone is satisfied by a link moved anywhere else.
+        const outside = statSync(outsideFile, { bigint: true })
+        const inside = lstatSync(hardlinkAbs, { bigint: true })
+        if (inside.dev !== outside.dev || inside.ino !== outside.ino) {
+          throw new Error('hard-link fixture invalid: tree link is not the outside file inode')
+        }
+        const rel = path.relative(treeRoot, hardlinkAbs)
+        if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+          throw new Error('hard-link fixture invalid: link is not under the tree')
+        }
+        if (outside.nlink < 2n) {
+          throw new Error(`hard-link fixture invalid: nlink=${outside.nlink}`)
+        }
         completed = true
       }
-      score = () => {
+      score = (r) => {
         const o = verifyOutsideIntact(outsideFile, 'shared-outside-content')
         const lostFiles = o.lost > 0 ? { 'shared-data.txt': 'shared-outside-content' } : {}
-        return scoreUserFiles(fx.root, { ...o, lostFiles })
+        return scoreUserFiles(
+          fx.root,
+          { ...o, lostFiles },
+          whereFor(fx.root, r, path.dirname(outsideFile))
+        )
       }
     }
 
@@ -87,7 +117,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
     return {
       precondition: c4Precondition(r, completed),
       outcome: c4Outcome(r, fx.root, candidate),
-      userFiles: score(),
+      userFiles: score(r),
       durationMs,
       extra: c4Extra(r, label, win, { subcase, reuseObserved }),
     }

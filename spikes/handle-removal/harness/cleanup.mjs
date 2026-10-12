@@ -15,7 +15,7 @@
 
 import { execFileSync, execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import path from 'node:path'
+import { realpathSync } from 'node:fs'
 
 /**
  * Runs a shell pipeline via execSync but returns {stdout, status} instead of
@@ -160,6 +160,9 @@ function main(argv) {
 }
 
 // Only when invoked directly -- importing this module must stay side-effect free.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// realpathSync, not path.resolve: resolve() leaves symlinks in place, so a run
+// through a symlinked path (a symlinked checkout, or /tmp on macOS) skipped
+// main() and exited 0 having checked nothing (SMI-6715 governance, measured).
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.exit(main(process.argv.slice(2)))
 }

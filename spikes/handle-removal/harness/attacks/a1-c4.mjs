@@ -122,6 +122,7 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, _test })
   let cleanupError
   // `_test` is a selftest seam only (doMount / detachAll / cleanup replacements).
   const detachFn = _test?.detachAll ?? detachAll
+  const mountsFn = _test?.mountsUnder ?? mountsUnder
   try {
     const { targetAbs, mountSourceDir } = buildMountFixture(fx.root)
     const userContent = `user-${crypto.randomBytes(8).toString('hex')}`
@@ -141,14 +142,14 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, _test })
     let mountedBeforeCall = false
     let mountedInHook = false
     if (window === 'pre-call') {
-      doMount()
+      doMount({ mountSourceDir, targetAbs, userContent })
       mountedBeforeCall = isMounted(targetAbs) === true
     }
     const onFire =
       window === 'pre-call'
         ? () => {}
         : () => {
-            doMount()
+            doMount({ mountSourceDir, targetAbs, userContent })
             mountedInHook = isMounted(targetAbs) === true
           }
 
@@ -171,7 +172,19 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, _test })
     let deleted = 0
     let displacedPaths = []
     if (lost) {
-      const loc = locateDisplaced(fx.root, { [USER_FILE]: userContent })
+      const loc = locateDisplaced(
+        fx.root,
+        { [USER_FILE]: userContent },
+        // destination is this run's own result.path (null if nothing moved)
+        {
+          destination:
+            r.result?.status === 'quarantined' && typeof r.result.path === 'string'
+              ? r.result.path
+              : null,
+          originRoot: path.join(fx.root, 'tree'),
+          baseDir: targetAbs,
+        }
+      )
       displaced = loc.displaced
       deleted = loc.deleted
       displacedPaths = loc.displacedPaths
@@ -183,7 +196,22 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, _test })
 
     const status = r.result?.status
     const quarantineLeft = scanQuarantineLeftovers(fx.root, candidate, { status, opId })
-    const mountsAtScore = mountsUnder(fx.root)
+    const mountsAtScore = mountsFn(fx.root)
+    // The record says BOTH things: the user file is displaced from its path
+    // (userFiles, owner decision 2), and whether the BACKING bytes survived. For a
+    // bind mount the backing is the source dir; for tmpfs it is the content seen
+    // through the mount wherever it now lives. null = not determinable (no mount
+    // found for tmpfs, or /proc/mounts unreadable).
+    const mountpointAbs = mountsAtScore?.length ? mountsAtScore[0] : null
+    const mountpointNow = mountpointAbs === null ? null : path.relative(fx.root, mountpointAbs)
+    const backingPath =
+      subcase === 'bind'
+        ? path.join(mountSourceDir, USER_FILE)
+        : mountpointAbs === null
+          ? null
+          : path.join(mountpointAbs, USER_FILE)
+    const backingIntact =
+      backingPath === null ? null : readUserFile(backingPath).content === userContent
     const stillMountedAtOriginal = isMounted(targetAbs) === true
 
     // Detach inside the try so the result carries it; `finally` repeats it as a
@@ -218,6 +246,8 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, _test })
         renameBusy: r.result?.errno === 'EBUSY' || /EBUSY/.test(String(r.result?.reason ?? '')),
         mountSurvivedAtOriginalPath: stillMountedAtOriginal,
         mountsAtScore,
+        mountpointNow,
+        backingIntact,
         displacedPaths,
         mutationError: r.mutationError ?? null,
         umount: detach,

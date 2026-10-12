@@ -1,4 +1,5 @@
-// Selftest for A13-C4's decision logic (attacks/a13-c4.classify.mjs). Plain
+// Selftest for A13-C4's decision logic (attacks/a13-c4.classify.mjs and
+// attacks/a13-c4.score.mjs). Plain
 // node, synthetic inputs only, no racer and no filesystem:
 //   node harness/a13-c4.selftest.mjs
 // Prints one PASS/FAIL line per case and exits non-zero on any failure.
@@ -9,14 +10,15 @@
 import {
   classifyLanding,
   windowEnds,
-  deriveHashEvidence,
-  buildLandings,
   routeRun,
   lossPrecededBy,
-  recordForRunError,
-  CALLER_HASH_FAILED_PREFIX,
-  CALLER_HASH_RACE_REASON,
 } from './attacks/a13-c4.classify.mjs'
+// Partial-run landings and scoring (review R1-F1/F3), the hash override and
+// the caller-hash-race record live in a sibling file to keep both under 500
+// lines; they report through this file's check().
+import { runLandingCases } from './a13-c4.selftest.landings.mjs'
+// Round-2 record-level rules and the caller-hash catch's relatedness check.
+import { runRecordCases } from './a13-c4.selftest.record.mjs'
 
 let failures = 0
 function check(name, cond, detail) {
@@ -192,187 +194,8 @@ for (const [arm, T] of [
   check('lossPrecededBy control: null when nothing was lost', lossPrecededBy(rel, false) === null)
 }
 
-// --- hash override ----------------------------------------------------------
-{
-  const racer = { applied: 'a8', mutationStartedAt: 9, landedAt: 11 } // timestamp says in-model
-  const ends = windowEnds('C4', C4_TIMES)
-  const land = (proven) =>
-    buildLandings({
-      racer,
-      callerHashAt: C4_TIMES.callerHashAt,
-      ...ends,
-      provenPreCallerHash: proven,
-    })
-
-  // Fires: caller saw the mutation (G != P) and the moved tree is still G.
-  const fire = deriveHashEvidence({
-    candidate: 'C4',
-    pristineHash: 'P',
-    guardHash: 'G',
-    postMoveHash: 'G',
-  })
-  check(
-    'hash evidence: proven when caller saw mutation and moved tree == caller hash',
-    fire.provenPreCallerHash === true && fire.window === 'before-caller-hash',
-    fire
-  )
-  const fired = land(fire.provenPreCallerHash)[0]
-  check(
-    'hash override FIRES: timestamp in-model reclassified pre-caller-hash by hash',
-    fired.cls === 'pre-caller-hash' &&
-      fired.evidence === 'hash' &&
-      fired.timestampCls === 'in-model',
-    fired
-  )
-  check(
-    'hash override routes the run out of the denominator',
-    routeRun([fired]).mutationApplied === false
-  )
-
-  // Does NOT fire: the moved tree differs from the caller's hash.
-  const differ = deriveHashEvidence({
-    candidate: 'C4',
-    pristineHash: 'P',
-    guardHash: 'G',
-    postMoveHash: 'X',
-  })
-  check(
-    'hash evidence control: moved tree differs -> not proven, change bounded after C4 read',
-    differ.provenPreCallerHash === false &&
-      differ.window === 'after-C4-read-of-entry..rename-returned',
-    differ
-  )
-  const notFired = land(differ.provenPreCallerHash)[0]
-  check(
-    'hash override does NOT fire when moved tree differs: stays in-model by timestamp',
-    notFired.cls === 'in-model' && notFired.evidence === 'timestamp',
-    notFired
-  )
-
-  const unseen = deriveHashEvidence({
-    candidate: 'C4',
-    pristineHash: 'P',
-    guardHash: 'P',
-    postMoveHash: 'P',
-  })
-  check(
-    'hash evidence control: caller saw pristine -> not proven',
-    unseen.provenPreCallerHash === false,
-    unseen
-  )
-  const kept = deriveHashEvidence({
-    candidate: 'C4',
-    pristineHash: 'P',
-    guardHash: 'G',
-    postMoveHash: null,
-  })
-  check(
-    'hash evidence control: nothing moved (null) -> not proven, no window',
-    kept.provenPreCallerHash === false && kept.window === null,
-    kept
-  )
-  const nv = deriveHashEvidence({
-    candidate: 'C4-naive',
-    pristineHash: 'P',
-    guardHash: 'G',
-    postMoveHash: 'X',
-  })
-  check(
-    'hash evidence naive: window names the caller, not C4',
-    nv.window === 'after-caller-read-of-entry..rename-returned',
-    nv
-  )
-
-  check(
-    'buildLandings: racer that applied nothing has no landing',
-    buildLandings({
-      racer: { applied: null },
-      callerHashAt: 10,
-      ...ends,
-      provenPreCallerHash: true,
-    }).length === 0
-  )
-}
-
-// --- caller-hash-race record ------------------------------------------------
-{
-  const base = {
-    candidate: 'C4',
-    markerObservedAt: 1,
-    durationMs: 2,
-    quarantineLeft: { dirs: null },
-  }
-  const hashErr = new Error(`${CALLER_HASH_FAILED_PREFIX} on the fixture: {"ok":false}`)
-  const applied = { applied: 'a5', mutationStartedAt: 3, landedAt: 4 }
-
-  // A throw here must surface as FAIL lines, not crash the selftest, so a
-  // mutation that makes this path rethrow is reported at the check it breaks.
-  let rec
-  try {
-    rec = recordForRunError({ ...base, err: hashErr, racer: applied })
-  } catch (thrown) {
-    rec = { outcome: {}, precondition: {}, extra: {}, thrown: String(thrown && thrown.message) }
-  }
-  check(
-    'caller-hash race: returned a record instead of throwing',
-    rec.thrown === undefined,
-    rec.thrown
-  )
-  check(
-    'caller-hash race: status harness-error with the named reason',
-    rec.outcome.status === 'harness-error' && rec.outcome.reason === CALLER_HASH_RACE_REASON,
-    rec.outcome
-  )
-  check(
-    'caller-hash race: mutationApplied false (R6 drops it), hookFired/traceMatched false',
-    rec.precondition.mutationApplied === false &&
-      rec.precondition.hookFired === false &&
-      rec.precondition.traceMatched === false &&
-      rec.precondition.controlExpected === true,
-    rec.precondition
-  )
-  check(
-    'caller-hash race: precondition carries exactly the four keys',
-    JSON.stringify(Object.keys(rec.precondition).sort()) ===
-      JSON.stringify(['controlExpected', 'hookFired', 'mutationApplied', 'traceMatched']),
-    Object.keys(rec.precondition)
-  )
-  check(
-    'caller-hash race: label A13-C4, variant fixed, raw racer fact kept',
-    rec.extra.label === 'A13-C4' &&
-      rec.extra.variant === 'racer/by-timestamp' &&
-      rec.extra.racerApplied === 'a5',
-    rec.extra
-  )
-
-  const throws = (fn) => {
-    try {
-      fn()
-      return null
-    } catch (e) {
-      return e
-    }
-  }
-  let e = throws(() =>
-    recordForRunError({ ...base, err: hashErr, racer: { applied: null, error: 'ENOENT' } })
-  )
-  check(
-    'caller-hash failure WITHOUT racer activity still throws (the same error)',
-    e === hashErr,
-    e && e.message
-  )
-  const other = new Error(
-    'runC4Candidate: fs.lstatSync is already interposed on entry; refusing to run'
-  )
-  e = throws(() => recordForRunError({ ...base, err: other, racer: applied }))
-  check(
-    'control: a different runC4Candidate error rethrows even with racer activity',
-    e === other,
-    e && e.message
-  )
-  e = throws(() => recordForRunError({ ...base, err: 'x', racer: applied }))
-  check('control: a non-Error throw rethrows', e === 'x', e)
-}
+runLandingCases(check)
+runRecordCases(check)
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

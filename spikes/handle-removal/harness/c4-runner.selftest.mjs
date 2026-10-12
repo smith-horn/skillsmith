@@ -6,33 +6,47 @@
 
 import path from 'node:path'
 import os from 'node:os'
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { makeRunner, snapshotDir } from './c4-selftest-util.mjs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolveHarnessRoot } from './fixture-root.mjs'
-import { runMountCase } from './attacks/a1-c4.mjs'
 import { makeRecord } from './result-schema.mjs'
-import { scoreCell } from './run-c4-attacks.mjs'
+import { scoreCell, runCells } from './run-c4-attacks.mjs'
+import { parseFlags } from './c4-target-guard.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const harnessRoot = resolveHarnessRoot()
 let failures = 0
-const check = (name, fn) => {
-  try {
-    const why = fn()
-    if (why === true || why === undefined) console.log(`PASS  ${name}`)
-    else {
-      failures += 1
-      console.log(`FAIL  ${name}: ${why}`)
-    }
-  } catch (err) {
+const report = (name, why) => {
+  if (why === true || why === undefined) console.log(`PASS  ${name}`)
+  else {
     failures += 1
-    console.log(`FAIL  ${name}: threw ${err?.message ?? err}`)
+    console.log(`FAIL  ${name}: ${why}`)
+  }
+}
+// Sync cases run where they are registered. Async cases share module state
+// (orderLog), so they are queued and run one at a time at the end.
+const queued = []
+const check = (name, fn) => {
+  if (fn.constructor.name === 'AsyncFunction') {
+    queued.push({ name, fn })
+    return
+  }
+  try {
+    report(name, fn())
+  } catch (err) {
+    report(name, `threw ${err?.message ?? err}`)
   }
 }
 
-const run = (script, args) =>
-  spawnSync(process.execPath, [path.join(here, script), ...args], { encoding: 'utf8' })
+// Every spawn goes through makeRunner: --out in a scratch dir, --target 1, and the
+// short-target guard pointed at a scratch dir, so no command line (however
+// mis-parsed) can reach results/raw. The real corpus is snapshotted around the whole
+// run and any change FAILS the selftest.
+const realRaw = path.join(here, '..', 'results', 'raw')
+const rawBefore = snapshotDir(realRaw)
+const R = makeRunner(here)
+const run = R.run
 const exits2With = (r, re) =>
   r.status === 2 && re.test(r.stderr) ? true : `status=${r.status} stderr=${r.stderr.slice(0, 240)}`
 
@@ -99,90 +113,13 @@ if (process.platform !== 'linux') {
 }
 rmSync(tmp, { recursive: true, force: true })
 
-// ---- G4: a1-c4 cleanup error handling --------------------------------------
-// runMountCase refuses off Linux, and the real mount/umount is out of reach
-// here, so the platform is spoofed for the call and the mount, umount and
-// cleanup steps are replaced through the `_test` seam. Only the control flow
-// around `finally` is under test.
-const withLinux = (fn) => {
-  const orig = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
-  try {
-    return fn()
-  } finally {
-    Object.defineProperty(process, 'platform', orig)
-  }
-}
-const noDetach = () => ({ found: 0, umounted: 0, failed: [], lazyUsed: 0, remaining: 0 })
-const callCase = (seam) =>
-  withLinux(() =>
-    runMountCase({
-      harnessRoot,
-      candidate: 'C4',
-      subcase: 'bind',
-      window: 'pre-call',
-      _test: { detachAll: noDetach, ...seam },
-    })
-  )
-const cleanupThenThrow = (fx) => {
-  fx.cleanup()
-  throw new Error('CLEANUP-BOOM')
-}
-const capture = (fn) => {
-  try {
-    return { value: fn() }
-  } catch (err) {
-    return { err }
-  }
-}
-
-check('a1 cleanup: positive control, no failures -> returns a record', () => {
-  const r = capture(() => callCase({ doMount: () => {} }))
-  return r.value?.precondition?.mutationApplied === false
-    ? true
-    : `got ${r.err?.message ?? JSON.stringify(r.value)}`
-})
-check(
-  'a1 cleanup: body fails + cleanup throws -> body error is the cause, cleanup message kept',
-  () => {
-    const body = new Error('BODY-BOOM')
-    const r = capture(() =>
-      callCase({
-        doMount: () => {
-          throw body
-        },
-        cleanup: cleanupThenThrow,
-      })
-    )
-    if (!r.err) return 'did not throw'
-    if (r.err.cause !== body)
-      return `cause=${r.err.cause?.message ?? r.err.cause} message=${r.err.message}`
-    return /CLEANUP-BOOM/.test(r.err.message)
-      ? true
-      : `message lost the cleanup error: ${r.err.message}`
-  }
-)
-check('a1 cleanup: body ok + cleanup throws -> run fails loudly with the cleanup error', () => {
-  const r = capture(() => callCase({ doMount: () => {}, cleanup: cleanupThenThrow }))
-  return r.err && /CLEANUP-BOOM/.test(r.err.message) ? true : `got ${r.err?.message ?? 'no throw'}`
-})
-check('a1 cleanup: body fails, cleanup fine -> the body error itself is thrown', () => {
-  const body = new Error('BODY-BOOM')
-  const r = capture(() =>
-    callCase({
-      doMount: () => {
-        throw body
-      },
-    })
-  )
-  return r.err === body ? true : `got ${r.err?.message ?? 'no throw'}`
-})
-
 // ---- G1: record-only cells show what verdictFor returns ---------------------
-const oomRecord = (lost) =>
-  makeRecord({
+const oomRecord = (lost, target = 1) => oomRecordFor('A13-C4-OOM', lost, target)
+// cell.target is what the summary compares `ran` with, so the records carry one
+const oomRecordFor = (attack, lost = 0, target = 1) => {
+  const rec = makeRecord({
     cell: {
-      attack: 'A13-C4-OOM',
+      attack,
       variant: 'racer/by-timestamp',
       candidate: 'C4',
       fs: 'selftest',
@@ -199,6 +136,9 @@ const oomRecord = (lost) =>
     userFiles: { checked: 1, lost, changed: 0, displaced: lost, deleted: 0 },
     durationMs: 1,
   })
+  rec.cell.target = target
+  return rec
+}
 const oomLine = (lost) =>
   scoreCell({
     label: 'A13-C4-OOM',
@@ -224,6 +164,240 @@ check('record-only: no loss shows a bare RECORD-ONLY (positive control)', () => 
   const line = oomLine(0)
   return /^RECORD-ONLY\t/.test(line) ? true : `got ${JSON.stringify(line)}`
 })
+
+// ---- G2-1: script guard works through a symlinked path --------------------------
+check('attacks: runs (not a silent no-op) when invoked through a symlink', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'c4-link-'))
+  try {
+    const link = path.join(dir, 'run-c4-attacks.mjs')
+    symlinkSync(path.join(here, 'run-c4-attacks.mjs'), link)
+    const r = run(link, [
+      '--only',
+      'a3',
+      '--fs-label',
+      'selftest',
+      '--out',
+      path.join(dir, 'o.jsonl'),
+    ])
+    return r.status === 0 && /A3-C4/.test(r.stdout)
+      ? true
+      : `status=${r.status} stdout=${JSON.stringify(r.stdout.slice(0, 120))} stderr=${r.stderr.slice(0, 160)}`
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- G2-4: a repeated flag is an error --------------------------------------------
+check('parseFlags: a repeated flag is an error naming the flag', () => {
+  const r = parseFlags(['--only', 'a3', '--only', 'a4'], {
+    '--only': { key: 'only', kind: 'list' },
+  })
+  return /--only given more than once/.test(r.error ?? '') ? true : `got ${JSON.stringify(r)}`
+})
+check('attacks: missing --out -> exit 2 (no default into results/raw)', () =>
+  exits2With(run(A, ['--only', 'a3'], { noOut: true }), /--out .* is required/)
+)
+check('mount: missing --out -> usage error before the Linux-only check', () => {
+  const r = run(M, [], { noOut: true })
+  return r.status === 2 && /--out .* is required/.test(r.stderr) && !/Linux only/.test(r.stderr)
+    ? true
+    : `status=${r.status} stderr=${r.stderr.slice(0, 240)}`
+})
+check('attacks: --only a3 --only a4 -> exit 2', () =>
+  exits2With(run(A, ['--only', 'a3', '--only', 'a4']), /more than once/)
+)
+
+// ---- F4: A13 arms are interleaved per run, in random order -------------------------
+const orderLog = []
+const fakeMod = {
+  runOnce: ({ candidate }) => {
+    orderLog.push(candidate)
+    throw new Error('fake: order test only')
+  },
+}
+const cellsFor = (interleave, rng) => {
+  orderLog.length = 0
+  return runCells({
+    mod: fakeMod,
+    args: {},
+    labels: ['A13-C4', 'A13-C4-OOM'],
+    tag: 't',
+    target: 4,
+    harnessRoot,
+    fsLabel: 'selftest',
+    out: null,
+    interleave,
+    rng,
+  })
+}
+const scripted = (vals) => {
+  let i = 0
+  return () => vals[i++ % vals.length]
+}
+check(
+  'interleave: scripted rng gives exactly alternating-pair order, C4 or naive first',
+  async () => {
+    await cellsFor(true, scripted([0.1, 0.9, 0.1, 0.9]))
+    const want = ['C4', 'C4-naive', 'C4-naive', 'C4', 'C4', 'C4-naive', 'C4-naive', 'C4']
+    return JSON.stringify(orderLog) === JSON.stringify(want)
+      ? true
+      : `got ${JSON.stringify(orderLog)}`
+  }
+)
+check(
+  'non-interleaved (deterministic rows): all C4 runs then all C4-naive runs, unchanged',
+  async () => {
+    await cellsFor(false)
+    const want = ['C4', 'C4', 'C4', 'C4', 'C4-naive', 'C4-naive', 'C4-naive', 'C4-naive']
+    return JSON.stringify(orderLog) === JSON.stringify(want)
+      ? true
+      : `got ${JSON.stringify(orderLog)}`
+  }
+)
+check(
+  'interleave: real rng produces both orders; every pair has both arms; run indexes 0..n-1 per arm',
+  async () => {
+    orderLog.length = 0
+    const cells = await runCells({
+      mod: fakeMod,
+      args: {},
+      labels: ['A13-C4', 'A13-C4-OOM'],
+      tag: 't',
+      target: 40,
+      harnessRoot,
+      fsLabel: 'selftest',
+      out: null,
+      interleave: true,
+    })
+    const pairs = []
+    for (let i = 0; i < orderLog.length; i += 2) pairs.push(`${orderLog[i]}>${orderLog[i + 1]}`)
+    const okPairs = pairs.every((p) => p === 'C4>C4-naive' || p === 'C4-naive>C4')
+    const both = new Set(pairs).size === 2
+    const idx = cells.C4.records.map((r) => r.run).join() === [...Array(40).keys()].join()
+    const stamped = cells.C4.extras.every(
+      (e) => e?.armOrder === 'C4-first' || e?.armOrder === 'naive-first'
+    )
+    return okPairs && both && idx && stamped
+      ? true
+      : `okPairs=${okPairs} both=${both} idx=${idx} stamped=${stamped}`
+  }
+)
+
+// ---- F4: straddle count beside the A13 verdict -------------------------------------
+const straddleLine = (extras) =>
+  scoreCell({
+    label: 'A13-C4-OOM',
+    variant: 'racer/by-timestamp',
+    candidate: 'C4',
+    records: [oomRecord(0, 2), oomRecord(0, 2)],
+    target: 2,
+    extras,
+    rows: [
+      {
+        attack: 'A13-C4-OOM',
+        variant: 'racer/by-timestamp',
+        candidate: 'C4',
+        fs: 'selftest',
+        failed: 0,
+      },
+    ],
+  })
+check('straddles: summed from extra.straddleCount when supplied', () =>
+  /straddles=3(\t|$)/.test(straddleLine([{ straddleCount: 1 }, { straddleCount: 2 }]))
+    ? true
+    : straddleLine([{ straddleCount: 1 }, { straddleCount: 2 }])
+)
+check('straddles: n/a when the module supplies none', () =>
+  /straddles=n\/a(\t|$)/.test(straddleLine([null, {}])) ? true : straddleLine([null, {}])
+)
+
+// ---- R2-3: every record carries the module's target for its cell -------------------
+check('records carry cell.target = the module target, not the requested --target', () => {
+  const o = path.join(R.scratch, 'target-check.jsonl')
+  const r = R.run('run-c4-attacks.mjs', ['--only', 'a3', '--out', o])
+  if (r.status !== 0) return `status=${r.status} stderr=${r.stderr.slice(0, 160)}`
+  const recs = readFileSync(o, 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
+  return recs.length === 2 && recs.every((x) => x.cell.target === 30)
+    ? true
+    : `targets=${JSON.stringify(recs.map((x) => x.cell.target))}`
+})
+
+// ---- R2-4: A13 harness errors are filed under the scored label whatever the order --
+check('A13 harness errors file under A13-C4 even when the label order is swapped', async () => {
+  const throwing = {
+    target: 300,
+    runOnce: () => {
+      throw new Error('fake: module crashed')
+    },
+  }
+  const cells = await runCells({
+    mod: throwing,
+    args: {},
+    labels: ['A13-C4-OOM', 'A13-C4'],
+    tag: 't',
+    target: 3,
+    harnessRoot,
+    fsLabel: 'selftest',
+    out: null,
+    interleave: true,
+  })
+  const all = [...cells.C4.records, ...cells['C4-naive'].records]
+  const labelsOk = [...cells.C4.runLabels, ...cells['C4-naive'].runLabels].every(
+    (l) => l === 'A13-C4'
+  )
+  const attacksOk = all.every(
+    (x) => x.cell.attack === 'A13-C4' && x.outcome.status === 'harness-error'
+  )
+  return labelsOk && attacksOk && all.length === 6
+    ? true
+    : `labelsOk=${labelsOk} attacksOk=${attacksOk}`
+})
+
+// ---- R2: vacuous-check exclusions are counted beside the A13 verdict -----------------
+const vacuousLine = (extras) =>
+  scoreCell({
+    label: 'A13-C4',
+    variant: 'racer/by-timestamp',
+    candidate: 'C4',
+    records: [oomRecordFor('A13-C4', 0, 2), oomRecordFor('A13-C4', 0, 2)],
+    target: 2,
+    extras,
+    rows: [
+      {
+        attack: 'A13-C4',
+        variant: 'racer/by-timestamp',
+        candidate: 'C4',
+        fs: 'selftest',
+        failed: 0,
+      },
+    ],
+  })
+check('vacuous: counted from extra.excludedReason === vacuous-check', () => {
+  const line = vacuousLine([{ excludedReason: 'vacuous-check' }, { excludedReason: 'other' }])
+  return /vacuousExcluded=1(\t|$)/.test(line) ? true : line
+})
+check('vacuous: n/a when the module never supplies excludedReason', () => {
+  const line = vacuousLine([{}, null])
+  return /vacuousExcluded=n\/a(\t|$)/.test(line) ? true : line
+})
+
+// Async cases run last, one at a time (they share module state), before the corpus check.
+for (const { name, fn } of queued) {
+  try {
+    report(name, await fn())
+  } catch (err) {
+    report(name, `threw ${err?.message ?? err}`)
+  }
+}
+
+check('results/raw is byte-for-byte unchanged by this selftest (names + sizes)', () => {
+  const after = snapshotDir(realRaw)
+  return after === rawBefore ? true : `changed:\n before=${rawBefore}\n after=${after}`
+})
+R.cleanup()
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

@@ -69,6 +69,31 @@ Nothing here ships: see `harness/assert-unshipped.mjs` and the plan's §7.
   (e42-e55, including e53/e54, the gate's actual source). Use these
   directly for anything gate-shaped; see its own README.
 
+## C4 harness selftests
+
+Any change to the C4 harness, its scoring (`harness/result-schema*.mjs`,
+`harness/control-spec*.mjs`) or its attack modules must run all of these from
+this directory (plain `node`, host or container, each exits non-zero on a
+failure). Each prints a closing pass line ("all cases passed" or "ALL PASS"); a run that prints
+nothing or crashes before it did not pass.
+
+- `node harness/c4-shared.selftest.mjs` -- `runC4Candidate`, the fs interposition and trace checks
+- `node harness/c4-displaced.selftest.mjs` -- `locateDisplaced` (displaced vs deleted)
+- `node harness/c4-score.selftest.mjs` -- `scoreUserFiles` and the shared C4 record builders
+- `node harness/c4-runner.selftest.mjs` -- the C4 runner's record assembly
+- `node harness/a13-c4.selftest.mjs` -- the A13-C4 / A13-C4-OOM racer and its window split
+- `node harness/result-schema.selftest.mjs` -- the legacy record schema and quarantine scan
+- `node harness/result-schema.c4.selftest.mjs` -- C4 quarantine scan (`scanC4Leftovers`)
+- `node harness/result-schema.c4.classify.selftest.mjs` -- C4 `classifyRecord` clauses
+- `node harness/result-schema.c4.shapes.selftest.mjs` -- record-shape attacks and `makeRecord`
+- `node harness/result-schema.c4.gate.selftest.mjs` -- the C4 gate, control rows, `makeRecord` snapshots, scoring reads
+- `node harness/result-schema.c4.roundtrip.selftest.mjs` -- runner/summary agreement (JSON round-trip), banned keys, no coercion of lost/changed
+- `node harness/cell-tally.selftest.mjs` -- the shared cell tally (vacuous-check exclusion, `cell.target`) and that `generate-summary` agrees with `aggregateCell`
+- `node harness/test-verdict-rule.mjs` -- `verdictFor`, record-only cells, the tally key, and the pinned `CONTROL_SPEC`
+
+After any of them, regenerate and diff the summary:
+`node results/generate-summary.mjs`, then confirm no legacy cell moved.
+
 ## Running
 
 Everything is plain ESM (`.mjs`), zero dependencies, Node >=20. On Linux

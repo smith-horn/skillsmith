@@ -1,7 +1,9 @@
 // C4 additions to the harness result schema (SMI-6715), split out of
 // result-schema.mjs to keep both files under the length limit. Imports nothing
 // from result-schema.mjs, so there is no cycle. Behaviour is unchanged by the
-// split; result-schema.selftest.mjs and result-schema.c4.selftest.mjs pin it.
+// split; result-schema.selftest.mjs, result-schema.c4.selftest.mjs,
+// result-schema.c4.classify.selftest.mjs, result-schema.c4.shapes.selftest.mjs
+// and result-schema.c4.gate.selftest.mjs pin it.
 
 import { lstatSync, readdirSync } from 'node:fs'
 import path from 'node:path'
@@ -166,6 +168,48 @@ export function isC4Cell(cell) {
  * runner, which records a throw as harness-error (never-ran), so a malformed
  * shape cannot be laundered into a clean-looking passing record.
  */
+const BANNED_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * True only if JSON.parse(JSON.stringify(v)) is the SAME value as v: primitives
+ * (finite numbers only), plain arrays and plain objects, own enumerable DATA
+ * properties only, no `toJSON` anywhere, no `__proto__` / `constructor` /
+ * `prototype` key, no cycles. This is what makes the runner (which classifies
+ * the in-memory record) and the summary (which classifies what was persisted)
+ * agree BY CONSTRUCTION for C4 records: a record that is not JSON-safe is
+ * refused by makeRecord, classified never-ran by classifyRecord, and refused by
+ * appendJsonl, so no persisted copy can differ from the classified one.
+ */
+export function jsonSafe(v, seen = new Set(), depth = 0) {
+  if (v === null || v === undefined) return true
+  const t = typeof v
+  if (t === 'string' || t === 'boolean') return true
+  if (t === 'number') return Number.isFinite(v)
+  if (t !== 'object' || depth > 12 || seen.has(v)) return false
+  const proto = Object.getPrototypeOf(v)
+  const isArr = Array.isArray(v)
+  if (isArr ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) return false
+  seen.add(v)
+  try {
+    for (const key of Reflect.ownKeys(v)) {
+      if (typeof key !== 'string') return false
+      if (isArr && key === 'length') continue
+      if (key === 'toJSON' || BANNED_KEYS.has(key)) return false
+      const d = Object.getOwnPropertyDescriptor(v, key)
+      if (!d || !d.enumerable || !('value' in d)) return false
+      if (!jsonSafe(d.value, seen, depth + 1)) return false
+    }
+    return true
+  } finally {
+    seen.delete(v)
+  }
+}
+
+/** The four objects classifyRecord reads for a C4 record, all JSON-safe. */
+export function c4RecordJsonSafe(record) {
+  return ['cell', 'precondition', 'outcome', 'userFiles'].every((k) => jsonSafe(record?.[k]))
+}
+
 export function c4Snapshot(obj, label) {
   if (!isPlain(obj)) {
     throw new TypeError(`makeRecord: C4 ${label} must be a plain object`)
@@ -176,6 +220,19 @@ export function c4Snapshot(obj, label) {
     if (!v.ok) {
       throw new TypeError(
         `makeRecord: C4 ${label} key ${String(key)} is not an own enumerable data property`
+      )
+    }
+    if (key === 'toJSON' || BANNED_KEYS.has(key)) {
+      throw new TypeError(`makeRecord: C4 ${label} key ${key} is not allowed`)
+    }
+    // precondition / userFiles / cell hold scalars only; only `outcome` may nest
+    // (quarantineLeft, a plain scan result).
+    if (label !== 'outcome' && v.value !== null && typeof v.value === 'object') {
+      throw new TypeError(`makeRecord: C4 ${label} key ${key} must be a primitive`)
+    }
+    if (!jsonSafe(v.value)) {
+      throw new TypeError(
+        `makeRecord: C4 ${label} key ${key} is not JSON-safe (its persisted form could differ from the classified one)`
       )
     }
     out[key] = v.value
@@ -225,9 +282,16 @@ export function c4Validate(record) {
     if (typeof key !== 'string') return null
     const v = strictOwn(pre, key)
     if (!v.ok) return null
-    if (key !== 'controlExpected' && v.value !== true) return null
+    if (v.value !== true && key !== 'controlExpected') return null
   }
-  for (const key of C4_REQUIRED_PRECONDITIONS) if (!strictOwn(pre, key).ok) return null
+  // controlExpected is REQUIRED and strictly true like the rest (Sol F6b): it is
+  // exempt from the any-false-is-never-ran sweep only in the sense that a cell
+  // without a paired control is handled by CONTROL_SPEC, not here -- and every
+  // C4 attack module sets it to the literal true.
+  for (const key of [...C4_REQUIRED_PRECONDITIONS, 'controlExpected']) {
+    const v = strictOwn(pre, key)
+    if (!v.ok || v.value !== true) return null
+  }
 
   const uf = record.userFiles
   if (!isPlain(uf)) return null
@@ -235,13 +299,14 @@ export function c4Validate(record) {
     const v = strictOwn(uf, k)
     return v.ok ? v.value : undefined
   }
+  // displaced/deleted are REQUIRED (Sol F6a): a loss with no recoverable-vs-gone
+  // split proves nothing, and "if present" let an omission read as a pass.
   const [checked, lost, changed] = [get('checked'), get('lost'), get('changed')]
-  if (!isCount(checked) || !isCount(lost) || !isCount(changed) || checked < 1) return null
-  const hasD = Reflect.ownKeys(uf).includes('displaced')
-  const hasX = Reflect.ownKeys(uf).includes('deleted')
-  if (hasD || hasX) {
-    const [d, x] = [get('displaced'), get('deleted')]
-    if (!isCount(d) || !isCount(x) || d + x !== lost) return null
-  }
+  const [displaced, deleted] = [get('displaced'), get('deleted')]
+  if (![checked, lost, changed, displaced, deleted].every(isCount) || checked < 1) return null
+  if (displaced + deleted !== lost) return null
+  // lost + changed <= checked (Sol F6c): more bytes lost than were checked is an
+  // inconsistent record, not a loss to count.
+  if (lost + changed > checked) return null
   return { lost, changed }
 }

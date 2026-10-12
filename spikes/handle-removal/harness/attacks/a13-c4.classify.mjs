@@ -2,11 +2,12 @@
 // racer, no clock), so harness/a13-c4.selftest.mjs can drive every branch
 // with synthetic values. a13-c4.mjs gathers the measurements and calls these.
 //
-// LANDING IS AN INTERVAL, NOT AN INSTANT. The racer's landedAt is taken after
-// its last mutation syscall returned, so it is an UPPER bound (a13-vr.mjs
-// documents milliseconds of child scheduling delay under contention);
-// mutationStartedAt is a LOWER bound. classifyLanding uses the whole interval
-// [s, l], all values on one clock (hrtime ms):
+// LANDING IS AN INTERVAL, NOT AN INSTANT. [s, l] is the DESTRUCTIVE step's own
+// interval (the first completed step of a13-c4.racer.mjs; review R1-F3): s is
+// stamped before that syscall, l after it returned, so l is an UPPER bound on
+// when it hit the filesystem (a13-vr.mjs documents milliseconds of child
+// scheduling delay under contention) and s a LOWER bound. classifyLanding
+// uses the whole interval, all values on one clock (hrtime ms):
 //   pre-caller-hash  l < callerHashAt. Irrelevant: the caller hashed the
 //                    racer's own content, so quarantining it is what the
 //                    caller asked for. Not a race against C4.
@@ -37,28 +38,33 @@
 //                 landing (mutationApplied:true).
 //   'A13-C4-OOM'  every relevant landing is out-of-model (record-only).
 // `mutationApplied` means "landed inside a window this cell scores"; the raw
-// racer fact is kept in extra.racerApplied. A run with BOTH an in-model and an
+// racer facts are kept in extra.racerSteps / racerFailedStep. A run with BOTH an in-model and an
 // out-of-model landing goes to 'A13-C4', because the in-model race happened.
 // The cost is real: a loss caused by the out-of-model landing is then charged
 // to the in-model cell. lossPrecededBy names the latest-ending relevant
-// landing so a summary can re-attribute. spawnConcurrentRacer makes exactly
-// one mutation per run, so today a run has at most one landing; routeRun takes
+// landing so a summary can re-attribute. The step racer makes exactly one
+// mutation per run, so today a run has at most one landing; routeRun takes
 // a list anyway so a racer that makes several cannot silently pick a label.
 //
-// HASH EVIDENCE (deriveHashEvidence + the override in buildLandings). The
+// HASH EVIDENCE (deriveHashEvidence + the override in landingFromRacer). The
 // pristine tree is hashed before the racer exists; a moved tree is hashed at
 // its quarantine path after the racer is joined. If the caller's hash differs
 // from pristine AND the moved tree still equals the caller's hash, the single
 // mutation was complete before the caller hashed: the landing is
-// 'pre-caller-hash' whatever the timestamps say. It never fired in 40 live
-// smoke runs; the selftest proves the branch synthetically.
+// 'pre-caller-hash' whatever the timestamps say. Never applied to a PARTIAL
+// run (see landingFromRacer). It never fired in 40 live smoke runs; the
+// selftest proves the branch synthetically.
 //
 // CALLER-HASH RACE (recordForRunError). If the racer is mid-mutation while the
 // caller hashes, runC4Candidate throws before quarantineTree runs. That is
 // recorded as a pre-caller-hash non-landing with status 'harness-error' and
 // mutationApplied:false, instead of a throw the runner would count as a
-// never-ran R6 cannot explain. Only that message AND a racer that actually
-// applied a mutation qualify; anything else rethrows.
+// never-ran R6 cannot explain -- but ONLY when the racer's expectations,
+// scored at their original paths, show nothing lost or changed (C4 never ran,
+// so a loss there means the harness model is wrong, and the record then
+// carries mutationApplied:true so R6 counts it against the cell). Only that
+// message AND a racer that completed at least one step qualify; anything else
+// rethrows.
 
 export const VARIANT = 'racer/by-timestamp'
 export const CALLER_HASH_FAILED_PREFIX = 'runC4Candidate: caller hash failed'
@@ -127,33 +133,113 @@ export function deriveHashEvidence({ candidate, pristineHash, guardHash, postMov
 }
 
 /**
- * Landings for one run. `racer` is the racer's own result object (applied,
- * mutationStartedAt, landedAt); a racer that applied nothing has no landing.
+ * The landing for one run, from the step racer's report (a13-c4.racer.mjs).
+ *
+ * A LANDING IS ANY COMPLETED STEP (review R1-F1). The shared racer reported
+ * `applied:null` whenever a later syscall failed, so a destructive first step
+ * that DID land (an unlink or a rename-aside, followed by an ENOENT because C4
+ * had already moved the tree) produced no landing, no scored files, and R6's
+ * non-landing exemption. Here the first completed step decides.
+ *
+ * CLASSIFIED FROM THE DESTRUCTIVE STEP'S OWN INTERVAL (review R1-F3): the first
+ * completed step's [startAt, endAt], not the whole mutation's. Every later step
+ * is carried in the record so a re-analysis can key on another one.
+ *
+ * A PARTIAL RUN (some steps completed, then one failed) is ALWAYS scored:
+ * `forceScored` keeps it out of the irrelevant classes' R6 exemption even when
+ * its destructive step timestamps as pre-caller-hash or post-rename, and the
+ * hash override is not applied to it (that override's proof assumes the one
+ * mutation was COMPLETE before the caller hashed). That is the conservative
+ * direction: a partial whose first step truly landed before the caller hashed
+ * is scored against C4 anyway.
+ *
+ * @param {object} a
+ * @param {object|null} a.racer - the step racer's result. `steps: null` means
+ *   the racer's report is unknown (unparseable output); the caller must treat
+ *   that as unscorable, never as "no landing". This function throws on it.
  */
-export function buildLandings({ racer, callerHashAt, inModelEnd, moveEnd, provenPreCallerHash }) {
-  if (!racer || !racer.applied) return []
-  const s = racer.mutationStartedAt ?? null
-  const l = racer.landedAt ?? null
-  const c = classifyLanding({ s, l, callerHashAt, inModelEnd, moveEnd })
-  const byHash = provenPreCallerHash === true && c.cls !== 'pre-caller-hash'
+export function landingFromRacer({
+  racer,
+  callerHashAt,
+  inModelEnd,
+  moveEnd,
+  provenPreCallerHash,
+  movedTreeDiffersFromCallerHash,
+}) {
+  if (!racer || !Array.isArray(racer.steps)) {
+    throw new TypeError('landingFromRacer: racer report has no steps array (unknown, not empty)')
+  }
+  if (racer.steps.length === 0) return []
+  const first = racer.steps[0]
+  const last = racer.steps[racer.steps.length - 1]
+  const partial = racer.failedStep != null
+  const c = classifyLanding({
+    s: first.startAt ?? null,
+    l: first.endAt ?? null,
+    callerHashAt,
+    inModelEnd,
+    moveEnd,
+  })
+  // PRE-CALLER-HASH NEEDS THE WHOLE MUTATION, NOT THE FIRST STEP. The first
+  // step is the right instant for in-model vs out-of-model (it decides whether
+  // C4 could have noticed the change), but "the caller hashed the racer's own
+  // content" holds only if EVERY step had landed before the caller's hash
+  // finished, and never if the moved tree differs from what the caller hashed.
+  // Found by smoke: an a7 whose unlink ended before callerHashAt and whose
+  // write ended after it was being dropped as irrelevant while the user's new
+  // file sat in the trash. Such a run is in-model: its first step started
+  // before inModelEnd (it started before callerHashAt) and part of it landed
+  // after the caller observed the tree.
+  let cls = c.cls
+  let evidence = 'timestamp'
+  if (cls === 'pre-caller-hash') {
+    if (movedTreeDiffersFromCallerHash === true) {
+      cls = 'in-model'
+      evidence = 'hash-moved-tree-differs'
+    } else if (last.endAt == null || !(last.endAt < callerHashAt)) {
+      cls = 'in-model'
+      evidence = 'last-step-after-caller-hash'
+    }
+  }
+  const byHash = !partial && provenPreCallerHash === true && cls !== 'pre-caller-hash'
+  if (byHash) {
+    cls = 'pre-caller-hash'
+    evidence = 'hash'
+  }
   return [
     {
-      mutation: racer.applied,
-      mutationStartedAt: s,
-      landedAt: l,
-      cls: byHash ? 'pre-caller-hash' : c.cls,
+      mutation: racer.mutation ?? null,
+      destructiveOp: first.op,
+      destructivePath: first.path,
+      mutationStartedAt: first.startAt ?? null,
+      landedAt: first.endAt ?? null,
+      cls,
       straddles: c.straddles,
+      // The destructive step's own interval crosses the in-model end. Such a
+      // run stays in the scored cell (conservative) and is counted.
+      straddlesInModelEnd:
+        first.startAt != null &&
+        first.endAt != null &&
+        inModelEnd != null &&
+        first.startAt < inModelEnd &&
+        first.endAt >= inModelEnd,
       timestampCls: c.cls,
-      evidence: byHash ? 'hash' : 'timestamp',
+      evidence,
+      lastStepEndAt: last.endAt ?? null,
+      partial,
+      forceScored: partial && IRRELEVANT.has(cls),
+      stepsCompleted: racer.steps.length,
+      failedOp: partial ? racer.failedStep.op : null,
+      failedError: partial ? (racer.failedStep.error ?? null) : null,
     },
   ]
 }
 
 /** @returns {{label:string, mutationApplied:boolean, relevant:object[]}} */
 export function routeRun(landings) {
-  const relevant = landings.filter((x) => !IRRELEVANT.has(x.cls))
-  const anyInModel = relevant.some((x) => x.cls === 'in-model' || x.cls === 'unknown')
-  const label = relevant.length > 0 && !anyInModel ? 'A13-C4-OOM' : 'A13-C4'
+  const relevant = landings.filter((x) => !IRRELEVANT.has(x.cls) || x.forceScored === true)
+  const scored = (x) => x.cls === 'in-model' || x.cls === 'unknown' || x.forceScored === true
+  const label = relevant.length > 0 && !relevant.some(scored) ? 'A13-C4-OOM' : 'A13-C4'
   return { label, mutationApplied: relevant.length > 0, relevant }
 }
 
@@ -166,28 +252,56 @@ export function lossPrecededBy(relevant, lostOrChanged) {
 }
 
 export function landingCounts(landings) {
-  const n = (c) => landings.filter((x) => x.cls === c).length
+  const n = (p) => landings.filter(p).length
   return {
     total: landings.length,
-    inModel: n('in-model'),
-    outOfModel: n('out-of-model'),
-    preCallerHash: n('pre-caller-hash'),
-    postRename: n('post-rename'),
-    unknown: n('unknown'),
+    inModel: n((x) => x.cls === 'in-model'),
+    outOfModel: n((x) => x.cls === 'out-of-model'),
+    preCallerHash: n((x) => x.cls === 'pre-caller-hash'),
+    postRename: n((x) => x.cls === 'post-rename'),
+    unknown: n((x) => x.cls === 'unknown'),
+    partial: n((x) => x.partial === true),
+    forceScored: n((x) => x.forceScored === true),
+    // Printed beside the verdict by the runner: runs kept in the scored cell
+    // although the destructive step's own interval crosses the in-model end.
+    straddlesInModelEnd: n((x) => x.straddlesInModelEnd === true),
   }
 }
 
-/** Whether a runC4Candidate throw is the caller-hash race, and only that. */
-export function isCallerHashRaceFailure({ message, racerApplied }) {
-  return (
-    typeof message === 'string' && message.startsWith(CALLER_HASH_FAILED_PREFIX) && !!racerApplied
-  )
+/**
+ * Whether a runC4Candidate throw is the caller-hash race, and only that
+ * (review R2-7). All three must hold:
+ *   - `err` is a real Error whose message starts with the c4-shared prefix. A
+ *     non-Error is never accepted, even if its toString carries the prefix.
+ *   - the racer completed at least one step.
+ *   - the racer's FIRST step interval overlaps the caller-hash window
+ *     [startAt, endAt] (closed, one clock). Without this, an unrelated
+ *     caller-hash failure was swallowed while the racer landed 5 s later. A
+ *     missing window fails closed: the error is rethrown.
+ */
+export function isCallerHashRaceFailure({ err, racer, callerHashWindow }) {
+  if (!(err instanceof Error) || typeof err.message !== 'string') return false
+  if (!err.message.startsWith(CALLER_HASH_FAILED_PREFIX)) return false
+  if (!Array.isArray(racer?.steps) || racer.steps.length === 0) return false
+  const w = callerHashWindow
+  if (!w || typeof w.startAt !== 'number' || typeof w.endAt !== 'number') return false
+  const first = racer.steps[0]
+  if (typeof first.startAt !== 'number' || typeof first.endAt !== 'number') return false
+  return first.startAt <= w.endAt && first.endAt >= w.startAt
 }
 
 /**
- * Turns a runC4Candidate throw into a record, or rethrows it. quarantineTree
- * never ran on this path, so `quarantineLeft` is supplied by the caller (a
- * scan with no status/opId, which reports nulls rather than a confident 0).
+ * Turns a runC4Candidate throw into a record, or rethrows it. Qualifies only
+ * as isCallerHashRaceFailure decides (a real Error with the prefix, and the
+ * racer's first step overlapping the caller-hash window). quarantineTree never ran
+ * on this path, so nothing was moved; `quarantineLeft` comes from the caller.
+ *
+ * `scored` is the racer's expectations scored at their original paths (see
+ * a13-c4.score.mjs). This run takes R6's non-landing exemption ONLY if that
+ * scoring found nothing lost or changed: C4 never ran, so any loss means the
+ * harness's own model of the racer is wrong, and the record is then a
+ * harness-error with mutationApplied:true, which R6 counts against the cell
+ * (otherNeverRan) instead of excusing.
  */
 export function recordForRunError({
   err,
@@ -196,25 +310,38 @@ export function recordForRunError({
   markerObservedAt,
   durationMs,
   quarantineLeft,
+  scored,
+  callerHashWindow,
 }) {
-  const message = err instanceof Error ? err.message : String(err)
-  if (!isCallerHashRaceFailure({ message, racerApplied: racer?.applied })) throw err
+  if (!isCallerHashRaceFailure({ err, racer, callerHashWindow })) throw err
+  const message = err.message
+  const unexplainedLoss = !scored || scored.lost + scored.changed > 0
   return {
     precondition: {
       hookFired: false,
-      mutationApplied: false,
+      mutationApplied: unexplainedLoss,
       traceMatched: false,
       controlExpected: true,
     },
     outcome: {
       status: 'harness-error',
-      reason: CALLER_HASH_RACE_REASON,
+      reason: unexplainedLoss
+        ? `${CALLER_HASH_RACE_REASON}+unexplained-loss`
+        : CALLER_HASH_RACE_REASON,
       path: null,
       entry: null,
       errno: null,
       quarantineLeft,
     },
-    userFiles: { checked: 0, lost: 0, changed: 0, displaced: 0, deleted: 0 },
+    userFiles: scored
+      ? {
+          checked: scored.checked,
+          lost: scored.lost,
+          changed: scored.changed,
+          displaced: scored.displaced,
+          deleted: scored.deleted,
+        }
+      : { checked: 0, lost: 0, changed: 0, displaced: 0, deleted: 0 },
     durationMs,
     extra: {
       label: 'A13-C4',
@@ -222,19 +349,24 @@ export function recordForRunError({
       candidate,
       firedAt: null,
       trace: [],
-      racerApplied: racer.applied ?? null,
-      racerError: racer.error ?? null,
+      racerMutation: racer.mutation ?? null,
+      racerComplete: racer.complete === true,
+      racerSteps: racer.steps,
+      racerFailedStep: racer.failedStep ?? null,
       racerDelayMs: racer.delayMs ?? null,
       callerHashError: message,
       landings: [
         {
-          mutation: racer.applied,
-          mutationStartedAt: racer.mutationStartedAt ?? null,
-          landedAt: racer.landedAt ?? null,
+          mutation: racer.mutation ?? null,
+          mutationStartedAt: racer.steps[0].startAt ?? null,
+          landedAt: racer.steps[0].endAt ?? null,
           cls: 'pre-caller-hash',
           straddles: true,
           timestampCls: null,
           evidence: 'caller-hash-threw',
+          partial: racer.failedStep != null,
+          forceScored: false,
+          straddlesInModelEnd: false,
         },
       ],
       landingCounts: {
@@ -244,8 +376,15 @@ export function recordForRunError({
         preCallerHash: 1,
         postRename: 0,
         unknown: 0,
+        partial: racer.failedStep != null ? 1 : 0,
+        forceScored: 0,
+        straddlesInModelEnd: 0,
       },
-      lossAttribution: { lost: false, lossPrecededBy: null, classes: ['pre-caller-hash'] },
+      lossAttribution: {
+        lost: unexplainedLoss,
+        lossPrecededBy: null,
+        classes: ['pre-caller-hash'],
+      },
       displacedPaths: [],
       hashEvidence: null,
       timing: {

@@ -22,6 +22,8 @@ import {
   PROBABILISTIC_ATTACKS,
   RECORD_ONLY_ATTACKS,
   controlFailedFlag,
+  CONTROL_SPEC,
+  verdictTallyKey,
 } from './control-spec.mjs'
 import { aggregateCell } from './result-schema.mjs'
 
@@ -246,8 +248,23 @@ check(
   'RECORD-ONLY (3 lost)'
 )
 check(
-  '8d record-only with never-ran is still record-only',
+  '8d record-only never hides never-ran runs (G2-2)',
   verdictFor(oom({ passed: 5, neverRan: 2 }), true, 'none'),
+  'RECORD-ONLY (2 never-ran)'
+)
+check(
+  '8i a cell made entirely of harness errors is not bare RECORD-ONLY',
+  verdictFor(oom({ neverRan: 7, otherNeverRan: 7 }), true, 'none'),
+  'RECORD-ONLY (7 never-ran)'
+)
+check(
+  '8j lost and never-ran are both named, lost first',
+  verdictFor(oom({ passed: 4, failed: 3, neverRan: 2 }), true, 'none'),
+  'RECORD-ONLY (3 lost, 2 never-ran)'
+)
+check(
+  '8k bare RECORD-ONLY only when nothing was lost and nothing never ran',
+  verdictFor(oom({ passed: 9 }), true, 'none'),
   'RECORD-ONLY'
 )
 check(
@@ -288,6 +305,42 @@ check(
     'satisfied'
   ),
   'FAIL'
+)
+
+// --- 9. tally key and the C4 spec split (G2-3, G2-5) --------------------------
+check(
+  '9a RECORD-ONLY (N lost) tallies as RECORD-ONLY',
+  verdictTallyKey('RECORD-ONLY (3 lost)'),
+  'RECORD-ONLY'
+)
+check(
+  '9b RECORD-ONLY (a, b) tallies as RECORD-ONLY',
+  verdictTallyKey('RECORD-ONLY (3 lost, 2 never-ran)'),
+  'RECORD-ONLY'
+)
+check('9c bare RECORD-ONLY is its own key', verdictTallyKey('RECORD-ONLY'), 'RECORD-ONLY')
+for (const v of [
+  'PASS',
+  'FAIL',
+  'NEVER-RAN',
+  'NEVER-RAN (control)',
+  'PASS (control unverified)',
+  'NEVER-RAN (underpowered)',
+  'INCOMPLETE (ran 1/2)',
+]) {
+  check('9d ' + v + ' is untouched by the tally key', verdictTallyKey(v), v)
+}
+check(
+  '9e CONTROL_SPEC is a plain object',
+  Object.getPrototypeOf(CONTROL_SPEC) === Object.prototype,
+  true
+)
+check(
+  '9f CONTROL_SPEC still holds every C4 row, in place before N1',
+  Object.keys(CONTROL_SPEC)
+    .slice(Object.keys(CONTROL_SPEC).indexOf('A3-C4'), Object.keys(CONTROL_SPEC).indexOf('N1'))
+    .join(','),
+  'A3-C4,A4-C4,A7-C4,A8-C4,A10-C4,A1-C4,A2-C4,A13-C4,A8a-C4,A10b-C4,A13-C4-OOM'
 )
 
 if (!allOk) {

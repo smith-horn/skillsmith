@@ -3,20 +3,15 @@
 //
 // c4-shared.mjs transforms evidence for every C4 verdict, so this proves both
 // directions: real runs MATCH (positive), and mutated traces do NOT (negative).
+// Synthetic matcher red tests live in c4-trace-match.selftest.mjs and
+// locateDisplaced's in c4-displaced.selftest.mjs.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { makeFixtureRoot, resolveHarnessRoot } from './fixture-root.mjs'
 import { buildSwapFixture, renameAsideAndReplace } from './attacks/_shared.mjs'
-import {
-  runC4Candidate,
-  locateDisplaced,
-  matchC4Trace,
-  C4_CANDIDATES,
-  C4_WINDOWS,
-  FIRE,
-} from './attacks/c4-shared.mjs'
+import { runC4Candidate, C4_CANDIDATES, C4_WINDOWS, FIRE } from './attacks/c4-shared.mjs'
 
 const harnessRoot = resolveHarnessRoot()
 const PRISTINE = { lstatSync: fs.lstatSync, renameSync: fs.renameSync, readdirSync: fs.readdirSync }
@@ -31,7 +26,12 @@ const restored = () =>
   fs.lstatSync === PRISTINE.lstatSync &&
   fs.renameSync === PRISTINE.renameSync &&
   fs.readdirSync === PRISTINE.readdirSync
-const names = (trace) => trace.map((e) => e.fn).join(',')
+// Root skeleton plus counts of descendant / destination events.
+const names = (trace) => {
+  const root = trace.filter((e) => e.fn === FIRE || (e.scope === 'origin' && !e.nested))
+  const n = (s) => trace.filter((e) => e.scope === s || e.scope2 === s).length
+  return `${root.map((e) => e.fn).join(',')} +desc:${n('desc')} +dest:${n('dest')}`
+}
 
 /** Runs one arm on a fresh swap fixture; onFire gets (fixture, fx, opId). */
 function runOn(candidate, window, makeOnFire) {
@@ -154,39 +154,6 @@ for (const candidate of C4_CANDIDATES) {
   fx.cleanup()
 }
 
-// 4. locateDisplaced positive and negative controls.
-{
-  const { out, fx } = runOn('C4', 'post-hash', (f, fx2, opId, ctx) => () => {
-    ctx.files = { 'orig-f1': `displaced-${fx2.runId}` }
-    renameAsideAndReplace(f.targetAbs, ctx.files)
-  })
-  // post-hash swap is decision 4's in-model FAIL row: the replacement is moved into trash.
-  const loc = locateDisplaced(fx.root, { 'orig-f1': `displaced-${fx.runId}` })
-  check(
-    'locateDisplaced positive: file moved into trash counts displaced',
-    out.result.status === 'quarantined' &&
-      loc.displaced === 1 &&
-      loc.deleted === 0 &&
-      loc.displacedPaths.length === 1,
-    JSON.stringify(loc)
-  )
-  fx.cleanup()
-}
-{
-  const fx = makeFixtureRoot({ harnessRoot })
-  fs.mkdirSync(path.join(fx.root, '.skillsmith-trash', 'op-x'), { recursive: true })
-  const victim = path.join(fx.root, 'user-file')
-  fs.writeFileSync(victim, 'deleted-content')
-  fs.rmSync(victim)
-  const loc = locateDisplaced(fx.root, { 'user-file': 'deleted-content' })
-  check(
-    'locateDisplaced negative: deleted file counts deleted',
-    loc.displaced === 0 && loc.deleted === 1,
-    JSON.stringify(loc)
-  )
-  fx.cleanup()
-}
-
 // 5. Shape attacks on runC4Candidate's own inputs: each must be a TypeError.
 {
   const fx = makeFixtureRoot({ harnessRoot })
@@ -220,152 +187,6 @@ for (const candidate of C4_CANDIDATES) {
   }
   check('shape attacks left wrappers restored', restored())
   fx.cleanup()
-}
-
-// 6. Red tests for matchC4Trace. Each mutated trace carries ONE defect; the
-//    unmutated baseline must match first, so a false below is caused by the defect.
-{
-  const { out, fx } = runOn('C4', 'at-rename', () => () => {})
-  const base = {
-    candidate: 'C4',
-    window: 'at-rename',
-    result: out.result,
-    callStartAt: out.times.callStartAt,
-    interpositionIntact: true,
-  }
-  const clone = () => out.trace.map((e) => ({ ...e }))
-  check(
-    'matcher baseline (real at-rename trace) matches',
-    matchC4Trace({ ...base, trace: clone() }) === true,
-    names(out.trace)
-  )
-
-  const noFire = clone().filter((e) => e.fn !== FIRE)
-  check(
-    'red: FIRE marker dropped -> false',
-    matchC4Trace({ ...base, trace: noFire }) === false,
-    names(noFire)
-  )
-
-  const extra = clone()
-  extra.splice(1, 0, { ...extra[0] })
-  check(
-    'red: extra lstat inserted -> false',
-    matchC4Trace({ ...base, trace: extra }) === false,
-    names(extra)
-  )
-
-  const reordered = clone()
-  ;[reordered[1], reordered[2]] = [reordered[2], reordered[1]]
-  for (let i = 0; i < reordered.length; i++) reordered[i].at = out.trace[i].at // keep timestamps monotone
-  check(
-    'red: readdir/lstat reordered -> false',
-    matchC4Trace({ ...base, trace: reordered }) === false,
-    names(reordered)
-  )
-
-  const midThrow = clone()
-  midThrow[0].threw = 'ENOENT'
-  check(
-    'red: non-final call threw -> false',
-    matchC4Trace({ ...base, trace: midThrow }) === false,
-    'trace[0].threw=ENOENT'
-  )
-  fx.cleanup()
-}
-{
-  // FIRE-absence in isolation: a stopped trace that is a valid prefix but never fired.
-  const prefixNoFire = [{ fn: 'lstatSync', at: 10, endAt: 11, threw: 'ENOENT' }]
-  const args = {
-    candidate: 'C4',
-    window: 'after-bind',
-    result: { status: 'stopped' },
-    callStartAt: 1,
-    interpositionIntact: true,
-  }
-  const withFire = [
-    { fn: 'lstatSync', at: 10, endAt: 11, threw: null },
-    { fn: FIRE, at: 12, endAt: 13, threw: null },
-    { fn: 'lstatSync', at: 14, endAt: 15, threw: 'ENOENT' },
-  ]
-  check(
-    'matcher control: stopped prefix WITH FIRE matches',
-    matchC4Trace({ ...args, trace: withFire }) === true
-  )
-  check(
-    'red: stopped prefix with no FIRE -> false',
-    matchC4Trace({ ...args, trace: prefixNoFire }) === false
-  )
-}
-
-// 7. Synthetic-trace red tests for the remaining matcher clauses. Each starts
-//    from a REAL trace whose baseline matches, then changes one thing.
-{
-  const real = (candidate, window) => {
-    const { out, fx } = runOn(candidate, window, () => () => {})
-    fx.cleanup()
-    return out
-  }
-  const args = (out, candidate, window, extra = {}) => ({
-    candidate,
-    window,
-    trace: out.trace.map((e) => ({ ...e })),
-    result: { ...out.result },
-    callStartAt: out.times.callStartAt,
-    interpositionIntact: true,
-    ...extra,
-  })
-
-  const q = real('C4', 'at-rename')
-  check(
-    'synthetic baseline C4/at-rename matches',
-    matchC4Trace(args(q, 'C4', 'at-rename')) === true
-  )
-  // Ciii: quarantined requires the final rename's destination to be result.path.
-  check(
-    'red Ciii: quarantined but result.path != rename dest -> false',
-    matchC4Trace(
-      args(q, 'C4', 'at-rename', { result: { ...q.result, path: `${q.result.path}-elsewhere` } })
-    ) === false
-  )
-  // Civ: kept/stopped requires an early stop or a final throw; a full clean trace is not one.
-  check(
-    'red Civ: full clean trace with status kept -> false',
-    matchC4Trace(args(q, 'C4', 'at-rename', { result: { ...q.result, status: 'kept' } })) === false
-  )
-  check(
-    'red Civ: full clean trace with status stopped -> false',
-    matchC4Trace(args(q, 'C4', 'at-rename', { result: { ...q.result, status: 'stopped' } })) ===
-      false
-  )
-  // Cv: interposition not intact at end of call.
-  check(
-    'red Cv: interpositionIntact false -> false',
-    matchC4Trace(args(q, 'C4', 'at-rename', { interpositionIntact: false })) === false
-  )
-
-  const p = real('C4', 'pre-call')
-  check('synthetic baseline C4/pre-call matches', matchC4Trace(args(p, 'C4', 'pre-call')) === true)
-  // Cvi: a pre-call FIRE must precede callStartAt.
-  {
-    const a = args(p, 'C4', 'pre-call')
-    a.trace[0].at = a.callStartAt // FIRE at the call start, still <= the first lstat's time
-    check(
-      'red Cvi: pre-call FIRE not before callStartAt -> false',
-      a.trace[1].at >= a.trace[0].at && matchC4Trace(a) === false
-    )
-  }
-
-  // Ci-b: a post-hash claim whose FIRE actually sits after the bind (where a
-  // coordinated FIRE_INDEX/C4_RECHECK_LSTAT_ORDINAL off-by-one would put it).
-  {
-    const ab = real('C4', 'after-bind')
-    check(
-      'red Ci-b: after-bind-shaped trace claimed as post-hash -> false',
-      matchC4Trace(args(ab, 'C4', 'post-hash')) === false,
-      names(ab.trace)
-    )
-  }
 }
 
 // 8. X7 + X9: C4 itself touching originPath through a non-lstat/rename/readdir
@@ -424,6 +245,93 @@ for (const stray of ['statSync', 'existsSync']) {
     out.traceMatched === true && !out.trace.some((e) => e.fn === 'statSync')
   )
   fx.cleanup()
+}
+
+// 9. R2-5a / R2-5c: a restore that cannot write one property must still restore
+//    every other wrapper, and must report the body error as `cause`.
+//    The victim is made non-writable from inside onFire; the test itself puts
+//    the descriptor and every *Sync function back in `finally` and checks it.
+{
+  const VICTIM = 'appendFileSync'
+  const syncNames = Object.keys(fs).filter((k) => k.endsWith('Sync') && typeof fs[k] === 'function')
+  const originals = new Map(syncNames.map((n) => [n, fs[n]]))
+  const victimDesc = Object.getOwnPropertyDescriptor(fs, VICTIM)
+  const putBack = () => {
+    Object.defineProperty(fs, VICTIM, victimDesc)
+    for (const n of syncNames) if (fs[n] !== originals.get(n)) fs[n] = originals.get(n)
+  }
+  const othersRestored = () => syncNames.filter((n) => n !== VICTIM && fs[n] !== originals.get(n))
+  for (const [label, bodyFails] of [
+    ['body also failed', true],
+    ['body succeeded', false],
+  ]) {
+    let thrown = null
+    let leftOthers = null
+    let victimWrapped = null
+    try {
+      runOn('C4', 'pre-call', () => () => {
+        // Precondition: the victim really is one of the interposed wrappers.
+        victimWrapped = fs[VICTIM] !== originals.get(VICTIM)
+        // bodyFails: replace with a foreign function, so the pre-call
+        // "still ours" check throws inside the body. Otherwise keep the
+        // installed wrapper, so the body completes and only the restore fails.
+        const value = bodyFails ? function foreign() {} : fs[VICTIM]
+        Object.defineProperty(fs, VICTIM, {
+          value,
+          writable: false,
+          configurable: true,
+          enumerable: true,
+        })
+      })
+    } catch (err) {
+      thrown = err
+    } finally {
+      leftOthers = othersRestored()
+      putBack()
+    }
+    check(
+      `R2-5a (${label}): precondition - the victim was interposed when onFire ran`,
+      victimWrapped === true
+    )
+    check(
+      `R2-5a (${label}): restore error names the victim, not a raw TypeError`,
+      thrown instanceof Error &&
+        thrown.message.startsWith('runC4Candidate: fs restore FAILED') &&
+        thrown.message.includes(VICTIM),
+      thrown ? `${thrown.name}: ${thrown.message.slice(0, 80)}` : 'no throw'
+    )
+    check(
+      `R2-5a (${label}): every other wrapper was still restored`,
+      leftOthers.length === 0,
+      `left installed: ${leftOthers.length}`
+    )
+    check(
+      `R2-5a (${label}): restoreErrors records the victim's own TypeError`,
+      Array.isArray(thrown?.restoreErrors) &&
+        thrown.restoreErrors.length === 1 &&
+        thrown.restoreErrors[0].fn === VICTIM &&
+        thrown.restoreErrors[0].name === 'TypeError'
+    )
+    if (bodyFails) {
+      check(
+        'R2-5c: cause is the body error when body and restore both fail',
+        thrown?.cause instanceof Error &&
+          thrown.cause.message.includes('fs interposition was replaced before the call'),
+        thrown?.cause ? thrown.cause.message.slice(0, 80) : 'no cause'
+      )
+    } else {
+      check(
+        'R2-5c control: no body failure -> cause undefined',
+        thrown !== null && thrown.cause === undefined
+      )
+    }
+    check(
+      `R2-5a (${label}): the test put fs back`,
+      othersRestored().length === 0 &&
+        fs[VICTIM] === originals.get(VICTIM) &&
+        Object.getOwnPropertyDescriptor(fs, VICTIM).writable === true
+    )
+  }
 }
 
 if (!allOk) {

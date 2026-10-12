@@ -21,11 +21,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { classifyRecord } from '../harness/result-schema.mjs'
+import { tallyCell, cellVerdict } from '../harness/cell-tally.mjs'
 import {
   resolveControl,
   controlFailedFlag,
   controlTag,
-  verdictFor,
+  verdictTallyKey,
 } from '../harness/control-spec.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -95,30 +96,8 @@ function aggregate(records) {
   }
   const rows = []
   for (const cell of byCell.values()) {
-    let passed = 0
-    let failed = 0
-    let neverRan = 0
-    let otherNeverRan = 0
-    for (const r of cell.records) {
-      const cls = classifyRecord(r, () => false)
-      if (cls === 'passed') passed += 1
-      else if (cls === 'failed') failed += 1
-      else {
-        neverRan += 1
-        // R6 drops only the runs where the RACER DID NOT LAND. A never-run with
-        // any other cause still disqualifies the cell, so verdictFor() gets both
-        // numbers rather than one it cannot tell apart.
-        if (r?.precondition?.mutationApplied !== false) otherNeverRan += 1
-      }
-    }
-    rows.push({
-      ...cell,
-      ran: cell.records.length,
-      passed,
-      failed,
-      neverRan,
-      otherNeverRan,
-    })
+    const t = tallyCell(cell.records, (r) => classifyRecord(r, () => false))
+    rows.push({ ...cell, ...t })
   }
   return rows
 }
@@ -131,7 +110,7 @@ function verdict(row, controlState) {
   // racer never landed leaves the denominator instead of counting against the
   // cell. Two copies of a verdict rule is how this file got its control clause
   // wrong the first time.
-  return verdictFor(row, controlFailedFlag(controlState), controlState)
+  return cellVerdict(row, row.attack, controlFailedFlag(controlState), controlState)
 }
 
 function main() {
@@ -149,7 +128,11 @@ function main() {
   }
 
   const tally = {}
-  for (const row of rows) tally[row.verdict] = (tally[row.verdict] ?? 0) + 1
+  // RECORD-ONLY verdicts carry a count parenthetical; tally them under one key.
+  for (const row of rows) {
+    const key = verdictTallyKey(row.verdict)
+    tally[key] = (tally[key] ?? 0) + 1
+  }
   const controlTally = {}
   for (const row of rows) controlTally[row.controlState] = (controlTally[row.controlState] ?? 0) + 1
 
@@ -180,6 +163,16 @@ function main() {
       'names is real but lives outside this JSONL (a feasibility script, or a cited ' +
       'earlier experiment) and this harness can neither confirm nor refute it.'
   )
+  if (rows.some((r) => verdictTallyKey(r.verdict) === 'RECORD-ONLY')) {
+    lines.push('')
+    lines.push(
+      '`RECORD-ONLY` marks a cell that is recorded, not scored (ADR-166 D-0: the out-of-model ' +
+        'window). It is never a `PASS` or a `FAIL`; the count after it, when present, is the ' +
+        'number of runs that lost user bytes (`lost`) or never ran (`never-ran`), shown so the ' +
+        'loss stays visible without being scored as a falsifier. The tally counts all of them ' +
+        'under one `RECORD-ONLY` row.'
+    )
+  }
   lines.push('')
   lines.push('## Control status tally')
   lines.push('')
@@ -202,6 +195,26 @@ function main() {
   lines.push('')
   lines.push(`Total: ${rows.length} cells, ${records.length} runs.`)
   lines.push('')
+  if (rows.some((r) => r.excluded > 0)) {
+    lines.push('## Cells with excluded runs')
+    lines.push('')
+    lines.push(
+      'A C4 run flagged `vacuous-check` (its only check was vacuous, e.g. a partial race that ' +
+        'left no user-created path) leaves the denominator like a non-landing and does not count ' +
+        'toward the 100-landing floor. Counts are shown here so they stay visible.'
+    )
+    lines.push('')
+    lines.push('| Attack | Variant | Candidate | FS | Ran | Excluded | Verdict |')
+    lines.push('|---|---|---|---|---|---|---|')
+    for (const row of rows) {
+      if (row.excluded > 0) {
+        lines.push(
+          `| ${row.attack} | ${row.variant ?? ''} | ${row.candidate} | ${row.fs} | ${row.ran} | ${row.excluded} | ${row.verdict} |`
+        )
+      }
+    }
+    lines.push('')
+  }
   lines.push('## Cells whose control did not bite')
   lines.push('')
   lines.push('| Attack | Variant | Candidate | FS | Control state | Why |')

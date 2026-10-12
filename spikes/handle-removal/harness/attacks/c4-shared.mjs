@@ -11,52 +11,41 @@
 // is built to fail closed: a trace it cannot match yields traceMatched:false
 // (and therefore hookFired:false), never a pass.
 //
-// MEASURED SEQUENCES (scratchpad measure-c4-sequence.mjs, darwin, node
-// v22.22.2, 3 runs per arm, buildSwapFixture, every own `*Sync` function on
-// the fs default export wrapped -- 43 of them -- so an unexpected touch of
-// originPath would have appeared):
-//   C4       (guardHash passed): lstatSync, lstatSync, readdirSync, lstatSync, renameSync
-//   C4-naive (no guardHash):     renameSync
-// The C4 lstats are, in order: bindIdentity (bind), pathTreeRecord's root
-// visit (hash), bindIdentity (pre-rename re-check). Nothing else touches
-// originPath; treeBytes() and the sidecar touch destPath, not originPath.
+// WHAT IS TRACED: every call, through any of the fs default export's own
+// `*Sync` functions, whose path is the tree root, inside the root, or inside
+// this run's trash destination (<parent>/.skillsmith-trash/<opId>/...), made by
+// C4 while quarantineTree runs. Calls made inside onFire are not traced. What a
+// MATCH then verifies -- the root skeleton plus phase invariants, and what it
+// does not verify -- is stated in ./c4-trace-match.mjs's header.
+//
+// Split for the file-length limit: the matcher lives in ./c4-trace-match.mjs
+// and displacement classification in ./c4-displaced.mjs; both are re-exported
+// here so callers keep importing from this module.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { quarantineTree, computePathTreeHash } from '../../quarantine.mjs'
 import { assertPathSegment } from '../../result-shape.mjs'
+import {
+  FIRE,
+  C4_RECHECK_LSTAT_ORDINAL,
+  effectiveWindow,
+  makeScoper,
+  matchC4Trace,
+} from './c4-trace-match.mjs'
+
+export { FIRE, expectedTrace, matchC4Trace } from './c4-trace-match.mjs'
+export { locateDisplaced } from './c4-displaced.mjs'
 
 export const C4_CANDIDATES = Object.freeze(['C4', 'C4-naive'])
 export const C4_WINDOWS = Object.freeze(['pre-call', 'after-bind', 'post-hash', 'at-rename'])
 
-/** The marker this module inserts into the trace at the moment onFire runs. */
-export const FIRE = 'FIRE'
-
-/** Declared originPath call sequence for an UNATTACKED run, per arm (measured, above). */
-const EXPECTED_CALLS = Object.freeze({
-  C4: Object.freeze(['lstatSync', 'lstatSync', 'readdirSync', 'lstatSync', 'renameSync']),
-  'C4-naive': Object.freeze(['renameSync']),
-})
-
-/**
- * Number of traced calls that precede the FIRE marker, per arm and EFFECTIVE
- * window. C4-naive has no bind, hash or re-check, so 'after-bind' and
- * 'post-hash' map to 'at-rename' (see effectiveWindow) and never appear here.
- */
-const FIRE_INDEX = Object.freeze({
-  C4: Object.freeze({ 'pre-call': 0, 'after-bind': 1, 'post-hash': 3, 'at-rename': 4 }),
-  'C4-naive': Object.freeze({ 'pre-call': 0, 'at-rename': 0 }),
-})
-
-/** Ordinal (1-based) of lstatSync(originPath) that is C4's pre-rename re-check. */
-const C4_RECHECK_LSTAT_ORDINAL = 3
-
 /**
  * Every own function-valued `*Sync` property of the fs default export, captured
  * at module load. All of them are wrapped during a run so an unexpected touch of
- * originPath through ANY of them lands in the trace and breaks the match. Only
- * lstatSync and renameSync carry fire logic.
+ * the root, its subtree or the destination through ANY of them lands in the
+ * trace. Only root lstatSync and renameSync carry fire logic.
  */
 const TRACED_FNS = Object.freeze(
   Object.keys(fs).filter((k) => k.endsWith('Sync') && typeof fs[k] === 'function')
@@ -64,125 +53,6 @@ const TRACED_FNS = Object.freeze(
 const PRISTINE = new Map(TRACED_FNS.map((n) => [n, fs[n]]))
 
 const now = () => performance.timeOrigin + performance.now()
-
-/** C4-naive has no bind/hash/re-check; those windows land at the rename. */
-function effectiveWindow(candidate, window) {
-  if (candidate === 'C4-naive' && (window === 'after-bind' || window === 'post-hash')) {
-    return 'at-rename'
-  }
-  return window
-}
-
-/** The full expected trace (fn names) including the FIRE marker. */
-export function expectedTrace(candidate, window) {
-  const eff = effectiveWindow(candidate, window)
-  const calls = EXPECTED_CALLS[candidate]
-  const idx = FIRE_INDEX[candidate]?.[eff]
-  if (!calls || idx === undefined) {
-    throw new TypeError(`expectedTrace: no sequence for ${candidate}/${window}`)
-  }
-  return [...calls.slice(0, idx), FIRE, ...calls.slice(idx)]
-}
-
-/**
- * TRACE MATCHING: DECLARED PREFIX + OUTCOME-CONSISTENT TERMINATION.
- *
- * A mutation can legitimately end C4 early (a swap makes the hash mismatch ->
- * `kept` after readdir; a deleted root makes the re-check lstat throw ->
- * `stopped`). Enumerating every (arm, outcome) sequence by hand would be a list
- * that silently goes stale. Instead every C4 exit is a `return` from a single
- * straight-line function, so the observed trace must be a PREFIX of the one
- * declared full sequence (FIRE included), and the place it stops must agree
- * with the result:
- *
- *   1. names is a prefix of expectedTrace(candidate, window), non-empty;
- *   2. it contains FIRE and does not END with FIRE (every window has at least
- *      one traced call after it in quarantine.mjs's code: pre-call -> bind or
- *      rename, after-bind -> hash root lstat, post-hash -> re-check, at-rename
- *      -> rename);
- *   3. a call that threw may only be the LAST entry (every throw on originPath
- *      in quarantine.mjs is caught and returned immediately);
- *   4. status 'quarantined' <=> the full sequence ran and the final rename
- *      returned, and that rename's destination is result.path;
- *      'kept'/'stopped' <=> the trace stopped early or the final call threw;
- *      any other status fails;
- *   5. timestamps are non-decreasing, FIRE for 'pre-call' precedes callStartAt
- *      and every other FIRE follows it;
- *   6. the interposed functions were still ours at the end of the call;
- *   7. FIRE's position agrees with what the window means, read from the trace
- *      alone (after-bind: right after the first lstat; post-hash: after the
- *      readdir and right before the last lstat; at-rename: right before the
- *      rename), so the placement constants cannot drift together unnoticed.
- *
- * Calls made BY onFire are deliberately not traced (they are the mutation, not
- * C4); a stray originPath touch from C4 itself, through any wrapped *Sync, is.
- *
- * Anything that is not provably one of these shapes returns false.
- */
-export function matchC4Trace({
-  candidate,
-  window,
-  trace,
-  result,
-  callStartAt,
-  interpositionIntact,
-}) {
-  if (interpositionIntact !== true) return false
-  if (!Array.isArray(trace) || trace.length === 0) return false
-  let full
-  try {
-    full = expectedTrace(candidate, window)
-  } catch {
-    return false
-  }
-  const names = trace.map((e) => e.fn)
-  if (names.length > full.length) return false
-  for (let i = 0; i < names.length; i++) if (names[i] !== full[i]) return false
-  const fireAt = names.indexOf(FIRE)
-  if (fireAt === -1 || names[names.length - 1] === FIRE) return false
-  for (let i = 0; i < trace.length - 1; i++) if (trace[i].threw !== null) return false
-  for (let i = 1; i < trace.length; i++) if (!(trace[i].at >= trace[i - 1].at)) return false
-  const fireTime = trace[fireAt].at
-  const eff = effectiveWindow(candidate, window)
-  if (eff === 'pre-call') {
-    if (!(fireTime < callStartAt)) return false
-  } else if (!(fireTime >= callStartAt)) return false
-
-  // POSITION INVARIANT, stated from what each window MEANS rather than from
-  // FIRE_INDEX / C4_RECHECK_LSTAT_ORDINAL (Ci-b). Those two constants place
-  // the fire and declare where it should be; if both drifted by one together,
-  // the prefix rule above would agree with the misplaced fire, and a post-hash
-  // row would silently become an after-bind row (C4 flips FAIL -> PASS). These
-  // checks read only the observed trace, so a coordinated drift fails here.
-  const next = names[fireAt + 1]
-  if (eff === 'pre-call') {
-    if (fireAt !== 0) return false
-  } else if (eff === 'after-bind') {
-    // after the FIRST lstat (the bind) returned, before the hash root lstat.
-    if (fireAt !== 1 || names[0] !== 'lstatSync' || next !== 'lstatSync') return false
-  } else if (eff === 'post-hash') {
-    // after the hash's readdir, immediately before the LAST lstat (the re-check).
-    const readdirAt = names.indexOf('readdirSync')
-    if (readdirAt === -1 || readdirAt > fireAt || next !== 'lstatSync') return false
-    if (names.slice(fireAt + 2).includes('lstatSync')) return false
-  } else if (eff === 'at-rename') {
-    if (next !== 'renameSync') return false
-  } else {
-    return false
-  }
-
-  const last = trace[trace.length - 1]
-  const status = result?.status
-  if (status === 'quarantined') {
-    if (names.length !== full.length || last.threw !== null) return false
-    if (last.fn !== 'renameSync' || typeof result.path !== 'string') return false
-    return path.resolve(String(last.dest)) === path.resolve(result.path)
-  }
-  if (status === 'kept' || status === 'stopped') {
-    return names.length < full.length || last.threw !== null
-  }
-  return false
-}
 
 function validateRunArgs(args) {
   if (args === null || typeof args !== 'object') {
@@ -227,6 +97,11 @@ function errorSummary(err) {
  * exception escaping quarantineTree itself; a mismatched trace is reported as
  * traceMatched:false / hookFired:false, never thrown.
  *
+ * Trace entries: {fn, path, scope, scope2, nested, at, endAt, threw} plus
+ * `dest` on renameSync and `flags` on openSync; FIRE entries carry `window`.
+ * `nested` marks a call made while another traced call was in progress (the
+ * openSync inside readFileSync).
+ *
  * Extra fields beyond the brief: `onFireInvoked` (raw: onFire was CALLED, even
  * if the trace later failed to match -- a mutation may have landed regardless),
  * `mutationError` (null, or {name, message, code} when onFire threw; the run
@@ -237,7 +112,8 @@ export function runC4Candidate(args) {
   const { candidate, parentAbs, name, window, onFire, opId } = validateRunArgs(args)
   const eff = effectiveWindow(candidate, window)
   const originPath = path.resolve(path.join(parentAbs, name))
-  const isOrigin = (p) => typeof p === 'string' && path.resolve(p) === originPath
+  const destDir = path.resolve(parentAbs, '.skillsmith-trash', opId)
+  const scopesOf = makeScoper(originPath, destDir)
 
   // The caller hash: same moment for both arms, so timing up to the call is
   // identical; passed to quarantineTree only for C4.
@@ -265,6 +141,7 @@ export function runC4Candidate(args) {
   let firedAt = null
   let mutationError = null
   let lstatOrdinal = 0
+  let depth = 0
 
   const fire = () => {
     if (fired) return
@@ -292,35 +169,60 @@ export function runC4Candidate(args) {
   for (const n of TRACED_FNS) {
     const orig = PRISTINE.get(n)
     const wrapper = function c4Traced(...callArgs) {
-      if (!recording || firing || !isOrigin(callArgs[0])) return orig.apply(this, callArgs)
+      if (!recording || firing) return orig.apply(this, callArgs)
+      const { scope, scope2 } = scopesOf(n, callArgs)
+      if (scope === null && scope2 === null) return orig.apply(this, callArgs)
+      const nested = depth > 0
+      const root = scope === 'origin' && !nested
       let ordinal = 0
-      if (n === 'lstatSync') {
+      if (root && n === 'lstatSync') {
         ordinal = ++lstatOrdinal
         if (candidate === 'C4' && ordinal === C4_RECHECK_LSTAT_ORDINAL) {
           if (eff === 'post-hash') fire()
           times.recheckAt = now()
         }
-      } else if (n === 'renameSync' && eff === 'at-rename') {
+      } else if (root && n === 'renameSync' && eff === 'at-rename') {
         fire()
       }
-      const entry = { fn: n, path: originPath, at: now(), endAt: null, threw: null }
-      if (n === 'renameSync') {
+      const entry = {
+        fn: n,
+        path: typeof callArgs[0] === 'string' ? path.resolve(callArgs[0]) : String(callArgs[0]),
+        scope,
+        scope2,
+        nested,
+        at: now(),
+        endAt: null,
+        threw: null,
+      }
+      if (n === 'openSync') entry.flags = callArgs[1]
+      const rootRename = root && n === 'renameSync'
+      if (rootRename) {
         entry.dest =
           typeof callArgs[1] === 'string' ? path.resolve(callArgs[1]) : String(callArgs[1])
         if (times.renameAt === null) times.renameAt = entry.at
       }
       trace.push(entry)
       let out
+      depth += 1
       try {
         out = orig.apply(this, callArgs)
       } catch (err) {
         entry.threw = err?.code ?? String(err)
         throw err
       } finally {
+        depth -= 1
         entry.endAt = now()
-        if (n === 'renameSync' && times.renameEndAt === null) times.renameEndAt = entry.endAt
+        if (rootRename && times.renameEndAt === null) times.renameEndAt = entry.endAt
       }
-      if (n === 'lstatSync' && ordinal === 1 && eff === 'after-bind' && candidate === 'C4') fire()
+      if (
+        root &&
+        n === 'lstatSync' &&
+        ordinal === 1 &&
+        eff === 'after-bind' &&
+        candidate === 'C4'
+      ) {
+        fire()
+      }
       return out
     }
     wrappers.set(n, wrapper)
@@ -331,6 +233,7 @@ export function runC4Candidate(args) {
   let bodyFailed = false
   let bodyError
   let leaked = []
+  const restoreErrors = []
   try {
     for (const [n, w] of wrappers) fs[n] = w
     if (eff === 'pre-call') fire()
@@ -352,17 +255,34 @@ export function runC4Candidate(args) {
     bodyFailed = true
     bodyError = err
   } finally {
-    for (const n of TRACED_FNS) fs[n] = PRISTINE.get(n)
+    // R2-5a: each assignment guarded on its own. A non-writable property makes
+    // the assignment THROW (strict mode); unguarded, that one throw escaped as a
+    // raw TypeError, replaced the body error, and left every later wrapper
+    // installed (42 of 43, measured). Keep restoring the rest regardless.
+    for (const n of TRACED_FNS) {
+      try {
+        fs[n] = PRISTINE.get(n)
+      } catch (err) {
+        restoreErrors.push({ fn: n, error: err })
+      }
+    }
     leaked = TRACED_FNS.filter((n) => fs[n] !== PRISTINE.get(n))
   }
   // Loud by design: a leaked wrapper poisons every later run in this process.
   // Thrown AFTER the finally, not inside it: a throw inside `finally` replaces
   // an error already in flight, so a body failure plus a failed restore used to
   // report only the restore and lose the cause of the run's failure.
-  if (leaked.length > 0) {
-    throw new Error(`runC4Candidate: fs restore FAILED for ${leaked.join(', ')}`, {
+  if (leaked.length > 0 || restoreErrors.length > 0) {
+    const failedFns = [...new Set([...leaked, ...restoreErrors.map((r) => r.fn)])]
+    const err = new Error(`runC4Candidate: fs restore FAILED for ${failedFns.join(', ')}`, {
       cause: bodyFailed ? bodyError : undefined,
     })
+    err.restoreErrors = restoreErrors.map(({ fn, error }) => ({
+      fn,
+      name: error?.name ?? typeof error,
+      message: String(error?.message ?? error),
+    }))
+    throw err
   }
   if (bodyFailed) throw bodyError
 
@@ -388,79 +308,4 @@ export function runC4Candidate(args) {
     mutationError,
     opId,
   }
-}
-
-const LOCATE_MAX_ENTRIES = 10000
-const LOCATE_MAX_PATHS = 8
-
-/**
- * Classifies user files that are no longer intact at their original path.
- * EVERY entry of `expectedFiles` is classified -- pass only the lost (and
- * changed) subset; an intact file passed here would count as `deleted`.
- * A file counts as displaced when a regular file with exactly that content
- * exists under <fxRoot>/.skillsmith-trash; each trash file satisfies at most
- * one expected entry. Symlinks under the trash are NOT followed: following one
- * (e.g. A8a's moved link to an outside dir) would find outside bytes and
- * misreport them as displaced.
- *
- * @param {string} fxRoot
- * @param {Record<string,string>} expectedFiles - {relName: content}
- * @returns {{displaced:number, deleted:number, displacedPaths:string[]}}
- */
-export function locateDisplaced(fxRoot, expectedFiles) {
-  if (typeof fxRoot !== 'string' || !path.isAbsolute(fxRoot)) {
-    throw new TypeError(
-      `locateDisplaced: fxRoot must be an absolute path string, got ${String(fxRoot)}`
-    )
-  }
-  if (expectedFiles === null || typeof expectedFiles !== 'object') {
-    throw new TypeError('locateDisplaced: expectedFiles must be an object of {relName: content}')
-  }
-  const wanted = Object.entries(expectedFiles)
-  for (const [rel, content] of wanted) {
-    if (typeof content !== 'string') {
-      throw new TypeError(`locateDisplaced: content for ${JSON.stringify(rel)} must be a string`)
-    }
-  }
-
-  const trashRoot = path.join(fxRoot, '.skillsmith-trash')
-  const pool = [] // [{rel, content, used}]
-  let seen = 0
-  const walk = (abs) => {
-    let st
-    try {
-      st = fs.lstatSync(abs)
-    } catch (err) {
-      if (err.code === 'ENOENT') return
-      throw err
-    }
-    if (++seen > LOCATE_MAX_ENTRIES) {
-      throw new Error(`locateDisplaced: more than ${LOCATE_MAX_ENTRIES} entries under ${trashRoot}`)
-    }
-    if (st.isDirectory()) {
-      for (const n of fs.readdirSync(abs).sort()) walk(path.join(abs, n))
-    } else if (st.isFile()) {
-      pool.push({
-        rel: path.relative(fxRoot, abs),
-        content: fs.readFileSync(abs, 'utf8'),
-        used: false,
-      })
-    }
-  }
-  walk(trashRoot)
-
-  let displaced = 0
-  let deleted = 0
-  const displacedPaths = []
-  for (const [, content] of wanted) {
-    const hit = pool.find((p) => !p.used && p.content === content)
-    if (hit) {
-      hit.used = true
-      displaced += 1
-      if (displacedPaths.length < LOCATE_MAX_PATHS) displacedPaths.push(hit.rel)
-    } else {
-      deleted += 1
-    }
-  }
-  return { displaced, deleted, displacedPaths }
 }

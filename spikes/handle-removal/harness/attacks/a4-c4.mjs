@@ -17,6 +17,7 @@ import {
   c4Outcome,
   c4Extra,
   assertReplacementLanded,
+  whereFor,
 } from './c4-score.mjs'
 
 export const id = 'A4-C4'
@@ -49,7 +50,11 @@ export function runOnce({ harnessRoot, candidate, window, _test }) {
     return {
       precondition: c4Precondition(r, completed),
       outcome: c4Outcome(r, fx.root, candidate),
-      userFiles: scoreUserFiles(fx.root, checkEachFile(targetAbs, replacementFiles)),
+      userFiles: scoreUserFiles(
+        fx.root,
+        checkEachFile(targetAbs, replacementFiles),
+        whereFor(fx.root, r, targetAbs)
+      ),
       durationMs,
       extra: c4Extra(r, id, win, {}),
     }

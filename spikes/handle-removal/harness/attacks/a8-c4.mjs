@@ -5,6 +5,12 @@
 //       'A8a-C4'; a PROPERTY check with no control: rename(2) moves a symlink,
 //       it cannot follow one, so the outside bytes must stay intact on both arms.
 // The record's label is returned in extra.label; the runner files it from there.
+//
+// SCOPE OF THE A8a ROW. A8a ('A8a-C4') is a NARROW PROPERTY row: it checks that a
+// rename(2) of a tree whose entry became a symlink moves the link and does not
+// follow it. Both arms pass by construction, so it says nothing about how well C4's
+// guard detects a mutation. It must stay OUT of comparative safety totals (do not
+// sum it with the controlled rows, and do not count its PASS as C4 beating naive).
 
 import { lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
@@ -20,6 +26,7 @@ import {
   c4Extra,
   assertReplacementLanded,
   trashHasSymlink,
+  whereFor,
 } from './c4-score.mjs'
 
 export const id = 'A8-C4'
@@ -52,7 +59,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
           symlinkSync(sf.outsideDir, sf.targetAbs)
         })
       onFire = () => {
-        mutate()
+        mutate(sf)
         if (
           !lstatSync(sf.targetAbs).isSymbolicLink() ||
           readlinkSync(sf.targetAbs) !== sf.outsideDir
@@ -63,7 +70,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
         }
         completed = true
       }
-      score = () => {
+      score = (r) => {
         // A moved tree must carry the link with it: a quarantined run whose trash
         // holds no such symlink did not exercise the property under test.
         if (
@@ -75,7 +82,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
         }
         const o = verifyOutsideIntact(sf.outsideMarker, 'outside-content')
         const lostFiles = o.lost > 0 ? { 'outside-marker.txt': 'outside-content' } : {}
-        return scoreUserFiles(fx.root, { ...o, lostFiles })
+        return scoreUserFiles(fx.root, { ...o, lostFiles }, whereFor(fx.root, r, sf.outsideDir))
       }
     } else {
       const replacementFiles = { 'user-file.txt': `replacement-${Date.now()}-${Math.random()}` }
@@ -87,11 +94,16 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
           writeFileSync(`${sf.linkAbs}/user-file.txt`, replacementFiles['user-file.txt'], 'utf8')
         })
       onFire = () => {
-        mutate()
+        mutate(sf)
         assertReplacementLanded(sf.linkAbs, replacementFiles)
         completed = true
       }
-      score = () => scoreUserFiles(fx.root, checkEachFile(sf.linkAbs, replacementFiles))
+      score = (r) =>
+        scoreUserFiles(
+          fx.root,
+          checkEachFile(sf.linkAbs, replacementFiles),
+          whereFor(fx.root, r, sf.linkAbs)
+        )
     }
 
     const start = performance.now()
@@ -101,7 +113,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
     return {
       precondition: c4Precondition(r, completed),
       outcome: c4Outcome(r, fx.root, candidate),
-      userFiles: (_test?.beforeScore?.({ fxRoot: fx.root }), score()),
+      userFiles: (_test?.beforeScore?.({ fxRoot: fx.root }), score(r)),
       durationMs,
       extra: c4Extra(r, label, win, { subcase }),
     }

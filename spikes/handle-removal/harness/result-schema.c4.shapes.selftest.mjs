@@ -168,10 +168,22 @@ const mkOk = makeRecord({
   run: 0,
   precondition: goodPre(),
   outcome: { status: 'kept' },
-  userFiles: { checked: 2 },
+  userFiles: { checked: 2, lost: 0, changed: 0, displaced: 0, deleted: 0 },
 })
 check('M2 C4 record built by makeRecord passes', classifyRecord(mkOk), 'passed')
-check('M2 no displaced key invented', 'displaced' in mkOk.userFiles, false)
+const mkNoSplit = makeRecord({
+  cell: C4CELL,
+  run: 0,
+  precondition: goodPre(),
+  outcome: { status: 'kept' },
+  userFiles: { checked: 2 },
+})
+check('M2 no displaced key invented', 'displaced' in mkNoSplit.userFiles, false)
+check(
+  'M2 missing split through makeRecord is never-ran (required)',
+  classifyRecord(mkNoSplit),
+  'never-ran'
+)
 const mkBad = makeRecord({
   cell: C4CELL,
   run: 0,

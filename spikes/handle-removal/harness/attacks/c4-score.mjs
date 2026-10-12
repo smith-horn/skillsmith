@@ -43,15 +43,28 @@ export function checkEachFile(dir, files) {
 }
 
 /**
+ * The `where` argument locateDisplaced requires: displacement is proven against
+ * THIS run's destination only. `r` is runC4Candidate's return; `baseDir` is what
+ * the keys of the lost files are relative to. The tree being removed is always
+ * <fxRoot>/tree in these attacks.
+ */
+export function whereFor(fxRoot, r, baseDir) {
+  const res = r.result
+  const destination =
+    res?.status === 'quarantined' && typeof res.path === 'string' ? res.path : null
+  return { destination, originRoot: path.join(fxRoot, 'tree'), baseDir }
+}
+
+/**
  * userFiles with displaced/deleted. locateDisplaced counts EVERY entry it is
  * given, so it receives only the lost subset. displaced + deleted must equal
  * lost; a violation throws (the runner records it as harness-error).
  */
-export function scoreUserFiles(fxRoot, check) {
+export function scoreUserFiles(fxRoot, check, where) {
   const { checked, lost, changed, lostFiles } = check
   let displaced = 0
   let deleted = 0
-  if (lost > 0) ({ displaced, deleted } = locateDisplaced(fxRoot, lostFiles))
+  if (lost > 0) ({ displaced, deleted } = locateDisplaced(fxRoot, lostFiles, where))
   if (displaced + deleted !== lost) {
     throw new Error(`displaced(${displaced}) + deleted(${deleted}) !== lost(${lost})`)
   }

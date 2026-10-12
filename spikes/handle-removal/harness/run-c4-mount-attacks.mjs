@@ -3,7 +3,11 @@
 // A2-C4 (mount made at after-bind) against C4 and C4-naive. Linux only, real
 // mount/umount, requires --privileged. Never run outside a throwaway container.
 //
-// Usage: node harness/run-c4-mount-attacks.mjs [--fs-label <name>] [--target <n>] [--out <path>]
+// Usage: node harness/run-c4-mount-attacks.mjs --out <path> [--fs-label <name>] [--target <n>]
+//
+// --out is REQUIRED: there is no default under results/raw/ (a mis-parsed command
+// line must not be able to write into the evidence corpus). C4_RESULTS_RAW_DIR
+// relocates the directory the short-target guard treats as the corpus; selftests only.
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,6 +35,13 @@ const FLAGS = {
 const parsedArgs = parseFlags(process.argv.slice(2), FLAGS)
 if (parsedArgs.error) {
   console.error(`[run-c4-mount-attacks] ${parsedArgs.error}`)
+  process.exit(2)
+}
+
+if (parsedArgs.opts.out === undefined) {
+  console.error(
+    '[run-c4-mount-attacks] --out <path> is required (there is no default under results/raw/)'
+  )
   process.exit(2)
 }
 
@@ -100,6 +111,7 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
         durationMs: null,
       })
     }
+    record.cell.target = mod.target
     records.push(record)
     // `record` is the plain object makeRecord just built (object literal), so
     // the spread copies every field and nothing is lost.
@@ -110,8 +122,10 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
 
 function main() {
   const opts = { target: null, out: null, fsLabel: process.platform, ...parsedArgs.opts }
-  const rawDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'results', 'raw')
-  const out = opts.out ?? path.join(rawDir, `c4-mount-attacks-${opts.fsLabel}.jsonl`)
+  const rawDir =
+    process.env.C4_RESULTS_RAW_DIR ??
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'results', 'raw')
+  const out = opts.out
   const refusal = shortTargetRefusal({
     out,
     requested: opts.target,

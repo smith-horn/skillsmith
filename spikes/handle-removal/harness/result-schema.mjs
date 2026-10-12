@@ -11,13 +11,14 @@ import path from 'node:path'
 // One implementation of the §9 verdict rule, shared with
 // results/generate-summary.mjs. control-spec.mjs imports nothing from here, so
 // there is no cycle.
-import { verdictFor } from './control-spec.mjs'
+import { tallyCell, cellVerdict } from './cell-tally.mjs'
 import {
   QUARANTINE_PREFIX,
   MAX_REPORTED_PATHS,
   scanC4Leftovers,
   isC4Cell,
   c4Snapshot,
+  c4RecordJsonSafe,
   c4UserFileExtras,
   c4Validate,
 } from './result-schema.c4.mjs'
@@ -116,16 +117,9 @@ export function scanQuarantineLeftovers(parentAbs, variant, options) {
  * @returns {object}
  */
 export function makeRecord(fields) {
-  const { cell, run, outcome, outsideIntact = true, durationMs = null, fsCheck = null } = fields
-  // `let`: for C4 cells both are replaced by a validated snapshot below.
-  let { precondition, userFiles } = fields
-  // `??` on BOTH sides. The inner test used to be truthiness, so a caller
-  // passing `0`/`false`/`''` on outcome.quarantineLeft collapsed to null --
-  // indistinguishable from "no scan ran" -- while the same value passed
-  // top-level survived. Two paths disagreeing about one value is how a null
-  // starts meaning two things at once.
-  const quarantineLeft = fields.quarantineLeft ?? outcome?.quarantineLeft ?? null
-  const c4 = isC4Cell(cell)
+  const { cell, run, outsideIntact = true, durationMs = null, fsCheck = null } = fields
+  // `let`: for C4 cells all four are replaced by a validated snapshot below.
+  let { precondition, outcome, userFiles } = fields
 
   if (!cell || typeof cell !== 'object') {
     throw new TypeError('makeRecord: cell is required')
@@ -136,32 +130,53 @@ export function makeRecord(fields) {
   if (!precondition || typeof precondition !== 'object') {
     throw new TypeError('makeRecord: precondition is required')
   }
-  if (!outcome || typeof outcome !== 'object' || !outcome.status) {
+  if (!outcome || typeof outcome !== 'object') {
     throw new TypeError('makeRecord: outcome.status is required')
   }
   if (!userFiles || typeof userFiles !== 'object') {
     throw new TypeError('makeRecord: userFiles is required')
   }
+
+  // ONE read of the two fields that pick the validation path, and the stored
+  // cell is built from those same values (Sol F6e). Deciding from one read of a
+  // lying getter and storing another is how a record routed to the legacy path
+  // ends up labelled C4 (or the reverse).
+  const [attack, candidate] = [cell.attack, cell.candidate]
+  const c4 = isC4Cell({ attack, candidate })
+  let cellSrc = cell
   if (c4) {
     // Snapshot BEFORE any field is read, and throw on a non-plain shape.
+    cellSrc = c4Snapshot(cell, 'cell')
     precondition = c4Snapshot(precondition, 'precondition')
+    outcome = c4Snapshot(outcome, 'outcome')
     userFiles = c4Snapshot(userFiles, 'userFiles')
   }
+  if (!outcome.status) {
+    throw new TypeError('makeRecord: outcome.status is required')
+  }
+  // `??` on BOTH sides. The inner test used to be truthiness, so a caller
+  // passing `0`/`false`/`''` on outcome.quarantineLeft collapsed to null --
+  // indistinguishable from "no scan ran" -- while the same value passed
+  // top-level survived. Two paths disagreeing about one value is how a null
+  // starts meaning two things at once.
+  const quarantineLeft = fields.quarantineLeft ?? outcome.quarantineLeft ?? null
   if (typeof userFiles.checked !== 'number') {
     throw new TypeError('makeRecord: userFiles.checked (the denominator) is required')
   }
 
   return {
     cell: {
-      attack: cell.attack,
-      variant: cell.variant ?? null,
-      candidate: cell.candidate,
-      fs: cell.fs,
-      platform: cell.platform ?? process.platform,
-      arch: cell.arch ?? process.arch,
-      node: cell.node ?? process.version,
-      os: cell.os ?? null,
-      runner: cell.runner ?? 'unknown',
+      attack: c4 ? cellSrc.attack : attack,
+      variant: cellSrc.variant ?? null,
+      candidate: c4 ? cellSrc.candidate : candidate,
+      fs: cellSrc.fs,
+      platform: cellSrc.platform ?? process.platform,
+      arch: cellSrc.arch ?? process.arch,
+      node: cellSrc.node ?? process.version,
+      os: cellSrc.os ?? null,
+      runner: cellSrc.runner ?? 'unknown',
+      // C4 only: the module's intended run count, so a short run can never render PASS.
+      ...(c4 ? { target: cellSrc.target ?? null } : {}),
     },
     run,
     precondition: c4
@@ -180,11 +195,17 @@ export function makeRecord(fields) {
       path: outcome.path ?? null,
       entry: outcome.entry ?? null,
       errno: outcome.errno ?? null,
+      // C4 only: an allowlisted exclusion reason (see cell-tally.mjs) rides the outcome.
+      ...(c4 && Object.hasOwn(outcome, 'excludedReason')
+        ? { excludedReason: outcome.excludedReason }
+        : {}),
     },
     userFiles: {
       checked: userFiles.checked,
-      lost: userFiles.lost ?? 0,
-      changed: userFiles.changed ?? 0,
+      // C4: passed through UNCOERCED so an absent / null lost or changed reaches
+      // classifyRecord (isCount rejects it) instead of being defaulted to a pass.
+      lost: c4 ? userFiles.lost : (userFiles.lost ?? 0),
+      changed: c4 ? userFiles.changed : (userFiles.changed ?? 0),
       // C4 only: displaced/deleted pass through UNCOERCED so a malformed value
       // reaches classifyRecord (which rejects it) instead of being defaulted.
       ...(c4 ? c4UserFileExtras(userFiles) : {}),
@@ -218,6 +239,7 @@ export function classifyRecord(record, isContradictory = () => false) {
     return 'never-ran'
   }
   if (isC4Cell(record.cell)) {
+    if (!c4RecordJsonSafe(record)) return 'never-ran'
     // ONE read: the values c4Validate checked are the values scored. Scoring
     // through record.userFiles.lost ([[Get]]) after validating via descriptor
     // let a Proxy validate one number and score another.
@@ -261,24 +283,8 @@ export function classifyRecord(record, isContradictory = () => false) {
  */
 export function aggregateCell(records, isContradictory = () => false, options = {}) {
   const target = options.target ?? records.length
-  let passed = 0
-  let failed = 0
-  let neverRan = 0
-  let otherNeverRan = 0
-
-  for (const record of records) {
-    const cls = classifyRecord(record, isContradictory)
-    if (cls === 'passed') passed += 1
-    else if (cls === 'failed') failed += 1
-    else {
-      neverRan += 1
-      // R6 drops a run where the RACER DID NOT LAND. Any other reason a run did
-      // not happen -- a harness error, an unmet precondition of some other kind
-      // -- still disqualifies the cell, so it is counted separately here rather
-      // than folded into one number the verdict cannot tell apart.
-      if (record?.precondition?.mutationApplied !== false) otherNeverRan += 1
-    }
-  }
+  const t = tallyCell(records, (record) => classifyRecord(record, isContradictory))
+  const { passed, failed, neverRan, excluded } = t
 
   const ran = records.length
   let verdict
@@ -297,14 +303,10 @@ export function aggregateCell(records, isContradictory = () => false, options = 
     // function to its call sites, where it is harder to see. The records carry
     // the attack id already, so derive it and leave callers nothing to forget.
     const attack = options.attack ?? records[0]?.cell?.attack ?? null
-    verdict = verdictFor(
-      { attack, passed, failed, neverRan, otherNeverRan },
-      options.controlFailed,
-      options.controlState
-    )
+    verdict = cellVerdict(t, attack, options.controlFailed, options.controlState)
   }
 
-  return { ran, passed, failed, neverRan, verdict }
+  return { ran, passed, failed, neverRan, excluded, verdict }
 }
 
 /**
@@ -320,6 +322,11 @@ export function formatVerdict(label, agg) {
  * needed. `filePath` should live under results/raw/ (gitignored).
  */
 export function appendJsonl(filePath, record) {
+  if (isC4Cell(record?.cell) && !c4RecordJsonSafe(record)) {
+    throw new TypeError(
+      'appendJsonl: C4 record is not JSON-safe; its persisted form could classify differently'
+    )
+  }
   mkdirSync(path.dirname(filePath), { recursive: true })
   appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf8')
 }

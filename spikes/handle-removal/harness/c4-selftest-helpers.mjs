@@ -33,7 +33,7 @@ export const goodPre = () => ({
   traceMatched: true,
   controlExpected: true,
 })
-export const goodUf = () => ({ checked: 3, lost: 0, changed: 0 })
+export const goodUf = () => ({ checked: 3, lost: 0, changed: 0, displaced: 0, deleted: 0 })
 export const rec = (o = {}) => ({
   cell: o.cell ?? C4CELL,
   precondition: o.precondition ?? goodPre(),
