@@ -202,7 +202,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `uninstall_skill` | Remove installed skill |
 | `skill_recommend` | Contextual skill recommendations |
 | `skill_validate` | Validate skill structure |
-| `skill_compare` | Compare 2-5 skills side-by-side |
+| `skill_compare` | Compare two skills side-by-side |
 | `skill_suggest` | Suggest skills based on current project context (counts against monthly quota) |
 | `skill_outdated` | Check installed skills for staleness and dependency status |
 | `index_local` | Index skills from a local directory |
@@ -214,33 +214,33 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `skill_diff` | Diff two installed skill versions side-by-side (Individual+) |
 | `skill_pack_audit` | Audit all skills in a directory (Individual+) |
 | `skill_audit` | Audit skill for security advisories (Team+) |
-| `skill_inventory_audit` | Audit every installed AI coding client's skill inventory (plus Claude Code's own commands/agents/CLAUDE.md rules) for local namespace collisions; returns rename + edit suggestions (SMI-4590; multi-client SMI-6077) |
-| `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip` / `revert`) (SMI-4590; `revert` SMI-5671) |
-| `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (SMI-4590) |
-| `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s), restored from the apply tool's own backup (SMI-5456/SMI-5470) |
-| `apply_manifest_reconcile` | Repair a corrupted or ambiguous `~/.skillsmith/manifest.json` entry through a supported path — `mark_local` / `relink` / `drop_entry` / `verify` / `revert` (SMI-6343 Wave 4, ADR-144 §6 / ADR-145) |
+| `skill_inventory_audit` | Audit every installed AI coding client's skill inventory (plus Claude Code's own commands/agents/CLAUDE.md rules) for local namespace collisions; returns rename + edit suggestions (Community; SMI-4590; multi-client SMI-6077) |
+| `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip` / `revert`) (Community; SMI-4590; `revert` SMI-5671) |
+| `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (Community; SMI-4590) |
+| `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s), restored from the apply tool's own backup (Community; SMI-5456/SMI-5470) |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous `~/.skillsmith/manifest.json` entry through a supported path — `mark_local` / `relink` / `drop_entry` / `verify` / `revert` (Community; SMI-6343 Wave 4, ADR-144 §6 / ADR-145) |
 | `team_workspace` | Manage team workspaces: create, list, get, delete (Team+) |
 | `share_skill` | Add, remove, or list skills in a team workspace (Team+) |
 | `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |
 | `team_analytics_dashboard` | Per-user tool usage counts, top tools, daily trend (Team+) |
 | `team_usage_report` | Weekly/monthly usage summary with period comparison (Team+) |
 | `private_registry_publish` | Publish a skill version to your team's private registry as a pending submission (Enterprise) |
-| `private_registry_manage` | List/get/install/deprecate/undeprecate/review your team's private registry via the `action` parameter, including `submissions`/`approve`/`reject` (Enterprise) |
+| `private_registry_manage` | List/get/install/deprecate/undeprecate/namespace/submissions/approve/reject on your team's private registry via the `action` parameter (Enterprise) |
 | `audit_export` | Export audit log events for a time range (Enterprise) |
 | `audit_query` | Query audit logs with filters (Enterprise) |
 | `siem_export` | Export audit events for SIEM ingestion (Enterprise) |
 | `analytics_dashboard` | Recommendation accuracy, adoption curves, team aggregation (Enterprise) |
 | `usage_report` | Comprehensive usage report with all metrics (Enterprise) |
-| `configure_sso` | Configure SSO/SAML integration: set, test, remove (Enterprise) |
+| `configure_sso` | Configure SSO/SAML integration: set, test, remove, claim_domain, verify_domain (Enterprise) |
 | `sso_settings` | View current SSO/SAML configuration (Enterprise) |
-| `rbac_manage` | Manage RBAC roles: create, list, get, delete (Enterprise) |
+| `rbac_manage` | Inspect and adjust per-role permissions: `list_roles` / `get_role` / `set_role_permission` / `reset_role_permission` (Enterprise) |
 | `rbac_assign_role` | Assign or revoke roles for users (Enterprise) |
-| `rbac_create_policy` | Create and manage RBAC access policies (Enterprise) |
+| `rbac_create_policy` | Bulk-set, clear or list per-role permission overrides: `create` / `list` / `delete` (Enterprise) |
 | `webhook_configure` | Configure HMAC-SHA256-signed webhooks for skill lifecycle events: create, list, get, delete, test, rotate_secret (Enterprise; in preview, SMI-4135) |
 | `api_key_manage` | Manage API keys for programmatic access: create, list, revoke, get (Enterprise; in preview, SMI-4135) |
 | `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports (Team+) |
 
-**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env. Shell exports don't reach MCP subprocesses. Team-tool resolution chain (SMI-4312/ADR-116), trust tiers, CLI surface: see [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md).
+**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min; one bucket per edge endpoint, shared across all anon-key callers, including every keyless MCP client), No Auth (10 trial, plus a 100/min per-IP cap; any direct HTTP request that fails to authenticate). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env. Shell exports don't reach MCP subprocesses. Team-tool resolution chain (SMI-4312/ADR-116), trust tiers, CLI surface: see [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md).
 
 ---
 

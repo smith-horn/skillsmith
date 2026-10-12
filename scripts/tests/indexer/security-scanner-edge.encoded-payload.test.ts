@@ -88,7 +88,7 @@ describe('core <-> edge encoded_payload weight + coefficient equality (SMI-6033 
     ).toBe(core.CATEGORY_WEIGHTS.encoded_payload)
   })
 
-  it('encoded_payload CATEGORY_COEFFICIENTS is 0.04 on edge (matching core SecurityScanner.helpers.ts)', async () => {
+  it('encoded_payload CATEGORY_COEFFICIENTS is 0.04 on edge (matching core weights.ts CATEGORY_COEFFICIENTS)', async () => {
     const edge = await import(NODE_SCANNER_CONTEXT)
     expect(edge.CATEGORY_COEFFICIENTS.encoded_payload).toBe(0.04)
   })

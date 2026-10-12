@@ -5,8 +5,8 @@
  * Split out of security-scanner-edge.ts to keep each file under the 500-line
  * limit (SMI-3493). Holds the shared finding types, the per-line markdown
  * context analyzer, and the confidence-weighted risk scorer — all ported from
- * @skillsmith/core (SecurityScanner.helpers.ts / weights.ts) so the Deno edge
- * quarantine gate uses the same context-aware model the core scanner already
+ * @skillsmith/core (SecurityScanner.helpers.ts, SecurityScanner.risk-score.ts,
+ * weights.ts) so the Deno edge quarantine gate uses the same context-aware model the core scanner already
  * validated. Pure Deno/Web APIs, no Node deps. Kept byte-identical to its
  * scripts/indexer/_shared twin (parity test enforces).
  */
@@ -160,7 +160,7 @@ export const SEVERITY_WEIGHTS: Record<SecuritySeverity, number> = {
 
 /**
  * SMI-4960: confidence weights — byte-identical to core
- * SecurityScanner.helpers.ts calculateRiskScore confidenceWeights.
+ * SecurityScanner.risk-score.ts calculateRiskScore confidenceWeights.
  */
 export const CONFIDENCE_WEIGHTS: Record<FindingConfidence, number> = {
   high: 1.0,
@@ -363,7 +363,7 @@ export function classifyMatch(
 /**
  * SMI-4960: Calculate risk score from findings using core's
  * category-coefficient + confidence model (ported from core
- * SecurityScanner.helpers.ts calculateRiskScore).
+ * SecurityScanner.risk-score.ts calculateRiskScore).
  *
  * Per finding: score = SEVERITY_WEIGHTS[sev] * CATEGORY_WEIGHTS[type] *
  * CONFIDENCE_WEIGHTS[confidence]. Scores accumulate per category, each category
@@ -386,7 +386,7 @@ export function classifyMatch(
  */
 export function calculateRiskScore(
   findings: SecurityFinding[],
-  coefficients: Record<SecurityFindingType, number> = CATEGORY_COEFFICIENTS
+  coefficients: Readonly<Record<SecurityFindingType, number>> = CATEGORY_COEFFICIENTS
 ): number {
   const breakdown: Record<SecurityFindingType, number> = {
     jailbreak: 0,
