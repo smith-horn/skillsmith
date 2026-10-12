@@ -66,6 +66,41 @@ worktree_lifecycle_image_id() {
     printf '%s' "$out"
 }
 
+# worktree_lifecycle_image_labels ID -- ONE read of an image's whole label map as
+# JSON (`null` when the image has none), printed on success; on failure prints the
+# reason and returns docker's status (124 = timed out), or 1 if the output is
+# neither `null` nor an object. SMI-7089: read once as JSON and parsed, never
+# inferred from a template error -- a six-field template failed on an unlabelled
+# image where one-field ones did not, so "unlabelled" is only ever what the JSON
+# says, not what a failed template implies.
+worktree_lifecycle_image_labels() {
+    local out rc
+    if out="$(_wtl_dk image inspect "$1" --format '{{json .Config.Labels}}')"; then
+        :
+    else
+        rc=$?
+        printf '%s' "$out"
+        return "$rc"
+    fi
+    if [[ "$out" != null && ! "$out" =~ ^\{.*\}$ ]]; then
+        printf 'unparseable image labels: %s' "$out"
+        return 1
+    fi
+    printf '%s' "$out"
+}
+
+# worktree_lifecycle_json_label JSON KEY -- the string value of KEY in a flat
+# label map, empty if absent. The needle includes the quotes, the colon and the
+# opening quote of the value, so it cannot match inside another label's value
+# (those quotes are backslash-escaped in the JSON) or as the tail of a longer key.
+worktree_lifecycle_json_label() {
+    local json="$1" needle rest
+    needle="\"$2\":\""
+    rest="${json#*"$needle"}"
+    [[ "$rest" != "$json" ]] || return 0
+    printf '%s' "${rest%%\"*}"
+}
+
 # _wtl_gate_fail WHAT STATUS DETAIL -- the stop message for an in-lock Docker
 # call that did not answer: names the call and the object.
 _wtl_gate_fail() {

@@ -21,6 +21,10 @@ REPO="$TMP/repo"
 source "$ROOT/scripts/_lib.sh"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib/worktree-lifecycle.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib/worktree-lifecycle-docker.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib/worktree-project-attribution.sh"
 
 check() { # name expected actual
     if [ "$2" = "$3" ]; then
@@ -93,6 +97,25 @@ fi
 # Status passthrough and a missing binary.
 worktree_lifecycle_bounded 5 /bin/sh -c 'exit 3'; check "bounded passes the child status" 3 $?
 worktree_lifecycle_bounded 5 /nonexistent/binary; check "bounded missing binary" 127 $?
+
+# T19 (SMI-7089): the attribution library under the SYSTEM bash (3.2) and macOS
+# userland. `mktemp -d` returns /var/..., which git prints as /private/var/...:
+# that is the case that makes the path test `-ef` rather than a string compare.
+git -C "$REPO" worktree add -q -b w1 "$TMP/foo"
+git -C "$REPO" worktree add -q -b w2 "$TMP/_foo"
+git -C "$REPO" worktree add -q -b w3 "$TMP/bar_"
+git -C "$REPO" worktree add -q -b w4 "$TMP/bar"
+peers="$(worktree_project_peers "$REPO" "$TMP/_foo" foo)"; rc=$?
+check "T19 shared project: status" 0 "$rc"
+case "$peers" in *"registered worktree|"*"/foo"*) found=found ;; *) found=missing ;; esac
+check "T19 shared project: the other worktree is named" found "$found"
+peers="$(worktree_project_peers "$REPO" "$TMP/bar" bar)"; rc=$?
+check "T19 near miss (bar_ beside bar): status" 0 "$rc"
+check "T19 near miss (bar_ beside bar): no peer" "" "$peers"
+worktree_project_peers "$REPO" "$TMP/not-a-worktree" foo >/dev/null; check "T19 unlisted path: status" 2 $?
+check "T19 json_label reads a key" foo "$(worktree_lifecycle_json_label '{"a":"1","com.docker.compose.project":"foo"}' com.docker.compose.project)"
+# shellcheck disable=SC2016
+check "T19 json_label: a key spoofed inside a value does not match" "" "$(worktree_lifecycle_json_label '{"x":"y\",\"app.skillsmith.owned\":\"true"}' app.skillsmith.owned)"
 
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]

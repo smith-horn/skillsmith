@@ -1088,6 +1088,9 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
   const imgOwnedById = `image inspect ${IMG_ID} --format {{index .Config.Labels "app.skillsmith.owned"}}`
   const imgIdProbe = `image inspect ${IMG} --format {{.Id}}`
   const imgOwned = imgOwnedById
+  // SMI-7089: selection reads the whole label map ONCE as JSON; the in-lock gate
+  // still re-reads ownership alone.
+  const imgLabelsJson = `image inspect ${IMG_ID} --format {{json .Config.Labels}}`
 
   const volumeFixture = (name: string) => {
     const fixture = setupFixture(name)
@@ -1190,7 +1193,7 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
   // SMI-6981 round 4 (F3/F4): a failed gating inspect or a failed delete must not
   // read as "nothing to do". Only "No such volume/image" is benign.
   const volOwnedGlob = `volume inspect ${VOL} *skillsmith.owned*`
-  const imgOwnedGlob = `image inspect ${IMG_ID} *skillsmith.owned*`
+  const imgOwnedGlob = `image inspect ${IMG_ID} *json*`
 
   it('F3a. a failing volume ownership inspect skips the volume and fails the run', () => {
     const fixture = volumeFixture('prune-insp-fail-vol')
@@ -1247,7 +1250,7 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     ])
     const result = runPrune(fixture, only('gone-wt'))
 
-    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgLabelsJson)).toHaveLength(1)
     expect(result.stderr).toContain(`Could not inspect image ${IMG_ID}`)
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
     expect(result.status).toBe(1)
@@ -1258,7 +1261,7 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     shimDockerFailures(fixture, [{ glob: imgOwnedGlob, stderr: `Error: No such image: ${IMG}` }])
     const result = runPrune(fixture, only('gone-wt'))
 
-    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgLabelsJson)).toHaveLength(1)
     expect(result.stderr).not.toContain('Could not inspect')
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
     expect(result.status).toBe(0)
@@ -1333,8 +1336,9 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     imageLabelSequence(fixture, IMG_ID, 'owned', ['true', ''])
     const result = runPrune(fixture, only('gone-wt'))
 
-    // Presence: the scan read and the in-lock read both happened.
-    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(2)
+    // Presence: the scan read (the JSON label map) and the in-lock read both happened.
+    expect(result.dockerCalls.filter((c) => c === imgLabelsJson)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(1)
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
     expect(result.stdout).toContain(`SKIPPED image ${IMG}`)
     expect(result.stdout).not.toContain('Removed image')
@@ -1356,7 +1360,8 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     const rmiIdx = result.dockerCalls.findIndex((c) => deletesImage(c, IMG_ID))
     expect(rmiIdx).toBeGreaterThan(0)
     expect(result.dockerCalls[rmiIdx - 1]).toBe(imgIdProbe)
-    expect(result.dockerCalls.filter((c) => c === imgOwnedById)).toHaveLength(2)
+    expect(result.dockerCalls.filter((c) => c === imgLabelsJson)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgOwnedById)).toHaveLength(1)
     // Never by tag.
     expect(result.dockerCalls.some((c) => deletesImage(c) && !c.includes(IMG_ID))).toBe(false)
   })

@@ -9,6 +9,44 @@
 # checkout is an explicit argument: a bare call under `set -u` would fail
 # inside the `$(...)` below and read as "enumeration failed", a silent pass.
 
+# worktree_shared_projects WT_PATHS MAIN -- SMI-7089 (OD-5). Prints one
+# "<project>\t<path>, <path>" line for every Compose project that two or more
+# checkouts resolve to: registered worktrees (the listing in $1, main checkout
+# included) plus unregistered `.worktrees/*/` directories under $2. Read-only.
+# remove-worktree.sh and `worktree-docker.sh start|stop` REFUSE such a project, so
+# this is how an operator finds them before trying to remove one. Needs only
+# sanitize_project_name (_lib.sh).
+worktree_shared_projects() {
+    local wt_paths="$1" main="$2" entry d seen proj rows=""
+    local -a registered=()
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        registered+=("$entry")
+        proj="$(sanitize_project_name "$(basename "$entry")")"
+        [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${entry}"$'\n'
+    done <<< "$wt_paths"
+    if [[ -d "$main/.worktrees" ]]; then
+        for d in "$main"/.worktrees/*/; do
+            [[ -d "$d" ]] || continue
+            d="${d%/}"
+            seen=0
+            for entry in ${registered[@]+"${registered[@]}"}; do
+                if [[ "$entry" -ef "$d" ]]; then
+                    seen=1
+                    break
+                fi
+            done
+            [[ "$seen" -eq 1 ]] && continue
+            proj="$(sanitize_project_name "$(basename "$d")")"
+            [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${d}"$'\n'
+        done
+    fi
+    [[ -n "$rows" ]] || return 0
+    printf '%s' "$rows" | sort | awk -F'\t' '
+        { n[$1]++; list[$1] = (list[$1] == "" ? $2 : list[$1] ", " $2) }
+        END { for (k in n) if (n[k] > 1) printf "%s\t%s\n", k, list[k] }' | sort
+}
+
 report_containers() {
     local main_repo="$1"
     local max_age="${SKILLSMITH_CONTAINER_SPRAWL_MAX_AGE_HOURS:-24}"
@@ -21,6 +59,14 @@ report_containers() {
     if ! worktrees="$(enumerate_worktree_paths "$main_repo")"; then
         echo "Skillsmith container inventory: worktree enumeration failed -- not classifying"
         return 0
+    fi
+    local shared line
+    shared="$(worktree_shared_projects "$worktrees" "$main_repo")"
+    if [[ -n "$shared" ]]; then
+        echo "Shared Compose projects (SMI-7089): these checkouts resolve to the SAME project, so remove-worktree.sh and worktree-docker.sh start/stop refuse them:"
+        while IFS= read -r line; do
+            printf '  %s: %s\n' "${line%%$'\t'*}" "${line#*$'\t'}"
+        done <<< "$shared"
     fi
     # A failed listing must not read as "zero containers, all clean".
     if ! ids="$(docker ps -q \

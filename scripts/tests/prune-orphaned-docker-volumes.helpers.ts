@@ -6,7 +6,6 @@
  * script + _lib.sh into its own throwaway repo).
  */
 
-import { createHash } from 'crypto'
 import { execSync, spawnSync } from 'child_process'
 import {
   rmSync,
@@ -21,6 +20,7 @@ import {
 import { dirname, join } from 'path'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import { setResponse } from './prune-orphaned-docker-volumes.responses.js'
 
 const REAL_SCRIPT_PATH = join(__dirname, '..', 'prune-orphaned-docker-volumes.sh')
 const REAL_LIB_PATH = join(__dirname, '..', '_lib.sh')
@@ -82,7 +82,11 @@ export interface FixtureRepo {
  *   exit__volume_rm__<vol>                       <- exit code override for `docker volume rm <vol>`
  *   exit__rmi__<img>                             <- exit code override for `docker rmi <img>`
  */
-function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir: string): void {
+export function writeResponsiveDockerShim(
+  binDir: string,
+  logPath: string,
+  responsesDir: string
+): void {
   const lines = [
     '#!/bin/sh',
     `echo "$@" >> "${logPath}"`,
@@ -212,6 +216,26 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        img="$3"',
     '        fmt="$5"',
     '        case "$fmt" in',
+    // SMI-7089: the whole label map as JSON, read ONCE at selection. A
+    // `__labels` response wins (a literal JSON string, e.g. `null`); otherwise the
+    // map is composed from the per-key responses (consumed like any other read of
+    // them), and a map with no labels at all reads `null`, as Docker prints it.
+    '          *"json .Config.Labels"*)',
+    '            lbl="$(emit "image_inspect__${img}__labels")"',
+    '            if [ -z "$lbl" ]; then',
+    '              sv="$(emit "image_inspect__${img}__service")"',
+    '              ow="$(emit "image_inspect__${img}__owned")"',
+    '              pj="$(emit "image_inspect__${img}__project")"',
+    '              if [ -z "$sv$ow$pj" ]; then lbl="null"; else',
+    '                lbl="{"; sep=""',
+    '                if [ -n "$pj" ]; then lbl="$lbl$sep\\"com.docker.compose.project\\":\\"$pj\\""; sep=","; fi',
+    '                if [ -n "$sv" ]; then lbl="$lbl$sep\\"com.docker.compose.service\\":\\"$sv\\""; sep=","; fi',
+    '                if [ -n "$ow" ]; then lbl="$lbl$sep\\"app.skillsmith.owned\\":\\"$ow\\""; sep=","; fi',
+    '                lbl="$lbl}"',
+    '              fi',
+    '            fi',
+    '            printf "%s\\n" "$lbl"',
+    '            ;;',
     '          *".Id"*) emit "image_inspect__${img}__id"; nth_hook "image_id_after__${img}" ;;',
     '          *compose.service*) emit "image_inspect__${img}__service" ;;',
     '          *skillsmith.owned*) emit "image_inspect__${img}__owned" ;;',
@@ -319,86 +343,18 @@ export function addWorktree(repoDir: string, worktreePath: string, branch: strin
   git(repoDir, `worktree add -b ${branch} "${worktreePath}"`)
 }
 
-function setResponse(responsesDir: string, key: string, value: string): void {
-  writeFileSync(join(responsesDir, key), value.endsWith('\n') ? value : `${value}\n`)
-}
-
-export function volumeListResponse(fixture: FixtureRepo, names: string[]): void {
-  setResponse(fixture.responsesDir, 'volume_ls', names.join('\n'))
-}
-
-/**
- * Serve a DIFFERENT value for each successive read of one volume label, so a
- * test can model a label that changes mid-run. Takes precedence over any
- * static value set by `volumeLabels` for the same label.
- *
- * Pass fewer values than there are reads to model the label VANISHING: once
- * the sequence runs dry, `emit` produces nothing, which is what `docker volume
- * inspect` yields for an absent label.
- */
-export function volumeLabelSequence(
-  fixture: FixtureRepo,
-  vol: string,
-  label: 'volume' | 'project' | 'owned',
-  values: string[]
-): void {
-  setResponse(fixture.responsesDir, `volume_inspect__${vol}__${label}.seq`, values.join('\n'))
-}
-
-export function imagesResponse(fixture: FixtureRepo, repos: string[]): void {
-  setResponse(fixture.responsesDir, 'images', repos.join('\n'))
-}
-
-export function volumeLabels(
-  fixture: FixtureRepo,
-  vol: string,
-  labels: { volume?: string; project?: string; owned?: string }
-): void {
-  if (labels.volume !== undefined) {
-    setResponse(fixture.responsesDir, `volume_inspect__${vol}__volume`, labels.volume)
-  }
-  if (labels.project !== undefined) {
-    setResponse(fixture.responsesDir, `volume_inspect__${vol}__project`, labels.project)
-  }
-  if (labels.owned !== undefined) {
-    setResponse(fixture.responsesDir, `volume_inspect__${vol}__owned`, labels.owned)
-  }
-}
-
-/** A stable, sha256-shaped image ID for a tag (SMI-6981: images are deleted by ID). */
-export function imageIdFor(tag: string): string {
-  return `sha256:${createHash('sha256').update(tag).digest('hex')}`
-}
-
-/**
- * Set an image's labels. Also registers the tag's ID (`imageIdFor(tag)` unless
- * `id` is given) and the same labels under that ID, which is what the in-lock
- * re-inspect reads.
- */
-export function imageLabels(
-  fixture: FixtureRepo,
-  img: string,
-  labels: { service?: string; owned?: string },
-  id: string = imageIdFor(img)
-): void {
-  setResponse(fixture.responsesDir, `image_inspect__${img}__id`, id)
-  if (labels.service !== undefined) {
-    setResponse(fixture.responsesDir, `image_inspect__${img}__service`, labels.service)
-    setResponse(fixture.responsesDir, `image_inspect__${id}__service`, labels.service)
-  }
-  if (labels.owned !== undefined) {
-    setResponse(fixture.responsesDir, `image_inspect__${img}__owned`, labels.owned)
-    setResponse(fixture.responsesDir, `image_inspect__${id}__owned`, labels.owned)
-  }
-}
-
-export function volumePsResponse(fixture: FixtureRepo, vol: string, containerIds: string): void {
-  setResponse(fixture.responsesDir, `ps_volume__${vol}`, containerIds)
-}
-
-export function setVolumeRmExit(fixture: FixtureRepo, vol: string, code: number): void {
-  writeFileSync(join(fixture.responsesDir, `exit__volume_rm__${vol}`), String(code))
-}
+// The canned-response setters live in the sibling .responses.ts (500-line
+// gate); re-exported here so existing imports keep working.
+export {
+  volumeListResponse,
+  volumeLabelSequence,
+  imagesResponse,
+  volumeLabels,
+  imageIdFor,
+  imageLabels,
+  volumePsResponse,
+  setVolumeRmExit,
+} from './prune-orphaned-docker-volumes.responses.js'
 
 export function resetLog(fixture: FixtureRepo): void {
   if (existsSync(fixture.logPath)) rmSync(fixture.logPath)

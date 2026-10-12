@@ -635,16 +635,21 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
       })
 
       const labelReads = (calls: string[], who: string): string[] =>
-        calls.filter((c) => c.startsWith(`image inspect ${who} --format {{index .Config.Labels`))
+        calls.filter(
+          (c) =>
+            c.startsWith(`image inspect ${who} --format {{index .Config.Labels`) ||
+            c.startsWith(`image inspect ${who} --format {{json .Config.Labels`)
+        )
 
       it('a tag retargeted right after the first ID resolution: every predicate is read by ID', () => {
         const f = imageFixture('lk-t22-img-sel')
         setDockerHook(f, `image_id_after__${IMG}__1`, rewriteTag(f))
         const r = runPrune(f, only('gone-wt'))
         // Presence: the retarget fired after selection's resolution, and the
-        // predicates (service + ownership at selection, ownership in the section) ran.
+        // predicates (the one JSON label read at selection, ownership in the
+        // section) ran.
         expect(hookRan(f, `image_id_after__${IMG}__1`)).toBe(true)
-        expect(labelReads(r.dockerCalls, OLD_ID).length).toBeGreaterThanOrEqual(3)
+        expect(labelReads(r.dockerCalls, OLD_ID).length).toBeGreaterThanOrEqual(2)
         // The predicates were evaluated on the resolved ID, never on the tag.
         expect(labelReads(r.dockerCalls, IMG)).toHaveLength(0)
         // And nothing outside the selected ID is deleted (the tag moved: skipped).

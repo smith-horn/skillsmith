@@ -100,6 +100,21 @@ is_protected() {
     grep -qxF "$project" <<< "$protected_set"
 }
 
+# Skillsmith-BUILT Compose projects that are not worktrees (SMI-7033). The
+# ownership label cannot distinguish these from a worktree's resources, and the
+# worktree-existence predicate cannot protect them, so they are named here.
+# Matches the exact project name OR the `skillsmith-eval-cron-` prefix family
+# (any `skillsmith-eval-cron-<suffix>`) -- a prefix match, so it can over-protect
+# a lookalike name, which is the safe direction. Never a substring match.
+# Lives here (SMI-7089) so the orphan pruner and lib/worktree-project-attribution.sh
+# share ONE copy.
+is_own_non_worktree_project() {
+    case "$1" in
+        skillsmith-eval-cron|skillsmith-eval-cron-*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # The worktree lifecycle lock (SMI-6981, ADR-180)
 #
