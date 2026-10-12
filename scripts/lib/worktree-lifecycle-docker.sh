@@ -131,11 +131,12 @@ _wtl_gate_fail() {
 _wtl_gate() {
     local kind="$1" name="$2" expect="$3" state cur owned attached rc
     _WTL_SKIP=""
+    _WTL_SKIP_FAILS=false
     _WTL_RM_TARGET="$name"
     if [[ "$kind" == volume ]]; then
         attached="$(_wtl_dk ps -aq --filter "volume=$name")" \
             || { rc=$?; error "$(_wtl_gate_fail "checking containers on volume $name" "$rc" "$attached")"; }
-        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; return 1; }
+        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; _WTL_SKIP_FAILS=true; return 1; }
         # Last: the incarnation read sits immediately before the delete.
         state="$(worktree_lifecycle_volume_state "$name")" \
             || { rc=$?; error "$(_wtl_gate_fail "re-inspecting volume $name" "$rc" "$state")"; }
@@ -152,7 +153,7 @@ _wtl_gate() {
     else
         attached="$(_wtl_dk ps -aq --filter "ancestor=$expect")" \
             || { rc=$?; error "$(_wtl_gate_fail "checking containers on image $expect" "$rc" "$attached")"; }
-        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; return 1; }
+        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; _WTL_SKIP_FAILS=true; return 1; }
         owned="$(_wtl_dk image inspect "$expect" --format '{{index .Config.Labels "app.skillsmith.owned"}}')" \
             || { rc=$?; error "$(_wtl_gate_fail "re-inspecting image $expect" "$rc" "$owned")"; }
         if [[ "$owned" != true ]]; then

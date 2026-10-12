@@ -45,6 +45,9 @@ WPA_DOCKER=""
 # Set by worktree_project_attribution_or_die (and the recheck): the container IDs U6
 # approved, one per line. The ONLY containers a caller may remove (CA-1).
 WPA_CONTAINER_IDS=""
+# The same containers as "<full id> <compose service label>" lines (service may be
+# empty). The stop path keeps only the dev-profile services among them.
+WPA_CONTAINER_SVCS=""
 
 _wpa_timeout() { _wtl_uint_env SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT 60; }
 
@@ -72,6 +75,18 @@ process.stdin.on("data", (c) => { d += c; }).on("end", () => {
   const v = j["com.docker.compose.project.working_dir"];
   if (typeof v !== "string" || v === "" || v === "<no value>") process.exit(4);
   process.stdout.write(v);
+});'
+}
+
+# stdin: `{{json .Config.Labels}}`. stdout: the compose service label (may be empty).
+_wpa_json_service() {
+    node -e '
+let d = "";
+process.stdin.on("data", (c) => { d += c; }).on("end", () => {
+  let j;
+  try { j = JSON.parse(d); } catch (e) { process.exit(2); }
+  const v = j && typeof j === "object" ? j["com.docker.compose.service"] : "";
+  process.stdout.write(typeof v === "string" && /^[A-Za-z0-9_.-]*$/.test(v) ? v : "");
 });'
 }
 
@@ -122,11 +137,13 @@ worktree_project_peers() {
 }
 
 # worktree_project_docker_check X P -- U5 and U6. On refusal prints the reason on
-# stdout and returns 1. On a pass prints the APPROVED container IDs (every
-# container of the project, running or stopped, each shown to come from X), one per
-# line, and returns 0. Every Docker call is bounded. Never calls error().
+# stdout and returns 1. On a pass prints the APPROVED containers (every container of
+# the project, running or stopped, each shown to come from X) as "<full id> <service>"
+# lines and returns 0. IDs are listed with --no-trunc: Docker resolves a reference as
+# a full ID first, then an exact NAME, then an ID prefix, so a container NAMED like a
+# 12-hex short ID could otherwise be inspected or removed in place of the real one. Every Docker call is bounded. Never calls error().
 worktree_project_docker_check() {
-    local x="$1" p="$2" t cfg name ids id labels wd rc
+    local x="$1" p="$2" t cfg name ids id labels wd rc svc approved=""
     t="$(_wpa_timeout)"
     command -v node >/dev/null 2>&1 || { echo "node is required to read Docker's JSON output and was not found on PATH"; return 1; }
 
@@ -145,7 +162,7 @@ worktree_project_docker_check() {
         fi
     fi
 
-    if ! ids="$(worktree_lifecycle_bounded "$t" docker ps -aq --filter "label=com.docker.compose.project=$p" 2>/dev/null)"; then
+    if ! ids="$(worktree_lifecycle_bounded "$t" docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$p" 2>/dev/null)"; then
         echo "could not list the containers of project '$p' (docker ps failed or timed out)"
         return 1
     fi
@@ -168,8 +185,10 @@ worktree_project_docker_check() {
             echo "container $id of project '$p' was created from $wd, not $x"
             return 1
         fi
+        svc="$(printf '%s' "$labels" | _wpa_json_service)" || svc=""
+        approved+="$id $svc"$'\n'
     done <<< "$ids"
-    printf '%s' "$ids"
+    printf '%s' "$approved"
     return 0
 }
 
@@ -182,8 +201,20 @@ _wpa_peer_message() {
         printf '  - %s: %s\n' "${line%%|*}" "${line#*|}"
     done <<< "$peers"
     if [[ "$mode" == docker-optional ]]; then
-        printf '\nTo remove just this worktree safely:\n  1. List its own containers: docker ps -aq --filter label=com.docker.compose.project=%s -- keep only those whose com.docker.compose.project.working_dir label is %s, and docker rm -f those IDs.\n  2. git worktree remove --force %s\n  3. Leave the project'"'"'s volumes, image and network alone: they are shared with the other checkout.\n' "$p" "$x" "$x"
+        printf '\nTo remove just this worktree safely:\n  1. List its own containers: docker ps -aq --no-trunc --filter label=com.docker.compose.project=%s -- keep only those whose com.docker.compose.project.working_dir label is %s, and docker rm -f those IDs.\n  2. git worktree remove --force %s\n  3. Leave the project'"'"'s volumes, image and network alone: they are shared with the other checkout.\n' "$p" "$x" "$x"
     fi
+}
+
+# _wpa_record_approved LINES -- split the check's "<id> <service>" lines into
+# WPA_CONTAINER_SVCS (as is) and WPA_CONTAINER_IDS (first column).
+_wpa_record_approved() {
+    local line
+    WPA_CONTAINER_SVCS="$1"
+    WPA_CONTAINER_IDS=""
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && WPA_CONTAINER_IDS+="${line%% *}"$'\n'
+    done <<< "$1"
+    return 0
 }
 
 # worktree_project_attribution_or_die MAIN X P MODE
@@ -196,6 +227,7 @@ worktree_project_attribution_or_die() {
     local main="$1" x="$2" p="$3" mode="$4" t rc peers reason real realp
     WPA_DOCKER=""
     WPA_CONTAINER_IDS=""
+    WPA_CONTAINER_SVCS=""
     [[ -n "$main" && -d "$main" ]] || error "could not resolve the main checkout for $x -- refusing: without it the Compose project cannot be attributed (SMI-7089). Nothing was changed."
     if [[ -z "$p" ]]; then
         if [[ "$mode" == docker-optional ]]; then
@@ -241,7 +273,7 @@ worktree_project_attribution_or_die() {
 
     if [[ "$WPA_DOCKER" == reachable ]]; then
         if reason="$(worktree_project_docker_check "$x" "$p")"; then
-            WPA_CONTAINER_IDS="$reason"
+            _wpa_record_approved "$reason"
         else
             error "$reason -- refusing: the Compose project '$p' cannot be attributed to $x (SMI-7089). Nothing was changed."
         fi
@@ -255,7 +287,7 @@ worktree_project_recheck_for_path() {
     local x="$1" p reason
     p="$(sanitize_project_name "$(basename "$x")")"
     if reason="$(worktree_project_docker_check "$x" "$p")"; then
-        WPA_CONTAINER_IDS="$reason"
+        _wpa_record_approved "$reason"
     else
         error "$reason -- refusing: the Compose project '$p' no longer attributes to $x since the first check (SMI-7089). Nothing was started."
     fi
@@ -275,25 +307,51 @@ worktree_path_inside() {
     done
 }
 
-# worktree_project_remove_approved -- remove EXACTLY the containers U6 approved
-# (WPA_CONTAINER_IDS), then the project's networks. Replaces `compose down`, which
-# acts on whatever the project holds at the moment it runs: container IDs are never
-# reused, so a container another checkout starts after U6, or one from a checkout
-# re-created at the same path, cannot be touched. No approved ID -> no `rm` call.
-# `rm -f` failing is FATAL (error(): the caller's worktree stays, exit 1, IDs named).
-# A network is removed by ID and Docker refuses while any endpoint is attached --
-# that refusal is a warning, never fatal, and never forced.
+# worktree_project_remove_approved P [X] -- remove EXACTLY the containers U6 approved
+# (WPA_CONTAINER_IDS, full IDs), then the project's networks that nothing uses.
+# Replaces `compose down`, which acts on whatever the project holds at the moment it
+# runs: container IDs are never reused, so a container another checkout starts after
+# U6, or one from a checkout re-created at the same path, cannot be touched. No
+# approved ID -> no `rm` call. `rm -f` failing is FATAL (error(): the caller's
+# worktree stays, exit 1, IDs named).
+# With X (the `stop` path) only the approved containers whose compose service is one
+# of the DEV PROFILE's are removed -- what `compose --profile dev down` used to act
+# on. The main checkout's project also holds the machine-shared `ruflo` service and
+# the `test` profile; those must survive a `stop`. The set comes from Compose
+# (`--profile dev config --services`); an unreadable answer REFUSES (nothing removed).
+# remove-worktree.sh passes no X: a worktree's own containers all go, and its project
+# can never be the main checkout's (U2 refuses a worktree that shares main's project).
+# A network is removed by ID only when NO container, running or not, is attached to
+# it (`ps -a --filter network=`): Docker itself refuses only while an ACTIVE endpoint
+# exists, so a created/exited container would otherwise silently lose its network.
+# A skipped or refused network is a warning, never fatal, and never forced.
 worktree_project_remove_approved() {
-    local p="$1" t ids id nets
+    local p="$1" x="${2:-}" t id svc nets users devsvcs line
     local -a idv=()
     t="$(_wpa_timeout)"
-    while IFS= read -r id; do
-        [[ -n "$id" ]] && idv+=("$id")
-    done <<< "$WPA_CONTAINER_IDS"
+    if [[ -n "$x" ]]; then
+        if ! devsvcs="$(cd "$x" && worktree_lifecycle_bounded "$t" docker compose --profile dev config --services 2>/dev/null)" || [[ -z "$devsvcs" ]]; then
+            error "could not read which Compose services belong to the dev profile for $x -- refusing to remove any container (SMI-7089): without that set the main checkout's shared services (ruflo) and test profile could be removed. Nothing was changed."
+        fi
+        while IFS= read -r line; do
+            id="${line%% *}"
+            svc="${line#* }"
+            [[ -n "$id" ]] || continue
+            if printf '%s\n' "$devsvcs" | grep -qxF -- "$svc"; then
+                idv+=("$id")
+            else
+                info "  Leaving container $id running: its service '${svc:-<none>}' is not in the dev profile"
+            fi
+        done <<< "$WPA_CONTAINER_SVCS"
+    else
+        while IFS= read -r id; do
+            [[ -n "$id" ]] && idv+=("$id")
+        done <<< "$WPA_CONTAINER_IDS"
+    fi
     if [[ "${#idv[@]}" -gt 0 ]]; then
         info "Stopping and removing the project's approved containers..."
         if ! worktree_lifecycle_bounded "$t" docker rm -f "${idv[@]}" >/dev/null 2>&1; then
-            error "could not remove the approved container(s) of Compose project '$p': ${idv[*]} -- stopping here (SMI-7089): nothing else was changed. Inspect them with: docker ps -a --filter label=com.docker.compose.project=$p"
+            error "could not remove the approved container(s) of Compose project '$p': ${idv[*]} -- stopping here (SMI-7089): nothing else was changed. Inspect them with: docker ps -a --no-trunc --filter label=com.docker.compose.project=$p"
         fi
         success "  Removed ${#idv[@]} container(s)"
     fi
@@ -303,8 +361,12 @@ worktree_project_remove_approved() {
     fi
     while IFS= read -r id; do
         [[ -n "$id" ]] || continue
-        if ! worktree_lifecycle_bounded "$t" docker network rm "$id" >/dev/null 2>&1; then
-            warn "  Network $id was not removed (Docker refuses while a container is attached); left in place"
+        if ! users="$(worktree_lifecycle_bounded "$t" docker ps -aq --no-trunc --filter "network=$id" 2>/dev/null)"; then
+            warn "  Network $id skipped: could not check which containers use it"
+        elif [[ -n "$users" ]]; then
+            warn "  Network $id left in place: container(s) still attached ($(printf '%s' "$users" | tr '\n' ' '))"
+        elif ! worktree_lifecycle_bounded "$t" docker network rm "$id" >/dev/null 2>&1; then
+            warn "  Network $id was not removed (Docker refused); left in place"
         fi
     done <<< "$nets"
     return 0

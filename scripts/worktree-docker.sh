@@ -258,12 +258,12 @@ cmd_stop() {
     fi
 
     # SMI-7089: attribute the project to this checkout alone, or refuse; then remove
-    # EXACTLY the containers that check approved (no project-scoped `compose down`).
+    # EXACTLY the approved containers of the dev profile (no project-scoped call).
     # Stopping the main checkout's own container is legitimate: it has no peer.
     worktree_project_gate_for_path "$worktree_path" docker-required
 
     info "Stopping Docker containers..."
-    worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")"
+    worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")" "$worktree_path"
 
     success "Docker containers stopped."
 }

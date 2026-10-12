@@ -4,7 +4,7 @@
  * History: SMI-4653 added per-worktree Docker cleanup, SMI-6401 made it
  * profile-aware, SMI-5145 added the reclaimable report, SMI-5750 the targeted
  * orphan prune. SMI-7089 then removed every delete from this script except the
- * orphan prune: `compose down` no longer carries `--volumes`/`--rmi`, and the
+ * orphan prune: the stop no longer uses `compose down` at all (it removes the approved ids), and the
  * name-based `docker rmi` / `docker volume rm` fallback is gone, because both
  * acted on a Compose project by NAME and a second directory resolving to the same
  * project lost its resources. The attribution and ordering guarantees are tested
@@ -28,6 +28,7 @@ import {
   runRemove,
   setExit,
   setExitSequence,
+  setNetworkUsers,
   setProjectNetworks,
   type AttrFixture,
 } from './_lib/worktree-attribution-fixture.js'
@@ -138,7 +139,7 @@ describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
 })
 
 describe('SMI-6401 (superseded by SMI-7089): no profile discovery, no project-scoped call', () => {
-  it('never asks Compose for profiles or runs `down`: the approved ids are the whole scope', () => {
+  it('never asks Compose for profiles or runs a project-scoped call: the approved ids are the whole scope', () => {
     const fx = mk('rmwt-6401-profiles')
     const wt = addWt(fx, 'wt-derive')
     primeAttribution(fx, wt)
@@ -262,7 +263,7 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
     expect(result.stdout).toMatch(new RegExp(`^${ansi}Orphan prune scope: ${project}${ansi}$`, 'm'))
   })
 
-  it('--keep-docker never reaches the orphan prune: the kept volumes are unattached after compose down (D-A)', () => {
+  it('--keep-docker never reaches the orphan prune: the kept volumes are unattached once the containers are gone (D-A)', () => {
     const fx = mk('rmwt-keep-noprune')
     const wt = addWt(fx, 'wt-keepnoprune')
     primeAttribution(fx, wt)
@@ -415,5 +416,71 @@ describe('SMI-7089: a resource still attached after Step 1 fails the removal', (
     expect(result.stderr + result.stdout).toContain('Docker cleanup incomplete')
     expect(result.stdout).not.toContain('Worktree removal complete!')
     expect(result.status).toBe(1)
+  })
+})
+
+describe('SMI-7089: what remove-worktree removes, and which networks it leaves', () => {
+  it('removes ALL of a worktree\u2019s approved containers, whatever their service (its project is never main\u2019s)', () => {
+    const fx = mk('rmwt-all-services')
+    const wt = addWt(fx, 'wt-allsvc')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1', 'c2'], { c2: 'test' })
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.status).toBe(0)
+    expect(result.dockerCalls).toContain('rm -f c1 c2')
+    // No dev-profile services read: that filter belongs to `worktree-docker.sh stop`.
+    expect(result.dockerCalls.some((c) => c.includes('config --services'))).toBe(false)
+  })
+
+  it('a network with an EXITED container attached is left in place; one nobody uses is removed', () => {
+    const fx = mk('rmwt-net-users')
+    const wt = addWt(fx, 'wt-netusers')
+    primeAttribution(fx, wt)
+    setProjectNetworks(fx, ['nUsed', 'nFree'])
+    setNetworkUsers(fx, 'nUsed', ['cExited'])
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: the free network went, so the other being kept is a decision.
+    expect(result.dockerCalls).toContain('network rm nFree')
+    expect(result.dockerCalls).toContain('ps -aq --no-trunc --filter network=nUsed')
+    expect(result.dockerCalls).not.toContain('network rm nUsed')
+    expect(result.stderr + result.stdout).toContain('Network nUsed left in place')
+    expect(result.stderr + result.stdout).toContain('cExited')
+    expect(result.status).toBe(0)
+  })
+
+  it('a failing "who uses this network" query skips that network with a warning', () => {
+    const fx = mk('rmwt-net-query-fails')
+    const wt = addWt(fx, 'wt-netq')
+    primeAttribution(fx, wt)
+    setProjectNetworks(fx, ['n1'])
+    setExit(fx, 'ps_network', 1)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain('ps -aq --no-trunc --filter network=n1')
+    expect(result.dockerCalls.some((c) => c.startsWith('network rm'))).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Network n1 skipped')
+    expect(existsSync(wt)).toBe(false)
+    expect(result.status).toBe(0)
+  })
+
+  it('container ids are listed and removed in FULL (--no-trunc), never as 12-char short ids', () => {
+    const fx = mk('rmwt-full-ids')
+    const wt = addWt(fx, 'wt-fullids')
+    primeAttribution(fx, wt)
+    const full = 'a'.repeat(64)
+    ourContainers(fx, wt, [full])
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain(
+      'ps -aq --no-trunc --filter label=com.docker.compose.project=wt-fullids'
+    )
+    expect(result.dockerCalls).toContain(`rm -f ${full}`)
+    expect(result.status).toBe(0)
   })
 })

@@ -169,8 +169,8 @@ main() {
     fi
 
     # Critical guard: refuse to operate on the main repo BEFORE any side effects.
-    # Without this, stop_worktree_containers below would `docker compose down`
-    # the live skillsmith-dev-1 container if invoked on the main repo path.
+    # Without this, stop_worktree_containers below would remove the live
+    # skillsmith-dev-1 container if invoked on the main repo path.
     # Resolves before any docker/git/rm operation runs.
     local _main_dir _main_repo=""
     _main_dir="$(get_main_git_dir "$worktree_path" 2>/dev/null || true)"
@@ -244,7 +244,7 @@ Commit or discard them first, or re-run with --force to discard:
     # project that is a COMPUTED name, so first show that nothing this script can
     # see shares it -- or refuse, changing nothing, here. Runs before the dirty
     # check and before any side effect, --keep-docker included (Step 1 still
-    # runs `compose down` under it). A plain statement, never in $(...): error()
+    # removes the approved containers under it). A plain statement, never in $(...): error()
     # inside a substitution would only end the subshell. Sets WPA_DOCKER.
     worktree_project_attribution_or_die "$_main_repo" "$worktree_path" "$orphan_project" docker-optional
     if [[ "$WPA_DOCKER" != reachable ]]; then

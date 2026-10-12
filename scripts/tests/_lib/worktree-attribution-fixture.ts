@@ -73,7 +73,7 @@ rc_of() {
   elif [ -f "$RESP/exit__$1" ]; then cat "$RESP/exit__$1"; else echo 0; fi
 }
 # One-shot "effect" hook: fires on the FIRST effect-phase call -- \`rm -f\`, a project
-# \`network ls --filter\` / \`network rm\`, a \`down\`, or the first call that falls
+# \`network ls --filter\` / \`network rm\`, or the first call that falls
 # through to the delegate (Step 3 reads, the pruner) -- and records which call it was
 # in hook.trigger. A hook keyed on one verb would not fire if a mutation stopped
 # that verb from ever running.
@@ -96,6 +96,13 @@ case "$1" in
       *"config --profiles"*)
         cat "$RESP/profiles" 2>/dev/null
         exit "$(rc_of compose_profiles)"
+        ;;
+      *"--profile dev config --services"*)
+        rc="$(rc_of compose_services)"
+        if [ "$rc" != 0 ]; then exit "$rc"; fi
+        # The services of the dev profile; default \`dev\` (what the repo's compose gives).
+        if [ -f "$RESP/compose_services" ]; then cat "$RESP/compose_services"; else echo dev; fi
+        exit 0
         ;;
       *"config --format json"*)
         rc="$(rc_of compose_config)"
@@ -137,6 +144,14 @@ case "$1" in
     ;;
   ps)
     case "$*" in
+      *"--filter network="*)
+        echo "$@" >> "$LOG"
+        rc="$(rc_of ps_network)"
+        if [ "$rc" != 0 ]; then exit "$rc"; fi
+        for a in "$@"; do case "$a" in network=*) net="\${a#network=}" ;; esac; done
+        cat "$RESP/ps_network__$net" 2>/dev/null
+        exit 0
+        ;;
       *label=com.docker.compose.project=*)
         echo "$@" >> "$LOG"
         rc="$(rc_of ps)"
@@ -189,7 +204,7 @@ export function setResp(fx: AttrFixture, key: string, value: string): void {
   writeFileSync(join(fx.responsesDir, key), value.endsWith('\n') ? value : `${value}\n`)
 }
 
-/** Make the wrapper's `docker <key>` answer exit `code` (keys: info, compose_config, compose_profiles, down, up, ps, inspect). */
+/** Make the wrapper's `docker <key>` answer exit `code` (keys: info, compose_config, compose_services, up, rm, ps, ps_network, inspect, network_ls, network_rm). */
 export function setExit(fx: AttrFixture, key: string, code: number): void {
   writeFileSync(join(fx.responsesDir, `exit__${key}`), String(code))
 }
@@ -200,9 +215,19 @@ export function setExitSequence(fx: AttrFixture, key: string, codes: number[]): 
 }
 
 /** Running containers (ids) that Compose created from \`workingDir\`: U6 approves them. */
-export function ourContainers(fx: AttrFixture, workingDir: string, ids: string[] = ['c1']): void {
+export function ourContainers(
+  fx: AttrFixture,
+  workingDir: string,
+  ids: string[] = ['c1'],
+  services: Record<string, string> = {}
+): void {
   setContainers(fx, { running: ids })
-  for (const id of ids) setLabels(fx, id, workdirLabels(workingDir))
+  for (const id of ids) setLabels(fx, id, workdirLabels(workingDir, 'x', services[id] ?? 'dev'))
+}
+
+/** Containers (ids) attached to network \`net\`, running or not, for \`ps -a --filter network=\`. */
+export function setNetworkUsers(fx: AttrFixture, net: string, ids: string[]): void {
+  setResp(fx, `ps_network__${net}`, ids.join('\n'))
 }
 
 /** Serve a different running-ID list on each successive \`ps\` (space-separated ids per call). */
@@ -225,9 +250,10 @@ export function setContainers(
 }
 
 /** The `{{json .Config.Labels}}` text for a container created from `workingDir`. */
-export function workdirLabels(workingDir: string, project = 'x'): string {
+export function workdirLabels(workingDir: string, project = 'x', service = 'dev'): string {
   return JSON.stringify({
     'com.docker.compose.project': project,
+    'com.docker.compose.service': service,
     'com.docker.compose.project.working_dir': workingDir,
   })
 }

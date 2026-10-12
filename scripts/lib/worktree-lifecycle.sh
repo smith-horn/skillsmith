@@ -417,6 +417,10 @@ worktree_lifecycle_delete() {
     if ! _wtl_gate "$kind" "$name" "$expect"; then
         echo "SKIPPED $kind $name: $_WTL_SKIP -- not deleted"
         worktree_lifecycle_lock_release
+        # A container that attached between the scan and this gate leaves the
+        # requested resource behind: a failure for the caller (OP_FAILED), unlike a
+        # re-created or ownership-lost resource, which is simply not ours any more.
+        [[ "${_WTL_SKIP_FAILS:-false}" == true ]] && return 1
         return 0
     fi
     if [[ "$kind" == volume ]]; then

@@ -1,6 +1,6 @@
 /**
  * SMI-7089 (OD-6, OD-8): `worktree-docker.sh stop` and `start` run a project-scoped
- * Compose call (`down`, `up`) that acts on EVERY container of the Compose project,
+ * Compose call (the old `down`, and `up`) that acts on EVERY container of the Compose project,
  * whichever directory created it. The project name is computed from the directory
  * basename, so a second directory resolving to the same name loses its container
  * (`stop` removes it, `start` recreates it). Both now run the shared attribution
@@ -9,11 +9,11 @@
  *
  * Row ids (T21-T30) are the plan's. Every refusal row asserts on the shim log, and
  * R0 means a refusal's log always starts with `info`, which is the presence partner
- * for each "no `down` / no `up`" assertion.
+ * for each "no removal / no `up`" assertion.
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, mkdirSync, rmSync, symlinkSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 import {
@@ -24,6 +24,7 @@ import {
   ourContainers,
   primeAttribution,
   runDocker,
+  setExit,
   setContainers,
   setExit,
   setLabels,
@@ -65,7 +66,7 @@ const foreignDir = (fx: AttrFixture): string => {
   return d
 }
 
-describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`', () => {
+describe('SMI-7089: worktree-docker.sh stop is attributed before it removes anything', () => {
   it('T21. refuses when a registered worktree shares the project, naming it', () => {
     const fx = mk('wd-t21')
     const foo = wt(fx, 'foo')
@@ -142,7 +143,9 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
 
       expect(r.status).toBe(1)
       // Presence: the reads happened; absence: the destructive call did not.
-      expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
+      expect(r.dockerCalls).toContain(
+        'ps -aq --no-trunc --filter label=com.docker.compose.project=foo'
+      )
       expect(inspects(r.dockerCalls, 'c1')).toBe(true)
       if (name.includes('second') || name.includes('STOPPED')) {
         expect(inspects(r.dockerCalls, 'c2')).toBe(true)
@@ -214,6 +217,44 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
     }
   })
 
+  it('T27b. stop from the MAIN checkout removes only the DEV-profile service: ruflo and test survive', () => {
+    const fx = mk('wd-t27b')
+    composeBase(fx.repoDir)
+    primeAttribution(fx, fx.repoDir)
+    ourContainers(fx, fx.repoDir, ['cdev', 'cruflo', 'ctest'], { cruflo: 'ruflo', ctest: 'test' })
+
+    const r = runDocker(fx, ['stop', fx.repoDir])
+
+    expect(r.status).toBe(0)
+    // Presence: the dev-profile service set was read, and the dev container went.
+    expect(r.dockerCalls).toContain('compose --profile dev config --services')
+    expect(removals(r.dockerCalls)).toEqual(['rm -f cdev'])
+    expect(r.dockerCalls.some((c) => c.includes('cruflo') && c.startsWith('rm'))).toBe(false)
+    expect(text(r)).toContain("service 'ruflo' is not in the dev profile")
+  })
+
+  it.each([
+    ['the services read fails', (fx: AttrFixture) => setExit(fx, 'compose_services', 1)],
+    [
+      'the services answer is empty (unparseable)',
+      (fx: AttrFixture) => writeFileSync(join(fx.responsesDir, 'compose_services'), ''),
+    ],
+  ])('T27c. %s: stop refuses and removes nothing (fail closed)', (_n, arrange) => {
+    const fx = mk('wd-t27c')
+    composeBase(fx.repoDir)
+    primeAttribution(fx, fx.repoDir)
+    ourContainers(fx, fx.repoDir, ['cdev', 'cruflo'], { cruflo: 'ruflo' })
+    arrange(fx)
+
+    const r = runDocker(fx, ['stop', fx.repoDir])
+
+    expect(r.dockerCalls).toContain('compose --profile dev config --services')
+    expect(removals(r.dockerCalls)).toEqual([])
+    expect(r.dockerCalls.some((c) => c.startsWith('network rm'))).toBe(false)
+    expect(text(r)).toContain('dev profile')
+    expect(r.status).toBe(1)
+  })
+
   it('T25. refuses when Compose resolves a different project name', () => {
     const fx = mk('wd-t25')
     const x = wt(fx, 'foo')
@@ -248,7 +289,9 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
       const r = runDocker(fx, ['stop', x])
 
       expect(r.status).toBe(1)
-      expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
+      expect(r.dockerCalls).toContain(
+        'ps -aq --no-trunc --filter label=com.docker.compose.project=foo'
+      )
       expect(removals(r.dockerCalls)).toEqual([])
     })
 
@@ -265,7 +308,7 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
     })
   })
 
-  it('T27. stopping the MAIN checkout’s own container is legitimate: no peer, `down` runs', () => {
+  it('T27. stopping the MAIN checkout’s own container is legitimate: no peer, its container is removed', () => {
     const fx = mk('wd-t27')
     composeBase(fx.repoDir)
     primeAttribution(fx, fx.repoDir)
@@ -351,7 +394,9 @@ describe('SMI-7089 (OD-8): worktree-docker.sh start is attributed before `compos
     const r = runDocker(fx, ['start', x])
 
     expect(r.status).toBe(1)
-    expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
+    expect(r.dockerCalls).toContain(
+      'ps -aq --no-trunc --filter label=com.docker.compose.project=foo'
+    )
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
     expect(ups(r.dockerCalls)).toEqual([])
   })

@@ -10,7 +10,7 @@
  *
  * Row ids (T1, T7f, ...) are the plan's test-plan ids
  * (docs/internal/implementation/smi-7089-remove-worktree-cleanup-plan.md).
- * Convention: every ABSENCE assertion ("no `down`") has a PRESENCE partner from the
+ * Convention: every ABSENCE assertion ("no removal") has a PRESENCE partner from the
  * same run, because R0 runs first and leaves a `docker info` call in the log: a
  * refusal's log is exactly `['info']`, or `info` plus the reads that preceded it.
  */
@@ -115,7 +115,7 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     const r = runRemove(fx, [underscoreFoo, '--force'])
 
     expect(r.status).toBe(1)
-    // The property first: R0 ran and NOTHING else did (no `down`, no pruner), and
+    // The property first: R0 ran and NOTHING else did (no removal, no pruner), and
     // both worktrees are still registered. The pruner's own liveness check would
     // also refuse this project after the fact, so the exit status alone cannot
     // tell a refusal-before-any-side-effect from a refusal-after-one.
@@ -326,7 +326,9 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(text(r)).toContain('c1')
     expect(text(r)).toContain(other)
     expect(r.dockerCalls).toContain('info')
-    expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
+    expect(r.dockerCalls).toContain(
+      'ps -aq --no-trunc --filter label=com.docker.compose.project=foo'
+    )
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
     expect(removals(r.dockerCalls)).toEqual([])
     expect(existsSync(wt)).toBe(true)
@@ -403,7 +405,9 @@ describe('SMI-7089: every container of the project must point at this worktree (
     // stopped one was inspected too.
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
     expect(inspects(r.dockerCalls, 'c2')).toBe(true)
-    expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
+    expect(r.dockerCalls).toContain(
+      'ps -aq --no-trunc --filter label=com.docker.compose.project=foo'
+    )
     expect(removals(r.dockerCalls)).toEqual([])
   })
 
@@ -441,7 +445,9 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(r.status).toBe(1)
     expect(text(r)).toContain('could not list the containers')
     expect(r.dockerCalls).toContain('info')
-    expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
+    expect(r.dockerCalls).toContain(
+      'ps -aq --no-trunc --filter label=com.docker.compose.project=foo'
+    )
     expect(removals(r.dockerCalls)).toEqual([])
     expect(existsSync(wt)).toBe(true)
   })

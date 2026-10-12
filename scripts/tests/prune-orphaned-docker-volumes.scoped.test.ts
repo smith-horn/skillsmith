@@ -333,3 +333,27 @@ describe('SMI-7089: an attached in-scope resource fails a named-project run', ()
     expect(r.status).toBe(0)
   })
 })
+
+describe('SMI-7089: a container that attaches between the scan and the in-lock gate fails the run', () => {
+  it('volume: unattached at the scan, attached at the gate -> SKIPPED, nothing deleted, exit 1', () => {
+    const f = fixture('sc-gate-attached')
+    volumeListResponse(f, ['foo_website-vercel-output'])
+    volumeLabels(f, 'foo_website-vercel-output', {
+      volume: 'website-vercel-output',
+      project: 'foo',
+      owned: 'true',
+    })
+    // 1st read (scan): nothing attached; 2nd (the gate, under the lock): cLate.
+    writeFileSync(join(f.responsesDir, 'ps_volume__foo_website-vercel-output.seq'), '\ncLate\n')
+
+    const r = runPrune(f, only('foo'))
+
+    // Presence: both attachment reads happened.
+    expect(
+      r.dockerCalls.filter((c) => c === 'ps -aq --filter volume=foo_website-vercel-output')
+    ).toHaveLength(2)
+    expect(volRm(r.dockerCalls, 'foo_website-vercel-output')).toBe(false)
+    expect(r.stdout).toContain('SKIPPED volume foo_website-vercel-output: a container is attached')
+    expect(r.status).toBe(1)
+  })
+})
