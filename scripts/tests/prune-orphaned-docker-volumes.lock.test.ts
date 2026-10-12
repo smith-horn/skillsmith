@@ -474,6 +474,63 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
       expect(r.stdout).toContain('re-created since selection')
     })
 
+    describe('the four-field inspect line is parsed strictly', () => {
+      const Z = '2026-10-01T10:00:00Z'
+      // [name, line, parses]: `parses` rows are well-formed lines whose labels just do not qualify.
+      const ROWS: Array<[string, string, boolean]> = [
+        ['a | inside the compose-volume label', `${Z}|node|modules|gone-wt|true`, false],
+        ['a | inside the compose-project label', `${Z}|node_modules|gone|wt|true`, false],
+        ['a | inside the owned label (value "x|true")', `${Z}|node_modules|gone-wt|x|true`, false],
+        ['three fields', `${Z}|node_modules|gone-wt`, false],
+        ['five fields', `${Z}|node_modules|gone-wt|true|extra`, false],
+        ['an empty CreatedAt', '|node_modules|gone-wt|true', false],
+        ['an empty owned label', `${Z}|node_modules|gone-wt|`, true],
+      ]
+
+      it.each(ROWS)('at selection, %s proposes nothing and deletes nothing', (_n, line, parses) => {
+        const f = volumeFixture('lk-t22-parse-sel')
+        writeFileSync(volIncarnation(f), `${line}\n`)
+        const r = runPrune(f, only('gone-wt'))
+        // Presence: the selection inspect ran (once; the candidate never reached the section).
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(1)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+        if (parses) {
+          expect(r.stdout).toContain(`UNCONFIRMED ownership: ${VOL}`)
+          expect(r.status).toBe(0)
+        } else {
+          expect(r.stderr).toContain(`Could not inspect volume ${VOL}`)
+          expect(r.status).toBe(1)
+        }
+      })
+
+      it('a missing label reads as empty: unowned, never deleted (the shim default)', () => {
+        const f = volumeFixture('lk-t22-parse-missing')
+        rmSync(join(f.responsesDir, `volume_inspect__${VOL}__owned`))
+        const r = runPrune(f, only('gone-wt'))
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(1)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+        expect(r.stdout).toContain(`UNCONFIRMED ownership: ${VOL}`)
+      })
+
+      it.each(ROWS)('inside the section, %s deletes nothing', (_n, line, parses) => {
+        const f = volumeFixture('lk-t22-parse-lock')
+        writeFileSync(`${volIncarnation(f)}.seq`, `${ORIGINAL}\n${line}\n`)
+        const r = runPrune(f, only('gone-wt'))
+        // Presence: selection and the in-lock re-inspect both ran.
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+        if (parses) {
+          // Well-formed but no longer ours (empty owned label, or CreatedAt differs): skipped.
+          expect(r.stdout).toContain(`SKIPPED volume ${VOL}`)
+          expect(r.status).toBe(0)
+        } else {
+          expect(r.stderr).toContain(`re-inspecting volume ${VOL}`)
+          expect(r.status).toBe(1)
+        }
+        expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
+      })
+    })
+
     it.each([
       ['an inspect that fails', 'FAIL'],
       ['unparseable inspect output', 'garbage'],

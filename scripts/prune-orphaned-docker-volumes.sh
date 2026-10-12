@@ -72,8 +72,9 @@
 #   `volume rm` (Docker ignores our lock and has no compare-and-delete); E2 a
 #   volume removed and re-created within the SAME SECOND as the one selected
 #   (CreatedAt has one-second resolution; Docker has no volume ID). Nothing else.
-#   Covered exactly: an IMAGE's ID is captured first, every predicate (service,
-#   ownership, attachment) is judged on that ID, and the section re-checks that
+#   Covered exactly: an IMAGE's ID is captured first, every Docker-observed
+#   predicate (service, ownership, attachment) is judged on that ID (project and
+#   scope come from the tag name that was resolved to it), and the section re-checks that
 #   the tag still resolves to it, that it is owned and unattached, then deletes
 #   BY ID. A VOLUME's CreatedAt, shape, project and ownership come from ONE
 #   inspect at selection, and the section requires CreatedAt unchanged, owned and
@@ -394,8 +395,10 @@ while IFS= read -r img; do
     project="${img%-dev}"
     is_protected "$project" "$protected" && continue
 
-    # IDENTITY FIRST: resolve the immutable image ID once, then judge EVERY
-    # predicate on that ID (labels are immutable per ID), never on the tag. A tag
+    # IDENTITY FIRST: resolve the immutable image ID once, then judge every
+    # Docker-observed image predicate (service, ownership, attachment) on that ID
+    # (labels are immutable per ID), never on the tag. The project/scope comes from
+    # the `<project>-dev` tag name, which is what is resolved to the ID. A tag
     # retargeted after this line changes nothing that was checked; the section
     # re-checks that the tag still resolves to this ID and deletes BY ID.
     if ! img_id="$(worktree_lifecycle_image_id "$img")"; then

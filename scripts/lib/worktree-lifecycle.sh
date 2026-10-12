@@ -374,8 +374,10 @@ worktree_lifecycle_image_id() {
 # re-inspect that cannot run or parse stops the whole run via error(), like a
 # failed delete. A mismatch SKIPS only that candidate: nothing was deleted and the
 # object now there is not ours to touch.
-# Coverage starts at IDENTITY CAPTURE (selection), where every predicate was
-# evaluated on the captured identity. Images: deleted BY ID, only if the tag
+# Coverage starts at IDENTITY CAPTURE (selection), where every Docker-observed
+# predicate (volume: shape, project, ownership; image: service, ownership,
+# attachment) was judged on the captured identity; an image's project/scope
+# comes from the tag name that was resolved to the ID. Images: deleted BY ID, only if the tag
 # still resolves to it, it is owned and no container uses it. Volumes: only if
 # CreatedAt is unchanged, still owned and unused. NOT covered: Docker ignores
 # this lock, so a volume replaced between this inspect and `volume rm`, or
