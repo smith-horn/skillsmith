@@ -9,10 +9,10 @@
 // control state and printed.
 
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
-import { shortTargetRefusal } from './c4-target-guard.mjs'
+import { shortTargetRefusal, parseFlags } from './c4-target-guard.mjs'
 import { resolveControl, controlFailedFlag, controlTag, isProbabilistic } from './control-spec.mjs'
 import * as a3 from './attacks/a3-c4.mjs'
 import * as a4 from './attacks/a4-c4.mjs'
@@ -66,13 +66,28 @@ const A13 = {
   combos: [{ args: {}, tag: 'racer/by-timestamp' }],
 }
 
+const FLAGS = {
+  '--out': { key: 'out', kind: 'string' },
+  '--only': { key: 'only', kind: 'list' },
+  '--target': { key: 'target', kind: 'int' },
+  '--fs-label': { key: 'fsLabel', kind: 'string' },
+}
+const KNOWN_KEYS = [...Object.keys(ATTACKS), 'a13']
+
+function usageError(message) {
+  console.error(`[run-c4-attacks] ${message}`)
+  process.exit(2)
+}
+
 function parseArgs(argv) {
-  const opts = { out: null, only: null, target: null, fsLabel: process.platform }
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--out') opts.out = argv[++i]
-    else if (argv[i] === '--only') opts.only = argv[++i].split(',')
-    else if (argv[i] === '--target') opts.target = Number.parseInt(argv[++i], 10)
-    else if (argv[i] === '--fs-label') opts.fsLabel = argv[++i]
+  const parsed = parseFlags(argv, FLAGS)
+  if (parsed.error) usageError(parsed.error)
+  const opts = { out: null, only: null, target: null, fsLabel: process.platform, ...parsed.opts }
+  const unknown = (opts.only ?? []).filter((k) => !KNOWN_KEYS.includes(k))
+  if (unknown.length > 0) {
+    usageError(
+      `unknown --only entr${unknown.length > 1 ? 'ies' : 'y'}: ${unknown.join(', ')} (known: ${KNOWN_KEYS.join(', ')})`
+    )
   }
   return opts
 }
@@ -176,6 +191,27 @@ function groupByLabel(cell, labels) {
   return groups
 }
 
+/**
+ * The verdict line for one (label, candidate) group. Exported so the selftest can
+ * drive it with synthetic records. The verdict text is whatever verdictFor()
+ * returns, including for record-only cells: this function adds nothing to it.
+ */
+export function scoreCell({ label, variant, candidate, records, target, rows }) {
+  const row = rows.find((r) => r.attack === label && r.candidate === candidate)
+  const control = resolveControl(row, rows)
+  const agg = aggregateCell(records, () => false, {
+    target,
+    controlFailed: controlFailedFlag(control.state),
+    controlState: control.state,
+  })
+  let line = `${formatVerdict(`${label}/${variant}/${candidate}`, agg)}\tcontrol=${controlTag(control.state)}`
+  if (label === 'A13-C4') line += `\t${A13_R6_NOTE}`
+  else if (agg.verdict.startsWith('PASS') && isProbabilistic(label)) {
+    line += '\tR6/§9 floor is a minimum evidence floor, not a safety bound'
+  }
+  return line
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2))
   const harnessRoot = resolveHarnessRoot()
@@ -187,6 +223,7 @@ async function main() {
     if (opts.only && !opts.only.includes(key)) continue
     selected.push([key, entry, entry.mod ?? (await entry.load())])
   }
+  if (selected.length === 0) usageError('nothing selected: no attack matches --only')
   const refusal = shortTargetRefusal({
     out,
     requested: opts.target,
@@ -247,20 +284,16 @@ async function main() {
             console.log(`(no ${label}/${candidate} runs)`)
             continue
           }
-          const row = rows.find((r) => r.attack === label && r.candidate === candidate)
-          const control = resolveControl(row, rows)
-          const agg = aggregateCell(records, () => false, {
-            target: groupTarget(groups[candidate].get(label)),
-            controlFailed: controlFailedFlag(control.state),
-            controlState: control.state,
-          })
-          if (label === 'A13-C4-OOM') agg.verdict = 'RECORD-ONLY'
-          let line = `${formatVerdict(`${label}/${variant}/${candidate}`, agg)}\tcontrol=${controlTag(control.state)}`
-          if (label === 'A13-C4') line += `\t${A13_R6_NOTE}`
-          else if (agg.verdict.startsWith('PASS') && isProbabilistic(label)) {
-            line += '\tR6/§9 floor is a minimum evidence floor, not a safety bound'
-          }
-          console.log(line)
+          console.log(
+            scoreCell({
+              label,
+              variant,
+              candidate,
+              records,
+              target: groupTarget(groups[candidate].get(label)),
+              rows,
+            })
+          )
           console.log(describe(records, extras))
         }
       }
@@ -271,4 +304,5 @@ async function main() {
   console.log('[run-c4-attacks] done')
 }
 
-await main()
+// Only when run as a script, so the selftest can import scoreCell.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main()

@@ -29,3 +29,42 @@ export function shortTargetRefusal({ out, requested, modules, rawDir }) {
     'Write smoke runs outside results/raw/ with --out.'
   )
 }
+
+/**
+ * Strict flag parser shared by the C4 runners. Every argument must be a known
+ * flag followed by a non-empty value that does not itself start with `--`; an
+ * unknown flag, a positional, or a flag with a missing value is an error, never
+ * silently ignored (a typo used to produce a run of zero cells that exited 0).
+ *
+ * @param {string[]} argv
+ * @param {Record<string,{key:string, kind:'string'|'int'|'list'}>} spec - flag -> how to read it
+ * @returns {{opts:object}|{error:string}}
+ */
+export function parseFlags(argv, spec) {
+  const opts = {}
+  for (let i = 0; i < argv.length; i += 1) {
+    const flag = argv[i]
+    const def = Object.hasOwn(spec, flag) ? spec[flag] : null
+    if (def === null) {
+      return {
+        error: `unknown argument ${JSON.stringify(flag)} (known: ${Object.keys(spec).join(', ')})`,
+      }
+    }
+    const value = argv[i + 1]
+    if (value === undefined || value === '' || value.startsWith('--')) {
+      return { error: `${flag} requires a value` }
+    }
+    i += 1
+    if (def.kind === 'int') {
+      if (!/^[1-9][0-9]*$/.test(value)) {
+        return { error: `${flag} must be a positive integer, got ${JSON.stringify(value)}` }
+      }
+      opts[def.key] = Number(value)
+    } else if (def.kind === 'list') {
+      opts[def.key] = value.split(',')
+    } else {
+      opts[def.key] = value
+    }
+  }
+  return { opts }
+}

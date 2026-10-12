@@ -20,6 +20,8 @@ import {
   isProbabilistic,
   LANDED_FLOOR,
   PROBABILISTIC_ATTACKS,
+  RECORD_ONLY_ATTACKS,
+  controlFailedFlag,
 } from './control-spec.mjs'
 import { aggregateCell } from './result-schema.mjs'
 
@@ -219,6 +221,74 @@ const aggOverride = aggregateCell(cellRecords, () => false, {
   controlState: 'satisfied',
 })
 check('7d explicit options.attack still wins', aggOverride.verdict, 'NEVER-RAN')
+
+// --- 8. RECORD-ONLY cells score no verdict (ADR-166 D-0, SMI-6715 G1) -------
+// A13-C4-OOM is the out-of-model window: losses there are recorded, never
+// scored as a falsifier, and never as a PASS either. Revert: delete the
+// RECORD_ONLY clause in verdictFor -- 8a/8b/8c then render PASS / FAIL.
+const oom = (o) => ({
+  attack: 'A13-C4-OOM',
+  passed: 0,
+  failed: 0,
+  neverRan: 0,
+  otherNeverRan: 0,
+  ...o,
+})
+check('8a record-only set is exactly A13-C4-OOM', [...RECORD_ONLY_ATTACKS].join(','), 'A13-C4-OOM')
+check(
+  '8b record-only, no losses: not PASS',
+  verdictFor(oom({ passed: 5 }), controlFailedFlag('none'), 'none'),
+  'RECORD-ONLY'
+)
+check(
+  '8c record-only, losses: names the count, not FAIL',
+  verdictFor(oom({ passed: 5, failed: 3 }), controlFailedFlag('none'), 'none'),
+  'RECORD-ONLY (3 lost)'
+)
+check(
+  '8d record-only with never-ran is still record-only',
+  verdictFor(oom({ passed: 5, neverRan: 2 }), true, 'none'),
+  'RECORD-ONLY'
+)
+check(
+  '8e record-only still validates counts',
+  (() => {
+    try {
+      verdictFor({ attack: 'A13-C4-OOM', passed: '5', failed: 0, neverRan: 0 }, true, 'none')
+      return 'no throw'
+    } catch (e) {
+      return e instanceof TypeError ? 'throws' : 'other'
+    }
+  })(),
+  'throws'
+)
+check(
+  '8f non-record-only attack unaffected: clean PASS',
+  verdictFor(
+    { attack: 'A3-C4', passed: 5, failed: 0, neverRan: 0, otherNeverRan: 0 },
+    true,
+    'satisfied'
+  ),
+  'PASS'
+)
+check(
+  '8g non-record-only attack unaffected: FAIL',
+  verdictFor(
+    { attack: 'A3-C4', passed: 5, failed: 2, neverRan: 0, otherNeverRan: 0 },
+    true,
+    'satisfied'
+  ),
+  'FAIL'
+)
+check(
+  '8h the sibling A13-C4 is NOT record-only (still scored)',
+  verdictFor(
+    { attack: 'A13-C4', passed: 150, failed: 1, neverRan: 0, otherNeverRan: 0 },
+    true,
+    'satisfied'
+  ),
+  'FAIL'
+)
 
 if (!allOk) {
   console.error('[verdict-rule] FAIL')

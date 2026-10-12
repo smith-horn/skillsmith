@@ -393,6 +393,17 @@ export function controlTag(state) {
 export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING', 'A13-C4'])
 export const LANDED_FLOOR = 100
 
+/**
+ * Cells that are RECORDED, not scored (SMI-6715 G1, ADR-166 D-0). A13-C4-OOM
+ * holds the runs whose racer landings fell only in the out-of-model window
+ * (pre-rename re-check entered .. renameSync returned); ADR-166 D-0 puts that
+ * window outside what C4 claims, so no verdict is scored for it -- neither a
+ * PASS that would read as safety evidence nor a FAIL that would read as a
+ * falsifier. verdictFor() renders `RECORD-ONLY`, with the loss count when there
+ * is one, so the numbers stay visible. Deliberately NOT in PROBABILISTIC_ATTACKS.
+ */
+export const RECORD_ONLY_ATTACKS = new Set(['A13-C4-OOM'])
+
 /** Whether §9's `never-ran == 0` clause applies to this attack. */
 export function isProbabilistic(attack) {
   return PROBABILISTIC_ATTACKS.has(attack)
@@ -421,6 +432,14 @@ export function verdictFor(row, controlFailed, controlState) {
     if (!Number.isInteger(row[k])) {
       throw new TypeError(`verdictFor: ${k} must be an integer, got ${String(row[k])}`)
     }
+  }
+
+  // RECORD-ONLY CELLS SCORE NO VERDICT (SMI-6715 G1). Placed after the count
+  // validation (a malformed row still throws) and gated on set membership, so it
+  // cannot pre-empt anything for any other attack. It precedes the FAIL clause
+  // on purpose: for these cells a loss is recorded, not scored as a falsifier.
+  if (RECORD_ONLY_ATTACKS.has(row.attack)) {
+    return row.failed > 0 ? 'RECORD-ONLY (' + row.failed + ' lost)' : 'RECORD-ONLY'
   }
 
   // FAILURES BEAT EVERYTHING, AND THIS CLAUSE GOES FIRST.

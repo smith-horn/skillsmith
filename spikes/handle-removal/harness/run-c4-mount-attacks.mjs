@@ -15,10 +15,24 @@ import {
   formatVerdict,
 } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
-import { shortTargetRefusal } from './c4-target-guard.mjs'
+import { shortTargetRefusal, parseFlags } from './c4-target-guard.mjs'
 import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import * as a1 from './attacks/a1-c4.mjs'
 import * as a2 from './attacks/a2-c4.mjs'
+
+const FLAGS = {
+  '--target': { key: 'target', kind: 'int' },
+  '--out': { key: 'out', kind: 'string' },
+  '--fs-label': { key: 'fsLabel', kind: 'string' },
+}
+
+// Arguments are validated BEFORE the platform check so a typo is reported as a
+// usage error on any host (and is testable off Linux).
+const parsedArgs = parseFlags(process.argv.slice(2), FLAGS)
+if (parsedArgs.error) {
+  console.error(`[run-c4-mount-attacks] ${parsedArgs.error}`)
+  process.exit(2)
+}
 
 if (process.platform !== 'linux') {
   console.error(
@@ -26,16 +40,6 @@ if (process.platform !== 'linux') {
     process.platform
   )
   process.exit(2)
-}
-
-function parseArgs(argv) {
-  const opts = { target: null, out: null, fsLabel: process.platform }
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--target') opts.target = Number.parseInt(argv[++i], 10)
-    else if (argv[i] === '--out') opts.out = argv[++i]
-    else if (argv[i] === '--fs-label') opts.fsLabel = argv[++i]
-  }
-  return opts
 }
 
 const ATTACKS = [
@@ -105,7 +109,7 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
 }
 
 function main() {
-  const opts = parseArgs(process.argv.slice(2))
+  const opts = { target: null, out: null, fsLabel: process.platform, ...parsedArgs.opts }
   const rawDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'results', 'raw')
   const out = opts.out ?? path.join(rawDir, `c4-mount-attacks-${opts.fsLabel}.jsonl`)
   const refusal = shortTargetRefusal({

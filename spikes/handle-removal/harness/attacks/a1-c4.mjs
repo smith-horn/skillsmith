@@ -108,7 +108,7 @@ function readUserFile(p) {
  * @param {'pre-call'|'after-bind'} args.window - 'pre-call': mount first;
  *   otherwise the mount is made inside onFire at that window.
  */
-export function runMountCase({ harnessRoot, candidate, subcase, window }) {
+export function runMountCase({ harnessRoot, candidate, subcase, window, _test }) {
   if (!CANDIDATES.has(candidate)) throw new TypeError(`a1/a2-c4: unknown candidate ${candidate}`)
   if (!SUBCASES.has(subcase)) throw new TypeError(`a1/a2-c4: unknown subcase ${subcase}`)
   if (process.platform !== 'linux') throw new Error('a1/a2-c4: Linux only (real mount/umount)')
@@ -118,12 +118,16 @@ export function runMountCase({ harnessRoot, candidate, subcase, window }) {
   let bodyFailed = false
   let bodyError
   let remainingAfter = null
+  let cleanupFailed = false
+  let cleanupError
+  // `_test` is a selftest seam only (doMount / detachAll / cleanup replacements).
+  const detachFn = _test?.detachAll ?? detachAll
   try {
     const { targetAbs, mountSourceDir } = buildMountFixture(fx.root)
     const userContent = `user-${crypto.randomBytes(8).toString('hex')}`
     const opId = `c4-${crypto.randomBytes(6).toString('hex')}`
 
-    const doMount = () => {
+    const realMount = () => {
       if (subcase === 'bind') {
         fs.writeFileSync(path.join(mountSourceDir, USER_FILE), userContent)
         bindMount(mountSourceDir, targetAbs)
@@ -133,6 +137,7 @@ export function runMountCase({ harnessRoot, candidate, subcase, window }) {
       }
     }
 
+    const doMount = _test?.doMount ?? realMount
     let mountedBeforeCall = false
     let mountedInHook = false
     if (window === 'pre-call') {
@@ -183,7 +188,7 @@ export function runMountCase({ harnessRoot, candidate, subcase, window }) {
 
     // Detach inside the try so the result carries it; `finally` repeats it as a
     // backstop if anything above threw.
-    detach = detachAll(fx.root)
+    detach = detachFn(fx.root)
 
     const mutationApplied =
       window === 'pre-call' ? mountedBeforeCall : mountedInHook && r.onFireInvoked === true
@@ -224,9 +229,18 @@ export function runMountCase({ harnessRoot, candidate, subcase, window }) {
     bodyFailed = true
     bodyError = err
   } finally {
-    const again = detach ?? detachAll(fx.root)
-    if (again.remaining === 0) fx.cleanup()
-    else remainingAfter = again
+    const again = detach ?? detachFn(fx.root)
+    if (again.remaining === 0) {
+      // Caught, not thrown: a throw inside `finally` replaces the error already
+      // in flight. It is rethrown below, after the body error is in hand.
+      try {
+        if (_test?.cleanup) _test.cleanup(fx)
+        else fx.cleanup()
+      } catch (err) {
+        cleanupFailed = true
+        cleanupError = err
+      }
+    } else remainingAfter = again
   }
   // Thrown AFTER the finally, not inside it: a throw inside `finally` replaces
   // an error already in flight, so a failed run plus a surviving mount used to
@@ -235,6 +249,12 @@ export function runMountCase({ harnessRoot, candidate, subcase, window }) {
     throw new Error(
       `a1/a2-c4: mounts remain under ${fx.root} after umount (${JSON.stringify(remainingAfter)}); fixture NOT removed`,
       { cause: bodyFailed ? bodyError : undefined }
+    )
+  }
+  if (cleanupFailed) {
+    throw new Error(
+      `a1/a2-c4: fixture cleanup failed under ${fx.root}: ${cleanupError?.message ?? String(cleanupError)}`,
+      { cause: bodyFailed ? bodyError : cleanupError }
     )
   }
   if (bodyFailed) throw bodyError
