@@ -250,7 +250,8 @@ describe('SMI-744: Search Command', () => {
       installPath: '/mock/skills/jest-helper',
       errorCode: 'CONFIRMATION_REQUIRED',
       trustTier: 'unverified',
-      confirmationReason: 'unverified tier skills have not been reviewed.',
+      confirmationReason:
+        'This skill is in the "unverified" trust tier. Skills in this tier have not been reviewed.',
     }
     const tty = {
       stdin: Object.getOwnPropertyDescriptor(process.stdin, 'isTTY'),

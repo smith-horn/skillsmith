@@ -230,12 +230,53 @@ describe('SMI-7056: trust-tier allowlist gates', () => {
       expect(unverified.errorCode).toBe('SCAN_REJECTED')
       expect(unverified.error).toContain('(Unreviewed trust tier - strictest scanning applied)')
 
-      // Presence partner: the pre-existing labels still win for their own tiers.
-      const unknown = await run('unknown', { confirmed: true })
-      expect(unknown.errorCode).toBe('SCAN_REJECTED')
-      expect(unknown.error).toContain('(Direct GitHub install - strictest scanning applied)')
-      expect(unknown.error).not.toContain('Unreviewed trust tier')
+      // An empty tier is unreviewed too, and is named "unknown" in the message and tips.
+      const empty = await run('', { confirmed: true })
+      expect(empty.errorCode).toBe('SCAN_REJECTED')
+      expect(empty.error).toContain('(Unreviewed trust tier - strictest scanning applied)')
+      expect(empty.error).toContain('skipScan is not available for unknown tier skills.')
+      expect(empty.error).not.toContain(' for  tier')
+      expect(empty.tips?.[0]).toMatch(/^Trust tier: unknown \(threshold: /)
+
+      // A registry skill stored as `unknown` is not a direct GitHub install.
+      const registryUnknown = await run('unknown', { confirmed: true })
+      expect(registryUnknown.errorCode).toBe('SCAN_REJECTED')
+      expect(registryUnknown.error).toContain(
+        '(Unreviewed trust tier - strictest scanning applied)'
+      )
+      expect(registryUnknown.error).not.toContain('Direct GitHub install')
+
+      // A real direct GitHub install keeps its own label.
+      const root = path.join(os.tmpdir(), 'skillsmith-7056-direct-scan-' + Date.now())
+      roots.push(root)
+      await fs.mkdir(path.join(root, 'skills'), { recursive: true })
+      const direct = await new SkillInstallationService({
+        db,
+        skillRepo: new SkillRepository(db),
+        skillDependencyRepo: new SkillDependencyRepository(db),
+        skillsDir: path.join(root, 'skills'),
+        manifestPath: path.join(root, 'manifest.json'),
+      }).install('https://github.com/owner/evil-repo', { skipOptimize: true })
+      expect(direct.errorCode).toBe('SCAN_REJECTED')
+      expect(direct.error).toContain('(Direct GitHub install - strictest scanning applied)')
+      expect(direct.error).not.toContain('Unreviewed trust tier')
+
+      // A trusted tier gets no tier label at all.
+      const community = await run('community', {})
+      expect(community.errorCode).toBe('SCAN_REJECTED')
+      expect(community.error).not.toContain('Unreviewed trust tier')
+      expect(community.error).not.toContain('strictest scanning applied')
     })
+  })
+
+  it('an empty tier is named "unknown" when skipScan is refused', async () => {
+    const result = await run('', { skipScan: true, confirmed: true })
+    expect(result.errorCode).toBe('SKIP_SCAN_FORBIDDEN')
+    expect(result.error).toContain('Cannot skip security scan for unknown tier skills.')
+    expect(result.error).not.toContain(' for  tier')
+    expect(result.tips).toContain(
+      'Trust tier "unknown" requires a security scan before installation'
+    )
   })
 
   describe('scanner options fallback', () => {

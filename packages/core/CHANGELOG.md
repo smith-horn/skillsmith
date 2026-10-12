@@ -15,7 +15,8 @@ All notable changes to `@skillsmith/core` are documented here.
   `confirmed=true`; clients that cannot pass it will see `CONFIRMATION_REQUIRED`. The
   confirmation reason now reads `This skill is in the "<tier>" trust tier.` (an empty tier reads
   `unknown`), and a `SCAN_REJECTED` error for any unreviewed tier says strictest scanning was
-  applied.
+  applied. Only a direct GitHub URL install is labelled "Direct GitHub install"; a registry
+  skill stored as `unknown` was mislabelled as one.
 - **Added**: SMI-7030 -- the scanner now raises an `executable_frontmatter` finding (critical,
   flag-only) when any scanned file (SKILL.md or a bundled sibling file) opens with an executable
   `---js` / `---javascript` frontmatter block. The finding carries a score coefficient of 0, so it

@@ -129,11 +129,11 @@ skillsmith install author/skill-name
 skillsmith install author/skill-name --yes
 ```
 
-**Options:**
+**Common options** (`skillsmith install --help` lists them all):
 - `-y, --yes` - Confirm installing a skill whose trust tier is not official, verified, curated, community or local. It never skips the security scan, and `--skip-scan` is still refused for these tiers. Without it, a terminal asks y/N (default No); a script or `--json` run exits non-zero with a message naming `--yes`.
 - `-f, --force` - Reinstall if already installed
 - `--skip-scan` - Skip the security scan (not recommended; refused for unreviewed trust tiers)
-- `--json` - Output a structured JSON result. A failure includes `errorCode`, for example `CONFIRMATION_REQUIRED`.
+- `--json` - Output a structured JSON result. When the install fails with a known error code, the result includes `errorCode` (for example `CONFIRMATION_REQUIRED` when it needs `--yes`, or `SCAN_REJECTED`). An unexpected error reports only `error`.
 
 ### remove
 
