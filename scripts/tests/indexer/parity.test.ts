@@ -96,7 +96,7 @@ const NODE_SCANNER_EXEC = resolve(
 )
 // SMI-7030: the category weight/coefficient maps moved out of .context.ts into a
 // .weights.ts twin, and the executable-frontmatter detector is its own twin.
-// Drift in either means the two indexers would score or flag the same SKILL.md
+// Drift in either means the two indexers would score or flag the same scanned file
 // differently.
 const DENO_SCANNER_WEIGHTS = resolve(
   REPO_ROOT,

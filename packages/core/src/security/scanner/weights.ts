@@ -22,7 +22,7 @@ export const SEVERITY_WEIGHTS: Record<SecuritySeverity, number> = {
  * SMI-6033 Wave 2 gap-closing pass: typed against `SecurityFindingType`
  * (was `Record<string, number>`) so a future new finding type that ships
  * without a weight entry here is a TypeScript compile error, not a silent
- * runtime `?? 1.0` fallback in SecurityScanner.helpers.ts's
+ * runtime `?? 1.0` fallback in SecurityScanner.risk-score.ts's
  * `calculateRiskScore` — the exact class of gap
  * scripts/tests/indexer/parity.test.ts's new consolidated core<->edge
  * coverage test (SMI-6033 Wave 2) was added to catch on the edge side; this

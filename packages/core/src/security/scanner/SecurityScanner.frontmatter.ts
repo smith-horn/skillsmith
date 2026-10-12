@@ -39,8 +39,8 @@ export function scanExecutableFrontmatter(content: string): SecurityFinding[] {
       confidence: 'high',
       lineNumber: 1,
       message:
-        'frontmatter opens with an executable "---js" / "---javascript" block; ' +
-        'gray-matter-based parsers (@skillsmith/cli <= 0.8.13 import-local) evaluate it as code',
+        'frontmatter opens with an executable language tag (---js / ---javascript); ' +
+        'older gray-matter-based importers (such as @skillsmith/cli 0.8.13 and earlier, `import-local`) evaluate it as code',
       location: 'line 1',
     },
   ]

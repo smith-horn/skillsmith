@@ -8,6 +8,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   finding (critical severity, zero score weight), `install_skill` now refuses a skill whose
   SKILL.md frontmatter opens with `---js` or `---javascript` (unless `skipScan` on an eligible
   tier), and `skill_rescan` records a local `MALICIOUS` quarantine for one already installed.
+  The detector runs on every scanned file, so a bundled non-doc sibling file that opens with
+  `---js` is likewise rejected at install on new clients; `skill_rescan` does not quarantine a
+  skill on a sibling's flag-only finding.
   Security-audit test fixtures gain the new `RiskScoreBreakdown.executableFrontmatter` field.
 - **Fixed**: SMI-7068 -- the audit row for a `deprecate` or `undeprecate` that finds no matching
   skill now records the caller's role, like the other rows that operation writes.

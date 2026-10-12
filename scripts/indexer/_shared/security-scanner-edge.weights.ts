@@ -7,7 +7,9 @@
  * from security-scanner-edge.context.ts so every existing importer keeps
  * working unchanged. The SecurityFindingType import is type-only (erased at
  * runtime), so context -> weights creates no runtime import cycle. Kept
- * byte-identical to its supabase/functions/_shared twin (parity test enforces).
+ * byte-identical across both _shared twins (scripts/indexer/_shared and
+ * supabase/functions/_shared), apart from the @module line (parity test
+ * enforces).
  */
 
 // ============================================================================
@@ -22,7 +24,7 @@ import type { SecurityFindingType } from './security-scanner-edge.context.ts'
  * no core equivalent; it is mapped onto core's `ai_defence` (weight 1.9,
  * coefficient 0.12) since both detect AI-injection attacks.
  */
-export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
+export const CATEGORY_WEIGHTS: Readonly<Record<SecurityFindingType, number>> = {
   jailbreak: 2.0,
   suspicious_pattern: 1.3,
   data_exfiltration: 1.7,
@@ -66,10 +68,11 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
 
 /**
  * SMI-4960: per-category final coefficients — byte-identical to the multipliers
- * in core SecurityScanner.helpers.ts calculateRiskScore. `prompt_injection`
+ * in core weights.ts CATEGORY_COEFFICIENTS (consumed by
+ * SecurityScanner.risk-score.ts calculateRiskScore). `prompt_injection`
  * uses core's `ai_defence` coefficient (0.12).
  */
-export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
+export const CATEGORY_COEFFICIENTS: Readonly<Record<SecurityFindingType, number>> = {
   jailbreak: 0.2,
   suspicious_pattern: 0.07, // core suspiciousCode
   data_exfiltration: 0.08,
@@ -79,8 +82,8 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   // exactly the 40 quarantine threshold: 50 * 2.0 * 1.0 = 100 -> cap 100 -> * 0.40 = 40.
   code_execution: 0.4,
   obfuscated_directive: 0.4,
-  // SMI-6033 Wave 1: byte-identical to core SecurityScanner.helpers.ts
-  // calculateRiskScore's per-category coefficients — core's "advisory tier"
+  // SMI-6033 Wave 1: byte-identical to core weights.ts
+  // CATEGORY_COEFFICIENTS per-category coefficients — core's "advisory tier"
   // (the same 0.04 core uses for sensitivePaths/externalUrls/ssrf/typosquat).
   sensitive_path: 0.04,
   typosquat: 0.04,
@@ -96,11 +99,11 @@ export const CATEGORY_COEFFICIENTS: Record<SecurityFindingType, number> = {
   paste_host_fetch: 0.4,
   // SMI-6033 Wave 2 (Gap 2): additive 0.04 — the sensitive_path/typosquat
   // advisory-tier coefficient, byte-identical to core
-  // SecurityScanner.helpers.ts's paired coefficient for encoded_payload.
+  // weights.ts CATEGORY_COEFFICIENTS' paired coefficient for encoded_payload.
   encoded_payload: 0.04,
   // SMI-6033 Wave 4 (Gap 6): additive 0.04 — the sensitive_path/typosquat/
   // encoded_payload advisory-tier coefficient, byte-identical to core
-  // SecurityScanner.helpers.ts's paired coefficient for decoy_misdirection.
+  // weights.ts CATEGORY_COEFFICIENTS' paired coefficient for decoy_misdirection.
   decoy_misdirection: 0.04,
   // SMI-7030 (owner decision, 2026-10-09): exactly 0. The finding is reported
   // but never moves riskScore, alone or mixed with other findings, so it can

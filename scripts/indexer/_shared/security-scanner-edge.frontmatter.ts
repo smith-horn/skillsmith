@@ -2,11 +2,12 @@
  * SMI-7030: executable-frontmatter detector (flag-only)
  * @module scripts/indexer/_shared/security-scanner-edge.frontmatter (Node port)
  *
- * Structural detector for a SKILL.md whose frontmatter opener names the
- * `js` / `javascript` engine (`---js`). gray-matter 4.0.3, used by
- * `@skillsmith/cli` <= 0.8.13's `import-local`, evaluates that block with a
- * direct `eval`. The payload is arbitrary JavaScript, so the rule keys on the
- * opener itself and never on the block's contents.
+ * Structural detector for any scanned file (SKILL.md and bundled sibling files)
+ * whose frontmatter opener names the `js` / `javascript` engine (`---js`).
+ * gray-matter 4.0.3, used by `@skillsmith/cli` <= 0.8.13's `import-local`,
+ * evaluates that block with a direct `eval`. The payload is arbitrary
+ * JavaScript, so the rule keys on the opener itself and never on the block's
+ * contents.
  *
  * Flag-only: the finding is `critical`/`high` for reporting, but its category
  * coefficient is 0 (security-scanner-edge.weights.ts), so it never moves
@@ -43,7 +44,7 @@ export function scanExecutableFrontmatter(content: string): SecurityFinding[] {
       type: 'executable_frontmatter',
       severity: 'critical',
       message:
-        'frontmatter opens with an executable language tag (---js / ---javascript); older gray-matter-based importers evaluate it as code',
+        'frontmatter opens with an executable language tag (---js / ---javascript); older gray-matter-based importers (such as @skillsmith/cli 0.8.13 and earlier, `import-local`) evaluate it as code',
       lineNumber: 1,
       confidence: 'high',
     },
