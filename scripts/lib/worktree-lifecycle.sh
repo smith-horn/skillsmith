@@ -22,6 +22,33 @@ enumerate_worktree_paths() {
     printf '%s\n' "$raw" | sed -n 's/^worktree //p'
 }
 
+# worktree_lifecycle_worktrees_dir_readable MAIN -- 0 when MAIN/.worktrees is absent
+# (nothing to enumerate) or is a directory this process can read AND search. An
+# existing but unreadable/unsearchable one makes every glob below match nothing,
+# which reads as "no peers": callers check this FIRST and fail closed.
+worktree_lifecycle_worktrees_dir_readable() {
+    [[ -e "$1/.worktrees" || -L "$1/.worktrees" ]] || return 0
+    [[ -d "$1/.worktrees" && -r "$1/.worktrees" && -x "$1/.worktrees" ]]
+}
+
+# worktree_lifecycle_worktrees_dirs MAIN -- every directory directly under
+# MAIN/.worktrees, NUL-delimited (no trailing slash), dot-named ones included.
+# NUL, not newline: a directory name may contain a newline, which a line reader
+# would split into two bogus paths. Read it with
+# `while IFS= read -r -d '' d; do ...; done < <(worktree_lifecycle_worktrees_dirs M)`.
+# `*/` alone misses `.foo`, whose project name sanitizes to `foo` (leading
+# separators are stripped), so an unregistered `.worktrees/.foo` would be invisible
+# to the liveness set, the attribution check and the shared-project report. The
+# three globs cover `.x`, `..x` and `*`; unmatched globs stay literal and the
+# `-d` guard drops them. bash 3.2 safe (no nullglob/dotglob).
+worktree_lifecycle_worktrees_dirs() {
+    local d
+    for d in "$1"/.worktrees/*/ "$1"/.worktrees/.[!.]*/ "$1"/.worktrees/..?*/; do
+        [[ -d "$d" ]] || continue
+        printf '%s\0' "${d%/}"
+    done
+}
+
 # derive_protected(): sanitized project names for the captured listing in $1,
 # UNIONED with a `.worktrees/*/` scan of the main checkout $2 (names sanitizing
 # alike only OVER-protect). sanitize_project_name (_lib.sh) is the single
@@ -35,13 +62,10 @@ derive_protected() {
         sanitize_project_name "$base"
     done <<< "$wt_paths"
 
-    if [[ -d "$main_repo/.worktrees" ]]; then
-        local d
-        for d in "$main_repo"/.worktrees/*/; do
-            [[ -d "$d" ]] || continue
-            sanitize_project_name "$(basename "${d%/}")"
-        done
-    fi
+    local d
+    while IFS= read -r -d '' d; do
+        sanitize_project_name "$(basename "$d")"
+    done < <(worktree_lifecycle_worktrees_dirs "$main_repo")
 }
 
 # The positive control is derived INDEPENDENTLY of the listing it checks, from
@@ -71,6 +95,9 @@ derive_checkout_project() {
 # `if`/`||` errexit does not stop it (measured on bash 3.2, SMI-6981).
 derive_protected_or_die() {
     local main_repo="$1" out self wt_paths
+    if ! worktree_lifecycle_worktrees_dir_readable "$main_repo"; then
+        error "$main_repo/.worktrees exists but cannot be read and searched -- refusing to proceed: a directory that cannot be listed would read as \"no live worktrees\", so no protected set derived from it can be trusted."
+    fi
     if ! wt_paths="$(enumerate_worktree_paths "$main_repo")"; then
         error "\`git worktree list\` failed -- refusing to proceed. A listing from a failed command may be missing later worktrees, so no protected set derived from it can be trusted."
     fi
@@ -98,6 +125,21 @@ derive_protected_or_die() {
 is_protected() {
     local project="$1" protected_set="$2"
     grep -qxF "$project" <<< "$protected_set"
+}
+
+# Skillsmith-BUILT Compose projects that are not worktrees (SMI-7033). The
+# ownership label cannot distinguish these from a worktree's resources, and the
+# worktree-existence predicate cannot protect them, so they are named here.
+# Matches the exact project name OR the `skillsmith-eval-cron-` prefix family
+# (any `skillsmith-eval-cron-<suffix>`) -- a prefix match, so it can over-protect
+# a lookalike name, which is the safe direction. Never a substring match.
+# Lives here (SMI-7089) so the orphan pruner and lib/worktree-project-attribution.sh
+# share ONE copy.
+is_own_non_worktree_project() {
+    case "$1" in
+        skillsmith-eval-cron|skillsmith-eval-cron-*) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -375,6 +417,10 @@ worktree_lifecycle_delete() {
     if ! _wtl_gate "$kind" "$name" "$expect"; then
         echo "SKIPPED $kind $name: $_WTL_SKIP -- not deleted"
         worktree_lifecycle_lock_release
+        # A container that attached between the scan and this gate leaves the
+        # requested resource behind: a failure for the caller (OP_FAILED), unlike a
+        # re-created or ownership-lost resource, which is simply not ours any more.
+        [[ "${_WTL_SKIP_FAILS:-false}" == true ]] && return 1
         return 0
     fi
     if [[ "$kind" == volume ]]; then

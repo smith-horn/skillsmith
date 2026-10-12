@@ -21,7 +21,11 @@
 # project it may delete with `--only-project <name>`. Without it the run is
 # report-only (never `volume rm` / `rmi`, whatever other flags are set). With
 # it, only owned, unattached resources whose project equals <name> exactly are
-# deleted; every other orphan is report-only. The ownership and attachment gates
+# deleted; every other orphan is report-only. SMI-7089: under --only-project P the
+# scope also covers every other owned volume of P (name `P_<key>`, project label P,
+# volume label <key>: e.g. website-vercel-output) and P's `-test` image; an image
+# must say it belongs to P (project label) and to the expected service. This is
+# remove-worktree.sh's only deleter. The ownership and attachment gates
 # run once at selection and AGAIN inside the critical section, just before the
 # delete, against the identity recorded at selection: an image's ID (it is
 # deleted BY ID, and only if its tag still resolves to that ID and the ID is
@@ -179,14 +183,22 @@ if [[ "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
     exit 0
 fi
 
-if ! command -v docker &>/dev/null; then
-    warn "Docker not found -- skipping targeted orphan prune"
+# SMI-7089: a caller that NAMED a project (remove-worktree.sh) asked for that
+# project's resources to be removed; "Docker unusable" must not read as success.
+unusable_docker() {
+    if [[ "$ONLY_PROJECT_SET" == true ]]; then
+        error "$1 -- the targeted orphan prune for '$ONLY_PROJECT' could not run, so its image and volumes were NOT removed. Re-run once Docker is available: $0 --only-project $ONLY_PROJECT"
+    fi
+    warn "$1 -- skipping targeted orphan prune"
     exit 0
+}
+
+if ! command -v docker &>/dev/null; then
+    unusable_docker "Docker not found"
 fi
 
 if ! docker info &>/dev/null; then
-    warn "Docker daemon not reachable -- skipping targeted orphan prune"
-    exit 0
+    unusable_docker "Docker daemon not reachable"
 fi
 
 repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -217,53 +229,12 @@ LISTING_FAILED=false
 # Set when a gating inspect or a delete FAILS for a reason other than the object
 # having vanished: the run did not do what it was asked to, so it exits 1.
 OP_FAILED=false
-# Filled by label_of via `printf -v`, which shellcheck cannot see; declared here.
+# Filled via `printf -v` / image_labels_of, which shellcheck cannot see; declared here.
+# shellcheck disable=SC2034
 vol_shape_label="" vol_project_label="" vol_owned_label="" vol_created=""
-img_service_label="" img_owned_label="" img_id=""
-
-# label_of KIND OBJECT LABEL VAR -- read one label into VAR. Returns nonzero when
-# it could not be read: if the object merely vanished (benign) nothing else
-# happens; any OTHER failure warns and sets OP_FAILED, because an unreadable
-# label must not read as "label absent" (a silent skip, exit 0).
-label_of() {
-    local kind="$1" obj="$2" label="$3" var="$4" path=".Labels" out
-    [[ "$kind" == image ]] && path=".Config.Labels"
-    if out="$(docker "$kind" inspect "$obj" --format "{{index $path \"$label\"}}" 2>&1)"; then
-        printf -v "$var" '%s' "$out"
-        return 0
-    fi
-    if ! grep -qiE 'no such (volume|image)' <<< "$out"; then
-        warn "  Could not inspect $kind $obj (${out:-no output}) -- skipping"
-        OP_FAILED=true
-    fi
-    return 1
-}
-
-# Skillsmith-BUILT Compose projects that are not worktrees (SMI-7033). The
-# ownership label cannot distinguish these from a worktree's resources, and the
-# worktree-existence predicate cannot protect them, so they are named here.
-# Matches the exact project name OR the `skillsmith-eval-cron-` prefix family
-# (any `skillsmith-eval-cron-<suffix>`) -- a prefix match, so it can over-protect
-# a lookalike name, which is the safe direction. Never a substring match.
-is_own_non_worktree_project() {
-    case "$1" in
-        skillsmith-eval-cron|skillsmith-eval-cron-*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# Returns 0 (=> caller must SKIP) when containers are attached to the resource
-# named by the `docker ps` filter in $1 OR when that query FAILED. A failed query
-# is "unknown", not "unattached": treating it as unattached would let a transient
-# daemon error license a delete (SMI-6981). Callers: `attached_or_unknown F && continue`.
-attached_or_unknown() {
-    local out
-    if ! out="$(docker ps -aq --filter "$1" 2>/dev/null)"; then
-        warn "  Could not check container attachment for ${1#*=} -- skipping (unknown is not unattached)"
-        return 0
-    fi
-    [[ -n "$out" ]]
-}
+img_service_label="" img_owned_label="" img_project_label="" img_labels_json="" img_expect_service="" img_id=""
+# shellcheck disable=SC2034  # filled by attached_or_unknown (lib/worktree-lifecycle-docker.sh)
+ATTACHED_IDS=""
 
 # Classify a volume name into (project, expected compose.volume label), covering
 # `<project>_node_modules` and `<project>_native-seed-<module>` /
@@ -293,7 +264,7 @@ fi
 # incarnation_of VOLUME CREATED_VAR SHAPE_VAR PROJECT_VAR OWNED_VAR -- ONE inspect
 # at selection yields the identity (CreatedAt) AND every predicate label, so
 # nothing is judged on a different incarnation than the one recorded. Like
-# label_of: a volume that merely vanished is silent, any other failure warns and
+# image_labels_of: a volume that merely vanished is silent, any other failure warns and
 # sets OP_FAILED; returns 1.
 incarnation_of() {
     local out rest
@@ -324,20 +295,47 @@ if ! vol_list="$(docker volume ls --format '{{.Name}}' 2>/dev/null)"; then
 fi
 
 # --- volumes: build candidates against the initial protected snapshot ---
-declare -a vol_candidates=() vol_candidate_created=()
+# Selection. Unscoped (report-only) runs keep classify_volume's two shapes. Under
+# --only-project P a volume is ALSO considered when its name starts with `P_`
+# (SMI-7089): a per-worktree volume such as `P_website-vercel-output` fits neither
+# classify_volume shape and used to leak on every removal. It is a candidate only
+# when ALL hold, judged on the one inspect that records CreatedAt: its
+# com.docker.compose.project label is P, its com.docker.compose.volume label equals
+# the name with `P_` removed, and it is owned. A `P_x_node_modules` that belongs to
+# the project `P_x` fails the project label and is reported under its own project.
+declare -a vol_candidates=() vol_candidate_created=() vol_candidate_project=()
 while IFS= read -r vol; do
     [[ -z "$vol" ]] && continue
-    classify_volume "$vol" || continue
-    is_protected "$project" "$protected" && continue
+    cand_scoped=false
+    if [[ -n "$ONLY_PROJECT" && "$vol" == "${ONLY_PROJECT}_"* ]]; then
+        cand_scoped=true
+    else
+        classify_volume "$vol" || continue
+        is_protected "$project" "$protected" && continue
+    fi
 
     incarnation_of "$vol" vol_created vol_shape_label vol_project_label vol_owned_label || continue
+
+    if [[ "$cand_scoped" == true ]]; then
+        # P's own volume iff its volume label is the name minus `P_`. The project
+        # label is judged ONCE, by the shared check below -- not here as well.
+        if [[ "$vol_shape_label" == "${vol#"${ONLY_PROJECT}"_}" ]]; then
+            project="$ONLY_PROJECT"
+            expected_vol_key="${vol#"${ONLY_PROJECT}"_}"
+        else
+            # Not P's own volume: fall back to the shapes classify_volume knows, so
+            # another project's orphan is still REPORTED (never deleted).
+            classify_volume "$vol" || continue
+            is_protected "$project" "$protected" && continue
+        fi
+    fi
 
     [[ "$vol_shape_label" == "$expected_vol_key" ]] || continue
     [[ "$vol_project_label" == "$project" ]] || continue
     # Container attachment is mutable state, not identity: it is re-read inside the
     # critical section. Every identity-bound predicate above came from the one
     # inspect that recorded CreatedAt, so no window exists between them.
-    attached_or_unknown "volume=$vol" && continue
+    skip_if_attached "volume=$vol" "$vol" && continue
 
     # SMI-6981: an unconfirmed volume is NEVER a deletion candidate, whatever
     # --include-unlabeled says. `app.skillsmith.owned` is the only NON-CIRCULAR
@@ -362,6 +360,7 @@ while IFS= read -r vol; do
 
     vol_candidates+=("$vol")
     vol_candidate_created+=("$vol_created")
+    vol_candidate_project+=("$project")
 done <<< "$vol_list"
 
 # Every delete below runs inside worktree_lifecycle_delete (lib/worktree-lifecycle.sh):
@@ -374,7 +373,7 @@ done <<< "$vol_list"
 if (( ${#vol_candidates[@]} > 0 )); then
     for i in "${!vol_candidates[@]}"; do
         vol="${vol_candidates[$i]}"
-        classify_volume "$vol" || continue
+        project="${vol_candidate_project[$i]}"
         # Attachment, ownership and CreatedAt are re-checked INSIDE the section,
         # not here: any Docker actor can replace the volume while we wait for the
         # lock, and Docker deletes by name.
@@ -393,26 +392,39 @@ img_list="$(printf '%s\n' "$img_list" | sort -u)"
 
 while IFS= read -r img; do
     [[ -z "$img" || "$img" == "<none>" ]] && continue
-    [[ "$img" == *-dev ]] || continue
-    project="${img%-dev}"
+    # Report every `*-dev` image. Under --only-project P also consider P's `-test`
+    # image (SMI-7089): the dev container is not the only service a worktree
+    # builds, and that image leaked on every removal.
+    if [[ "$img" == *-dev ]]; then
+        project="${img%-dev}"
+        img_expect_service="dev"
+    elif [[ -n "$ONLY_PROJECT" && "$img" == "${ONLY_PROJECT}-test" ]]; then
+        project="$ONLY_PROJECT"
+        img_expect_service="test"
+    else
+        continue
+    fi
     is_protected "$project" "$protected" && continue
 
     # IDENTITY FIRST: resolve the immutable image ID once, then judge every
-    # Docker-observed image predicate (service, ownership, attachment) on that ID
-    # (labels are immutable per ID), never on the tag. The project/scope comes from
-    # the `<project>-dev` tag name, which is what is resolved to the ID. A tag
-    # retargeted after this line changes nothing that was checked; the section
+    # Docker-observed image predicate (service, ownership, project, attachment) on
+    # that ID (labels are immutable per ID), never on the tag. The scope comes from
+    # the `<project>-<service>` tag name, which is what is resolved to the ID. A
+    # tag retargeted after this line changes nothing that was checked; the section
     # re-checks that the tag still resolves to this ID and deletes BY ID.
     if ! img_id="$(worktree_lifecycle_image_id "$img")"; then
         warn "  Could not resolve image $img (${img_id:-no output}) -- skipping"
         OP_FAILED=true
         continue
     fi
-    label_of image "$img_id" com.docker.compose.service img_service_label || continue
-    [[ "$img_service_label" == "dev" ]] || continue
-    attached_or_unknown "ancestor=$img_id" && continue
+    image_labels_of "$img_id" || continue
+    if [[ "$img_labels_json" == "null" || "$img_labels_json" == "{}" ]]; then
+        echo "UNCONFIRMED ownership: $img (the image carries no labels -- report only, never deleted)"
+        continue
+    fi
+    [[ "$img_service_label" == "$img_expect_service" ]] || continue
+    skip_if_attached "ancestor=$img_id" "$img" && continue
 
-    label_of image "$img_id" app.skillsmith.owned img_owned_label || continue
     # SMI-6981: --include-unlabeled gated `docker rmi` exactly as it gated
     # `volume rm`, so a foreign `*-dev` image with no attached container and no
     # ownership label was deletable. Same rule, same reason.
@@ -428,6 +440,13 @@ while IFS= read -r img; do
 
     if ! in_scope "$project"; then
         echo "REPORT-ONLY orphan: $img (project not named by --only-project -- never deleted)"
+        continue
+    fi
+
+    # SMI-7089: a tag is only a name. `P-test` can be retagged onto another
+    # project's image, so the project the IMAGE says it belongs to must be P.
+    if [[ "$img_project_label" != "$project" ]]; then
+        echo "UNCONFIRMED project: $img (its image says project '${img_project_label:-<none>}', not '$project' -- report only, never deleted)"
         continue
     fi
 

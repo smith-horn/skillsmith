@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2154  # globals shared with the sourcing pruner (img_*, OP_FAILED, project)
 # worktree-lifecycle-docker.sh - the Docker-state reads of the orphan pruner and
 # the in-lock gate (SMI-6981). Sourced by prune-orphaned-docker-volumes.sh after
 # lib/worktree-lifecycle.sh, whose worktree_lifecycle_delete calls _wtl_gate;
@@ -66,6 +67,41 @@ worktree_lifecycle_image_id() {
     printf '%s' "$out"
 }
 
+# worktree_lifecycle_image_labels ID -- ONE read of an image's whole label map as
+# JSON (`null` when the image has none), printed on success; on failure prints the
+# reason and returns docker's status (124 = timed out), or 1 if the output is
+# neither `null` nor an object. SMI-7089: read once as JSON and parsed, never
+# inferred from a template error -- a six-field template failed on an unlabelled
+# image where one-field ones did not, so "unlabelled" is only ever what the JSON
+# says, not what a failed template implies.
+worktree_lifecycle_image_labels() {
+    local out rc
+    if out="$(_wtl_dk image inspect "$1" --format '{{json .Config.Labels}}')"; then
+        :
+    else
+        rc=$?
+        printf '%s' "$out"
+        return "$rc"
+    fi
+    if [[ "$out" != null && ! "$out" =~ ^\{.*\}$ ]]; then
+        printf 'unparseable image labels: %s' "$out"
+        return 1
+    fi
+    printf '%s' "$out"
+}
+
+# worktree_lifecycle_json_label JSON KEY -- the string value of KEY in a flat
+# label map, empty if absent. The needle includes the quotes, the colon and the
+# opening quote of the value, so it cannot match inside another label's value
+# (those quotes are backslash-escaped in the JSON) or as the tail of a longer key.
+worktree_lifecycle_json_label() {
+    local json="$1" needle rest
+    needle="\"$2\":\""
+    rest="${json#*"$needle"}"
+    [[ "$rest" != "$json" ]] || return 0
+    printf '%s' "${rest%%\"*}"
+}
+
 # _wtl_gate_fail WHAT STATUS DETAIL -- the stop message for an in-lock Docker
 # call that did not answer: names the call and the object.
 _wtl_gate_fail() {
@@ -95,11 +131,12 @@ _wtl_gate_fail() {
 _wtl_gate() {
     local kind="$1" name="$2" expect="$3" state cur owned attached rc
     _WTL_SKIP=""
+    _WTL_SKIP_FAILS=false
     _WTL_RM_TARGET="$name"
     if [[ "$kind" == volume ]]; then
         attached="$(_wtl_dk ps -aq --filter "volume=$name")" \
             || { rc=$?; error "$(_wtl_gate_fail "checking containers on volume $name" "$rc" "$attached")"; }
-        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; return 1; }
+        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; _WTL_SKIP_FAILS=true; return 1; }
         # Last: the incarnation read sits immediately before the delete.
         state="$(worktree_lifecycle_volume_state "$name")" \
             || { rc=$?; error "$(_wtl_gate_fail "re-inspecting volume $name" "$rc" "$state")"; }
@@ -116,7 +153,7 @@ _wtl_gate() {
     else
         attached="$(_wtl_dk ps -aq --filter "ancestor=$expect")" \
             || { rc=$?; error "$(_wtl_gate_fail "checking containers on image $expect" "$rc" "$attached")"; }
-        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; return 1; }
+        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; _WTL_SKIP_FAILS=true; return 1; }
         owned="$(_wtl_dk image inspect "$expect" --format '{{index .Config.Labels "app.skillsmith.owned"}}')" \
             || { rc=$?; error "$(_wtl_gate_fail "re-inspecting image $expect" "$rc" "$owned")"; }
         if [[ "$owned" != true ]]; then
@@ -134,3 +171,62 @@ _wtl_gate() {
     fi
     return 0
 }
+
+# image_labels_of ID -- read an image's whole label map ONCE as JSON
+# (worktree_lifecycle_image_labels) and set img_labels_json, img_service_label,
+# img_owned_label and img_project_label from it. An image that merely vanished is
+# silent; any OTHER failure warns and sets OP_FAILED. Returns 1 on failure.
+image_labels_of() {
+    local out rc
+    if out="$(worktree_lifecycle_image_labels "$1")"; then
+        img_labels_json="$out"
+        img_service_label="$(worktree_lifecycle_json_label "$out" com.docker.compose.service)"
+        img_owned_label="$(worktree_lifecycle_json_label "$out" app.skillsmith.owned)"
+        img_project_label="$(worktree_lifecycle_json_label "$out" com.docker.compose.project)"
+        return 0
+    else
+        rc=$?
+    fi
+    if ! grep -qiE 'no such image' <<< "$out"; then
+        warn "  Could not inspect image $1 (${out:-no output}; status $rc) -- skipping"
+        OP_FAILED=true
+    fi
+    return 1
+}
+
+# Returns 0 (=> caller must SKIP) when containers are attached to the resource
+# named by the `docker ps` filter in $1 OR when that query FAILED. A failed query
+# is "unknown", not "unattached": treating it as unattached would let a transient
+# daemon error license a delete (SMI-6981). On "attached" the container IDs are left
+# in ATTACHED_IDS (empty for "unknown", which has already warned), so a caller
+# holding an in-scope resource can say WHY it was skipped (SMI-7089).
+attached_or_unknown() {
+    local out
+    ATTACHED_IDS=""
+    if ! out="$(docker ps -aq --filter "$1" 2>/dev/null)"; then
+        warn "  Could not check container attachment for ${1#*=} -- skipping (unknown is not unattached)"
+        return 0
+    fi
+    ATTACHED_IDS="$(printf '%s' "$out" | tr '\n' ' ')"
+    [[ -n "$out" ]]
+}
+
+# skip_if_attached FILTER NAME -- the candidate-time attachment gate. Returns 0 (the
+# caller must `continue`) when the resource is attached or the query failed. When it
+# is attached AND its project is the one --only-project named, the skip is a FAILURE
+# of the requested cleanup, not a quiet skip: warn with the container IDs and set
+# OP_FAILED, so the run (and remove-worktree.sh, which names that project) exits 1
+# instead of reporting a cleanup that left the resource behind.
+skip_if_attached() {
+    attached_or_unknown "$1" || return 1
+    if in_scope "$project"; then
+        if [[ -n "$ATTACHED_IDS" ]]; then
+            warn "SKIPPED (attached): $2 by ${ATTACHED_IDS% }"
+        else
+            warn "SKIPPED (attachment unknown): $2: the container query (docker ps -aq --filter $1) failed"
+        fi
+        OP_FAILED=true
+    fi
+    return 0
+}
+

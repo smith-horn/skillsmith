@@ -5,196 +5,43 @@
 # Split out of remove-worktree.sh (SMI-6401) once the SMI-6401 volume-cleanup
 # fix pushed the parent script over this repo's 500-line file-length gate.
 # Sourced by remove-worktree.sh; not meant to be run standalone. Depends on
-# _lib.sh (info/success/warn/error/sanitize_project_name/get_main_git_dir)
-# already being sourced by the caller.
+# _lib.sh (info/success/warn/error) already being sourced by the caller.
+#
+# SMI-7089: this file no longer deletes anything. The per-worktree image and
+# volume deletes that used to live here (Path A `down --volumes --rmi local`,
+# Path B name-based `docker rmi` / `docker volume rm`) acted on a Compose project
+# by NAME with no ownership check, no lock and no liveness re-read, so a second
+# directory resolving to the same project lost its resources too. They are gone;
+# the orphan pruner is the only deleter.
 
 # Network count threshold for warning
 NETWORK_WARN_THRESHOLD=5
 
 #######################################
-# Stop Docker containers for a worktree
+# Stop and remove the worktree's containers (and then its project networks)
+#
+# SMI-7089: this is remove-worktree.sh's ONLY Docker mutation before the worktree is
+# removed, and it is NOT a project-scoped Compose call. `compose down` acts on
+# whatever the project holds at the moment it runs, so a container another checkout
+# starts after the attribution check would go too. Instead it removes EXACTLY the
+# container IDs the attribution check approved (WPA_CONTAINER_IDS; IDs are never
+# reused) with `docker rm -f`, then the project's networks, which Docker refuses to
+# remove while anything is attached (a warning, never forced). It deletes no volume
+# or image: those belong to the orphan pruner, which runs AFTER `git worktree remove`
+# under the lifecycle lock.
+#
+# MUST run only after worktree_project_attribution_or_die passed in the same run
+# (lib/worktree-project-attribution.sh). Skipped when that check found Docker
+# unavailable (WPA_DOCKER). A failed `rm -f` is fatal: the caller's worktree stays.
 #######################################
 stop_worktree_containers() {
     local worktree_path="$1"
 
-    # Check if docker-compose.override.yml exists in worktree
-    if [[ -f "$worktree_path/docker-compose.override.yml" ]]; then
-        info "Stopping Docker containers for worktree..."
-        if (cd "$worktree_path" && docker compose --profile dev down 2>/dev/null); then
-            success "  Docker containers stopped"
-        else
-            warn "  Could not stop Docker containers (may already be stopped)"
-        fi
-    fi
-}
-
-#######################################
-# Remove per-worktree Docker image and named volumes
-#
-# IMPORTANT: this function MUST run BEFORE `git worktree remove` because
-# Path A (`docker compose down`) needs the worktree directory (and its
-# docker-compose.override.yml) to still exist. Do NOT reorder.
-#
-# Arguments:
-#   $1 - Worktree path (absolute)
-#
-# Behavior:
-#   - Refuses to operate on the main repo (would destroy active dev resources)
-#   - Path A: `docker compose <discovered --profile args> down --volumes
-#     --rmi local` from the worktree dir (SMI-6401: profile discovery is
-#     REQUIRED — dev/test are profile-gated, and Compose silently no-ops on
-#     `down`/`config` for profile-gated services without an explicit
-#     `--profile`)
-#   - Path B: name-based fallback `docker rmi` + a `docker volume rm` loop
-#     over every named volume `docker compose config --format json` reports
-#     (falling back to the single historical `_node_modules` name if that
-#     discovery fails) — idempotent
-#######################################
-cleanup_worktree_docker_resources() {
-    local worktree_path="$1"
-
-    if ! command -v docker &>/dev/null; then
-        warn "Docker not found, skipping per-worktree resource cleanup"
+    if [[ "${WPA_DOCKER:-}" != reachable ]]; then
+        info "Skipping Docker container stop (Docker is ${WPA_DOCKER:-not checked}) -- no Docker resources were touched"
         return 0
     fi
-
-    # Critical guard: never operate on the main repo. Without this,
-    # misinvoking `remove-worktree.sh /path/to/main` would destroy
-    # `skillsmith-dev` + `skillsmith_node_modules`.
-    local main_dir main_repo
-    main_dir="$(get_main_git_dir "$worktree_path" 2>/dev/null || true)"
-    if [[ -n "$main_dir" ]]; then
-        main_repo="$(dirname "$main_dir")"
-        if [[ "$worktree_path" == "$main_repo" ]]; then
-            error "Refusing to clean Docker resources for the main repo: $worktree_path"
-        fi
-    fi
-
-    # Compose-equivalent project name. sanitize_project_name() (_lib.sh) is the
-    # single canonical implementation (see its comment for the exact rules, which
-    # this comment deliberately does not restate) -- shared with
-    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750). Plain
-    # `basename` would diverge for dirs containing uppercase or special chars.
-    local project_name
-    project_name="$(sanitize_project_name "$(basename "$worktree_path")")"
-
-    # SMI-6401: declared ONCE here, unconditionally — NOT inside the
-    # `if [[ -f docker-compose.override.yml ]]` block below. A `local -a
-    # x=()` statement only creates the variable when its containing block
-    # actually runs; if the override file is absent (a real code path —
-    # e.g. a worktree whose container was never started), a declaration
-    # living only inside that `if` would never execute, and referencing
-    # ${declared_volume_keys[@]} further down would crash with "unbound
-    # variable" under this script's `set -euo pipefail` before
-    # `git worktree remove` ever runs (caught in plan review — see
-    # docs/internal/implementation/smi-6401-remove-worktree-volume-cleanup.md).
-    local -a compose_profile_args=()
-    local -a declared_volume_keys=()
-
-    # Path A: prefer compose-managed teardown when the override file exists.
-    # `down --volumes --rmi local` removes named volumes declared in compose
-    # AND any image without an explicit `image:` field. NOTE: --rmi local is
-    # load-bearing — if a service in docker-compose.yml gains an explicit
-    # `image:` field, --rmi local becomes a silent no-op and Path B alone
-    # carries the cleanup. The audit-standards check enforces no `image:`
-    # field at lint time.
-    #
-    # SMI-6401: docker-compose.yml gates BOTH `dev` and `test` behind
-    # `profiles:` keys (profiles: [dev] / profiles: [test]). Docker Compose
-    # v2/v5 treats "no active profile" as "zero services in scope" for BOTH
-    # `down` and `config` — confirmed empirically (see the plan doc): without
-    # an explicit --profile flag, this `down --volumes --rmi local` call
-    # used to silently touch NOTHING — not the container, not the image, not
-    # a single named volume — despite exiting 0 and this function reporting
-    # "Compose teardown complete" below. Every volume that appeared cleaned
-    # up before this fix was actually removed by a DIFFERENT mechanism
-    # entirely (stop_worktree_containers's own `--profile dev down` for the
-    # container; the SMI-5750 orphan-prune step for *_native-seed-*
-    # volumes; Path B's name-based `_node_modules` guess below) — this call
-    # itself was a complete no-op. `config --profiles` discovers the actual
-    # declared profile set instead of hardcoding "dev"/"test" literally, so
-    # a future new profile can't reintroduce this same silent-no-op class of
-    # bug (same "derive, don't hardcode" convention as SMI-5650/SMI-6050).
-    if [[ -f "$worktree_path/docker-compose.override.yml" ]]; then
-        local profile
-        while IFS= read -r profile; do
-            [[ -n "$profile" ]] && compose_profile_args+=(--profile "$profile")
-        done < <(cd "$worktree_path" && docker compose config --profiles 2>/dev/null || true)
-        if [[ "${#compose_profile_args[@]}" -eq 0 ]]; then
-            warn "  No Compose profiles discovered (docker compose config --profiles returned nothing) — dev/test teardown may silently no-op"
-        fi
-
-        info "Removing per-worktree Docker image and volumes (compose)..."
-        if (cd "$worktree_path" && docker compose ${compose_profile_args[@]+"${compose_profile_args[@]}"} down --volumes --rmi local 2>/dev/null); then
-            success "  Compose teardown complete"
-        else
-            warn "  Compose teardown returned non-zero (continuing with name-based fallback)"
-        fi
-
-        # SMI-6401: derive the FULL per-worktree named-volume list from
-        # docker-compose.yml's own resolved config (base + override,
-        # profile-inclusive) instead of hardcoding "_node_modules" alone —
-        # a hardcoded single name silently stopped covering
-        # website-vercel-output (SMI-6192) and would silently miss any
-        # FUTURE named volume the same way. Requires the SAME --profile args
-        # as the `down` call above: `config` (like `down`) also returns
-        # nothing for profile-gated services without them (confirmed live in
-        # the plan doc — `docker compose config --format json` alone
-        # returns `{"volumes":{}}` for this repo).
-        local config_json
-        config_json="$(cd "$worktree_path" && docker compose ${compose_profile_args[@]+"${compose_profile_args[@]}"} config --format json 2>/dev/null || true)"
-        if [[ -n "$config_json" ]]; then
-            local vol_key
-            while IFS= read -r vol_key; do
-                [[ -n "$vol_key" ]] && declared_volume_keys+=("$vol_key")
-            done < <(printf '%s' "$config_json" | node -e '
-let data = "";
-process.stdin.on("data", (d) => { data += d; });
-process.stdin.on("end", () => {
-    try {
-        const cfg = JSON.parse(data);
-        const vols = (cfg && cfg.volumes) || {};
-        for (const name of Object.keys(vols)) {
-            if (vols[name] && vols[name].external) continue;
-            console.log(name);
-        }
-    } catch (e) {
-        // Malformed JSON — print nothing; caller falls back below.
-    }
-});
-' 2>/dev/null || true)
-        fi
-    fi
-
-    # Fall back to the single historical volume name if compose-config
-    # discovery failed or was unavailable for any reason (no override file,
-    # docker unreachable, malformed JSON, `node` unavailable) — this is a
-    # best-effort safety net layered under Path A, never a hard failure, and
-    # never regresses below the pre-SMI-6401 baseline behavior.
-    if [[ "${#declared_volume_keys[@]}" -eq 0 ]]; then
-        declared_volume_keys=("node_modules")
-    fi
-
-    # SMI-6981: neither path below takes the worktree lifecycle lock. Against a
-    # concurrent create-worktree.sh they are protected only by its refusal to
-    # register a second worktree for this Docker project (D-1) plus the order in
-    # remove-worktree.sh (this runs before `git worktree remove`, while this
-    # worktree is still registered). They are NOT protected against a plain
-    # `git worktree add` of a same-project name.
-
-    # Path B: name-based fallback. Idempotent — these always run, even when
-    # Path A succeeded, to catch any image/volume that compose lost track of
-    # (e.g. previous partial runs, manually-renamed projects, or the compose
-    # discovery above failing).
-    info "Removing Docker resources by derived name..."
-    docker rmi "${project_name}-dev" 2>/dev/null && success "  Removed image $project_name-dev" || true
-    local vol_key removed_count=0
-    for vol_key in "${declared_volume_keys[@]}"; do
-        docker volume rm "${project_name}_${vol_key}" 2>/dev/null && removed_count=$((removed_count + 1)) || true
-    done
-    [[ "$removed_count" -gt 0 ]] && success "  Removed $removed_count volume(s) by derived name"
-
-    info "Tip: pass --keep-docker on future removals to preserve image + volume."
+    worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")"
 }
 
 #######################################
@@ -205,8 +52,25 @@ check_docker_networks() {
         return 0
     fi
 
-    local network_count
-    network_count=$(docker network ls --format '{{.Name}}' 2>/dev/null | wc -l | tr -d ' ')
+    # Captured with `if !`, never a bare `x=$(a | b)`: under `set -euo pipefail` a
+    # failing `docker network ls` (daemon gone) would abort the script AFTER
+    # `git worktree remove` already ran, with no summary.
+    # stdout only is the list of names: stderr from a SUCCESSFUL call (a daemon
+    # warning) must not be counted as networks, so it goes to a scratch file that
+    # is read only to explain a failure.
+    local network_count names errfile
+    errfile="$(mktemp "${TMPDIR:-/tmp}/rwd-netls.XXXXXX" 2>/dev/null)" || errfile=/dev/null
+    if ! names="$(docker network ls --format '{{.Name}}' 2>"$errfile")"; then
+        warn "Could not list Docker networks (docker network ls failed): $(cat "$errfile" 2>/dev/null)"
+        [[ "$errfile" == /dev/null ]] || rm -f "$errfile"
+        return 0
+    fi
+    [[ "$errfile" == /dev/null ]] || rm -f "$errfile"
+    if [[ -z "$names" ]]; then
+        network_count=0
+    else
+        network_count=$(printf '%s\n' "$names" | wc -l | tr -d ' ')
+    fi
 
     if [[ "$network_count" -gt "$NETWORK_WARN_THRESHOLD" ]]; then
         warn "Docker has $network_count networks (threshold: $NETWORK_WARN_THRESHOLD)"
@@ -234,7 +98,13 @@ prune_docker_networks() {
 
     info "Pruning stale Docker networks..."
     local pruned
-    pruned=$(docker network prune -f 2>&1)
+    # Best-effort and user-requested: a failure warns and returns 0 (a bare
+    # `pruned=$(...)` would abort the script under `set -e` after the worktree
+    # was already removed).
+    if ! pruned="$(docker network prune -f 2>&1)"; then
+        warn "  network prune failed: ${pruned:-no output}"
+        return 0
+    fi
 
     if echo "$pruned" | grep -q "Deleted Networks"; then
         success "  $pruned"
@@ -255,7 +125,8 @@ prune_docker_networks() {
 #
 # SMI-5750: a separate, TARGETED orphan prune (only volumes/images belonging
 # to worktrees git no longer knows about) now runs automatically at the end
-# of every removal, unconditionally — see the call site in main() (in
+# of every removal (SMI-7089: it is remove-worktree.sh's only deleter),
+# unconditionally — see the call site in main() (in
 # remove-worktree.sh), after the --prune block. It is safe at any
 # concurrency level because its deletion predicate is worktree-existence,
 # not container-running state. The two BLANKET commands printed below

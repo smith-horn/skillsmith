@@ -164,7 +164,11 @@ derive_tier_b_paths() {
 #   Sanitized project-name-safe string, followed by a newline, to stdout
 #######################################
 sanitize_project_name() {
-    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]//g' -e 's/^[_-]*//'
+    # A newline inside a name is dropped like any other invalid character (sed
+    # works line by line, so it would otherwise survive and split the result into
+    # two "names"). The inner substitution strips whatever trailing newline the
+    # local sed adds, so the output is one line on GNU and BSD alike.
+    printf '%s\n' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '\n' | sed -e 's/[^a-z0-9_-]//g' -e 's/^[_-]*//')"
 }
 
 #######################################

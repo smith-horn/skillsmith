@@ -306,6 +306,13 @@ describe('SMI-6981: static scans over the source closure', () => {
     ...new Set([
       ...sourceClosure(join(SCRIPTS, 'prune-orphaned-docker-volumes.sh')),
       ...sourceClosure(join(SCRIPTS, 'create-worktree.sh')),
+      // SMI-7089: the attribution library runs on the macOS host's bash 3.2 and
+      // must keep fd 7 to the lock. worktree-docker.sh sources it through
+      // $WORKTREE_DOCKER_LIB_DIR, which the closure walk does not follow, so it is
+      // listed explicitly (with its libraries).
+      ...sourceClosure(join(SCRIPTS, 'remove-worktree.sh')),
+      join(SCRIPTS, 'worktree-docker.sh'),
+      join(SCRIPTS, 'lib', 'worktree-project-attribution.sh'),
     ]),
   ]
   const LIB = join(SCRIPTS, 'lib', 'worktree-lifecycle.sh')
