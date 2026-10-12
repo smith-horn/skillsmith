@@ -348,12 +348,24 @@ EOF`}</code></pre>
   <p>Install a skill to the local environment.</p>
 
   <pre><code>{`// Tool: install_skill
-// Parameters:
+// Parameters (common ones; see the tool's input schema for the rest):
 {
-  "id": "community/jest-helper",  // Skill ID (required)
-  "path": "~/.claude/skills",     // Installation path
-  "force": false                  // Overwrite existing
+  "skillId": "community/jest-helper", // Skill ID (owner/repo/skill) or GitHub URL (required)
+  "force": false,                     // Reinstall if already installed
+  "skipScan": false,                  // Skip the security scan (allowlisted tiers only)
+  "confirmed": false                  // Confirm a tier outside the allowlist
 }`}</code></pre>
+
+  <p>
+    A registry skill whose trust tier is not official, verified, curated, community or local (for
+    example, <code>unverified</code>) needs <code>confirmed: true</code>. Without it the tool returns
+    <code>CONFIRMATION_REQUIRED</code> with the tier and the reason. <code>confirmed</code> never
+    skips the security scan, and <code>skipScan</code> is refused for these tiers and for direct
+    GitHub URL installs. The security scan rejects a skill whose SKILL.md opens with executable
+    <code>---js</code> frontmatter; only an install in the official, verified, curated, community or local tiers with <code>skipScan</code> bypasses
+    that check. (<code>local</code> means a skill imported from disk with <code>skillsmith import-local</code>;
+    <code>experimental</code> and <code>unknown</code> are legacy names that are also gated.)
+  </p>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
@@ -684,8 +696,20 @@ Assistant: [Uses compare tool] Here's a comparison:
         <td>No verification performed</td>
         <td>None</td>
       </tr>
+      <tr>
+        <td><code>local</code></td>
+        <td>Imported from disk with <code>skillsmith import-local</code></td>
+        <td>None; you control this skill</td>
+      </tr>
     </tbody>
   </table>
+
+  <p>
+    Installing a registry skill outside the official, verified, curated, community and local tiers
+    needs confirmation (<code>confirmed: true</code>, or <code>--yes</code> in the CLI), and the
+    security scan can't be skipped for it. That list is an install policy, not a review claim: a
+    <code>local</code> skill is on it because you imported it yourself, not because anyone reviewed it.
+  </p>
 
   <h2>Lifecycle Tutorials</h2>
 

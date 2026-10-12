@@ -16,7 +16,7 @@ All notable changes to `@skillsmith/core` are documented here.
   instead of the scanner default. A registry skill whose tier is `unverified` now needs
   `confirmed=true`; clients that cannot pass it will see `CONFIRMATION_REQUIRED`. The
   confirmation reason now reads `This skill is in the "<tier>" trust tier.` (an empty tier reads
-  `unknown`), and a `SCAN_REJECTED` error for any unreviewed tier says strictest scanning was
+  `unknown`), and a `SCAN_REJECTED` error for any tier outside that allowlist says strictest scanning was
   applied. Only a direct GitHub URL install is labelled "Direct GitHub install"; a registry
   skill stored as `unknown` was mislabelled as one.
 - **Added**: SMI-7030 -- the scanner now raises an `executable_frontmatter` finding (critical,
