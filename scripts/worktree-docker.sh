@@ -450,7 +450,7 @@ main() {
         fi
         shift
         if [[ ! "$exec_worktree_path" = /* ]]; then
-            exec_worktree_path="$(cd "$exec_worktree_path" 2>/dev/null && pwd)" || error "Invalid path: $exec_worktree_path"
+            exec_worktree_path="$(CDPATH='' cd -L -- "$exec_worktree_path" 2>/dev/null && builtin pwd -L)" || error "Invalid path: $exec_worktree_path"
         fi
         cmd_exec "$exec_worktree_path" "$@"
         return
@@ -460,7 +460,7 @@ main() {
 
     # Convert to absolute path
     if [[ ! "$worktree_path" = /* ]]; then
-        worktree_path="$(cd "$worktree_path" 2>/dev/null && pwd)" || error "Invalid path: $worktree_path"
+        worktree_path="$(CDPATH='' cd -L -- "$worktree_path" 2>/dev/null && builtin pwd -L)" || error "Invalid path: $worktree_path"
     fi
 
     case "$command" in
