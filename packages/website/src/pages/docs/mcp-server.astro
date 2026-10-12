@@ -348,12 +348,24 @@ EOF`}</code></pre>
   <p>Install a skill to the local environment.</p>
 
   <pre><code>{`// Tool: install_skill
-// Parameters:
+// Parameters (common ones; see the tool's input schema for the rest):
 {
-  "id": "community/jest-helper",  // Skill ID (required)
-  "path": "~/.claude/skills",     // Installation path
-  "force": false                  // Overwrite existing
+  "skillId": "community/jest-helper", // Skill ID (owner/repo/skill) or GitHub URL (required)
+  "force": false,                     // Reinstall if already installed
+  "skipScan": false,                  // Skip the security scan (reviewed tiers only)
+  "confirmed": false                  // Confirm an unreviewed trust tier
 }`}</code></pre>
+
+  <p>
+    A registry skill whose trust tier is not official, verified, curated, community or local (for
+    example, <code>unverified</code>) needs <code>confirmed: true</code>. Without it the tool returns
+    <code>CONFIRMATION_REQUIRED</code> with the tier and the reason. <code>confirmed</code> never
+    skips the security scan, and <code>skipScan</code> is refused for these tiers and for direct
+    GitHub URL installs. The security scan rejects a skill whose SKILL.md opens with executable
+    <code>---js</code> frontmatter; only a reviewed-tier install with <code>skipScan</code> bypasses
+    that check. (<code>local</code> means a skill imported from disk with <code>skillsmith import-local</code>;
+    <code>experimental</code> and <code>unknown</code> are legacy names that are also gated.)
+  </p>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
@@ -686,6 +698,12 @@ Assistant: [Uses compare tool] Here's a comparison:
       </tr>
     </tbody>
   </table>
+
+  <p>
+    Installing a registry skill outside the official, verified, curated, community and local tiers
+    needs confirmation (<code>confirmed: true</code>, or <code>--yes</code> in the CLI), and the
+    security scan can't be skipped for it.
+  </p>
 
   <h2>Lifecycle Tutorials</h2>
 
