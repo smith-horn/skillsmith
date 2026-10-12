@@ -183,9 +183,9 @@ check(
 )
 // Guards the set's own contents against a silent edit.
 check(
-  '6f the set is exactly the three ids R6 names',
+  '6f the set is exactly the ids R6 names (A13-C4 added by SMI-6715; A13-C4-OOM excluded)',
   [...PROBABILISTIC_ATTACKS].sort().join(','),
-  'A13,A13-TIMING,A13-VR'
+  'A13,A13-C4,A13-TIMING,A13-VR'
 )
 
 // --- 7. aggregateCell DERIVES THE ATTACK RATHER THAN ASKING FOR IT -------

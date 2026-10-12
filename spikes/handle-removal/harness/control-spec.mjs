@@ -31,6 +31,21 @@ function headVariant(v) {
   return v == null ? null : String(v).split('/')[0]
 }
 
+/** One controlled C4 row: control = C4-naive, same attack, exact variant. */
+function c4Controlled(attack) {
+  return {
+    [attack]: {
+      control: {
+        kind: 'in-data',
+        candidate: 'C4-naive',
+        matchVariant: 'exact',
+        cite: `SMI-6715: ${attack} against C4-naive (guard ablated) is the control`,
+      },
+      isControlCandidate: (c) => c === 'C4-naive',
+    },
+  }
+}
+
 /**
  * One row per attack label as it appears in the DATA (not the plan's own ID,
  * which the runners split -- e.g. plan A9 is recorded as A9-C0 and A9-VR).
@@ -197,6 +212,34 @@ export const CONTROL_SPEC = {
       cite: 'methodology experiment (arm-C warming confound), not a §5.1 attack cell',
     },
   },
+  // C4 attack rows (SMI-6715). The control for a C4 cell is the SAME attack
+  // against C4-naive (quarantineTree with the guard ablated), same variant.
+  ...c4Controlled('A3-C4'),
+  ...c4Controlled('A4-C4'),
+  ...c4Controlled('A7-C4'),
+  ...c4Controlled('A8-C4'),
+  ...c4Controlled('A10-C4'),
+  ...c4Controlled('A1-C4'),
+  ...c4Controlled('A2-C4'),
+  ...c4Controlled('A13-C4'),
+  'A8a-C4': {
+    control: {
+      kind: 'none',
+      cite: 'property check: rename(2) moves a symlink, it cannot unlink or follow one, so both arms pass by construction; outside bytes must stay intact',
+    },
+  },
+  'A10b-C4': {
+    control: {
+      kind: 'none',
+      cite: 'property check: rename(2) moves the name, never the shared inode, so both arms pass by construction; the outside hard-linked file must stay intact',
+    },
+  },
+  'A13-C4-OOM': {
+    control: {
+      kind: 'none',
+      cite: 'record-only: racer landings in the out-of-model window (re-check entered .. rename returned), ADR-166 D-0',
+    },
+  },
   N1: { control: { kind: 'external', cite: "plan §5.1 N1: 'gate B (E48) for C0 only'" } },
   'N1-VR': {
     control: {
@@ -332,6 +375,13 @@ export function controlTag(state) {
  * contents, so an edit here fails a test rather than silently rescoring a
  * family.
  *
+ * A13-C4 IS IN THE SET (SMI-6715) because R6's own terms apply: it is A13 -- a
+ * concurrent racer whose landing is probabilistic -- run against C4, so a run
+ * where the racer did not land must leave the denominator exactly as for the
+ * other A13 cells. A13-C4-OOM is DELIBERATELY NOT in it: it is record-only
+ * (no verdict is scored, ADR-166 D-0 puts its window out of model), and adding
+ * it would give an unscored label an R6 verdict.
+ *
  * WHAT THE EXCLUSION DOES NOT SHOW (SMI-6711 MEDIUM 6, 2026-10-12). Calling
  * these two "methodology experiments" is a statement about why they were run,
  * not evidence that their mechanism differs from A13's -- the paragraph above
@@ -340,7 +390,7 @@ export function controlTag(state) {
  * beside the scored A13 cells, so a reader weighing the removal decision sees
  * them.
  */
-export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING'])
+export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING', 'A13-C4'])
 export const LANDED_FLOOR = 100
 
 /** Whether §9's `never-ran == 0` clause applies to this attack. */

@@ -91,7 +91,6 @@ console.log(`[fixture-root self-test] resolveHarnessRoot() -> ${resolved} (smoke
 
 // 7. assertScratchEmpty reports non-empty correctly.
 const fx2 = makeFixtureRoot({ harnessRoot: harnessBase })
-const trashDir = path.join(fx2.root, '.skillsmith-trash')
 const emptyCheck = assertScratchEmpty(fx2.root, ['.skillsmith-trash'])
 console.log(
   `[fixture-root self-test] assertScratchEmpty on absent dir: ${emptyCheck.clean ? 'PASS' : 'FAIL'}`

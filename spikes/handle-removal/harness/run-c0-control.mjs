@@ -11,13 +11,7 @@
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  appendJsonl,
-  makeRecord,
-  classifyRecord,
-  aggregateCell,
-  formatVerdict,
-} from './result-schema.mjs'
+import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
 import * as a3 from './attacks/a3.mjs'

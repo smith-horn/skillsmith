@@ -12,19 +12,15 @@ import path from 'node:path'
 // results/generate-summary.mjs. control-spec.mjs imports nothing from here, so
 // there is no cycle.
 import { verdictFor } from './control-spec.mjs'
-
-/**
- * Anything the removal machinery creates beside a tree it is removing is
- * named with this prefix -- V2's own private quarantine directory
- * (`.skillsmith-rm-<opId>`, walk.mjs) and C4's trash root
- * (`.skillsmith-trash`, quarantine.mjs). Matching on the PREFIX rather than
- * either exact name is deliberate: a leftover from a naming scheme this
- * scanner has not been told about must still be counted, not silently
- * reported as zero.
- */
-const QUARANTINE_PREFIX = '.skillsmith-'
-
-const MAX_REPORTED_PATHS = 8
+import {
+  QUARANTINE_PREFIX,
+  MAX_REPORTED_PATHS,
+  scanC4Leftovers,
+  isC4Cell,
+  c4Snapshot,
+  c4UserFileExtras,
+  c4Validate,
+} from './result-schema.c4.mjs'
 
 /**
  * Looks in `parentAbs` -- the directory that held the removed tree, and the
@@ -55,9 +51,15 @@ const MAX_REPORTED_PATHS = 8
  * joined, and BEFORE the fixture root is torn down.
  *
  * @param {string} parentAbs
- * @returns {{dirs:number|null, entries:number|null, paths:string[], scanError:string|null}}
+ * @param {string} [variant]
+ * @param {{status?:string, opId?:string}} [options] - C4 only: the outcome's
+ *   status and the op id the call used (see scanC4Leftovers)
+ * @returns {{dirs:number|null, entries:number|null, paths:string[], scanError:string|null,
+ *   expected?:{present:boolean|null, entries:number|null, path:string|null}, litter?:number|null}}
+ *   (`expected` and `litter` are present for C4 variants only)
  */
-export function scanQuarantineLeftovers(parentAbs, variant) {
+export function scanQuarantineLeftovers(parentAbs, variant, options) {
+  if (variant === 'C4' || variant === 'C4-naive') return scanC4Leftovers(parentAbs, options)
   // Only V2 creates a quarantine directory (`walk.mjs`: `if (variant === 'V2')`
   // guards the mkdirAt). For V0 and V1 a scan can only ever return
   // `{dirs:0, entries:0}` -- a confident zero about a mechanism that does not
@@ -95,7 +97,7 @@ export function scanQuarantineLeftovers(parentAbs, variant) {
   return { dirs, entries, paths, scanError: null }
 }
 
-/** @typedef {'removed'|'kept'|'stopped'|'harness-error'} Outcome */
+/** @typedef {'removed'|'kept'|'stopped'|'quarantined'|'harness-error'} Outcome */
 
 /**
  * Builds a normalized run record. Callers fill in `cell`, `precondition`,
@@ -114,22 +116,16 @@ export function scanQuarantineLeftovers(parentAbs, variant) {
  * @returns {object}
  */
 export function makeRecord(fields) {
-  const {
-    cell,
-    run,
-    precondition,
-    outcome,
-    userFiles,
-    outsideIntact = true,
-    durationMs = null,
-    fsCheck = null,
-  } = fields
+  const { cell, run, outcome, outsideIntact = true, durationMs = null, fsCheck = null } = fields
+  // `let`: for C4 cells both are replaced by a validated snapshot below.
+  let { precondition, userFiles } = fields
   // `??` on BOTH sides. The inner test used to be truthiness, so a caller
   // passing `0`/`false`/`''` on outcome.quarantineLeft collapsed to null --
   // indistinguishable from "no scan ran" -- while the same value passed
   // top-level survived. Two paths disagreeing about one value is how a null
   // starts meaning two things at once.
   const quarantineLeft = fields.quarantineLeft ?? outcome?.quarantineLeft ?? null
+  const c4 = isC4Cell(cell)
 
   if (!cell || typeof cell !== 'object') {
     throw new TypeError('makeRecord: cell is required')
@@ -145,6 +141,11 @@ export function makeRecord(fields) {
   }
   if (!userFiles || typeof userFiles !== 'object') {
     throw new TypeError('makeRecord: userFiles is required')
+  }
+  if (c4) {
+    // Snapshot BEFORE any field is read, and throw on a non-plain shape.
+    precondition = c4Snapshot(precondition, 'precondition')
+    userFiles = c4Snapshot(userFiles, 'userFiles')
   }
   if (typeof userFiles.checked !== 'number') {
     throw new TypeError('makeRecord: userFiles.checked (the denominator) is required')
@@ -163,14 +164,16 @@ export function makeRecord(fields) {
       runner: cell.runner ?? 'unknown',
     },
     run,
-    precondition: {
-      hookFired: precondition.hookFired ?? null,
-      mutationApplied: precondition.mutationApplied ?? null,
-      reuseObserved: precondition.reuseObserved ?? null,
-      mountActiveAtWalk: precondition.mountActiveAtWalk ?? null,
-      controlExpected: precondition.controlExpected ?? null,
-      ...precondition,
-    },
+    precondition: c4
+      ? precondition
+      : {
+          hookFired: precondition.hookFired ?? null,
+          mutationApplied: precondition.mutationApplied ?? null,
+          reuseObserved: precondition.reuseObserved ?? null,
+          mountActiveAtWalk: precondition.mountActiveAtWalk ?? null,
+          controlExpected: precondition.controlExpected ?? null,
+          ...precondition,
+        },
     outcome: {
       status: outcome.status,
       reason: outcome.reason ?? null,
@@ -182,6 +185,9 @@ export function makeRecord(fields) {
       checked: userFiles.checked,
       lost: userFiles.lost ?? 0,
       changed: userFiles.changed ?? 0,
+      // C4 only: displaced/deleted pass through UNCOERCED so a malformed value
+      // reaches classifyRecord (which rejects it) instead of being defaulted.
+      ...(c4 ? c4UserFileExtras(userFiles) : {}),
     },
     outsideIntact,
     quarantineLeft,
@@ -198,7 +204,8 @@ export function makeRecord(fields) {
  * explicitly false, or the harness itself errored. Only among records whose
  * preconditions all held do we ask whether the run failed or passed.
  *
- * @param {object} record - from makeRecord()
+ * @param {object} record - from makeRecord(). C4 records (candidate C4/C4-naive, or
+ *   attack ending -C4/-C4-OOM) get stricter clauses; see c4Validate.
  * @param {(record: object) => boolean} [isContradictory] - attack-specific
  *   predicate for "an outcome contradicting the pass criterion" (e.g.
  *   `removed` after an identity mismatch, or anything removed after an
@@ -209,6 +216,14 @@ export function makeRecord(fields) {
 export function classifyRecord(record, isContradictory = () => false) {
   if (record.outcome.status === 'harness-error') {
     return 'never-ran'
+  }
+  if (isC4Cell(record.cell)) {
+    // ONE read: the values c4Validate checked are the values scored. Scoring
+    // through record.userFiles.lost ([[Get]]) after validating via descriptor
+    // let a Proxy validate one number and score another.
+    const v = c4Validate(record)
+    if (v === null) return 'never-ran'
+    return v.lost + v.changed > 0 || isContradictory(record) ? 'failed' : 'passed'
   }
 
   const preconditionEntries = Object.entries(record.precondition).filter(

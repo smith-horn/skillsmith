@@ -217,7 +217,7 @@ async function main() {
         { tag: 'none', extraArgs: { guardMode: 'none' } },
         { tag: 'guardHash', extraArgs: { guardMode: 'guardHash' } },
       ],
-      runFnFor: (kind, c) => (kind === 'c0' ? a3.runOnce : a3vr.runOnce),
+      runFnFor: (kind) => (kind === 'c0' ? a3.runOnce : a3vr.runOnce),
       harnessRoot,
       fsLabel: opts.fsLabel,
       out,
