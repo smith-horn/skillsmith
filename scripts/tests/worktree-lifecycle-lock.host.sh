@@ -11,7 +11,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/lockhost.XXXXXX")"
-trap 'rm -rf "$TMP" "$TMP.link"' EXIT
+trap 'chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP" "$TMP.link"' EXIT
 FAILS=0
 
 git init -q "$TMP/repo"
@@ -25,6 +25,8 @@ source "$ROOT/scripts/lib/worktree-lifecycle.sh"
 source "$ROOT/scripts/lib/worktree-lifecycle-docker.sh"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib/worktree-project-attribution.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib/report-sprawl-containers.sh"
 
 check() { # name expected actual
     if [ "$2" = "$3" ]; then
@@ -145,6 +147,38 @@ o")"
 mkdir -p "$REPO/.worktrees/new
 line"
 check "T19b worktrees_dirs: a name with a newline is ONE entry (4 NULs for 4 dirs)" 4 "$(worktree_lifecycle_worktrees_dirs "$REPO" | tr -cd '\000' | wc -c | tr -d ' ')"
+
+# T19c (SMI-7089 D): worktree_path_inside compares ANCESTORS with `-ef`, so it holds on
+# a case-insensitive filesystem (APFS) where `pwd -P` keeps the typed case, and a
+# sibling whose name merely starts with the target's is not "inside" it.
+mkdir -p "$TMP/wtc/scripts/deep" "$TMP/wtc2/scripts"
+worktree_path_inside "$TMP/wtc/scripts" "$TMP/wtc"; check "T19c script dir inside the worktree" 0 $?
+worktree_path_inside "$TMP/wtc/scripts/deep" "$TMP/wtc"; check "T19c nested deeper inside the worktree" 0 $?
+worktree_path_inside "$TMP/wtc2/scripts" "$TMP/wtc"; check "T19c sibling wtc2 is NOT inside wtc" 1 $?
+worktree_path_inside "$TMP" "$TMP/wtc"; check "T19c a PARENT is not inside" 1 $?
+if [ -d "$TMP/WTC" ]; then
+    worktree_path_inside "$TMP/WTC/scripts" "$TMP/wtc"; check "T19c mixed case (case-insensitive FS) is still inside" 0 $?
+else
+    echo "SKIP T19c mixed case: this filesystem is case-sensitive"
+fi
+
+# T19d (SMI-7089 E): an existing but unreadable/unsearchable .worktrees must fail
+# closed everywhere it is enumerated. Needs a non-root user (root reads anything).
+if [ "$(id -u)" = 0 ]; then
+    echo "SKIP T19d: running as root, chmod cannot make a directory unreadable"
+else
+    for mode in 000 300 600; do
+        chmod "$mode" "$REPO/.worktrees"
+        worktree_lifecycle_worktrees_dir_readable "$REPO"; check "T19d mode $mode: readable() refuses" 1 $?
+        worktree_project_peers "$REPO" "$TMP/foo" foo >/dev/null; check "T19d mode $mode: peers returns 3" 3 $?
+        ( derive_protected_or_die "$REPO" ) >/dev/null 2>&1; check "T19d mode $mode: derive_protected_or_die fails closed" 1 $?
+        out="$(worktree_shared_projects "$(enumerate_worktree_paths "$REPO")" "$REPO")"
+        case "$out" in *"could not read"*) r=says-so ;; *) r=silent ;; esac
+        check "T19d mode $mode: the shared-project report says it could not read" says-so "$r"
+        chmod 755 "$REPO/.worktrees"
+    done
+    worktree_lifecycle_worktrees_dir_readable "$REPO"; check "T19d permissions restored: readable() passes" 0 $?
+fi
 
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]

@@ -22,6 +22,15 @@ enumerate_worktree_paths() {
     printf '%s\n' "$raw" | sed -n 's/^worktree //p'
 }
 
+# worktree_lifecycle_worktrees_dir_readable MAIN -- 0 when MAIN/.worktrees is absent
+# (nothing to enumerate) or is a directory this process can read AND search. An
+# existing but unreadable/unsearchable one makes every glob below match nothing,
+# which reads as "no peers": callers check this FIRST and fail closed.
+worktree_lifecycle_worktrees_dir_readable() {
+    [[ -e "$1/.worktrees" || -L "$1/.worktrees" ]] || return 0
+    [[ -d "$1/.worktrees" && -r "$1/.worktrees" && -x "$1/.worktrees" ]]
+}
+
 # worktree_lifecycle_worktrees_dirs MAIN -- every directory directly under
 # MAIN/.worktrees, NUL-delimited (no trailing slash), dot-named ones included.
 # NUL, not newline: a directory name may contain a newline, which a line reader
@@ -86,6 +95,9 @@ derive_checkout_project() {
 # `if`/`||` errexit does not stop it (measured on bash 3.2, SMI-6981).
 derive_protected_or_die() {
     local main_repo="$1" out self wt_paths
+    if ! worktree_lifecycle_worktrees_dir_readable "$main_repo"; then
+        error "$main_repo/.worktrees exists but cannot be read and searched -- refusing to proceed: a directory that cannot be listed would read as \"no live worktrees\", so no protected set derived from it can be trusted."
+    fi
     if ! wt_paths="$(enumerate_worktree_paths "$main_repo")"; then
         error "\`git worktree list\` failed -- refusing to proceed. A listing from a failed command may be missing later worktrees, so no protected set derived from it can be trusted."
     fi

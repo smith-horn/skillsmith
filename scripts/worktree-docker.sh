@@ -52,7 +52,7 @@ Docker helper for git worktrees with isolated containers.
 
 Commands:
   start     Start Docker containers in worktree (docker compose up -d)
-  stop      Stop Docker containers in worktree (docker compose down)
+  stop      Stop Docker containers in worktree (docker rm -f the approved IDs)
             start and stop REFUSE, changing nothing, when another checkout
             (a registered worktree, the main checkout, a .worktrees directory)
             or a container created elsewhere shares this worktree's Compose
@@ -224,6 +224,9 @@ cmd_start() {
         echo ""
     fi
 
+    # CA-3: the first check is stale by now (override generation, DEV_PORT read).
+    worktree_project_recheck_for_path "$worktree_path"
+
     info "Starting Docker containers..."
     # SMI-4298: export DEV_PORT to the SAME host port this worktree's own
     # override already maps to container port 3001, BEFORE `up`. Compose
@@ -254,14 +257,13 @@ cmd_stop() {
         error "No docker-compose.yml found in $worktree_path"
     fi
 
-    # SMI-7089: `down` removes every container and the network of this Compose
-    # project, whichever directory created them -- attribute it to this checkout
-    # alone, or refuse. Stopping the main checkout's own container is legitimate:
-    # it has no peer, so it passes.
+    # SMI-7089: attribute the project to this checkout alone, or refuse; then remove
+    # EXACTLY the containers that check approved (no project-scoped `compose down`).
+    # Stopping the main checkout's own container is legitimate: it has no peer.
     worktree_project_gate_for_path "$worktree_path" docker-required
 
     info "Stopping Docker containers..."
-    (cd "$worktree_path" && docker compose --profile dev down)
+    worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")"
 
     success "Docker containers stopped."
 }

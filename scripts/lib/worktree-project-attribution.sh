@@ -7,10 +7,12 @@
 #
 # WHY. A Compose project name is COMPUTED from a directory basename, so two
 # directories can resolve to the same project (`_foo`, `-foo` and `foo` all give
-# `foo`). Every project-scoped Compose call (`down`, `up`) acts on ALL of the
-# project's containers, networks and volumes, whichever directory created them.
-# Three callers run such a call for checkout X: remove-worktree.sh (`down`) and
-# worktree-docker.sh stop (`down`) / start (`up`). Each must first show that
+# `foo`). Every project-scoped Compose call (`up`, and the old `down`) acts on ALL of
+# the project's containers, networks and volumes, whichever directory created them.
+# Three callers act on checkout X's project: remove-worktree.sh and
+# worktree-docker.sh stop (they now remove EXACTLY the container IDs U6 approved,
+# never `compose down`) and worktree-docker.sh start (`up`, rechecked right before).
+# Each must first show that
 # nothing it can SEE shares X's project, and refuse -- changing nothing -- when it
 # cannot.
 #
@@ -40,6 +42,9 @@
 # Set by worktree_project_attribution_or_die for the caller:
 #   reachable | absent | unreachable
 WPA_DOCKER=""
+# Set by worktree_project_attribution_or_die (and the recheck): the container IDs U6
+# approved, one per line. The ONLY containers a caller may remove (CA-1).
+WPA_CONTAINER_IDS=""
 
 _wpa_timeout() { _wtl_uint_env SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT 60; }
 
@@ -72,11 +77,12 @@ process.stdin.on("data", (c) => { d += c; }).on("end", () => {
 
 # worktree_project_peers MAIN X P -- U1-U4. Prints one "reason|detail" line per
 # peer. Returns 0 (zero or more peer lines), 1 the listing failed, 2 X is not
-# listed exactly once. Never calls error(), so it is safe in a $(...) capture.
+# listed exactly once, 3 MAIN/.worktrees exists but cannot be read. Never calls error(), so it is safe in a $(...) capture.
 worktree_project_peers() {
     local main="$1" x="$2" p="$3" raw entry base d seen found=0
     local -a registered=()
     raw="$(enumerate_worktree_paths "$main")" || return 1
+    worktree_lifecycle_worktrees_dir_readable "$main" || return 3
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
         registered+=("$entry")
@@ -115,9 +121,10 @@ worktree_project_peers() {
     return 0
 }
 
-# worktree_project_docker_check X P -- U5 and U6. Prints the reason on stdout and
-# returns 1 when it refuses; prints nothing and returns 0 when it passes. Every
-# Docker call is bounded. Never calls error().
+# worktree_project_docker_check X P -- U5 and U6. On refusal prints the reason on
+# stdout and returns 1. On a pass prints the APPROVED container IDs (every
+# container of the project, running or stopped, each shown to come from X), one per
+# line, and returns 0. Every Docker call is bounded. Never calls error().
 worktree_project_docker_check() {
     local x="$1" p="$2" t cfg name ids id labels wd rc
     t="$(_wpa_timeout)"
@@ -162,6 +169,7 @@ worktree_project_docker_check() {
             return 1
         fi
     done <<< "$ids"
+    printf '%s' "$ids"
     return 0
 }
 
@@ -185,8 +193,9 @@ _wpa_peer_message() {
 # as a plain statement, never inside $(...): error() inside a substitution only
 # ends the subshell. R0 runs first so every refusal leaves a `docker info` call.
 worktree_project_attribution_or_die() {
-    local main="$1" x="$2" p="$3" mode="$4" t rc peers reason
+    local main="$1" x="$2" p="$3" mode="$4" t rc peers reason real realp
     WPA_DOCKER=""
+    WPA_CONTAINER_IDS=""
     [[ -n "$main" && -d "$main" ]] || error "could not resolve the main checkout for $x -- refusing: without it the Compose project cannot be attributed (SMI-7089). Nothing was changed."
     if [[ -z "$p" ]]; then
         if [[ "$mode" == docker-optional ]]; then
@@ -194,6 +203,16 @@ worktree_project_attribution_or_die() {
         else
             error "the directory name of $x sanitizes to an empty Compose project name -- refusing: it cannot be attributed (SMI-7089). Nothing was changed. Rename the worktree so its name has letters or digits (git worktree move $x <new-path>), then retry."
         fi
+    fi
+
+    # Compose names the project from the path AS INVOKED. A symlinked checkout path
+    # therefore gives one directory two project names (measured), and the
+    # attribution below would be about the wrong one. Refuse; the real path is the
+    # one every other tool sees.
+    real="$(cd "$x" 2>/dev/null && pwd -P)" || error "could not resolve the real path of $x -- refusing (SMI-7089). Nothing was changed."
+    realp="$(sanitize_project_name "$(basename "$real")")"
+    if [[ "$realp" != "$p" ]]; then
+        error "$x is a symlink: invoked by that path its Compose project is '$p', but its real path $real names the project '${realp:-<empty>}' -- refusing: the project cannot be attributed (SMI-7089). Nothing was changed. Use the real path: $real"
     fi
 
     t="$(_wpa_timeout)"
@@ -212,6 +231,7 @@ worktree_project_attribution_or_die() {
     case "$rc" in
         0) ;;
         1) error "\`git worktree list\` failed -- refusing: a partial listing could hide a checkout that shares the Compose project '$p' (SMI-7089). Nothing was changed." ;;
+        3) error "$main/.worktrees exists but cannot be read and searched -- refusing: a directory that cannot be listed would read as \"no other checkout shares the Compose project '$p'\" (SMI-7089). Nothing was changed." ;;
         2) error "$x is not listed exactly once by \`git worktree list\` (it is not a registered worktree of $main, or it is listed twice) -- refusing: the Compose project '$p' cannot be attributed to it (SMI-7089). Nothing was changed." ;;
         *) error "worktree attribution failed with an unexpected status ($rc) -- refusing (SMI-7089). Nothing was changed." ;;
     esac
@@ -220,10 +240,74 @@ worktree_project_attribution_or_die() {
     fi
 
     if [[ "$WPA_DOCKER" == reachable ]]; then
-        if reason="$(worktree_project_docker_check "$x" "$p")"; then :; else
+        if reason="$(worktree_project_docker_check "$x" "$p")"; then
+            WPA_CONTAINER_IDS="$reason"
+        else
             error "$reason -- refusing: the Compose project '$p' cannot be attributed to $x (SMI-7089). Nothing was changed."
         fi
     fi
+}
+
+# worktree_project_recheck_for_path X -- U5+U6 again, for a caller whose first check
+# is stale by the time it acts (worktree-docker.sh start, right before `up`). Dies
+# on a refusal; refreshes WPA_CONTAINER_IDS. Docker must be reachable.
+worktree_project_recheck_for_path() {
+    local x="$1" p reason
+    p="$(sanitize_project_name "$(basename "$x")")"
+    if reason="$(worktree_project_docker_check "$x" "$p")"; then
+        WPA_CONTAINER_IDS="$reason"
+    else
+        error "$reason -- refusing: the Compose project '$p' no longer attributes to $x since the first check (SMI-7089). Nothing was started."
+    fi
+}
+
+# worktree_path_inside DIR TREE -- 0 when DIR is TREE or anywhere below it. Walks the
+# ancestors of DIR and compares each to TREE with `-ef` (same file), so it holds on a
+# case-insensitive filesystem (pwd -P keeps the typed case) and a sibling `x2` is not
+# "inside" `x`.
+worktree_path_inside() {
+    local d tree="$2"
+    d="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+    while :; do
+        [[ "$d" -ef "$tree" ]] && return 0
+        [[ "$d" == / || "$d" == . || -z "$d" ]] && return 1
+        d="$(dirname "$d")"
+    done
+}
+
+# worktree_project_remove_approved -- remove EXACTLY the containers U6 approved
+# (WPA_CONTAINER_IDS), then the project's networks. Replaces `compose down`, which
+# acts on whatever the project holds at the moment it runs: container IDs are never
+# reused, so a container another checkout starts after U6, or one from a checkout
+# re-created at the same path, cannot be touched. No approved ID -> no `rm` call.
+# `rm -f` failing is FATAL (error(): the caller's worktree stays, exit 1, IDs named).
+# A network is removed by ID and Docker refuses while any endpoint is attached --
+# that refusal is a warning, never fatal, and never forced.
+worktree_project_remove_approved() {
+    local p="$1" t ids id nets
+    local -a idv=()
+    t="$(_wpa_timeout)"
+    while IFS= read -r id; do
+        [[ -n "$id" ]] && idv+=("$id")
+    done <<< "$WPA_CONTAINER_IDS"
+    if [[ "${#idv[@]}" -gt 0 ]]; then
+        info "Stopping and removing the project's approved containers..."
+        if ! worktree_lifecycle_bounded "$t" docker rm -f "${idv[@]}" >/dev/null 2>&1; then
+            error "could not remove the approved container(s) of Compose project '$p': ${idv[*]} -- stopping here (SMI-7089): nothing else was changed. Inspect them with: docker ps -a --filter label=com.docker.compose.project=$p"
+        fi
+        success "  Removed ${#idv[@]} container(s)"
+    fi
+    if ! nets="$(worktree_lifecycle_bounded "$t" docker network ls --filter "label=com.docker.compose.project=$p" --format '{{.ID}}' 2>/dev/null)"; then
+        warn "  Could not list the project's networks (continuing)"
+        return 0
+    fi
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        if ! worktree_lifecycle_bounded "$t" docker network rm "$id" >/dev/null 2>&1; then
+            warn "  Network $id was not removed (Docker refuses while a container is attached); left in place"
+        fi
+    done <<< "$nets"
+    return 0
 }
 
 # worktree_project_gate_for_path X MODE -- the same check for a caller that holds

@@ -18,50 +18,30 @@
 NETWORK_WARN_THRESHOLD=5
 
 #######################################
-# Stop and remove the worktree's Compose containers and project network
+# Stop and remove the worktree's containers (and then its project networks)
 #
-# SMI-7089: this is remove-worktree.sh's ONLY project-scoped Compose call, and it
-# never deletes a volume or an image: no `--volumes`, no `--rmi`, no name-based
-# `docker volume rm` / `docker rmi`. Those deletes belong to the orphan pruner
-# (prune-orphaned-docker-volumes.sh --only-project), which runs AFTER
-# `git worktree remove` and takes the worktree lifecycle lock for each one.
-# `down` is still needed first: it removes the containers and the network, and
-# the pruner skips any volume a container is still attached to.
+# SMI-7089: this is remove-worktree.sh's ONLY Docker mutation before the worktree is
+# removed, and it is NOT a project-scoped Compose call. `compose down` acts on
+# whatever the project holds at the moment it runs, so a container another checkout
+# starts after the attribution check would go too. Instead it removes EXACTLY the
+# container IDs the attribution check approved (WPA_CONTAINER_IDS; IDs are never
+# reused) with `docker rm -f`, then the project's networks, which Docker refuses to
+# remove while anything is attached (a warning, never forced). It deletes no volume
+# or image: those belong to the orphan pruner, which runs AFTER `git worktree remove`
+# under the lifecycle lock.
 #
 # MUST run only after worktree_project_attribution_or_die passed in the same run
-# (lib/worktree-project-attribution.sh): `down` acts on EVERY container of the
-# Compose project, so it is safe only once nothing else can share that project.
-# It is skipped when that check found Docker unavailable (WPA_DOCKER).
-#
-# SMI-6401: dev/test are profile-gated and Compose silently no-ops `down` for a
-# profile-gated service without an explicit --profile, so the declared profiles
-# are discovered (`config --profiles`) rather than hard-coded. If discovery
-# returns nothing, fall back to --profile dev.
+# (lib/worktree-project-attribution.sh). Skipped when that check found Docker
+# unavailable (WPA_DOCKER). A failed `rm -f` is fatal: the caller's worktree stays.
 #######################################
 stop_worktree_containers() {
-    local worktree_path="$1" profile
-    local -a profile_args=()
+    local worktree_path="$1"
 
-    [[ -f "$worktree_path/docker-compose.override.yml" ]] || return 0
     if [[ "${WPA_DOCKER:-}" != reachable ]]; then
         info "Skipping Docker container stop (Docker is ${WPA_DOCKER:-not checked}) -- no Docker resources were touched"
         return 0
     fi
-
-    while IFS= read -r profile; do
-        [[ -n "$profile" ]] && profile_args+=(--profile "$profile")
-    done < <(cd "$worktree_path" && docker compose config --profiles 2>/dev/null || true)
-    if [[ "${#profile_args[@]}" -eq 0 ]]; then
-        warn "  No Compose profiles discovered (docker compose config --profiles returned nothing) -- stopping the dev profile only"
-        profile_args=(--profile dev)
-    fi
-
-    info "Stopping Docker containers for worktree..."
-    if (cd "$worktree_path" && docker compose "${profile_args[@]}" down 2>/dev/null); then
-        success "  Docker containers stopped"
-    else
-        warn "  Could not stop Docker containers (may already be stopped)"
-    fi
+    worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")"
 }
 
 #######################################

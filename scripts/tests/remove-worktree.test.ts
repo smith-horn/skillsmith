@@ -22,15 +22,20 @@ import { join } from 'path'
 import {
   addWt,
   makeAttrFixture,
+  ourContainers,
   primeAttribution,
   readRegLog,
   runRemove,
   setExit,
   setExitSequence,
-  setResp,
+  setProjectNetworks,
   type AttrFixture,
 } from './_lib/worktree-attribution-fixture.js'
-import { volumeLabels, volumeListResponse } from './prune-orphaned-docker-volumes.helpers.js'
+import {
+  volumeLabels,
+  volumeListResponse,
+  volumePsResponse,
+} from './prune-orphaned-docker-volumes.helpers.js'
 
 const tempDirs: string[] = []
 
@@ -50,16 +55,20 @@ function mk(prefix: string): AttrFixture {
 const deletes = (c: string): boolean => /^(rmi|image rm|volume rm|volume remove)\b/.test(c)
 
 describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
-  it('stops the containers with a plain `down` and issues no delete of its own', () => {
+  it('removes exactly the approved containers (no `compose down`) and issues no delete of its own', () => {
     const fx = mk('rmwt-default')
     const wt = addWt(fx, 'wt-feature')
     primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1', 'c2'])
 
     const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Presence: the stop path reached Compose.
-    expect(result.dockerCalls).toContain('compose --profile dev down')
+    // Presence: the stop path removed the approved ids, and nothing is project-scoped.
+    expect(result.dockerCalls).toContain('rm -f c1 c2')
+    expect(result.dockerCalls.some((c) => c.startsWith('compose') && /\bdown\b/.test(c))).toBe(
+      false
+    )
     // The flags that made Path A delete by project are gone, and so is Path B.
     expect(result.dockerCalls.some((c) => c.includes('--volumes') || c.includes('--rmi'))).toBe(
       false
@@ -67,32 +76,40 @@ describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
     expect(result.dockerCalls.some(deletes)).toBe(false)
   })
 
-  it('--keep-docker stops the containers but never deletes or prunes anything', () => {
+  it('--keep-docker removes the containers but never deletes or prunes anything', () => {
     const fx = mk('rmwt-keep')
     const wt = addWt(fx, 'wt-keep')
     primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
     const result = runRemove(fx, [wt, '--force', '--keep-docker'])
 
     expect(result.status).toBe(0)
-    expect(result.dockerCalls).toContain('compose --profile dev down')
+    expect(result.dockerCalls).toContain('rm -f c1')
     expect(result.dockerCalls.some(deletes)).toBe(false)
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
   })
 
-  it('compose down failing does not block the worktree removal', () => {
-    const fx = mk('rmwt-down-fail')
-    const wt = addWt(fx, 'wt-fail')
+  it('a network the project cannot drop (Docker refuses while attached) is a warning, never fatal', () => {
+    const fx = mk('rmwt-netrm-refused')
+    const wt = addWt(fx, 'wt-netrm')
     primeAttribution(fx, wt)
-    setExit(fx, 'down', 1)
+    ourContainers(fx, wt)
+    setProjectNetworks(fx, ['n1', 'n2'])
+    setExit(fx, 'network_rm', 1)
 
     const result = runRemove(fx, [wt, '--force'])
 
-    expect(result.status).toBe(0)
-    // Presence: the failing `down` really was attempted.
-    expect(result.dockerCalls).toContain('compose --profile dev down')
+    // Presence: both networks were attempted (one refusal does not hide the next),
+    // never forced.
+    expect(result.dockerCalls).toContain('network rm n1')
+    expect(result.dockerCalls).toContain('network rm n2')
+    expect(result.dockerCalls.some((c) => c.startsWith('network rm') && c.includes('-f'))).toBe(
+      false
+    )
+    expect(result.stderr + result.stdout).toContain('Network n1 was not removed')
     expect(existsSync(wt)).toBe(false)
-    expect(result.stderr + result.stdout).toContain('Could not stop Docker containers')
+    expect(result.status).toBe(0)
   })
 
   it('refuses to operate on the main repo before any docker call', () => {
@@ -120,17 +137,18 @@ describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
   })
 })
 
-describe('SMI-6401: profile-aware `down`', () => {
-  it('discovers the declared profiles and applies them to `down`, with no delete flags', () => {
+describe('SMI-6401 (superseded by SMI-7089): no profile discovery, no project-scoped call', () => {
+  it('never asks Compose for profiles or runs `down`: the approved ids are the whole scope', () => {
     const fx = mk('rmwt-6401-profiles')
     const wt = addWt(fx, 'wt-derive')
     primeAttribution(fx, wt)
-    setResp(fx, 'profiles', 'dev\ntest')
+    ourContainers(fx, wt)
 
     const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    expect(result.dockerCalls).toContain('compose --profile dev --profile test down')
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls.some((c) => c.includes('--profiles'))).toBe(false)
   })
 
   it('does not crash and makes no Compose call when the worktree has no Compose files', () => {
@@ -213,13 +231,14 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
     const fx = mk('rmwt-no-orphan-prune')
     const wt = addWt(fx, 'wt-noorphanprune')
     primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
     const result = runRemove(fx, [wt, '--force', '--no-orphan-prune'])
 
     expect(result.status).toBe(0)
     // Presence: Docker was reached (R0 + the stop), so the absence below is not
     // "docker never ran".
-    expect(result.dockerCalls).toContain('compose --profile dev down')
+    expect(result.dockerCalls).toContain('rm -f c1')
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
     // The removed worktree's own resources are KEPT, and the output says so.
     expect(result.stdout).toContain('image and volumes are kept')
@@ -247,12 +266,13 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
     const fx = mk('rmwt-keep-noprune')
     const wt = addWt(fx, 'wt-keepnoprune')
     primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
     const result = runRemove(fx, [wt, '--force', '--keep-docker'])
 
     expect(result.status).toBe(0)
     // Presence: the stop path DID reach docker.
-    expect(result.dockerCalls.some((c) => c.includes('compose') && c.includes('down'))).toBe(true)
+    expect(result.dockerCalls).toContain('rm -f c1')
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
   })
 
@@ -368,6 +388,30 @@ describe('SMI-7089: global --prune steps and an unusable Docker never abort a re
     expect(result.dockerCalls.filter((c) => c === 'info')).toHaveLength(2)
     expect(existsSync(wt)).toBe(false)
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+})
+
+describe('SMI-7089: a resource still attached after Step 1 fails the removal', () => {
+  it('a container attached to the project volume after the stop: exit 1, "Docker cleanup incomplete"', () => {
+    const fx = mk('rmwt-attached-vol')
+    const wt = addWt(fx, 'foo')
+    primeAttribution(fx, wt)
+    const vol = 'foo_website-vercel-output'
+    volumeListResponse(fx, [vol])
+    volumeLabels(fx, vol, { volume: 'website-vercel-output', project: 'foo', owned: 'true' })
+    // A container another actor started after Step 1 holds the volume.
+    volumePsResponse(fx, vol, 'cLate')
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: the worktree is gone and the pruner reached the volume.
+    expect(existsSync(wt)).toBe(false)
+    expect(result.dockerCalls.some((c) => c.includes(`volume=${vol}`))).toBe(true)
+    expect(result.dockerCalls).not.toContain(`volume rm ${vol}`)
+    expect(result.stderr + result.stdout).toContain('SKIPPED (attached)')
     expect(result.stderr + result.stdout).toContain('Docker cleanup incomplete')
     expect(result.stdout).not.toContain('Worktree removal complete!')
     expect(result.status).toBe(1)

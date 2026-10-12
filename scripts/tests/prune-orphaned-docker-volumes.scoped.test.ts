@@ -24,6 +24,7 @@ import {
   setupFixture,
   volumeLabels,
   volumeListResponse,
+  volumePsResponse,
   type FixtureRepo,
 } from './prune-orphaned-docker-volumes.helpers.js'
 import { hookRan, setDockerHook } from './worktree-lifecycle.helpers.js'
@@ -292,5 +293,43 @@ describe('SMI-7089: an unusable Docker is a failure when a project was named, a 
     expect(scoped.dockerCalls).toContain('info')
     expect(scoped.status).toBe(1)
     expect(scoped.stderr).toContain('NOT removed')
+  })
+})
+
+describe('SMI-7089: an attached in-scope resource fails a named-project run', () => {
+  it('an attached image of the named project: SKIPPED (attached) with the ids, exit 1; a bare run exits 0', () => {
+    const f = fixture('sc-attached-img')
+    imagesResponse(f, ['foo-dev'])
+    imageLabels(f, 'foo-dev', { service: 'dev', owned: 'true' })
+    writeFileSync(join(f.responsesDir, `ps_ancestor__${imageIdFor('foo-dev')}`), 'cA\ncB\n')
+
+    const scoped = runPrune(f, only('foo'))
+    const bare = runPrune(f, [])
+
+    expect(scoped.dockerCalls.some((c) => /^rmi\b/.test(c))).toBe(false)
+    expect(scoped.stderr).toContain('SKIPPED (attached): foo-dev by cA cB')
+    expect(scoped.status).toBe(1)
+    expect(bare.dockerCalls.some((c) => c.startsWith('images'))).toBe(true)
+    expect(bare.stderr).not.toContain('SKIPPED (attached)')
+    expect(bare.status).toBe(0)
+  })
+
+  it('an attached volume of ANOTHER project is reported nowhere as a failure of this run', () => {
+    const f = fixture('sc-attached-other')
+    volumeListResponse(f, ['foo_website-vercel-output', 'bar_node_modules'])
+    volumeLabels(f, 'foo_website-vercel-output', {
+      volume: 'website-vercel-output',
+      project: 'foo',
+      owned: 'true',
+    })
+    volumeLabels(f, 'bar_node_modules', { volume: 'node_modules', project: 'bar', owned: 'true' })
+    volumePsResponse(f, 'bar_node_modules', 'cZ')
+
+    const r = runPrune(f, only('foo'))
+
+    // Presence: foo's own volume was deleted in the same run.
+    expect(volRm(r.dockerCalls, 'foo_website-vercel-output')).toBe(true)
+    expect(r.stderr).not.toContain('SKIPPED (attached)')
+    expect(r.status).toBe(0)
   })
 })

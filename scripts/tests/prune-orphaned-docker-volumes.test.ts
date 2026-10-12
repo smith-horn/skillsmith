@@ -686,7 +686,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(result.dockerCalls.some((c) => c.includes('foobar_node_modules'))).toBe(false)
   })
 
-  it('8. skips a volume still referenced by any container (running or stopped)', () => {
+  it('8. skips a volume still referenced by any container (running or stopped); a NAMED project makes that a failure (SMI-7089)', () => {
     const fixture = setupFixture('prune-container-ref')
     tempDirs.push(fixture.tempRoot)
 
@@ -699,8 +699,17 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
 
     const result = runPrune(fixture, only('other-wt'))
 
-    expect(result.status).toBe(0)
     expect(result.dockerCalls.some((c) => c === 'volume rm other-wt_node_modules')).toBe(false)
+    // The caller named this project, so leaving its attached volume behind is a
+    // failed cleanup, said out loud with the container ids.
+    expect(result.stderr).toContain('SKIPPED (attached): other-wt_node_modules by abc123def456')
+    expect(result.status).toBe(1)
+
+    // A bare (report-only) run keeps its old behaviour: a quiet skip, exit 0.
+    const bare = runPrune(fixture, [])
+    expect(bare.dockerCalls.some((c) => c === 'volume ls --format {{.Name}}')).toBe(true)
+    expect(bare.stderr).not.toContain('SKIPPED (attached)')
+    expect(bare.status).toBe(0)
   })
 
   it('9. skips a volume with a mismatched com.docker.compose.volume label', () => {
@@ -1147,7 +1156,16 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     expect(result.dockerCalls.some(destroysInBulk)).toBe(false)
     expect(result.stdout).not.toContain('Removed volume')
     expect(result.stderr).toContain('Could not check container attachment')
-    expect(result.status).toBe(0)
+    // The named project's volume was NOT cleaned up and we do not know why: that is
+    // a failed run (SMI-7089), not a quiet skip.
+    expect(result.stderr).toContain(`SKIPPED (attachment unknown): ${VOL}`)
+    expect(result.status).toBe(1)
+
+    // A bare (report-only) run is unchanged: a quiet skip, exit 0.
+    const bare = runPrune(fixture, [])
+    expect(bare.dockerCalls).toContain(volPs)
+    expect(bare.stderr).not.toContain('SKIPPED (attachment unknown)')
+    expect(bare.status).toBe(0)
   })
 
   it('G4b. a failing attachment query inside the critical section stops the run', () => {
@@ -1175,6 +1193,8 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
     expect(result.stdout).not.toContain('Removed image')
     expect(result.stderr).toContain('Could not check container attachment')
+    expect(result.stderr).toContain('SKIPPED (attachment unknown): gone-wt-dev')
+    expect(result.status).toBe(1)
   })
 
   it('G4d. a failing attachment query inside the critical section (image) stops the run', () => {

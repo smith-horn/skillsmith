@@ -18,6 +18,10 @@
 # sanitize_project_name (_lib.sh).
 worktree_shared_projects() {
     local wt_paths="$1" main="$2" entry d seen proj rows=""
+    if ! worktree_lifecycle_worktrees_dir_readable "$main"; then
+        echo "Shared Compose projects (SMI-7089): could not read $main/.worktrees (not readable and searchable), so this report is incomplete"
+        return 0
+    fi
     local -a registered=()
     while IFS= read -r entry; do
         [[ -n "$entry" ]] || continue

@@ -70,8 +70,9 @@ What this script does:
      another registered worktree, the main checkout, a .worktrees directory, a
      container created from a different directory, or any unreadable listing
   2. Refuses if the worktree has uncommitted changes, unless --force is passed (SMI-5000)
-  3. Stops and removes the worktree's Docker containers and project network
-     (never a volume or an image)
+  3. Removes exactly the containers the check approved (docker rm -f <ids>, no
+     project-scoped Compose call) and then the project's networks if Docker allows (never a
+     volume or an image)
   4. Removes the git worktree (always passes --force to git worktree remove
      so submodule presence — post-SMI-4829 every worktree has 4 — does not block)
   5. Checks Docker network count and reports global reclaimable Docker
@@ -85,7 +86,10 @@ What this script does:
      concurrent create-worktree.sh (not against a plain 'git worktree add');
      skip with --no-orphan-prune or SKILLSMITH_ORPHAN_PRUNE_DISABLE=1. If it
      fails the script exits 1 after the worktree is already removed and prints
-     the command to re-run it
+     the command to re-run it. The same holds when Docker is installed but its
+     daemon is unreachable and you did not opt out: the worktree is removed, the
+     containers and resources are NOT, and it exits 1 with the re-run command. A
+     missing docker binary exits 0 (nothing to clean up)
 
 EOF
 }
@@ -186,13 +190,12 @@ main() {
     # Refuse BEFORE any side effect if this very script lives inside the worktree
     # being removed. Step 3.5 runs `$SCRIPT_DIR/prune-orphaned-docker-volumes.sh`
     # after `git worktree remove`, by which time SCRIPT_DIR is gone: the prune would
-    # fail and the printed re-run command would name a deleted path. Compared on
-    # RESOLVED paths with a trailing slash, so a sibling `x2` is not "inside" `x`.
-    local _rw _sd
-    _rw="$(cd "$worktree_path" && pwd -P)"
-    _sd="$(cd "$SCRIPT_DIR" && pwd -P)"
-    if [[ "$_sd" == "$_rw" || "$_sd/" == "$_rw/"* || "$_sd" -ef "$_rw" ]]; then
-        error "This copy of remove-worktree.sh lives inside the worktree it would remove ($_sd), so its own scripts would be deleted before the Docker cleanup runs. Nothing was changed. Run the main checkout's copy instead:
+    # fail and the printed re-run command would name a deleted path. The ancestors of
+    # SCRIPT_DIR are compared to the worktree with `-ef` (same file), not by string:
+    # `pwd -P` keeps the typed case, so on a case-insensitive filesystem `.../WT/scripts`
+    # would pass a string test against `.../wt`; and a sibling `x2` is not inside `x`.
+    if worktree_path_inside "$SCRIPT_DIR" "$worktree_path"; then
+        error "This copy of remove-worktree.sh lives inside the worktree it would remove ($SCRIPT_DIR), so its own scripts would be deleted before the Docker cleanup runs. Nothing was changed. Run the main checkout's copy instead:
   ${_main_repo:-<main checkout>}/scripts/remove-worktree.sh $worktree_path"
     fi
 
@@ -200,20 +203,11 @@ main() {
     info "Removing worktree: $worktree_path"
     echo ""
 
-    # Step 0 (SMI-7089): attribution. Every Docker step below acts on a Compose
-    # project that is a COMPUTED name, so first show that nothing this script can
-    # see shares it -- or refuse, changing nothing, here. Runs before the dirty
-    # check and before any side effect, --keep-docker included (Step 1 still
-    # runs `compose down` under it). A plain statement, never in $(...): error()
-    # inside a substitution would only end the subshell. Sets WPA_DOCKER.
-    worktree_project_attribution_or_die "$_main_repo" "$worktree_path" "$orphan_project" docker-optional
-    if [[ "$WPA_DOCKER" != reachable ]]; then
-        warn "Docker is $WPA_DOCKER: Docker resources will not be touched and the Docker cleanup steps are skipped."
-    fi
-
-    # Step 0b: SMI-5000 -- script-level dirty-tree check, BEFORE any side effect
+    # Step 0a: SMI-5000 -- script-level dirty-tree check, BEFORE any side effect
     # (SMI-7089: it used to run after the Docker deletes, so a refused removal had
-    # already destroyed the worktree's volumes).
+    # already destroyed the worktree's volumes). It also runs BEFORE the attribution
+    # check, so the attribution's container list is as fresh as possible when Step 1
+    # acts on it (the E3 window).
     #
     # Post-SMI-4829, every worktree has 4 initialized submodules
     # (docs/internal + 3 strategy mounts), and `git worktree remove`
@@ -246,6 +240,17 @@ Commit or discard them first, or re-run with --force to discard:
         fi
     fi
 
+    # Step 0 (SMI-7089): attribution. Every Docker step below acts on a Compose
+    # project that is a COMPUTED name, so first show that nothing this script can
+    # see shares it -- or refuse, changing nothing, here. Runs before the dirty
+    # check and before any side effect, --keep-docker included (Step 1 still
+    # runs `compose down` under it). A plain statement, never in $(...): error()
+    # inside a substitution would only end the subshell. Sets WPA_DOCKER.
+    worktree_project_attribution_or_die "$_main_repo" "$worktree_path" "$orphan_project" docker-optional
+    if [[ "$WPA_DOCKER" != reachable ]]; then
+        warn "Docker is $WPA_DOCKER: Docker resources will not be touched and the Docker cleanup steps are skipped."
+    fi
+
     # Step 1: stop and remove the worktree's containers and project network (no
     # volume or image is deleted here -- see Step 3.5).
     stop_worktree_containers "$worktree_path"
@@ -257,7 +262,7 @@ Commit or discard them first, or re-run with --force to discard:
         rm -f "$worktree_path/node_modules"
     fi
 
-    # Step 2: Remove the worktree (--force is now unconditional -- see Step 0b
+    # Step 2: Remove the worktree (--force is now unconditional -- see Step 0a
     # rationale above). The user-visible --force flag remains for parity with
     # `git worktree remove --force` semantics, but the script already enforced
     # the dirty check above. SMI-5000.
@@ -329,6 +334,10 @@ Commit or discard them first, or re-run with --force to discard:
     if [[ "$prune_failed" == true ]]; then
         echo ""
         warn "Worktree removed; Docker cleanup incomplete ($prune_reason)."
+        if [[ "$WPA_DOCKER" == unreachable ]]; then
+            warn "  The project's containers were NOT stopped or removed either. Inspect them with:"
+            warn "    docker ps -a --filter label=com.docker.compose.project=$orphan_project"
+        fi
         warn "  Re-run it once the cause above is fixed (Docker must be reachable):"
         warn "    $SCRIPT_DIR/prune-orphaned-docker-volumes.sh --only-project $orphan_project"
         exit 1

@@ -230,43 +230,11 @@ LISTING_FAILED=false
 # having vanished: the run did not do what it was asked to, so it exits 1.
 OP_FAILED=false
 # Filled via `printf -v` / image_labels_of, which shellcheck cannot see; declared here.
+# shellcheck disable=SC2034
 vol_shape_label="" vol_project_label="" vol_owned_label="" vol_created=""
 img_service_label="" img_owned_label="" img_project_label="" img_labels_json="" img_expect_service="" img_id=""
-
-# image_labels_of ID -- read an image's whole label map ONCE as JSON
-# (worktree_lifecycle_image_labels) and set img_labels_json, img_service_label,
-# img_owned_label and img_project_label from it. An image that merely vanished is
-# silent; any OTHER failure warns and sets OP_FAILED. Returns 1 on failure.
-image_labels_of() {
-    local out rc
-    if out="$(worktree_lifecycle_image_labels "$1")"; then
-        img_labels_json="$out"
-        img_service_label="$(worktree_lifecycle_json_label "$out" com.docker.compose.service)"
-        img_owned_label="$(worktree_lifecycle_json_label "$out" app.skillsmith.owned)"
-        img_project_label="$(worktree_lifecycle_json_label "$out" com.docker.compose.project)"
-        return 0
-    else
-        rc=$?
-    fi
-    if ! grep -qiE 'no such image' <<< "$out"; then
-        warn "  Could not inspect image $1 (${out:-no output}; status $rc) -- skipping"
-        OP_FAILED=true
-    fi
-    return 1
-}
-
-# Returns 0 (=> caller must SKIP) when containers are attached to the resource
-# named by the `docker ps` filter in $1 OR when that query FAILED. A failed query
-# is "unknown", not "unattached": treating it as unattached would let a transient
-# daemon error license a delete (SMI-6981). Callers: `attached_or_unknown F && continue`.
-attached_or_unknown() {
-    local out
-    if ! out="$(docker ps -aq --filter "$1" 2>/dev/null)"; then
-        warn "  Could not check container attachment for ${1#*=} -- skipping (unknown is not unattached)"
-        return 0
-    fi
-    [[ -n "$out" ]]
-}
+# shellcheck disable=SC2034  # filled by attached_or_unknown (lib/worktree-lifecycle-docker.sh)
+ATTACHED_IDS=""
 
 # Classify a volume name into (project, expected compose.volume label), covering
 # `<project>_node_modules` and `<project>_native-seed-<module>` /
@@ -367,7 +335,7 @@ while IFS= read -r vol; do
     # Container attachment is mutable state, not identity: it is re-read inside the
     # critical section. Every identity-bound predicate above came from the one
     # inspect that recorded CreatedAt, so no window exists between them.
-    attached_or_unknown "volume=$vol" && continue
+    skip_if_attached "volume=$vol" "$vol" && continue
 
     # SMI-6981: an unconfirmed volume is NEVER a deletion candidate, whatever
     # --include-unlabeled says. `app.skillsmith.owned` is the only NON-CIRCULAR
@@ -455,7 +423,7 @@ while IFS= read -r img; do
         continue
     fi
     [[ "$img_service_label" == "$img_expect_service" ]] || continue
-    attached_or_unknown "ancestor=$img_id" && continue
+    skip_if_attached "ancestor=$img_id" "$img" && continue
 
     # SMI-6981: --include-unlabeled gated `docker rmi` exactly as it gated
     # `volume rm`, so a foreign `*-dev` image with no attached container and no

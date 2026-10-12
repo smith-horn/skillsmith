@@ -72,10 +72,17 @@ rc_of() {
     head -n 1 "$RESP/exit__$1.seq"; tail -n +2 "$RESP/exit__$1.seq" > "$RESP/exit__$1.seq.n"; mv "$RESP/exit__$1.seq.n" "$RESP/exit__$1.seq"
   elif [ -f "$RESP/exit__$1" ]; then cat "$RESP/exit__$1"; else echo 0; fi
 }
-# One-shot "effect" hook: fires on the FIRST effect-phase call -- a \`down\`, or the
-# first call that falls through to the delegate (Step 3 reads, the pruner) -- and
-# records which call it was in hook.trigger. Unlike a hook keyed on \`down\`, it
-# still fires if a mutation stops \`down\` from ever running.
+# One-shot "effect" hook: fires on the FIRST effect-phase call -- \`rm -f\`, a project
+# \`network ls --filter\` / \`network rm\`, a \`down\`, or the first call that falls
+# through to the delegate (Step 3 reads, the pruner) -- and records which call it was
+# in hook.trigger. A hook keyed on one verb would not fire if a mutation stopped
+# that verb from ever running.
+# \`<key>.seq\` (one line per call, ids space-separated) serves a DIFFERENT list on each call.
+emit_ids() {
+  if [ -s "$RESP/$1.seq" ]; then
+    head -n 1 "$RESP/$1.seq" | tr ' ' '\\n'; tail -n +2 "$RESP/$1.seq" > "$RESP/$1.seq.n"; mv "$RESP/$1.seq.n" "$RESP/$1.seq"
+  else cat "$RESP/$1" 2>/dev/null; fi
+}
 fire_effect() { f="$RESP/hook__effect"; if [ -f "$f" ]; then mv "$f" "$f.ran"; echo "$1" > "$RESP/hook.trigger"; bash "$f.ran"; fi; }
 run_hook() { f="$RESP/hook__$1"; if [ -f "$f" ]; then mv "$f" "$f.ran"; bash "$f.ran"; fi; }
 case "$1" in
@@ -107,10 +114,20 @@ case "$1" in
     esac
     exit 0
     ;;
+  rm)
+    echo "$@" >> "$LOG"
+    fire_effect "$*"
+    rc="$(rc_of rm)"
+    if [ "$rc" != 0 ]; then echo "Error response from daemon: cannot remove container" >&2; exit "$rc"; fi
+    exit 0
+    ;;
   network)
     echo "$@" >> "$LOG"
+    case "$*" in *--filter*|"network rm"*) fire_effect "$*" ;; esac
     rc="$(rc_of "network_$2")"
     if [ "$rc" != 0 ]; then echo "Cannot connect to the Docker daemon" >&2; exit "$rc"; fi
+    # The project-scoped listing: ids from network_filter_out, one per line.
+    case "$*" in *--filter*) cat "$RESP/network_filter_out" 2>/dev/null; exit 0 ;; esac
     # Optional canned output: network_ls_out on stdout, network_ls_err on stderr.
     if [ "$2" = ls ]; then
       if [ -f "$RESP/network_ls_err" ]; then cat "$RESP/network_ls_err" >&2; fi
@@ -124,7 +141,7 @@ case "$1" in
         echo "$@" >> "$LOG"
         rc="$(rc_of ps)"
         if [ "$rc" != 0 ]; then exit "$rc"; fi
-        cat "$RESP/ps_running" 2>/dev/null
+        emit_ids ps_running
         case "$2" in -aq) cat "$RESP/ps_stopped" 2>/dev/null ;; esac
         exit 0
         ;;
@@ -180,6 +197,22 @@ export function setExit(fx: AttrFixture, key: string, code: number): void {
 /** One exit code per successive \`docker <key>\` call (e.g. info: R0 answers 0, the pruner's own check 1). */
 export function setExitSequence(fx: AttrFixture, key: string, codes: number[]): void {
   writeFileSync(join(fx.responsesDir, `exit__${key}.seq`), `${codes.join('\n')}\n`)
+}
+
+/** Running containers (ids) that Compose created from \`workingDir\`: U6 approves them. */
+export function ourContainers(fx: AttrFixture, workingDir: string, ids: string[] = ['c1']): void {
+  setContainers(fx, { running: ids })
+  for (const id of ids) setLabels(fx, id, workdirLabels(workingDir))
+}
+
+/** Serve a different running-ID list on each successive \`ps\` (space-separated ids per call). */
+export function setPsSequence(fx: AttrFixture, lists: string[]): void {
+  writeFileSync(join(fx.responsesDir, 'ps_running.seq'), `${lists.join('\n')}\n`)
+}
+
+/** The ids \`docker network ls --filter label=com.docker.compose.project=...\` returns. */
+export function setProjectNetworks(fx: AttrFixture, ids: string[]): void {
+  setResp(fx, 'network_filter_out', ids.join('\n'))
 }
 
 /** Declare the ID lists `docker ps` answers: running ones to `-q`/`-aq`, stopped ones to `-aq` only. */

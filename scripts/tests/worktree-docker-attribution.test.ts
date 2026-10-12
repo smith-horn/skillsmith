@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, symlinkSync } from 'fs'
 import { join } from 'path'
 
 import {
@@ -21,11 +21,13 @@ import {
   composeBase,
   composeOverride,
   makeAttrFixture,
+  ourContainers,
   primeAttribution,
   runDocker,
   setContainers,
   setExit,
   setLabels,
+  setPsSequence,
   workdirLabels,
   type AttrFixture,
 } from './_lib/worktree-attribution-fixture.js'
@@ -51,7 +53,8 @@ const wt = (fx: AttrFixture, name: string, parent?: string): string =>
   addWt(fx, name, { base: true, override: false, parent })
 
 const text = (r: { stdout: string; stderr: string }): string => r.stdout + r.stderr
-const downs = (calls: string[]): string[] => calls.filter((c) => /^compose .*\bdown$/.test(c))
+// The destructive container/network calls: `rm -f <ids>` and `network rm <id>`.
+const removals = (calls: string[]): string[] => calls.filter((c) => /^(rm -f |network rm )/.test(c))
 const ups = (calls: string[]): string[] => calls.filter((c) => /^compose .* up /.test(c))
 const inspects = (calls: string[], id: string): boolean =>
   calls.includes(`inspect --type container ${id} --format {{json .Config.Labels}}`)
@@ -145,20 +148,70 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
         expect(inspects(r.dockerCalls, 'c2')).toBe(true)
         expect(text(r)).toContain('c2')
       }
-      expect(downs(r.dockerCalls)).toEqual([])
+      expect(removals(r.dockerCalls)).toEqual([])
     })
   })
 
-  it('T24. a near miss (foo_ beside foo) is not a peer: `compose --profile dev down` runs', () => {
+  it('T24. a near miss (foo_ beside foo) is not a peer: the approved container is removed', () => {
     const fx = mk('wd-t24')
     wt(fx, 'foo_')
     const x = wt(fx, 'foo')
     primeAttribution(fx, x)
+    ourContainers(fx, x)
 
     const r = runDocker(fx, ['stop', x])
 
     expect(r.status).toBe(0)
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
+  })
+
+  it('T24b. only the approved ids go: a container in a later `ps` is untouched; no compose down', () => {
+    const fx = mk('wd-t24b')
+    const x = wt(fx, 'foo')
+    primeAttribution(fx, x)
+    ourContainers(fx, x)
+    setPsSequence(fx, ['c1', 'c1 c9'])
+
+    const r = runDocker(fx, ['stop', x])
+
+    expect(r.status).toBe(0)
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
+    expect(r.dockerCalls.some((c) => c.includes('c9'))).toBe(false)
+    expect(r.dockerCalls.some((c) => c.startsWith('compose') && /\bdown\b/.test(c))).toBe(false)
+  })
+
+  it('T24c. a failed `rm -f` makes stop exit non-zero and names the ids', () => {
+    const fx = mk('wd-t24c')
+    const x = wt(fx, 'foo')
+    primeAttribution(fx, x)
+    ourContainers(fx, x, ['c1', 'c2'])
+    setExit(fx, 'rm', 1)
+
+    const r = runDocker(fx, ['stop', x])
+
+    expect(r.dockerCalls).toContain('rm -f c1 c2')
+    expect(text(r)).toContain('c1 c2')
+    expect(text(r)).not.toContain('Docker containers stopped')
+    expect(r.status).toBe(1)
+  })
+
+  it('T24d. a symlinked worktree path is refused before any Docker call (stop and start)', () => {
+    const fx = mk('wd-t24d')
+    const real = wt(fx, 'fooreal')
+    composeOverride(real)
+    primeAttribution(fx, real)
+    const link = join(fx.tempRoot, 'foolink')
+    symlinkSync(real, link)
+
+    const stop = runDocker(fx, ['stop', link])
+    const start = runDocker(fx, ['start', link])
+
+    for (const r of [stop, start]) {
+      expect(r.status).toBe(1)
+      expect(r.dockerCalls).toEqual([])
+      expect(text(r)).toContain('fooreal')
+      expect(text(r)).toContain(`Use the real path: ${real}`)
+    }
   })
 
   it('T25. refuses when Compose resolves a different project name', () => {
@@ -170,7 +223,7 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
 
     expect(r.status).toBe(1)
     expect(r.dockerCalls).toContain('compose config --format json')
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
   })
 
   describe('T26. any unreadable input refuses', () => {
@@ -196,7 +249,7 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
 
       expect(r.status).toBe(1)
       expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
-      expect(downs(r.dockerCalls)).toEqual([])
+      expect(removals(r.dockerCalls)).toEqual([])
     })
 
     it('docker info fails: docker-required mode refuses (no fall-through)', () => {
@@ -216,11 +269,12 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
     const fx = mk('wd-t27')
     composeBase(fx.repoDir)
     primeAttribution(fx, fx.repoDir)
+    ourContainers(fx, fx.repoDir)
 
     const r = runDocker(fx, ['stop', fx.repoDir])
 
     expect(r.status).toBe(0)
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
   })
 })
 
@@ -299,6 +353,25 @@ describe('SMI-7089 (OD-8): worktree-docker.sh start is attributed before `compos
     expect(r.status).toBe(1)
     expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
+    expect(ups(r.dockerCalls)).toEqual([])
+  })
+
+  it('T31. a foreign container that appears AFTER the first check is refused by the recheck before `up`', () => {
+    const fx = mk('wd-t31')
+    const x = wt(fx, 'foo')
+    composeOverride(x)
+    primeAttribution(fx, x)
+    setLabels(fx, 'c2', workdirLabels(foreignDir(fx)))
+    // The 1st `ps` (the gate) sees nothing; the 2nd (the recheck) sees c2.
+    setPsSequence(fx, ['', 'c2'])
+
+    const r = runDocker(fx, ['start', x])
+
+    expect(r.status).toBe(1)
+    // Presence: both checks ran.
+    expect(r.dockerCalls.filter((c) => c.startsWith('ps -aq'))).toHaveLength(2)
+    expect(inspects(r.dockerCalls, 'c2')).toBe(true)
+    expect(text(r)).toContain('c2')
     expect(ups(r.dockerCalls)).toEqual([])
   })
 })

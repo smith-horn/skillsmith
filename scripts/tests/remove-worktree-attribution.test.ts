@@ -33,6 +33,7 @@ import { makeFixtureEnv } from './_lib/git-fixture-env.js'
 import {
   addWt,
   makeAttrFixture,
+  ourContainers,
   pathWithoutDocker,
   primeAttribution,
   readRegLog,
@@ -42,7 +43,8 @@ import {
   setExit,
   setHook,
   setLabels,
-  setResp,
+  setPsSequence,
+  setProjectNetworks,
   workdirLabels,
   type AttrFixture,
 } from './_lib/worktree-attribution-fixture.js'
@@ -78,7 +80,8 @@ const listed = (fx: AttrFixture): string =>
   })
 
 const text = (r: { stdout: string; stderr: string }): string => r.stdout + r.stderr
-const downs = (calls: string[]): string[] => calls.filter((c) => /^compose .*\bdown$/.test(c))
+// The destructive container/network calls: `rm -f <ids>` and `network rm <id>`.
+const removals = (calls: string[]): string[] => calls.filter((c) => /^(rm -f |network rm )/.test(c))
 const deletes = (c: string): boolean => /^(rmi|image rm|volume rm|volume remove)\b/.test(c)
 
 /** Wrap `git` so `worktree list --porcelain` prints its real answer TWICE. */
@@ -124,7 +127,7 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     expect(text(r)).toContain('project foo')
   })
 
-  it('T2. a near miss (foo_ beside foo) is NOT a peer: removal proceeds, `down` has no --volumes', () => {
+  it('T2. a near miss (foo_ beside foo) is NOT a peer: removal proceeds, no project-scoped call', () => {
     const fx = mk('attr-t2')
     addWt(fx, 'foo_')
     const foo = addWt(fx, 'foo')
@@ -133,7 +136,10 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     const r = runRemove(fx, [foo, '--force'])
 
     expect(r.status).toBe(0)
-    expect(r.dockerCalls).toContain('compose --profile dev down')
+    // Presence: the stop phase ran (it listed the project's networks).
+    expect(r.dockerCalls).toContain(
+      'network ls --filter label=com.docker.compose.project=foo --format {{.ID}}'
+    )
     expect(r.dockerCalls.some((c) => c.includes('--volumes') || c.includes('--rmi'))).toBe(false)
     expect(text(r)).toContain('Orphan prune scope: foo')
     expect(existsSync(foo)).toBe(false)
@@ -322,7 +328,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(r.dockerCalls).toContain('info')
     expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
     expect(existsSync(wt)).toBe(true)
   })
 
@@ -339,7 +345,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
 
     expect(r.status).toBe(0)
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
     expect(existsSync(wt)).toBe(false)
   })
 
@@ -361,7 +367,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(text(r)).toContain(needle)
     expect(text(r)).toContain('c1')
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
   })
 
   it('T7d. the FIRST container is ours but the SECOND is foreign: refused, both inspected', () => {
@@ -378,7 +384,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(text(r)).toContain('c2')
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
     expect(inspects(r.dockerCalls, 'c2')).toBe(true)
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
   })
 
   it('T7f. a STOPPED foreign container is seen: `ps -a`, not `ps`', () => {
@@ -398,7 +404,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(inspects(r.dockerCalls, 'c1')).toBe(true)
     expect(inspects(r.dockerCalls, 'c2')).toBe(true)
     expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
   })
 
   it('T7e. (characterises E4) a label naming this PATH passes even if an earlier occupant wrote it', () => {
@@ -421,7 +427,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     // A path label cannot prove which incarnation created a container (ADR-180 E4);
     // this row flips to a refusal when a per-checkout identity label lands (SMI-7096).
     expect(r.status).toBe(0)
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
   })
 
   it('T8. an unreadable container listing refuses (a failed `ps` is not an empty one)', () => {
@@ -436,7 +442,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(text(r)).toContain('could not list the containers')
     expect(r.dockerCalls).toContain('info')
     expect(r.dockerCalls).toContain('ps -aq --filter label=com.docker.compose.project=foo')
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
     expect(existsSync(wt)).toBe(true)
   })
 
@@ -451,7 +457,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(text(r)).toContain("resolves the project 'something-else'")
     expect(r.dockerCalls).toContain('compose config --format json')
     expect(r.dockerCalls.some((c) => c.startsWith('ps '))).toBe(false)
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
   })
 
   it('T8c. an unreadable Compose configuration refuses', () => {
@@ -465,7 +471,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     expect(r.status).toBe(1)
     expect(text(r)).toContain('could not read the Compose configuration')
     expect(r.dockerCalls).toContain('compose config --format json')
-    expect(downs(r.dockerCalls)).toEqual([])
+    expect(removals(r.dockerCalls)).toEqual([])
   })
 })
 
@@ -476,14 +482,16 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     primeAttribution(fx, wt)
     writeFileSync(join(wt, 'README.md'), 'edited\n')
 
+    ourContainers(fx, wt)
+
     const r = runRemove(fx, [wt])
 
     expect(r.status).toBe(1)
     expect(text(r)).toContain('uncommitted change')
-    // Presence: attribution ran (R0), so the absence of `down` is not "docker never ran".
-    expect(r.dockerCalls).toContain('info')
-    expect(downs(r.dockerCalls)).toEqual([])
-    expect(r.dockerCalls.some(deletes)).toBe(false)
+    // The dirty-tree refusal comes BEFORE the attribution check (G: so U6's list is
+    // as fresh as possible when the removal acts), hence before even `docker info`:
+    // no Docker call of any kind was made, and the worktree is untouched.
+    expect(r.dockerCalls).toEqual([])
     expect(existsSync(wt)).toBe(true)
   })
 
@@ -494,6 +502,7 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     const vol = 'foo_website-vercel-output'
     volumeListResponse(fx, [vol])
     volumeLabels(fx, vol, { volume: 'website-vercel-output', project: 'foo', owned: 'true' })
+    ourContainers(fx, wt)
     const reg = (): string[] => readRegLog(fx)
 
     const r = runRemove(fx, [wt, '--force'])
@@ -505,7 +514,7 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     expect(rm.every((l) => l.endsWith('registered=no'))).toBe(true)
     // And the control that the probe can see the other state: the stop ran, and
     // it ran while the worktree was still registered.
-    const stop = reg().find((l) => l.startsWith('compose') && l.includes('down'))
+    const stop = reg().find((l) => l.startsWith('rm -f '))
     expect(stop).toBeDefined()
     expect(stop).toMatch(/registered=yes$/)
   })
@@ -514,11 +523,12 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     const fx = mk('attr-t13')
     const wt = addWt(fx, 'foobar')
     primeAttribution(fx, wt)
+    ourContainers(fx, wt)
     const hookRc = join(fx.tempRoot, 'hook.rc')
     const hookErr = join(fx.tempRoot, 'hook.err')
     const hookList = join(fx.tempRoot, 'hook.list')
-    // Fires on the FIRST effect-phase docker call, whatever it is, so the test
-    // does not depend on `down` still running.
+    // Fires on the FIRST effect-phase docker call, whatever it is (here the
+    // approved `rm -f`), so the test does not depend on one verb still running.
     setHook(
       fx,
       'effect',
@@ -543,8 +553,8 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     expect(readFileSync(hookList, 'utf8')).not.toContain('foo.bar')
     expect(readFileSync(hookList, 'utf8')).toContain('foobar')
     // Then that the effect phase it interrupted was the stop itself.
-    expect(readFileSync(join(fx.responsesDir, 'hook.trigger'), 'utf8')).toContain('down')
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    expect(readFileSync(join(fx.responsesDir, 'hook.trigger'), 'utf8')).toContain('rm -f c1')
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
     // Last: a creator that got in would make the pruner refuse the project later,
     // so the exit status follows from the property rather than proving it.
     expect(r.status).toBe(0)
@@ -563,15 +573,16 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     expect(existsSync(wt)).toBe(true)
   })
 
-  it('T14b. --keep-docker without a collision: `down` runs, the pruner never does', () => {
+  it('T14b. --keep-docker without a collision: the containers go, the pruner never runs', () => {
     const fx = mk('attr-t14b')
     const wt = addWt(fx, 'foo')
     primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
     const r = runRemove(fx, [wt, '--force', '--keep-docker'])
 
     expect(r.status).toBe(0)
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
     expect(r.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
     expect(r.dockerCalls.some(deletes)).toBe(false)
   })
@@ -634,21 +645,27 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
       `${join(fx.repoDir, 'scripts')}/prune-orphaned-docker-volumes.sh --only-project foo`
     )
     expect(text(r)).not.toContain('Worktree removal complete!')
+    // The project's containers were not stopped either: say so, and how to look.
+    expect(text(r)).toContain('containers were NOT stopped or removed')
+    expect(text(r)).toContain('docker ps -a --filter label=com.docker.compose.project=foo')
+    // No by-name `compose -p P down` fallback.
+    expect(r.dockerCalls).toEqual(['info'])
     expect(r.status).toBe(1)
   })
 
   it.each([
-    ['--keep-docker', ['--keep-docker']],
-    ['--no-orphan-prune', ['--no-orphan-prune']],
+    ['--keep-docker', ['--keep-docker'], {}],
+    ['--no-orphan-prune', ['--no-orphan-prune'], {}],
+    ['SKILLSMITH_ORPHAN_PRUNE_DISABLE=1', [], { SKILLSMITH_ORPHAN_PRUNE_DISABLE: '1' }],
   ])(
     'T15e. an unreachable daemon with %s: the user asked to keep the resources, so exit 0',
-    (_n, flags) => {
+    (_n, flags, env) => {
       const fx = mk('attr-t15e')
       const wt = addWt(fx, 'foo')
       primeAttribution(fx, wt)
       setExit(fx, 'info', 1)
 
-      const r = runRemove(fx, [wt, '--force', ...flags])
+      const r = runRemove(fx, [wt, '--force', ...flags], env)
 
       expect(r.dockerCalls).toEqual(['info'])
       expect(existsSync(wt)).toBe(false)
@@ -658,18 +675,91 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     }
   )
 
-  it('T17. profiles are discovered: `down` carries each, and never --volumes/--rmi', () => {
+  it('T17. removes exactly the approved ids, then the project networks by id; no `compose down` anywhere', () => {
     const fx = mk('attr-t17')
     const wt = addWt(fx, 'foo')
     primeAttribution(fx, wt)
-    setResp(fx, 'profiles', 'dev\ntest')
+    ourContainers(fx, wt, ['c1', 'c2'])
+    setProjectNetworks(fx, ['n1', 'n2'])
 
     const r = runRemove(fx, [wt, '--force'])
 
     expect(r.status).toBe(0)
-    expect(r.dockerCalls).toContain('compose config --profiles')
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev --profile test down'])
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1 c2', 'network rm n1', 'network rm n2'])
+    expect(r.dockerCalls.some((c) => c.startsWith('compose') && /\bdown\b/.test(c))).toBe(false)
+    expect(r.dockerCalls.some((c) => c.includes('--profiles'))).toBe(false)
     expect(r.dockerCalls.some((c) => c.includes('--volumes') || c.includes('--rmi'))).toBe(false)
+  })
+
+  it('T17c. a container that appears in a LATER `ps` is not removed: only U6\u2019s ids are', () => {
+    const fx = mk('attr-t17c')
+    const wt = addWt(fx, 'foo')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1'])
+    // The 1st `ps` (U6) sees c1; any LATER `ps` would also see c9.
+    setPsSequence(fx, ['c1', 'c1 c9', 'c1 c9'])
+
+    const r = runRemove(fx, [wt, '--force'])
+
+    expect(r.status).toBe(0)
+    // Presence: U6 listed once, and c1 went.
+    expect(r.dockerCalls.filter((c) => c.startsWith('ps -aq'))).toHaveLength(1)
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
+    expect(r.dockerCalls.some((c) => c.includes('c9'))).toBe(false)
+  })
+
+  it('T17d. no approved container -> no `rm` call at all', () => {
+    const fx = mk('attr-t17d')
+    const wt = addWt(fx, 'foo')
+    primeAttribution(fx, wt)
+
+    const r = runRemove(fx, [wt, '--force'])
+
+    expect(r.status).toBe(0)
+    // Presence: the stop phase ran (networks were listed).
+    expect(r.dockerCalls).toContain(
+      'network ls --filter label=com.docker.compose.project=foo --format {{.ID}}'
+    )
+    expect(r.dockerCalls.some((c) => c.startsWith('rm '))).toBe(false)
+  })
+
+  it('T17e. a failed `rm -f` is fatal BEFORE Step 2: the worktree stays registered, exit 1, ids named', () => {
+    const fx = mk('attr-t17e')
+    const wt = addWt(fx, 'foo')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1', 'c2'])
+    setProjectNetworks(fx, ['n1'])
+    setExit(fx, 'rm', 1)
+
+    const r = runRemove(fx, [wt, '--force'])
+
+    expect(r.status).toBe(1)
+    // Presence: the rm was attempted; then the run stopped: no network call, no
+    // pruner, and the worktree is still on disk and registered.
+    expect(r.dockerCalls).toContain('rm -f c1 c2')
+    expect(r.dockerCalls.some((c) => c.startsWith('network rm'))).toBe(false)
+    expect(r.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
+    expect(existsSync(wt)).toBe(true)
+    expect(listed(fx)).toContain(`worktree ${wt}\n`)
+    expect(text(r)).toContain('c1 c2')
+    expect(text(r)).not.toContain('Worktree removal complete!')
+  })
+
+  it('T17f. a symlinked worktree path is refused before any Docker call, naming both paths', () => {
+    const fx = mk('attr-t17f')
+    const real = addWt(fx, 'fooreal')
+    primeAttribution(fx, real)
+    const link = join(fx.tempRoot, 'foolink')
+    symlinkSync(real, link)
+
+    const r = runRemove(fx, [link, '--force'])
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual([])
+    expect(existsSync(real)).toBe(true)
+    expect(text(r)).toContain('foolink')
+    expect(text(r)).toContain('fooreal')
+    expect(text(r)).toContain(`Use the real path: ${real}`)
   })
 
   it('T17b. a worktree with no Compose files is attributed on git alone: no Compose call is made', () => {
@@ -766,5 +856,33 @@ describe('SMI-7089: static guarantees', () => {
     expect(offences(code('lib/remove-worktree-docker.sh'))).toEqual([])
     // Presence: the same read finds the pruner call that replaced them.
     expect(code('remove-worktree.sh')).toContain('--only-project')
+  })
+
+  it('T18c. --help states the exit contract for an unreachable daemon and for a missing binary', () => {
+    const fx = mk('attr-t18c')
+    const r = run(fx, 'remove-worktree.sh', ['--help'])
+    const help = r.stdout.replace(/\s+/g, ' ')
+
+    expect(r.status).toBe(0)
+    expect(help).toContain('daemon is unreachable and you did not opt out')
+    expect(help).toContain('exits 1 with the re-run command')
+    expect(help).toContain('A missing docker binary exits 0')
+  })
+
+  it('T18b. neither script nor the attribution library issues a project-scoped `compose ... down`', () => {
+    const DOWN = /compose[^\n]*\bdown\b/
+    // Known positive: the scanner flags the old call.
+    expect(DOWN.test('(cd "$d" && docker compose --profile dev down)')).toBe(true)
+    for (const f of [
+      'remove-worktree.sh',
+      'lib/remove-worktree-docker.sh',
+      'worktree-docker.sh',
+      'lib/worktree-project-attribution.sh',
+    ]) {
+      expect([f, DOWN.test(code(f))]).toEqual([f, false])
+    }
+    // Presence: the helper that replaced it is wired into both scripts.
+    expect(code('lib/remove-worktree-docker.sh')).toContain('worktree_project_remove_approved')
+    expect(code('worktree-docker.sh')).toContain('worktree_project_remove_approved')
   })
 })
