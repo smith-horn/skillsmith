@@ -10,6 +10,7 @@ const showErrorMessage = vi.fn()
 const showInformationMessage = vi.fn()
 const registerCommand = vi.fn()
 const executeCommand = vi.fn()
+const progressReport = vi.fn()
 
 let acceptHandler: (() => Promise<void>) | undefined
 const quickPick = {
@@ -37,7 +38,7 @@ vi.mock('vscode', () => ({
     showInformationMessage,
     createQuickPick: () => quickPick,
     withProgress: async (_opts: unknown, task: (p: { report: () => void }) => Promise<void>) =>
-      task({ report: vi.fn() }),
+      task({ report: progressReport }),
   },
   commands: { registerCommand, executeCommand },
   ProgressLocation: { Notification: 15 },
@@ -117,6 +118,48 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     expect(options.detail).not.toContain('confirmed=true')
     expect(button).toBe('Install anyway')
     expect(showErrorMessage).not.toHaveBeenCalled()
+    // Presence partner: the retry's success reached the success UI.
+    const succeeded = showInformationMessage.mock.calls.some((c) =>
+      String(c[0]).startsWith('Successfully installed "example-skill"')
+    )
+    expect(succeeded).toBe(true)
+  })
+
+  it('retries only once: a second CONFIRMATION_REQUIRED is an error, not another prompt', async () => {
+    installSkill.mockResolvedValue(confirmationRequired)
+    showWarningMessage.mockResolvedValue('Install anyway')
+
+    await runInstall()
+
+    expect(showWarningMessage).toHaveBeenCalledTimes(1)
+    expect(installSkill).toHaveBeenCalledTimes(2)
+    expect(showErrorMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a failed retry as an install failure', async () => {
+    installSkill.mockResolvedValueOnce(confirmationRequired).mockResolvedValueOnce({
+      success: false,
+      skillId: skill.id,
+      installPath: '',
+      error: 'Security scan failed',
+    })
+    showWarningMessage.mockResolvedValueOnce('Install anyway')
+
+    await runInstall()
+
+    expect(installSkill).toHaveBeenCalledTimes(2)
+    expect(showErrorMessage).toHaveBeenCalledWith('Installation failed: Security scan failed')
+  })
+
+  it('names an empty trust tier "unknown", not "-tier"', async () => {
+    installSkill.mockResolvedValueOnce({ ...confirmationRequired, trustTier: '' })
+    showWarningMessage.mockResolvedValueOnce(undefined)
+
+    await runInstall()
+
+    const message = String(showWarningMessage.mock.calls[0]?.[0])
+    expect(message).toContain('unknown-tier')
+    expect(message).not.toMatch(/ -tier/)
   })
 
   it('never passes skipScan on either call', async () => {
@@ -127,8 +170,11 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
 
     await runInstall()
 
+    // Presence partner: both calls happened, so the loop below inspected something.
+    expect(installSkill).toHaveBeenCalledTimes(2)
+    expect(installSkill.mock.calls[1]?.[1]).toEqual({ confirmed: true })
     for (const call of installSkill.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('skipScan')
+      expect('skipScan' in ((call[1] as object | undefined) ?? {})).toBe(false)
     }
   })
 
@@ -143,6 +189,10 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     expect(showErrorMessage).not.toHaveBeenCalled()
     const cancelled = showInformationMessage.mock.calls.some((c) => /cancelled/.test(String(c[0])))
     expect(cancelled).toBe(true)
+    // The progress notification says "Cancelled", never "Complete!".
+    const reported = progressReport.mock.calls.map((c) => (c[0] as { message?: string }).message)
+    expect(reported).toContain('Cancelled')
+    expect(reported).not.toContain('Complete!')
   })
 
   it('makes one call with no confirmed option and no warning on a normal success', async () => {

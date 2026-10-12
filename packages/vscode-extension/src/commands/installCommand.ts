@@ -202,15 +202,16 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
       try {
         const result = await performInstall(skill)
 
-        progress.report({ increment: 100, message: 'Complete!' })
-
         if (result.cancelled) {
           // SMI-7056: the user declined the trust-tier confirmation.
+          progress.report({ increment: 100, message: 'Cancelled' })
           vscode.window.showInformationMessage(
             `Installation of "${skill.name}" cancelled: it was not confirmed.`
           )
           return
         }
+
+        progress.report({ increment: 100, message: 'Complete!' })
 
         if (result.tierDeniedHandled) {
           // SMI-5288: the server refused on tier grounds; the tier-denied UX
@@ -271,7 +272,7 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
       // confirmed: true. skipScan is never set, so the scan still runs.
       if (!result.success && isConfirmationRequired(result)) {
         const choice = await vscode.window.showWarningMessage(
-          `"${skill.name}" is a ${result.trustTier ?? 'unknown'}-tier skill.`,
+          `"${skill.name}" is a ${result.trustTier || 'unknown'}-tier skill.`,
           { modal: true, detail: confirmationDetail(result) },
           'Install anyway'
         )

@@ -258,6 +258,21 @@ describe('SMI-7056: install confirmation path', () => {
     expect(errorOutput()).not.toContain('User force closed')
   })
 
+  it('TTY: any other prompt error is reported as an error, not swallowed as a decline', async () => {
+    setTty(true)
+    mocks.installFn.mockResolvedValue(CONFIRMATION_REQUIRED)
+    mocks.confirmFn.mockRejectedValue(new Error('prompt backend failed'))
+
+    await run()
+
+    expect(mocks.confirmFn).toHaveBeenCalledTimes(1)
+    expect(mocks.installFn).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(1)
+    expect(errorOutput()).toContain('prompt backend failed')
+    const printed = mockConsoleLog.mock.calls.map((c) => c.join(' ')).join('\n')
+    expect(printed).not.toContain('Install cancelled')
+  })
+
   it('an empty trust tier is named "unknown", not "-tier"', async () => {
     mocks.installFn.mockResolvedValue({ ...CONFIRMATION_REQUIRED, trustTier: '' })
 
