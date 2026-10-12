@@ -148,9 +148,9 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
 
   it('T5. a plain `git worktree add` before the in-lock read is caught (images)', () => {
     const f = imageFixture('lk-t5')
-    setDockerHook(f, `ps_ancestor__${IMG}`, plainAdd(f, 'feat-t5'))
+    setDockerHook(f, `ps_ancestor__${imageIdFor(IMG)}`, plainAdd(f, 'feat-t5'))
     const r = runPrune(f, only('gone-wt'))
-    expect(hookRan(f, `ps_ancestor__${IMG}`)).toBe(true)
+    expect(hookRan(f, `ps_ancestor__${imageIdFor(IMG)}`)).toBe(true)
     expect(r.stdout).toContain('LIVE NOW')
     expect(r.dockerCalls.some((c) => deletesImg(c))).toBe(false)
   })
@@ -381,8 +381,8 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
   describe('T22. the Docker gates run inside the section, against the identity recorded at selection', () => {
     const volIncarnation = (f: FixtureRepo): string =>
       join(f.responsesDir, `volume_inspect__${VOL}__incarnation`)
-    const ORIGINAL = '2026-10-01T10:00:00Z|true'
-    const volProbe = `volume inspect ${VOL} --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}`
+    const ORIGINAL = '2026-10-01T10:00:00Z|node_modules|gone-wt|true'
+    const volProbe = `volume inspect ${VOL} --format {{.CreatedAt}}|{{index .Labels "com.docker.compose.volume"}}|{{index .Labels "com.docker.compose.project"}}|{{index .Labels "app.skillsmith.owned"}}`
 
     /** A volume whose incarnation is rewritten while the section runs (at the in-lock liveness read, git call #2). */
     const replacedVolumeFixture = (name: string, replacement: string): FixtureRepo => {
@@ -402,8 +402,56 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
       expect(r.status).toBe(0)
     })
 
+    describe('selection: predicates and identity come from ONE inspect', () => {
+      const WRONG_PROJECT = '2026-10-01T10:00:09Z|node_modules|other-proj|true'
+      const write = (f: FixtureRepo, line: string): string =>
+        `printf '%s\n' '${line}' > "${volIncarnation(f)}"`
+
+      it('control: with no replacement the owned volume is deleted after exactly one selection inspect', () => {
+        const f = volumeFixture('lk-t22-sel-ok')
+        writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+        const r = runPrune(f, only('gone-wt'))
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2) // selection + section
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(1)
+      })
+
+      it.each([
+        [
+          'an unowned replacement',
+          '2026-10-01T10:00:09Z|node_modules|gone-wt|',
+          'UNCONFIRMED ownership',
+        ],
+        ['a wrong-project replacement', WRONG_PROJECT, ''],
+      ])('BEFORE the inspect: %s is judged as itself and is not a candidate', (_n, line, msg) => {
+        const f = volumeFixture('lk-t22-sel-before')
+        writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+        setDockerHook(f, `volume_inspect__${VOL}`, write(f, line))
+        const r = runPrune(f, only('gone-wt'))
+        // Presence: the swap happened before the one selection inspect, which read it.
+        expect(hookRan(f, `volume_inspect__${VOL}`)).toBe(true)
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(1)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+        if (msg) expect(r.stdout).toContain(msg)
+      })
+
+      it('AFTER the inspect: a wrong-project replacement is caught by the in-lock CreatedAt check', () => {
+        const f = volumeFixture('lk-t22-sel-after')
+        writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+        // Fires right after the selection read that carries the project label.
+        setDockerHook(f, `volume_after_project_read__${VOL}`, write(f, WRONG_PROJECT))
+        const r = runPrune(f, only('gone-wt'))
+        expect(hookRan(f, `volume_after_project_read__${VOL}`)).toBe(true)
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+        expect(r.stdout).toContain('re-created since selection')
+      })
+    })
+
     it('a volume replaced by an unowned one under the same name is not deleted', () => {
-      const f = replacedVolumeFixture('lk-t22-vol-swap', '2026-10-01T10:00:09Z|')
+      const f = replacedVolumeFixture(
+        'lk-t22-vol-swap',
+        '2026-10-01T10:00:09Z|node_modules|gone-wt|'
+      )
       const r = runPrune(f, only('gone-wt'))
       // Presence: the replacement happened (git call #2 ran) and the in-lock
       // re-inspect read it: two incarnation reads, the second one in the section.
@@ -415,7 +463,10 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
     })
 
     it('a volume whose labels are identical but whose CreatedAt changed is not deleted', () => {
-      const f = replacedVolumeFixture('lk-t22-vol-marker', '2026-10-01T10:00:09Z|true')
+      const f = replacedVolumeFixture(
+        'lk-t22-vol-marker',
+        '2026-10-01T10:00:09Z|node_modules|gone-wt|true'
+      )
       const r = runPrune(f, only('gone-wt'))
       expect(gitHookRan(f, 2)).toBe(true)
       expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
@@ -459,6 +510,44 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
         const r = runPrune(f, only('gone-wt'))
         expect(r.dockerCalls.filter((c) => deletesImg(c))).toEqual([`rmi ${OLD_ID}`])
         expect(r.status).toBe(0)
+      })
+
+      const labelReads = (calls: string[], who: string): string[] =>
+        calls.filter((c) => c.startsWith(`image inspect ${who} --format {{index .Config.Labels`))
+
+      it('a tag retargeted right after the first ID resolution: every predicate is read by ID', () => {
+        const f = imageFixture('lk-t22-img-sel')
+        setDockerHook(f, `image_id_after__${IMG}__1`, rewriteTag(f))
+        const r = runPrune(f, only('gone-wt'))
+        // Presence: the retarget fired after selection's resolution, and the
+        // predicates (service + ownership at selection, ownership in the section) ran.
+        expect(hookRan(f, `image_id_after__${IMG}__1`)).toBe(true)
+        expect(labelReads(r.dockerCalls, OLD_ID).length).toBeGreaterThanOrEqual(3)
+        // The predicates were evaluated on the resolved ID, never on the tag.
+        expect(labelReads(r.dockerCalls, IMG)).toHaveLength(0)
+        // And nothing outside the selected ID is deleted (the tag moved: skipped).
+        expect(r.dockerCalls.filter((c) => deletesImg(c))).toHaveLength(0)
+        expect(r.dockerCalls.some((c) => c.includes(NEW_ID) && deletesImg(c))).toBe(false)
+        expect(r.stdout).toContain(`SKIPPED image ${IMG}`)
+      })
+
+      it('an image referenced by several tags: docker refuses the delete, the run stops, nothing else is tried', () => {
+        const f = imageFixture('lk-t22-img-multi')
+        shimDockerFailures(f, [
+          {
+            glob: `rmi ${OLD_ID}`,
+            stderr:
+              'Error response from daemon: conflict: unable to delete 210d3be062ba (must be forced) - image is referenced in multiple repositories',
+          },
+        ])
+        const r = runPrune(f, only('gone-wt'))
+        // Presence: the by-ID delete was attempted exactly once, and only that.
+        expect(r.dockerCalls.filter((c) => deletesImg(c))).toEqual([`rmi ${OLD_ID}`])
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain(`docker rmi ${OLD_ID} failed (exit 1:`)
+        expect(r.stderr).toContain('multiple repositories')
+        expect(r.stderr).toContain('outcome of a failed request is UNKNOWN')
+        expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
       })
 
       it('a tag retargeted to another image before the section is not deleted', () => {

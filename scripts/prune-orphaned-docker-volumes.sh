@@ -53,12 +53,8 @@
 #       its registration became observable -- while ALL of these hold: C1 it was
 #       created through create-worktree.sh; C2 the common directory inode is not
 #       replaced (detected at each check, NOT after the final check before the
-#       delete); C2b Docker ignores the lock: a volume replaced between the
-#       in-lock re-inspect and `volume rm`, or removed and re-created within the
-#       same second as the original (CreatedAt has one-second resolution; Docker
-#       has no volume ID or compare-and-delete), is NOT detected and is deleted.
-#       Images are covered (deleted by ID); C3 no creator skips the lock (it has
-#       no opt-out); C4 the filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
+#       delete); C3 no creator skips the lock (it has no opt-out); C4 the
+#       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
 #       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
 #       outcome the daemon may still execute; the run stops with exit 1). ANY
 #       failed delete does the same, whatever the CLI printed: a docker CLI can
@@ -71,6 +67,19 @@
 #       lock is released, but SIGKILL of this script releases the lock at once:
 #       the supervisor then notices the lost parent within ~50 ms and kills the
 #       group, which a delete already sent to the daemon can still outlive.
+#   G1 DOES NOT HOLD for these (explicit exceptions: the delete can hit the
+#   wrong object): E1 a VOLUME replaced between the in-lock re-inspect and
+#   `volume rm` (Docker ignores our lock and has no compare-and-delete); E2 a
+#   volume removed and re-created within the SAME SECOND as the one selected
+#   (CreatedAt has one-second resolution; Docker has no volume ID). Nothing else.
+#   Covered exactly: an IMAGE's ID is captured first, every predicate (service,
+#   ownership, attachment) is judged on that ID, and the section re-checks that
+#   the tag still resolves to it, that it is owned and unattached, then deletes
+#   BY ID. A VOLUME's CreatedAt, shape, project and ownership come from ONE
+#   inspect at selection, and the section requires CreatedAt unchanged, owned and
+#   unused. (A container started on an image between the in-lock check and `rmi`
+#   is not detected here; docker's own in-use refusal would stop the run -- not
+#   measured.)
 #   G2. A worktree registered WITHOUT the lock (plain `git worktree add`, the
 #       Claude Code harness, any other tool) is not excluded. The in-lock liveness
 #       read shrinks the race to the gap between that read and the delete, which
@@ -278,14 +287,20 @@ if [[ -n "$ONLY_PROJECT" ]] && is_protected "$ONLY_PROJECT" "$protected"; then
     error "--only-project '$ONLY_PROJECT' is the main checkout or a live worktree -- refusing to prune."
 fi
 
-# incarnation_of VOLUME CREATED_VAR OWNED_VAR -- read a volume's CreatedAt and
-# ownership label at selection (one inspect). Like label_of: a volume that merely
-# vanished is silent, any other failure warns and sets OP_FAILED; returns 1.
+# incarnation_of VOLUME CREATED_VAR SHAPE_VAR PROJECT_VAR OWNED_VAR -- ONE inspect
+# at selection yields the identity (CreatedAt) AND every predicate label, so
+# nothing is judged on a different incarnation than the one recorded. Like
+# label_of: a volume that merely vanished is silent, any other failure warns and
+# sets OP_FAILED; returns 1.
 incarnation_of() {
-    local out
+    local out rest
     if out="$(worktree_lifecycle_volume_state "$1")"; then
         printf -v "$2" '%s' "${out%%|*}"
-        printf -v "$3" '%s' "${out#*|}"
+        rest="${out#*|}"
+        printf -v "$3" '%s' "${rest%%|*}"
+        rest="${rest#*|}"
+        printf -v "$4" '%s' "${rest%%|*}"
+        printf -v "$5" '%s' "${rest##*|}"
         return 0
     fi
     if ! grep -qiE 'no such volume' <<< "$out"; then
@@ -312,12 +327,13 @@ while IFS= read -r vol; do
     classify_volume "$vol" || continue
     is_protected "$project" "$protected" && continue
 
-    label_of volume "$vol" com.docker.compose.volume vol_shape_label || continue
-    label_of volume "$vol" com.docker.compose.project vol_project_label || continue
-    incarnation_of "$vol" vol_created vol_owned_label || continue
+    incarnation_of "$vol" vol_created vol_shape_label vol_project_label vol_owned_label || continue
 
     [[ "$vol_shape_label" == "$expected_vol_key" ]] || continue
     [[ "$vol_project_label" == "$project" ]] || continue
+    # Container attachment is mutable state, not identity: it is re-read inside the
+    # critical section. Every identity-bound predicate above came from the one
+    # inspect that recorded CreatedAt, so no window exists between them.
     attached_or_unknown "volume=$vol" && continue
 
     # SMI-6981: an unconfirmed volume is NEVER a deletion candidate, whatever
@@ -378,11 +394,20 @@ while IFS= read -r img; do
     project="${img%-dev}"
     is_protected "$project" "$protected" && continue
 
-    label_of image "$img" com.docker.compose.service img_service_label || continue
+    # IDENTITY FIRST: resolve the immutable image ID once, then judge EVERY
+    # predicate on that ID (labels are immutable per ID), never on the tag. A tag
+    # retargeted after this line changes nothing that was checked; the section
+    # re-checks that the tag still resolves to this ID and deletes BY ID.
+    if ! img_id="$(worktree_lifecycle_image_id "$img")"; then
+        warn "  Could not resolve image $img (${img_id:-no output}) -- skipping"
+        OP_FAILED=true
+        continue
+    fi
+    label_of image "$img_id" com.docker.compose.service img_service_label || continue
     [[ "$img_service_label" == "dev" ]] || continue
-    attached_or_unknown "ancestor=$img" && continue
+    attached_or_unknown "ancestor=$img_id" && continue
 
-    label_of image "$img" app.skillsmith.owned img_owned_label || continue
+    label_of image "$img_id" app.skillsmith.owned img_owned_label || continue
     # SMI-6981: --include-unlabeled gated `docker rmi` exactly as it gated
     # `volume rm`, so a foreign `*-dev` image with no attached container and no
     # ownership label was deletable. Same rule, same reason.
@@ -398,14 +423,6 @@ while IFS= read -r img; do
 
     if ! in_scope "$project"; then
         echo "REPORT-ONLY orphan: $img (project not named by --only-project -- never deleted)"
-        continue
-    fi
-
-    # Record the immutable image ID now; the section deletes BY THAT ID after
-    # re-checking, inside the lock, that the tag still resolves to it.
-    if ! img_id="$(worktree_lifecycle_image_id "$img")"; then
-        warn "  Could not resolve image $img (${img_id:-no output}) -- skipping"
-        OP_FAILED=true
         continue
     fi
 

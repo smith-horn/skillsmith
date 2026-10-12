@@ -172,17 +172,22 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     // SMI-6981: the incarnation read ("<CreatedAt>|<owned>"). A static or
     // sequenced `__incarnation` response wins; otherwise it is composed from the
     // volume's `__owned` response (consumed like any other read of it) and a
-    // fixed CreatedAt, so tests that only set labels keep working.
+    // fixed CreatedAt, so tests that only set labels keep working. The line is
+    // "<CreatedAt>|<shape>|<project>|<owned>" (one inspect carries identity and
+    // every predicate).
     '          *CreatedAt*)',
     '            line="$(emit "volume_inspect__${vol}__incarnation")"',
     '            if [ -z "$line" ]; then',
+    '              sh_="$(emit "volume_inspect__${vol}__volume")"',
+    '              pj="$(emit "volume_inspect__${vol}__project")"',
     '              o="$(emit "volume_inspect__${vol}__owned")"',
-    '              line="2000-01-01T00:00:00Z|$o"',
+    '              line="2000-01-01T00:00:00Z|$sh_|$pj|$o"',
     '            fi',
     '            printf "%s\\n" "$line"',
+    '            run_hook "volume_after_project_read__${vol}"',
     '            ;;',
     '          *compose.volume*) emit "volume_inspect__${vol}__volume" ;;',
-    '          *compose.project*) emit "volume_inspect__${vol}__project" ;;',
+    '          *compose.project*) emit "volume_inspect__${vol}__project"; run_hook "volume_after_project_read__${vol}" ;;',
     '          *skillsmith.owned*) emit "volume_inspect__${vol}__owned" ;;',
     '        esac',
     '        exit 0',

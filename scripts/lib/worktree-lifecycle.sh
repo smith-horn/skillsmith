@@ -330,18 +330,21 @@ worktree_lifecycle_bounded() {
     perl -e "$_WTL_PERL_BOUNDED" -- "$secs" "$@" 7<&- </dev/null
 }
 
-# worktree_lifecycle_volume_state NAME -- prints "<CreatedAt>|<owned label>"; 1
-# (printing the reason) if the inspect fails or does not parse. CreatedAt is the
-# volume's incarnation marker: Docker has no volume ID or compare-and-delete, but
-# a volume re-created under the same name gets a new CreatedAt (measured, docker
-# 29.7.2). Its resolution is ONE SECOND: a same-second replacement is invisible.
+# worktree_lifecycle_volume_state NAME -- ONE `docker volume inspect` printed as
+# "<CreatedAt>|<compose volume label>|<compose project label>|<owned label>"; 1
+# (printing the reason) if it fails or does not parse. Selection takes its
+# predicates (shape, project, ownership) AND its identity (CreatedAt) from this
+# one result, so they describe the same incarnation. CreatedAt is the identity:
+# Docker has no volume ID or compare-and-delete, but a volume re-created under
+# the same name gets a new CreatedAt (measured, docker 29.7.2), at ONE-SECOND
+# resolution: a same-second replacement is invisible.
 worktree_lifecycle_volume_state() {
     local out
-    if ! out="$(docker volume inspect "$1" --format '{{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}' 7<&- </dev/null 2>&1)"; then
+    if ! out="$(docker volume inspect "$1" --format '{{.CreatedAt}}|{{index .Labels "com.docker.compose.volume"}}|{{index .Labels "com.docker.compose.project"}}|{{index .Labels "app.skillsmith.owned"}}' 7<&- </dev/null 2>&1)"; then
         printf '%s' "$out"
         return 1
     fi
-    if [[ ! "$out" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^|]*\|[^|]*$ ]]; then
+    if [[ ! "$out" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^|]*\|[^|]*\|[^|]*\|[^|]*$ ]]; then
         printf 'unparseable inspect output: %s' "$out"
         return 1
     fi
@@ -366,16 +369,17 @@ worktree_lifecycle_image_id() {
 
 # _wtl_gate KIND NAME EXPECT -- the Docker re-inspect INSIDE the critical section,
 # the last checks before the delete. EXPECT is the volume's CreatedAt or the
-# image's ID recorded at selection. Returns 0 to proceed (an image's delete target
-# is left in _WTL_RM_TARGET) or 1 to SKIP with the reason in _WTL_SKIP. A
+# image's ID captured at selection. Returns 0 to proceed (an image's delete
+# target is left in _WTL_RM_TARGET) or 1 to SKIP with the reason in _WTL_SKIP. A
 # re-inspect that cannot run or parse stops the whole run via error(), like a
 # failed delete. A mismatch SKIPS only that candidate: nothing was deleted and the
 # object now there is not ours to touch.
-# Covered: an image is deleted BY ID, only if its tag still resolves to the
-# recorded ID, that ID is owned and no container uses it. A volume is deleted
-# only if CreatedAt is unchanged, it is still owned and unused. NOT covered:
-# Docker ignores this lock, so a volume replaced between this inspect and
-# `volume rm`, or within the same second as the original, is deleted.
+# Coverage starts at IDENTITY CAPTURE (selection), where every predicate was
+# evaluated on the captured identity. Images: deleted BY ID, only if the tag
+# still resolves to it, it is owned and no container uses it. Volumes: only if
+# CreatedAt is unchanged, still owned and unused. NOT covered: Docker ignores
+# this lock, so a volume replaced between this inspect and `volume rm`, or
+# re-created within the same second as the original, is deleted.
 _wtl_gate() {
     local kind="$1" name="$2" expect="$3" state cur owned attached
     _WTL_SKIP=""
@@ -388,7 +392,7 @@ _wtl_gate() {
         state="$(worktree_lifecycle_volume_state "$name")" \
             || error "re-inspecting volume $name under the worktree lifecycle lock failed (${state}) -- deleting nothing further."
         cur="${state%%|*}"
-        owned="${state#*|}"
+        owned="${state##*|}"
         if [[ "$cur" != "$expect" ]]; then
             _WTL_SKIP="it was re-created since selection (CreatedAt $expect -> $cur)"
             return 1
