@@ -113,6 +113,8 @@ describe('SMI-7056: CLI confirmation helper against the real core gate', () => {
     expect(refused.error).toContain('--yes')
     // Core's API-flavoured "confirmed=true" wording never reaches a CLI user.
     expect(refused.error).not.toContain('confirmed=true')
+    // Presence partner: the tips survived the filter; only the API wording left.
+    expect(refused.tips ?? []).toContain('Trust tier: unverified')
     expect((refused.tips ?? []).join(' ')).not.toContain('confirmed=true')
   })
 

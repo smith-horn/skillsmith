@@ -103,6 +103,8 @@ function setTty(isTty: boolean): void {
   Object.defineProperty(process.stdout, 'isTTY', { value: isTty, configurable: true })
 }
 
+const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
 describe('SMI-7056: update confirmation path', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -142,6 +144,27 @@ describe('SMI-7056: update confirmation path', () => {
       expectedInstallPath: '/mock/skills/low-star-skill',
       confirmed: true,
     })
+  })
+
+  it('--yes with no terminal never prompts, including the "Update <skill>?" prompt', async () => {
+    // Off a TTY a real prompt throws; make any call fail loudly.
+    mocks.confirmFn.mockRejectedValue(
+      Object.assign(new Error('prompt needs a TTY'), { name: 'ExitPromptError' })
+    )
+    const { updateSkillWithOutcome } = await import('../src/commands/manage.update.js')
+
+    const result = await updateSkillWithOutcome(
+      'low-star-skill',
+      '/fake/db',
+      false,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(mocks.confirmFn).not.toHaveBeenCalled()
+    expect(mocks.installFn).toHaveBeenCalledTimes(1)
+    expect(result.outcome).toBe('updated')
   })
 
   it('without --yes the options carry no confirmed key (existing shape preserved)', async () => {
@@ -195,6 +218,9 @@ describe('SMI-7056: update confirmation path', () => {
 
     expect(mocks.installFn).toHaveBeenCalledTimes(1)
     expect(result.outcome).toBe('cancelled')
+    const printed = logSpy.mock.calls.map((c) => c.join(' ')).join('\n')
+    expect(printed).toContain('Update cancelled: unverified-tier skill was not confirmed.')
+    expect(printed).not.toContain('Install cancelled')
   })
 
   it('updateSkills threads yes into every per-skill install', async () => {

@@ -93,9 +93,9 @@ const ttyDescriptors = {
   stdout: Object.getOwnPropertyDescriptor(process.stdout, 'isTTY'),
 }
 
-function setTty(isTty: boolean): void {
-  Object.defineProperty(process.stdin, 'isTTY', { value: isTty, configurable: true })
-  Object.defineProperty(process.stdout, 'isTTY', { value: isTty, configurable: true })
+function setTty(stdinTty: boolean, stdoutTty: boolean = stdinTty): void {
+  Object.defineProperty(process.stdin, 'isTTY', { value: stdinTty, configurable: true })
+  Object.defineProperty(process.stdout, 'isTTY', { value: stdoutTty, configurable: true })
 }
 
 function restoreTty(): void {
@@ -144,6 +144,10 @@ describe('SMI-7056: install confirmation path', () => {
     )
     expect(mocks.confirmFn).not.toHaveBeenCalled()
     expect(mocks.spinner.succeed).toHaveBeenCalledWith('Skill installed')
+    // --yes answers the confirmation only; it must not imply skipScan.
+    const options = mocks.installFn.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(options['confirmed']).toBe(true)
+    expect('skipScan' in options).toBe(false)
   })
 
   it('-y is an alias for --yes', async () => {
@@ -178,6 +182,21 @@ describe('SMI-7056: install confirmation path', () => {
     expect(out).not.toContain('confirmed=true')
   })
 
+  it.each([
+    ['stdin is a TTY but stdout is not', true, false],
+    ['stdout is a TTY but stdin is not', false, true],
+  ])('%s: never prompts and the refusal names --yes', async (_label, stdinTty, stdoutTty) => {
+    setTty(stdinTty, stdoutTty)
+    mocks.installFn.mockResolvedValue(CONFIRMATION_REQUIRED)
+
+    await run()
+
+    expect(mocks.confirmFn).not.toHaveBeenCalled()
+    expect(mocks.installFn).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(1)
+    expect(errorOutput()).toContain('--yes')
+  })
+
   it('TTY answering yes retries once with confirmed: true', async () => {
     setTty(true)
     mocks.installFn.mockResolvedValueOnce(CONFIRMATION_REQUIRED).mockResolvedValueOnce(INSTALLED)
@@ -194,6 +213,15 @@ describe('SMI-7056: install confirmation path', () => {
     expect(second['confirmed']).toBe(true)
     expect(mocks.spinner.succeed).toHaveBeenCalledWith('Skill installed')
     expect(mockExit).not.toHaveBeenCalled()
+    // The spinner stops before the prompt and restarts before the retry.
+    const stopAt = mocks.spinner.stop.mock.invocationCallOrder.at(-1) ?? 0
+    const promptAt = mocks.confirmFn.mock.invocationCallOrder[0] ?? 0
+    const restartAt = mocks.spinner.start.mock.invocationCallOrder.at(-1) ?? 0
+    const retryAt = mocks.installFn.mock.invocationCallOrder[1] ?? 0
+    expect(stopAt).toBeGreaterThan(0)
+    expect(stopAt).toBeLessThan(promptAt)
+    expect(promptAt).toBeLessThan(restartAt)
+    expect(restartAt).toBeLessThan(retryAt)
   })
 
   it('TTY answering no does not install and exits non-zero', async () => {
@@ -206,8 +234,38 @@ describe('SMI-7056: install confirmation path', () => {
     expect(mocks.confirmFn).toHaveBeenCalledTimes(1)
     expect(mocks.installFn).toHaveBeenCalledTimes(1)
     expect(mocks.spinner.succeed).not.toHaveBeenCalled()
+    expect(mocks.spinner.fail).not.toHaveBeenCalled()
     expect(mockExit).toHaveBeenCalledWith(1)
-    expect(errorOutput()).toContain('cancelled')
+    const printed = mockConsoleLog.mock.calls.map((c) => c.join(' ')).join('\n')
+    expect(printed).toContain('Install cancelled: unverified-tier skill was not confirmed.')
+    expect(errorOutput()).not.toContain('Installation failed')
+  })
+
+  it('TTY Ctrl-C at the prompt is a decline, not a crash', async () => {
+    setTty(true)
+    mocks.installFn.mockResolvedValue(CONFIRMATION_REQUIRED)
+    mocks.confirmFn.mockRejectedValue(
+      Object.assign(new Error('User force closed the prompt'), { name: 'ExitPromptError' })
+    )
+
+    await run()
+
+    expect(mocks.confirmFn).toHaveBeenCalledTimes(1)
+    expect(mocks.installFn).toHaveBeenCalledTimes(1)
+    expect(mockExit).toHaveBeenCalledWith(1)
+    const printed = mockConsoleLog.mock.calls.map((c) => c.join(' ')).join('\n')
+    expect(printed).toContain('Install cancelled')
+    expect(errorOutput()).not.toContain('User force closed')
+  })
+
+  it('an empty trust tier is named "unknown", not "-tier"', async () => {
+    mocks.installFn.mockResolvedValue({ ...CONFIRMATION_REQUIRED, trustTier: '' })
+
+    await run()
+
+    const out = errorOutput()
+    expect(out).toContain('Confirmation required for unknown-tier skill.')
+    expect(out).not.toMatch(/ -tier/)
   })
 
   it('--json never prompts, even on a TTY, and names --yes in the JSON error', async () => {
@@ -220,7 +278,14 @@ describe('SMI-7056: install confirmation path', () => {
     expect(mocks.installFn).toHaveBeenCalledTimes(1)
     expect(mockExit).toHaveBeenCalledWith(1)
     const printed = mockConsoleLog.mock.calls.map((c) => c.join(' ')).join('\n')
-    expect(printed).toContain('--yes')
+    const parsed = JSON.parse(printed) as Record<string, unknown>
+    expect(parsed['success']).toBe(false)
+    expect(parsed['trustTier']).toBe('unverified')
+    expect(parsed['errorCode']).toBe('CONFIRMATION_REQUIRED')
+    expect(parsed['error']).toContain('--yes')
+    expect(Object.keys(parsed).sort()).toEqual(
+      ['error', 'errorCode', 'installPath', 'skillId', 'success', 'tips', 'trustTier'].sort()
+    )
   })
 
   it('--yes with --skip-scan sends both flags and still reports core refusing the skip', async () => {

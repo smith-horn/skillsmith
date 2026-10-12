@@ -51,7 +51,8 @@ export const installTool = {
       confirmed: {
         type: 'boolean',
         description:
-          'Confirm install despite security warnings (required for experimental/unknown tier skills)',
+          'Confirm install despite security warnings. Required for any registry skill whose trust ' +
+          'tier is not official, verified, curated, community or local (for example unverified).',
       },
       // SMI-4578: multi-client install
       client: {

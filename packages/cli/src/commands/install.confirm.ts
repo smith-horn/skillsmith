@@ -64,6 +64,16 @@ function withError(result: CoreInstallResult, error: string): CoreInstallResult 
   return { ...rest, ...(tips ? { tips } : {}), error }
 }
 
+/** Ask y/N (default No). Ctrl-C (`ExitPromptError`) is a "no", as in login.ts. */
+async function askToProceed(): Promise<boolean> {
+  try {
+    return await confirm({ message: 'Install anyway?', default: false })
+  } catch (err) {
+    if ((err as { name?: string }).name === 'ExitPromptError') return false
+    throw err
+  }
+}
+
 /**
  * Run `install` and, on CONFIRMATION_REQUIRED, apply the confirm path above.
  * `confirmed` is only ever added to the options when it is true, so callers'
@@ -77,7 +87,8 @@ export async function installWithConfirmation(
   const first = await install(opts.yes ? { ...baseOptions, confirmed: true } : baseOptions)
   if (!isConfirmationRequired(first)) return first
 
-  const tier = first.trustTier ?? 'unknown'
+  // `||`, not `??`: an empty-string tier would otherwise print as "-tier".
+  const tier = first.trustTier || 'unknown'
   const reason = reasonText(first)
 
   if (opts.allowPrompt === false || !isInteractiveTerminal()) {
@@ -91,12 +102,9 @@ export async function installWithConfirmation(
   opts.beforePrompt?.()
   console.log(chalk.yellow(`\n  Trust tier: ${tier}`))
   console.log(chalk.yellow(`  ${reason}`))
-  const proceed = await confirm({ message: 'Install anyway?', default: false })
-  if (!proceed) {
-    return {
-      ...withError(first, `Install cancelled: ${tier}-tier skill was not confirmed.`),
-      declined: true,
-    }
+  if (!(await askToProceed())) {
+    // Callers prefix their own verb ("Install cancelled: ...", "Update cancelled: ...").
+    return { ...withError(first, `${tier}-tier skill was not confirmed.`), declined: true }
   }
 
   opts.beforeRetry?.()

@@ -196,12 +196,13 @@ export const installInputSchema = z.object({
     .enum(['overwrite', 'merge', 'cancel'])
     .optional()
     .describe('Action to take on conflict: overwrite local, merge changes, or cancel'),
-  /** SMI-3863: Confirm install of experimental/unknown tier skills */
+  /** SMI-3863 / SMI-7056: Confirm install of a registry skill outside the reviewed trust tiers */
   confirmed: z
     .boolean()
     .default(false)
     .describe(
-      'Confirm install despite security warnings (required for experimental/unknown tiers)'
+      'Confirm install despite security warnings. Required for any registry skill whose trust ' +
+        'tier is not official, verified, curated, community or local (for example unverified).'
     ),
   /** SMI-4578: target client (defaults to SKILLSMITH_CLIENT env or claude-code) */
   client: z

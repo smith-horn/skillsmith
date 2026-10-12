@@ -26,6 +26,8 @@ export function formatJsonResult(result: CoreInstallResult): string {
       skillId: result.skillId,
       installPath: result.installPath,
       error: result.error,
+      // SMI-7056: lets a script tell CONFIRMATION_REQUIRED from other failures.
+      ...(!result.success && result.errorCode !== undefined && { errorCode: result.errorCode }),
       trustTier: result.trustTier,
       optimization: result.optimization,
       tips: result.tips,

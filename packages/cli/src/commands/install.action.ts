@@ -384,6 +384,8 @@ async function installActionImpl(
       if (spinner) {
         if (result.success) {
           spinner.succeed('Skill installed')
+        } else if (result.declined) {
+          spinner.stop()
         } else {
           spinner.fail('Installation failed')
         }
@@ -391,6 +393,9 @@ async function installActionImpl(
 
       if (jsonOutput) {
         console.log(formatJsonResult(result))
+      } else if (result.declined) {
+        // SMI-7056: a "no" at the trust-tier prompt is a cancellation, not a failure.
+        console.log(chalk.yellow(`Install cancelled: ${result.error}`))
       } else {
         displayResult(result, quiet)
       }

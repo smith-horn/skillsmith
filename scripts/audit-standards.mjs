@@ -5837,6 +5837,8 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // install-confirmation.contract.test.ts, which passes an explicit manifestPath.
     'packages/cli/tests/install-confirmation.test.ts':
       'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
+    'packages/vscode-extension/src/__tests__/installCommand.confirmation.test.ts':
+      "McpClient is vi.mock()ed and installSkill is a vi.fn() — the suite drives the extension's confirm-and-retry path, and no installer or manifest is ever reached",
     'packages/cli/src/commands/registry-install.action.test.ts':
       'SkillInstallationService is vi.mock()ed; the assertions are on constructor arguments, not on an install',
     'packages/cli/tests/install-quarantine.test.ts':

@@ -12,6 +12,7 @@ vi.mock('@inquirer/prompts', () => ({
   checkbox: vi.fn(),
   number: vi.fn(),
   select: vi.fn(),
+  confirm: vi.fn(),
 }))
 
 // Hoisted mock state for the SMI-5982 interactive-install regression suite below.
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    warn: vi.fn().mockReturnThis(),
     text: '',
   },
 }))
@@ -236,6 +238,89 @@ describe('SMI-744: Search Command', () => {
         expect.objectContaining({ companionBaseDir: process.cwd() })
       )
       expect(mocks.installFn).toHaveBeenCalledWith('community/jest-helper', {})
+    })
+  })
+
+  // SMI-7056: installing from interactive search answers core's
+  // CONFIRMATION_REQUIRED gate with the same y/N prompt as `install`.
+  describe('interactive install confirmation (SMI-7056)', () => {
+    const CONFIRMATION_REQUIRED = {
+      success: false,
+      skillId: 'community/jest-helper',
+      installPath: '/mock/skills/jest-helper',
+      errorCode: 'CONFIRMATION_REQUIRED',
+      trustTier: 'unverified',
+      confirmationReason: 'unverified tier skills have not been reviewed.',
+    }
+    const tty = {
+      stdin: Object.getOwnPropertyDescriptor(process.stdin, 'isTTY'),
+      stdout: Object.getOwnPropertyDescriptor(process.stdout, 'isTTY'),
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true })
+      Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true })
+    })
+
+    afterEach(() => {
+      for (const [stream, key] of [
+        [process.stdin, 'stdin'],
+        [process.stdout, 'stdout'],
+      ] as const) {
+        const original = tty[key]
+        if (original) Object.defineProperty(stream, 'isTTY', original)
+        else delete (stream as { isTTY?: boolean }).isTTY
+      }
+    })
+
+    async function pickInstall(): Promise<void> {
+      const { input, checkbox, number, select } = await import('@inquirer/prompts')
+      vi.mocked(input).mockResolvedValueOnce('jest-helper')
+      vi.mocked(checkbox).mockResolvedValueOnce([])
+      vi.mocked(number).mockResolvedValueOnce(0)
+      vi.mocked(select)
+        .mockResolvedValueOnce('view_0')
+        .mockResolvedValueOnce('install')
+        .mockResolvedValueOnce('exit')
+      const { createSearchCommand } = await import('../src/commands/search.js')
+      await createSearchCommand().parseAsync(['node', 'test', '--interactive', '--db', 'fake.db'])
+    }
+
+    it('answering yes retries once with confirmed: true', async () => {
+      const { confirm } = await import('@inquirer/prompts')
+      vi.mocked(confirm).mockResolvedValueOnce(true)
+      mocks.installFn.mockReset()
+      mocks.installFn.mockResolvedValueOnce(CONFIRMATION_REQUIRED).mockResolvedValueOnce({
+        success: true,
+        skillId: 'community/jest-helper',
+        installPath: '/mock/skills/jest-helper',
+      })
+
+      await pickInstall()
+
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(mocks.installFn).toHaveBeenCalledTimes(2)
+      expect(mocks.installFn.mock.calls[0]?.[1]).toEqual({})
+      expect(mocks.installFn.mock.calls[1]?.[1]).toEqual({ confirmed: true })
+      expect(mocks.ora.succeed).toHaveBeenCalledWith(
+        expect.stringContaining('Installed "jest-helper" successfully')
+      )
+    })
+
+    it('answering no cancels without a second install', async () => {
+      const { confirm } = await import('@inquirer/prompts')
+      vi.mocked(confirm).mockResolvedValueOnce(false)
+      mocks.installFn.mockReset()
+      mocks.installFn.mockResolvedValue(CONFIRMATION_REQUIRED)
+
+      await pickInstall()
+
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(mocks.installFn).toHaveBeenCalledTimes(1)
+      expect(mocks.ora.warn).toHaveBeenCalledWith(expect.stringContaining('Install cancelled'))
+      expect(mocks.ora.fail).not.toHaveBeenCalledWith(
+        expect.stringContaining('Installation failed')
+      )
     })
   })
 

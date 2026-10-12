@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Fix**: SMI-7056 -- installing a registry skill whose trust tier is not official, verified, curated, community or local (for example unverified) now shows a warning naming the tier and the reason, with an "Install anyway" button, and retries once with confirmation on that choice. Dismissing it cancels the install. Previously the install failed with a generic error. The security scan is never skipped.
+
 - **Breaking**: Skillsmith now requires VS Code 1.125 or later. If you're on an earlier version,
   you keep the version of Skillsmith you have installed but won't receive updates until you update
   VS Code. Raising the minimum lets the extension be built and published against the current VS Code

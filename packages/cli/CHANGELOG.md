@@ -10,7 +10,10 @@ All notable changes to `@skillsmith/cli` are documented here.
   an interactive terminal shows the skill's trust tier and a warning and asks y/N (default No); a
   script or pipe exits non-zero with a message naming `--yes`. Installing from interactive
   `skillsmith search` asks the same question. `--yes` only answers that question: the security
-  scan still runs, and `--skip-scan` is still refused for these tiers.
+  scan still runs, and `--skip-scan` is still refused for these tiers. `update --yes` also answers
+  the existing "Update <skill>?" prompt, so it works from a script. Answering no, or pressing
+  Ctrl-C, cancels the install. `install --json` output now includes `errorCode` on failure (for
+  example `CONFIRMATION_REQUIRED`).
 
 ## v0.8.15
 

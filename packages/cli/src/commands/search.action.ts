@@ -267,6 +267,8 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
                   if (installResult.installPath) {
                     console.log(chalk.dim(`  Path: ${installResult.installPath}`))
                   }
+                } else if (installResult.declined) {
+                  installSpinner.warn(chalk.yellow(`Install cancelled: ${installResult.error}`))
                 } else {
                   installSpinner.fail(chalk.red(`Installation failed: ${installResult.error}`))
                 }

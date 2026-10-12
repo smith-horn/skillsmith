@@ -327,6 +327,7 @@ export class McpClient {
     options?: {
       force?: boolean
       skipScan?: boolean
+      confirmed?: boolean // SMI-7056: answers CONFIRMATION_REQUIRED for an unreviewed tier
     }
   ): Promise<McpInstallResponse> {
     return this.callTool<McpInstallResponse>('install_skill', {

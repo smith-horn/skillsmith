@@ -180,10 +180,14 @@ async function updateSkillWithOutcome(
       return { outcome: 'up-to-date' }
     }
 
-    const proceed = await confirm({
-      message: `Update ${skillName}?`,
-      default: true,
-    })
+    // SMI-7056: `--yes` answers this prompt as well as the trust-tier one, so
+    // `update --yes` works without a terminal.
+    const proceed =
+      yes ||
+      (await confirm({
+        message: `Update ${skillName}?`,
+        default: true,
+      }))
 
     if (!proceed) {
       console.log(chalk.yellow('Update cancelled'))
