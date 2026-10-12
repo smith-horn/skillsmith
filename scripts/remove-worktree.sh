@@ -65,11 +65,11 @@ Examples:
   $(basename "$0") worktrees/my-feature --keep-docker
 
 What this script does:
-  1. Refuses, changing nothing, if the worktree's Compose project is also used by
+  1. Refuses if the worktree has uncommitted changes, unless --force is passed (SMI-5000)
+  2. Refuses, changing nothing, if the worktree's Compose project is also used by
      another checkout or cannot be attributed to this worktree alone (SMI-7089):
      another registered worktree, the main checkout, a .worktrees directory, a
      container created from a different directory, or any unreadable listing
-  2. Refuses if the worktree has uncommitted changes, unless --force is passed (SMI-5000)
   3. Removes exactly the containers the check approved (docker rm -f <ids>, no
      project-scoped Compose call) and then the project's networks if Docker allows (never a
      volume or an image)
@@ -157,16 +157,22 @@ main() {
         worktree_path="$repo_root/$worktree_path"
     fi
 
+    # Check worktree exists
+    if [[ ! -d "$worktree_path" ]]; then
+        error "Worktree not found at: $worktree_path"
+    fi
+
+    # Canonicalize (SMI-7111): a path ending in `/.` or `/..` has an empty or wrong
+    # basename, so the Compose project must not be derived from the raw argument.
+    # LOGICAL pwd (no -P) resolves `.`/`..` but keeps a symlink's own name, so the
+    # symlink-basename refusal still sees it (same as worktree-docker.sh).
+    worktree_path="$(CDPATH= cd -- "$worktree_path" && pwd)"
+
     # The Compose project this removal may prune, derived with the SAME sanitizer
     # the Compose project name uses and BEFORE anything is removed. It is the only
     # project the orphan prune (Step 3.5) is allowed to delete from.
     local orphan_project
     orphan_project="$(sanitize_project_name "$(basename "$worktree_path")")"
-
-    # Check worktree exists
-    if [[ ! -d "$worktree_path" ]]; then
-        error "Worktree not found at: $worktree_path"
-    fi
 
     # Critical guard: refuse to operate on the main repo BEFORE any side effects.
     # Without this, stop_worktree_containers below would remove the live
@@ -242,8 +248,8 @@ Commit or discard them first, or re-run with --force to discard:
 
     # Step 0 (SMI-7089): attribution. Every Docker step below acts on a Compose
     # project that is a COMPUTED name, so first show that nothing this script can
-    # see shares it -- or refuse, changing nothing, here. Runs before the dirty
-    # check and before any side effect, --keep-docker included (Step 1 still
+    # see shares it -- or refuse, changing nothing, here. Runs after the dirty
+    # check (Step 0a) and before any side effect, --keep-docker included (Step 1 still
     # removes the approved containers under it). A plain statement, never in $(...): error()
     # inside a substitution would only end the subshell. Sets WPA_DOCKER.
     worktree_project_attribution_or_die "$_main_repo" "$worktree_path" "$orphan_project" docker-optional

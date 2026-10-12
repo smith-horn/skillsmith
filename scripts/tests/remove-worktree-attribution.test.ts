@@ -289,6 +289,29 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     expect(text(r)).toContain(`git worktree remove --force ${wt}`)
   })
 
+  it.each([
+    ['a trailing `/.`', (wt: string) => `${wt}/.`],
+    ['a `/sub/..` hop', (wt: string) => `${wt}/sub/..`],
+  ])(
+    'T16c. %s resolves to the worktree\u2019s own project (SMI-7111), not an empty name',
+    (_n, spell) => {
+      const fx = mk('attr-t16c')
+      const wt = addWt(fx, 'foo')
+      mkdirSync(join(wt, 'sub'))
+      primeAttribution(fx, wt)
+      ourContainers(fx, wt, ['c1'])
+
+      const r = runRemove(fx, [spell(wt), '--force'])
+
+      expect(r.status).toBe(0)
+      expect(text(r)).not.toContain('sanitizes to an empty Compose project name')
+      // Presence: project foo was acted on, not merely not-refused.
+      expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
+      expect(text(r)).toContain('Orphan prune scope: foo')
+      expect(existsSync(wt)).toBe(false)
+    }
+  )
+
   it('T16. refuses an own non-worktree Compose project (skillsmith-eval-cron)', () => {
     const fx = mk('attr-t16')
     const wt = addWt(fx, 'skillsmith-eval-cron')
