@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/cli",
-  "version": "0.8.15",
+  "version": "0.8.16",
   "description": "A registry for sharing, scanning, and tracking agent skills across teams.",
   "type": "module",
   "bin": {
@@ -38,8 +38,8 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@skillsmith/core": "^0.13.0",
-    "@skillsmith/mcp-server": "^0.7.19",
+    "@skillsmith/core": "^0.14.0",
+    "@skillsmith/mcp-server": "^0.8.0",
     "@types/node": "^25.9.3",
     "esbuild": "0.28.1",
     "vitest": "4.1.11"
