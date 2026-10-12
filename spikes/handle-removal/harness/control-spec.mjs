@@ -303,10 +303,18 @@ export function controlTag(state) {
  * and lost nothing would PASS, which is worse than the rule it replaces. 100 is
  * not arbitrary: by the rule of three, observing 0 failures in n trials puts the
  * 95% upper confidence bound on the failure rate at about 3/n, so 100 landed
- * races bound it at ~3%. At 30 the bound is ~10%, which is too weak to certify a
- * data-loss property. A cell that lands fewer than the floor is reported
- * NEVER-RAN (underpowered) -- honest about having too few real races rather than
- * passing on a handful.
+ * races bound it at ~3%. At 30 the bound is ~10%. A cell that lands fewer than
+ * the floor is reported NEVER-RAN (underpowered) -- honest about having too few
+ * real races rather than passing on a handful.
+ *
+ * A MINIMUM EVIDENCE FLOOR, NOT A SAFETY BOUND (SMI-6711 HIGH 4, 2026-10-12).
+ * This comment used to say 30 was "too weak to certify a data-loss property",
+ * implying 100 certifies one. It does not. A 95% upper bound of ~3% loss per
+ * landed race is not a production threshold, and the rule of three assumes
+ * independent, identically distributed trials -- repeated races from one
+ * runner on one filesystem under one timing distribution are neither. So a
+ * PASS here means "at least 100 landed races, none lost data": a diagnostic
+ * floor below which a cell cannot pass. It is not a measured loss rate.
  */
 /**
  * THE EXCLUSIONS ARE DELIBERATE -- do not "fix" them by adding the rest of the
@@ -323,6 +331,14 @@ export function controlTag(state) {
  * the UAT. harness/test-verdict-rule.mjs case 6f pins this set's exact
  * contents, so an edit here fails a test rather than silently rescoring a
  * family.
+ *
+ * WHAT THE EXCLUSION DOES NOT SHOW (SMI-6711 MEDIUM 6, 2026-10-12). Calling
+ * these two "methodology experiments" is a statement about why they were run,
+ * not evidence that their mechanism differs from A13's -- the paragraph above
+ * says it does not. So the exclusion is kept for the §5.1 criterion-1 tally
+ * only, and their verdicts are not hidden: the decision memo reports them
+ * beside the scored A13 cells, so a reader weighing the removal decision sees
+ * them.
  */
 export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING'])
 export const LANDED_FLOOR = 100

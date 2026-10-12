@@ -26,8 +26,11 @@ per-cell ran/passed/failed/never-ran counts and the control status.
 > now reads **606 cells / 136,240 records / 60 raw files**; every figure in this
 > memo was computed against **560 cells / 46,760 records / 34 raw files**.
 >
-> The corpus is not corrupt and the memo is not stale in its conclusions — the
-> corpus GREW. The `A13-WARMARM` arms alone added 86,400 records, and the scored
+> The corpus is not corrupt — the corpus GREW. *(Corrected 2026-10-12, SMI-6711
+> BLOCKING 2: this sentence also said "the memo is not stale in its
+> conclusions". That was wrong. Its Recommendation section still recommended
+> the native track with C4 as the fallback, the opposite of the decision this
+> memo was gating. See "Status 2026-10-12" below.)* The `A13-WARMARM` arms alone added 86,400 records, and the scored
 > `guardHash` cell, the `A13-VALIDATE` runs and the Linux filesystem passes
 > added the rest. Nothing was removed.
 >
@@ -52,6 +55,69 @@ A13" stdout this memo's A13 provenance paragraph leans on exists in **no file
 at all** — it was terminal output from an exploratory run, and it is gone. Those
 four pre-fix numbers are the one class of figure in this memo that cannot be
 checked by anyone, including its author.
+
+---
+
+## Status 2026-10-12: the recommendation in this memo is superseded
+
+**Read this before anything below.** This memo's Recommendation section
+recommends the native track (C5) with C4 as the fallback. That is no longer
+the decision, and it was already out of date when the 2026-09-17 correction
+above called the memo's conclusions current.
+
+**The decision now (ADR-166):**
+
+- **C4, quarantine by rename, is the shipping removal mechanism.** The owner
+  chose it on 2026-09-17. The native track stays funded but isn't required to
+  ship.
+- **C4's threat model is narrowed (owner decision 2026-10-12).** C4 is safe
+  against *accidental* concurrent writers to a skills directory: a second
+  session, an editor, a sync tool. It is **not** safe against an adversary
+  with write access to the parent racing the final `rename(2)`. That window
+  can't be closed without `renameat(2)` on a held handle, which Node 22 lacks.
+  Such a writer is in practice the same user account, which can already
+  rewrite or delete the tree directly. C4 never deletes, so a lost race
+  misplaces a tree rather than destroying it.
+- **C4 has no scored attack cells in this corpus.** SMI-6715 tracks building
+  and running them. This memo's verdicts are about the walk candidates, not
+  C4.
+
+**Why it changed.** The SMI-6711 cross-family review (2026-09-19) found that
+the 2026-09-17 argument, "the native track cannot ship without C4, but C4 can
+ship without the native track", conflated operational fallback with security
+independence. Under C4's original threat model, "anything that can write to
+the parent", C4 needs the handle-relative machinery it was chosen to avoid.
+`quarantine.mjs` says so itself at the rename residual. Narrowing the threat
+model is what makes C4 shippable on its own.
+
+**Two evidence labels this memo uses, corrected by the same review:**
+
+- **R6's landed-subset floor of 100 is a minimum evidence floor, not a safety
+  bound.** A PASS under it means "at least 100 landed races, none lost data."
+  The rule-of-three bound of about 3% assumes independent, identically
+  distributed trials, which repeated races on one runner and one filesystem
+  are not. It is not a production loss threshold. See `harness/control-spec.mjs`.
+- **`A13-VALIDATE` and `A13-WARMARM` stay out of the criterion-1 tally, but not
+  out of sight.** They race by the same mechanism as A13. Leaving them out
+  records why they were run, not that they differ. Their verdicts, summed
+  across filesystems from `SUMMARY.md` (V2 candidate, no paired control by
+  design):
+
+  | Attack | Arm | Ran | Passed | Failed (user bytes lost) | Never-ran | Verdicts |
+  |---|---|---|---|---|---|---|
+  | A13-VALIDATE | perEntryTiming-off | 700 | 326 | 66 | 308 | FAIL |
+  | A13-VALIDATE | perEntryTiming-on | 700 | 315 | 66 | 319 | FAIL |
+  | A13-WARMARM | arm-A | 14,400 | 5,637 | 999 | 7,764 | FAIL ×4 |
+  | A13-WARMARM | arm-A0 | 14,400 | 5,526 | 1,056 | 7,818 | FAIL ×4 |
+  | A13-WARMARM | arm-B | 14,400 | 6,446 | 0 | 7,954 | NEVER-RAN ×4 |
+  | A13-WARMARM | arm-B0 | 14,400 | 6,476 | 0 | 7,924 | NEVER-RAN ×4 |
+  | A13-WARMARM | arm-C | 14,400 | 5,542 | 889 | 7,969 | FAIL ×4 |
+  | A13-WARMARM | arm-P | 14,400 | 0 | 0 | 14,400 | NEVER-RAN ×4 |
+
+  The never-ran column sums to 54,456, matching the figure in
+  `control-spec.mjs`.
+
+**Every other finding from that review and its disposition:** SMI-6711.
 
 ---
 
@@ -100,6 +166,11 @@ it is listed under "What would close criterion 1" below.
 ---
 
 ## Recommendation
+
+> **SUPERSEDED 2026-09-17, recorded here 2026-10-12.** This section's
+> recommendation is not the decision. C4 ships, under the narrowed threat
+> model in "Status 2026-10-12" above (ADR-166). It is kept below as the
+> checkpoint-7 record.
 
 **Native, shipped as C5 with C4 as the fallback — with the child-process probe
 AND a caller-supplied guard hash both as requirements, not footnotes.** The
@@ -596,7 +667,12 @@ retracts, so it is corrected here rather than repeated:
   its reason was one filesystem too broad.
 - **A8(a)** — its only cited control is F2 B (`feasibility/c3/check2-mac.sh`),
   which is macOS-only. On the four Linux filesystems it has no control at all.
-  All 40 A8 cells resolve to `external-unverified`.
+  All 40 A8 cells resolve to `external-unverified`. *(SMI-6711 MEDIUM 7,
+  2026-10-12: these cells stay `external-unverified` and must not be waived to
+  PASS. GNU `rm` refusing 15 of 15 shows GNU `rm` is not a vulnerable
+  implementation to use as the Linux control. It does not show no Linux
+  control can be built: a deliberately vulnerable walker could serve. None was
+  built. That doesn't block C4, which these cells don't score.)*
 - **A8(b)** — no control exists on any filesystem, checked against
   `check2-mac.sh`'s own case list (its `swap_run` has exactly three swap kinds —
   `dir`, `symlink`, `mount` — and none is "symlink replaced by a directory").
