@@ -1,7 +1,18 @@
 // SMI-6676 C4: quarantine by rename, delete only by explicit prune (§4.4).
 //
-// Pure JS, no native shim dependency -- C4 is the FALLBACK for when native
-// is unavailable, so it must work with nothing but `node:fs`. Where D1 asks
+// THREAT MODEL (owner decision 2026-10-12, SMI-6711 BLOCKING 1, ADR-166):
+// C4 is safe against ACCIDENTAL concurrent writers to the skills directory --
+// a second session, an editor, a sync tool. It is NOT safe against an
+// adversary with write access to the parent racing the final rename(2): that
+// window cannot be closed without renameat(2) on a held handle, which Node 22
+// lacks (see the residual above the rename). Such a writer is in practice the
+// same user account, which can already rewrite or delete the tree directly.
+// Comments below that say "anything that can write to the parent" name the
+// adversary the checks were DESIGNED against, not a guarantee C4 makes.
+//
+// Pure JS, no native shim dependency. C4 was written as the FALLBACK for when
+// native is unavailable; since 2026-09-17 it is the shipping mechanism
+// (ADR-166), so it must work with nothing but `node:fs`. Where D1 asks
 // for an extra Linux mnt_id check, that's attempted only if a native shim
 // happens to already be loaded (best-effort precision), never required.
 //
@@ -644,17 +655,29 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     }
   }
 
-  // THE RE-CHECK THAT ACTUALLY CLOSES B2, IMMEDIATELY BEFORE THE DESTRUCTIVE
-  // STEP. Everything above verified the tree; between that verification and
-  // this line the function created a trash root and an op directory, both of
-  // which touch the filesystem and take time. Re-comparing here is UD24's rule:
-  // the identity is checked immediately before each destructive step, not once
-  // at the top.
+  // THE RE-CHECK THAT NARROWS B2 -- A MITIGATION, NOT A CLOSURE. Everything
+  // above verified the tree; between that verification and this line the
+  // function created a trash root and an op directory, both of which touch the
+  // filesystem and take time. Re-comparing here is UD24's rule: the identity is
+  // checked immediately before each destructive step, not once at the top.
+  //
+  // (Corrected 2026-10-12, SMI-6711 HIGH 3. This heading used to say the
+  // re-check "ACTUALLY CLOSES B2", while the paragraphs below say the window
+  // stays open. The cross-family review read the two against each other. The
+  // paragraph below also used to break off mid-sentence at "UD25's".)
   //
   // RESIDUAL, STATED RATHER THAN IMPLIED: a window remains between this lstat
   // and the rename(2) below, and it cannot be closed in this design, because
   // closing it needs renameat(2) against a held directory handle and Node 22's
-  // fs has no renameat -- which is the reason this spike exists at all. UD25's
+  // fs has no renameat -- which is the reason this spike exists at all.
+  //
+  // WHY THE RESIDUAL IS ACCEPTED (owner decision 2026-10-12, SMI-6711 BLOCKING
+  // 1, ADR-166): C4 defends against ACCIDENTAL concurrent writers -- a second
+  // session, an editor, a sync tool. It does not claim safety against an
+  // adversary with write access to the parent racing this rename: in practice
+  // that writer is the same user account, which can already rewrite or delete
+  // the tree directly. A lost race misplaces a tree; C4 never deletes one.
+  //
   // WHAT THE CLOCK GATE ACTUALLY BUYS, corrected 2026-09-17. An earlier version
   // of this comment — written the same day, by me — said the gate means the
   // same-tick forge E47 measured on overlayfs "is rejected even when
