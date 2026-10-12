@@ -70,12 +70,11 @@ cleanup_worktree_docker_resources() {
         fi
     fi
 
-    # Compose-equivalent project name: lowercase + drop chars outside
-    # [a-z0-9_-]. Matches docker compose v2 ProjectName sanitization.
-    # Plain `basename` would diverge for dirs containing uppercase or
-    # special chars. sanitize_project_name() (_lib.sh) is the single
-    # canonical implementation -- shared with
-    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750).
+    # Compose-equivalent project name. sanitize_project_name() (_lib.sh) is the
+    # single canonical implementation (see its comment for the exact rules, which
+    # this comment deliberately does not restate) -- shared with
+    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750). Plain
+    # `basename` would diverge for dirs containing uppercase or special chars.
     local project_name
     project_name="$(sanitize_project_name "$(basename "$worktree_path")")"
 
@@ -175,6 +174,13 @@ process.stdin.on("end", () => {
     if [[ "${#declared_volume_keys[@]}" -eq 0 ]]; then
         declared_volume_keys=("node_modules")
     fi
+
+    # SMI-6981: neither path below takes the worktree lifecycle lock. Against a
+    # concurrent create-worktree.sh they are protected only by its refusal to
+    # register a second worktree for this Docker project (D-1) plus the order in
+    # remove-worktree.sh (this runs before `git worktree remove`, while this
+    # worktree is still registered). They are NOT protected against a plain
+    # `git worktree add` of a same-project name.
 
     # Path B: name-based fallback. Idempotent — these always run, even when
     # Path A succeeded, to catch any image/volume that compose lost track of

@@ -6,14 +6,27 @@
  * script + _lib.sh into its own throwaway repo).
  */
 
+import { createHash } from 'crypto'
 import { execSync, spawnSync } from 'child_process'
-import { rmSync, existsSync, writeFileSync, chmodSync, readFileSync, mkdirSync, cpSync } from 'fs'
+import {
+  rmSync,
+  existsSync,
+  writeFileSync,
+  chmodSync,
+  readFileSync,
+  readdirSync,
+  mkdirSync,
+  cpSync,
+} from 'fs'
 import { dirname, join } from 'path'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const REAL_SCRIPT_PATH = join(__dirname, '..', 'prune-orphaned-docker-volumes.sh')
 const REAL_LIB_PATH = join(__dirname, '..', '_lib.sh')
+const REAL_SPRAWL_LIB_PATH = join(__dirname, '..', 'lib', 'report-sprawl-containers.sh')
+const REAL_LIFECYCLE_LIB_PATH = join(__dirname, '..', 'lib', 'worktree-lifecycle.sh')
+const REAL_LIFECYCLE_DOCKER_LIB_PATH = join(__dirname, '..', 'lib', 'worktree-lifecycle-docker.sh')
 
 /**
  * SMI-4693: GIT_DISCOVERY_VARS-stripped env for every git invocation AND the
@@ -77,9 +90,56 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '',
     'emit() {',
     '  key="$1"',
+    // A `<key>.seq` file, if present, is CONSUMED one line per call: the first
+    // line is emitted and removed. This is the only way to test a value that
+    // CHANGES between two reads within a single run -- which is exactly what
+    // the SMI-6981 ownership re-check exists to catch. With a static response
+    // both reads return the same value, so the re-check's `|| continue` can be
+    // changed to `|| true` with nothing observing it (round-2 finding T2).
+    // Running the sequence dry emits nothing, i.e. the label has vanished.
+    '  if [ -n "$key" ] && [ -f "$RESP_DIR/$key.seq" ]; then',
+    '    head -n 1 "$RESP_DIR/$key.seq"',
+    '    tail -n +2 "$RESP_DIR/$key.seq" > "$RESP_DIR/$key.seq.next"',
+    '    mv "$RESP_DIR/$key.seq.next" "$RESP_DIR/$key.seq"',
+    '    return 0',
+    '  fi',
     '  if [ -n "$key" ] && [ -f "$RESP_DIR/$key" ]; then',
     '    cat "$RESP_DIR/$key"',
     '  fi',
+    '}',
+    '',
+    // SMI-6981 interleaving seam: a `hook__<key>` file is run ONCE, synchronously,
+    // by the shim at the point the keyed call is made -- inside the pruner's own
+    // child, so it executes at a deterministic point of the run. Consumed by a
+    // rename to `.ran`, which is also the "the hook ran" presence proof.
+    'run_hook() {',
+    '  f="$RESP_DIR/hook__$1"',
+    '  if [ -n "$1" ] && [ -f "$f" ]; then',
+    '    mv "$f" "$f.ran"',
+    '    bash "$f.ran"',
+    '  fi',
+    '}',
+    '',
+    // Counted hook: runs `hook__<key>__<n>` on the n-th call that reaches it, so a
+    // test can act AFTER a specific call has answered (SMI-6981 lock tests).
+    'nth_hook() {',
+    '  n=$(cat "$RESP_DIR/nth__$1" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$RESP_DIR/nth__$1"',
+    '  run_hook "$1__$n"',
+    '}',
+    '',
+    // `ps`, `volume ls`, `images` (keys `container_ids`/`volume_ls`/`images`): a nonzero exit code, static (`exit__<key>`) or one per read
+    // (`exit__<key>.seq`, consumed like `emit`'s), models a failing daemon query.
+    'ps_exit() {',
+    '  [ -n "$1" ] || return 0',
+    '  code=0',
+    '  if [ -f "$RESP_DIR/exit__$1.seq" ]; then',
+    '    code="$(head -n 1 "$RESP_DIR/exit__$1.seq")"',
+    '    tail -n +2 "$RESP_DIR/exit__$1.seq" > "$RESP_DIR/exit__$1.seq.next"',
+    '    mv "$RESP_DIR/exit__$1.seq.next" "$RESP_DIR/exit__$1.seq"',
+    '  elif [ -f "$RESP_DIR/exit__$1" ]; then',
+    '    code="$(cat "$RESP_DIR/exit__$1")"',
+    '  fi',
+    '  [ "${code:-0}" = 0 ] || exit "$code"',
     '}',
     '',
     'exit_override() {',
@@ -101,26 +161,48 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '  volume)',
     '    case "$sub" in',
     '      ls)',
+    '        ps_exit "volume_ls"',
     '        emit "volume_ls"',
     '        exit 0',
     '        ;;',
     '      inspect)',
     '        vol="$3"',
     '        fmt="$5"',
+    '        run_hook "volume_inspect__${vol}"',
+    '        nth_hook "volume_inspect_n__${vol}"',
     '        case "$fmt" in',
+    // SMI-6981: the incarnation read ("<CreatedAt>|<owned>"). A static or
+    // sequenced `__incarnation` response wins; otherwise it is composed from the
+    // volume's `__owned` response (consumed like any other read of it) and a
+    // fixed CreatedAt, so tests that only set labels keep working. The line is
+    // "<CreatedAt>|<shape>|<project>|<owned>" (one inspect carries identity and
+    // every predicate).
+    '          *CreatedAt*)',
+    '            line="$(emit "volume_inspect__${vol}__incarnation")"',
+    '            if [ -z "$line" ]; then',
+    '              sh_="$(emit "volume_inspect__${vol}__volume")"',
+    '              pj="$(emit "volume_inspect__${vol}__project")"',
+    '              o="$(emit "volume_inspect__${vol}__owned")"',
+    '              line="2000-01-01T00:00:00Z|$sh_|$pj|$o"',
+    '            fi',
+    '            printf "%s\\n" "$line"',
+    '            run_hook "volume_after_project_read__${vol}"',
+    '            ;;',
     '          *compose.volume*) emit "volume_inspect__${vol}__volume" ;;',
-    '          *compose.project*) emit "volume_inspect__${vol}__project" ;;',
+    '          *compose.project*) emit "volume_inspect__${vol}__project"; run_hook "volume_after_project_read__${vol}" ;;',
     '          *skillsmith.owned*) emit "volume_inspect__${vol}__owned" ;;',
     '        esac',
     '        exit 0',
     '        ;;',
     '      rm)',
+    '        run_hook "volume_rm__$3"',
     '        exit_override "volume_rm__$3"',
     '        ;;',
     '    esac',
     '    exit 0',
     '    ;;',
     '  images)',
+    '    ps_exit "images"',
     '    emit "images"',
     '    exit 0',
     '    ;;',
@@ -130,6 +212,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        img="$3"',
     '        fmt="$5"',
     '        case "$fmt" in',
+    '          *".Id"*) emit "image_inspect__${img}__id"; nth_hook "image_id_after__${img}" ;;',
     '          *compose.service*) emit "image_inspect__${img}__service" ;;',
     '          *skillsmith.owned*) emit "image_inspect__${img}__owned" ;;',
     '        esac',
@@ -139,10 +222,12 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '    exit 0',
     '    ;;',
     '  rmi)',
+    '    run_hook "rmi__$2"',
     '    exit_override "rmi__$2"',
     '    ;;',
     '  ps)',
     '    if [ "$2" = "-q" ]; then',
+    '      ps_exit "container_ids"',
     '      emit "container_ids"',
     '      exit 0',
     '    fi',
@@ -153,6 +238,9 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        ancestor=*) key="ps_ancestor__${arg#ancestor=}" ;;',
     '      esac',
     '    done',
+    '    run_hook "$key"',
+    '    nth_hook "ps_n__${key}"',
+    '    ps_exit "$key"',
     '    emit "$key"',
     '    exit 0',
     '    ;;',
@@ -182,20 +270,36 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
  * into its own scripts/ dir (see file header for why this is required), plus
  * a docker shim wired up on a dedicated bin dir.
  */
-export function setupFixture(prefix: string): FixtureRepo {
+/**
+ * @param opts.spacedPath nest the repo under a directory whose name contains a
+ *   space, so the MAIN CHECKOUT's own path has whitespace in it.
+ *
+ *   No fixture could reach this before: `makeFixtureTempDir` builds on
+ *   `tmpdir()`, which is space-free, so every fixture's main checkout sat at a
+ *   clean path and the `awk '{print $2}'` truncation was invisible on that
+ *   side. It is the worse side -- when the MAIN checkout's path is truncated,
+ *   the control name is derived from the same truncation, so every arm of the
+ *   enumeration guard agrees and the main checkout's own volume is deletable.
+ */
+export function setupFixture(prefix: string, opts: { spacedPath?: boolean } = {}): FixtureRepo {
   const tempRoot = makeTempDir(prefix)
-  const repoDir = join(tempRoot, 'repo')
+  const repoParent = opts.spacedPath ? join(tempRoot, 'My Projects') : tempRoot
+  if (opts.spacedPath) mkdirSync(repoParent, { recursive: true })
+  const repoDir = join(repoParent, 'repo')
 
-  git(tempRoot, `init "${repoDir}"`)
+  git(repoParent, `init "${repoDir}"`)
   sh(`touch "${join(repoDir, 'README.md')}"`)
   git(repoDir, 'add README.md')
   git(repoDir, 'commit -m "initial"')
 
   const scriptsDir = join(repoDir, 'scripts')
-  mkdirSync(scriptsDir, { recursive: true })
+  mkdirSync(join(scriptsDir, 'lib'), { recursive: true })
   const scriptPath = join(scriptsDir, 'prune-orphaned-docker-volumes.sh')
   cpSync(REAL_SCRIPT_PATH, scriptPath)
   cpSync(REAL_LIB_PATH, join(scriptsDir, '_lib.sh'))
+  cpSync(REAL_SPRAWL_LIB_PATH, join(scriptsDir, 'lib', 'report-sprawl-containers.sh'))
+  cpSync(REAL_LIFECYCLE_LIB_PATH, join(scriptsDir, 'lib', 'worktree-lifecycle.sh'))
+  cpSync(REAL_LIFECYCLE_DOCKER_LIB_PATH, join(scriptsDir, 'lib', 'worktree-lifecycle-docker.sh'))
   chmodSync(scriptPath, 0o755)
 
   const binDir = join(tempRoot, 'bin')
@@ -223,6 +327,24 @@ export function volumeListResponse(fixture: FixtureRepo, names: string[]): void 
   setResponse(fixture.responsesDir, 'volume_ls', names.join('\n'))
 }
 
+/**
+ * Serve a DIFFERENT value for each successive read of one volume label, so a
+ * test can model a label that changes mid-run. Takes precedence over any
+ * static value set by `volumeLabels` for the same label.
+ *
+ * Pass fewer values than there are reads to model the label VANISHING: once
+ * the sequence runs dry, `emit` produces nothing, which is what `docker volume
+ * inspect` yields for an absent label.
+ */
+export function volumeLabelSequence(
+  fixture: FixtureRepo,
+  vol: string,
+  label: 'volume' | 'project' | 'owned',
+  values: string[]
+): void {
+  setResponse(fixture.responsesDir, `volume_inspect__${vol}__${label}.seq`, values.join('\n'))
+}
+
 export function imagesResponse(fixture: FixtureRepo, repos: string[]): void {
   setResponse(fixture.responsesDir, 'images', repos.join('\n'))
 }
@@ -243,16 +365,30 @@ export function volumeLabels(
   }
 }
 
+/** A stable, sha256-shaped image ID for a tag (SMI-6981: images are deleted by ID). */
+export function imageIdFor(tag: string): string {
+  return `sha256:${createHash('sha256').update(tag).digest('hex')}`
+}
+
+/**
+ * Set an image's labels. Also registers the tag's ID (`imageIdFor(tag)` unless
+ * `id` is given) and the same labels under that ID, which is what the in-lock
+ * re-inspect reads.
+ */
 export function imageLabels(
   fixture: FixtureRepo,
   img: string,
-  labels: { service?: string; owned?: string }
+  labels: { service?: string; owned?: string },
+  id: string = imageIdFor(img)
 ): void {
+  setResponse(fixture.responsesDir, `image_inspect__${img}__id`, id)
   if (labels.service !== undefined) {
     setResponse(fixture.responsesDir, `image_inspect__${img}__service`, labels.service)
+    setResponse(fixture.responsesDir, `image_inspect__${id}__service`, labels.service)
   }
   if (labels.owned !== undefined) {
     setResponse(fixture.responsesDir, `image_inspect__${img}__owned`, labels.owned)
+    setResponse(fixture.responsesDir, `image_inspect__${id}__owned`, labels.owned)
   }
 }
 
@@ -266,7 +402,26 @@ export function setVolumeRmExit(fixture: FixtureRepo, vol: string, code: number)
 
 export function resetLog(fixture: FixtureRepo): void {
   if (existsSync(fixture.logPath)) rmSync(fixture.logPath)
+  // Also clear any sequenced responses. `.seq` files are CONSUMED, so one left
+  // over from a previous runPrune in the same test would be dry on the next
+  // call and read as "label absent" -- which is the BLOCKING outcome, so a
+  // two-run test combining `.seq` with resetLog would pass for the wrong
+  // reason. Clearing here means a sequence is scoped to one run unless the
+  // test deliberately re-arms it.
+  for (const f of readdirSync(fixture.responsesDir)) {
+    if (f.endsWith('.seq') || f.endsWith('.seq.next')) {
+      rmSync(join(fixture.responsesDir, f))
+    }
+  }
 }
+
+// The git-failure shims live in the sibling .shims.ts (500-line gate);
+// re-exported here so existing imports keep working.
+export {
+  breakGitWorktreeList,
+  failGitWorktreeListCalls,
+  worktreeListCallCount,
+} from './prune-orphaned-docker-volumes.shims.js'
 
 export function containerResponses(
   fixture: FixtureRepo,
