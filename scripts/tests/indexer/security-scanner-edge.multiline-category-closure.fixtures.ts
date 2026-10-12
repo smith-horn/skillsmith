@@ -20,6 +20,11 @@ export const CONTEXT_SRC = readFileSync(
   join(SHARED_DIR, 'security-scanner-edge.context.ts'),
   'utf-8'
 )
+// SMI-7030: CATEGORY_WEIGHTS / CATEGORY_COEFFICIENTS moved out of the context file into this sibling.
+export const WEIGHTS_SRC = readFileSync(
+  join(SHARED_DIR, 'security-scanner-edge.weights.ts'),
+  'utf-8'
+)
 export const PATTERNS_SRC = readFileSync(
   join(SHARED_DIR, 'security-scanner-edge.patterns.ts'),
   'utf-8'

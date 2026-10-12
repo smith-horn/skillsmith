@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-7030 -- the scanner now raises an `executable_frontmatter` finding (critical,
+  flag-only) when a skill's frontmatter opens with an executable `---js` / `---javascript` block.
+  The finding carries a score coefficient of 0, so it never changes `riskScore` on its own; it is
+  reported so it can be acted on. Current clients refuse to install a skill that carries it.
+- **Changed** (breaking for hand-built literals): SMI-7030 -- `RiskScoreBreakdown` gains a required
+  `executableFrontmatter` field. Code that constructs a `RiskScoreBreakdown` by hand must add it.
+- **Added**: SMI-7030 -- `calculateRiskScore` accepts an optional second `coefficients` argument.
+  It is a test seam; production callers pass one argument, and a lowered map would weaken the
+  quarantine gate.
+- **Added**: SMI-7030 -- `CATEGORY_COEFFICIENTS` is exported from the internal `weights.ts` module
+  (not re-exported from the scanner index, so not part of the package's public API).
+
 ## v0.13.0
 
 - **Fix**: SMI-6991 -- a corruption refusal told users to switch to the driver that also refuses it (#3013)

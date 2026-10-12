@@ -52,6 +52,7 @@ import { scanPasteHostFetch } from './SecurityScanner.paste-host.js'
 import { scanEncodedPayload } from './SecurityScanner.encoding.js'
 // SMI-6033 Wave 4 (Gap 6): decoy/misdirection URL-target heuristic.
 import { scanDecoyMisdirection } from './SecurityScanner.decoy.js'
+import { scanExecutableFrontmatter } from './SecurityScanner.frontmatter.js'
 
 // Import code-execution & obfuscated-directive detectors (SMI-5359 Wave 4.2).
 import {
@@ -368,6 +369,7 @@ export class SecurityScanner {
     // (inner) call to this same method — so no finding is ever run through
     // escalateCodeExecution/escalateCorroboratedMentions twice.
     if (!skipEncodedPayload) {
+      findings.push(...scanExecutableFrontmatter(content)) // SMI-7030: outer document only
       findings.push(
         ...scanEncodedPayload(content, lineContexts, (decodedContent) =>
           this.runDetectors(
