@@ -60,9 +60,16 @@ Shell exports don't reach MCP subprocesses — configure in `~/.skillsmith/confi
 
 ## Trust Tiers
 
-- **verified**: Official, reviewed by Skillsmith team
-- **community**: Community-reviewed
-- **experimental**: New or beta
+Eight tiers, from `TrustTierDescriptions` (`packages/core/src/types.ts`), the text the server shows:
+
+- **official**: Official or partner skill with full security review. Maintained by Skillsmith or verified partners.
+- **verified**: Manually reviewed by the Skillsmith team. High quality and safe to use.
+- **curated**: Third-party publisher. Manually opted into the registry.
+- **community**: Highly rated by the community. Generally reliable.
+- **experimental**: New or beta skill. Use with caution.
+- **unknown**: Not yet assessed. Review carefully before using.
+- **unverified**: No verification performed. Review carefully before installing.
+- **local**: Local skill from your ~/.claude/skills/ directory. You control this skill.
 
 ## Tool Naming Convention
 

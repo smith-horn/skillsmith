@@ -234,7 +234,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `configure_sso` | Configure SSO/SAML integration: set, test, remove, claim_domain, verify_domain (Enterprise) |
 | `sso_settings` | View current SSO/SAML configuration (Enterprise) |
 | `rbac_manage` | Inspect and adjust per-role permissions: `list_roles` / `get_role` / `set_role_permission` / `reset_role_permission` (Enterprise) |
-| `rbac_assign_role` | Assign or revoke roles for users (Enterprise) |
+| `rbac_assign_role` | Assign, revoke or list role assignments: assign, revoke, list_assignments (Enterprise) |
 | `rbac_create_policy` | Bulk-set, clear or list per-role permission overrides: `create` / `list` / `delete` (Enterprise) |
 | `webhook_configure` | Configure HMAC-SHA256-signed webhooks for skill lifecycle events: create, list, get, delete, test, rotate_secret (Enterprise; in preview, SMI-4135) |
 | `api_key_manage` | Manage API keys for programmatic access: create, list, revoke, get (Enterprise; in preview, SMI-4135) |

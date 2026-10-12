@@ -307,7 +307,7 @@ All tiers include:
 | `private_registry_publish` | Publish a skill to your private registry | Enterprise |
 | `private_registry_manage` | Manage private registry skills (list, get, install, deprecate, undeprecate, namespace, submissions, approve, reject) | Enterprise |
 | `rbac_manage` | Inspect and adjust per-role permissions (list_roles, get_role, set_role_permission, reset_role_permission) | Enterprise |
-| `rbac_assign_role` | Assign or revoke roles for users | Enterprise |
+| `rbac_assign_role` | Assign, revoke or list role assignments | Enterprise |
 | `rbac_create_policy` | Bulk-set, clear or list per-role permission overrides | Enterprise |
 | `webhook_configure` | Configure HMAC-SHA256 signed webhooks for skill events (in preview — availability pending production migration) | Enterprise |
 | `api_key_manage` | Manage API keys for programmatic access (in preview — availability pending production migration) | Enterprise |
@@ -375,11 +375,12 @@ Validate a skill's SKILL.md file.
 
 ### skill_compare
 
-Compare multiple skills side-by-side.
+Compare two skills side-by-side.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `skill_ids` | string[] | Yes | Array of skill IDs to compare (2-5) |
+| `skill_a` | string | Yes | First skill ID (`author/name`) |
+| `skill_b` | string | Yes | Second skill ID (`author/name`) |
 
 ### skill_suggest
 
