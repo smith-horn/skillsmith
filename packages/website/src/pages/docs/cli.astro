@@ -99,13 +99,26 @@ skillsmith install community/git-commit --quiet --json`}</code></pre>
     </thead>
     <tbody>
       <tr>
+        <td><code>-y, --yes</code></td>
+        <td>
+          Confirm installing a registry skill whose trust tier is not official, verified, curated,
+          community or local (for example, unverified). Never skips the security scan. Without it, a terminal
+          asks y/N (default No); a script or <code>--json</code> run exits non-zero with a message
+          naming <code>--yes</code>.
+        </td>
+        <td>false</td>
+      </tr>
+      <tr>
         <td><code>-f, --force</code></td>
         <td>Force reinstall if already installed</td>
         <td>false</td>
       </tr>
       <tr>
         <td><code>--skip-scan</code></td>
-        <td>Skip security scan (not recommended)</td>
+        <td>
+          Skip security scan (not recommended). Refused for any tier other than official, verified, curated, community or local,
+          and for direct GitHub URL installs.
+        </td>
         <td>false</td>
       </tr>
       <tr>
@@ -120,7 +133,10 @@ skillsmith install community/git-commit --quiet --json`}</code></pre>
       </tr>
       <tr>
         <td><code>--json</code></td>
-        <td>Output structured JSON result</td>
+        <td>
+          Output structured JSON result. A failure with a known error code includes
+          <code>errorCode</code> (for example <code>CONFIRMATION_REQUIRED</code>).
+        </td>
         <td>false</td>
       </tr>
       <tr>

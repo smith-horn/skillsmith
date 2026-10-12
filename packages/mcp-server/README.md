@@ -8,9 +8,9 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## What's New in v0.8.0
 
-- **Unreviewed skills need confirmation (behaviour change):** `install_skill` now needs `confirmed: true` for any registry skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). Without it you get `CONFIRMATION_REQUIRED` with the tier and the reason. These skills can't use `skipScan`, and the security scan always runs. Clients that never send `confirmed` can't install them.
+- **Skills outside the allowlisted tiers need confirmation (behaviour change):** `install_skill` now needs `confirmed: true` for any registry skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). Without it you get `CONFIRMATION_REQUIRED` with the tier and the reason. These skills can't use `skipScan`, and the security scan always runs. Clients that never send `confirmed` can't install them.
 - **`official` skills are now recognised:** an `official` registry skill was treated as `unknown`. All eight trust tiers are now accepted.
-- **Executable frontmatter is refused:** the security scan rejects a skill whose SKILL.md, or a bundled non-doc file other than `package.json`, opens with `---js` or `---javascript`, so `install_skill` refuses it unless the scan is skipped (allowed only for reviewed tiers). `skill_rescan` quarantines an installed skill whose SKILL.md does.
+- **Executable frontmatter is refused:** the security scan rejects a skill whose SKILL.md, or a bundled non-doc file other than `package.json`, opens with `---js` or `---javascript`, so `install_skill` refuses it unless the scan is skipped (allowed only for the official, verified, curated, community or local tiers). `skill_rescan` quarantines an installed skill whose SKILL.md does.
 - **Private-registry audit log fixed:** denials, failures and reads are now recorded on the standard deployment, through a new database function that uses your own login. This needs migration `20261008000000_private_registry_audit_attempt_rpc.sql`; until it's applied, audit writes fail soft.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
@@ -343,7 +343,7 @@ Install a skill to your local environment. The table lists the common parameters
 | `skillId` | string | Yes | Registry ID (`author/name`), GitHub path (`owner/repo/skill`) or GitHub URL |
 | `force` | boolean | No | Reinstall if already installed |
 | `skipScan` | boolean | No | Skip the security scan. Refused for any tier other than official, verified, curated, community or local |
-| `confirmed` | boolean | No | Confirm installing a registry skill whose trust tier has not been reviewed (for example `unverified`). Without it, those installs return `CONFIRMATION_REQUIRED`. It never skips the security scan |
+| `confirmed` | boolean | No | Confirm installing a registry skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). Without it, those installs return `CONFIRMATION_REQUIRED`. It never skips the security scan |
 
 ### uninstall_skill
 
@@ -446,6 +446,8 @@ Every skill carries one of eight trust tiers. Descriptions are the ones the serv
 | `unknown` | Not yet assessed. Review carefully before using. |
 | `unverified` | No verification performed. Review carefully before installing. |
 | `local` | Local skill from your ~/.claude/skills/ directory. You control this skill. |
+
+Installing a registry skill outside official, verified, curated, community and local needs `confirmed: true`, and those skills can't use `skipScan`. That list is an install policy, not a review claim: `local` is on it because you control the skill, not because anyone reviewed it.
 
 ## Environment Variables
 
