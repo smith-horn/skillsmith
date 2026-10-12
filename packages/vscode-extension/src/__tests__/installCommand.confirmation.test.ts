@@ -170,10 +170,14 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     expect(installSkill).not.toHaveBeenCalled()
     expect(String(showWarningMessage.mock.calls[0]?.[0])).toContain('MCP server unavailable')
     expect(showErrorMessage).not.toHaveBeenCalled()
-    const cancelled = showInformationMessage.mock.calls.some((c) => /cancelled/.test(String(c[0])))
-    expect(cancelled).toBe(true)
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      'Installation of "example-skill" cancelled: the MCP server is unavailable, so nothing was installed.'
+    )
+    // Cancelled is the only outcome reported: neither success nor failure.
     const reported = progressReport.mock.calls.map((c) => (c[0] as { message?: string }).message)
     expect(reported).toContain('Cancelled')
+    expect(reported).not.toContain('Not installed')
+    expect(reported).not.toContain('Complete!')
   })
 
   it('names an empty trust tier "unknown", not "-tier"', async () => {
@@ -212,11 +216,13 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     expect(showWarningMessage).toHaveBeenCalledTimes(1)
     expect(installSkill).toHaveBeenCalledTimes(1)
     expect(showErrorMessage).not.toHaveBeenCalled()
-    const cancelled = showInformationMessage.mock.calls.some((c) => /cancelled/.test(String(c[0])))
-    expect(cancelled).toBe(true)
-    // The progress notification says "Cancelled", never "Complete!".
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      'Installation of "example-skill" cancelled: it was not confirmed.'
+    )
+    // Cancelled is the only outcome reported: neither success nor failure.
     const reported = progressReport.mock.calls.map((c) => (c[0] as { message?: string }).message)
     expect(reported).toContain('Cancelled')
+    expect(reported).not.toContain('Not installed')
     expect(reported).not.toContain('Complete!')
   })
 

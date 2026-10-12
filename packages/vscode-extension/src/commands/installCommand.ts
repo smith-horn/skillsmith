@@ -206,7 +206,7 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
           // SMI-7056: the user declined a confirmation (trust tier or placeholder).
           progress.report({ increment: 100, message: 'Cancelled' })
           vscode.window.showInformationMessage(
-            `Installation of "${skill.name}" cancelled: it was not confirmed.`
+            `Installation of "${skill.name}" cancelled: ${result.cancelReason ?? 'it was not confirmed.'}`
           )
           return
         }
@@ -243,8 +243,10 @@ interface InstallResult {
   error: string | undefined
   /** SMI-5288: server refused on tier grounds; tier-denied UX already shown. */
   tierDeniedHandled?: boolean
-  /** SMI-7056: the user declined the trust-tier confirmation prompt. */
+  /** SMI-7056: the user declined a confirmation prompt (trust tier or placeholder install). */
   cancelled?: boolean
+  /** SMI-7056: why nothing was installed, shown after "cancelled:". */
+  cancelReason?: string
 }
 
 /** SMI-7056: true when the MCP install result is core's CONFIRMATION_REQUIRED refusal. */
@@ -343,6 +345,7 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
       tips: undefined,
       error: 'Installation cancelled',
       cancelled: true,
+      cancelReason: 'the MCP server is unavailable, so nothing was installed.',
     }
   }
 
