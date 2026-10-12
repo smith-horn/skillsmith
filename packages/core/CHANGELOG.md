@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.14.0
+
 - **Changed** (behaviour change for every caller): SMI-7056 -- `SkillInstallationService.install()` gated `skipScan` and the
   pre-install confirmation on a deny-list (`experimental`, `unknown`) written before the public
   tier vocabulary. A registry skill served as `unverified` (the public name for `unknown`), or

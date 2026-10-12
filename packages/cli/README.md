@@ -8,7 +8,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v0815)
+- [What's New](#whats-new-in-v0816)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,7 +16,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.15
+## What's New in v0.8.16
 
 - **Clearer message for a mistyped frontmatter line**: when a SKILL.md's frontmatter contains a line such as `--- # note` or `...`, `skillsmith import-local` now says that line starts a second YAML document and gives both fixes: change it to exactly `---` if it was meant to end the frontmatter, or remove it. Before, you got a YAML library message telling you to call `YAML.parseAllDocuments()`.
 

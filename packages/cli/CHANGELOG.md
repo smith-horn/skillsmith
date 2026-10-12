@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.16
+
+- **Feature**: SMI-7030 -- flag executable (---js) SKILL.md frontmatter in all three scanners, flag-only (#3063)
 - **Added**: SMI-7056 -- `skillsmith install` and `skillsmith update` accept `--yes` (`-y`) to
   confirm installing a registry skill whose trust tier has not been reviewed, such as `unverified`.
   The registry now asks for that confirmation, and the CLI had no way to give it. Without `--yes`,
