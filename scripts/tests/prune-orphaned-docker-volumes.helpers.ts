@@ -26,6 +26,7 @@ const REAL_SCRIPT_PATH = join(__dirname, '..', 'prune-orphaned-docker-volumes.sh
 const REAL_LIB_PATH = join(__dirname, '..', '_lib.sh')
 const REAL_SPRAWL_LIB_PATH = join(__dirname, '..', 'lib', 'report-sprawl-containers.sh')
 const REAL_LIFECYCLE_LIB_PATH = join(__dirname, '..', 'lib', 'worktree-lifecycle.sh')
+const REAL_LIFECYCLE_DOCKER_LIB_PATH = join(__dirname, '..', 'lib', 'worktree-lifecycle-docker.sh')
 
 /**
  * SMI-4693: GIT_DISCOVERY_VARS-stripped env for every git invocation AND the
@@ -168,6 +169,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        vol="$3"',
     '        fmt="$5"',
     '        run_hook "volume_inspect__${vol}"',
+    '        nth_hook "volume_inspect_n__${vol}"',
     '        case "$fmt" in',
     // SMI-6981: the incarnation read ("<CreatedAt>|<owned>"). A static or
     // sequenced `__incarnation` response wins; otherwise it is composed from the
@@ -237,6 +239,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '      esac',
     '    done',
     '    run_hook "$key"',
+    '    nth_hook "ps_n__${key}"',
     '    ps_exit "$key"',
     '    emit "$key"',
     '    exit 0',
@@ -296,6 +299,7 @@ export function setupFixture(prefix: string, opts: { spacedPath?: boolean } = {}
   cpSync(REAL_LIB_PATH, join(scriptsDir, '_lib.sh'))
   cpSync(REAL_SPRAWL_LIB_PATH, join(scriptsDir, 'lib', 'report-sprawl-containers.sh'))
   cpSync(REAL_LIFECYCLE_LIB_PATH, join(scriptsDir, 'lib', 'worktree-lifecycle.sh'))
+  cpSync(REAL_LIFECYCLE_DOCKER_LIB_PATH, join(scriptsDir, 'lib', 'worktree-lifecycle-docker.sh'))
   chmodSync(scriptPath, 0o755)
 
   const binDir = join(tempRoot, 'bin')

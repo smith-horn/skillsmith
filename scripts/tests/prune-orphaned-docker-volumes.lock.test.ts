@@ -556,6 +556,71 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
       expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
     })
 
+    describe('every Docker call inside the section is bounded', () => {
+      // The hook sleeps far past the 2 s timeout, standing in for a hung CLI.
+      const HANG = 'sleep 12'
+      const rows: Array<[string, (f: FixtureRepo) => string, string]> = [
+        [
+          'volume inspect',
+          (f) => {
+            setDockerHook(f, `volume_inspect_n__${VOL}__2`, HANG)
+            return `volume_inspect_n__${VOL}__2`
+          },
+          `re-inspecting volume ${VOL} under the worktree lifecycle lock timed out after 2s`,
+        ],
+        [
+          'attachment `docker ps`',
+          (f) => {
+            setDockerHook(f, `ps_n__ps_volume__${VOL}__2`, HANG)
+            return `ps_n__ps_volume__${VOL}__2`
+          },
+          `checking containers on volume ${VOL} under the worktree lifecycle lock timed out after 2s`,
+        ],
+      ]
+
+      it.each(rows)('a hung %s releases the lock and stops the run', (_n, arm, message) => {
+        const f = volumeFixture('lk-t22-bound')
+        writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+        const hook = arm(f)
+        const t0 = Date.now()
+        const r = runPrune(f, only('gone-wt'), { SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT: '2' })
+        const elapsed = Date.now() - t0
+        // Presence: the in-lock call was reached and hung.
+        expect(hookRan(f, hook)).toBe(true)
+        expect(elapsed).toBeLessThan(8_000)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain(message)
+        expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
+      })
+
+      it('a hung image ID resolve releases the lock and stops the run', () => {
+        const f = imageFixture('lk-t22-bound-img')
+        const hook = `image_id_after__${IMG}__2`
+        setDockerHook(f, hook, HANG)
+        const t0 = Date.now()
+        const r = runPrune(f, only('gone-wt'), { SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT: '2' })
+        const elapsed = Date.now() - t0
+        expect(hookRan(f, hook)).toBe(true)
+        expect(elapsed).toBeLessThan(8_000)
+        expect(r.dockerCalls.filter((c) => deletesImg(c))).toHaveLength(0)
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain(
+          `re-resolving image ${IMG} under the worktree lifecycle lock timed out after 2s`
+        )
+        expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
+      })
+
+      it('control: with fast calls and the same timeout the volume is deleted', () => {
+        const f = volumeFixture('lk-t22-bound-ok')
+        writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+        const r = runPrune(f, only('gone-wt'), { SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT: '2' })
+        expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+        expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(1)
+        expect(r.status).toBe(0)
+      })
+    })
+
     describe('images', () => {
       const OLD_ID = imageIdFor(IMG)
       const NEW_ID = imageIdFor('someone-elses-image')

@@ -199,6 +199,8 @@ fi
 
 # shellcheck source=lib/worktree-lifecycle.sh
 source "$SCRIPT_DIR/lib/worktree-lifecycle.sh"
+# shellcheck source=lib/worktree-lifecycle-docker.sh
+source "$SCRIPT_DIR/lib/worktree-lifecycle-docker.sh"
 # shellcheck source=lib/report-sprawl-containers.sh
 source "$SCRIPT_DIR/lib/report-sprawl-containers.sh"
 
