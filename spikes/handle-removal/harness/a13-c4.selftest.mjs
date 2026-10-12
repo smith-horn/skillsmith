@@ -23,6 +23,17 @@ import { runRecordCases } from './a13-c4.selftest.record.mjs'
 import { runGovCases } from './a13-c4.selftest.gov.mjs'
 // Trace compaction: synthetic, plus one live runOnce per arm.
 import { runTraceCases } from './a13-c4.selftest.trace.mjs'
+// Owner decision on governance finding 1: provable caller intent.
+import { runIntentCases } from './a13-c4.selftest.intent.mjs'
+// Trace artifacts (content-addressed side files).
+import { runArtifactCases } from './a13-c4.selftest.artifact.mjs'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// Every live runOnce stores its trace here; removed at exit.
+const TRACE_DIR = mkdtempSync(join(tmpdir(), 'a13-c4-selftest-traces-'))
+process.on('exit', () => rmSync(TRACE_DIR, { recursive: true, force: true }))
 
 let failures = 0
 function check(name, cond, detail) {
@@ -201,7 +212,9 @@ for (const [arm, T] of [
 runLandingCases(check)
 runRecordCases(check)
 runGovCases(check)
-await runTraceCases(check)
+runIntentCases(check)
+await runTraceCases(check, { traceDir: TRACE_DIR })
+await runArtifactCases(check, { traceDir: TRACE_DIR })
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

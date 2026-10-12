@@ -31,8 +31,7 @@ import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { runC4Candidate, locateDisplaced } from './c4-shared.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
-import { applyDirs } from './c4-score.mjs'
-import { compactTrace } from './c4-trace-match.mjs'
+import { applyDirs, keepTrace } from './c4-score.mjs'
 import { scanQuarantineLeftovers } from '../result-schema.mjs'
 import { bindMount, tmpfsMount, isMounted, buildMountFixture } from './mount-shared.mjs'
 
@@ -110,7 +109,7 @@ function readUserFile(p) {
  * @param {'pre-call'|'after-bind'} args.window - 'pre-call': mount first;
  *   otherwise the mount is made inside onFire at that window.
  */
-export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, _test }) {
+export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, traceDir, _test }) {
   if (!CANDIDATES.has(candidate)) throw new TypeError(`a1/a2-c4: unknown candidate ${candidate}`)
   if (!SUBCASES.has(subcase)) throw new TypeError(`a1/a2-c4: unknown subcase ${subcase}`)
   if (process.platform !== 'linux') throw new Error('a1/a2-c4: Linux only (real mount/umount)')
@@ -248,7 +247,7 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, _t
         actualDirs,
         candidate,
         firedAt: r.firedAt ?? null,
-        traceCompact: compactTrace(r.trace, { traceMatched: r.traceMatched }),
+        ...keepTrace(r, traceDir),
         renameBusy: r.result?.errno === 'EBUSY' || /EBUSY/.test(String(r.result?.reason ?? '')),
         mountSurvivedAtOriginalPath: stillMountedAtOriginal,
         mountsAtScore,
@@ -297,6 +296,6 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, _t
   return ret
 }
 
-export function runOnce({ harnessRoot, candidate, subcase, dirs }) {
-  return runMountCase({ harnessRoot, candidate, subcase, window: 'pre-call', dirs })
+export function runOnce({ harnessRoot, candidate, subcase, dirs, traceDir }) {
+  return runMountCase({ harnessRoot, candidate, subcase, window: 'pre-call', dirs, traceDir })
 }

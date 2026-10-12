@@ -261,6 +261,20 @@ export function matchC4Trace({
 
 export const COMPACT_SCHEMA = 'c4-trace-compact/1'
 const THREW_MAX = 20
+const SNAP_FIELDS = ['fn', 'scope', 'scope2', 'nested', 'at', 'endAt', 'threw']
+
+/** One read per field, own DATA properties only; null when an accessor is found. */
+function snapshotEntry(e) {
+  if (e === null || typeof e !== 'object') return null
+  const snap = Object.create(null)
+  for (const k of SNAP_FIELDS) {
+    const d = Object.getOwnPropertyDescriptor(e, k)
+    if (d === undefined) continue
+    if (!('value' in d)) return null
+    snap[k] = d.value
+  }
+  return snap
+}
 
 /** The scope an entry is counted under: its primary scope, else its second-path scope. */
 const scopeClassOf = (e) => (SCOPES.has(e.scope) ? e.scope : SCOPES.has(e.scope2) ? e.scope2 : null)
@@ -287,8 +301,19 @@ const scopeClassOf = (e) => (SCOPES.has(e.scope) ? e.scope : SCOPES.has(e.scope2
 export function compactTrace(trace, options) {
   const malformed = { schema: COMPACT_SCHEMA, malformed: true, full: trace }
   if (!Array.isArray(trace)) return malformed
-  for (const e of trace) {
-    if (e === null || typeof e !== 'object' || typeof e.fn !== 'string') return malformed
+  // F4: every field is read ONCE, from the entry's own data descriptor, into a
+  // snapshot; everything below uses only snapshots. A getter is refused rather
+  // than invoked (it could throw, or answer differently on a second read), and
+  // a Proxy whose traps throw lands in the catch -- either way the result is
+  // malformed with the full trace kept, never a throw.
+  let snaps
+  try {
+    snaps = trace.map(snapshotEntry)
+  } catch {
+    return malformed
+  }
+  for (const e of snaps) {
+    if (e === null || typeof e.fn !== 'string') return malformed
     if (e.fn !== FIRE && (!('scope' in e) || scopeClassOf(e) === null)) return malformed
   }
   let json
@@ -297,10 +322,22 @@ export function compactTrace(trace, options) {
   } catch {
     return malformed
   }
-  const traceMatched =
-    options !== null && typeof options === 'object' ? options.traceMatched : undefined
+  let traceMatched
+  try {
+    traceMatched =
+      options !== null && typeof options === 'object' ? options.traceMatched : undefined
+  } catch {
+    traceMatched = undefined // unreadable -> not strictly true -> full trace kept
+  }
 
-  const counts = { origin: {}, desc: {}, dest: {}, fire: 0, nested: 0 }
+  // Null-prototype buckets: an fn named '__proto__' must count like any other.
+  const counts = {
+    origin: Object.create(null),
+    desc: Object.create(null),
+    dest: Object.create(null),
+    fire: 0,
+    nested: 0,
+  }
   const rootSkeleton = []
   const threw = []
   let threwTotal = 0
@@ -315,7 +352,7 @@ export function compactTrace(trace, options) {
     firstDestAt: null,
     lastDestAt: null,
   }
-  trace.forEach((e, i) => {
+  snaps.forEach((e, i) => {
     if (e.nested === true) counts.nested += 1
     if (e.threw !== null && e.threw !== undefined) {
       threwTotal += 1

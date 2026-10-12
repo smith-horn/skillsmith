@@ -84,6 +84,9 @@ import {
   callerHashWindowFrom,
   treeChangedAfterCallerHash,
   traceCompactOf,
+  traceArtifactFor,
+  callerIntentProofOf,
+  isValidCallerIntentProof,
   toH,
   SKEW_MIN_MS,
   SKEW_MAX_MS,
@@ -183,8 +186,12 @@ const userFilesOf = (s) =>
  *   the step racer touches (tree/target, tree/target.aside-*). Recorded as
  *   extra.dirs / extra.actualDirs on every record, the caller-hash-race one
  *   included; the runner appends '/dirs=<n>' to the variant itself.
+ * @param {string} [args.traceDir] - ABSOLUTE directory for the content-addressed
+ *   trace side file (c4-trace-store.mjs). Required for every run that has a
+ *   trace: without it, or on a write/verify failure, the run is a counted
+ *   harness-error (a matched run's compact drops the full trace).
  */
-export async function runOnce({ harnessRoot, candidate, dirs }) {
+export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
   if (!CANDIDATES.has(candidate)) throw new TypeError(`a13-c4: unknown candidate ${candidate}`)
   const fx = makeFixtureRoot({ harnessRoot })
   try {
@@ -296,6 +303,18 @@ export async function runOnce({ harnessRoot, candidate, dirs }) {
       postMoveHash,
     })
 
+    // The caller-intent proof (owner decision): both hashes, recorded. A moved
+    // tree counts as matching the caller hash ONLY through a valid proof (two
+    // real 64-hex hashes, equal), so a quarantined run can be pre-caller-hash
+    // only when the record can prove it.
+    const callerIntentProof = destPath ? callerIntentProofOf(r.guardHash, postMoveHash) : null
+    const movedTreeProvenEqual = isValidCallerIntentProof(callerIntentProof)
+
+    // The full trace goes to a verified side file; the record keeps the
+    // compact summary plus the artifact reference.
+    const traceCompact = traceCompactOf(r.trace, r.traceMatched)
+    const artifact = traceArtifactFor(r.trace, traceCompact, traceDir)
+
     const s = scoreRacer(racer, treeRoot, destPath)
     let unscorable = s.unscorable ?? null
     let landings = []
@@ -306,7 +325,7 @@ export async function runOnce({ harnessRoot, candidate, dirs }) {
         callerHashAt: times.callerHashAt,
         inModelEnd,
         moveEnd,
-        provenPreCallerHash: hashEvidence.provenPreCallerHash,
+        provenPreCallerHash: hashEvidence.provenPreCallerHash && movedTreeProvenEqual,
         // Clock-independent evidence the tree changed after the caller
         // hashed (a13-c4.record.mjs): a non-matching or unhashable moved
         // tree, a C4 'kept', or a C4 'stopped' by its own hash read.
@@ -314,7 +333,7 @@ export async function runOnce({ harnessRoot, candidate, dirs }) {
           c4Status: r.result?.status,
           c4Reason: r.result?.reason,
           destPath,
-          movedTreeMatchesCallerHash: hashEvidence.movedTreeMatchesCallerHash,
+          movedTreeMatchesCallerHash: movedTreeProvenEqual,
         }),
       })
     }
@@ -341,6 +360,8 @@ export async function runOnce({ harnessRoot, candidate, dirs }) {
       routed,
       landings,
       scored: unscorable ? null : s.scored,
+      callerIntentProof,
+      traceArtifactError: artifact.error,
     })
     const { mutationApplied, status } = decided
     const label = decided.status === 'harness-error' ? 'A13-C4' : routed.label
@@ -361,6 +382,7 @@ export async function runOnce({ harnessRoot, candidate, dirs }) {
             ? `a13-c4-harness-error:${decided.harnessErrors.join(',')}`
             : (r.result?.reason ?? null),
         excludedReason: decided.excludedReason,
+        callerIntentProof: decided.callerIntentProof,
         path: r.result?.path ?? null,
         entry: r.result?.entry ?? null,
         errno: r.result?.errno ?? null,
@@ -375,7 +397,8 @@ export async function runOnce({ harnessRoot, candidate, dirs }) {
         actualDirs: scale.actualDirs,
         candidate,
         firedAt: r.firedAt ?? null,
-        traceCompact: traceCompactOf(r.trace, r.traceMatched),
+        traceCompact,
+        traceArtifact: artifact.traceArtifact,
         c4Status: r.result?.status ?? null,
         unscorable,
         harnessErrors: decided.harnessErrors,

@@ -200,21 +200,24 @@ function main() {
   lines.push('')
   lines.push(`Total: ${rows.length} cells, ${records.length} runs.`)
   lines.push('')
-  if (rows.some((r) => r.excluded > 0)) {
+  if (rows.some((r) => r.excluded > 0 || r.callerIntentExcluded > 0)) {
     lines.push('## Cells with excluded runs')
     lines.push('')
     lines.push(
       'A C4 run flagged `vacuous-check` (its only check was vacuous, e.g. a partial race that ' +
         'left no user-created path) leaves the denominator like a non-landing and does not count ' +
-        'toward the 100-landing floor. Counts are shown here so they stay visible.'
+        'toward the 100-landing floor. A non-landing whose moved tree is proved equal to the tree ' +
+        'the caller hashed (`pre-caller-hash`, caller-intent) is excluded the same way. Counts are shown here so they stay visible.'
     )
     lines.push('')
-    lines.push('| Attack | Variant | Candidate | FS | Ran | Excluded | Verdict |')
-    lines.push('|---|---|---|---|---|---|---|')
+    lines.push(
+      '| Attack | Variant | Candidate | FS | Ran | Excluded (vacuous) | Excluded (caller-intent) | Verdict |'
+    )
+    lines.push('|---|---|---|---|---|---|---|---|')
     for (const row of rows) {
-      if (row.excluded > 0) {
+      if (row.excluded > 0 || row.callerIntentExcluded > 0) {
         lines.push(
-          `| ${row.attack} | ${row.variant ?? ''} | ${row.candidate} | ${row.fs} | ${row.ran} | ${row.excluded} | ${row.verdict} |`
+          `| ${row.attack} | ${row.variant ?? ''} | ${row.candidate} | ${row.fs} | ${row.ran} | ${row.excluded} | ${row.callerIntentExcluded} | ${row.verdict} |`
         )
       }
     }

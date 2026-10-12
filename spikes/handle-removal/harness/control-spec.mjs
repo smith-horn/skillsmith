@@ -254,7 +254,9 @@ export function resolveControl(row, allRows) {
       detail: `${c.cite} -- no ${wantAttack}/${c.candidate} cell exists on ${row.fs}`,
     }
   }
-  const failed = matches.reduce((n, r) => n + r.failed, 0)
+  // controlFailures excludes harness-error records (see cell-tally.mjs); rows
+  // that do not carry it (hand-built, older) fall back to `failed`.
+  const failed = matches.reduce((n, r) => n + (r.controlFailures ?? r.failed), 0)
   return failed >= 1
     ? { state: 'satisfied', detail: `${wantAttack}/${c.candidate} on ${row.fs} failed ${failed}` }
     : {

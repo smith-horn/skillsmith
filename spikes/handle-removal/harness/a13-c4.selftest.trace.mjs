@@ -11,6 +11,7 @@
 
 import { traceCompactOf } from './attacks/a13-c4.record.mjs'
 import { runOnce } from './attacks/a13-c4.mjs'
+import { CALLER_HASH_FAILED_PREFIX } from './attacks/a13-c4.classify.mjs'
 
 /** A small well-formed trace in the shape runC4Candidate records. */
 const TRACE = [
@@ -27,7 +28,7 @@ const TRACE = [
   },
 ]
 
-export async function runTraceCases(check) {
+export async function runTraceCases(check, { traceDir } = {}) {
   // --- synthetic: full trace kept exactly on a mismatch ------------------------
   {
     const matched = traceCompactOf(TRACE, true)
@@ -58,30 +59,70 @@ export async function runTraceCases(check) {
   }
 
   // --- live: the emitted record itself ----------------------------------------
+  // A real race can legitimately hit the caller's own hash and yield a clean
+  // caller-hash-race record (status 'not-run', traceCompact null): roughly 1
+  // run in 10 at fixture scale, which made this check flaky. Such a record is
+  // checked as its OWN branch, and the run is repeated (up to MAX_ATTEMPTS)
+  // until C4 actually ran, so the main assertion is always exercised rather
+  // than skipped. Running out of attempts is a FAIL, not a pass. A caller-hash
+  // failure that runOnce RETHROWS by design (unrelated per R2-7, or racer
+  // clock out of tolerance; the runner counts those against the cell) is also
+  // a real-race outcome with no record to inspect, so it is retried too, and
+  // counted; any OTHER throw fails the check.
+  const MAX_ATTEMPTS = 5
   for (const candidate of ['C4', 'C4-naive']) {
     let rec = null
     let thrown = null
-    try {
-      rec = await runOnce({ candidate })
-    } catch (e) {
-      thrown = e
+    let notRunSeen = 0
+    let notRunBad = null
+    let rethrownRaces = 0
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      rec = null
+      thrown = null
+      try {
+        rec = await runOnce({ candidate, traceDir })
+      } catch (e) {
+        thrown = e
+      }
+      if (thrown instanceof Error && thrown.message.startsWith(CALLER_HASH_FAILED_PREFIX)) {
+        rethrownRaces += 1
+        continue
+      }
+      if (thrown !== null || rec?.outcome?.status !== 'not-run') break
+      notRunSeen += 1
+      const xn = rec.extra ?? {}
+      const ok =
+        rec.outcome.status === 'not-run' &&
+        xn.traceCompact === null &&
+        xn.traceArtifact === null &&
+        !Object.prototype.hasOwnProperty.call(xn, 'trace')
+      if (!ok && notRunBad === null)
+        notRunBad = { status: rec.outcome.status, keys: Object.keys(xn) }
     }
+    check(
+      `trace live ${candidate}: every caller-hash-race record seen (${notRunSeen}) has status not-run, traceCompact null, no extra.trace`,
+      notRunBad === null,
+      notRunBad
+    )
+    const ran = thrown === null && rec !== null && rec.outcome?.status !== 'not-run'
     const x = rec?.extra ?? {}
     check(
       `trace live ${candidate}: record carries extra.traceCompact and NO extra.trace`,
-      thrown === null &&
+      ran &&
         !Object.prototype.hasOwnProperty.call(x, 'trace') &&
         x.traceCompact !== null &&
         typeof x.traceCompact === 'object' &&
         typeof x.traceCompact.schema === 'string',
       thrown
         ? String(thrown.message)
-        : { keys: Object.keys(x), traceCompactType: typeof x.traceCompact }
+        : ran
+          ? { keys: Object.keys(x), traceCompactType: typeof x.traceCompact }
+          : `no run where C4 executed in ${MAX_ATTEMPTS} attempts (not-run ${notRunSeen}, rethrown races ${rethrownRaces})`
     )
     const tm = rec?.precondition?.traceMatched
     check(
       `trace live ${candidate}: traceCompact.full is null exactly when the trace matched`,
-      tm === true ? x.traceCompact?.full === null : Array.isArray(x.traceCompact?.full),
+      ran && (tm === true ? x.traceCompact?.full === null : Array.isArray(x.traceCompact?.full)),
       { traceMatched: tm, full: x.traceCompact?.full === null ? null : typeof x.traceCompact?.full }
     )
   }

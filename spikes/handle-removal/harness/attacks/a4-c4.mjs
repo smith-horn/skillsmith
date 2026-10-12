@@ -29,7 +29,7 @@ export function labelFor() {
   return id
 }
 
-export function runOnce({ harnessRoot, candidate, window, dirs, _test }) {
+export function runOnce({ harnessRoot, candidate, window, dirs, traceDir, _test }) {
   assertC4Candidate(candidate)
   const win = resolveWindow(window, WINDOWS)
   const fx = makeFixtureRoot({ harnessRoot })
@@ -59,7 +59,7 @@ export function runOnce({ harnessRoot, candidate, window, dirs, _test }) {
         whereFor(fx.root, r, targetAbs)
       ),
       durationMs,
-      extra: c4Extra(r, id, win, { dirs: dirs ?? null, actualDirs }),
+      extra: c4Extra(r, id, win, { dirs: dirs ?? null, actualDirs }, traceDir),
     }
   } finally {
     fx.cleanup()

@@ -8,7 +8,7 @@
 
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
-import { scoreCell, runCells, comboLines } from './run-c4-attacks.mjs'
+import { scoreCell, runCells, comboLines, buildRows } from './run-c4-attacks.mjs'
 import { harnessErrorRaw } from './c4-target-guard.mjs'
 import { oomRecord, oomRecordFor, makeSelftest } from './c4-selftest-util.mjs'
 
@@ -403,6 +403,58 @@ check(
     })
     const line = lines.find((l) => l.includes('A13-C4/racer/by-timestamp/C4\t'))
     return line && !/^INCOMPLETE/.test(line) ? true : `got ${JSON.stringify(lines[0])}`
+  }
+)
+
+// ---- control rows carry controlFailures, so harness-error losses cannot satisfy a control ----
+check('buildRows copies controlFailures from the aggregate (not just failed)', () => {
+  const g = { records: [{}], extras: [null], variant: 'v' }
+  const groups = { C4: new Map([['X-C4', g]]), 'C4-naive': new Map([['X-C4', g]]) }
+  const rows = buildRows({
+    labels: ['X-C4'],
+    groups,
+    fsLabel: 'f',
+    groupTarget: () => 1,
+    aggregate: () => ({ failed: 3, controlFailures: 0 }),
+  })
+  return rows.length === 2 && rows.every((r) => r.failed === 3 && r.controlFailures === 0)
+    ? true
+    : JSON.stringify(rows)
+})
+check(
+  'a naive arm of harness-error losses (controlFailures 0) leaves C4 with control=DID-NOT-FAIL',
+  () => {
+    const rec = (attack, candidate) => {
+      const r = oomRecordFor('A3-C4', 0, 1)
+      r.cell.candidate = candidate
+      r.cell.variant = 'v'
+      return r
+    }
+    const g = (c) => ({ records: [rec('A3-C4', c)], extras: [null], variant: 'v' })
+    const groups = {
+      C4: new Map([['A3-C4', g('C4')]]),
+      'C4-naive': new Map([['A3-C4', g('C4-naive')]]),
+    }
+    const rows = buildRows({
+      labels: ['A3-C4'],
+      groups,
+      fsLabel: 'selftest',
+      groupTarget: () => 1,
+      // naive: 3 failures, all from harness errors; C4: none
+      aggregate: (records) =>
+        records[0].cell.candidate === 'C4-naive'
+          ? { failed: 3, controlFailures: 0 }
+          : { failed: 0, controlFailures: 0 },
+    })
+    const line = scoreCell({
+      label: 'A3-C4',
+      variant: 'v',
+      candidate: 'C4',
+      records: groups.C4.get('A3-C4').records,
+      target: 1,
+      rows,
+    })
+    return /control=DID-NOT-FAIL/.test(line) ? true : line
   }
 )
 

@@ -202,6 +202,10 @@ export function makeRecord(fields) {
       ...(c4 && Object.hasOwn(outcome, 'excludedReason')
         ? { excludedReason: outcome.excludedReason }
         : {}),
+      // C4 only: the caller-intent proof for a 'pre-caller-hash' exclusion (cell-tally.mjs).
+      ...(c4 && Object.hasOwn(outcome, 'callerIntentProof')
+        ? { callerIntentProof: outcome.callerIntentProof }
+        : {}),
     },
     userFiles: {
       checked: userFiles.checked,
@@ -314,7 +318,16 @@ export function aggregateCell(records, isContradictory = () => false, options = 
     verdict = cellVerdict(t, attack, options.controlFailed, options.controlState)
   }
 
-  return { ran, passed, failed, neverRan, excluded, verdict }
+  return {
+    ran,
+    passed,
+    failed,
+    controlFailures: t.controlFailures,
+    neverRan,
+    excluded,
+    callerIntentExcluded: t.callerIntentExcluded,
+    verdict,
+  }
 }
 
 /**

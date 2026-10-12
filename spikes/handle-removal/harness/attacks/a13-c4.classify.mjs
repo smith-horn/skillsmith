@@ -394,6 +394,7 @@ export function recordForRunError({
       // quarantineTree never ran: no trace. Same field as every other A13
       // record, with nothing in it.
       traceCompact: null,
+      traceArtifact: null,
       racerMutation: racer.mutation ?? null,
       racerComplete: racer.complete === true,
       racerSteps: racer.steps,

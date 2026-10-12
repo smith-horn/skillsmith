@@ -42,10 +42,12 @@
 // and count it separately.
 
 import { compactTrace } from './c4-trace-match.mjs'
+import { writeTraceArtifact, assertCompactMatchesArtifact } from './c4-trace-store.mjs'
 
 export const SKEW_MIN_MS = -0.05
 export const SKEW_MAX_MS = 25
 export const VACUOUS_REASON = 'vacuous-check'
+export const PRE_CALLER_HASH_REASON = 'pre-caller-hash'
 
 export function decideRecord({
   c4Status,
@@ -58,11 +60,15 @@ export function decideRecord({
   routed,
   landings,
   scored,
+  callerIntentProof,
+  traceArtifactError,
 }) {
   const harnessErrors = []
   if (traceMatched !== true) harnessErrors.push('trace-mismatch')
   if (clockOrderOk !== true) harnessErrors.push('clock-order')
   if (unscorable) harnessErrors.push(`unscorable:${unscorable}`)
+  // The trace could not be stored and verified (traceArtifactFor).
+  if (traceArtifactError) harnessErrors.push(String(traceArtifactError))
   if (typeof clockSkewCheckMs !== 'number' || !Number.isFinite(clockSkewCheckMs)) {
     harnessErrors.push('clock-skew-unmeasured')
   } else if (clockSkewCheckMs < SKEW_MIN_MS || clockSkewCheckMs > SKEW_MAX_MS) {
@@ -84,9 +90,36 @@ export function decideRecord({
     harnessErrors.push('impossible-post-rename-loss')
   }
   if (harnessErrors.length > 0) {
-    return { status: 'harness-error', mutationApplied: true, excludedReason: null, harnessErrors }
+    return {
+      status: 'harness-error',
+      mutationApplied: true,
+      excludedReason: null,
+      callerIntentProof: null,
+      harnessErrors,
+    }
   }
   const mutationApplied = routed.mutationApplied === true
+  // Caller intent: a quarantined, non-landing run whose landing is
+  // pre-caller-hash (not a forced partial) AND whose proof is valid. The
+  // measured userFiles are left as measured; this label is what says the loss
+  // was the caller's request. A kept run moved nothing and stays a plain
+  // non-landing. landingFromRacer only ever classes a quarantined run
+  // pre-caller-hash when the moved tree matched the caller hash, so a missing
+  // or mismatched hash never reaches here as pre-caller-hash.
+  if (
+    !mutationApplied &&
+    c4Status === 'quarantined' &&
+    (landings ?? []).some((x) => x.cls === 'pre-caller-hash' && x.forceScored !== true) &&
+    isValidCallerIntentProof(callerIntentProof)
+  ) {
+    return {
+      status: c4Status,
+      mutationApplied,
+      excludedReason: PRE_CALLER_HASH_REASON,
+      callerIntentProof,
+      harnessErrors,
+    }
+  }
   return {
     status: c4Status,
     mutationApplied,
@@ -97,6 +130,7 @@ export function decideRecord({
       mutationApplied && scored?.vacuous === true && scored.lost + scored.changed === 0
         ? VACUOUS_REASON
         : null,
+    callerIntentProof: null,
     harnessErrors,
   }
 }
@@ -191,4 +225,61 @@ export function treeChangedAfterCallerHash({
  */
 export function traceCompactOf(trace, traceMatched) {
   return compactTrace(trace, { traceMatched })
+}
+
+const HEX64 = /^[0-9a-f]{64}$/
+const isHex64 = (h) => typeof h === 'string' && HEX64.test(h)
+
+/**
+ * CALLER INTENT (owner decision on governance finding 1). An A13 run whose
+ * racer finished BEFORE the caller hashed, where C4 then moved exactly the
+ * tree the caller hashed, is not a loss against C4: the caller saw that
+ * content and asked to remove it (decision 5). It must be provable, so a
+ * producer bug cannot hide a real loss: the record carries both hashes.
+ * callerHash is runC4Candidate's caller (guard) hash, movedTreeHash the hash of
+ * the quarantined tree, computed after the racer was joined.
+ */
+export function callerIntentProofOf(callerHash, movedTreeHash) {
+  return {
+    callerHash: callerHash ?? null,
+    movedTreeHash: movedTreeHash ?? null,
+    equal: callerHash === movedTreeHash,
+  }
+}
+
+/** Valid only for two real 64-hex hashes that are equal (a stored equal:true is re-checked). */
+export function isValidCallerIntentProof(p) {
+  return (
+    p !== null &&
+    typeof p === 'object' &&
+    isHex64(p.callerHash) &&
+    isHex64(p.movedTreeHash) &&
+    p.callerHash === p.movedTreeHash &&
+    p.equal === true
+  )
+}
+
+/**
+ * Stores the run's full trace as a content-addressed side file
+ * (c4-trace-store.mjs: atomic write, verified by read-back) and returns the
+ * reference recorded as extra.traceArtifact. The compact's sha256 must name
+ * the artifact. Any failure -- no traceDir, a write or verify throw, a sha256
+ * mismatch -- is returned as `error`, never swallowed: decideRecord turns it
+ * into a counted harness-error, because a matched run's compact drops the full
+ * trace and an unstored trace would be lost evidence. `write` is injectable
+ * so the failure branch is testable without breaking a filesystem.
+ * @returns {{traceArtifact: {sha256: string, path: string}|null, error: string|null}}
+ */
+export function traceArtifactFor(trace, traceCompact, traceDir, write = writeTraceArtifact) {
+  try {
+    if (traceDir === undefined || traceDir === null) throw new Error('no traceDir given')
+    const ref = write(trace, { dir: traceDir })
+    assertCompactMatchesArtifact(traceCompact, ref)
+    return { traceArtifact: { sha256: ref.sha256, path: ref.path }, error: null }
+  } catch (err) {
+    return {
+      traceArtifact: null,
+      error: `trace-artifact:${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
 }

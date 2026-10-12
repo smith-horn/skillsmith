@@ -8,11 +8,53 @@ import { verdictFor, RECORD_ONLY_ATTACKS } from './control-spec.mjs'
 import { isC4Cell, C4_KNOWN_STATUSES } from './result-schema.c4.mjs'
 
 /** The only `outcome.excludedReason` a C4 record may carry. Anything else is a harness fault. */
-export const EXCLUDED_REASONS = new Set(['vacuous-check'])
+export const EXCLUDED_REASONS = new Set(['vacuous-check', 'pre-caller-hash'])
 
 /** `cell.targetScope` value: the run count covers both A13 labels together. */
 export const TARGET_SCOPE_A13 = 'across-a13-labels'
 const A13_LABELS = new Set(['A13-C4', 'A13-C4-OOM'])
+const INTENT_STATUSES = new Set(['quarantined', 'kept', 'stopped', 'not-run'])
+const HEX64 = /^[0-9a-f]{64}$/
+
+/**
+ * The ONE exemption from "a measured loss is a failure" (owner decision,
+ * SMI-6715 governance finding 1): a non-landing whose tree moved is proved to be
+ * the very tree the caller hashed. Re-derived here from the two hashes; the
+ * producer's `equal` flag is required to be true but is never trusted alone.
+ */
+function callerIntentProven(r) {
+  if (r?.outcome?.excludedReason !== 'pre-caller-hash') return false
+  // A harness error always counts against the cell, whatever proof it carries:
+  // only a known NON-error status can be an intended non-landing.
+  if (!INTENT_STATUSES.has(r?.outcome?.status)) return false
+  if (r?.precondition?.mutationApplied !== false) return false
+  const proof = r?.outcome?.callerIntentProof
+  if (proof === null || typeof proof !== 'object' || Array.isArray(proof)) return false
+  const proto = Object.getPrototypeOf(proof)
+  if (proto !== Object.prototype && proto !== null) return false
+  const [a, b, eq] = [proof.callerHash, proof.movedTreeHash, proof.equal]
+  return (
+    typeof a === 'string' &&
+    typeof b === 'string' &&
+    HEX64.test(a) &&
+    HEX64.test(b) &&
+    a === b &&
+    eq === true
+  )
+}
+
+/** A measured loss: valid non-negative integer lost and changed with a positive sum. */
+function measuredLoss(r) {
+  const [lost, changed] = [r?.userFiles?.lost, r?.userFiles?.changed]
+  return (
+    Number.isSafeInteger(lost) &&
+    lost >= 0 &&
+    Number.isSafeInteger(changed) &&
+    changed >= 0 &&
+    lost + changed > 0
+  )
+}
+
 const validTarget = (x) => Number.isSafeInteger(x) && x > 0
 
 /**
@@ -39,29 +81,36 @@ const validTarget = (x) => Number.isSafeInteger(x) && x > 0
 export function tallyCell(records, classify, universe = records) {
   let passed = 0
   let failed = 0
+  // Failures from NON-ERROR records only. A harness-error that reports a loss
+  // counts `failed` for its own cell (failures beat everything) but is not a
+  // measured loss of the arm, so it must not satisfy a control (resolveControl
+  // reads this, not `failed`): a harness-model fault is never the evidence that
+  // unlocks a C4 PASS.
+  let controlFailures = 0
   let neverRan = 0
   let otherNeverRan = 0
   let excluded = 0
+  let callerIntentExcluded = 0
   let c4 = false
   for (const r of records) {
     const isC4 = isC4Cell(r?.cell)
     c4 = c4 || isC4
     const cls = classify(r)
-    // A C4 harness-error that nonetheless MEASURED a loss is a loss: failures beat
-    // everything, so it counts failed, not never-ran. Only valid integer counts
-    // qualify; a harness-error with malformed or absent counts stays a fault.
-    if (isC4 && r?.outcome?.status === 'harness-error') {
-      const [lost, changed] = [r?.userFiles?.lost, r?.userFiles?.changed]
-      if (
-        Number.isSafeInteger(lost) &&
-        lost >= 0 &&
-        Number.isSafeInteger(changed) &&
-        changed >= 0 &&
-        lost + changed > 0
-      ) {
+    // A C4 record that MEASURED a loss is a failure whatever its status or
+    // mutationApplied says: failures beat everything. The single exemption is a
+    // proven caller-intent non-landing (callerIntentProven), which leaves the
+    // denominator like a non-landing and is counted separately. Only valid
+    // integer counts qualify; a record with malformed counts stays a fault.
+    if (isC4 && measuredLoss(r)) {
+      if (callerIntentProven(r)) {
+        neverRan += 1
+        callerIntentExcluded += 1
+      } else {
         failed += 1
-        continue
+        // A harness-error is a fault of the harness model, never control evidence.
+        if (r?.outcome?.status !== 'harness-error') controlFailures += 1
       }
+      continue
     }
     const er = isC4 ? r?.outcome?.excludedReason : undefined
     // R6 drops only the runs where the RACER DID NOT LAND. For C4 records a
@@ -76,13 +125,14 @@ export function tallyCell(records, classify, universe = records) {
         isC4 &&
         (r?.outcome?.status === 'harness-error' || !C4_KNOWN_STATUSES.has(r?.outcome?.status))
       )
-    if (er !== undefined && er !== null) {
+    if (er !== undefined && er !== null && er !== 'pre-caller-hash') {
       if (cls === 'failed') {
         // Failures beat exclusion (G3-2): a run whose check FAILED is a loss
         // whatever label it carries -- including 'vacuous-check', which should
         // never co-occur with a loss, and an unrecognised label, which must not
         // hide one.
         failed += 1
+        if (r?.outcome?.status !== 'harness-error') controlFailures += 1
       } else if (er === 'vacuous-check' && cls === 'passed') {
         neverRan += 1
         excluded += 1
@@ -96,8 +146,10 @@ export function tallyCell(records, classify, universe = records) {
       continue
     }
     if (cls === 'passed') passed += 1
-    else if (cls === 'failed') failed += 1
-    else {
+    else if (cls === 'failed') {
+      failed += 1
+      if (r?.outcome?.status !== 'harness-error') controlFailures += 1
+    } else {
       neverRan += 1
       if (!nonLanding) otherNeverRan += 1
     }
@@ -141,9 +193,11 @@ export function tallyCell(records, classify, universe = records) {
     ran: records.length,
     passed,
     failed,
+    controlFailures,
     neverRan,
     otherNeverRan,
     excluded,
+    callerIntentExcluded,
     c4,
     target,
     targetState,

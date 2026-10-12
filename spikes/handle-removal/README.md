@@ -90,6 +90,8 @@ nothing or crashes before it did not pass.
 - `node harness/result-schema.c4.roundtrip.selftest.mjs` -- runner/summary agreement (JSON round-trip), banned keys, no coercion of lost/changed
 - `node harness/cell-tally.selftest.mjs` -- the shared cell tally (vacuous-check exclusion, `cell.target`) and that `generate-summary` agrees with `aggregateCell`
 - `node harness/cell-tally.a13.selftest.mjs` -- A13 completeness counted across A13-C4 and A13-C4-OOM (`cell.targetScope`), `dirs`
+- `node harness/cell-tally.control.selftest.mjs` -- harness errors are never control evidence (`controlFailures`)
+- `node harness/cell-tally.intent.selftest.mjs` -- a measured loss is FAILED unless a proven `pre-caller-hash` caller-intent non-landing (`callerIntentExcluded`)
 - `node harness/test-verdict-rule.mjs` -- `verdictFor`, record-only cells, the tally key, and the pinned `CONTROL_SPEC`
 
 After any of them, regenerate and diff the summary:

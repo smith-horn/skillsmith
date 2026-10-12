@@ -64,6 +64,8 @@ const SUBCASES = ['bind', 'tmpfs']
 const CANDIDATES = ['C4', 'C4-naive']
 
 function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, out, dirs) {
+  // full traces go beside the output file: <out dir>/traces/<sha256>.json.br
+  const traceDir = path.join(path.dirname(path.resolve(out)), 'traces')
   const records = []
   for (let run = 0; run < target; run += 1) {
     let raw
@@ -73,7 +75,11 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
         candidate,
         subcase,
         ...(dirs ? { dirs } : {}),
+        traceDir,
       })
+      if (!raw.extra?.traceArtifact?.sha256) {
+        throw new Error('module did not report extra.traceArtifact for the requested traceDir')
+      }
       if (dirs && raw.extra?.actualDirs !== dirs) {
         throw new Error(
           `module did not pad to the requested ${dirs} directories (extra.actualDirs=${String(raw.extra?.actualDirs)})`
@@ -150,6 +156,8 @@ function main() {
       for (const candidate of CANDIDATES) {
         const records = runCell(atk, subcase, candidate, target, opts.fsLabel, out, opts.dirs)
         const failed = records.filter((r) => classifyRecord(r) === 'failed').length
+        // losses from non-error records only: a harness-error loss must not satisfy a control
+        const { controlFailures } = aggregateCell(records, () => false, { target })
         cells.push({
           attack: atk.label,
           variant: `${subcase}/${atk.window}${opts.dirs ? `/dirs=${opts.dirs}` : ''}`,
@@ -158,6 +166,7 @@ function main() {
           target,
           records,
           failed,
+          controlFailures,
         })
       }
     }

@@ -141,7 +141,16 @@ function symlinkUserFiles(fxRoot, linkAbs, newTarget, where) {
   return { checked: 1, lost, changed, displaced, deleted: lost - displaced }
 }
 
-export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, dirs, _test }) {
+export function runOnce({
+  harnessRoot,
+  candidate,
+  subcase,
+  entryKind,
+  window,
+  dirs,
+  traceDir,
+  _test,
+}) {
   assertC4Candidate(candidate)
   if (!Object.hasOwn(SUBCASE_WINDOW, subcase)) {
     throw new TypeError(`subcase must be 'between' or 'late', got ${String(subcase)}`)
@@ -236,13 +245,19 @@ export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, di
       outcome: c4Outcome(r, fx.root, candidate),
       userFiles: score(r),
       durationMs,
-      extra: c4Extra(r, id, win, {
-        subcase,
-        entryKind: entryKind ?? null,
-        reuseObserved,
-        dirs: dirs ?? null,
-        actualDirs,
-      }),
+      extra: c4Extra(
+        r,
+        id,
+        win,
+        {
+          subcase,
+          entryKind: entryKind ?? null,
+          reuseObserved,
+          dirs: dirs ?? null,
+          actualDirs,
+        },
+        traceDir
+      ),
     }
   } finally {
     fx.cleanup()

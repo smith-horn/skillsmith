@@ -46,7 +46,7 @@ export function labelFor({ subcase }) {
   return subcase === 'b' ? 'A10b-C4' : 'A10-C4'
 }
 
-export function runOnce({ harnessRoot, candidate, subcase, window, dirs, _test }) {
+export function runOnce({ harnessRoot, candidate, subcase, window, dirs, traceDir, _test }) {
   assertC4Candidate(candidate)
   if (subcase !== 'a' && subcase !== 'b') {
     throw new TypeError(`subcase must be 'a' or 'b', got ${String(subcase)}`)
@@ -123,7 +123,13 @@ export function runOnce({ harnessRoot, candidate, subcase, window, dirs, _test }
       outcome: c4Outcome(r, fx.root, candidate),
       userFiles: score(r),
       durationMs,
-      extra: c4Extra(r, label, win, { subcase, reuseObserved, dirs: dirs ?? null, actualDirs }),
+      extra: c4Extra(
+        r,
+        label,
+        win,
+        { subcase, reuseObserved, dirs: dirs ?? null, actualDirs },
+        traceDir
+      ),
     }
   } finally {
     fx.cleanup()

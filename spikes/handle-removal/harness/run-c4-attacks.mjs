@@ -130,6 +130,7 @@ async function runOne({
   cell: acc,
   armOrder,
   dirs,
+  traceDir,
 }) {
   let raw
   // Harness errors need a label too. For a per-run-label attack (A13) it is the
@@ -140,7 +141,25 @@ async function runOne({
   let variant = tag
   try {
     // `dirs` is passed only when requested, so default runs call modules exactly as before.
-    raw = await mod.runOnce({ harnessRoot, candidate, ...args, ...(dirs ? { dirs } : {}) })
+    raw = await mod.runOnce({
+      harnessRoot,
+      candidate,
+      ...args,
+      ...(dirs ? { dirs } : {}),
+      ...(traceDir !== undefined ? { traceDir } : {}),
+    })
+    // Every full trace is kept as a side file. A module that was asked for one and did
+    // not name it would otherwise leave a record whose evidence silently went missing.
+    // The one exemption: a clean A13 caller-hash race (quarantineTree never ran, so there
+    // is no trace to keep). It must say so in all three ways -- status 'not-run' AND a null
+    // traceCompact AND a null traceArtifact -- anything less is still a missing artifact.
+    const notRunNoTrace =
+      raw.outcome?.status === 'not-run' &&
+      raw.extra?.traceCompact === null &&
+      raw.extra?.traceArtifact === null
+    if (traceDir !== undefined && !notRunNoTrace && !raw.extra?.traceArtifact?.sha256) {
+      throw new Error('module did not report extra.traceArtifact for the requested traceDir')
+    }
     // A module that ignored --dirs would otherwise file an unpadded run under a dirs=N
     // cell. The module must report the directory count it actually built.
     if (dirs && raw.extra?.actualDirs !== dirs) {
@@ -221,11 +240,12 @@ export async function runCells({
   out,
   interleave,
   dirs,
+  traceDir,
   rng = Math.random,
 }) {
   const cells = {}
   for (const c of CANDIDATES) cells[c] = { records: [], extras: [], runLabels: [] }
-  const common = { mod, args, labels, tag, harnessRoot, fsLabel, out, dirs }
+  const common = { mod, args, labels, tag, harnessRoot, fsLabel, out, dirs, traceDir }
   if (interleave) {
     for (let run = 0; run < target; run += 1) {
       const naiveFirst = rng() >= 0.5
@@ -332,6 +352,32 @@ export function scoreCell({
 }
 
 /**
+ * The control rows for one combo: one per (label, candidate) group that has runs.
+ * `controlFailures` (losses from non-error records) is carried beside `failed` so
+ * resolveControl never lets a harness-error loss satisfy a control; `aggregate` is
+ * injectable for the selftest.
+ */
+export function buildRows({ labels, groups, fsLabel, groupTarget, aggregate = aggregateCell }) {
+  const rows = []
+  for (const label of labels) {
+    for (const candidate of CANDIDATES) {
+      const g = groups[candidate].get(label)
+      if (g.records.length === 0) continue
+      const t = aggregate(g.records, () => false, { target: groupTarget(g) })
+      rows.push({
+        attack: label,
+        variant: g.variant,
+        candidate,
+        fs: fsLabel,
+        failed: t.failed,
+        controlFailures: t.controlFailures,
+      })
+    }
+  }
+  return rows
+}
+
+/**
  * The printed lines for one combo: for every (label, candidate) group, its verdict
  * line and its detail line. `universe` for each group is ALL of that candidate's
  * records, so an attack whose run count spans several labels (A13) is judged
@@ -408,6 +454,8 @@ async function main() {
         out,
         interleave: perRun,
         dirs: opts.dirs,
+        // full traces go beside the output file: <out dir>/traces/<sha256>.json.br
+        traceDir: path.join(path.dirname(path.resolve(out)), 'traces'),
       })
       const groups = {}
       for (const candidate of CANDIDATES) groups[candidate] = groupByLabel(cells[candidate], labels)
@@ -416,20 +464,7 @@ async function main() {
       // A per-run-label attack is scored per label on the runs that carry it, so
       // its target is that group's own size; a fixed-label attack keeps `target`.
       const groupTarget = (g) => (perRun ? g.records.length : target)
-      const rows = []
-      for (const label of labels) {
-        for (const candidate of CANDIDATES) {
-          const g = groups[candidate].get(label)
-          if (g.records.length === 0) continue
-          rows.push({
-            attack: label,
-            variant: g.variant,
-            candidate,
-            fs: opts.fsLabel,
-            failed: aggregateCell(g.records, () => false, { target: groupTarget(g) }).failed,
-          })
-        }
-      }
+      const rows = buildRows({ labels, groups, fsLabel: opts.fsLabel, groupTarget })
       for (const line of comboLines({ labels, cells, groups, rows, groupTarget })) console.log(line)
     }
     console.log('')
