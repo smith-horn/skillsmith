@@ -235,6 +235,50 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before it removes anyt
     expect(text(r)).toContain("service 'ruflo' is not in the dev profile")
   })
 
+  it('T27d. a network used only by a KEPT (non-dev) container is not an incomplete cleanup: stop succeeds', () => {
+    const fx = mk('wd-t27d')
+    composeBase(fx.repoDir)
+    primeAttribution(fx, fx.repoDir)
+    const dev = 'a'.repeat(64)
+    const test = 'b'.repeat(64)
+    ourContainers(fx, fx.repoDir, [dev, test], { [test]: 'test' })
+    setProjectNetworks(fx, ['n1'])
+    // The exited \`test\` container is still attached to the project's default network.
+    setNetworkUsers(fx, 'n1', [test])
+
+    const r = runDocker(fx, ['stop', fx.repoDir])
+
+    // The verdict first: the kept container is not a failure.
+    expect(r.status).toBe(0)
+
+    // Presence: the network was inspected and the dev container removed.
+    expect(r.dockerCalls).toContain('ps -aq --no-trunc --filter network=n1')
+    expect(removals(r.dockerCalls)).toEqual([`rm -f ${dev}`])
+    expect(r.dockerCalls).not.toContain('network rm n1')
+    expect(text(r)).toContain('Network n1 left in place: used only by kept service(s) test')
+    expect(text(r)).toContain('Docker containers stopped')
+  })
+
+  it('T27e. a network used by the kept container AND by anyone else is still incomplete (exit 1)', () => {
+    const fx = mk('wd-t27e')
+    composeBase(fx.repoDir)
+    primeAttribution(fx, fx.repoDir)
+    const dev = 'a'.repeat(64)
+    const test = 'b'.repeat(64)
+    ourContainers(fx, fx.repoDir, [dev, test], { [test]: 'test' })
+    setProjectNetworks(fx, ['n1'])
+    setNetworkUsers(fx, 'n1', [test, 'cOther'])
+
+    const r = runDocker(fx, ['stop', fx.repoDir])
+
+    expect(removals(r.dockerCalls)).toEqual([`rm -f ${dev}`])
+    expect(text(r)).toContain('n1: still used by cOther')
+    // The kept container is not blamed for the incompleteness.
+    expect(text(r)).not.toContain(`n1: still used by ${test}`)
+    expect(text(r)).not.toContain('Docker containers stopped')
+    expect(r.status).toBe(1)
+  })
+
   it.each([
     ['the services read fails', (fx: AttrFixture) => setExit(fx, 'compose_services', 1)],
     [

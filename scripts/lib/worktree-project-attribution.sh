@@ -333,7 +333,8 @@ worktree_path_inside() {
 # recorded in WPA_NETWORK_INCOMPLETE, and the caller must turn that into an
 # incomplete (non-zero) outcome. Container-removal failure stays fatal (error()).
 worktree_project_remove_approved() {
-    local p="$1" x="${2:-}" t id svc nets users devsvcs line
+    local p="$1" x="${2:-}" t id svc nets users devsvcs line u outside kept_names
+    local kept=""   # "<id> <service>" lines for containers the stop path deliberately keeps
     WPA_NETWORK_INCOMPLETE=""
     local -a idv=()
     t="$(_wpa_timeout)"
@@ -349,6 +350,7 @@ worktree_project_remove_approved() {
                 idv+=("$id")
             else
                 info "  Leaving container $id running: its service '${svc:-<none>}' is not in the dev profile"
+                kept+="$id ${svc:-<none>}"$'\n'
             fi
         done <<< "$WPA_CONTAINER_SVCS"
     else
@@ -374,8 +376,25 @@ worktree_project_remove_approved() {
             warn "  Network $id skipped: could not check which containers use it"
             WPA_NETWORK_INCOMPLETE+="$id: could not check which containers use it"$'\n'
         elif [[ -n "$users" ]]; then
-            warn "  Network $id left in place: container(s) still attached ($(printf '%s' "$users" | tr '\n' ' '))"
-            WPA_NETWORK_INCOMPLETE+="$id: still used by $(printf '%s' "$users" | tr '\n' ' ')"$'\n'
+            # Containers the stop path KEPT on purpose (e.g. an exited `test` service on
+            # the default network) do not make the cleanup incomplete: it did what it
+            # was asked. Any other user still does.
+            outside="" kept_names=""
+            while IFS= read -r u; do
+                [[ -n "$u" ]] || continue
+                line="$(printf '%s' "$kept" | awk -v id="$u" '$1 == id { print $2; exit }')"
+                if [[ -n "$line" ]]; then
+                    kept_names+="$line "
+                else
+                    outside+="$u "
+                fi
+            done <<< "$users"
+            if [[ -z "$outside" ]]; then
+                info "  Network $id left in place: used only by kept service(s) ${kept_names% }"
+            else
+                warn "  Network $id left in place: container(s) still attached ($outside)"
+                WPA_NETWORK_INCOMPLETE+="$id: still used by $outside"$'\n'
+            fi
         elif ! worktree_lifecycle_bounded "$t" docker network rm "$id" >/dev/null 2>&1; then
             warn "  Network $id was not removed (Docker refused); left in place"
             WPA_NETWORK_INCOMPLETE+="$id: docker network rm was refused"$'\n'
