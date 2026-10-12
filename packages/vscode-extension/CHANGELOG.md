@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-- **Fix**: SMI-7056 -- installing a registry skill whose trust tier is not official, verified, curated, community or local (for example unverified) now shows a warning naming the tier and the reason, with an "Install anyway" button, and retries once with confirmation on that choice. Dismissing it cancels the install. Previously the install failed with a generic error. The security scan is never skipped.
+- **Fix**: SMI-7056 -- installing a registry skill whose trust tier is not official, verified, curated, community or local (for example unverified) now shows a warning naming the tier and the reason, with an "Install anyway" button, and retries once with confirmation on that choice. Dismissing it cancels the install. Previously the install failed with a generic error. The security scan is never skipped. The progress notification now ends with "Complete!" only when the skill was installed: "Cancelled" when you decline (including the placeholder install offered while the MCP server is unavailable, which was reported as a failure), and "Not installed" otherwise.
 
 - **Breaking**: Skillsmith now requires VS Code 1.125 or later. If you're on an earlier version,
   you keep the version of Skillsmith you have installed but won't receive updates until you update

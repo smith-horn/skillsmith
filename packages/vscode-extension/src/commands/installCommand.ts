@@ -203,7 +203,7 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
         const result = await performInstall(skill)
 
         if (result.cancelled) {
-          // SMI-7056: the user declined the trust-tier confirmation.
+          // SMI-7056: the user declined a confirmation (trust tier or placeholder).
           progress.report({ increment: 100, message: 'Cancelled' })
           vscode.window.showInformationMessage(
             `Installation of "${skill.name}" cancelled: it was not confirmed.`
@@ -211,7 +211,10 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
           return
         }
 
-        progress.report({ increment: 100, message: 'Complete!' })
+        progress.report({
+          increment: 100,
+          message: result.success ? 'Complete!' : 'Not installed',
+        })
 
         if (result.tierDeniedHandled) {
           // SMI-5288: the server refused on tier grounds; the tier-denied UX
@@ -318,7 +321,9 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
         success: false,
         installPath: result.installPath || '',
         tips: undefined,
-        error: result.error,
+        // SMI-7056: a repeated CONFIRMATION_REQUIRED carries its reason, not `error`.
+        error:
+          result.error || (isConfirmationRequired(result) ? confirmationDetail(result) : undefined),
       }
     } catch (error) {
       console.warn('[Skillsmith] MCP install failed, falling back to local:', error)
@@ -332,7 +337,13 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
     'Install Placeholder'
   )
   if (proceedLocally !== 'Install Placeholder') {
-    return { success: false, installPath: '', tips: undefined, error: 'Installation cancelled' }
+    return {
+      success: false,
+      installPath: '',
+      tips: undefined,
+      error: 'Installation cancelled',
+      cancelled: true,
+    }
   }
 
   // Fallback to local installation

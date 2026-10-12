@@ -47,8 +47,9 @@ vi.mock('vscode', () => ({
 }))
 
 const installSkill = vi.fn()
+let connected = true
 vi.mock('../mcp/McpClient.js', () => ({
-  getMcpClient: () => ({ isConnected: () => true, installSkill }),
+  getMcpClient: () => ({ isConnected: () => connected, installSkill }),
 }))
 
 vi.mock('../mcp/tierDenied.js', () => ({ handleTierDenied: vi.fn() }))
@@ -95,6 +96,7 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     showWarningMessage.mockReset()
     showInformationMessage.mockReset()
     acceptHandler = undefined
+    connected = true
     // First prompt is the generic "Install" dialog; always accept it.
     showInformationMessage.mockResolvedValueOnce('Install')
     showInformationMessage.mockResolvedValue(undefined)
@@ -133,7 +135,11 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
 
     expect(showWarningMessage).toHaveBeenCalledTimes(1)
     expect(installSkill).toHaveBeenCalledTimes(2)
+    // The refusal's own reason reaches the user, not a bare "Installation failed".
     expect(showErrorMessage).toHaveBeenCalledTimes(1)
+    expect(showErrorMessage).toHaveBeenCalledWith(
+      'Installation failed: This is an unverified tier skill. unverified tier skills have not been reviewed.'
+    )
   })
 
   it('reports a failed retry as an install failure', async () => {
@@ -149,6 +155,25 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
 
     expect(installSkill).toHaveBeenCalledTimes(2)
     expect(showErrorMessage).toHaveBeenCalledWith('Installation failed: Security scan failed')
+    // A failure is not reported as "Complete!".
+    const reported = progressReport.mock.calls.map((c) => (c[0] as { message?: string }).message)
+    expect(reported).toContain('Not installed')
+    expect(reported).not.toContain('Complete!')
+  })
+
+  it('declining the placeholder install (MCP offline) is a cancellation, not a failure', async () => {
+    connected = false
+    showWarningMessage.mockResolvedValueOnce(undefined)
+
+    await runInstall()
+
+    expect(installSkill).not.toHaveBeenCalled()
+    expect(String(showWarningMessage.mock.calls[0]?.[0])).toContain('MCP server unavailable')
+    expect(showErrorMessage).not.toHaveBeenCalled()
+    const cancelled = showInformationMessage.mock.calls.some((c) => /cancelled/.test(String(c[0])))
+    expect(cancelled).toBe(true)
+    const reported = progressReport.mock.calls.map((c) => (c[0] as { message?: string }).message)
+    expect(reported).toContain('Cancelled')
   })
 
   it('names an empty trust tier "unknown", not "-tier"', async () => {
@@ -207,5 +232,9 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     expect(installSkill).toHaveBeenCalledTimes(1)
     expect(installSkill.mock.calls[0]).toEqual([skill.id])
     expect(showWarningMessage).not.toHaveBeenCalled()
+    // Success-side partner of the cancellation test's progress check.
+    const reported = progressReport.mock.calls.map((c) => (c[0] as { message?: string }).message)
+    expect(reported).toContain('Complete!')
+    expect(reported).not.toContain('Cancelled')
   })
 })
