@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-7030 -- through `@skillsmith/core`'s new flag-only `executable_frontmatter`
+  finding (critical severity, zero score weight), `install_skill` now refuses a skill whose
+  SKILL.md frontmatter opens with `---js` or `---javascript` (unless `skipScan` on an eligible
+  tier), and `skill_rescan` records a local `MALICIOUS` quarantine for one already installed.
+  Security-audit test fixtures gain the new `RiskScoreBreakdown.executableFrontmatter` field.
 - **Fixed**: SMI-7068 -- the audit row for a `deprecate` or `undeprecate` that finds no matching
   skill now records the caller's role, like the other rows that operation writes.
 - **Fixed**: SMI-6114 -- private-registry denials, failures and reads are now recorded in the

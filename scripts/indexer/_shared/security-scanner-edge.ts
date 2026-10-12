@@ -69,6 +69,7 @@ import { scanPasteHostFetch } from './security-scanner-edge.paste-host.ts'
 import { scanEncodedPayload } from './security-scanner-edge.encoding.ts'
 // SMI-6033 Wave 4 (Gap 6): decoy/misdirection URL-target heuristic.
 import { scanDecoyMisdirection } from './security-scanner-edge.decoy.ts'
+import { scanExecutableFrontmatter } from './security-scanner-edge.frontmatter.ts'
 
 // SMI-5879: evidence-tier classification + pattern scope + corroboration —
 // extracted to a sibling twin; byte-identical body across both _shared twins.
@@ -370,6 +371,8 @@ function runDetectors(
   // after escalateCodeExecution so a freshly-critical code_execution finding
   // can itself serve as a corroborator.
   escalateCorroboratedMentions(findings)
+  // SMI-7030: flag-only executable frontmatter; outer document only (never on decoded rescans).
+  if (!skipEncodedPayload) findings.push(...scanExecutableFrontmatter(content))
 
   // SMI-6033 Wave 2 (Gap 2): decode-and-recursively-rescan base64 payloads.
   // Appended AFTER escalateCodeExecution above, and the recursive rescan's

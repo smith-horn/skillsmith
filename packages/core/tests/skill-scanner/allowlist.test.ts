@@ -84,6 +84,7 @@ function makeReport(
       pasteHostFetch: 0,
       encodedPayload: 0,
       decoyMisdirection: 0,
+      executableFrontmatter: 0,
     },
     ...overrides,
   }

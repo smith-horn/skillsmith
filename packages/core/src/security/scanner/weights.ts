@@ -4,7 +4,7 @@
  * Weight constants for risk score calculation.
  */
 
-import type { SecurityFindingType, SecuritySeverity } from './types.js'
+import type { RiskScoreBreakdown, SecurityFindingType, SecuritySeverity } from './types.js'
 
 /**
  * Severity weights for risk score calculation
@@ -96,4 +96,44 @@ export const CATEGORY_WEIGHTS: Record<SecurityFindingType, number> = {
   // (rounds to ~1); a saturated breakdown (capped at 100) contributes 4 —
   // comfortably under the riskThreshold: 40 quarantine cutoff on its own.
   decoy_misdirection: 1.2,
+  // SMI-7030: reporting weight only. Flag-only (owner decision 2026-10-09): the
+  // paired CATEGORY_COEFFICIENTS entry is exactly 0, so this finding adds
+  // nothing to riskScore, alone or in a mixed scan. A lone finding still
+  // shows as riskBreakdown.executableFrontmatter = 50 * 1.2 = 60.
+  executable_frontmatter: 1.2,
+}
+
+/**
+ * SMI-7030 (rev 7): per-category coefficients of the second-stage risk-score
+ * sum, moved out of SecurityScanner.risk-score.ts so a test can inject an
+ * override and prove each term is actually read.
+ *
+ * ORDER MATTERS: calculateRiskScore adds these left to right, and floating
+ * point addition is not associative. The keys are declared in exactly the
+ * order the former inline expression added its terms, so totals stay
+ * bit-identical before Math.round. Do not reorder.
+ */
+export const CATEGORY_COEFFICIENTS: Readonly<Record<keyof RiskScoreBreakdown, number>> = {
+  jailbreak: 0.2,
+  socialEngineering: 0.11,
+  promptLeaking: 0.11,
+  dataExfiltration: 0.08,
+  privilegeEscalation: 0.11,
+  suspiciousCode: 0.07,
+  sensitivePaths: 0.04,
+  externalUrls: 0.04,
+  aiDefence: 0.12,
+  ssrf: 0.04,
+  pii: 0.08,
+  codeExecution: 0.4,
+  obfuscatedDirective: 0.4,
+  typosquat: 0.04,
+  gatekeeperBypass: 0.4,
+  archiveEvasion: 0.4,
+  pasteHostFetch: 0.4,
+  encodedPayload: 0.04,
+  decoyMisdirection: 0.04,
+  // SMI-7030: flag-only. Exactly 0, never a small positive number: a nonzero
+  // term is additive and can push a mixed scan across a quarantine threshold.
+  executableFrontmatter: 0,
 }

@@ -315,4 +315,15 @@ export const CLOSURE_WATCHED_SOURCE_PATHS = [
   'packages/core/src/security/scanner/SecurityScanner.action-context.ts',
   'scripts/indexer/_shared/security-scanner-edge.action-context.ts',
   'supabase/functions/_shared/security-scanner-edge.action-context.ts',
+  // SMI-7030: the already-watched SecurityScanner.ts / security-scanner-edge.ts
+  // now import the new executable-frontmatter detector, and the edge context
+  // file now imports (and re-exports) its weight/coefficient maps from a new
+  // weights sibling. Flagged by assertion 5 (the real import-graph tracer) as
+  // reachable-but-unwatched; the supabase/functions/_shared twins are added
+  // alongside for the same symmetry as the pairs above.
+  'packages/core/src/security/scanner/SecurityScanner.frontmatter.ts',
+  'scripts/indexer/_shared/security-scanner-edge.frontmatter.ts',
+  'scripts/indexer/_shared/security-scanner-edge.weights.ts',
+  'supabase/functions/_shared/security-scanner-edge.frontmatter.ts',
+  'supabase/functions/_shared/security-scanner-edge.weights.ts',
 ] as const
