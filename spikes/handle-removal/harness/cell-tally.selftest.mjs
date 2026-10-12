@@ -3,7 +3,7 @@
 // and results/generate-summary.mjs. The final block proves the two agree by
 // running the real generator on the same records.
 
-import { makeRecord, aggregateCell } from './result-schema.mjs'
+import { makeRecord, aggregateCell, classifyRecord } from './result-schema.mjs'
 import { spawnSync } from 'node:child_process'
 import {
   mkdtempSync,
@@ -200,6 +200,144 @@ check(
   'FAIL'
 )
 
+// --- 'not-run' is a known non-landing status; any other unknown status is a fault ---
+const ANR = cellOf('A13-C4', 101)
+const odd = (i, status, mutationApplied) =>
+  mk(ANR, 700 + i, {
+    precondition: { ...goodPre(), mutationApplied },
+    outcome: { status },
+    userFiles: { checked: 0, lost: 0, changed: 0 },
+  })
+const clean100n = many(100, ANR)
+check(
+  'N1 100 passes + 1 not-run with mutationApplied:false is PASS (leaves the denominator)',
+  agg([...clean100n, odd(0, 'not-run', false)]).verdict,
+  'PASS'
+)
+check(
+  'N1 the not-run record is a never-ran, not a pass',
+  agg([...clean100n, odd(0, 'not-run', false)]).neverRan,
+  1
+)
+check(
+  'N2 not-run with mutationApplied:true is a fault (NEVER-RAN)',
+  agg([...clean100n, odd(0, 'not-run', true)]).verdict,
+  'NEVER-RAN'
+)
+for (const typo of ['quarantine', 'Kept', 'removed', 'notrun', 'harness_error']) {
+  check(
+    'N3 unknown status ' + JSON.stringify(typo) + ' + mutationApplied:false is NOT a non-landing',
+    agg([...clean100n, odd(0, typo, false)]).verdict,
+    'NEVER-RAN'
+  )
+}
+check(
+  'N3 control: a known non-error status with mutationApplied:false still leaves the denominator',
+  agg([...clean100n, odd(0, 'kept', false)]).verdict,
+  'PASS'
+)
+check(
+  'N4 classifyRecord: not-run is never-ran',
+  classifyRecord(odd(0, 'not-run', false)),
+  'never-ran'
+)
+// legacy unchanged: an unknown status with mutationApplied:false is still a non-landing there
+const legacyOdd = [
+  ...Array.from({ length: 100 }, (_, i) =>
+    makeRecord({
+      cell: { attack: 'A13', variant: 'v', candidate: 'baseline', fs: 'f', runner: 't' },
+      run: i,
+      precondition: { hookFired: true, mutationApplied: true },
+      outcome: { status: 'kept' },
+      userFiles: { checked: 1 },
+    })
+  ),
+  makeRecord({
+    cell: { attack: 'A13', variant: 'v', candidate: 'baseline', fs: 'f', runner: 't' },
+    run: 100,
+    precondition: { hookFired: true, mutationApplied: false },
+    outcome: { status: 'quarantine' },
+    userFiles: { checked: 1 },
+  }),
+]
+check(
+  'N5 legacy cell: unknown status + mutationApplied:false is unchanged (non-landing, PASS)',
+  aggregateCell(legacyOdd, () => false, { controlFailed: true, controlState: 'satisfied' }).verdict,
+  'PASS'
+)
+
+// --- harness-error with a measured loss: failures beat everything ----------------
+const AHE = cellOf('A8-C4', 101)
+const heRec = (i, userFiles) =>
+  mk(AHE, 900 + i, { outcome: { status: 'harness-error', reason: 'x' }, userFiles })
+const cleanHE = many(100, AHE)
+const heVerdict = (uf) => agg([...cleanHE, heRec(0, uf)])
+check(
+  'E1 harness-error + lost 1 is FAIL, not NEVER-RAN',
+  heVerdict({ checked: 1, lost: 1, changed: 0 }).verdict,
+  'FAIL'
+)
+check(
+  'E1 and is counted in the failed column',
+  heVerdict({ checked: 1, lost: 1, changed: 0 }).failed,
+  1
+)
+check(
+  'E2 harness-error + changed 1 is FAIL',
+  heVerdict({ checked: 1, lost: 0, changed: 1 }).verdict,
+  'FAIL'
+)
+check('E2 and is counted failed', heVerdict({ checked: 1, lost: 0, changed: 1 }).failed, 1)
+check(
+  'E3 harness-error with lost 0 changed 0 stays NEVER-RAN',
+  heVerdict({ checked: 0, lost: 0, changed: 0 }).verdict,
+  'NEVER-RAN'
+)
+check('E3 and is not counted failed', heVerdict({ checked: 0, lost: 0, changed: 0 }).failed, 0)
+for (const [label, uf] of [
+  ['lost as a string', { checked: 1, lost: '1', changed: 0 }],
+  ['lost null', { checked: 1, lost: null, changed: 0 }],
+  ['lost fractional', { checked: 1, lost: 0.5, changed: 0 }],
+  ['changed negative', { checked: 1, lost: 1, changed: -1 }],
+  ['lost missing', { checked: 1, changed: 1 }],
+]) {
+  const r = heVerdict(uf)
+  check(
+    'E4 harness-error with malformed counts (' + label + ') is NEVER-RAN',
+    r.verdict,
+    'NEVER-RAN'
+  )
+  check('E4 and is not counted failed (' + label + ')', r.failed, 0)
+}
+const legacyHELoss = [
+  ...Array.from({ length: 100 }, (_, i) =>
+    makeRecord({
+      cell: { attack: 'A13', variant: 'v', candidate: 'baseline', fs: 'f', runner: 't' },
+      run: i,
+      precondition: { hookFired: true, mutationApplied: true },
+      outcome: { status: 'kept' },
+      userFiles: { checked: 1 },
+    })
+  ),
+  makeRecord({
+    cell: { attack: 'A13', variant: 'v', candidate: 'baseline', fs: 'f', runner: 't' },
+    run: 100,
+    precondition: { hookFired: true, mutationApplied: true },
+    outcome: { status: 'harness-error' },
+    userFiles: { checked: 1, lost: 1 },
+  }),
+]
+const legacyHEagg = aggregateCell(legacyHELoss, () => false, {
+  controlFailed: true,
+  controlState: 'satisfied',
+})
+check('E5 legacy harness-error with lost 1 is unchanged: not counted failed', legacyHEagg.failed, 0)
+check(
+  'E5 legacy harness-error with lost 1 is unchanged: NEVER-RAN',
+  legacyHEagg.verdict,
+  'NEVER-RAN'
+)
+
 // --- G3-1: a harness-error is never a non-landing -------------------------------
 const A101 = cellOf('A13-C4', 101)
 const noLand = (i, status) =>
@@ -287,6 +425,17 @@ const scenarios = [
   ['A3-C4', 10, many(5, cellOf('A3-C4', 10))],
   ['A4-C4', undefined, many(4, cellOf('A4-C4', undefined))],
   ['A7-C4', 5, many(5, cellOf('A7-C4', 5))],
+  [
+    'A8-C4',
+    5,
+    [
+      ...many(4, cellOf('A8-C4', 5)),
+      mk(cellOf('A8-C4', 5), 4, {
+        outcome: { status: 'harness-error' },
+        userFiles: { checked: 1, lost: 1, changed: 0 },
+      }),
+    ],
+  ],
 ]
 const lines = []
 const expected = {}

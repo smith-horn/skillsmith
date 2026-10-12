@@ -5,7 +5,7 @@
 // (isC4Cell), so no pre-existing record can be affected.
 
 import { verdictFor, RECORD_ONLY_ATTACKS } from './control-spec.mjs'
-import { isC4Cell } from './result-schema.c4.mjs'
+import { isC4Cell, C4_KNOWN_STATUSES } from './result-schema.c4.mjs'
 
 /** The only `outcome.excludedReason` a C4 record may carry. Anything else is a harness fault. */
 export const EXCLUDED_REASONS = new Set(['vacuous-check'])
@@ -23,6 +23,8 @@ const validTarget = (x) => Number.isSafeInteger(x) && x > 0
  *    PASSED leaves the denominator like a non-landing (neverRan, not
  *    otherNeverRan) and is counted in `excluded`, so an A13-C4 run whose only
  *    check was vacuous cannot count toward the 100-landing floor.
+ *  - a harness-error that nonetheless reports valid integer lost/changed counts
+ *    with lost + changed > 0 is counted failed (a measured loss is not a fault).
  *  - a record that LOST bytes is counted failed whatever excludedReason it
  *    carries (failures beat exclusion, G3-2); 'vacuous-check' should never
  *    co-occur with a loss, and the producer guards it, but the consumer must
@@ -45,13 +47,35 @@ export function tallyCell(records, classify, universe = records) {
     const isC4 = isC4Cell(r?.cell)
     c4 = c4 || isC4
     const cls = classify(r)
+    // A C4 harness-error that nonetheless MEASURED a loss is a loss: failures beat
+    // everything, so it counts failed, not never-ran. Only valid integer counts
+    // qualify; a harness-error with malformed or absent counts stays a fault.
+    if (isC4 && r?.outcome?.status === 'harness-error') {
+      const [lost, changed] = [r?.userFiles?.lost, r?.userFiles?.changed]
+      if (
+        Number.isSafeInteger(lost) &&
+        lost >= 0 &&
+        Number.isSafeInteger(changed) &&
+        changed >= 0 &&
+        lost + changed > 0
+      ) {
+        failed += 1
+        continue
+      }
+    }
     const er = isC4 ? r?.outcome?.excludedReason : undefined
     // R6 drops only the runs where the RACER DID NOT LAND. For C4 records a
     // harness-error is never a non-landing, whatever mutationApplied says: the
     // run did not happen for a reason that has nothing to do with the racer.
+    // For C4 records only a KNOWN non-error status can be a non-landing: a
+    // harness-error never is, and neither is an unknown status (a typo such as
+    // 'quarantine' must disqualify the cell, not silently leave the denominator).
     const nonLanding =
       r?.precondition?.mutationApplied === false &&
-      !(isC4 && r?.outcome?.status === 'harness-error')
+      !(
+        isC4 &&
+        (r?.outcome?.status === 'harness-error' || !C4_KNOWN_STATUSES.has(r?.outcome?.status))
+      )
     if (er !== undefined && er !== null) {
       if (cls === 'failed') {
         // Failures beat exclusion (G3-2): a run whose check FAILED is a loss

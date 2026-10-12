@@ -248,6 +248,13 @@ export function c4UserFileExtras(userFiles) {
 }
 
 const C4_STATUSES = new Set(['quarantined', 'kept', 'stopped', 'harness-error'])
+/**
+ * Every outcome.status a C4 record may carry. 'not-run' is a non-error run that
+ * did not happen (a clean A13 caller-hash race): it classifies never-ran and,
+ * with mutationApplied === false, is a non-landing. Any status outside this set
+ * is a fault, never a non-landing (see cell-tally.mjs).
+ */
+export const C4_KNOWN_STATUSES = new Set([...C4_STATUSES, 'not-run'])
 const C4_REQUIRED_PRECONDITIONS = ['hookFired', 'mutationApplied', 'traceMatched']
 
 /** Own, enumerable, data (non-accessor) property value, or {ok:false}. */
@@ -275,6 +282,7 @@ const isCount = (v) => Number.isSafeInteger(v) && v >= 0
  * else is never-ran.
  */
 export function c4Validate(record) {
+  // 'not-run' is known but is not a run that can be scored: never-ran.
   if (!C4_STATUSES.has(record.outcome?.status)) return null
   const pre = record.precondition
   if (!isPlain(pre)) return null

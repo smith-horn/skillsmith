@@ -74,6 +74,10 @@ export function decideRecord({
     harnessErrors.push('caller-hash-before-marker')
   }
   const lostOrChanged = !!scored && scored.lost + scored.changed > 0
+  // Timestamps and hash evidence disagree (classify.mjs landingFromRacer).
+  if ((landings ?? []).some((x) => x.contradiction === true)) {
+    harnessErrors.push('clock-hash-contradiction')
+  }
   if (lostOrChanged && (landings ?? []).some((x) => x.cls === 'post-rename')) {
     harnessErrors.push('impossible-post-rename-loss')
   }
@@ -155,8 +159,11 @@ export function toH(t, offset) {
  * were being dropped as pre-caller-hash):
  *   - a moved tree that does not match the caller's hash (or could not be
  *     hashed: the conservative reading);
- *   - C4 'kept': its own hash or identity check saw the tree differ from what
- *     the caller hashed, and C4's checks all run after the caller's hash;
+ *   - C4 'kept' with reason 'identity-changed' (final governance F3): its own
+ *     hash or identity check saw the ORIGIN tree differ from what the caller
+ *     hashed, and C4's checks all run after the caller's hash. Any other kept
+ *     reason (e.g. quarantine-destination-changed, about the trash, not the
+ *     tree) is not evidence about the origin tree;
  *   - C4 'stopped' by its own hash read (reason guard-*): an entry the caller
  *     read was gone or unreadable when C4 read it.
  * A 'stopped' at the rename (quarantine-failed) is not hash evidence.
@@ -168,6 +175,6 @@ export function treeChangedAfterCallerHash({
   movedTreeMatchesCallerHash,
 }) {
   if (destPath != null) return movedTreeMatchesCallerHash !== true
-  if (c4Status === 'kept') return true
+  if (c4Status === 'kept') return c4Reason === 'identity-changed'
   return c4Status === 'stopped' && typeof c4Reason === 'string' && c4Reason.startsWith('guard-')
 }

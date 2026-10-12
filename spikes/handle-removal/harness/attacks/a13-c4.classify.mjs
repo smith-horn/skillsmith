@@ -56,15 +56,21 @@
 // selftest proves the branch synthetically.
 //
 // CALLER-HASH RACE (recordForRunError). If the racer is mid-mutation while the
-// caller hashes, runC4Candidate throws before quarantineTree runs. That is
-// recorded as a pre-caller-hash non-landing with status 'harness-error' and
-// mutationApplied:false, instead of a throw the runner would count as a
-// never-ran R6 cannot explain -- but ONLY when the racer's expectations,
-// scored at their original paths, show nothing lost or changed (C4 never ran,
-// so a loss there means the harness model is wrong, and the record then
-// carries mutationApplied:true so R6 counts it against the cell). Only that
-// message AND a racer that completed at least one step qualify; anything else
-// rethrows.
+// caller hashes, runC4Candidate throws before quarantineTree runs. When the
+// racer's expectations, scored at their original paths, show nothing lost or
+// changed, that is a NON-ERROR NON-LANDING: status 'not-run', mutationApplied
+// false, which the shared tally drops from the denominator (final governance
+// F1; why it is not a harness error is in recordForRunError's docblock). A
+// loss there, or a run that cannot be scored, means the harness model is
+// wrong: a harness-error with mutationApplied true, counted against the cell.
+// Only a real Error with the c4-shared prefix AND a racer whose first step
+// overlaps the caller-hash window qualify; anything else rethrows.
+//
+// CLOCK/HASH CONTRADICTION (final governance F3). Timestamps that say the
+// racer finished before the caller hash BEGAN, together with clock-independent
+// evidence the tree changed after the caller hashed, cannot both be true with
+// one writer. landingFromRacer marks it and decideRecord makes it a counted
+// harness-error, never a credited catch.
 
 export const VARIANT = 'racer/by-timestamp'
 export const CALLER_HASH_FAILED_PREFIX = 'runC4Candidate: caller hash failed'
@@ -193,8 +199,24 @@ export function landingFromRacer({
   // after the caller observed the tree.
   let cls = c.cls
   let evidence = 'timestamp'
+  let contradiction = false
   if (cls === 'pre-caller-hash') {
-    if (movedTreeDiffersFromCallerHash === true) {
+    if (
+      movedTreeDiffersFromCallerHash === true &&
+      typeof callerHashStartAt === 'number' &&
+      typeof last.endAt === 'number' &&
+      last.endAt < callerHashStartAt
+    ) {
+      // CONTRADICTION (final governance F3): the timestamps say the racer's
+      // whole mutation finished before the caller hash BEGAN, so the caller
+      // hashed the final state -- yet C4's outcome or the moved tree says the
+      // tree changed after the caller hashed. With one writer that cannot
+      // happen; the clock or the model is wrong. Not credited as a catch:
+      // decideRecord makes it a counted harness-error.
+      cls = 'in-model'
+      evidence = 'clock-hash-contradiction'
+      contradiction = true
+    } else if (movedTreeDiffersFromCallerHash === true) {
       cls = 'in-model'
       evidence = 'hash-moved-tree-differs'
     } else if (last.endAt == null || !(last.endAt < callerHashAt)) {
@@ -234,6 +256,7 @@ export function landingFromRacer({
         first.endAt >= inModelEnd,
       timestampCls: c.cls,
       evidence,
+      contradiction,
       lastStepEndAt: last.endAt ?? null,
       partial,
       forceScored: partial && IRRELEVANT.has(cls),
@@ -302,15 +325,26 @@ export function isCallerHashRaceFailure({ err, racer, callerHashWindow }) {
 /**
  * Turns a runC4Candidate throw into a record, or rethrows it. Qualifies only
  * as isCallerHashRaceFailure decides (a real Error with the prefix, and the
- * racer's first step overlapping the caller-hash window). quarantineTree never ran
- * on this path, so nothing was moved; `quarantineLeft` comes from the caller.
+ * racer's first step overlapping the caller-hash window). quarantineTree never
+ * ran on this path, so nothing was moved; `quarantineLeft` comes from the caller.
+ *
+ * A CLEAN CALLER-HASH RACE IS A NON-ERROR NON-LANDING (final governance F1):
+ * status 'not-run', mutationApplied false, so the shared tally (cell-tally.mjs)
+ * drops it from the denominator like any racer that did not land in a window
+ * this cell scores. It is not a harness error -- nothing in the harness failed:
+ * the racer was mutating while the CALLER computed its guard hash, the caller
+ * got an error, and removal was never called, exactly as a real caller would
+ * behave. C4 never ran, so this is not a race against C4. Counting it as a
+ * harness error would also disqualify the A13 cell at scale: at 1,630 dirs the
+ * caller hash takes ~100 ms and most landings fall inside it. 'not-run' rather
+ * than 'stopped', so a status histogram never confuses it with a real C4 stop.
  *
  * `scored` is the racer's expectations scored at their original paths (see
- * a13-c4.score.mjs). This run takes R6's non-landing exemption ONLY if that
- * scoring found nothing lost or changed: C4 never ran, so any loss means the
- * harness's own model of the racer is wrong, and the record is then a
- * harness-error with mutationApplied:true, which R6 counts against the cell
- * (otherNeverRan) instead of excusing.
+ * a13-c4.score.mjs). If that scoring found anything lost or changed, or could
+ * not run, the record IS a harness-error with mutationApplied true: C4 never
+ * ran, so a loss means the harness's own model of the racer is wrong. The tally
+ * counts a measured loss on a C4 harness-error as failed and an unmeasured one
+ * as otherNeverRan; both keep the cell from passing.
  */
 export function recordForRunError({
   err,
@@ -333,7 +367,7 @@ export function recordForRunError({
       controlExpected: true,
     },
     outcome: {
-      status: 'harness-error',
+      status: unexplainedLoss ? 'harness-error' : 'not-run',
       reason: unexplainedLoss
         ? `${CALLER_HASH_RACE_REASON}+unexplained-loss`
         : CALLER_HASH_RACE_REASON,

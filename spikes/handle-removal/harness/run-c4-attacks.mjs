@@ -300,13 +300,25 @@ function vacuousExcluded(extras) {
  * drive it with synthetic records. The verdict text is whatever verdictFor()
  * returns, including for record-only cells: this function adds nothing to it.
  */
-export function scoreCell({ label, variant, candidate, records, target, rows, extras = [] }) {
+export function scoreCell({
+  label,
+  variant,
+  candidate,
+  records,
+  target,
+  rows,
+  extras = [],
+  universe = records,
+}) {
   const row = rows.find((r) => r.attack === label && r.candidate === candidate)
   const control = resolveControl(row, rows)
   const agg = aggregateCell(records, () => false, {
     target,
     controlFailed: controlFailedFlag(control.state),
     controlState: control.state,
+    // A13's run count spans both of its labels (cell.targetScope), so completeness is
+    // judged over every record of this candidate, exactly as generate-summary does.
+    universe,
   })
   let line = `${formatVerdict(`${label}/${variant}/${candidate}`, agg)}\tcontrol=${controlTag(control.state)}`
   if (A13_LABELS.includes(label)) {
@@ -317,6 +329,40 @@ export function scoreCell({ label, variant, candidate, records, target, rows, ex
     line += '\tR6/§9 floor is a minimum evidence floor, not a safety bound'
   }
   return line
+}
+
+/**
+ * The printed lines for one combo: for every (label, candidate) group, its verdict
+ * line and its detail line. `universe` for each group is ALL of that candidate's
+ * records, so an attack whose run count spans several labels (A13) is judged
+ * complete across them.
+ */
+export function comboLines({ labels, cells, groups, rows, groupTarget }) {
+  const lines = []
+  for (const label of labels) {
+    for (const candidate of CANDIDATES) {
+      const g = groups[candidate].get(label)
+      const { records, extras, variant } = g
+      if (records.length === 0) {
+        lines.push(`(no ${label}/${candidate} runs)`)
+        continue
+      }
+      lines.push(
+        scoreCell({
+          label,
+          variant,
+          candidate,
+          records,
+          target: groupTarget(g),
+          rows,
+          extras,
+          universe: cells[candidate].records,
+        }),
+        describe(records, extras)
+      )
+    }
+  }
+  return lines
 }
 
 async function main() {
@@ -384,27 +430,7 @@ async function main() {
           })
         }
       }
-      for (const label of labels) {
-        for (const candidate of CANDIDATES) {
-          const { records, extras, variant } = groups[candidate].get(label)
-          if (records.length === 0) {
-            console.log(`(no ${label}/${candidate} runs)`)
-            continue
-          }
-          console.log(
-            scoreCell({
-              label,
-              variant,
-              candidate,
-              records,
-              target: groupTarget(groups[candidate].get(label)),
-              rows,
-              extras,
-            })
-          )
-          console.log(describe(records, extras))
-        }
-      }
+      for (const line of comboLines({ labels, cells, groups, rows, groupTarget })) console.log(line)
     }
     console.log('')
   }

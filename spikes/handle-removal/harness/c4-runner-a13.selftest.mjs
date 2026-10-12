@@ -8,7 +8,7 @@
 
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
-import { scoreCell, runCells } from './run-c4-attacks.mjs'
+import { scoreCell, runCells, comboLines } from './run-c4-attacks.mjs'
 import { harnessErrorRaw } from './c4-target-guard.mjs'
 import { oomRecord, oomRecordFor, makeSelftest } from './c4-selftest-util.mjs'
 
@@ -312,6 +312,97 @@ check(
       [...keys][0] === JSON.stringify([300, 'across-a13-labels', 'racer/by-timestamp/dirs=50', 50])
       ? true
       : `keys=${[...keys].join(' ; ')} labels=${[...labels]}`
+  }
+)
+
+// ---- completeness is judged across BOTH A13 labels (universe), as generate-summary does ----
+const scoped = (attack) => {
+  const rec = oomRecordFor(attack, 0, 4)
+  rec.cell.targetScope = 'across-a13-labels'
+  rec.cell.dirs = null
+  return rec
+}
+check(
+  'scoreCell: 2 A13-C4 + 2 A13-C4-OOM records against target 4 are complete across labels',
+  () => {
+    const scored = [scoped('A13-C4'), scoped('A13-C4')]
+    const oom = [scoped('A13-C4-OOM'), scoped('A13-C4-OOM')]
+    const line = scoreCell({
+      label: 'A13-C4',
+      variant: 'racer/by-timestamp',
+      candidate: 'C4',
+      records: scored,
+      target: 2,
+      universe: [...scored, ...oom],
+      rows: [
+        {
+          attack: 'A13-C4',
+          variant: 'racer/by-timestamp',
+          candidate: 'C4',
+          fs: 'selftest',
+          failed: 0,
+        },
+      ],
+    })
+    return /^INCOMPLETE/.test(line) ? `still INCOMPLETE: ${line}` : true
+  }
+)
+check(
+  'scoreCell: with only 3 of 4 runs across the labels the cell IS INCOMPLETE (negative control)',
+  () => {
+    const scored = [scoped('A13-C4'), scoped('A13-C4')]
+    const oom = [scoped('A13-C4-OOM')]
+    const line = scoreCell({
+      label: 'A13-C4',
+      variant: 'racer/by-timestamp',
+      candidate: 'C4',
+      records: scored,
+      target: 2,
+      universe: [...scored, ...oom],
+      rows: [
+        {
+          attack: 'A13-C4',
+          variant: 'racer/by-timestamp',
+          candidate: 'C4',
+          fs: 'selftest',
+          failed: 0,
+        },
+      ],
+    })
+    return /^INCOMPLETE \(ran 3\/4 across A13 labels\)/.test(line) ? true : line
+  }
+)
+
+check(
+  'comboLines: the printed A13-C4 line is judged across both labels (the main() wiring)',
+  () => {
+    const scoredRecs = [scoped('A13-C4'), scoped('A13-C4')]
+    const oomRecs = [scoped('A13-C4-OOM'), scoped('A13-C4-OOM')]
+    const mk = (records) => ({
+      records,
+      extras: records.map(() => null),
+      variant: 'racer/by-timestamp',
+    })
+    const groupsFor = (a, b) =>
+      new Map([
+        ['A13-C4', mk(a)],
+        ['A13-C4-OOM', mk(b)],
+      ])
+    const lines = comboLines({
+      labels: ['A13-C4', 'A13-C4-OOM'],
+      cells: { C4: { records: [...scoredRecs, ...oomRecs] }, 'C4-naive': { records: [] } },
+      groups: { C4: groupsFor(scoredRecs, oomRecs), 'C4-naive': groupsFor([], []) },
+      rows: ['A13-C4', 'A13-C4-OOM'].map((attack) => ({
+        attack,
+        variant: 'racer/by-timestamp',
+        candidate: 'C4',
+        fs: 'selftest',
+        failed: 0,
+      })),
+      groupTarget: (g) => g.records.length,
+    })
+    const line = lines.find((l) => l.includes('A13-C4/racer/by-timestamp/C4\t'))
+    return line && !/^INCOMPLETE/.test(line) ? true : `got ${JSON.stringify(lines[0])}`
   }
 )
 

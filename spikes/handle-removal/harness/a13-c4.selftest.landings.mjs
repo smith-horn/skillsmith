@@ -201,7 +201,7 @@ export function runLandingCases(check) {
         routeRun(wc ? [wc] : []).mutationApplied === false,
       wc
     )
-    const [h] = land(a7(9.9), false, true)
+    const [h] = land(a7(9.97), false, true)
     check(
       'all steps timestamp before callerHashAt but moved tree differs -> in-model by hash, scored',
       h?.cls === 'in-model' &&
@@ -422,8 +422,8 @@ export function runLandingCases(check) {
       rec.thrown
     )
     check(
-      'caller-hash race: status harness-error with the named reason',
-      rec.outcome.status === 'harness-error' && rec.outcome.reason === CALLER_HASH_RACE_REASON,
+      "caller-hash race: status 'not-run' (non-error non-landing, F1) with the named reason",
+      rec.outcome.status === 'not-run' && rec.outcome.reason === CALLER_HASH_RACE_REASON,
       rec.outcome
     )
     check(
