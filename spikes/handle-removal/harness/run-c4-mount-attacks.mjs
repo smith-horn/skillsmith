@@ -22,6 +22,7 @@ import {
 } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
 import { shortTargetRefusal, parseFlags, harnessErrorRaw } from './c4-target-guard.mjs'
+import { checkTraceArtifact } from './c4-trace-check.mjs'
 import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import * as a1 from './attacks/a1-c4.mjs'
 import * as a2 from './attacks/a2-c4.mjs'
@@ -77,9 +78,7 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
         ...(dirs ? { dirs } : {}),
         traceDir,
       })
-      if (!raw.extra?.traceArtifact?.sha256) {
-        throw new Error('module did not report extra.traceArtifact for the requested traceDir')
-      }
+      raw = checkTraceArtifact(raw, traceDir)
       if (dirs && raw.extra?.actualDirs !== dirs) {
         throw new Error(
           `module did not pad to the requested ${dirs} directories (extra.actualDirs=${String(raw.extra?.actualDirs)})`

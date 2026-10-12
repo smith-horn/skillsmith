@@ -254,14 +254,25 @@ export function resolveControl(row, allRows) {
       detail: `${c.cite} -- no ${wantAttack}/${c.candidate} cell exists on ${row.fs}`,
     }
   }
-  // controlFailures excludes harness-error records (see cell-tally.mjs); rows
-  // that do not carry it (hand-built, older) fall back to `failed`.
-  const failed = matches.reduce((n, r) => n + (r.controlFailures ?? r.failed), 0)
+  // controlFailures counts only GENUINE scored failures (see cell-tally.mjs). A
+  // C4-naive row that does not carry it FAILS CLOSED: counted 0, never read
+  // through `failed`, which also holds harness faults. Legacy rows keep `failed`.
+  let missingCf = false
+  const failed = matches.reduce((n, r) => {
+    if (r.controlFailures !== undefined) return n + r.controlFailures
+    if (c.candidate === 'C4-naive') {
+      missingCf = true
+      return n
+    }
+    return n + r.failed
+  }, 0)
   return failed >= 1
     ? { state: 'satisfied', detail: `${wantAttack}/${c.candidate} on ${row.fs} failed ${failed}` }
     : {
         state: 'did-not-fail',
-        detail: `${c.cite} -- ${wantAttack}/${c.candidate} on ${row.fs} recorded 0 failures`,
+        detail:
+          `${c.cite} -- ${wantAttack}/${c.candidate} on ${row.fs} recorded 0 failures` +
+          (missingCf ? ' (controlFailures missing on a C4-naive row: counted as 0)' : ''),
       }
 }
 

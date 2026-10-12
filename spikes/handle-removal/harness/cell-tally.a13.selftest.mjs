@@ -197,6 +197,7 @@ check(
 
 // dirs: a different directory count is a different cell, and controls match on it
 const dRow = (dirs, candidate, failed) => ({
+  controlFailures: failed,
   attack: 'A13-C4',
   variant: 'race',
   candidate,

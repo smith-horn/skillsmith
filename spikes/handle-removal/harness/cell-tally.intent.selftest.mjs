@@ -49,11 +49,13 @@ const lossRec = ({
   outcome = {},
   lost = 2,
   changed = 0,
+  cell = CELL,
+  pre = {},
 } = {}) =>
   makeRecord({
-    cell: CELL,
+    cell,
     run: 500,
-    precondition: { ...goodPre(), mutationApplied },
+    precondition: { ...goodPre(), mutationApplied, ...pre },
     outcome: { status, ...outcome },
     userFiles: { checked: 3, lost, changed, displaced: lost, deleted: 0 },
   })
@@ -185,12 +187,68 @@ check(
   verdict(lossRec({ status: 'harness-error', outcome: exemptOutcome() })).controlFailures,
   0
 )
-for (const st of ['quarantined', 'kept', 'stopped', 'not-run']) {
-  check(
-    'P3 control: a known non-error status (' + st + ') with a valid proof is exempt',
-    verdict(lossRec({ status: st, outcome: exemptOutcome() })).callerIntentExcluded,
-    1
+// F4: the only producer emits this proof for A13 + quarantined, so that is all the
+// tally accepts.
+check(
+  'P3 control: quarantined on A13-C4 with a valid proof is exempt',
+  verdict(lossRec({ outcome: exemptOutcome() })).callerIntentExcluded,
+  1
+)
+check(
+  'P3 control: and on A13-C4-OOM',
+  (() => {
+    const r = aggregateCell(
+      [lossRec({ outcome: exemptOutcome(), cell: { ...CELL, attack: 'A13-C4-OOM' } })],
+      () => false,
+      { controlFailed: true, controlState: 'none' }
+    )
+    return r.callerIntentExcluded
+  })(),
+  1
+)
+for (const st of ['kept', 'stopped', 'not-run']) {
+  failedCase(
+    'status ' + st + ' with an otherwise valid proof',
+    lossRec({ status: st, outcome: exemptOutcome() })
   )
+}
+for (const attack of ['A3-C4', 'A4-C4', 'A8-C4', 'A10-C4', 'A13', 'X13-C4']) {
+  const r = aggregateCell(
+    [
+      ...clean100.map((x) => ({ ...x, cell: { ...x.cell, attack } })),
+      lossRec({ outcome: exemptOutcome(), cell: { ...CELL, attack } }),
+    ],
+    () => false,
+    { controlFailed: true, controlState: 'satisfied' }
+  )
+  check('P7 attack ' + attack + ' with a valid proof is never exempt', r.callerIntentExcluded, 0)
+}
+check(
+  'P7 an A3-C4 record with a valid proof is FAILED',
+  aggregateCell(
+    [lossRec({ outcome: exemptOutcome(), cell: { ...CELL, attack: 'A3-C4' } })],
+    () => false,
+    { controlFailed: true, controlState: 'satisfied' }
+  ).failed,
+  1
+)
+for (const [key, v] of [
+  ['hookFired', 1],
+  ['hookFired', 'true'],
+  ['traceMatched', 1],
+  ['traceMatched', 'true'],
+]) {
+  failedCase(
+    key + ' = ' + JSON.stringify(v) + ' (truthy, not strictly true)',
+    lossRec({ outcome: exemptOutcome(), pre: { [key]: v } })
+  )
+}
+for (const key of ['hookFired', 'traceMatched']) {
+  failedCase(
+    key + ' false with an otherwise valid proof',
+    lossRec({ outcome: exemptOutcome(), pre: { [key]: false } })
+  )
+  failedCase(key + ' missing', lossRec({ outcome: exemptOutcome(), pre: { [key]: undefined } }))
 }
 // the exemption is about a MEASURED loss only: no loss, the reason is informational
 const noLoss = verdict(lossRec({ lost: 0, outcome: exemptOutcome() }))
@@ -222,9 +280,14 @@ check(
 )
 // a loss that cannot be proven intended counts as control evidence unless it is an error
 check(
-  'P6 an unexempted loss on a non-error record is control evidence',
-  verdict(lossRec({ status: 'not-run' })).controlFailures,
+  'P6 an unexempted loss on a genuine record (quarantined, preconditions true) is control evidence',
+  verdict(lossRec({ mutationApplied: true })).controlFailures,
   1
+)
+check(
+  'P6 an unexempted loss on a not-run record is not (F3: only genuine scored failures count)',
+  verdict(lossRec({ status: 'not-run' })).controlFailures,
+  0
 )
 check(
   'P6 a harness-error loss is not',

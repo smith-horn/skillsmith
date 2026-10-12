@@ -116,17 +116,26 @@ export function c4Outcome(r, fxRoot, candidate) {
  * The trace evidence for one record: the compact summary always, and -- when
  * `traceDir` (absolute) is given -- the FULL trace kept as a Brotli side file named
  * by `traceArtifact`. The compact summary alone would not let a matched verdict be
- * re-audited. Any write or verify failure THROWS, so the run becomes a counted
- * harness-error instead of silently losing the artifact.
+ * re-audited.
+ *
+ * It does NOT throw on a write or verify failure: by this point the run's loss has
+ * been measured, and throwing would make the runner replace the scored record with a
+ * blank one (a FAIL turned NEVER-RAN). The failure is returned as `harnessErrors`
+ * with no `traceArtifact`; the runner then marks the record harness-error while
+ * keeping what it measured (c4-trace-check.mjs).
  */
 export function keepTrace(r, traceDir) {
   // A full trace is ~3.4 MB per record at 1630 directories. The compact summary keeps
   // the evidence: the full trace survives inside it unless traceMatched is true.
   const traceCompact = compactTrace(r.trace, { traceMatched: r.traceMatched })
   if (traceDir === undefined) return { traceCompact }
-  const ref = writeTraceArtifact(r.trace, { dir: traceDir })
-  assertCompactMatchesArtifact(traceCompact, ref)
-  return { traceCompact, traceArtifact: { sha256: ref.sha256, path: ref.path } }
+  try {
+    const ref = writeTraceArtifact(r.trace, { dir: traceDir })
+    assertCompactMatchesArtifact(traceCompact, ref)
+    return { traceCompact, traceArtifact: { sha256: ref.sha256, path: ref.path } }
+  } catch (err) {
+    return { traceCompact, harnessErrors: [`trace artifact not kept: ${err.message}`] }
+  }
 }
 
 /** `more` is always a plain object literal built by the caller (shape-safe spread). */

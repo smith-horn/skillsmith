@@ -123,14 +123,15 @@ for (const arm of ARMS) {
     }
   )
 }
-check('A3: a non-absolute traceDir makes the run throw (never a silently skipped artifact)', () => {
-  try {
-    a3.runOnce({ harnessRoot, candidate: 'C4', traceDir: 'relative/traces' })
-  } catch (err) {
-    return /absolute/.test(err.message) ? true : err.message
+check(
+  'A3: a non-absolute traceDir is recorded as a harness error, with no artifact claimed',
+  () => {
+    const { extra } = a3.runOnce({ harnessRoot, candidate: 'C4', traceDir: 'relative/traces' })
+    return !('traceArtifact' in extra) && extra.harnessErrors?.some((m) => /absolute/.test(m))
+      ? true
+      : JSON.stringify(extra.harnessErrors)
   }
-  return 'did not throw'
-})
+)
 check('without a traceDir (module called directly) no artifact is written or claimed', () => {
   const { extra } = a3.runOnce({ harnessRoot, candidate: 'C4' })
   return !('traceArtifact' in extra) ? true : 'artifact claimed'
@@ -157,7 +158,21 @@ check('runner: a forced write failure yields harness-error records, counted', as
 check(
   'runner: a module that does not report traceArtifact when asked becomes harness-error',
   async () => {
-    const lazy = { target: 30, runOnce: () => ({ extra: { label: 'X-C4' } }) }
+    const lazy = {
+      target: 30,
+      runOnce: () => ({
+        precondition: {
+          hookFired: true,
+          mutationApplied: true,
+          traceMatched: true,
+          controlExpected: true,
+        },
+        outcome: { status: 'quarantined' },
+        userFiles: { checked: 1, lost: 0, changed: 0, displaced: 0, deleted: 0 },
+        durationMs: 1,
+        extra: { label: 'X-C4' },
+      }),
+    }
     const cells = await runCells({
       mod: lazy,
       args: {},
@@ -198,17 +213,18 @@ check('runner end to end: traces/ beside --out holds one verified artifact per r
   return ok ? true : JSON.stringify(recs.map((x) => x.extra.traceArtifact))
 })
 
-check('keepTrace: a compact summary that disagrees with the written artifact throws', () => {
-  // an entry whose JSON form changes between the two serialisations (compactTrace, then the store)
-  let n = 0
-  const entry = { fn: 'FIRE', toJSON: () => ({ fn: 'FIRE', n: (n += 1) }) }
-  try {
-    keepTrace({ trace: [entry], traceMatched: false }, traceDir)
-  } catch (err) {
-    return /does not match/.test(err.message) ? true : err.message
+check(
+  'keepTrace: a compact summary that disagrees with the written artifact is reported, not thrown',
+  () => {
+    // an entry whose JSON form changes between the two serialisations (compactTrace, then the store)
+    let n = 0
+    const entry = { fn: 'FIRE', toJSON: () => ({ fn: 'FIRE', n: (n += 1) }) }
+    const k = keepTrace({ trace: [entry], traceMatched: false }, traceDir)
+    return !('traceArtifact' in k) && k.harnessErrors?.some((m) => /does not match/.test(m))
+      ? true
+      : JSON.stringify(k.harnessErrors)
   }
-  return 'did not throw'
-})
+)
 
 // ---- a clean A13 caller-hash race has no trace: exempt ONLY under all three conditions ----
 const rawWith = (status, extraBits) => ({

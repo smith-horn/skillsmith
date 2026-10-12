@@ -22,6 +22,8 @@ const row = (attack, candidate, failed, variant = 'v') => ({
   variant,
   fs: 'f',
   failed,
+  // what tallyCell supplies; a C4-naive row without it fails closed (F3)
+  controlFailures: failed,
 })
 for (const a of ['A3-C4', 'A4-C4', 'A7-C4', 'A8-C4', 'A10-C4', 'A1-C4', 'A2-C4', 'A13-C4']) {
   check(

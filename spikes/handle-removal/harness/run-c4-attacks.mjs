@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
 import { shortTargetRefusal, parseFlags, harnessErrorRaw } from './c4-target-guard.mjs'
+import { checkTraceArtifact } from './c4-trace-check.mjs'
 import { resolveControl, controlFailedFlag, controlTag, isProbabilistic } from './control-spec.mjs'
 import * as a3 from './attacks/a3-c4.mjs'
 import * as a4 from './attacks/a4-c4.mjs'
@@ -148,18 +149,9 @@ async function runOne({
       ...(dirs ? { dirs } : {}),
       ...(traceDir !== undefined ? { traceDir } : {}),
     })
-    // Every full trace is kept as a side file. A module that was asked for one and did
-    // not name it would otherwise leave a record whose evidence silently went missing.
-    // The one exemption: a clean A13 caller-hash race (quarantineTree never ran, so there
-    // is no trace to keep). It must say so in all three ways -- status 'not-run' AND a null
-    // traceCompact AND a null traceArtifact -- anything less is still a missing artifact.
-    const notRunNoTrace =
-      raw.outcome?.status === 'not-run' &&
-      raw.extra?.traceCompact === null &&
-      raw.extra?.traceArtifact === null
-    if (traceDir !== undefined && !notRunNoTrace && !raw.extra?.traceArtifact?.sha256) {
-      throw new Error('module did not report extra.traceArtifact for the requested traceDir')
-    }
+    // Every full trace is kept as a side file; verify the claim (c4-trace-check.mjs). A
+    // problem marks the record harness-error but keeps what it measured.
+    raw = checkTraceArtifact(raw, traceDir)
     // A module that ignored --dirs would otherwise file an unpadded run under a dirs=N
     // cell. The module must report the directory count it actually built.
     if (dirs && raw.extra?.actualDirs !== dirs) {
@@ -329,10 +321,11 @@ export function scoreCell({
   rows,
   extras = [],
   universe = records,
+  aggregate = aggregateCell,
 }) {
   const row = rows.find((r) => r.attack === label && r.candidate === candidate)
   const control = resolveControl(row, rows)
-  const agg = aggregateCell(records, () => false, {
+  const agg = aggregate(records, () => false, {
     target,
     controlFailed: controlFailedFlag(control.state),
     controlState: control.state,
@@ -342,7 +335,7 @@ export function scoreCell({
   })
   let line = `${formatVerdict(`${label}/${variant}/${candidate}`, agg)}\tcontrol=${controlTag(control.state)}`
   if (A13_LABELS.includes(label)) {
-    line += `\tstraddles=${straddleTotal(extras)}\tvacuousExcluded=${vacuousExcluded(extras)}`
+    line += `\tstraddles=${straddleTotal(extras)}\tvacuousExcluded=${vacuousExcluded(extras)}\tcallerIntentExcluded=${agg.callerIntentExcluded ?? 0}`
   }
   if (label === 'A13-C4') line += `\t${A13_R6_NOTE}`
   else if (agg.verdict.startsWith('PASS') && isProbabilistic(label)) {

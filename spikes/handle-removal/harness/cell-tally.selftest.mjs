@@ -88,7 +88,17 @@ const r3b = agg(n100(changedVac))
 check('V4 100 vacuous runs whose check FAILED read FAIL, not NEVER-RAN', r3b.verdict, 'FAIL')
 check('V4 and every one is counted failed', r3b.failed, 100)
 // any other excludedReason: never-ran AND otherNeverRan
-for (const bad of ['Vacuous-Check', 'vacuous', 'other', '', 7, true, { a: 1 }]) {
+for (const bad of [
+  'Vacuous-Check',
+  'vacuous',
+  'other',
+  'whatever',
+  'pre-caller-hash ',
+  '',
+  7,
+  true,
+  { a: 1 },
+]) {
   const r = agg([
     ...many(100, A111),
     ...v10(A111),

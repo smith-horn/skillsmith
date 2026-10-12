@@ -6,7 +6,7 @@
 // resolveControl uses it; generate-summary goes through the same two functions.
 // Shared fixtures: c4-selftest-helpers.mjs.
 
-import { makeRecord, aggregateCell } from './result-schema.mjs'
+import { makeRecord, aggregateCell, classifyRecord } from './result-schema.mjs'
 import { tallyCell } from './cell-tally.mjs'
 import { resolveControl, controlFailedFlag } from './control-spec.mjs'
 import { spawnSync } from 'node:child_process'
@@ -135,12 +135,89 @@ check(
   resolveControl(guardedRow, [guardedRow, rowOf(naiveReal, 'C4-naive')]).state,
   'satisfied'
 )
+// F3 (fail closed): a C4-naive control row with no controlFailures is NOT trusted
+// through its `failed`; it counts 0 and the detail says so.
+const naiveNoCf = { attack: 'A3-C4', variant: 'v', candidate: 'C4-naive', fs: 'f', failed: 2 }
+const missingCf = resolveControl(
+  { attack: 'A3-C4', variant: 'v', candidate: 'C4', fs: 'f', failed: 0 },
+  [naiveNoCf]
+)
 check(
-  'D3 rows without controlFailures (hand-built / legacy) fall back to failed',
+  'D3 a C4-naive row missing controlFailures fails closed (did-not-fail)',
+  missingCf.state,
+  'did-not-fail'
+)
+check('D3 and says why', /controlFailures missing/.test(missingCf.detail), true)
+check(
+  'D3 control: the same row WITH controlFailures 2 is satisfied',
   resolveControl({ attack: 'A3-C4', variant: 'v', candidate: 'C4', fs: 'f', failed: 0 }, [
-    { attack: 'A3-C4', variant: 'v', candidate: 'C4-naive', fs: 'f', failed: 2 },
+    { ...naiveNoCf, controlFailures: 2 },
   ]).state,
   'satisfied'
+)
+check(
+  'D3 legacy rows without controlFailures keep the `failed` fallback',
+  resolveControl({ attack: 'A13', variant: 'x', candidate: 'V2', fs: 'f', failed: 0 }, [
+    { attack: 'A3', variant: 'y', candidate: 'baseline', fs: 'f', failed: 2 },
+  ]).state,
+  'satisfied'
+)
+
+// F3: control evidence = a GENUINE scored failure: the record passes the C4
+// validation (every precondition strictly true, valid counts) AND has a known
+// non-error status. Anything else still counts failed for its own cell (a
+// measured loss beats everything) but never counts toward a control.
+const naiveRec = (i, status, over = {}) =>
+  makeRecord({
+    cell: NAIVE,
+    run: i,
+    precondition: over.pre ?? goodPre(),
+    outcome: { status },
+    userFiles: over.uf ?? lossUf,
+  })
+const cfOf = (r) => tallyCell([r], classifyRecord)
+for (const [label, r] of [
+  ['an unknown status', naiveRec(0, 'quarantine')],
+  ['hookFired false', naiveRec(1, 'kept', { pre: { ...goodPre(), hookFired: false } })],
+  ['traceMatched false', naiveRec(2, 'kept', { pre: { ...goodPre(), traceMatched: false } })],
+  ['mutationApplied false', naiveRec(3, 'kept', { pre: { ...goodPre(), mutationApplied: false } })],
+  ['controlExpected false', naiveRec(4, 'kept', { pre: { ...goodPre(), controlExpected: false } })],
+  [
+    'displaced + deleted !== lost',
+    naiveRec(5, 'kept', { uf: { checked: 1, lost: 2, changed: 0, displaced: 1, deleted: 0 } }),
+  ],
+  [
+    'lost + changed > checked',
+    naiveRec(6, 'kept', { uf: { checked: 1, lost: 2, changed: 0, displaced: 2, deleted: 0 } }),
+  ],
+  ['status not-run with a loss', naiveRec(7, 'not-run')],
+  ['status harness-error with a loss', naiveRec(8, 'harness-error')],
+]) {
+  const t = cfOf(r)
+  check('F3 ' + label + ': still counted failed for its own cell', t.failed, 1)
+  check('F3 ' + label + ': adds nothing to controlFailures', t.controlFailures, 0)
+}
+// even a classifier that wrongly calls it failed: 'not-run' is not a genuine status
+check(
+  'F3 a not-run record forced to failed by the classifier adds no control evidence',
+  tallyCell(
+    [naiveRec(12, 'not-run', { uf: { checked: 1, displaced: 0, deleted: 0 } })],
+    () => 'failed'
+  ).controlFailures,
+  0
+)
+for (const st of ['quarantined', 'kept', 'stopped']) {
+  check(
+    'F3 positive control: a genuine ' + st + ' failure counts as control evidence',
+    cfOf(naiveRec(10, st)).controlFailures,
+    1
+  )
+}
+check(
+  'F3 positive control: changed-only genuine failure counts',
+  cfOf(naiveRec(11, 'kept', { uf: { checked: 1, lost: 0, changed: 1, displaced: 0, deleted: 0 } }))
+    .controlFailures,
+  1
 )
 
 // --- the real generator goes through the same path --------------------------------
