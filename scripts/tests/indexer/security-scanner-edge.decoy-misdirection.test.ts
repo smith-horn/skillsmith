@@ -95,7 +95,7 @@ describe('core <-> edge decoy_misdirection weight + coefficient equality (SMI-60
     ).toBe(core.CATEGORY_WEIGHTS.decoy_misdirection)
   })
 
-  it('decoy_misdirection CATEGORY_COEFFICIENTS is 0.04 on edge (matching core SecurityScanner.helpers.ts)', async () => {
+  it('decoy_misdirection CATEGORY_COEFFICIENTS is 0.04 on edge (matching core weights.ts CATEGORY_COEFFICIENTS)', async () => {
     const edge = await import(NODE_SCANNER_CONTEXT)
     expect(edge.CATEGORY_COEFFICIENTS.decoy_misdirection).toBe(0.04)
   })

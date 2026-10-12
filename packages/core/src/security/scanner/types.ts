@@ -27,7 +27,7 @@ export type SecurityFindingType =
   | 'paste_host_fetch' // SMI-6033 Wave 2 (Gap 4): anonymous paste/snippet-host URL is the target of a fetch command
   | 'encoded_payload' // SMI-6033 Wave 2 (Gap 2): base64-encoded blob decoded and recursively rescanned
   | 'decoy_misdirection' // SMI-6033 Wave 4 (Gap 6): fetch target's domain doesn't match a brand/authority claim made nearby in the skill's own prose
-  | 'executable_frontmatter' // SMI-7030: SKILL.md opens with a `---js` / `---javascript` frontmatter block (flag-only, coefficient 0)
+  | 'executable_frontmatter' // SMI-7030: a scanned file (SKILL.md or a bundled sibling) opens with a `---js` / `---javascript` frontmatter block (flag-only, coefficient 0)
 
 /**
  * Severity levels for security findings
