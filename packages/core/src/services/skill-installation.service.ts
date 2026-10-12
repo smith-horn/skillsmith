@@ -8,7 +8,8 @@ import type { SkillDependencyRepository } from '../repositories/SkillDependencyR
 import type { RiskScoreHistoryRepository } from '../repositories/RiskScoreHistoryRepository.js'
 import type { Database } from '../db/database-interface.js'
 import {
-  TRUST_TIER_SCANNER_OPTIONS,
+  TRUSTED_INSTALL_TIERS,
+  scannerOptionsForTier,
   type ProgressCallback,
   type InstallOptions,
   type InstallResult,
@@ -219,19 +220,21 @@ export class SkillInstallationService {
 
       const contentHashMismatch = // SMI-3510
         indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
-      // Security scan — GAP-06: Restrict skipScan to trusted tiers only
-      if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
+      // SMI-7056: the tier as shown in messages; an empty tier reads "unknown".
+      const tierName = trustTier || 'unknown'
+      // Security scan — GAP-06: Restrict skipScan to trusted tiers only (SMI-7056: fail-closed allowlist)
+      if (options.skipScan && !TRUSTED_INSTALL_TIERS.has(trustTier)) {
         return buildInstallFailure('SKIP_SCAN_FORBIDDEN', {
           skillId,
           installPath: '',
           trustTier,
           error:
             'Cannot skip security scan for ' +
-            trustTier +
+            tierName +
             ' tier skills. ' +
-            'Only verified, curated, community, and local tier skills may use skipScan.',
+            'Only official, verified, curated, community, and local tier skills may use skipScan.',
           tips: [
-            'Trust tier "' + trustTier + '" requires a security scan before installation',
+            'Trust tier "' + tierName + '" requires a security scan before installation',
             'If you believe this skill is safe, request a trust tier upgrade from the author',
           ],
         })
@@ -239,7 +242,7 @@ export class SkillInstallationService {
       let securityReport: InstallResult['securityReport']
       if (!options.skipScan) {
         this.onProgress('scan', 'Running security scan')
-        const scannerOptions = TRUST_TIER_SCANNER_OPTIONS[trustTier]
+        const scannerOptions = scannerOptionsForTier(trustTier)
         const scanner = new SecurityScanner(scannerOptions)
         securityReport = scanner.scan(skillId, skillMdContent)
 
@@ -253,12 +256,16 @@ export class SkillInstallationService {
           const criticalFindings = securityReport.findings.filter(
             (f) => f.severity === 'critical' || f.severity === 'high'
           )
+          // SMI-7056: "Direct GitHub install" only when it was one; a registry skill
+          // stored as `unknown` is an unreviewed tier like any other.
           const tierContext =
-            trustTier === 'unknown'
+            !fromRegistry && trustTier === 'unknown'
               ? ' (Direct GitHub install - strictest scanning applied)'
               : trustTier === 'experimental'
                 ? ' (Experimental skill - aggressive scanning applied)'
-                : ''
+                : !TRUSTED_INSTALL_TIERS.has(trustTier)
+                  ? ' (Unreviewed trust tier - strictest scanning applied)'
+                  : ''
 
           return buildInstallFailure('SCAN_REJECTED', {
             skillId,
@@ -270,26 +277,24 @@ export class SkillInstallationService {
               criticalFindings.length +
               ' critical/high findings' +
               tierContext +
-              (trustTier === 'experimental' || trustTier === 'unknown'
-                ? '. skipScan is not available for ' + trustTier + ' tier skills.'
+              (!TRUSTED_INSTALL_TIERS.has(trustTier)
+                ? '. skipScan is not available for ' + tierName + ' tier skills.'
                 : '. Use skipScan=true to override (not recommended).'),
             tips: [
-              'Trust tier: ' + trustTier + ' (threshold: ' + scannerOptions.riskThreshold + ')',
+              'Trust tier: ' + tierName + ' (threshold: ' + scannerOptions.riskThreshold + ')',
               'Risk score: ' + securityReport.riskScore,
             ],
           })
         }
       }
 
-      // SMI-3863: Pre-install confirmation gate for experimental/unknown registry skills
+      // SMI-3863: Pre-install confirmation gate for registry skills outside the trusted tiers (SMI-7056: fail-closed)
       const needsConfirmation =
-        fromRegistry &&
-        (trustTier === 'experimental' || trustTier === 'unknown') &&
-        !options.confirmed
+        fromRegistry && !TRUSTED_INSTALL_TIERS.has(trustTier) && !options.confirmed
       if (needsConfirmation) {
         const scanNote = securityReport
           ? securityReport.passed
-            ? trustTier + ' tier skills have not been reviewed.'
+            ? 'Skills in this tier have not been reviewed.'
             : 'Security scan detected issues.'
           : 'No security scan was performed.'
         return buildConfirmationRequired({
@@ -298,12 +303,12 @@ export class SkillInstallationService {
           trustTier,
           securityReport,
           confirmationReason:
-            'This is an ' +
-            trustTier +
-            ' tier skill. ' +
+            'This skill is in the "' +
+            tierName +
+            '" trust tier. ' +
             scanNote +
             ' Re-run with confirmed=true to proceed.',
-          tips: ['Trust tier: ' + trustTier, 'Use confirmed=true to proceed with installation'],
+          tips: ['Trust tier: ' + tierName, 'Use confirmed=true to proceed with installation'],
         })
       }
       this.onProgress('optimize', 'Applying optimization')
@@ -329,7 +334,7 @@ export class SkillInstallationService {
         basePath,
         branch,
         skillId,
-        options.skipScan ? null : TRUST_TIER_SCANNER_OPTIONS[trustTier]
+        options.skipScan ? null : scannerOptionsForTier(trustTier)
       )
       if (optionalFiles.failedScans.length > 0) {
         const first = optionalFiles.failedScans[0]

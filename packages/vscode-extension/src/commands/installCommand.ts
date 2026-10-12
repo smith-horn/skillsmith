@@ -12,6 +12,7 @@ import type { SkillService } from '../services/SkillService.js'
 import { getSkillPath, installSkillLocally } from '../services/installUtils.js'
 import { getTrustTierCodicon, getTrustTierLabel } from '../sidebar/trustTier.js'
 import { getMcpClient } from '../mcp/McpClient.js'
+import type { McpInstallResponse } from '../mcp/types.js'
 import { McpToolError } from '../mcp/McpToolError.js'
 import { handleTierDenied } from '../mcp/tierDenied.js'
 import { withTelemetry } from '../services/telemetry-wrap.js'
@@ -201,7 +202,19 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
       try {
         const result = await performInstall(skill)
 
-        progress.report({ increment: 100, message: 'Complete!' })
+        if (result.cancelled) {
+          // SMI-7056: the user declined a confirmation (trust tier or placeholder).
+          progress.report({ increment: 100, message: 'Cancelled' })
+          vscode.window.showInformationMessage(
+            `Installation of "${skill.name}" cancelled: ${result.cancelReason ?? 'it was not confirmed.'}`
+          )
+          return
+        }
+
+        progress.report({
+          increment: 100,
+          message: result.success ? 'Complete!' : 'Not installed',
+        })
 
         if (result.tierDeniedHandled) {
           // SMI-5288: the server refused on tier grounds; the tier-denied UX
@@ -230,6 +243,21 @@ interface InstallResult {
   error: string | undefined
   /** SMI-5288: server refused on tier grounds; tier-denied UX already shown. */
   tierDeniedHandled?: boolean
+  /** SMI-7056: the user declined a confirmation prompt (trust tier or placeholder install). */
+  cancelled?: boolean
+  /** SMI-7056: why nothing was installed, shown after "cancelled:". */
+  cancelReason?: string
+}
+
+/** SMI-7056: true when the MCP install result is core's CONFIRMATION_REQUIRED refusal. */
+function isConfirmationRequired(result: McpInstallResponse): boolean {
+  return result.errorCode === 'CONFIRMATION_REQUIRED' || result.requiresConfirmation === true
+}
+
+/** The reason without core's API-flavoured "Re-run with confirmed=true" tail. */
+function confirmationDetail(result: McpInstallResponse): string {
+  const raw = result.confirmationReason ?? 'This skill has not been reviewed.'
+  return raw.replace(/\s*Re-run with confirmed=true to proceed\.?\s*$/, '').trim()
 }
 
 /**
@@ -242,7 +270,28 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
   // Try MCP client first if connected
   if (client.isConnected()) {
     try {
-      const result = await client.installSkill(skill.id)
+      let result = await client.installSkill(skill.id)
+
+      // SMI-7056: core refuses a registry skill outside the reviewed trust tiers
+      // until it is confirmed. Ask once; on "Install anyway" retry with
+      // confirmed: true. skipScan is never set, so the scan still runs.
+      if (!result.success && isConfirmationRequired(result)) {
+        const choice = await vscode.window.showWarningMessage(
+          `"${skill.name}" is a ${result.trustTier || 'unknown'}-tier skill.`,
+          { modal: true, detail: confirmationDetail(result) },
+          'Install anyway'
+        )
+        if (choice !== 'Install anyway') {
+          return {
+            success: false,
+            installPath: '',
+            tips: undefined,
+            error: 'Installation cancelled',
+            cancelled: true,
+          }
+        }
+        result = await client.installSkill(skill.id, { confirmed: true })
+      }
 
       if (result.success) {
         return {
@@ -274,7 +323,9 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
         success: false,
         installPath: result.installPath || '',
         tips: undefined,
-        error: result.error,
+        // SMI-7056: a repeated CONFIRMATION_REQUIRED carries its reason, not `error`.
+        error:
+          result.error || (isConfirmationRequired(result) ? confirmationDetail(result) : undefined),
       }
     } catch (error) {
       console.warn('[Skillsmith] MCP install failed, falling back to local:', error)
@@ -288,7 +339,14 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
     'Install Placeholder'
   )
   if (proceedLocally !== 'Install Placeholder') {
-    return { success: false, installPath: '', tips: undefined, error: 'Installation cancelled' }
+    return {
+      success: false,
+      installPath: '',
+      tips: undefined,
+      error: 'Installation cancelled',
+      cancelled: true,
+      cancelReason: 'the MCP server is unavailable, so nothing was installed.',
+    }
   }
 
   // Fallback to local installation

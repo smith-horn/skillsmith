@@ -119,6 +119,14 @@ export interface McpInstallResponse {
   securityReport?: McpSecurityReport
   tips?: string[]
   error?: string
+  /** SMI-7056: typed failure code, e.g. 'CONFIRMATION_REQUIRED' */
+  errorCode?: string
+  /** SMI-7056: trust tier of the skill, set on a confirmation-required result */
+  trustTier?: string
+  /** SMI-7056: true when the install is held until the user confirms */
+  requiresConfirmation?: boolean
+  /** SMI-7056: why confirmation is needed */
+  confirmationReason?: string
 }
 
 /**

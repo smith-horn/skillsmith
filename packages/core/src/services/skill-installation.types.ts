@@ -135,7 +135,7 @@ export type InstallErrorCode =
   | 'VALIDATION_FAILED' // SKILL.md missing required frontmatter / too short
   | 'SKIP_SCAN_FORBIDDEN' // skipScan requested but trust tier disallows it
   | 'SCAN_REJECTED' // Security scan returned non-passing report
-  | 'CONFIRMATION_REQUIRED' // Experimental/unknown registry skill needs confirmed=true
+  | 'CONFIRMATION_REQUIRED' // Registry skill outside official/verified/curated/community/local needs confirmed=true
   | 'INVALID_CONTENT' // SMI-5905: installFromContent() content shape/path-safety rejected
   // SMI-6529 Wave A0: pre-write install-target safety guard (checkInstallTarget).
   | 'INSTALL_TARGET_MISMATCH' // update() would write outside the directory it diffed against
@@ -358,4 +358,29 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
     riskThreshold: 20, // Same as unknown — unverified is the public alias for unknown
     maxContentLength: 250_000,
   },
+}
+
+/**
+ * SMI-7056: the only tiers that may use `skipScan` and that install without
+ * the pre-install confirmation. Fail-closed allowlist: any value not listed
+ * (unverified, unknown, experimental, missing, empty, or any other string) is
+ * gated. Both gates in `SkillInstallationService.install()` read this set.
+ */
+export const TRUSTED_INSTALL_TIERS: ReadonlySet<string> = new Set<TrustTier>([
+  'official',
+  'verified',
+  'curated',
+  'community',
+  'local',
+])
+
+/**
+ * SMI-7056: scanner options for a tier, falling back to the strictest
+ * (`unknown`) options for a missing or unrecognised value. Uses an own-property
+ * check so inherited keys such as `constructor` cannot match.
+ */
+export function scannerOptionsForTier(tier: string | null | undefined): ScannerOptions {
+  return typeof tier === 'string' && Object.hasOwn(TRUST_TIER_SCANNER_OPTIONS, tier)
+    ? TRUST_TIER_SCANNER_OPTIONS[tier as TrustTier]
+    : TRUST_TIER_SCANNER_OPTIONS.unknown
 }
