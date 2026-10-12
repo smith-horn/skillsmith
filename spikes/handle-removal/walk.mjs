@@ -20,7 +20,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import { loadShim } from './native-c/load.mjs'
-import { guardPass, computeTreeHash, readExactly } from './hash.mjs'
+import { guardPass, readExactly } from './hash.mjs'
 
 const EXDEV_ERRNO = -os.constants.errno.EXDEV
 
