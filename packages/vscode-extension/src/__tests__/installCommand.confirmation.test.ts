@@ -77,7 +77,7 @@ const confirmationRequired = {
   requiresConfirmation: true,
   trustTier: 'unverified',
   confirmationReason:
-    'This is an unverified tier skill. unverified tier skills have not been reviewed. Re-run with confirmed=true to proceed.',
+    'This skill is in the "unverified" trust tier. Skills in this tier have not been reviewed. Re-run with confirmed=true to proceed.',
 }
 
 async function runInstall(): Promise<void> {
@@ -138,7 +138,7 @@ describe('installCommand trust-tier confirmation (SMI-7056)', () => {
     // The refusal's own reason reaches the user, not a bare "Installation failed".
     expect(showErrorMessage).toHaveBeenCalledTimes(1)
     expect(showErrorMessage).toHaveBeenCalledWith(
-      'Installation failed: This is an unverified tier skill. unverified tier skills have not been reviewed.'
+      'Installation failed: This skill is in the "unverified" trust tier. Skills in this tier have not been reviewed.'
     )
   })
 

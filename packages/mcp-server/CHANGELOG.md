@@ -4,7 +4,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
-- **Fixed**: SMI-7056 -- `validateTrustTier` accepted only six of the eight `TrustTier` values, so a
+- **Changed** (behaviour change for every caller): SMI-7056 -- `validateTrustTier` accepted only six of the eight `TrustTier` values, so a
   registry `official` skill was treated as `unknown` (needing confirmation, scanned at the strict
   threshold, refused `skipScan`). It now accepts all eight (adds `official` and `unverified`);
   unrecognised values still map to `unknown`. With core's fail-closed install gates (SMI-7056),

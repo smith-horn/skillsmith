@@ -259,7 +259,9 @@ export class SkillInstallationService {
               ? ' (Direct GitHub install - strictest scanning applied)'
               : trustTier === 'experimental'
                 ? ' (Experimental skill - aggressive scanning applied)'
-                : ''
+                : !TRUSTED_INSTALL_TIERS.has(trustTier)
+                  ? ' (Unreviewed trust tier - strictest scanning applied)'
+                  : ''
 
           return buildInstallFailure('SCAN_REJECTED', {
             skillId,
@@ -286,9 +288,10 @@ export class SkillInstallationService {
       const needsConfirmation =
         fromRegistry && !TRUSTED_INSTALL_TIERS.has(trustTier) && !options.confirmed
       if (needsConfirmation) {
+        const tierName = trustTier || 'unknown'
         const scanNote = securityReport
           ? securityReport.passed
-            ? trustTier + ' tier skills have not been reviewed.'
+            ? 'Skills in this tier have not been reviewed.'
             : 'Security scan detected issues.'
           : 'No security scan was performed.'
         return buildConfirmationRequired({
@@ -297,12 +300,12 @@ export class SkillInstallationService {
           trustTier,
           securityReport,
           confirmationReason:
-            'This is an ' +
-            trustTier +
-            ' tier skill. ' +
+            'This skill is in the "' +
+            tierName +
+            '" trust tier. ' +
             scanNote +
             ' Re-run with confirmed=true to proceed.',
-          tips: ['Trust tier: ' + trustTier, 'Use confirmed=true to proceed with installation'],
+          tips: ['Trust tier: ' + tierName, 'Use confirmed=true to proceed with installation'],
         })
       }
       this.onProgress('optimize', 'Applying optimization')
