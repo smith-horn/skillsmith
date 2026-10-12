@@ -54,6 +54,7 @@ import {
   failGitWorktreeListCalls,
   worktreeListCallCount,
   imageLabels,
+  imageIdFor,
   volumePsResponse,
   resetLog,
   runPrune,
@@ -254,7 +255,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     // 11 and 19 cannot observe the second read at all: they short-circuit at
     // candidate construction, so the re-check never runs there.
     const ownedProbe =
-      'volume inspect gone-wt_node_modules --format {{index .Labels "app.skillsmith.owned"}}'
+      'volume inspect gone-wt_node_modules --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}'
     expect(result.dockerCalls.filter((c) => c === ownedProbe)).toHaveLength(2)
     // The count alone pins MULTIPLICITY, not POSITION -- it survives moving
     // the second read into candidate construction, which deletes the TOCTOU
@@ -291,7 +292,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     // this test proves nothing about the re-check. Test 1 pins that a
     // successful delete reads it twice; here the second read returns empty.
     const ownedProbe =
-      'volume inspect gone-wt_node_modules --format {{index .Labels "app.skillsmith.owned"}}'
+      'volume inspect gone-wt_node_modules --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}'
     expect(result.dockerCalls.filter((c) => c === ownedProbe)).toHaveLength(2)
     expect(result.dockerCalls.some((c) => deletesVolume(c, 'gone-wt_node_modules'))).toBe(false)
     expect(result.stdout).not.toContain('Removed volume gone-wt_node_modules')
@@ -789,7 +790,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     // inspected exactly ONCE. Revert it and the volume reaches the delete
     // loop, whose own re-check inspects the label a second time -- 2, not 1.
     const ownedProbe =
-      'volume inspect gone-wt_node_modules --format {{index .Labels "app.skillsmith.owned"}}'
+      'volume inspect gone-wt_node_modules --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}'
     expect(second.dockerCalls.filter((c) => c === ownedProbe)).toHaveLength(1)
   })
 
@@ -806,7 +807,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     const result = runPrune(fixture, only('gone-wt'))
 
     expect(result.status).toBe(0)
-    expect(result.dockerCalls).toContain('rmi gone-wt-dev')
+    expect(result.dockerCalls).toContain(`rmi ${imageIdFor('gone-wt-dev')}`)
     expect(result.dockerCalls.some((c) => c.includes('live-wt-dev'))).toBe(false)
     expect(result.dockerCalls.some((c) => c.includes('repo-dev'))).toBe(false)
   })
@@ -992,7 +993,7 @@ describe('SMI-5750: prune-orphaned-docker-volumes.sh', () => {
     expect(second.dockerCalls.some(destroysInBulk)).toBe(false)
     // Pins the candidate-build guard on its own -- see test 11's note.
     const ownedProbe =
-      'volume inspect gone-wt_native-seed-esbuild-scope --format {{index .Labels "app.skillsmith.owned"}}'
+      'volume inspect gone-wt_native-seed-esbuild-scope --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}'
     expect(second.dockerCalls.filter((c) => c === ownedProbe)).toHaveLength(1)
   })
 
@@ -1080,6 +1081,10 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
   const IMG = 'gone-wt-dev'
   const volPs = `ps -aq --filter volume=${VOL}`
   const imgPs = `ps -aq --filter ancestor=${IMG}`
+  const IMG_ID = imageIdFor(IMG)
+  const imgIdPs = `ps -aq --filter ancestor=${IMG_ID}`
+  const imgOwnedById = `image inspect ${IMG_ID} --format {{index .Config.Labels "app.skillsmith.owned"}}`
+  const imgIdProbe = `image inspect ${IMG} --format {{.Id}}`
   const imgOwned = `image inspect ${IMG} --format {{index .Config.Labels "app.skillsmith.owned"}}`
 
   const volumeFixture = (name: string) => {
@@ -1140,21 +1145,22 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     expect(result.status).toBe(0)
   })
 
-  it('G4b. a failing attachment query at the pre-delete re-check skips the volume', () => {
+  it('G4b. a failing attachment query inside the critical section stops the run', () => {
     const fixture = volumeFixture('prune-ps-fails-recheck')
-    setPsExit(fixture, `ps_volume__${VOL}`, [0, 1]) // scan ok, re-check fails
+    setPsExit(fixture, `ps_volume__${VOL}`, [0, 1]) // scan ok, in-lock check fails
     const result = runPrune(fixture, only('gone-wt'))
 
-    // Presence: BOTH reads happened, so the failure was the re-check's.
+    // Presence: BOTH reads happened, so the failure was the in-lock one.
     expect(result.dockerCalls.filter((c) => c === volPs)).toHaveLength(2)
     expect(result.dockerCalls.some((c) => deletesVolume(c))).toBe(false)
     expect(result.stdout).not.toContain('Removed volume')
-    expect(result.stderr).toContain('Could not check container attachment')
+    expect(result.stderr).toContain(`checking containers on volume ${VOL}`)
+    expect(result.status).toBe(1)
   })
 
   it('G4c. a failing attachment query at image candidate construction skips the image', () => {
     const control = imageFixture('prune-img-ps-control')
-    expect(runPrune(control, only('gone-wt')).dockerCalls).toContain(`rmi ${IMG}`)
+    expect(runPrune(control, only('gone-wt')).dockerCalls).toContain(`rmi ${IMG_ID}`)
 
     const fixture = imageFixture('prune-img-ps-fails')
     setPsExit(fixture, `ps_ancestor__${IMG}`, 1)
@@ -1166,14 +1172,18 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     expect(result.stderr).toContain('Could not check container attachment')
   })
 
-  it('G4d. a failing attachment query at the image pre-rmi re-check skips the image', () => {
+  it('G4d. a failing attachment query inside the critical section (image) stops the run', () => {
     const fixture = imageFixture('prune-img-ps-fails-recheck')
-    setPsExit(fixture, `ps_ancestor__${IMG}`, [0, 1])
+    setPsExit(fixture, `ps_ancestor__${IMG_ID}`, 1)
     const result = runPrune(fixture, only('gone-wt'))
 
-    expect(result.dockerCalls.filter((c) => c === imgPs)).toHaveLength(2)
+    // Presence: the scan read (by tag) and the in-lock read (by ID) both ran.
+    expect(result.dockerCalls.filter((c) => c === imgPs)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgIdPs)).toHaveLength(1)
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
     expect(result.stdout).not.toContain('Removed image')
+    expect(result.stderr).toContain(`checking containers on image ${IMG_ID}`)
+    expect(result.status).toBe(1)
   })
 
   // SMI-6981 round 4 (F3/F4): a failed gating inspect or a failed delete must not
@@ -1191,7 +1201,9 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     // Presence: the failing inspect was actually issued.
     expect(
       result.dockerCalls.filter(
-        (c) => c === `volume inspect ${VOL} --format {{index .Labels "app.skillsmith.owned"}}`
+        (c) =>
+          c ===
+          `volume inspect ${VOL} --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}`
       )
     ).toHaveLength(1)
     expect(result.stderr).toContain(`Could not inspect volume ${VOL}`)
@@ -1212,7 +1224,7 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     expect(result.status).toBe(0)
   })
 
-  it('F3c. a failing volume ownership RE-READ before the delete skips it and fails the run', () => {
+  it('F3c. a failing volume re-inspect inside the critical section stops the run', () => {
     const fixture = volumeFixture('prune-insp-fail-recheck')
     shimDockerFailures(fixture, [{ glob: volOwnedGlob, stderr: 'i/o timeout', passFirst: 1 }])
     const result = runPrune(fixture, only('gone-wt'))
@@ -1222,7 +1234,7 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
         (c) => c.includes(`inspect ${VOL}`) && c.includes('skillsmith.owned')
       )
     ).toHaveLength(2)
-    expect(result.stderr).toContain(`Could not inspect volume ${VOL}`)
+    expect(result.stderr).toContain(`re-inspecting volume ${VOL}`)
     expect(result.dockerCalls.some((c) => deletesVolume(c))).toBe(false)
     expect(result.status).toBe(1)
   })
@@ -1288,14 +1300,14 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
     const fixture = imageFixture('prune-rmi-real-fail')
     shimDockerFailures(fixture, [
       {
-        glob: `rmi ${IMG}`,
-        stderr: `Error response from daemon: conflict: unable to delete ${IMG} - image is being used by running container abc`,
+        glob: `rmi ${IMG_ID}`,
+        stderr: `Error response from daemon: conflict: unable to delete ${IMG_ID} - image is being used by running container abc`,
       },
     ])
     const result = runPrune(fixture, only('gone-wt'))
 
-    expect(result.dockerCalls).toContain(`rmi ${IMG}`)
-    expect(result.stderr).toContain(`docker rmi ${IMG} failed (exit 1:`)
+    expect(result.dockerCalls).toContain(`rmi ${IMG_ID}`)
+    expect(result.stderr).toContain(`docker rmi ${IMG_ID} failed (exit 1:`)
     expect(result.stderr).toContain('being used by running container')
     expect(result.status).toBe(1)
   })
@@ -1303,11 +1315,11 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
   it('F4d. an image rmi answering "No such image" also stops the run: no failure is benign', () => {
     const fixture = imageFixture('prune-rmi-gone')
     shimDockerFailures(fixture, [
-      { glob: `rmi ${IMG}`, stderr: `Error response from daemon: No such image: ${IMG}:latest` },
+      { glob: `rmi ${IMG_ID}`, stderr: `Error response from daemon: No such image: ${IMG_ID}` },
     ])
     const result = runPrune(fixture, only('gone-wt'))
 
-    expect(result.dockerCalls).toContain(`rmi ${IMG}`)
+    expect(result.dockerCalls).toContain(`rmi ${IMG_ID}`)
     expect(result.stderr).toContain('No such image')
     expect(result.stderr).toContain('outcome of a failed request is UNKNOWN')
     expect(result.stdout).not.toContain('already gone')
@@ -1316,33 +1328,39 @@ describe('SMI-6981: failed or flipped gating queries never license a delete', ()
 
   it('R2-PR16a. an image whose ownership label vanishes between scan and rmi is not removed', () => {
     const fixture = imageFixture('prune-img-owner-flip')
-    // Owned at the scan, gone by the final re-read (sequence then runs dry).
-    imageLabelSequence(fixture, IMG, 'owned', ['true'])
+    // Owned at the scan (by tag); the in-lock read of the selected ID finds no label.
+    imageLabelSequence(fixture, IMG_ID, 'owned', [''])
     const result = runPrune(fixture, only('gone-wt'))
 
-    // Presence: both reads happened, so the second one decided the outcome.
-    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(2)
+    // Presence: the scan read and the in-lock read both happened.
+    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgOwnedById)).toHaveLength(1)
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
+    expect(result.stdout).toContain(`SKIPPED image ${IMG}`)
     expect(result.stdout).not.toContain('Removed image')
-    expect(result.stdout).not.toContain('UNCONFIRMED ownership: gone-wt-dev')
   })
 
   it('R2-PR16b. an image that gains a container between scan and rmi is not removed', () => {
     const fixture = imageFixture('prune-img-attach-flip')
-    psResponseSequence(fixture, `ps_ancestor__${IMG}`, ['', 'cid1']) // unattached, then attached
+    psResponseSequence(fixture, `ps_ancestor__${IMG}`, ['']) // unattached at the scan (by tag)
+    psResponseSequence(fixture, `ps_ancestor__${IMG_ID}`, ['cid1']) // attached by the in-lock read
     const result = runPrune(fixture, only('gone-wt'))
 
-    expect(result.dockerCalls.filter((c) => c === imgPs)).toHaveLength(2)
+    expect(result.dockerCalls.filter((c) => c === imgPs)).toHaveLength(1)
+    expect(result.dockerCalls.filter((c) => c === imgIdPs)).toHaveLength(1)
     expect(result.dockerCalls.some((c) => deletesImage(c))).toBe(false)
+    expect(result.stdout).toContain(`SKIPPED image ${IMG}`)
     expect(result.stdout).not.toContain('Removed image')
   })
 
-  it('R2-PR16c. an image delete reads the ownership label immediately before `rmi`', () => {
+  it('R2-PR16c. an image delete resolves the tag immediately before `rmi`, and deletes by ID', () => {
     const result = runPrune(imageFixture('prune-img-order'), only('gone-wt'))
-    const rmiIdx = result.dockerCalls.findIndex((c) => deletesImage(c, IMG))
+    const rmiIdx = result.dockerCalls.findIndex((c) => deletesImage(c, IMG_ID))
     expect(rmiIdx).toBeGreaterThan(0)
-    expect(result.dockerCalls[rmiIdx - 1]).toBe(imgOwned)
-    expect(result.dockerCalls.filter((c) => c === imgOwned)).toHaveLength(2)
+    expect(result.dockerCalls[rmiIdx - 1]).toBe(imgIdProbe)
+    expect(result.dockerCalls.filter((c) => c === imgOwnedById)).toHaveLength(1)
+    // Never by tag.
+    expect(result.dockerCalls.some((c) => deletesImage(c) && !c.includes(IMG_ID))).toBe(false)
   })
 })
 
@@ -1497,7 +1515,7 @@ describe('L2: a failed docker listing is reported and fails the run, never "noth
     }
     const ok = runPrune(mk('prune-img-ok'), only('gone'))
     expect(ok.status).toBe(0)
-    expect(ok.dockerCalls.some((c) => deletesImage(c, 'gone-dev'))).toBe(true)
+    expect(ok.dockerCalls.some((c) => deletesImage(c, imageIdFor('gone-dev')))).toBe(true)
 
     const broken = mk('prune-img-fail')
     setPsExit(broken, 'images', 1)
@@ -1586,7 +1604,7 @@ describe('#3041: deletion needs --only-project; every other orphan is report-onl
     const result = runPrune(fixture, only('gone-wt'))
     expect(result.status).toBe(0)
     expect(result.dockerCalls).toContain('volume rm gone-wt_node_modules')
-    expect(result.dockerCalls).toContain('rmi gone-wt-dev')
+    expect(result.dockerCalls).toContain(`rmi ${imageIdFor('gone-wt-dev')}`)
     expect(
       result.dockerCalls.some(
         (c) => (deletesVolume(c) || deletesImage(c)) && c.includes('release-mcp-0717')

@@ -29,6 +29,7 @@ import {
   volumeLabels,
   runPrune,
   setVolumeRmExit,
+  imageIdFor,
   type FixtureRepo,
 } from './prune-orphaned-docker-volumes.helpers.js'
 import {
@@ -39,6 +40,7 @@ import {
   markerPath,
   recordAcquire,
   installGitShim,
+  gitHookRan,
   gitListCount,
   installPerlWrapper,
   startHolder,
@@ -46,6 +48,7 @@ import {
   REPLACE_GIT_DIR,
   type Holder,
 } from './worktree-lifecycle.helpers.js'
+import { shimDockerFailures } from './prune-orphaned-docker-volumes.shims.js'
 
 const VOL = 'gone-wt_node_modules'
 const VOL2 = 'gone-wt_native-seed-better-sqlite3'
@@ -192,7 +195,9 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
     const rm = calls.findIndex((c) => deletesVol(c, VOL))
     expect(rm).toBeGreaterThan(0)
     let prev = rm - 1
-    while (calls[prev] === 'PERL bounded') prev--
+    // The Docker re-inspect (ps / volume inspect) sits between the identity check
+    // and the delete; it is not a git read or an identity check.
+    while (calls[prev] === 'PERL bounded' || /^(ps -aq|volume inspect)/.test(calls[prev])) prev--
     expect(calls[prev]).toBe('PERL same')
     const lastGit = calls
       .map((c, i) => (c.startsWith('GIT ') ? i : -1))
@@ -370,6 +375,117 @@ describe('SMI-6981: pruner delete sections under the lifecycle lock', () => {
       expect(r.dockerCalls.filter((c) => deletesVol(c, VOL))).toHaveLength(1)
       expect(r.dockerCalls.filter((c) => deletesVol(c, VOL2))).toHaveLength(1)
       expect(r.status).toBe(0)
+    })
+  })
+
+  describe('T22. the Docker gates run inside the section, against the identity recorded at selection', () => {
+    const volIncarnation = (f: FixtureRepo): string =>
+      join(f.responsesDir, `volume_inspect__${VOL}__incarnation`)
+    const ORIGINAL = '2026-10-01T10:00:00Z|true'
+    const volProbe = `volume inspect ${VOL} --format {{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}`
+
+    /** A volume whose incarnation is rewritten while the section runs (at the in-lock liveness read, git call #2). */
+    const replacedVolumeFixture = (name: string, replacement: string): FixtureRepo => {
+      const f = volumeFixture(name)
+      writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+      installGitShim(f, { hooks: { 2: `printf '%s\n' '${replacement}' > "${volIncarnation(f)}"` } })
+      return f
+    }
+
+    it('control: an unchanged volume is deleted, with the incarnation read immediately before', () => {
+      const f = replacedVolumeFixture('lk-t22-vol-ok', ORIGINAL)
+      const r = runPrune(f, only('gone-wt'))
+      const rm = r.dockerCalls.findIndex((c) => deletesVol(c, VOL))
+      expect(rm).toBeGreaterThan(0)
+      expect(r.dockerCalls[rm - 1]).toBe(volProbe)
+      expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+      expect(r.status).toBe(0)
+    })
+
+    it('a volume replaced by an unowned one under the same name is not deleted', () => {
+      const f = replacedVolumeFixture('lk-t22-vol-swap', '2026-10-01T10:00:09Z|')
+      const r = runPrune(f, only('gone-wt'))
+      // Presence: the replacement happened (git call #2 ran) and the in-lock
+      // re-inspect read it: two incarnation reads, the second one in the section.
+      expect(gitHookRan(f, 2)).toBe(true)
+      expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+      expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+      expect(r.stdout).toContain(`SKIPPED volume ${VOL}`)
+      expect(r.status).toBe(0)
+    })
+
+    it('a volume whose labels are identical but whose CreatedAt changed is not deleted', () => {
+      const f = replacedVolumeFixture('lk-t22-vol-marker', '2026-10-01T10:00:09Z|true')
+      const r = runPrune(f, only('gone-wt'))
+      expect(gitHookRan(f, 2)).toBe(true)
+      expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+      expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+      expect(r.stdout).toContain('re-created since selection')
+    })
+
+    it.each([
+      ['an inspect that fails', 'FAIL'],
+      ['unparseable inspect output', 'garbage'],
+    ])('%s inside the section stops the run, deletes nothing and frees the lock', (_n, mode) => {
+      const f = volumeFixture('lk-t22-vol-inspect', [VOL, VOL2])
+      writeFileSync(volIncarnation(f), `${ORIGINAL}\n`)
+      if (mode === 'garbage') {
+        // candidate-time read is fine; the in-lock read returns junk
+        writeFileSync(`${volIncarnation(f)}.seq`, `${ORIGINAL}\nnot-an-inspect-line\n`)
+      }
+      if (mode === 'FAIL') {
+        // the 2nd incarnation read (in the section) exits nonzero
+        shimDockerFailures(f, [
+          { glob: `volume inspect ${VOL} *CreatedAt*`, stderr: 'i/o timeout', passFirst: 1 },
+        ])
+      }
+      const r = runPrune(f, only('gone-wt'))
+      // Presence: both reads ran, so the second (in-lock) one stopped the run.
+      expect(r.dockerCalls.filter((c) => c === volProbe)).toHaveLength(2)
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain(`re-inspecting volume ${VOL}`)
+      expect(r.dockerCalls.filter((c) => deletesVol(c))).toHaveLength(0)
+      expect(tryAcquire(f.repoDir, 1, {})).toBe(0)
+    })
+
+    describe('images', () => {
+      const OLD_ID = imageIdFor(IMG)
+      const NEW_ID = imageIdFor('someone-elses-image')
+      const idFile = (f: FixtureRepo): string => join(f.responsesDir, `image_inspect__${IMG}__id`)
+      const rewriteTag = (f: FixtureRepo): string => `printf '%s\n' '${NEW_ID}' > "${idFile(f)}"`
+
+      it('control: an unchanged image is deleted BY ID, never by tag', () => {
+        const f = imageFixture('lk-t22-img-ok')
+        const r = runPrune(f, only('gone-wt'))
+        expect(r.dockerCalls.filter((c) => deletesImg(c))).toEqual([`rmi ${OLD_ID}`])
+        expect(r.status).toBe(0)
+      })
+
+      it('a tag retargeted to another image before the section is not deleted', () => {
+        const f = imageFixture('lk-t22-img-retarget')
+        installGitShim(f, { hooks: { 2: rewriteTag(f) } })
+        const r = runPrune(f, only('gone-wt'))
+        // Presence: retargeted at the in-lock liveness read, and the tag was
+        // re-resolved afterwards (scan + section = two `.Id` reads).
+        expect(gitHookRan(f, 2)).toBe(true)
+        expect(
+          r.dockerCalls.filter((c) => c === `image inspect ${IMG} --format {{.Id}}`)
+        ).toHaveLength(2)
+        expect(r.dockerCalls.filter((c) => deletesImg(c))).toHaveLength(0)
+        expect(r.stdout).toContain(`SKIPPED image ${IMG}`)
+        expect(r.stdout).toContain(NEW_ID)
+      })
+
+      it('a tag retargeted AFTER the section checks still deletes only the selected ID', () => {
+        const f = imageFixture('lk-t22-img-late')
+        // Fires after the section's tag resolution (the 2nd `.Id` read) has answered.
+        setDockerHook(f, `image_id_after__${IMG}__2`, rewriteTag(f))
+        const r = runPrune(f, only('gone-wt'))
+        expect(hookRan(f, `image_id_after__${IMG}__2`)).toBe(true)
+        // Never the tag (which now means someone else's image) nor the new ID.
+        expect(r.dockerCalls.filter((c) => deletesImg(c))).toEqual([`rmi ${OLD_ID}`])
+        expect(r.dockerCalls.some((c) => c.includes(NEW_ID))).toBe(false)
+      })
     })
   })
 

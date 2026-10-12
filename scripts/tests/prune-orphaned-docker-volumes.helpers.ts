@@ -6,6 +6,7 @@
  * script + _lib.sh into its own throwaway repo).
  */
 
+import { createHash } from 'crypto'
 import { execSync, spawnSync } from 'child_process'
 import {
   rmSync,
@@ -118,6 +119,13 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '  fi',
     '}',
     '',
+    // Counted hook: runs `hook__<key>__<n>` on the n-th call that reaches it, so a
+    // test can act AFTER a specific call has answered (SMI-6981 lock tests).
+    'nth_hook() {',
+    '  n=$(cat "$RESP_DIR/nth__$1" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$RESP_DIR/nth__$1"',
+    '  run_hook "$1__$n"',
+    '}',
+    '',
     // `ps`, `volume ls`, `images` (keys `container_ids`/`volume_ls`/`images`): a nonzero exit code, static (`exit__<key>`) or one per read
     // (`exit__<key>.seq`, consumed like `emit`'s), models a failing daemon query.
     'ps_exit() {',
@@ -161,6 +169,18 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        fmt="$5"',
     '        run_hook "volume_inspect__${vol}"',
     '        case "$fmt" in',
+    // SMI-6981: the incarnation read ("<CreatedAt>|<owned>"). A static or
+    // sequenced `__incarnation` response wins; otherwise it is composed from the
+    // volume's `__owned` response (consumed like any other read of it) and a
+    // fixed CreatedAt, so tests that only set labels keep working.
+    '          *CreatedAt*)',
+    '            line="$(emit "volume_inspect__${vol}__incarnation")"',
+    '            if [ -z "$line" ]; then',
+    '              o="$(emit "volume_inspect__${vol}__owned")"',
+    '              line="2000-01-01T00:00:00Z|$o"',
+    '            fi',
+    '            printf "%s\\n" "$line"',
+    '            ;;',
     '          *compose.volume*) emit "volume_inspect__${vol}__volume" ;;',
     '          *compose.project*) emit "volume_inspect__${vol}__project" ;;',
     '          *skillsmith.owned*) emit "volume_inspect__${vol}__owned" ;;',
@@ -185,6 +205,7 @@ function writeResponsiveDockerShim(binDir: string, logPath: string, responsesDir
     '        img="$3"',
     '        fmt="$5"',
     '        case "$fmt" in',
+    '          *".Id"*) emit "image_inspect__${img}__id"; nth_hook "image_id_after__${img}" ;;',
     '          *compose.service*) emit "image_inspect__${img}__service" ;;',
     '          *skillsmith.owned*) emit "image_inspect__${img}__owned" ;;',
     '        esac',
@@ -335,16 +356,30 @@ export function volumeLabels(
   }
 }
 
+/** A stable, sha256-shaped image ID for a tag (SMI-6981: images are deleted by ID). */
+export function imageIdFor(tag: string): string {
+  return `sha256:${createHash('sha256').update(tag).digest('hex')}`
+}
+
+/**
+ * Set an image's labels. Also registers the tag's ID (`imageIdFor(tag)` unless
+ * `id` is given) and the same labels under that ID, which is what the in-lock
+ * re-inspect reads.
+ */
 export function imageLabels(
   fixture: FixtureRepo,
   img: string,
-  labels: { service?: string; owned?: string }
+  labels: { service?: string; owned?: string },
+  id: string = imageIdFor(img)
 ): void {
+  setResponse(fixture.responsesDir, `image_inspect__${img}__id`, id)
   if (labels.service !== undefined) {
     setResponse(fixture.responsesDir, `image_inspect__${img}__service`, labels.service)
+    setResponse(fixture.responsesDir, `image_inspect__${id}__service`, labels.service)
   }
   if (labels.owned !== undefined) {
     setResponse(fixture.responsesDir, `image_inspect__${img}__owned`, labels.owned)
+    setResponse(fixture.responsesDir, `image_inspect__${id}__owned`, labels.owned)
   }
 }
 

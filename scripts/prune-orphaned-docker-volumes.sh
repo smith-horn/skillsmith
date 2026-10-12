@@ -21,8 +21,13 @@
 # project it may delete with `--only-project <name>`. Without it the run is
 # report-only (never `volume rm` / `rmi`, whatever other flags are set). With
 # it, only owned, unattached resources whose project equals <name> exactly are
-# deleted, after the ownership, attachment and final re-check gates; every other
-# orphan is report-only. <name> must not be the main checkout's project or a
+# deleted; every other orphan is report-only. The ownership and attachment gates
+# run once at selection and AGAIN inside the critical section, just before the
+# delete, against the identity recorded at selection: an image's ID (it is
+# deleted BY ID, and only if its tag still resolves to that ID and the ID is
+# owned) and a volume's CreatedAt (it must be unchanged and the volume still
+# owned and unused). A mismatch skips that candidate; an unreadable re-inspect
+# stops the run. <name> must not be the main checkout's project or a
 # live worktree's. remove-worktree.sh passes the removed worktree's project.
 #
 # Ownership gate: the generic Compose-label shape checks are conventions any
@@ -41,14 +46,19 @@
 # Concurrency (SMI-6981, ADR-180). Every delete is a critical section under the
 # worktree lifecycle lock (lib/worktree-lifecycle.sh): a kernel-released flock on
 # the git common directory that create-worktree.sh also takes around `git worktree
-# add`. Inside it the liveness read and the lock-identity check are the last
-# operations before the one bounded `docker volume rm` / `rmi`.
+# add`. Inside it the order is: liveness re-read, lock-identity check, Docker
+# re-inspect (attachment, ownership, and the image ID / volume CreatedAt recorded
+# at selection), then the one bounded `docker volume rm` / `rmi <image ID>`.
 #   G1. A worktree registered by create-worktree.sh is never deleted from after
 #       its registration became observable -- while ALL of these hold: C1 it was
 #       created through create-worktree.sh; C2 the common directory inode is not
 #       replaced (detected at each check, NOT after the final check before the
-#       delete); C3 no creator skips the lock (it has no opt-out); C4 the
-#       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
+#       delete); C2b Docker ignores the lock: a volume replaced between the
+#       in-lock re-inspect and `volume rm`, or removed and re-created within the
+#       same second as the original (CreatedAt has one-second resolution; Docker
+#       has no volume ID or compare-and-delete), is NOT detected and is deleted.
+#       Images are covered (deleted by ID); C3 no creator skips the lock (it has
+#       no opt-out); C4 the filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
 #       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
 #       outcome the daemon may still execute; the run stops with exit 1). ANY
 #       failed delete does the same, whatever the CLI printed: a docker CLI can
@@ -196,8 +206,8 @@ LISTING_FAILED=false
 # having vanished: the run did not do what it was asked to, so it exits 1.
 OP_FAILED=false
 # Filled by label_of via `printf -v`, which shellcheck cannot see; declared here.
-vol_shape_label="" vol_project_label="" vol_owned_label="" recheck_owned=""
-img_service_label="" img_owned_label=""
+vol_shape_label="" vol_project_label="" vol_owned_label="" vol_created=""
+img_service_label="" img_owned_label="" img_id=""
 
 # label_of KIND OBJECT LABEL VAR -- read one label into VAR. Returns nonzero when
 # it could not be read: if the object merely vanished (benign) nothing else
@@ -268,6 +278,23 @@ if [[ -n "$ONLY_PROJECT" ]] && is_protected "$ONLY_PROJECT" "$protected"; then
     error "--only-project '$ONLY_PROJECT' is the main checkout or a live worktree -- refusing to prune."
 fi
 
+# incarnation_of VOLUME CREATED_VAR OWNED_VAR -- read a volume's CreatedAt and
+# ownership label at selection (one inspect). Like label_of: a volume that merely
+# vanished is silent, any other failure warns and sets OP_FAILED; returns 1.
+incarnation_of() {
+    local out
+    if out="$(worktree_lifecycle_volume_state "$1")"; then
+        printf -v "$2" '%s' "${out%%|*}"
+        printf -v "$3" '%s' "${out#*|}"
+        return 0
+    fi
+    if ! grep -qiE 'no such volume' <<< "$out"; then
+        warn "  Could not inspect volume $1 (${out:-no output}) -- skipping"
+        OP_FAILED=true
+    fi
+    return 1
+}
+
 # The deletion-scope predicate (candidate build AND pre-delete re-check).
 in_scope() { [[ -n "$ONLY_PROJECT" && "$1" == "$ONLY_PROJECT" ]]; }
 
@@ -279,7 +306,7 @@ if ! vol_list="$(docker volume ls --format '{{.Name}}' 2>/dev/null)"; then
 fi
 
 # --- volumes: build candidates against the initial protected snapshot ---
-declare -a vol_candidates=()
+declare -a vol_candidates=() vol_candidate_created=()
 while IFS= read -r vol; do
     [[ -z "$vol" ]] && continue
     classify_volume "$vol" || continue
@@ -287,7 +314,7 @@ while IFS= read -r vol; do
 
     label_of volume "$vol" com.docker.compose.volume vol_shape_label || continue
     label_of volume "$vol" com.docker.compose.project vol_project_label || continue
-    label_of volume "$vol" app.skillsmith.owned vol_owned_label || continue
+    incarnation_of "$vol" vol_created vol_owned_label || continue
 
     [[ "$vol_shape_label" == "$expected_vol_key" ]] || continue
     [[ "$vol_project_label" == "$project" ]] || continue
@@ -315,6 +342,7 @@ while IFS= read -r vol; do
     fi
 
     vol_candidates+=("$vol")
+    vol_candidate_created+=("$vol_created")
 done <<< "$vol_list"
 
 # Every delete below runs inside worktree_lifecycle_delete (lib/worktree-lifecycle.sh):
@@ -325,18 +353,13 @@ done <<< "$vol_list"
 # on both calls only keeps the function in an errexit-suppressed `||` context,
 # which its internal `x="$(…)" || error` checks were written and measured under.
 if (( ${#vol_candidates[@]} > 0 )); then
-    for vol in "${vol_candidates[@]}"; do
+    for i in "${!vol_candidates[@]}"; do
+        vol="${vol_candidates[$i]}"
         classify_volume "$vol" || continue
-        # SMI-6981: re-evaluate attachment and ownership against the object as it
-        # is now -- the two NON-CIRCULAR components. Shape and project labels are
-        # not re-read: both derive from the candidate's own name, so re-reading
-        # establishes nothing. Between candidate construction and here a volume
-        # can have become attached, or been replaced by a DIFFERENT volume under
-        # the same name, which Docker would happily let us delete.
-        attached_or_unknown "volume=$vol" && continue
-        label_of volume "$vol" app.skillsmith.owned recheck_owned || continue
-        [[ "$recheck_owned" == "true" ]] || continue
-        worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" volume "$vol" || OP_FAILED=true
+        # Attachment, ownership and CreatedAt are re-checked INSIDE the section,
+        # not here: any Docker actor can replace the volume while we wait for the
+        # lock, and Docker deletes by name.
+        worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" volume "$vol" "${vol_candidate_created[$i]}" || OP_FAILED=true
     done
 fi
 
@@ -378,14 +401,15 @@ while IFS= read -r img; do
         continue
     fi
 
-    # Final re-read of attachment and ownership immediately before the delete, as
-    # the volume loop does: an image can gain a container or be replaced between
-    # the scan above and the `rmi` below.
-    attached_or_unknown "ancestor=$img" && continue
-    label_of image "$img" app.skillsmith.owned recheck_owned || continue
-    [[ "$recheck_owned" == "true" ]] || continue
+    # Record the immutable image ID now; the section deletes BY THAT ID after
+    # re-checking, inside the lock, that the tag still resolves to it.
+    if ! img_id="$(worktree_lifecycle_image_id "$img")"; then
+        warn "  Could not resolve image $img (${img_id:-no output}) -- skipping"
+        OP_FAILED=true
+        continue
+    fi
 
-    worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" image "$img" || OP_FAILED=true
+    worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" image "$img" "$img_id" || OP_FAILED=true
 done <<< "$img_list"
 
 if [[ "$LISTING_FAILED" == true || "$OP_FAILED" == true ]]; then

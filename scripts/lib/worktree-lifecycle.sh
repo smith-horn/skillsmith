@@ -330,35 +330,118 @@ worktree_lifecycle_bounded() {
     perl -e "$_WTL_PERL_BOUNDED" -- "$secs" "$@" 7<&- </dev/null
 }
 
-# worktree_lifecycle_delete MAIN_REPO PROJECT DRY_RUN KIND NAME
+# worktree_lifecycle_volume_state NAME -- prints "<CreatedAt>|<owned label>"; 1
+# (printing the reason) if the inspect fails or does not parse. CreatedAt is the
+# volume's incarnation marker: Docker has no volume ID or compare-and-delete, but
+# a volume re-created under the same name gets a new CreatedAt (measured, docker
+# 29.7.2). Its resolution is ONE SECOND: a same-second replacement is invisible.
+worktree_lifecycle_volume_state() {
+    local out
+    if ! out="$(docker volume inspect "$1" --format '{{.CreatedAt}}|{{index .Labels "app.skillsmith.owned"}}' 7<&- </dev/null 2>&1)"; then
+        printf '%s' "$out"
+        return 1
+    fi
+    if [[ ! "$out" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^|]*\|[^|]*$ ]]; then
+        printf 'unparseable inspect output: %s' "$out"
+        return 1
+    fi
+    printf '%s' "$out"
+}
+
+# worktree_lifecycle_image_id TAG -- prints the immutable image ID the tag
+# resolves to now; returns 1 (printing the reason) if it cannot be read or is not
+# a sha256 ID.
+worktree_lifecycle_image_id() {
+    local out
+    if ! out="$(docker image inspect "$1" --format '{{.Id}}' 7<&- </dev/null 2>&1)"; then
+        printf '%s' "$out"
+        return 1
+    fi
+    if [[ ! "$out" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        printf 'unparseable image ID: %s' "$out"
+        return 1
+    fi
+    printf '%s' "$out"
+}
+
+# _wtl_gate KIND NAME EXPECT -- the Docker re-inspect INSIDE the critical section,
+# the last checks before the delete. EXPECT is the volume's CreatedAt or the
+# image's ID recorded at selection. Returns 0 to proceed (an image's delete target
+# is left in _WTL_RM_TARGET) or 1 to SKIP with the reason in _WTL_SKIP. A
+# re-inspect that cannot run or parse stops the whole run via error(), like a
+# failed delete. A mismatch SKIPS only that candidate: nothing was deleted and the
+# object now there is not ours to touch.
+# Covered: an image is deleted BY ID, only if its tag still resolves to the
+# recorded ID, that ID is owned and no container uses it. A volume is deleted
+# only if CreatedAt is unchanged, it is still owned and unused. NOT covered:
+# Docker ignores this lock, so a volume replaced between this inspect and
+# `volume rm`, or within the same second as the original, is deleted.
+_wtl_gate() {
+    local kind="$1" name="$2" expect="$3" state cur owned attached
+    _WTL_SKIP=""
+    _WTL_RM_TARGET="$name"
+    if [[ "$kind" == volume ]]; then
+        attached="$(docker ps -aq --filter "volume=$name" 7<&- </dev/null 2>&1)" \
+            || error "checking containers on volume $name under the worktree lifecycle lock failed (${attached}) -- deleting nothing further."
+        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; return 1; }
+        # Last: the incarnation read sits immediately before the delete.
+        state="$(worktree_lifecycle_volume_state "$name")" \
+            || error "re-inspecting volume $name under the worktree lifecycle lock failed (${state}) -- deleting nothing further."
+        cur="${state%%|*}"
+        owned="${state#*|}"
+        if [[ "$cur" != "$expect" ]]; then
+            _WTL_SKIP="it was re-created since selection (CreatedAt $expect -> $cur)"
+            return 1
+        fi
+        if [[ "$owned" != true ]]; then
+            _WTL_SKIP="it no longer carries app.skillsmith.owned=true"
+            return 1
+        fi
+    else
+        attached="$(docker ps -aq --filter "ancestor=$expect" 7<&- </dev/null 2>&1)" \
+            || error "checking containers on image $expect under the worktree lifecycle lock failed (${attached}) -- deleting nothing further."
+        [[ -z "$attached" ]] || { _WTL_SKIP="a container is attached"; return 1; }
+        owned="$(docker image inspect "$expect" --format '{{index .Config.Labels "app.skillsmith.owned"}}' 7<&- </dev/null 2>&1)" \
+            || error "re-inspecting image $expect under the worktree lifecycle lock failed (${owned}) -- deleting nothing further."
+        if [[ "$owned" != true ]]; then
+            _WTL_SKIP="image $expect no longer carries app.skillsmith.owned=true"
+            return 1
+        fi
+        # Last: the tag must still resolve to the ID we will delete.
+        cur="$(worktree_lifecycle_image_id "$name")" \
+            || error "re-resolving image $name under the worktree lifecycle lock failed (${cur}) -- deleting nothing further."
+        if [[ "$cur" != "$expect" ]]; then
+            _WTL_SKIP="the tag now points at $cur, not the selected $expect"
+            return 1
+        fi
+        _WTL_RM_TARGET="$expect"
+    fi
+    return 0
+}
+
+# worktree_lifecycle_delete MAIN_REPO PROJECT DRY_RUN KIND NAME EXPECT
 #
 # The ONE critical section for a liveness-keyed Docker delete (KIND is `volume`
-# or `image`). Inside it, the liveness read and the lock-identity check are the
-# LAST operations before the single bounded delete. Returns 0 when the delete
-# succeeded, the object turned out to be live, or in dry-run. EVERY other
-# outcome exits via error(): the lock, the liveness read or the identity cannot
-# be established, or the delete returned ANY nonzero status (timeout, daemon
-# refusal, lost connection, missing binary, signal). A failed request's outcome
-# is not knowable from the CLI -- a docker CLI can send the request, lose the
-# connection and exit nonzero while the daemon still carries it out after the
-# lock is released -- and its output is never used to decide, only to tell the
-# operator what happened. One refusal therefore ends the run with exit 1 and
-# the remaining candidates wait for the next run.
+# or `image`; EXPECT as for _wtl_gate). Order: acquire, liveness re-read,
+# identity check, Docker re-inspect, then the one bounded delete (an image BY ID).
+# Returns 0 when deleted, live now, skipped by the re-inspect (nothing deleted)
+# or dry-run. EVERY other outcome exits via error(): the lock, liveness read,
+# identity or re-inspect cannot be established, or the delete returned ANY
+# nonzero status (timeout, refusal, lost connection, missing binary, signal). A
+# failed request's outcome is not knowable from the CLI -- it can be sent, the
+# connection lost and the daemon still carry it out after the lock is released
+# -- and its output only tells the operator what happened, never decides. One
+# refusal therefore ends the run with exit 1; the rest wait for the next run.
 #
-# This function is always called from a `||` context, which suppresses errexit
-# inside it, so no step below relies on errexit: the re-read is `x="$(...)" ||
-# error ...` and the delete status is captured with if/else.
+# Always called from a `||` context, which suppresses errexit inside it, so no
+# step relies on errexit: re-reads are `x="$(...)" || error ...` and the delete
+# status is captured with if/else.
 worktree_lifecycle_delete() {
-    local main_repo="$1" project="$2" dry_run="$3" kind="$4" name="$5"
+    local main_repo="$1" project="$2" dry_run="$3" kind="$4" name="$5" expect="$6"
     local rc fresh out drc wait_s rm_timeout
     local -a rm_cmd
     wait_s="$(_wtl_uint_env SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT 30)"
     rm_timeout="$(_wtl_uint_env SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT 60)"
-    if [[ "$kind" == volume ]]; then
-        rm_cmd=(docker volume rm "$name")
-    else
-        rm_cmd=(docker rmi "$name")
-    fi
 
     if worktree_lifecycle_lock_acquire "$main_repo" "$wait_s" pruner; then rc=0; else rc=$?; fi
     if [[ "$rc" -ne 0 ]]; then
@@ -374,6 +457,16 @@ worktree_lifecycle_delete() {
     if worktree_lifecycle_lock_assert_held; then rc=0; else rc=$?; fi
     if [[ "$rc" -ne 0 ]]; then
         error "worktree lifecycle lock identity could not be confirmed (code $rc; was the git common directory replaced?) -- deleting nothing further."
+    fi
+    if ! _wtl_gate "$kind" "$name" "$expect"; then
+        echo "SKIPPED $kind $name: $_WTL_SKIP -- not deleted"
+        worktree_lifecycle_lock_release
+        return 0
+    fi
+    if [[ "$kind" == volume ]]; then
+        rm_cmd=(docker volume rm "$name")
+    else
+        rm_cmd=(docker rmi "$_WTL_RM_TARGET")
     fi
     if [[ "$dry_run" == true ]]; then
         info "[dry-run] would remove $kind $name"

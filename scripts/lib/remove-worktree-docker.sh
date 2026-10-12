@@ -70,12 +70,11 @@ cleanup_worktree_docker_resources() {
         fi
     fi
 
-    # Compose-equivalent project name: lowercase + drop chars outside
-    # [a-z0-9_-]. Matches docker compose v2 ProjectName sanitization.
-    # Plain `basename` would diverge for dirs containing uppercase or
-    # special chars. sanitize_project_name() (_lib.sh) is the single
-    # canonical implementation -- shared with
-    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750).
+    # Compose-equivalent project name. sanitize_project_name() (_lib.sh) is the
+    # single canonical implementation (see its comment for the exact rules, which
+    # this comment deliberately does not restate) -- shared with
+    # prune-orphaned-docker-volumes.sh so the two can't drift (SMI-5750). Plain
+    # `basename` would diverge for dirs containing uppercase or special chars.
     local project_name
     project_name="$(sanitize_project_name "$(basename "$worktree_path")")"
 
