@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process'
 import { runC4Candidate, locateDisplaced } from './c4-shared.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
 import { applyDirs } from './c4-score.mjs'
+import { compactTrace } from './c4-trace-match.mjs'
 import { scanQuarantineLeftovers } from '../result-schema.mjs'
 import { bindMount, tmpfsMount, isMounted, buildMountFixture } from './mount-shared.mjs'
 
@@ -247,7 +248,7 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, _t
         actualDirs,
         candidate,
         firedAt: r.firedAt ?? null,
-        trace: r.trace,
+        traceCompact: compactTrace(r.trace, { traceMatched: r.traceMatched }),
         renameBusy: r.result?.errno === 'EBUSY' || /EBUSY/.test(String(r.result?.reason ?? '')),
         mountSurvivedAtOriginalPath: stillMountedAtOriginal,
         mountsAtScore,

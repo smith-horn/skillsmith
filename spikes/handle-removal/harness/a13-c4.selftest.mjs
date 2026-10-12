@@ -21,6 +21,8 @@ import { runLandingCases } from './a13-c4.selftest.landings.mjs'
 import { runRecordCases } from './a13-c4.selftest.record.mjs'
 // Final governance: the caller-hash-race record through the real tally, F3.
 import { runGovCases } from './a13-c4.selftest.gov.mjs'
+// Trace compaction: synthetic, plus one live runOnce per arm.
+import { runTraceCases } from './a13-c4.selftest.trace.mjs'
 
 let failures = 0
 function check(name, cond, detail) {
@@ -199,6 +201,7 @@ for (const [arm, T] of [
 runLandingCases(check)
 runRecordCases(check)
 runGovCases(check)
+await runTraceCases(check)
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

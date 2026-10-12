@@ -46,6 +46,7 @@
 //  non-UTF-8 bytes (decoded as UTF-8, it no longer equals the root's path).
 
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 export const FIRE = 'FIRE'
@@ -256,4 +257,106 @@ export function matchC4Trace({
   )
   if (!matchRootSkeleton(candidate, window, rootTrace, result, callStartAt)) return false
   return matchPhases(candidate, trace)
+}
+
+export const COMPACT_SCHEMA = 'c4-trace-compact/1'
+const THREW_MAX = 20
+
+/** The scope an entry is counted under: its primary scope, else its second-path scope. */
+const scopeClassOf = (e) => (SCOPES.has(e.scope) ? e.scope : SCOPES.has(e.scope2) ? e.scope2 : null)
+
+/**
+ * A record-sized, JSON-safe summary of a C4 trace (Step 1 prerequisite: a full
+ * trace is ~3.4 MB at 1630 directories).
+ *
+ * Evidence is never silently dropped:
+ *  - the full trace is dropped ONLY when `traceMatched === true` (strict); any
+ *    other value, including a missing option, keeps it;
+ *  - a malformed trace (not an array; an entry that is not an object, has no
+ *    string `fn`, or -- unless it is FIRE -- has no `scope` key or no valid
+ *    scope; or one JSON.stringify cannot serialise) returns exactly
+ *    {schema, malformed: true, full: trace};
+ *  - sha256 is over JSON.stringify(trace), so a kept-elsewhere full trace can be
+ *    matched to this summary.
+ *
+ * Counts: every non-FIRE entry is counted once, under scopeClassOf (so
+ * sum(origin)+sum(desc)+sum(dest)+fire === length). `nested` overlaps them.
+ * Phases are `at` timestamps (renameEndAt is the rename's endAt), null when
+ * absent; recheckAt is the third top-level root lstat (C4's re-check).
+ */
+export function compactTrace(trace, options) {
+  const malformed = { schema: COMPACT_SCHEMA, malformed: true, full: trace }
+  if (!Array.isArray(trace)) return malformed
+  for (const e of trace) {
+    if (e === null || typeof e !== 'object' || typeof e.fn !== 'string') return malformed
+    if (e.fn !== FIRE && (!('scope' in e) || scopeClassOf(e) === null)) return malformed
+  }
+  let json
+  try {
+    json = JSON.stringify(trace)
+  } catch {
+    return malformed
+  }
+  const traceMatched =
+    options !== null && typeof options === 'object' ? options.traceMatched : undefined
+
+  const counts = { origin: {}, desc: {}, dest: {}, fire: 0, nested: 0 }
+  const rootSkeleton = []
+  const threw = []
+  let threwTotal = 0
+  let fireIndex = null
+  let rootLstats = 0
+  const phases = {
+    firstDescAt: null,
+    lastDescAt: null,
+    recheckAt: null,
+    renameAt: null,
+    renameEndAt: null,
+    firstDestAt: null,
+    lastDestAt: null,
+  }
+  trace.forEach((e, i) => {
+    if (e.nested === true) counts.nested += 1
+    if (e.threw !== null && e.threw !== undefined) {
+      threwTotal += 1
+      if (threw.length < THREW_MAX) threw.push({ fn: e.fn, scope: e.scope ?? null, code: e.threw })
+    }
+    if (e.fn === FIRE) {
+      counts.fire += 1
+      if (fireIndex === null) fireIndex = i
+      rootSkeleton.push(FIRE)
+      return
+    }
+    const cls = scopeClassOf(e)
+    const bucket = counts[cls]
+    bucket[e.fn] = (Object.prototype.hasOwnProperty.call(bucket, e.fn) ? bucket[e.fn] : 0) + 1
+    const at = typeof e.at === 'number' ? e.at : null
+    if (cls === 'desc') {
+      if (phases.firstDescAt === null) phases.firstDescAt = at
+      phases.lastDescAt = at
+    } else if (cls === 'dest') {
+      if (phases.firstDestAt === null) phases.firstDestAt = at
+      phases.lastDestAt = at
+    }
+    if (e.scope === 'origin' && e.nested !== true) {
+      rootSkeleton.push(e.fn)
+      if (e.fn === 'lstatSync' && ++rootLstats === 3) phases.recheckAt = at
+      if (e.fn === 'renameSync' && phases.renameAt === null) {
+        phases.renameAt = at
+        phases.renameEndAt = typeof e.endAt === 'number' ? e.endAt : null
+      }
+    }
+  })
+  return {
+    schema: COMPACT_SCHEMA,
+    length: trace.length,
+    rootSkeleton,
+    fireIndex,
+    counts,
+    phases,
+    threw,
+    threwTotal,
+    sha256: crypto.createHash('sha256').update(json).digest('hex'),
+    full: traceMatched === true ? null : trace,
+  }
 }

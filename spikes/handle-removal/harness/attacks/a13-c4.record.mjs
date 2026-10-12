@@ -41,6 +41,8 @@
 // aggregator and summary drop that exact reason from the 100-landing floor
 // and count it separately.
 
+import { compactTrace } from './c4-trace-match.mjs'
+
 export const SKEW_MIN_MS = -0.05
 export const SKEW_MAX_MS = 25
 export const VACUOUS_REASON = 'vacuous-check'
@@ -177,4 +179,16 @@ export function treeChangedAfterCallerHash({
   if (destPath != null) return movedTreeMatchesCallerHash !== true
   if (c4Status === 'kept') return c4Reason === 'identity-changed'
   return c4Status === 'stopped' && typeof c4Reason === 'string' && c4Reason.startsWith('guard-')
+}
+
+/**
+ * The per-run trace as emitted (Step 1 record size: A13 records at --dirs 1630
+ * were ~2 MB, almost all full trace). compactTrace (c4-trace-match.mjs) keeps a
+ * bounded summary and drops the full trace ONLY when `traceMatched` is the
+ * strict boolean true, so a mismatch stays fully diagnosable. runC4Candidate's
+ * own strict boolean is passed straight through, never coerced. Nothing that
+ * classifies or scores reads the trace: decideRecord takes traceMatched itself.
+ */
+export function traceCompactOf(trace, traceMatched) {
+  return compactTrace(trace, { traceMatched })
 }

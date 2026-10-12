@@ -7,6 +7,7 @@ import path from 'node:path'
 import { scanQuarantineLeftovers } from '../result-schema.mjs'
 import { verifyReplacementIntact } from './_shared.mjs'
 import { locateDisplaced } from './c4-shared.mjs'
+import { compactTrace } from './c4-trace-match.mjs'
 
 /** Primitive string only: a `new String('C4')` is typeof 'object' and is rejected. */
 export function assertC4Candidate(candidate) {
@@ -115,7 +116,9 @@ export function c4Extra(r, label, window, more) {
   return {
     label,
     window,
-    trace: r.trace,
+    // A full trace is ~3.4 MB per record at 1630 directories. The compact summary keeps
+    // the evidence: the full trace survives inside it unless traceMatched is true.
+    traceCompact: compactTrace(r.trace, { traceMatched: r.traceMatched }),
     firedAt: r.firedAt,
     times: r.times,
     guardHash: r.guardHash,
