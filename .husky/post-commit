@@ -1,4 +1,17 @@
 #!/bin/sh
+# SMI-6967 H-3(b): Husky invokes every hook through `sh -e` (.husky/_/h), so
+# errexit is always on here regardless of this file's own shebang -- the
+# shebang is never consulted (same mechanism documented in .husky/post-merge
+# and .husky/post-checkout's own headers). Without `set +e`, a failing
+# `REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)` below would abort
+# this hook before the background reindex kick ever runs. Reachability is
+# NOT established -- `--show-toplevel` succeeds inside any normal worktree,
+# and no concrete trigger for it failing here has been produced (one
+# recorded way `git rev-parse` can misbehave in this repo generally: the
+# `core.bare=true` leak in project memory). git ignores post-commit's exit
+# status entirely, so `set +e` costs nothing even if the condition never
+# fires.
+set +e
 # Post-commit hook
 # - SMI-2536: Branch integrity fallback guard
 # - SMI-710: Linear issue sync from commit messages
@@ -53,7 +66,11 @@ node "$(dirname "$0")/../scripts/linear-hook.mjs" post-commit &
 # SMI-4417/SMI-4426: Background incremental re-index of doc corpus.
 # Non-blocking, failure non-fatal, skipped if index absent (first run manual)
 # or in CI. Sentinel is .ruvector/skillsmith-docs/vectors (single DB file per
-# @ruvector/core@0.1.30 — not the legacy .rvf path). Indexer runs inside
+# the @ruvector/core copy packages/doc-retrieval-mcp declares and resolves
+# for itself — not the legacy .rvf path; SMI-6744 Wave 4 F4: dropped the
+# version literal this comment used to cite, since that copy is nested under
+# this package's own node_modules and drifts on its own schedule,
+# independent of the root devDependency Wave 4 removes). Indexer runs inside
 # Docker (SMI-4426: native binding requires linux-arm64-gnu, not darwin-arm64).
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -n "$REPO_ROOT" ] && [ -z "$CI" ] && [ -z "$SKILLSMITH_CI" ] \

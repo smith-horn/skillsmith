@@ -17,9 +17,25 @@ import type { SkillManifest } from './install.types.js'
 // Mocks
 // ============================================================================
 
-vi.mock('./install.helpers.js', () => ({
-  loadManifest: vi.fn(),
-}))
+// SMI-6733 Phase 2 Wave 2: `loadManifestWithWarning` is a SIBLING of
+// `loadManifest`, added to the real module alongside it (ADR-171 § 10) — it
+// is not in this factory's return object by default, so `executeSkillUpdates`'s
+// new call to it would otherwise fail with "No 'loadManifestWithWarning'
+// export is defined on the mock." It is wired to DELEGATE to the SAME
+// `loadManifest` mock below rather than stand alone, so every existing
+// `mockedLoadManifest.mockResolvedValue(...)` setup in this file keeps
+// driving the SUT unchanged — none of those ~12 call sites test a degraded
+// read, so `warning: null` is the correct default for all of them.
+vi.mock('./install.helpers.js', () => {
+  const loadManifest = vi.fn()
+  return {
+    loadManifest,
+    loadManifestWithWarning: vi.fn(async (...args: unknown[]) => ({
+      manifest: await loadManifest(...args),
+      warning: null,
+    })),
+  }
+})
 
 import { loadManifest } from './install.helpers.js'
 

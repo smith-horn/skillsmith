@@ -1,7 +1,7 @@
 /**
  * Helpers for audit-standards.mjs Check 59 (CLI-tool pin invariants, SMI-5746).
  *
- * Four static invariants that keep CLI-tool version pins from silently
+ * Five static invariants that keep CLI-tool version pins from silently
  * drifting back to an unmonitored state — see
  * docs/internal/implementation/cli-tool-version-drift-remediation.md for the
  * full incident history and design rationale. This file only detects; it
@@ -100,30 +100,251 @@ export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
 }
 
 /**
- * Sub-check 3: `.mcp.json`'s `ruflo` npx entry must pin an exact semver.
- * Deliberately scoped to `ruflo` only, not "every npx entry" — a git
- * worktree's `.mcp.json` gets auto-patched (skip-worktree, never committed)
- * to a bare unversioned `npx` command for `skillsmith`; that worktree-local
- * artifact is not a real invariant violation. See the plan doc's Review
- * Summary (Codex plan-review finding #2) for the full explanation.
+ * The single place the launcher's RUFLO_CLI_PIN literal is read (M-F,
+ * SMI-6744 A1.8 retro). Sub-checks 3 and 5 below both consume it, so
+ * tightening or changing the pattern happens once. `scripts/cli-pin-drift-
+ * check.sh` carries the ONLY other independent reader of this literal (a
+ * shell grep against the same one-line assignment) — its own pattern must
+ * be changed together with this one, since sub-check 3's own drift-
+ * detection purpose extends to "the shell mirror still agrees with the JS
+ * reader" as much as it does to "the pin itself is well-formed".
  */
-export function findUnpinnedRufloMcpEntry(mcpJsonPath) {
-  if (!existsSync(mcpJsonPath)) return null
-  let mcp
-  try {
-    mcp = JSON.parse(readFileSync(mcpJsonPath, 'utf8'))
-  } catch {
-    return null
+function readRufloLauncherPin(launcherPath) {
+  if (!existsSync(launcherPath)) {
+    return { reason: `RUFLO_CLI_PIN launcher not found at ${launcherPath}` }
   }
-  const ruflo = mcp.mcpServers && mcp.mcpServers.ruflo
-  if (!ruflo || ruflo.command !== 'npx') return null
-  const args = ruflo.args || []
-  const pkgArg = args[0] || ''
-  const m = pkgArg.match(/^ruflo@(.+)$/)
-  if (!m) return { reason: 'ruflo npx entry missing an @version suffix', pkgArg }
-  const version = m[1]
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    return { reason: `ruflo npx entry pinned to a non-exact-semver tag '${version}'`, pkgArg }
+  const m = readFileSync(launcherPath, 'utf8').match(/^RUFLO_CLI_PIN=(\S+)$/m)
+  if (!m) return { reason: `RUFLO_CLI_PIN not found in ${launcherPath}` }
+  return { pin: m[1] }
+}
+
+/**
+ * Sub-check 3: `scripts/mcp-ruflo-launcher.sh` must define `RUFLO_CLI_PIN`
+ * as a plain, anchored, exact-semver assignment (SMI-6744 ADR-170 § 7).
+ *
+ * The pin moved here from `.mcp.json`'s `ruflo` npx entry (SMI-5746's
+ * original scope) once ADR-170 replaced that entry with a launcher script
+ * that `docker exec`s into a lockfile-pinned, image-baked `@claude-flow/cli`
+ * tree — there is no `npx` entry left to read a version out of. This check
+ * reads the launcher's pin via the shared readRufloLauncherPin() above,
+ * rather than skipping when a pin can't be found: an absent or malformed
+ * pin is exactly the drift this check exists to catch, not a "nothing to
+ * check" case.
+ */
+export function findUnpinnedRufloLauncherPin(launcherPath) {
+  const { pin, reason } = readRufloLauncherPin(launcherPath)
+  if (reason) {
+    return { reason, launcherPath }
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(pin)) {
+    return {
+      reason: `RUFLO_CLI_PIN '${pin}' in ${launcherPath} is not an exact semver`,
+      launcherPath,
+      pin,
+    }
+  }
+  return null
+}
+
+/**
+ * Sub-check 5 (SMI-6744 M-3, post-merge governance retro on PR #2931): the
+ * @claude-flow/cli pin lives in TWO committed places that must never drift
+ * apart -- scripts/mcp-ruflo-launcher.sh's RUFLO_CLI_PIN (what the launcher
+ * authenticates the SERVED container's version against, ADR-170 § 7) and
+ * scripts/ruflo-seed/package.json's dependencies["@claude-flow/cli"] (the
+ * exact version actually baked into the `ruflo` image stage's seed tree by
+ * `npm ci` against its committed lockfile). Sub-check 3 above validates only
+ * that the launcher's OWN pin is a well-formed exact semver; this is a
+ * DIFFERENT invariant -- that the two committed pins agree with each other
+ * -- and needs both files to exist and parse before it can say anything, so
+ * it is a separate function rather than folded into
+ * findUnpinnedRufloLauncherPin's existing single-file contract. Returns
+ * `null` only when both files exist, both pins parse, and the two values
+ * are identical.
+ */
+export function findRufloSeedPinDrift(launcherPath, seedPackageJsonPath) {
+  const { pin: launcherPin, reason } = readRufloLauncherPin(launcherPath)
+  if (reason) {
+    return { reason, launcherPath, seedPackageJsonPath }
+  }
+
+  if (!existsSync(seedPackageJsonPath)) {
+    return {
+      reason: `seed package.json not found at ${seedPackageJsonPath}`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+    }
+  }
+  let seedPkg
+  try {
+    seedPkg = JSON.parse(readFileSync(seedPackageJsonPath, 'utf8'))
+  } catch (err) {
+    return {
+      reason: `${seedPackageJsonPath} is not valid JSON (${err.message})`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+    }
+  }
+  const seedPin = seedPkg && seedPkg.dependencies && seedPkg.dependencies['@claude-flow/cli']
+  if (!seedPin) {
+    return {
+      reason: `${seedPackageJsonPath} has no dependencies["@claude-flow/cli"] entry`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+    }
+  }
+  if (seedPin !== launcherPin) {
+    return {
+      reason: `RUFLO_CLI_PIN=${launcherPin} in ${launcherPath} does not match dependencies["@claude-flow/cli"]=${seedPin} in ${seedPackageJsonPath}`,
+      launcherPath,
+      seedPackageJsonPath,
+      launcherPin,
+      seedPin,
+    }
+  }
+  return null
+}
+
+/**
+ * Decodes a single-quoted JS string literal BODY (the text between, but not
+ * including, the surrounding quotes) without eval/Function -- this file
+ * only ever needs to resolve simple backslash escapes (\\, \', \n, ...)
+ * out of a literal this repo itself wrote, so a full JS string grammar is
+ * unnecessary. `\X` for any X not in the switch below decodes to X itself
+ * (matches JS's own "unrecognized escape passes the character through"
+ * behavior for the handful of escapes this constant actually uses, `\'`
+ * and `\\`).
+ */
+function decodeSingleQuotedJsStringBody(raw) {
+  return raw.replace(/\\(.)/g, (_, ch) => {
+    switch (ch) {
+      case 'n':
+        return '\n'
+      case 't':
+        return '\t'
+      case 'r':
+        return '\r'
+      default:
+        return ch
+    }
+  })
+}
+
+/**
+ * Sub-check 6 (rec 2, SMI-6744 A1.8 retro): scripts/ruflo-launch-guard.mjs's
+ * PROC_SCAN_CMD_HINT constant is duplicated verbatim as prose in
+ * .claude/development/claude-flow-guide.md (L-1, post-merge governance
+ * retro on PR #2931) -- a comment-only convention that this check turns
+ * into a gate, the same shape M-3/sub-check 5 above already applies to the
+ * RUFLO_CLI_PIN pair. Extracts the guard's own single-quoted string literal
+ * (handling its escapes with decodeSingleQuotedJsStringBody, never
+ * eval/Function against file content) and asserts it appears verbatim
+ * inside the guide's prose. Returns `null` only when both files exist, the
+ * constant parses, and the exact literal is found in the guide.
+ */
+export function findProcScanCmdHintDrift(guardPath, guideMdPath) {
+  if (!existsSync(guardPath)) {
+    return { reason: `guard not found at ${guardPath}`, guardPath, guideMdPath }
+  }
+  const guardSrc = readFileSync(guardPath, 'utf8')
+  const m = guardSrc.match(/const PROC_SCAN_CMD_HINT\s*=\s*\n?\s*'((?:\\.|[^'\\])*)'/)
+  if (!m) {
+    return {
+      reason: `PROC_SCAN_CMD_HINT constant not found (or not a plain single-quoted string) in ${guardPath}`,
+      guardPath,
+      guideMdPath,
+    }
+  }
+  const hintLiteral = decodeSingleQuotedJsStringBody(m[1])
+
+  if (!existsSync(guideMdPath)) {
+    return { reason: `guide not found at ${guideMdPath}`, guardPath, guideMdPath, hintLiteral }
+  }
+  const guideSrc = readFileSync(guideMdPath, 'utf8')
+  if (!guideSrc.includes(hintLiteral)) {
+    return {
+      reason: `PROC_SCAN_CMD_HINT literal from ${guardPath} does not appear verbatim in ${guideMdPath} -- the two have drifted`,
+      guardPath,
+      guideMdPath,
+      hintLiteral,
+    }
+  }
+  return null
+}
+
+/**
+ * Finds the `permissions.deny` array's exact CHARACTER-OFFSET span
+ * (inclusive of both the opening `[` and its matching `]`) within the
+ * FULL raw file text `fileText` -- not a per-line scan (M-3 fix, SMI-6744
+ * Wave 4 governance round, superseding the prior line-based
+ * `findJsonArrayLineSpan`). Two defects the line-based version could not
+ * fix without this rewrite:
+ *
+ *   1. A single-line array (`"deny": ["Bash(npx claude-flow)"]`) collapses
+ *      `startLine === endLine` under line-number tracking, so the
+ *      exemption below's `idx > startLine && idx < endLine` check can
+ *      never be true for anything on that one line -- a legitimate deny
+ *      entry written single-line was a FALSE POSITIVE. Character offsets
+ *      have a real, comparable interior even within one line.
+ *   2. Depth was only ever checked AFTER a full line finished scanning, so
+ *      a same-line `], "allow": [` (deny's own close immediately followed
+ *      by allow's own open) let allow's `[` re-increment depth back past
+ *      zero before the end-of-line check ran, corrupting `endLine` into a
+ *      FALSE NEGATIVE that swallowed allow's own content into deny's
+ *      span. Depth is now checked immediately after every `]`,
+ *      character-by-character, so the span always ends at the FIRST point
+ *      depth returns to zero.
+ *
+ * The search for `"deny"` starts from the `"permissions"` key's own
+ * offset (not the first bare `"deny":` text anywhere in the file) so an
+ * UNRELATED earlier `"deny":` occurrence elsewhere in the file — a
+ * different nested structure entirely — cannot be mistaken for
+ * `permissions.deny`. String-literal contents are skipped while tracking
+ * bracket depth, so a deny entry like "Bash(rg '[a-z]')" containing its
+ * own literal brackets can never perturb the count. Returns null if
+ * `"permissions"`/`"deny"` is never found, or the array never closes.
+ * @param {string} fileText the FULL raw file text (not split into lines)
+ * @returns {{startOffset: number, endOffset: number} | null} the `[` and
+ *   matching `]` character offsets (inclusive)
+ */
+function findPermissionsDenySpan(fileText) {
+  const permIdx = fileText.search(/"permissions"\s*:/)
+  if (permIdx === -1) return null
+
+  const denyKeyRe = /"deny"\s*:\s*\[/g
+  denyKeyRe.lastIndex = permIdx
+  const denyMatch = denyKeyRe.exec(fileText)
+  if (!denyMatch) return null
+
+  const openIdx = fileText.indexOf('[', denyMatch.index)
+  if (openIdx === -1) return null
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = openIdx; i < fileText.length; i++) {
+    const ch = fileText[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '[') {
+      depth++
+    } else if (ch === ']') {
+      depth--
+      if (depth === 0) return { startOffset: openIdx, endOffset: i }
+    }
   }
   return null
 }
@@ -146,14 +367,50 @@ export function findClaudeFlowReintroductions(repoRoot) {
   // to catch (found while writing this check's own test coverage).
   const pattern = /npx['",\s]+claude-flow/
 
-  const scanFile = (relPath) => {
+  const scanFile = (relPath, denyLiterals) => {
     const fullPath = join(repoRoot, relPath)
     if (!existsSync(fullPath)) return
-    const lines = readFileSync(fullPath, 'utf8').split('\n')
+    const fileText = readFileSync(fullPath, 'utf8')
+    const lines = fileText.split('\n')
+    // M-3 fix (SMI-6744 Wave 4 governance round): the exemption below must
+    // be POSITIONAL, computed once per file from the raw text via
+    // CHARACTER OFFSETS (not line numbers -- see findPermissionsDenySpan's
+    // own doc comment for why a line-based span was wrong for both a
+    // single-line array and a same-line `], "allow": [`), never from the
+    // already-parsed `permissions.deny` array's VALUES alone (SMI-6744
+    // Wave 4 H-1: a value-only check wrongly exempted the identical
+    // literal sitting in `allow` too).
+    const denySpan =
+      denyLiterals && denyLiterals.size > 0 ? findPermissionsDenySpan(fileText) : null
+
+    let lineStartOffset = 0
     lines.forEach((line, idx) => {
-      if (!pattern.test(line)) return
-      if (/@see\s+SMI-\d+/.test(line)) return
-      findings.push({ file: relPath, line: idx + 1 })
+      const matchIdx = line.search(pattern)
+      if (matchIdx === -1 || /@see\s+SMI-\d+/.test(line)) {
+        lineStartOffset += line.length + 1
+        return
+      }
+      // A `.claude/settings.json` `permissions.deny` entry must literally
+      // spell the banned command it blocks (e.g. "Bash(npx claude-flow)")
+      // -- that is the opposite of "reintroduces npx claude-flow", so it
+      // must not be flagged. Once `denySpan` is a real character-offset
+      // range, ANYTHING positioned strictly between the array's own `[`
+      // and `]` is necessarily part of one of its own JSON string
+      // elements (nothing else can legally occupy that span), so the
+      // offset check alone is sufficient -- no separate per-line
+      // JSON.parse-and-compare-to-denyLiterals step is needed (that step
+      // could never exempt a single-line array's own entry anyway, since
+      // the whole `"deny": [...]` text on one line never parses as a bare
+      // JSON string on its own).
+      const absoluteMatchOffset = lineStartOffset + matchIdx
+      const insideDeny =
+        denySpan &&
+        absoluteMatchOffset > denySpan.startOffset &&
+        absoluteMatchOffset < denySpan.endOffset
+      if (!insideDeny) {
+        findings.push({ file: relPath, line: idx + 1 })
+      }
+      lineStartOffset += line.length + 1
     })
   }
 
@@ -173,7 +430,21 @@ export function findClaudeFlowReintroductions(repoRoot) {
   walkShellScripts(join(repoRoot, 'scripts'), (p) => p.includes(`${join('scripts', 'prompts')}`))
   walkShellScripts(join(repoRoot, '.claude', 'helpers'), null)
 
-  scanFile('.claude/settings.json')
+  const settingsJsonPath = join(repoRoot, '.claude', 'settings.json')
+  let denyLiterals = new Set()
+  if (existsSync(settingsJsonPath)) {
+    try {
+      const parsedSettings = JSON.parse(readFileSync(settingsJsonPath, 'utf8'))
+      const denyArr =
+        parsedSettings && parsedSettings.permissions && parsedSettings.permissions.deny
+      if (Array.isArray(denyArr)) denyLiterals = new Set(denyArr)
+    } catch {
+      // Malformed settings.json: fall through with an empty exemption set,
+      // matching this check's pre-existing behavior of flagging every match
+      // when the file cannot be parsed as JSON.
+    }
+  }
+  scanFile('.claude/settings.json', denyLiterals)
   scanFile('docker-compose.yml')
 
   const packagesDir = join(repoRoot, 'packages')

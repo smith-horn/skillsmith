@@ -129,7 +129,7 @@ export async function dispatchToolCall(
     case 'install_skill':
       // SMI-4288 / #599: forward raw args; installSkill() performs Zod
       // validation at its boundary and returns a structured error envelope
-      // on failure instead of throwing. See install.ts buildValidationError.
+      // on failure instead of throwing. See install.errors.ts buildValidationError.
       return ok(await installSkill(args, toolContext))
 
     case 'uninstall_skill': {

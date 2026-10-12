@@ -22,7 +22,7 @@ import {
 } from './skill-installation.types.js'
 import { installFromContent } from './skill-installation.content.js'
 import { recordAiDefenceFeedback } from './skill-installation.feedback.js'
-import { ManifestManager } from './skill-manifest.js'
+import { installedSkillsOf, ManifestManager } from './skill-manifest.js'
 import {
   hashContent,
   applyOptimization,
@@ -156,7 +156,9 @@ export class SkillInstallationService {
       const targetCheck = await checkInstallTarget({
         installPath,
         skillsDir: this.skillsDir,
-        manifestEntry: manifest.installedSkills[manifestKey],
+        // SMI-6733 MAJOR 3: a nullish `installedSkills` classifies `ok`, so a
+        // bare subscript here type-checks and throws at runtime.
+        manifestEntry: installedSkillsOf(manifest)[manifestKey],
         force: options.force ?? false,
         expectedInstallPath: options.expectedInstallPath,
       })

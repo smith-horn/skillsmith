@@ -574,6 +574,90 @@ describe('checkInstallTarget (SMI-6529 Wave A0)', () => {
     })
   })
 
+  // SMI-6532 review round 4, MAJOR 3: rule (c)'s own containment clause
+  // (`isUsableDirectory` calling `isRealpathInside`) is the ONLY thing that
+  // catches a symlink that is LEXICALLY inside skillsDir but whose REALPATH
+  // escapes it. N5 above (line 533) is NOT a backstop for this shape: N5's
+  // lexical arm computes `path.resolve(installPath)` — for a symlink that
+  // physically lives inside skillsDir, that lexical path IS inside skillsDir
+  // regardless of where the symlink points, so `lexicallyContained` is true
+  // and N5 never even reaches its `reallyContained` (realpath) arm. Measured
+  // directly: disabling rule (c)'s `isRealpathInside` call (replacing it with
+  // `return true`) flips this exact fixture from `INSTALL_TARGET_NOT_DIRECTORY`
+  // to `INSTALL_TARGET_UNTRACKED` (no `.git`) or `INSTALL_TARGET_GIT_WORKTREE`
+  // rooted OUTSIDE skillsDir (`.git` planted at the escape target) — never
+  // `INSTALL_TARGET_MISMATCH`, the code N5's own refusal uses. Do not remove
+  // or weaken rule (c)'s containment clause; this describe block is the
+  // regression pin for it.
+  describe('MAJOR 3 (round 4): rule (c) containment is load-bearing against a lexically-inside, really-escaping symlink', () => {
+    it('refuses INSTALL_TARGET_NOT_DIRECTORY for a symlink physically inside skillsDir whose realpath resolves OUTSIDE it', async () => {
+      const { root, skillsDir } = await makeRoot('major3-escape')
+      const outsideDir = path.join(root, 'outside')
+      await fs.mkdir(outsideDir, { recursive: true })
+      // The symlink ENTRY itself lives inside skillsDir (so N5's lexical arm
+      // sees it as contained); its TARGET resolves entirely outside skillsDir.
+      const installPath = path.join(skillsDir, 'escaper')
+      await fs.symlink(outsideDir, installPath, 'dir')
+
+      const result = await checkInstallTarget({
+        installPath,
+        skillsDir,
+        manifestEntry: undefined,
+        force: true,
+      })
+
+      expect(result).toMatchObject({ ok: false, code: 'INSTALL_TARGET_NOT_DIRECTORY' })
+    })
+
+    it('acceptance control: a symlink physically inside skillsDir whose realpath ALSO resolves inside it is not refused by rule (c) — proves the refusal above is about containment, not "any symlink here"', async () => {
+      const { skillsDir } = await makeRoot('major3-inside')
+      const realTarget = path.join(skillsDir, 'real-skill')
+      await fs.mkdir(realTarget, { recursive: true })
+      const installPath = path.join(skillsDir, 'aliased-skill')
+      await fs.symlink(realTarget, installPath, 'dir')
+
+      const result = await checkInstallTarget({
+        installPath,
+        skillsDir,
+        manifestEntry: undefined,
+        force: true,
+      })
+
+      expect(result).not.toMatchObject({ code: 'INSTALL_TARGET_NOT_DIRECTORY' })
+      // Falls through to the normal untracked-directory rule instead —
+      // proves it reached rule (e), not rule (c)'s refusal.
+      expect(result).toMatchObject({ ok: false, code: 'INSTALL_TARGET_UNTRACKED' })
+    })
+
+    // Round-4 self-review: the two tests above both use a realpath (`outside`,
+    // `real-skill`) that shares NO string prefix with `skillsDir`, so neither
+    // would catch a mutation that drops the `+ path.sep` boundary from the
+    // shared `isResolvedPathInside`/`isRealpathInside` comparison (i.e.
+    // `realTarget.startsWith(realRoot)` instead of
+    // `realTarget.startsWith(realRoot + path.sep)`) — a classic path-prefix
+    // off-by-one. Measured: with that boundary dropped, this exact
+    // off-by-one mutant survives the two tests above AND every other test in
+    // this file and the probe suites (791/791 still green) — a real gap this
+    // test closes. `skillsDirEvil` is a SIBLING of `skillsDir` that shares
+    // `skillsDir`'s full string as a prefix without the separator.
+    it('boundary: a realpath sibling that shares skillsDir as a bare STRING PREFIX (no separator) is still refused — pins the `+ path.sep` boundary, not just gross escape', async () => {
+      const { skillsDir } = await makeRoot('major3-prefix-boundary')
+      const skillsDirEvil = skillsDir + '-evil' // e.g. ".../skills-evil"
+      await fs.mkdir(skillsDirEvil, { recursive: true })
+      const installPath = path.join(skillsDir, 'escaper')
+      await fs.symlink(skillsDirEvil, installPath, 'dir')
+
+      const result = await checkInstallTarget({
+        installPath,
+        skillsDir,
+        manifestEntry: undefined,
+        force: true,
+      })
+
+      expect(result).toMatchObject({ ok: false, code: 'INSTALL_TARGET_NOT_DIRECTORY' })
+    })
+  })
+
   // SMI-6529 L17: a manifest entry with a missing/non-absolute installPath
   // refuses with a clear, structured error — never a raw TypeError.
   describe('L17: unusable manifest-entry installPath', () => {

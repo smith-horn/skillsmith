@@ -14,7 +14,7 @@ import type { ScanReport, SecurityFinding } from '../../security/index.js'
 import { determineSeverityCategory, type SeverityCategory } from '../skill-scanner/categorizer.js'
 import { shouldQuarantine } from '../skill-scanner/trust-scorer.js'
 import { extractScannableContent } from '../skill-scanner/file-scanner.js'
-import { loadAllowlist } from '../skill-scanner/allowlist.js'
+import { buildMatcher } from '../skill-scanner/allowlist.js'
 import type { ImportedSkill } from '../skill-scanner/types.js'
 
 // ============================================================================
@@ -96,6 +96,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -155,6 +156,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -189,6 +191,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -223,6 +226,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -257,6 +261,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           pasteHostFetch: 0, // SMI-6033 Wave 2
           encodedPayload: 0, // SMI-6033 Wave 2
           decoyMisdirection: 0, // SMI-6033 Wave 4
+          executableFrontmatter: 0,
         },
       }
 
@@ -512,13 +517,41 @@ A helpful skill for formatting code.
       expect(privFindings.some((f) => f.severity === 'critical')).toBe(true)
       expect(shouldQuarantine(report)).toBe(true)
 
-      const allowlistPath = path.resolve(
-        __dirname,
-        '../../../../../data/skills-security-allowlist.json'
-      )
-      const allowlist = loadAllowlist(allowlistPath)
+      // SMI-7070: a FIXTURE allowlist, not data/skills-security-allowlist.json.
+      // Asserting against the live file made this test fail on the calendar date
+      // the real entry expired (2026-10-10), with no code change. The entry below
+      // mirrors that real entry's match fields; its expiry is computed from today,
+      // so renewing, retiring or letting the real entry lapse cannot break this
+      // test. What it pins is unchanged: this content shape's finding is cleared
+      // by an allowlist pattern, and the frontmatter heuristic cannot do it.
+      const inAYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const allowlist = buildMatcher([
+        {
+          skillId: 'github/leksman/ai-security-guard',
+          findingType: 'privilege_escalation',
+          messagePattern: 'escalation',
+          reason: 'SMI-7070 test fixture mirroring the SMI-5666 entry',
+          reviewedBy: 'test-fixture',
+          reviewedAt: new Date().toISOString().slice(0, 10),
+          expiresAt: inAYear,
+        },
+      ])
 
       expect(shouldQuarantine(report, undefined, allowlist)).toBe(false)
+
+      // Specificity: the pattern must clear THIS finding, not anything. An
+      // unrelated privilege_escalation finding for the same skill, whose message
+      // never says "escalation", must not be allowed -- an overbroad pattern
+      // ('.*') would pass the assertion above but fail here (SMI-7070 gate).
+      const skillId = 'github/leksman/ai-security-guard'
+      const unrelated: SecurityFinding = {
+        type: 'privilege_escalation',
+        severity: 'critical',
+        message: 'sudo invoked to modify system files',
+      }
+      expect(allowlist.isAllowed(skillId, unrelated)).toBe(false)
+      // Presence partner, same matcher: a real finding from this scan IS allowed.
+      expect(privFindings.some((f) => allowlist.isAllowed(skillId, f))).toBe(true)
     })
   })
 })

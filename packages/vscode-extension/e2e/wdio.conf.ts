@@ -52,7 +52,7 @@ for (const p of [NODE_BIN, FAKE_MCP_SERVER]) {
 
 // Concrete VS Code version, deliberately pinned (NOT 'stable') so the CI binary
 // cache key is stable and version bumps are intentional. Must be >= engines.vscode
-// (^1.110.0) or VS Code refuses to load the extension. NOTE: wdio-vscode-service@8's
+// (^1.125.0) or VS Code refuses to load the extension. NOTE: wdio-vscode-service@8's
 // tested default is 1.109.0 and the exact string '1.110.0' mis-resolves down to it;
 // a concrete recent release (1.125.1, validated) resolves correctly. Override via
 // VSCODE_E2E_VERSION if a pinned patch is ever unavailable.

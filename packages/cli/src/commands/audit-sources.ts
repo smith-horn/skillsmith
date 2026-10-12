@@ -23,6 +23,11 @@
  *   --force-write-frontmatter  Confirm SKILL.md mutation (required with
  *                              --write-frontmatter). Prints a bold warning.
  *   -d, --db <path>         SQLite database path (default: ~/.skillsmith/skills.db).
+ *   --client <id>           SMI-6358: which client the scanned skillsRoot belongs
+ *                           to — determines the manifest key backfill --apply
+ *                           reads/writes (defaults to SKILLSMITH_CLIENT env or
+ *                           claude-code). Pair with a non-default [skillsRoot]
+ *                           when scanning a non-canonical client's skills dir.
  *
  * Community tier (no requireTier call). Read-only by default; --apply enables
  * the manifest write path.
@@ -31,6 +36,7 @@
 import { Command } from 'commander'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { auditSourcesAction } from './audit-sources.action.js'
+import { VALID_CLIENT_HINT } from './install.js'
 
 /**
  * Build the `audit sources` subcommand. Registered in `createAuditCommand()`
@@ -61,6 +67,11 @@ export function createAuditSourcesSubcommand(): Command {
       false
     )
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
+    .option(
+      '--client <id>',
+      `which client the scanned skillsRoot belongs to, for the manifest key --apply writes ` +
+        `(defaults to SKILLSMITH_CLIENT env or claude-code; ${VALID_CLIENT_HINT})`
+    )
     .action(auditSourcesAction)
 }
 

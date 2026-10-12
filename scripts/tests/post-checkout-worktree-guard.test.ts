@@ -176,7 +176,11 @@ function runHook(
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {}
 ): { status: number; stdout: string; stderr: string } {
-  const result = spawnSync('sh', [script, ...args], {
+  // SMI-6967 (F2): Husky invokes every hook via `sh -e` (.husky/_/h:17)
+  // regardless of the hook's own shebang -- a plain `sh` spawn here never
+  // reproduces that execution mode. See post-merge-worktree-guard.test.ts's
+  // identical F1 fix for the full rationale.
+  const result = spawnSync('sh', ['-e', script, ...args], {
     cwd,
     encoding: 'utf8',
     env: { ...makeFixtureEnv(), ...extraEnv },
@@ -270,6 +274,11 @@ describe('.husky/post-checkout — linked-worktree guard + lockfile-drift classi
     // Code-review finding 1: a VALID token printed but a non-zero exit must
     // NOT be trusted — status and token are checked together.
     ['valid token (fresh) but non-zero exit', 'echo fresh; exit 9'],
+    // SMI-6967 L-4: completes the {valid, invalid, empty} x {zero, non-zero}
+    // matrix — the five rows above cover valid+zero (tested elsewhere via
+    // the real classifier), empty+zero, empty+non-zero, invalid+zero, and
+    // valid+non-zero, but not invalid+non-zero until this row.
+    ['unrecognized token AND non-zero exit', "printf 'garbage\\n'; exit 9"],
   ])('(f) malformed classifier output (%s) → treated as unknown', (_label, body) => {
     const { root, beforeSha, afterCosmeticSha } = fixture!
 

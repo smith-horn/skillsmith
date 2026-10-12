@@ -4,6 +4,228 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.15
+
+- **Fixed**: SMI-7018 -- when a SKILL.md's frontmatter contains a line such as `--- # note` or
+  `...`, `skillsmith import-local` now names the problem instead of showing a YAML library message
+  telling you to call `YAML.parseAllDocuments()`. The message says that line starts a second YAML
+  document and gives both fixes: if it was meant to end the frontmatter, change it to exactly
+  `---`; otherwise remove it. It offers both because the parser can't tell which you meant: a
+  horizontal rule (`---`) later in the body looks like the end of the frontmatter, so a mistyped
+  closing line followed by a horizontal rule would otherwise get the wrong advice.
+
+## v0.8.14
+
+- **Security**: SMI-7030 -- in `@skillsmith/cli` 0.8.13 and earlier, `skillsmith import-local`
+  (including `--watch`) ran a SKILL.md's frontmatter as JavaScript when its opening line was
+  `---js` or `---javascript`. Importing a directory that contained such a file, including skills
+  installed from third parties under the default `~/.claude/skills/`, ran that code with your
+  privileges. 0.8.14 refuses that frontmatter and runs nothing. **Upgrade to 0.8.14.**
+
+- **Fixed**: SMI-7018 -- `skillsmith import-local` no longer depends on `gray-matter`, which pulled
+  `sprintf-js` (GHSA-hp3w-g68c-fv3c, no fixed release) into the CLI's production dependencies.
+  SKILL.md frontmatter is now read with the `yaml` package the CLI already uses.
+
+  What changes for a SKILL.md file:
+  - Values are read as YAML 1.2. A bare date, `1:30`, `0b11` or `1_000` now stays text. Before, a
+    date as `name` was ignored, so the folder name was used instead, and a date in `tags` was dropped.
+    Ordinary names, descriptions and tag lists read the same as before.
+  - The closing `---` line must be exactly `---`, optionally followed by spaces or tabs. A line such
+    as `----` or `--- # note` no longer ends the frontmatter, so the rest of the file is read as
+    frontmatter and the file is reported as a parse failure.
+  - Frontmatter over 16 KiB is reported as a parse failure instead of being read. Real SKILL.md
+    frontmatter is a few hundred bytes.
+  - Custom YAML tags such as `!foo` now read as their plain value instead of failing the file.
+  - An opening line of `---yaml`, `---yml` or `---json` (any case) is read as before. An opening
+    line of `---js` or `---javascript` is now reported as a parse failure; previously that
+    frontmatter was run as JavaScript during the import. Any other language tag fails, as before.
+  - Tab characters used as YAML indentation, and duplicate keys inside `---json` frontmatter, now
+    make the file a parse failure. Before, tabs were accepted and the last duplicate key won.
+
+  A file that fails to parse is not imported. If that skill was imported before, its existing
+  entry keeps its old values. With `--json`, a one-shot import exits 1 if any file fails; in
+  `--watch` mode each pass reports its failures in the JSON result and keeps watching.
+
+## v0.8.13
+
+- **Fixed**: SMI-6961 / ADR-175 § 1 -- commands no longer proceed against an empty database when
+  your local one is corrupt. The shared opener caught the driver's refusal, renamed the **main file
+  only** -- orphaning any `-wal` against a rebuilt database -- and returned, so the command ran to
+  completion against nothing and reported success. It now surfaces the refusal, with a remedy naming
+  the file and the `mv` to run.
+
+  **No command gets a repaired database, and none proceeds against an empty one** -- including
+  `search`, `info` and `remove`, each of which could have served from the remote API or the
+  filesystem without a database. Uniform refusal was chosen deliberately over degrading those three:
+  one code path is far harder to regress than fourteen plus three exceptions. Move the database aside
+  as the message instructs and every command works again.
+
+  What is uniform is the **refusal**, not the control flow. Most commands stop at the first failure
+  and exit 1. `skillsmith update` instead reports a failure per skill and continues, then exits 1 --
+  on a corrupt database that means every installed skill is reported as failed. `skillsmith list`
+  degrades deliberately, showing `Unknown` for each skill rather than a count it cannot verify. An
+  earlier draft of this entry said every command "aborts", which was never true of `update`.
+
+  The message tells you to **move** the files, never delete them, and it now says why: a sync
+  rebuilds the registry mirror, but it does **not** rebuild rows you created locally. Skills added
+  with `skillsmith import-local` are tagged `source='local'` specifically so sync -- `--force`
+  included -- will not overwrite them, and quarantine review decisions have no registry source
+  either. An earlier draft of both this entry and the refusal itself claimed the database "holds no
+  data that cannot be rebuilt from the registry". That was false, and it was the sentence telling
+  you there was nothing to lose.
+
+- **Docs**: SMI-6991 -- two claims in `open-database.ts` and `fatal.ts` corrected after the
+  post-merge review of SMI-6961, both about this release's own behaviour.
+
+  The opener said "most commands have no `try` around their open", which was unmeasured and pointed
+  the wrong way — several commands catch and exit themselves. It also named `update` as the sole
+  command that does not abort, when `list` is a second one. It now describes the **two** shapes
+  without asserting how many commands are in each; the enumeration lives in the consumer-inventory
+  test, where it is checked rather than narrated. (A first attempt at this correction described
+  *three* shapes, and review measured that the first had no members — every call site is reached
+  from an `*ActionImpl` wrapped in try/catch. The entry-point handler is a backstop, not a shape
+  any command uses.)
+
+  `fatal.ts` justified preferring `process.exitCode` by asserting `process.exit()` "can truncate a
+  multi-line message mid-write on a piped stream". That was reasoning, not measurement, and it put
+  the file in conflict with the many existing `catch` blocks that print the same refusal and call
+  `process.exit(1)`. Measured: `skillsmith info` against a corrupt database produced **identical
+  1217-byte output piped and direct, with all three `mv` lines present**. No truncation, so those
+  five sites carry no defect and the claim is withdrawn.
+
+- **Fixed** (behaviour change for scripts): SMI-6961 -- `skillsmith update` now exits **1** when any
+  skill failed. It previously printed a red `Failed: N` and exited **0**, so a script wrapping the
+  command read total failure as success. On a corrupt database every installed skill lands in that
+  bucket, which made it the same silent-success defect this release exists to remove.
+
+  Keyed on failures only. A **skipped** skill still exits 0: a skip is a decision the command made
+  on purpose (`local-drift`, `identity-mismatch`), and reporting those as a process failure would
+  make a correct refusal look like a malfunction. If you have automation that tolerates partial
+  update failures and checks only the exit status, this will start failing for you -- check the
+  `Failed:` count in the summary instead.
+
+- **Fixed**: SMI-6961 -- an error that no command handled used to print your absolute home path and
+  a stack trace. `program.parse()` does not await an async action's promise, so a rejection escaped
+  to Node, which printed the raw message -- bypassing the sanitizer that exists to replace home
+  paths with `~`. Every such failure now prints the sanitized message and exits 1 — the whole
+  message, not one line: the corruption refusal is multi-line by design and the `mv` commands are
+  the point of it. (An earlier draft of this entry said "one sanitized line", which the 1217-byte
+  measurement recorded in `fatal.ts` contradicts.)
+
+  Found in review of the change above, and newly reachable because of it: `search` opens its
+  database outside any `try`, so once the opener stopped swallowing corruption refusals, a corrupt
+  database on `skillsmith search` took exactly that route. The fix is at the entry point rather than
+  at those two call sites, so a command added later with the same shape cannot reintroduce it.
+
+- **Test**: SMI-6946 / ADR-175 -- coverage for the two `list` output paths a pre-merge gate showed
+  were unobservable. `warnUndetermined` appeared in **zero** test files, so no mutation to it could
+  be caught, and the gate named one that survived the whole suite: relocate that call one line later,
+  past the `--outdated` early return, and a run against a wholly unreadable database prints **nothing
+  at all** and exits 0. The green "All installed skills are up to date." is gated on
+  `undetermined.length === 0` and the yellow partial line on `undetermined.length < skills.length`, so
+  with the warning unreachable both are correctly suppressed and nothing replaces them -- SMI-6946's
+  original defect reproduced by moving one line. A second mutation, sourcing `undetermined` from
+  `filtered` rather than `skills`, restores the false green line on a fully corrupt database, because
+  `--outdated`'s filter keeps only `'available'`. Both are now killed (2 and 4 respectively), and a
+  paired silence control forbids the degenerate fix of warning unconditionally.
+
+  Separately, the claim that **absence is established before the open** now has a test. It asserts
+  the *mechanism* -- that no open is attempted for a path that does not exist -- rather than the
+  resulting status, deliberately: the native driver re-states an absent path's `SQLITE_CANTOPEN` into
+  the same `current` outcome, so an outcome assertion is blind to the gate's removal, and the
+  difference shows only on the WASM driver, which the CLI suite cannot exercise. Asserting the
+  mechanism holds for every driver, present and future.
+
+- **Docs**: SMI-6946 -- `describeQueryFailure`'s docblock sat immediately above
+  `resolveUpdateStatus`, which has its own. Only the nearest attaches, so the first was dangling dead
+  text and `describeQueryFailure` had no documentation at all. Moved to its own signature.
+
+- **Fix (correctness)**: SMI-6946 / ADR-175 -- `skillsmith manage` and `skillsmith list` no longer
+  report **"Up to date"** for every installed skill when the local database cannot be read. They
+  report **"Unknown"**, name the cause once, and say so rather than asserting currency they have no
+  basis for.
+
+  The mechanism was a `boolean`. `hasUpdates` had exactly two states, the renderer printed `false` as
+  "Up to date", and a bare `catch {}` commented *"DB not available yet"* turned **five** distinct
+  causes into that one `false`: a database that does not exist, one that is corrupt, one we lack
+  permission to read, one locked by another process, and one whose schema is wrong. Only the first
+  licenses "no updates available" -- nothing is installed that could be out of date. The other four
+  leave the answer unknowable, and the command was stating it anyway.
+
+  So `hasUpdates: boolean` becomes `updateStatus: 'available' | 'current' | 'unknown'`, **replaced
+  rather than kept alongside**: a surviving boolean is a second source of truth a reader can pick up
+  without noticing the distinction. `--outdated` now filters on a *confirmed* newer version and
+  reports how many entries it could not determine, exiting 0 -- it did what it could and says what it
+  could not. Its `"All installed skills are up to date."` line, a second false statement on the same
+  fault, may now only print when every skill was actually checked.
+
+  Introduced by SMI-6931, which made the driver throw a structured-less `Error` that this consumer
+  discarded; **measured as a regression**, since a read-only open of a page-corrupt file *succeeds*,
+  so the path worked before. Found by a post-merge retrospective after nine reviews missed it -- every
+  one scoped to the diff, and a diff does not contain its consumers.
+
+  Two further things the implementation turned up, neither in the original report. A **second** false
+  statement lived one layer in: a per-skill lookup failure also fell back to "up to date", and it is
+  now classified on SQLite's result code so query-time corruption is named rather than described
+  generically. And on the **WASM driver** an *absent* database reported `unknown` for every skill
+  rather than `current`, because that driver succeeds on a missing path and hands back an empty
+  in-memory database -- so absence is now established before the open, where no driver's behaviour can
+  mask it. That one was reachable on any `npx` install without a native build, before a first sync.
+
+- **Docs (internal)**: SMI-6733 -- two comments in `install-skill.ts` pointed at `install.ts:299-301`
+  for a `resolveClientId`/`getInstallPath` pattern. Those lines held something else entirely, and had
+  before this branch started: the citation rotted at some earlier edit, and nothing noticed because
+  nothing checks a line number in a comment. Both now name the construct (`install.ts`'s own
+  `effectiveClient` resolution) instead. Found by sweeping every `install.ts:NNN` citation in the repo
+  after a cross-family review round flagged two others that a file split had shifted by 36 lines --
+  four stale citations in one sweep, which is the argument for naming constructs rather than lines.
+
+- **Fix (crash)**: SMI-6733 / SMI-6886 -- `sklx pin`, `sklx unpin` and `sklx diff` no longer break on
+  a manifest whose `installedSkills` is `null`. That is not a corrupt file: ADR-171 § 5 classifies it
+  `ok`, and the reader hands it back unchanged. (ADR-171 § 5 accepts both that and an absent key; § 3
+  preserves the difference between them; `installedSkillsOf` normalises either to an empty map. No
+  causal clause joining those three -- earlier versions of this entry carried one, and three review
+  rounds on PR #2980 each found it false. See `installedSkillsOf`'s docblock in core.) Five sites then subscripted it with no
+  guard (`pin.ts:85`, `:112`, `:150`, `:165`; `diff.ts:141`), all fed by a lenient loader that
+  silently substitutes an empty document on any read failure. `pin`/`unpin` surfaced a raw
+  `TypeError: Cannot read properties of null`; `diff` differed, because `fetchLatestContent` catches
+  it and reported "check your network connection" instead of naming the real problem. All five now
+  read through `installedSkillsOf`. Each is pinned by a test asserting the command's normal
+  not-installed output rather than merely the absence of a throw -- an absence assertion passes
+  whenever the command silently did nothing.
+
+- **Fix (data integrity)**: SMI-6733 -- `skillsmith update` no longer replaces a manifest it could
+  not read. `getSkillDiff`'s untracked-skill adoption reached `adoptUntrackedSkillEntry`, which took
+  a tolerant load unconditionally: that substitutes an empty document for a corrupt, unreadable or
+  version-unsupported manifest and then saves over the original bytes. Measured against a manifest
+  whose readable prefix recorded a real skill followed by trailing garbage -- one `update` left a
+  valid file holding only the adopted entry, and the recorded skill was gone. `update` has no
+  `force` in its option surface, so nothing authorised that overwrite. Tolerance is now an explicit
+  `tolerateDegradedRead` argument defaulting to refuse, and this call site passes nothing; a refused
+  adoption returns a distinct outcome rather than a hard error.
+
+- **Test**: SMI-6358 post-merge retro -- the `audit sources` already-tracked overlay's own client
+  keying is now pinned. Reverting it to a bare-name lookup previously left all five audit-sources
+  test files green; what pins it is the THREE-test set, not the two added here. Both new tests use
+  a non-canonical client, so an always-suffixed implementation satisfies both; the arm that rules
+  that out is the pre-existing default-client test, which is therefore load-bearing and must not be
+  deleted as redundant. Also pins the telemetry hook script's `0o755` mode, which
+  a fully-faked `chmodSync` had made invisible -- a dropped executable bit would have registered a
+  hook that could not run. Corrections to comments that described mechanisms the code does not
+  have. (#2920 follow-up)
+
+- **Fix (data integrity)**: SMI-6358 -- `pin` and `unpin` gained `--client` and key through
+  `manifestKeyFor(name, client)`. They previously read and wrote the bare name whatever client you
+  asked for, so pinning a non-canonical install either silently did nothing or modified the
+  canonical client's record instead. Client resolution matches `update`/`remove`/`install`:
+  explicit flag, then `SKILLSMITH_CLIENT`, then canonical. (#2920)
+
+- **Fix (concurrency)**: SMI-6358 -- `updateManifestEntry()` takes the same cross-process lock as
+  every other manifest writer in the repo, via `ManifestManager.updateSafely()`, instead of doing an
+  unlocked read-modify-write. It also reads fail-closed and returns the post-update manifest, so a
+  caller needing the fresh value does not take a second unlocked read. It accepts an optional
+  explicit manifest path, mirroring `loadManifest()`. (#2920)
+
 ## v0.8.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.8.11).

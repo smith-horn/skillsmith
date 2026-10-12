@@ -508,6 +508,15 @@ verify_jwt = false
 [functions.indexer-lock-starvation-monitor]
 verify_jwt = false
 
+# registry-audit-volume-monitor: pg_cron-invoked, service-role internal
+# (SMI-7050 — hourly volume monitor for client-reported registry audit rows,
+# ADR-178 property 5). Deploy WITH --no-verify-jwt. Unlike the siblings above,
+# the handler itself authenticates its caller with
+# isServiceRoleCallerBySecretCompare (401 otherwise): its output is a list of
+# user ids flagged for abuse.
+[functions.registry-audit-volume-monitor]
+verify_jwt = false
+
 # status-check: pg_cron-invoked, service-role internal (SMI-5752, public
 # status page Wave 2). Deploy WITH --no-verify-jwt; mirrors
 # webhook-heartbeat-monitor / quota-monitor.

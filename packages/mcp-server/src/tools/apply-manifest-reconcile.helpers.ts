@@ -15,6 +15,7 @@ import type { Stats } from 'node:fs'
 
 import {
   compareSkillContentHashes,
+  installedSkillsOf,
   manifestKeyFor,
   type SkillManifest,
   type SkillManifestEntry,
@@ -104,7 +105,11 @@ export function resolveReconcileEntry(
   client: ClientId
 ): { key: string; entry: SkillManifestEntry } {
   const key = manifestKeyFor(name, client)
-  const entry = manifest.installedSkills[key] as SkillManifestEntry | undefined
+  // SMI-6733 MAJOR 3: ADR-171 § 5 classifies a manifest whose
+  // `installedSkills` is `null` (or absent) as `ok`, so this reaches a
+  // nullish value while the declared type says otherwise.
+  const entries = installedSkillsOf(manifest)
+  const entry = entries[key] as SkillManifestEntry | undefined
   if (entry) {
     // Adversarial-review finding (Wave 4): for the CANONICAL client,
     // `manifestKeyFor` returns the bare `name` itself — the same bare key
@@ -129,7 +134,7 @@ export function resolveReconcileEntry(
   // check whether a bare-name key exists carrying a DIFFERENT client —
   // that is the key-shape-ambiguous case, not a genuine absence.
   if (client !== CANONICAL_CLIENT) {
-    const bareEntry = manifest.installedSkills[name] as SkillManifestEntry | undefined
+    const bareEntry = entries[name] as SkillManifestEntry | undefined
     if (bareEntry && bareEntry.client && bareEntry.client !== client) {
       throw new ReconcileGuardError('manifest.reconcile.key_shape_ambiguous', {
         name,
@@ -164,6 +169,19 @@ export function reconcileKeyForLedgerEntry(name: string, client: string): string
  * record. Refuses when `installPath` still resolves to an existing
  * directory; any stat failure (ENOENT or otherwise) is treated as
  * "no longer resolves" — exactly the case this action exists for.
+ *
+ * This is the DELIBERATE OPPOSITE of the uninstall guard's own convention
+ * (`checkNotTrackedElsewhere`, `packages/core/src/services/
+ * skill-installation.removal-identity.ts`): there, only ENOENT counts as
+ * absence, and any other stat failure is a REFUSAL, on the theory that a
+ * record it cannot check might still be real. Here, ANY failure clears the
+ * record, on the theory that `drop_entry` is the only way a user has to get
+ * an unhelpable record out of their way. Harmonizing the two in either
+ * direction would wedge users permanently — an ENOENT-only `drop_entry`
+ * could never clear a record blocked by, say, a permission error on its
+ * `installPath`; an any-failure uninstall guard could be made to silently
+ * proceed past a transient fault (SMI-6732 round 7's own F1 finding). Keep
+ * them divergent on purpose.
  */
 export async function assertDropTargetNoLongerResolves(
   name: string,

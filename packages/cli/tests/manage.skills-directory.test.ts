@@ -44,6 +44,11 @@ vi.mock('@skillsmith/core/install', async (importOriginal) => {
 
 // Mock core - use class implementations to avoid vitest warning
 vi.mock('@skillsmith/core', () => ({
+  // ADR-175 / SMI-6946: the real predicate, not a stub. A stub returning
+  // `false` would make this mock less capable than the module it replaces,
+  // and would silently disable the corruption branch in every test here.
+  isCorruptDatabaseError: (e: unknown) =>
+    (e as { code?: unknown } | null | undefined)?.code === 'SKILLSMITH_DB_CORRUPT',
   createDatabase: vi.fn(() => ({ close: vi.fn() })),
   createDatabaseAsync: vi.fn(),
   initializeSchema: vi.fn(),

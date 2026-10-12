@@ -142,11 +142,18 @@ function registrySentence(ev: ActivityEvent, who: string | null, operation: stri
   if (!verbs)
     return withActor(who, 'viewed the private registry', 'The private registry was viewed')
   const subject = registrySubject(ev.metadata)
-  const result = ev.result ?? 'success'
+  // A missing `result` (e.g. the select ever drops the column) must never read as success — fall
+  // through to the attempt/outcome branch below, whose `?? 'did not complete'` default is the
+  // most conservative existing wording (SMI-6114 retro F3).
+  const result = ev.result
   if (result === 'success') {
     return withActor(who, `${verbs.done} ${subject}`, `${capitalize(subject)} was ${verbs.done}`)
   }
-  const outcome = ATTEMPT_OUTCOMES[result] ?? 'did not complete'
+  // Own keys only: an empty string or a prototype name such as `constructor` must fall back too.
+  const outcome =
+    typeof result === 'string' && Object.prototype.hasOwnProperty.call(ATTEMPT_OUTCOMES, result)
+      ? ATTEMPT_OUTCOMES[result]
+      : 'did not complete'
   return withActor(
     who,
     `tried to ${verbs.attempt} ${subject}, which ${outcome}`,

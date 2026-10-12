@@ -6,7 +6,7 @@
 
 export { parseGitConfigRemote, normalizeGitHubRemote } from './git-config.js'
 export { parsePluginManifestRepository } from './plugin-manifest.js'
-export { scanLocalSkills, type LocalSkillEntry } from './local-skill-scan.js'
+export { scanLocalSkills, isBackupDir, type LocalSkillEntry } from './local-skill-scan.js'
 export {
   SourceRecoveryService,
   defaultSkillsRoot,

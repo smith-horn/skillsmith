@@ -111,6 +111,7 @@ import {
   SCANNER_SRC,
   EXEC_SRC,
   CONTEXT_SRC,
+  WEIGHTS_SRC,
   PATTERNS_SRC,
   MULTILINE_SRC,
   PER_LINE_SCOPED_IDENTIFIERS,
@@ -229,7 +230,7 @@ describe('SMI-5879 Wave 3 item 2 — multiline-pass category closure, EDGE TWIN 
     it('CATEGORY_COEFFICIENTS grounds the AI-category identity: jailbreak=0.2, prompt_injection=0.12 (mapped to core ai_defence, SMI-4960)', () => {
       expect(CATEGORY_COEFFICIENTS.jailbreak).toBe(0.2)
       expect(CATEGORY_COEFFICIENTS.prompt_injection).toBe(0.12)
-      expect(CONTEXT_SRC).toMatch(/prompt_injection:\s*0\.12,?\s*\/\/\s*mapped to core ai_defence/)
+      expect(WEIGHTS_SRC).toMatch(/prompt_injection:\s*0\.12,?\s*\/\/\s*mapped to core ai_defence/)
     })
   })
 

@@ -12,8 +12,9 @@ fi
 
 # Add MCP server
 echo "📦 Adding Claude Flow MCP server..."
-# Pin must stay in sync with the "ruflo" server's args in .mcp.json.
-claude mcp add ruflo npx -y ruflo@3.14.2 mcp start
+# Must stay in sync with the "ruflo" server entry in .mcp.json: a stdio server
+# whose command is the launcher script (ADR-170), not a direct npx invocation.
+claude mcp add ruflo ./scripts/mcp-ruflo-launcher.sh
 
 echo "✅ MCP server setup complete!"
 echo "🎯 You can now use mcp__ruflo__ tools in Claude Code"

@@ -264,6 +264,17 @@ export async function getSkillDiff(
       // resolution so the write lands in the SAME manifest the read above
       // just consulted.
       const manifestPathForAdoption = scopeTarget?.manifestPath ?? DEFAULT_MANIFEST_PATH
+      // SMI-6733 CRITICAL 1: `tolerateDegradedRead` is deliberately NOT
+      // passed, so adoption's write refuses on a manifest ADR-171 classified
+      // `corrupt`/`unreadable`/`version_unsupported` and leaves the file
+      // byte-identical, surfacing as `{ adoptionError }` below. `sklx update`
+      // has no `force` concept anywhere in its option surface, so there is no
+      // point at which a user of this command authorizes overwriting a
+      // manifest this process could not read — and passing tolerance here
+      // unconditionally is what destroyed a real recorded skill in the
+      // measurement that opened SMI-6733. Do not "restore" this argument to
+      // match `performUninstall`'s call: that call site has a `force` to
+      // spend and this one does not.
       const adoptResult = await adoptUntrackedSkillEntry(
         skillName,
         basename(installed.path),
@@ -276,6 +287,18 @@ export async function getSkillDiff(
         // skill, the path, and the manifest it tried to write (ADR-139
         // point 1's failure contract, identical to performUninstall()'s).
         return adoptResult
+      }
+      if ('adoptionRefusal' in adoptResult) {
+        // SMI-6733 CRITICAL 1: the manifest could not be classified and this
+        // command has no `force` to authorize overwriting it, so nothing was
+        // written. Reported through the SAME channel as a hard adoption
+        // failure — not silently continued past — because the alternative is
+        // `update` proceeding on an entry that exists only in memory, which
+        // is how a caller comes to believe a skill is tracked when the
+        // manifest still says nothing about it. `performUninstall` continues
+        // past this instead, and it is right to: it has more specific
+        // identity checks still to run. This function has none.
+        return { adoptionError: adoptResult.adoptionRefusal }
       }
       manifestEntry = adoptResult.entry
     }

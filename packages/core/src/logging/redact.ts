@@ -44,8 +44,12 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(ghr_[a-zA-Z0-9]{36})\b/g, replacement: 'ghr_[REDACTED]' },
   // Linear API keys
   { pattern: /\b(lin_api_[a-zA-Z0-9]{32,})\b/g, replacement: 'lin_api_[REDACTED]' },
-  // Stripe keys
-  { pattern: /\b(sk_live_[a-zA-Z0-9]{24,})\b/g, replacement: 'sk_live_[REDACTED]' },
+  // Skillsmith's own `sk_live_` keys are base64url, so this class must include `-` and `_` and
+  // must NOT end in `\b`. Do not narrow it back to `[a-zA-Z0-9]` and do not re-add a trailing
+  // boundary; `redact.test.ts` pins both, and the `{24,}` minimum at each side. Why: SMI-6840.
+  { pattern: /\b(sk_live_[A-Za-z0-9_-]{24,})/g, replacement: 'sk_live_[REDACTED]' },
+  // Stripe's own prefixes. Left untouched and unexamined -- their real key alphabet is not known
+  // here, so these are neither vouched for nor safe to widen without checking. See SMI-6840.
   { pattern: /\b(sk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'sk_test_[REDACTED]' },
   { pattern: /\b(pk_live_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_live_[REDACTED]' },
   { pattern: /\b(pk_test_[a-zA-Z0-9]{24,})\b/g, replacement: 'pk_test_[REDACTED]' },

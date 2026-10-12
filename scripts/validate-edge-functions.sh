@@ -92,6 +92,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "release-cadence-heartbeat-monitor"
   "sso-domain-reverify"
   "indexer-lock-starvation-monitor"
+  "registry-audit-volume-monitor"
 )
 
 echo ""

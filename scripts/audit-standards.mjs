@@ -82,6 +82,15 @@ import {
   evaluateContainerNpmGate,
   containerNpmGateReportLines,
 } from './audit-container-npm-gate-helpers.mjs'
+import { evaluateSettingsEnv, settingsEnvReportLines } from './audit-settings-env-helpers.mjs'
+import {
+  evaluateRufloHostPaths,
+  rufloHostPathsReportLines,
+  evaluateRufloHostGuardHooks,
+  rufloHostGuardHooksReportLines,
+  evaluateRufloMcpDenies,
+  rufloMcpDeniesReportLines,
+} from './audit-ruflo-host-paths-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -91,9 +100,16 @@ import {
 import {
   findFloatingSupabaseCliInstalls,
   findUnpinnedBareNpxCliInPackageJson,
-  findUnpinnedRufloMcpEntry,
+  findUnpinnedRufloLauncherPin,
+  findRufloSeedPinDrift,
+  findProcScanCmdHintDrift,
   findClaudeFlowReintroductions,
 } from './audit-cli-pin-drift-helpers.mjs'
+import {
+  runDependencyRegistryCheck,
+  runDependencyRegistryCli,
+  exactPinOverrideWarning,
+} from './audit-dependency-registry-helpers.mjs'
 import { TEST_PATTERNS } from './ci/source-patterns.mjs'
 import { PACKAGE_SPECS } from './lib/version-utils.ts'
 // SMI-5992: MAX_LINES + isExemptFromLengthCheck are shared with pre-commit's
@@ -138,6 +154,12 @@ const CHECK_REGISTRY = new Map([
   // narrow `--only realpath-asymmetry` subprocess, without running the full
   // ~70-check audit against a synthetic fixture directory.
   ['realpath-asymmetry', async () => runRealpathAsymmetryCheck()],
+  // SMI-6949: Check 76 (dependency registry) as a narrow `--only dependency-registry`.
+  [
+    'dependency-registry',
+    // Same implementation as scripts/check-dependency-registry.mjs.
+    async () => runDependencyRegistryCli() === 0,
+  ],
 ])
 
 const cliArgs = parseArgs({
@@ -588,6 +610,10 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // lock-starvation detection for the skill indexer, service-role internal.
   // Mirrors scan-coverage-monitor / webhook-heartbeat-monitor.
   'indexer-lock-starvation-monitor',
+  // SMI-7050: registry-audit-volume-monitor — pg_cron-invoked hourly volume
+  // monitor for client-reported registry audit rows (ADR-178 property 5).
+  // Authenticates its caller in-handler with isServiceRoleCallerBySecretCompare.
+  'registry-audit-volume-monitor',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
@@ -1481,11 +1507,15 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
   }
 }
 
-// npm override exact-pin check (SMI-3099 lesson, SMI-3987 refinement)
-// Flags scoped overrides that target exact-pinned dependencies AND failed to
-// take effect via npm's dedup machinery. CLAUDE.md's `npm overrides` note:
-// "`npm update <pkg>` may resolve it via dedup if another chain pulls in the
-// patched version. Verify with `npm ls <dep>` after update."
+// npm override effectiveness check (SMI-3099 lesson, SMI-3987 refinement,
+// SMI-6949 text correction)
+// Flags scoped overrides on a parent that exact-pins the dependency when the
+// resolved tree has NO version that satisfies the override. It measures the
+// resolved result (`npm ls <dep>`), not a rule about pins: a flat override does
+// replace an exact-pinned transitive version (SMI-6891), so an exact pin alone
+// is not a problem. Guidance lives in .claude/development/ci-reference.md,
+// section "npm Overrides (Transitive Vulnerability Fixes)"; this comment does
+// not restate it.
 //
 // The original Check 11 (pre-SMI-3987) flagged any override targeting an
 // exact-pinned dep, even when dedup actually applied the override. This
@@ -1583,10 +1613,8 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
     }
 
     if (exactPinIssues.length > 0) {
-      warn(
-        `${exactPinIssues.length} npm override(s) target exact-pinned dependencies (override may not take effect)`,
-        'Verify with `npm ls <dep>` and `npm audit`. Remove truly ineffective overrides and dismiss with documented rationale.'
-      )
+      const exactPinWarning = exactPinOverrideWarning(exactPinIssues.length)
+      warn(exactPinWarning.message, exactPinWarning.fix)
       exactPinIssues.forEach(({ parent, dep, spec, resolved }) => {
         const detail = resolved ? `resolved: ${resolved.join(', ')}` : 'could not inspect tree'
         console.log(`    ${parent} → ${dep}: "${spec}" (${detail})`)
@@ -5148,10 +5176,44 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     )
   }
 
-  const rufloFinding = findUnpinnedRufloMcpEntry('.mcp.json')
+  const rufloLauncherPath = join('scripts', 'mcp-ruflo-launcher.sh')
+  const rufloFinding = findUnpinnedRufloLauncherPin(rufloLauncherPath)
   if (rufloFinding) {
     check59Violations++
-    report(`Check 59: .mcp.json — ${rufloFinding.reason} (${rufloFinding.pkgArg})${shadowSuffix}`)
+    report(
+      `Check 59: ${rufloLauncherPath} — ${rufloFinding.reason}${shadowSuffix}`,
+      `Add a plain, anchored "RUFLO_CLI_PIN=<exact-semver>" assignment near the top of ${rufloLauncherPath} (ADR-170 § 7).`
+    )
+  }
+
+  // SMI-6744 M-3 (post-merge governance retro, PR #2931): the launcher's own
+  // pin can be well-formed (the check above passes) while still having
+  // drifted apart from the OTHER committed copy that actually determines
+  // what ships in the ruflo image.
+  const rufloSeedPackageJsonPath = join('scripts', 'ruflo-seed', 'package.json')
+  const rufloSeedDrift = findRufloSeedPinDrift(rufloLauncherPath, rufloSeedPackageJsonPath)
+  if (rufloSeedDrift) {
+    check59Violations++
+    report(
+      `Check 59: ${rufloSeedDrift.reason}${shadowSuffix}`,
+      `Keep RUFLO_CLI_PIN in ${rufloLauncherPath} and dependencies["@claude-flow/cli"] in ${rufloSeedPackageJsonPath} identical (ADR-170 § 7) — bump both together and re-run scripts/ruflo-seed/regenerate-digest.sh.`
+    )
+  }
+
+  // rec 2 (SMI-6744 A1.8 retro): scripts/ruflo-launch-guard.mjs's
+  // PROC_SCAN_CMD_HINT constant is duplicated as prose in
+  // .claude/development/claude-flow-guide.md (L-1) -- a comment-only
+  // convention until now. Gate it the same way M-3/sub-check 5 gates the
+  // RUFLO_CLI_PIN pair.
+  const rufloGuardPath = join('scripts', 'ruflo-launch-guard.mjs')
+  const claudeFlowGuidePath = join('.claude', 'development', 'claude-flow-guide.md')
+  const procScanHintDrift = findProcScanCmdHintDrift(rufloGuardPath, claudeFlowGuidePath)
+  if (procScanHintDrift) {
+    check59Violations++
+    report(
+      `Check 59: ${procScanHintDrift.reason}${shadowSuffix}`,
+      `Update ${claudeFlowGuidePath}'s PROC_SCAN_CMD_HINT prose to match ${rufloGuardPath}'s constant verbatim, or vice versa.`
+    )
   }
 
   const claudeFlowHits = findClaudeFlowReintroductions(resolvePath('.'))
@@ -5159,7 +5221,7 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     check59Violations++
     report(
       `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
-      `Replace with the local-bin form: node node_modules/ruflo/bin/ruflo.js ...`
+      `Replace with the sanctioned service form: docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js ... (SMI-6744 Wave 4 removes the root ruflo devDependency, Checkpoint 4 row 5, so the fastmcp edge is gone from the lockfile; the host tree follows at the post-merge refresh)`
     )
   }
 
@@ -5317,8 +5379,9 @@ console.log(`\n${BOLD}Check 62: MCP server service-role usage lockdown (SMI-6109
   // SUPABASE_SERVICE_ROLE_KEY, which neither pattern below actually matches, so it never needed
   // an entry; keeping it would itself have been a silent, unnecessary allowlist grant.
   const MCP_SERVICE_ROLE_ALLOWLIST_JUSTIFICATIONS = {
-    'packages/mcp-server/src/tools/registry-tools.live.audit.ts':
-      'best-effort audit-log write for reads and uncommitted attempts only — fail-soft, a no-op without the key; committed mutations are audited by the trg_prs_audit trigger (SMI-6114)',
+    // registry-tools.live.audit.ts's entry was removed here (SMI-6114, ADR-178): it reports audit
+    // events through record_private_registry_audit_attempt() over the caller's own client, so no
+    // getSupabaseAdminClient() call remains in that file.
     // registry-tools.live.content.ts's entry was removed here (SMI-6111, 2026-08-24): its
     // getContent()/install() entitlement check now uses check_registry_team_entitlement(), a
     // SECURITY DEFINER RPC via the member client — no getSupabaseAdminClient() call remains in
@@ -5755,6 +5818,12 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // ManifestManager. All four are genuine false positives.
     'packages/cli/src/commands/pin.test.ts':
       "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', () => ({ updateManifestEntry: mockUpdateManifestEntry, ... })) — no real manifest module is loaded",
+    // SMI-6733 Phase 2 Wave 2: same mock surface as pin.test.ts directly above,
+    // in a sibling file that pins the ADR-171 § 5 nullish case (`installedSkills:
+    // null` classifies `ok`, so a bare subscript threw a raw TypeError out of
+    // `sklx pin`). Same justification, same mocked module.
+    'packages/cli/src/commands/pin.manifest-null.test.ts':
+      "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', ...) — no real manifest module is loaded",
     'packages/cli/src/utils/manifest.test.ts':
       "this IS manifest.ts's own test file — fs/promises is fully mocked (vi.mock with importOriginal, only mkdir/writeFile/rename/readFile/unlink overridden) so saveManifest()'s writes go to an in-memory memfs object, never real disk; a dedicated 'SMI-6343: real-home write guard' describe block additionally proves the new guard itself fires",
     'packages/mcp-server/src/tools/install.helpers.manifest.test.ts':
@@ -5782,6 +5851,8 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // again, that is a genuine regression, not a missing allowlist row.
     'packages/mcp-server/src/tools/__meta__/telemetry-coverage.test.ts':
       "'installSkill' is a string literal inside a tool->handler coverage data map, not a call",
+    'packages/core/src/config/file-lock.test.ts':
+      "updateManifestSafely appears only in a comment explaining WHY this suite exists — that the manifest suites exercise fn() succeeding, so withFileLock's release-on-throw path had no coverage (SMI-6735). The file tests a generic file lock against its own os.tmpdir() target and imports no manifest module at all",
     'packages/mcp-server/src/tools/skill-recover-source.test.ts':
       'backfillManifest appears only in comments documenting that this read-only tool deliberately never calls it',
     'packages/mcp-server/tests/onboarding/tier1-self-heal.test.ts':
@@ -5796,6 +5867,23 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
       "'skillsmith.installSkill' is a VS Code command id string passed to handleTierDenied",
     'packages/vscode-extension/src/commands/__meta__/telemetry-coverage.test.ts':
       "'skillsmith.installSkill' is a command-id key in a command->action coverage map",
+    // SMI-6358 retro. Added by a later issue than the SMI-6343 block above, so
+    // it sits outside that comment's "the four rows below" count rather than
+    // inside it — inserting a fifth row there would leave that comment naming a
+    // smaller set than it now covers.
+    //
+    // Residual gap this row does NOT close, stated so nobody assumes it does:
+    // a RENAME of the test file goes stale loudly (evaluateManifestHygiene
+    // reports it via staleAllowlistEntries). Deleting the vi.mock while keeping
+    // the updateManifestSafely reference does NOT — the row keeps matching and
+    // silently grants an exemption it no longer earns. After any edit to that
+    // file's mocks, re-confirm the row by deleting
+    // `updateManifestSafely: mockUpdateManifestSafely` from its vi.mock factory
+    // and running that file: 2 of 10 tests must fail. If they all still pass,
+    // the mock is no longer load-bearing and this row must be removed, not
+    // reworded.
+    'packages/mcp-server/src/tools/install.conflict.test.ts':
+      "updateManifestSafely is the only writer symbol this file matches, and it is replaced wholesale by vi.mock('./install.helpers.manifest.js', ...) returning { ...actual, updateManifestSafely: mockUpdateManifestSafely } — the assertions read the updater function off the mock's call record and run it against a literal object, so no manifest module, path or fs call is reachable. The subject under test is manifestKeyFor's keying, which is deliberately NOT mocked",
   }
 
   const CHECK_65_SHADOW_END_DATE = '2026-09-15'
@@ -6207,6 +6295,114 @@ console.log(
     reporters[line.severity](line.message, line.fix)
   }
 }
+
+// Check 73: .claude/settings.json's `env` block is exactly the pinned set
+// (SMI-6744 Wave 4 / A4.3, Checkpoint 4 row 4)
+//
+// A4.1 measured that no censused Ruflo build's `init` writes
+// CLAUDE_FLOW_AUTO_COMMIT / CLAUDE_FLOW_AUTO_PUSH / CLAUDE_FLOW_REMOTE_EXECUTION
+// -- so a three-named-absence check (the plan's original spec) would be green
+// on the very re-add it exists to catch, because the live re-add writers
+// write a different set of keys entirely. Checkpoint 4 chose to pin the
+// exact expected `env` block instead (empty today), which is also what
+// closes the smuggled-hook-disable-variable route the design's Layer H
+// section names (a leading shell assignment never reaches the PreToolUse
+// hook process, so the `env` block is the one route that would work).
+//
+// Every outcome is decided in the helper, so this stays a flat dispatch
+// (the SMI-6575 lesson from Checks 69 and 70).
+//
+// scripts/tests/audit-settings-env.test.ts is the executable twin of this
+// check -- same helper, same invariant.
+console.log(
+  `\n${BOLD}Check 73: settings.json env block is exactly the pinned set (SMI-6744)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of settingsEnvReportLines(
+    evaluateSettingsEnv({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 74: the SMI-6744 Wave 4 Bash deny set is present and the host tree
+// no longer carries `ruflo` (SMI-6744 Wave 4 / A4.6, design doc § 1(b)
+// Layer R and Layer X, Checkpoint 4 rows 9 and 14)
+//
+// Two independent assertions: (a) every one of the RUFLO_BASH_DENY_ENTRIES
+// (audit-ruflo-host-paths-helpers.mjs) Bash deny entries the adversarial
+// command census requires is present in `permissions.deny`
+// (exact and ` *` forms only -- no `:*` duplicates, since fact 1 of the
+// permission-rule semantics record documents `:*` as equivalent to ` *`);
+// (b) `node_modules/ruflo` is absent from the host tree (Checkpoint 4 row
+// 5's devDependency removal, a tree predicate distinct from the design's
+// lockfile-graph reachability computation).
+//
+// This check cannot see host-global (`~/.nvm`) or user-scope
+// (`~/.claude/settings.json`) state -- CI and the dev container have
+// neither, so asserting either here would be a wrong-subject check,
+// vacuously green in the very environments that run it. Both the pass and
+// fail lines say so; that gap is A4.7's owner-transcript job.
+//
+// scripts/tests/audit-ruflo-host-paths.test.ts is the executable twin of
+// this check -- same helper, same invariant.
+console.log(`\n${BOLD}Check 74: SMI-6744 Wave 4 Bash deny set + host-tree removal${RESET}`)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of rufloHostPathsReportLines(
+    evaluateRufloHostPaths({
+      settingsPath: join('.claude', 'settings.json'),
+      root: process.cwd(),
+    })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+  // A4.6 addition: the ruflo-host-guard.mjs hook-entry tripwire (detection,
+  // not prevention -- design doc § 8 item 13). Purely additive report
+  // lines under the same Check 74 number, same helper file.
+  for (const line of rufloHostGuardHooksReportLines(
+    evaluateRufloHostGuardHooks({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 75: the SMI-6744 Wave 4 MCP deny set is present (SMI-6744 Wave 4 /
+// A4.6, design doc § 6 row 13 and decision 2.5)
+//
+// `mcp__ruflo__terminal_execute` / `agent_execute` / `wasm_agent_tool` grant
+// an arbitrary shell/agent/wasm surface inside the restricted service
+// container -- egress-bounded by the network namespace but not
+// store-bounded or ptrace-bounded, so leaving them reachable while denying
+// `memory_store` would make the memory denies decorative. Decision 2.5
+// additionally denies the `github_*` and `browser_*` families
+// (`network_mode: none` breaks both regardless, but a stray
+// `permissions.allow` entry would otherwise reach them). No parameter-level
+// MCP deny exists (permission-rule semantics record, gap 3), so the exact
+// tool name is the only enforceable form.
+//
+// scripts/tests/audit-ruflo-host-paths.test.ts is the executable twin of
+// this check too -- same helper file, same invariant class.
+console.log(
+  `\n${BOLD}Check 75: SMI-6744 Wave 4 MCP deny set (terminal/agent/wasm/github/browser)${RESET}`
+)
+{
+  const reporters = { pass, warn, fail }
+  for (const line of rufloMcpDeniesReportLines(
+    evaluateRufloMcpDenies({ settingsPath: join('.claude', 'settings.json') })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
+
+// Check 76: the dependency registry (.github/dependency-registry.json) is
+// complete, well-formed and unexpired (SMI-6949, ADR-176). Pure logic lives in
+// scripts/audit-dependency-registry-helpers.mjs; today's date (UTC) is computed
+// there at the call site, never inside the evaluator. An expired acceptance
+// FAILS on and after its expiry date and there is no opt-out (ADR-176).
+console.log(`\n${BOLD}Check 76: dependency registry coherence and expiry (SMI-6949)${RESET}`)
+runDependencyRegistryCheck({ pass, warn, fail })
 
 // Summary
 console.log('\n' + '━'.repeat(50))

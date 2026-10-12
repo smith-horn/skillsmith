@@ -27,6 +27,7 @@ import type { DepIntelResult, OptimizationInfo } from './skill-installation.type
 export { fetchFromGitHub } from './skill-installation.io.js'
 import { CANONICAL_CLIENT, CLIENT_DISPLAY_LABELS, type ClientId } from '../install/paths.js'
 import { InstallRestoreError } from './skill-installation.io.rollback.js'
+import { ManifestUnwritableError } from './skill-manifest.read-state.js'
 
 /** Result of applying optimization to a skill's content. */
 export interface OptimizationResult {
@@ -299,6 +300,16 @@ export function sanitizeInstallError(error: unknown): string {
   // files could NOT be restored, which the user needs to recover manually.
   // Bypasses the allowlist entirely (never gated on message content).
   if (error instanceof InstallRestoreError) {
+    return error.message
+  }
+  // SMI-6733 Phase 2 Wave 1: a manifest-read refusal is the same shape of
+  // case the InstallRestoreError bypass above exists for — ADR-171 § 8
+  // already builds a message naming the path and (for `corrupt`) the exact
+  // byte offset, and the generic fallback below would discard the one
+  // thing the user needs to act on. An `instanceof` check on the classifier's
+  // own error type, not a 13th message-content prefix (SMI-6529 H2's
+  // deliberate coupling avoidance, per ADR-171's plan).
+  if (error instanceof ManifestUnwritableError) {
     return error.message
   }
   if (error instanceof Error) {

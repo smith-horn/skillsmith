@@ -18,8 +18,14 @@ import { dirname, join } from 'node:path'
 
 import { describe, it, expect } from 'vitest'
 
-import { GIT_DISCOVERY_VARS as CANONICAL } from './_lib/git-fixture-env.js'
-import { GIT_DISCOVERY_VARS as PER_PACKAGE } from '../../packages/doc-retrieval-mcp/src/_lib/git-fixture-env.js'
+import {
+  GIT_CONFIG_INJECTION_VARS as CANONICAL_INJECTION,
+  GIT_DISCOVERY_VARS as CANONICAL,
+} from './_lib/git-fixture-env.js'
+import {
+  GIT_CONFIG_INJECTION_VARS as PER_PACKAGE_INJECTION,
+  GIT_DISCOVERY_VARS as PER_PACKAGE,
+} from '../../packages/doc-retrieval-mcp/src/_lib/git-fixture-env.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const canonicalSrc = join(here, '_lib', 'git-fixture-env.ts')
@@ -69,5 +75,13 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
 
   it('runtime array matches the canonical source text', () => {
     expect([...CANONICAL]).toEqual(extractVarNames(canonicalSrc))
+  })
+
+  // SMI-6919: the config-injection list is a second array, kept apart from
+  // the discovery list because the per-package production scrub iterates
+  // only the latter; both copies must still agree on it.
+  it('GIT_CONFIG_INJECTION_VARS is identical across both copies and disjoint from discovery', () => {
+    expect([...PER_PACKAGE_INJECTION]).toEqual([...CANONICAL_INJECTION])
+    for (const v of CANONICAL_INJECTION) expect(CANONICAL).not.toContain(v)
   })
 })

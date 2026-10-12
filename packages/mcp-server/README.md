@@ -6,7 +6,7 @@ MCP (Model Context Protocol) server for agent skill publishing, installation, an
 
 Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills across teams.
 
-## What's New in v0.7.16
+## What's New in v0.7.19
 
 - **Fix: 0.7.10 was uninstallable** — it imported `@skillsmith/core` exports (`SessionTierAuthError`, `SessionTierTransientError`, `resolveSessionTier`, `getApiBaseUrl`) that only shipped in core 0.12.0, but this package's own dependency floor still allowed the older, broken-for-this-purpose 0.11.7. The `@skillsmith/core` dependency is now `^0.12.0` (SMI-6143). No other changes in this release.
 
@@ -190,7 +190,7 @@ The Skillsmith API provides access to **hundreds of thousands of indexed skills*
 - **Indexed daily** from GitHub repositories
 - **Security screened hourly** for vulnerabilities and malicious patterns
 - **Quality scored** based on documentation, structure, and community feedback
-- **Categorized** by trust tier (Verified, Community, Experimental)
+- **Categorized** by trust tier (eight tiers, from Official to Unverified; see Trust Tiers below)
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
@@ -198,7 +198,7 @@ Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
 ### Why Configure an API Key?
 
-Without an API key, you're limited to **10 total requests** (trial mode). With a free Community account, you get **30 requests/minute** with access to all live skills.
+Without an API key, the MCP server falls back to a built-in public key: you get the Community per-minute rate (30/min), but each edge endpoint has one bucket shared by every keyless client, so it can be exhausted by others. (The 10-call trial with a 100/min per-IP cap applies to direct HTTP requests that do not successfully authenticate; keyless MCP requests authenticate with the built-in key and never reach it.) With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
 
 **Benefits of API key:**
 - Access to live indexed skills (not just cached)
@@ -240,13 +240,15 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 
 ### Rate Limits by Tier
 
-| Tier | Rate Limit | Monthly Cost | Best For |
-|------|------------|--------------|----------|
-| Trial | 10 total | Free | Quick evaluation |
-| Community | 30/min | Free | Personal projects |
-| Individual | 60/min | $9.99/mo | Active developers |
-| Team | 120/min | $25/user/mo | Development teams |
-| Enterprise | 300/min | Custom (Contact Sales) | Large organizations |
+| Tier | Monthly quota | Per-minute limit | Monthly Cost | Best For |
+|------|---------------|------------------|--------------|----------|
+| No API key (MCP default) | Community rate, shared public key | 30/min per endpoint, shared across all keyless clients | Free | Quick evaluation |
+| Community | 100 | 30/min | Free | Personal projects |
+| Individual | 1,000 | 200/min | $9.99/mo | Active developers |
+| Team | 10,000 | 300/min | $25/user/mo | Development teams |
+| Enterprise | Unlimited | 600/min | Contact Sales | Large organizations |
+
+> **Quota note:** the monthly figure is a hard limit only where enforced. Edge functions hard-block on monthly quota for Community only, and only when `ENFORCE_COMMUNITY_QUOTA` is `'true'`. The MCP server's own monthly quota counts only `skill_suggest` and the tier-gated tools, and hard-blocks them by default (`SKILLSMITH_ENFORCE_MCP_QUOTA=false` turns that off).
 
 All tiers include:
 - Full access to skill search, details, and recommendations
@@ -280,36 +282,37 @@ All tiers include:
 | `skill_rescan` | Re-scan an installed skill's content | Community |
 | `skill_recover_source` | Recover the canonical GitHub source of locally-installed skills (read-only report + candidates) | Community |
 | `inventory_push` | Push this machine's installed-skill inventory to your Skillsmith account for the web dashboard (read-only; requires `skillsmith login`) | Community |
+| `skill_inventory_audit` | Audit every installed AI coding client's skill inventory for local namespace collisions; returns rename + edit suggestions | Community |
+| `apply_namespace_rename` | Apply a rename suggestion from an inventory audit (`apply`/`custom`/`skip`/`revert`) | Community |
+| `apply_recommended_edit` | Apply a recommended prose edit from an inventory audit (gated on APPLY_TEMPLATE_REGISTRY) | Community |
+| `undo_apply` | Session-scoped undo for the most recent apply_namespace_rename / apply_recommended_edit changeset(s), restored from the apply tool's own backup | Community |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous manifest entry (`mark_local`/`relink`/`drop_entry`/`verify`/`revert`) — see `skill_outdated`'s `identity-mismatch`/`local-drift` diagnosis | Community |
 | `skill_updates` | Check registry for newer skill versions | Individual+ |
 | `skill_diff` | Section-level diff between skill versions | Individual+ |
 | `skill_pack_audit` | Audit all skills in a directory | Individual+ |
 | `skill_audit` | Check skills for security advisories | Team+ |
-| `skill_inventory_audit` | Audit every installed AI coding client's skill inventory for local namespace collisions; returns rename + edit suggestions | Team+ |
-| `apply_namespace_rename` | Apply a rename suggestion from an inventory audit (`apply`/`custom`/`skip`/`revert`) | Team+ |
-| `apply_recommended_edit` | Apply a recommended prose edit from an inventory audit (gated on APPLY_TEMPLATE_REGISTRY) | Team+ |
-| `undo_apply` | Session-scoped undo for the most recent apply_namespace_rename / apply_recommended_edit changeset(s), restored from the apply tool's own backup | Team+ |
-| `apply_manifest_reconcile` | Repair a corrupted or ambiguous manifest entry (`mark_local`/`relink`/`drop_entry`/`verify`/`revert`) — see `skill_outdated`'s `identity-mismatch`/`local-drift` diagnosis | Community |
 | `team_workspace` | Manage team workspaces (create, list, get, delete) | Team+ |
 | `share_skill` | Add, remove, or list skills in a team workspace | Team+ |
-| `publish_private` | Mark a skill as private to your team | Team+ |
+| `publish_private` | Mark a skill private on this machine (local only; hides it from your own search results) | Team+ |
 | `team_analytics_dashboard` | Per-user tool usage counts, top tools, daily trend | Team+ |
 | `team_usage_report` | Weekly/monthly usage summary with period comparison | Team+ |
+| `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports | Team+ |
 | `audit_export` | Export audit log events for a time range | Enterprise |
 | `audit_query` | Query audit logs with filters | Enterprise |
 | `siem_export` | Export audit events for SIEM ingestion | Enterprise |
 | `analytics_dashboard` | Recommendation accuracy, adoption curves, team aggregation | Enterprise |
 | `usage_report` | Comprehensive usage report with all metrics | Enterprise |
-| `configure_sso` | Configure SSO/SAML integration (set, test, remove) | Enterprise |
+| `configure_sso` | Configure SSO/SAML (set, test, remove, claim_domain, verify_domain) | Enterprise |
 | `sso_settings` | View current SSO/SAML configuration | Enterprise |
 | `private_registry_publish` | Publish a skill to your private registry | Enterprise |
-| `private_registry_manage` | Manage private registry skills (list, get, deprecate) | Enterprise |
-| `rbac_manage` | Manage RBAC roles (create, list, get, delete) | Enterprise |
+| `private_registry_manage` | Manage private registry skills (list, get, install, deprecate, undeprecate, namespace, submissions, approve, reject) | Enterprise |
+| `rbac_manage` | Inspect and adjust per-role permissions (list_roles, get_role, set_role_permission, reset_role_permission) | Enterprise |
 | `rbac_assign_role` | Assign or revoke roles for users | Enterprise |
-| `rbac_create_policy` | Create and manage RBAC access policies | Enterprise |
+| `rbac_create_policy` | Bulk-set, clear or list per-role permission overrides | Enterprise |
 | `webhook_configure` | Configure HMAC-SHA256 signed webhooks for skill events (in preview — availability pending production migration) | Enterprise |
 | `api_key_manage` | Manage API keys for programmatic access (in preview — availability pending production migration) | Enterprise |
-<!-- preview-status tracked by SMI-4135 -->
-| `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports | Enterprise |
+
+The automatic session-start namespace audit is a Team and Enterprise feature; `skill_inventory_audit`, `apply_namespace_rename`, `apply_recommended_edit` and `undo_apply` can be run by hand on any tier.
 
 ## Tool Parameters
 
@@ -321,7 +324,7 @@ Search for skills matching a query.
 |-----------|------|----------|-------------|
 | `query` | string | Conditional | Search term (min 3 characters); required unless a filter (`category`/`trust_tier`/`min_score`) is provided |
 | `category` | string | No | Filter by category (development, testing, devops, etc.) |
-| `trust_tier` | string | No | Filter by trust level (verified, community, experimental) |
+| `trust_tier` | string | No | Filter by trust tier (verified, curated, community, experimental, unknown) |
 | `min_score` | number | No | Minimum quality score (0-100) |
 | `limit` | number | No | Max results (default 10) |
 
@@ -433,12 +436,18 @@ Index local skills from `~/.claude/skills/` directory.
 
 ## Trust Tiers
 
+Every skill carries one of eight trust tiers. Descriptions are the ones the server shows (`TrustTierDescriptions`, `packages/core/src/types.ts`).
+
 | Tier | Description |
 |------|-------------|
-| `verified` | Official platform skills |
-| `community` | Community-reviewed skills |
-| `experimental` | New/beta skills |
-| `unknown` | Unverified skills |
+| `official` | Official or partner skill with full security review. Maintained by Skillsmith or verified partners. |
+| `verified` | Manually reviewed by the Skillsmith team. High quality and safe to use. |
+| `curated` | Third-party publisher. Manually opted into the registry. |
+| `community` | Highly rated by the community. Generally reliable. |
+| `experimental` | New or beta skill. Use with caution. |
+| `unknown` | Not yet assessed. Review carefully before using. |
+| `unverified` | No verification performed. Review carefully before installing. |
+| `local` | Local skill from your ~/.claude/skills/ directory. You control this skill. |
 
 ## Environment Variables
 

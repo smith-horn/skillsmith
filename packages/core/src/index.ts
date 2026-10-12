@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.12.5'
+export const VERSION = '0.13.0'
 
 // ============================================================================
 // Grouped Exports from Barrel Files
@@ -25,8 +25,36 @@ export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 // WASM has no cross-process write coordination — see compliance-tools.cyclonedx.ts).
 export { getBestDriver, type DriverType } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
-// SMI-4484: corruption detection + self-heal helpers, reused by the CLI opener.
-export { isCorruptionError, backupCorruptDbFile } from './db/drivers/corruption.js'
+// SMI-4484's `isCorruptionError` and `backupCorruptDbFile` were REMOVED here
+// (SMI-6961 step 4), along with `db/drivers/corruption.ts` itself. This is an
+// API removal, not a deprecation, and it is deliberate for both of them:
+//
+// - `backupCorruptDbFile` renamed a database out of the way. ADR-175 § 1
+//   forbids that, because SQLite coordinates through file paths rather than
+//   inodes: renaming a database another process may hold open is undefined
+//   behaviour, and the two files then share a journal by name. Leaving it
+//   exported invited a consumer to reintroduce the defect this issue removed.
+// - `isCorruptionError` matched substrings against arbitrary error text, so an
+//   incidental word in a wrapper message or a file path could classify a
+//   healthy failure as corruption. `CorruptDatabaseError`'s `code` replaces it.
+//
+// Recognise a refusal with `isCorruptDatabaseError` below. There is no
+// replacement for the backup helper, by design — the refusal's message tells
+// the user which files to move, and that decision is theirs.
+// ADR-175 / SMI-6946: the supported way to recognise a corruption refusal.
+// Match `code`, never the message and never `instanceof` — see db-errors.ts.
+export {
+  CorruptDatabaseError,
+  isCorruptDatabaseError,
+  DB_CORRUPT_CODE,
+  type RemedyKind,
+} from './db/db-errors.js'
+export {
+  classifyProbeFailure,
+  isCorruptionCode,
+  remedyKindFor,
+  type ProbeFailureClass,
+} from './db/probe-classification.js'
 // SMI-4807: native-driver failure reason getter.
 export { getBetterSqlite3FailureReason } from './db/drivers/betterSqlite3Driver.js'
 // SMI-5006: createLogger exposed for @smith-horn/enterprise/billing consumers.
@@ -374,6 +402,13 @@ export {
   type Tier as AuditModeTier,
   type ResolveAuditModeOptions,
 } from './config/audit-mode.js'
+
+// SMI-6735: generic cross-process file lock (wraps the owned-lock primitive),
+// exposed at the root so a consumer outside @skillsmith/core (e.g.
+// @skillsmith/mcp-server's manifest write path) can share the SAME lock
+// mechanism instead of hand-rolling its own age-based lock protocol.
+export { withFileLock } from './config/file-lock.js'
+export { describeRemedy, StuckLockError, type StuckLockReason } from './config/owned-lock.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)

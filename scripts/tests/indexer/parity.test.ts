@@ -94,6 +94,26 @@ const NODE_SCANNER_EXEC = resolve(
   REPO_ROOT,
   'scripts/indexer/_shared/security-scanner-edge.exec.ts'
 )
+// SMI-7030: the category weight/coefficient maps moved out of .context.ts into a
+// .weights.ts twin, and the executable-frontmatter detector is its own twin.
+// Drift in either means the two indexers would score or flag the same scanned file
+// differently.
+const DENO_SCANNER_WEIGHTS = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.weights.ts'
+)
+const NODE_SCANNER_WEIGHTS = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.weights.ts'
+)
+const DENO_SCANNER_FRONTMATTER = resolve(
+  REPO_ROOT,
+  'supabase/functions/_shared/security-scanner-edge.frontmatter.ts'
+)
+const NODE_SCANNER_FRONTMATTER = resolve(
+  REPO_ROOT,
+  'scripts/indexer/_shared/security-scanner-edge.frontmatter.ts'
+)
 // SMI-5402: the five high-risk pattern arrays were extracted to a sibling twin
 // (500-line limit). Drift here means the two indexers would match different
 // jailbreak / suspicious / exfil / priv-esc / prompt-injection patterns.
@@ -416,6 +436,29 @@ describe('Deno <-> Node security-scanner-edge parity (SMI-4960)', () => {
       const node = normalizeWs(extractBody(NODE_SCANNER_CONTEXT, fn))
       expect(node).toBe(deno)
     })
+  }
+
+  // SMI-7030: the weights and executable-frontmatter twins — whole-body
+  // byte-identity from the first section marker. Compared LITERALLY, not through
+  // normalizeWs: whitespace normalisation would also equate a changed string
+  // literal (e.g. the persisted finding message), which differs at runtime.
+  for (const [label, denoPath, nodePath] of [
+    ['security-scanner-edge.weights.ts', DENO_SCANNER_WEIGHTS, NODE_SCANNER_WEIGHTS],
+    ['security-scanner-edge.frontmatter.ts', DENO_SCANNER_FRONTMATTER, NODE_SCANNER_FRONTMATTER],
+  ] as const) {
+    it.skipIf(isGitCryptEncrypted(denoPath))(
+      `${label} body is identical from the first section marker (literal; line endings only normalised)`,
+      () => {
+        // Line endings only are normalised (a CRLF checkout of one twin is not
+        // drift); every other character, inside literals included, must match.
+        const deno = extractScannerBody(denoPath).replace(/\r\n/g, '\n')
+        const node = extractScannerBody(nodePath).replace(/\r\n/g, '\n')
+        expect(
+          node,
+          `${label} drift between supabase/functions/_shared/ and scripts/indexer/_shared/ twins`
+        ).toBe(deno)
+      }
+    )
   }
 
   // SMI-5359 Wave 4.2c: the code_execution + obfuscated_directive detector twin —
@@ -983,15 +1026,15 @@ describe('core <-> edge sensitive_path/typosquat weight, coefficient, and co-sig
     )
   })
 
-  // Core does not export its coefficients as a lookup table — they're inlined
-  // literals in calculateRiskScore's weighted sum (SecurityScanner.helpers.ts:
-  // `breakdown.sensitivePaths * 0.04` / `breakdown.typosquat * 0.04`, both
-  // documented there as the shared 0.04 "advisory tier" coefficient — the same
-  // one used for externalUrls/ssrf). Pin edge's data-driven equivalent directly
-  // since there is no core export to diff against; the behavioral fixture suite
+  // Core's coefficients live in weights.ts (CATEGORY_COEFFICIENTS) and are applied by
+  // calculateRiskScore in SecurityScanner.risk-score.ts as a loop over that map
+  // (sensitivePaths and typosquat at 0.04, the shared "advisory tier" coefficient —
+  // the same one used for externalUrls/ssrf). Pin edge's data-driven equivalent directly:
+  // core keys its map by breakdown field and edge by finding type, so the two
+  // are not diffed key-for-key here; the behavioral fixture suite
   // below cross-checks the actual end-to-end riskScore instead, which is the
-  // real proof that core's inlined 0.04 and edge's tabled 0.04 behave alike.
-  it('sensitive_path and typosquat CATEGORY_COEFFICIENTS are 0.04 on edge (matching core SecurityScanner.helpers.ts)', async () => {
+  // real proof that core's 0.04 (weights.ts) and edge's tabled 0.04 behave alike.
+  it('sensitive_path and typosquat CATEGORY_COEFFICIENTS are 0.04 on edge (matching core weights.ts CATEGORY_COEFFICIENTS)', async () => {
     const edge = await import(NODE_SCANNER_CONTEXT)
     expect(edge.CATEGORY_COEFFICIENTS.sensitive_path).toBe(0.04)
     expect(edge.CATEGORY_COEFFICIENTS.typosquat).toBe(0.04)

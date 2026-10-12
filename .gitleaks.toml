@@ -89,6 +89,15 @@ description = "Clerk Secret Key"
 regex = '''sk_live_[a-zA-Z0-9]{32,}'''
 tags = ["api", "clerk"]
 
+# Skillsmith's own sk_live_ keys are base64url, so this rule's class includes - and _.
+# clerk-secret above matches the same prefix but is a different issuer's rule, left
+# untouched and unexamined. Why both: SMI-6840.
+[[rules]]
+id = "skillsmith-api-key"
+description = "Skillsmith personal API key (sk_live_, base64url body)"
+regex = '''sk_live_[A-Za-z0-9_-]{32,}'''
+tags = ["api", "skillsmith"]
+
 [[rules]]
 id = "clerk-test-secret"
 description = "Clerk Test Secret Key"
@@ -129,6 +138,10 @@ regexes = [
   # These are NOT real keys - they follow our test key format for validation
   '''sk_live_test_[a-zA-Z0-9]{32}''',
   '''sk_test_[a-zA-Z0-9]{32}''',
+
+  # A dummy all-zero placeholder in scripts/smoke-prod/inventory.sh, not a key. The only
+  # tracked string skillsmith-api-key matches. See SMI-6840.
+  '''sk_live_smoke_test_0+''',
 
   # False positive: handleCorsPreflightRequest function name contains 24+ alphanumeric
   # substring that matches the broad vercel-token rule regex [a-zA-Z0-9]{24}

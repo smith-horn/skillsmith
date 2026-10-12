@@ -8,29 +8,21 @@
  * reached 505 lines against the 500-line standard — the same sibling-split
  * convention `fan-out.leftovers.ts` already follows. `fan-out.overwrite.ts`
  * re-exports both entry points, so existing importers are unchanged.
+ *
+ * SMI-6735: the cross-process file-lock half (`withFileLock`) moved to
+ * `../config/file-lock.ts` — it was always fully generic, and two other
+ * modules elsewhere in the repo needed to share it instead of hand-rolling
+ * their own age-based lock protocol. Re-exported here so this file's own
+ * existing importers (`fan-out.overwrite.ts`) are unchanged.
  */
 import * as path from 'node:path'
 import * as fsp from 'node:fs/promises'
-import { setTimeout as delay } from 'node:timers/promises'
-import { acquireOwnedLock, StuckLockError, type StuckLockReason } from '../config/owned-lock.js'
+import { withFileLock } from '../config/file-lock.js'
 import { siblingPrefix } from './fan-out.leftovers.js'
 
+export { withFileLock }
+
 const LOCK_TAG = '.skillsmith-fanout'
-/** How long to wait for another process's lock on the same destination (ms). */
-const DESTINATION_LOCK_TIMEOUT_MS = 30_000
-/** Pause between attempts while another process holds the lock (ms). */
-const DESTINATION_LOCK_POLL_MS = 50
-/**
- * Refusals that end on their own, so they are waited out: a live holder, a
- * busy reclaim lock, and a holder we may not reclaim because auto-reclaim is
- * off (it still ends when that holder releases). An unparseable or legacy
- * claim never goes away by itself, so it fails at once.
- */
-const RETRYABLE_REASONS: ReadonlySet<StuckLockReason> = new Set([
-  'held',
-  'reclaim_unavailable',
-  'reclaim_disabled',
-])
 
 // Same-process callers for one destination queue here, so only one of them
 // holds the file lock at a time; the file lock arbitrates between processes.
@@ -46,49 +38,6 @@ async function queueKey(dest: string): Promise<string> {
   const parent = path.dirname(path.resolve(dest))
   const realParent = await fsp.realpath(parent).catch(() => parent)
   return path.join(realParent, path.basename(dest))
-}
-
-/**
- * Take the cross-process file lock without ever blocking the event loop.
- * `acquireOwnedLock` normally waits with a synchronous sleep, which froze a
- * whole MCP server for up to 10 s (round 7). Here each attempt is one
- * non-waiting try (`timeoutMs: 0`) that still reclaims a dead holder's lock
- * at once (`reclaimProbeAfterMs: 0`) and never waits on the reclaim lock
- * either (`reclaimLockTimeoutMs: 0`, round 8). Between attempts we await.
- */
-async function acquireFileLock(target: string, label: string): Promise<() => void> {
-  const deadline = Date.now() + DESTINATION_LOCK_TIMEOUT_MS
-  for (;;) {
-    try {
-      return acquireOwnedLock(target, {
-        timeoutMs: 0,
-        reclaimProbeAfterMs: 0,
-        reclaimLockTimeoutMs: 0,
-        label,
-      })
-    } catch (err) {
-      const retryable = err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason)
-      if (!retryable || Date.now() >= deadline) throw err
-      await delay(DESTINATION_LOCK_POLL_MS)
-    }
-  }
-}
-
-/**
- * Run `fn` holding the cross-process file lock `<target>.lock`, waiting
- * without blocking the event loop. Callers in one process contend on it too.
- */
-export async function withFileLock<T>(
-  target: string,
-  label: string,
-  fn: () => Promise<T>
-): Promise<T> {
-  const release = await acquireFileLock(target, label)
-  try {
-    return await fn()
-  } finally {
-    release()
-  }
 }
 
 /**

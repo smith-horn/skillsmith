@@ -185,10 +185,14 @@ export async function reviewRegistrySubmission(
 
 /**
  * Toggle deprecation via a plain RLS-protected update (admin_update policy,
- * column-scoped GRANT UPDATE (deprecated)). The trailing .select() is
+ * column-scoped GRANT UPDATE (deprecated)). The trailing .select('id') is
  * load-bearing: without it Supabase reports success with null data even when
  * RLS matched zero rows, so a non-admin (or a stale row) would look like a
- * successful update.
+ * successful update. Scoped to 'id' rather than a bare .select() (SMI-6651)
+ * — this call only needs to know a row was affected, and `authenticated` no
+ * longer holds table-level SELECT on this table's `content` column at all
+ * (20260915000000_private_registry_content_release_rpc.sql), so an
+ * unqualified select here would fail outright rather than merely over-fetch.
  */
 export async function setRegistryVersionDeprecated(
   supabase: SupabaseClient,
@@ -203,7 +207,7 @@ export async function setRegistryVersionDeprecated(
     .eq('team_id', teamId)
     .eq('skill_id', skillId)
     .eq('version', version)
-    .select()
+    .select('id')
 
   if (error) throw new Error(error.message)
   if (!data || data.length === 0) {

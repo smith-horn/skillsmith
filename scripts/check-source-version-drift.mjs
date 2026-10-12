@@ -28,6 +28,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// SMI-7012: re-exported below rather than reimplemented. This file used to carry
+// a byte-identical copy of the matcher, and both copies missed `chore(release)!:`.
+import { isReleaseBumpSubject as isReleaseBumpSubjectShared } from './lib/release-bump-subject.mjs'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const REPO_ROOT = join(__dirname, '..')
@@ -75,19 +79,23 @@ export function semverGt(a, b) {
 }
 
 /**
- * True iff a commit subject is a release-version-bump commit, using the same
- * 3-pattern matcher as findLastVersionBumpCommit in lib/release-changelog.ts.
- * Used only by the countReleasesSince fallback (when no publishable tags are
- * reachable after the baseline).
+ * True iff a commit subject is a release-version-bump commit.
+ *
+ * SMI-7012: this was a byte-identical COPY of the matcher in
+ * lib/release-changelog.ts, and both copies carried the same defect —
+ * `startsWith('chore(release):')` cannot match `chore(release)!:`, which is what
+ * core 0.13.0's release commit actually is. Fixing one site would have left the
+ * other wrong, so the matcher moved to lib/release-bump-subject.mjs and both
+ * consumers import it.
+ *
+ * Re-exported rather than removed: this name is part of this module's tested
+ * surface (scripts/tests/check-source-version-drift.test.ts imports it), and
+ * callers here read better with the local name. Still used only by the
+ * countReleasesSince fallback, for when no publishable tags are reachable after
+ * the baseline — tags being the authoritative boundary per ADR-177 § 4, which
+ * this file already preferred.
  */
-export function isReleaseBumpSubject(subject) {
-  if (typeof subject !== 'string') return false
-  return (
-    subject.startsWith('chore(release):') ||
-    subject.startsWith('chore: bump version') ||
-    /^chore:.*bump.*\d+\.\d+\.\d+/.test(subject)
-  )
-}
+export const isReleaseBumpSubject = isReleaseBumpSubjectShared
 
 function git(args) {
   return execFileSync('git', args, {

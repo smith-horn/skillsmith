@@ -20,18 +20,45 @@
  * @module @skillsmith/core/install/remove-if-same
  */
 import { randomBytes } from 'node:crypto'
-import type { Stats } from 'node:fs'
+import type { BigIntStats } from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
 
 /** Tag in a parked entry's name: `.<name>.skillsmith-removing-<32 hex>`. */
 export const PARK_TAG = '.skillsmith-removing-'
 
-/** An entry's device and inode, to tell it apart from anything later put at its path. */
-export interface EntryIdentity {
-  dev: number
-  ino: number
-}
+/**
+ * An entry's device and inode, to tell it apart from anything later put at
+ * its path.
+ *
+ * Round 8 (SMI-6732 C1): widened to accept `bigint` alongside the original
+ * `number`. The uninstall path now reads `dev`/`ino` as `bigint` (see
+ * `skill-installation.removal-identity.ts`'s `DirIdentity`), since a
+ * `number`-typed `st_ino` has already lost precision above 2^53 on some
+ * filesystems. Every OTHER caller of {@link removeIfSame} still passes a
+ * plain `fs.Stats` (`number`-typed) and is unaffected -- see
+ * {@link removeIfSame}'s own `sameIdentity` comparison for how the two
+ * domains are reconciled without changing what a `number`-typed caller has
+ * always compared.
+ *
+ * Round 10 (SMI-6732 R4): a plain `{dev: number | bigint; ino: number | bigint}`
+ * permitted a MIXED pair -- `{dev: number, ino: bigint}` -- that no producer
+ * writes today but that the type nonetheless allowed. A mixed pair falls to
+ * the `Number` branch below and silently discards the `ino` half's precision,
+ * which is exactly the hazard `bigint` was added to close. A union of the two
+ * legitimate shapes makes the mixed pair unrepresentable, so `sameIdentity`
+ * can branch on one field and the type system guarantees the other agrees.
+ *
+ * Round 10 (SMI-6732 R3): the bigint arm also carries an OPTIONAL
+ * `birthtimeNs`, for the same reason `DirIdentity` does -- see
+ * {@link sameIdentity}'s own comparison. Optional, not required: a caller
+ * that only has `dev`/`ino` (there is none today, but nothing here should
+ * require inventing a birthtime to satisfy the type) still type-checks, and
+ * the comparison simply skips the check it cannot make.
+ */
+export type EntryIdentity =
+  | { dev: number; ino: number }
+  | { dev: bigint; ino: bigint; birthtimeNs?: bigint }
 
 /**
  * Result of {@link removeIfSame}. `reason` reads after the path, e.g.
@@ -113,6 +140,68 @@ export function parkedLeftoverWarning(parked: string): string {
 }
 
 /**
+ * Compares `expected` and `actual` in the domain of `expected`. `actual` is
+ * always read `bigint` (every caller here reads via `{bigint: true}`), but
+ * `expected` may still be a plain `fs.Stats`-derived `number`, from one of
+ * {@link removeIfSame}'s six other, unmodified call sites (fan-out cleanup x2,
+ * fan-out overwrite x3, install rollback).
+ *
+ * A caller that captured its identity as a `number` has already lost any
+ * bits above 2^53 -- widening it to `BigInt` cannot recover them, so
+ * comparing in the `bigint` domain would report a spurious DIFFERENCE for
+ * those callers on a filesystem where it matters. Narrowing `actual` to
+ * `number` instead reproduces EXACTLY the comparison those callers have
+ * always made; only a caller that itself captured a `bigint` identity (the
+ * uninstall path) gets the wider, precision-preserving comparison.
+ *
+ * Round 10 (SMI-6732 R2): both branches were previously unpinned -- reverting
+ * the bigint branch to a `Number()` comparison, or reverting the number
+ * branch to widen `expected` to `BigInt` instead of narrowing `actual` to
+ * `Number`, left the whole suite green. The bigint-branch mutant is caught
+ * only by two inodes that are DISTINCT as `bigint` but collapse to the SAME
+ * `Number` -- see `skill-installation.uninstall.guard.test.ts`'s CASE U. The
+ * number-branch mutant is caught only when `expected` is a LOSSY `Number()`
+ * capture of an inode past 2^53 -- every existing regression test used a
+ * small, real inode, where `BigInt(Number(x)) === x` holds trivially and
+ * cannot discriminate the two rules -- see CASE L2.
+ *
+ * Round 10 (SMI-6732 R3): the bigint branch also compares `birthtimeNs`, by
+ * the SAME both-non-zero rule `identityChanged`
+ * (`skill-installation.removal-identity.ts`) uses, closing a gap that rule
+ * does not reach. `identityChanged` only covers the window from the removal
+ * guard's own read to `performUninstall`'s `seen` read; `removeIfSame` opens
+ * TWO MORE windows after that -- `seen` to this function's own `before`
+ * lstat, and `before` to the re-check after the park rename -- and a
+ * filesystem that reuses a freed inode immediately (ext4) can be swapped
+ * through either one. The number branch is deliberately left alone: every
+ * caller there passes a plain `fs.Stats`, which has no `birthtimeNs` at all.
+ */
+function isBigintIdentity(
+  id: EntryIdentity
+): id is { dev: bigint; ino: bigint; birthtimeNs?: bigint } {
+  return typeof id.dev === 'bigint' && typeof id.ino === 'bigint'
+}
+
+function sameIdentity(
+  expected: EntryIdentity,
+  actual: { dev: bigint; ino: bigint; birthtimeNs: bigint }
+): boolean {
+  if (isBigintIdentity(expected)) {
+    if (expected.dev !== actual.dev || expected.ino !== actual.ino) return false
+    if (
+      expected.birthtimeNs !== undefined &&
+      expected.birthtimeNs !== 0n &&
+      actual.birthtimeNs !== 0n &&
+      expected.birthtimeNs !== actual.birthtimeNs
+    ) {
+      return false
+    }
+    return true
+  }
+  return Number(expected.dev) === Number(actual.dev) && Number(expected.ino) === Number(actual.ino)
+}
+
+/**
  * Remove `target` (a folder recursively, anything else with `unlink`) only if
  * it is still the entry `expected` describes. An entry that is already gone
  * counts as removed. Anything else is left alone, and whatever this call
@@ -127,14 +216,18 @@ export function parkedLeftoverWarning(parked: string): string {
  * destroy an entry, while leaving one parked merely moves it, recoverably,
  * and says where it went. The identity is also checked once BEFORE the entry
  * is parked, so the ordinary mismatch moves nothing at all.
+ *
+ * Round 8 (SMI-6732 C1): both `lstat`s below read `{bigint: true}` — see
+ * {@link sameIdentity} for how that stays behaviour-identical for the six
+ * other callers, which still pass a `number`-typed identity.
  */
 export async function removeIfSame(
   target: string,
   expected: EntryIdentity
 ): Promise<CheckedRemoval> {
-  let before: Stats
+  let before: BigIntStats
   try {
-    before = await fsp.lstat(target)
+    before = await fsp.lstat(target, { bigint: true })
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { removed: true }
     return {
@@ -142,7 +235,7 @@ export async function removeIfSame(
       reason: `could not be checked (${errorCode(err)}), so it was left in place`,
     }
   }
-  if (before.dev !== expected.dev || before.ino !== expected.ino) {
+  if (!sameIdentity(expected, before)) {
     return { removed: false, reason: 'was replaced by something else, so it was left in place' }
   }
   const parked = parkedName(target)
@@ -155,10 +248,10 @@ export async function removeIfSame(
       reason: `could not be moved aside to be removed (${errorCode(err)}), so it was left in place`,
     }
   }
-  let now: Stats | undefined
+  let now: BigIntStats | undefined
   let checkError: unknown
   try {
-    now = await fsp.lstat(parked)
+    now = await fsp.lstat(parked, { bigint: true })
   } catch (err) {
     checkError = err
   }
@@ -179,7 +272,7 @@ export async function removeIfSame(
     }
     return { removed: false, reason: `${why} and is now at ${parked}` }
   }
-  if (now.dev !== expected.dev || now.ino !== expected.ino) {
+  if (!sameIdentity(expected, now)) {
     // Something took the path between the check above and this rename, so what
     // is parked belongs to whoever put it there. A regular file goes back
     // atomically; anything else is never renamed back over what is at the path
@@ -232,7 +325,11 @@ type FileRestore = 'restored' | 'restored-with-link' | 'not-restored'
  * says whether the link under the parked name was cleaned up, so a caller
  * that leaves two links says so rather than reporting a plain restore.
  */
-async function linkFileBack(parked: string, target: string, entry: Stats): Promise<FileRestore> {
+async function linkFileBack(
+  parked: string,
+  target: string,
+  entry: BigIntStats
+): Promise<FileRestore> {
   if (!entry.isFile()) return 'not-restored'
   try {
     await fsp.link(parked, target)

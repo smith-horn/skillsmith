@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Breaking**: Skillsmith now requires VS Code 1.125 or later. If you're on an earlier version,
+  you keep the version of Skillsmith you have installed but won't receive updates until you update
+  VS Code. Raising the minimum lets the extension be built and published against the current VS Code
+  API.
+
+- **Docs**: SMI-6532 -- `manifestReader.ts` now states in the file itself that nothing consumes its
+  two update-reason tables yet. Its two sibling tables (the MCP one and the parity test in core) each
+  said so in their own headers; this one did not, so a reader opening only this file saw carefully
+  maintained data and no signal that it is preparatory. Found by the post-merge retro on PR #2952.
+
+- **Feature**: SMI-6532 step 6 (preparatory -- see the scope note below) -- `manifestReader` now also carries two tables: a total `Record` from
+  every update skip reason and result code to the text this extension will show, and a mirror of which
+  remediation kind each member maps to. **Nothing consumes either yet**: the call site arrives with
+  the CLI/gate work tracked on SMI-6531, so this is preparatory data, not user-visible behaviour.
+
+  Two guards, and they cover different things -- an earlier version of this entry merged them and was
+  wrong as a result. TypeScript enforces that the text table is exhaustive over **this package's own
+  copy** of the two unions, so deleting an entry fails `tsc` here (measured: TS2741). It cannot see
+  core adding a member, because the copy is what the table is typed against; a parity test in core
+  AST-reads this file and is what catches the copy drifting from core's closed sets.
+
+  The remediation mirror is what keeps that parity test non-vacuous. The MCP surface will obtain its
+  kinds from core's own `remediationFor`, so comparing MCP against core would compare core with
+  itself; this copy can genuinely drift, so it is the one worth checking.
+
+- **Feature**: SMI-6532 -- the existing `manifestReader` service now carries the closed sets of
+  update skip reasons and result codes (23 and 15 members) that the update eligibility gate uses.
+  They are deliberately mirrored from `@skillsmith/core` rather than imported, because this
+  extension does not depend on that package; a test in core pins the two copies to the same
+  members in the same order, so they cannot drift apart silently. Nothing in the extension reads
+  these values yet, so there is no user-visible behaviour change in this release.
+
 ## v0.7.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.7.11).

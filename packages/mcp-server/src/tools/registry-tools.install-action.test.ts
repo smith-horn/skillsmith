@@ -46,8 +46,12 @@ import {
   executePrivateRegistryManage,
   privateRegistryManageInputSchema,
   setPrivateRegistryService,
+  type PrivateRegistryService,
   type StubRegistryService,
 } from './registry-tools.js'
+import { registrySkillNotFoundMessage } from './registry-tools.content.types.js'
+import { getSkillContent } from './registry-tools.live.content.js'
+import type { UserClientBinding } from './registry-tools.live.auth.js'
 
 // SMI-6622: the "Dispatch" tests below go through `executePrivateRegistryManage`, which now
 // ALWAYS attempts real team resolution (never a placeholder id just because the stub SERVICE is
@@ -388,5 +392,91 @@ describe('private_registry_manage(action:"install") — Antigravity fails closed
     // unwinds the whole install atomically (SKILL.md included) when the companion-agent step
     // throws, so the skill's install directory must not exist on disk at all.
     await expect(fs.access(path.join(skillsDir, 'acme-tool'))).rejects.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-6651 (plan D14, round-8 scope comment): not-found byte identity across causes, at the
+// install action's own return shape.
+// ---------------------------------------------------------------------------
+/**
+ * A live-shaped `PrivateRegistryService` whose `getContent()` is the REAL `getSkillContent()`
+ * (registry-tools.live.content.ts), wired to an RPC fake that always returns
+ * `{"status":"not_found"}` — so the test below exercises the actual not-found mapping, not a
+ * hand-rolled stand-in for it. Every other method is unused by `executeRegistryInstall()` and
+ * stubbed only to satisfy the interface.
+ */
+function makeReleaseRpcBackedService(): PrivateRegistryService {
+  const binding: UserClientBinding = {
+    client: {
+      rpc: async () => ({ data: { status: 'not_found' }, error: null }),
+      from: () => {
+        throw new Error('must not be called — the content path is RPC-only (SMI-6651)')
+      },
+    } as unknown as UserClientBinding['client'],
+    actorUserId: 'install-action-test-user',
+    role: 'member',
+  }
+  return {
+    getContent: (teamId: string, skillId: string, version?: string) =>
+      getSkillContent({ binding, teamId, skillId, version }),
+    publish: vi.fn(),
+    list: vi.fn(),
+    get: vi.fn(),
+    deprecate: vi.fn(),
+    undeprecate: vi.fn(),
+    getNamespace: vi.fn(),
+    submissions: vi.fn(),
+    review: vi.fn(),
+  } as unknown as PrivateRegistryService
+}
+
+/** Strips one exact skillId out of a message so two messages differing only by which skillId
+ *  they embed compare equal — the byte-identity property is "identical shape", not "identical
+ *  string", once the message is known to embed the id (asserted separately below). */
+function normalizeSkillId(message: string, skillId: string): string {
+  return message.split(skillId).join('<SKILL_ID>')
+}
+
+describe('private_registry_manage(action:"install") — not-found byte identity across causes (SMI-6651)', () => {
+  it('an other-team skillId and a genuinely missing one produce byte-identical errors (skillId aside)', async () => {
+    const service = makeReleaseRpcBackedService()
+    const otherTeamId = 'globex/secret'
+    const missingId = 'myteam/does-not-exist'
+
+    const otherTeam = await executeRegistryInstall({
+      input: { action: 'install', skillId: otherTeamId },
+      teamId: TEAM,
+      dataSource: 'stub',
+      service,
+      context: mockContext,
+      createInstaller: () => makeInstaller(),
+    })
+    const missing = await executeRegistryInstall({
+      input: { action: 'install', skillId: missingId },
+      teamId: TEAM,
+      dataSource: 'stub',
+      service,
+      context: mockContext,
+      createInstaller: () => makeInstaller(),
+    })
+
+    expect(otherTeam.success).toBe(false)
+    expect(missing.success).toBe(false)
+
+    // The message DOES embed the skill id (registrySkillNotFoundMessage) — confirmed explicitly
+    // so the normalization below is known to be removing a real difference, not papering over an
+    // unrelated one.
+    expect(otherTeam.error).toBe(registrySkillNotFoundMessage(otherTeamId))
+    expect(missing.error).toBe(registrySkillNotFoundMessage(missingId))
+    expect(otherTeam.error).toContain(otherTeamId)
+    expect(missing.error).toContain(missingId)
+
+    // SMI-6598 revert-then-restore target: temporarily appending anything skillId-length-keyed
+    // (or otherwise cause-dependent) to one branch's message in registry-tools.install-action.ts
+    // makes this assertion fail — the skill id is the ONLY difference.
+    expect(normalizeSkillId(otherTeam.error ?? '', otherTeamId)).toBe(
+      normalizeSkillId(missing.error ?? '', missingId)
+    )
   })
 })

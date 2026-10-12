@@ -77,10 +77,13 @@ jobs:
         # dist/src/_lib/mcp-disconnect-worker.js — without a build step it never
         # exists and the test times out (10s, doubled by vitest.preset.ts's
         # retry-on-timeout condition) instead of failing clearly. The root
-        # `npm run typecheck` above is `tsc --build`, which only covers
-        # tsconfig.json's project references (core, mcp-server, cli, enterprise) —
-        # doc-retrieval-mcp is NOT one of them, so it must be built explicitly, in
-        # dependency order (core first, since doc-retrieval-mcp depends on it).
+        # `npm run typecheck` above runs `tsc --build` as one of its two halves
+        # (SMI-6975 made it an orchestrator; the other half checks non-test
+        # scripts/). That half still only covers tsconfig.json's project
+        # references (core, mcp-server, cli, enterprise) — doc-retrieval-mcp is
+        # NOT one of them, so it must be built explicitly, in dependency order
+        # (core first, since doc-retrieval-mcp depends on it). Neither half of
+        # the typecheck builds it.
         run: |
           set -eu
           npm run build -w @skillsmith/core

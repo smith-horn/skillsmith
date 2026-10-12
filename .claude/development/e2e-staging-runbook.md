@@ -167,9 +167,10 @@ They only rotate if the team or project ID changes.
 
 The workflow caches `~/.vercel/cache/` keyed on the website source
 hash + `vercel.json`. Warm hits save ~20s/run on `vercel build`. The
-global `vercel` binary (installed via `npm install -g vercel@latest`)
-is intentionally not cached — it's small (~50 MB) and pinning to
-`@latest` keeps us aligned with current edge runtime fixes.
+`vercel` binary is the lockfile copy installed by the job's own `npm ci`
+(SMI-6944, `scripts/ci/use-lockfile-vercel.sh`), so it is covered by the
+`npm ci` cache and the root `overrides`; there is no separate global
+install to cache or to pin.
 
 ### Failure-mode runbook
 

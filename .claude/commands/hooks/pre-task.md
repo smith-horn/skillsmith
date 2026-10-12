@@ -78,7 +78,7 @@ Topology and complexity routing moved to `hooks route -t "<task>"` and `hooks mo
 
 ## Integration
 
-This hook is automatically called by Claude Code when:
+Nothing in this repo calls this automatically — there is no `Task`-matched hook that invokes ruflo (`.claude/settings.json`'s only PostToolUse `Task` entry runs the governance audit). Upstream ruflo documents it as Claude-Code-invoked when:
 
 - Starting a new task
 - Resuming work after a break

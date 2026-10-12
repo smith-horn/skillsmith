@@ -4,6 +4,7 @@
  */
 
 import { readdir, readFile, realpath, stat } from 'fs/promises'
+import { existsSync } from 'node:fs'
 import { join } from 'path'
 import {
   ManifestManager,
@@ -58,13 +59,41 @@ export {
 export { computeHasUpdates } from './skills-directory.hash-comparison.js'
 import { computeHasUpdates } from './skills-directory.hash-comparison.js'
 
+// ADR-175 / SMI-6946: the update-status type and its classifiers live in
+// skills-directory.update-status.ts (the fourth extraction from this file for
+// the 500-line standard) -- re-exported, same convention as above.
+export {
+  classifyOpenFailure,
+  describeQueryFailure,
+  resolveUpdateStatus,
+  type UpdateStatus,
+} from './skills-directory.update-status.js'
+import {
+  classifyOpenFailure,
+  resolveUpdateStatus,
+  type UpdateStatus,
+} from './skills-directory.update-status.js'
+
 export interface InstalledSkill {
   name: string
   path: string
   version: string | null
   trustTier: TrustTier
   installDate: string
-  hasUpdates: boolean
+  updateStatus: UpdateStatus
+  /**
+   * Why `updateStatus` is `unknown`, in one short human-readable clause.
+   *
+   * Set only for `unknown`. Callers aggregate these into **one** warning per
+   * command rather than one per skill — this module deliberately performs no
+   * output of its own, so the diagnostic travels out with the data.
+   *
+   * Explicitly `| undefined` because this package sets
+   * `exactOptionalPropertyTypes`, under which an optional property may be
+   * ABSENT but not present-and-undefined. Every construction site sets this key
+   * unconditionally, so the union is load-bearing rather than cosmetic.
+   */
+  updateStatusReason?: string | undefined
   /**
    * SMI-4578: which client's directory this skill was discovered under.
    * `'local'` = repo-local `./.claude/skills`. Other values are
@@ -135,7 +164,8 @@ async function resolvesToDirectory(
  *
  * When dbPath is provided, opens the skill_versions table to determine
  * whether a newer content hash has been recorded since the skill was installed.
- * Falls back to hasUpdates: false when the database is unavailable.
+ * Reports `updateStatus: 'unknown'` when the version lookup is unavailable for
+ * a reason that leaves the answer unknowable (ADR-175 § 5) — never `'current'`.
  *
  * @param skillsDir   Directory to scan for installed skills
  * @param dbPath      Optional path to the Skillsmith SQLite database
@@ -187,18 +217,29 @@ export async function getSkillsFromDirectory(
   // Open the version repository if a db path was provided
   let versionRepo: SkillVersionRepository | null = null
   let dbConn: Database | null = null
-  if (dbPath) {
+  // Non-null when the version lookup is unavailable for a reason that leaves
+  // update state UNKNOWABLE, rather than knowably "nothing installed".
+  let unknownReason: string | undefined
+  // ADR-175 § 5: absence is decided BEFORE the open, because the two drivers
+  // disagree about what an absent path does. Native throws SQLITE_CANTOPEN;
+  // WASM **succeeds** with an empty in-memory database, so the absence would
+  // resurface as a per-skill query failure and render `unknown` — wrong, since
+  // an absent database is this contract's one benign case. Reachable on any
+  // machine without a native build, which is the normal npx install.
+  //
+  // Not the precheck ADR § 2 forbids: that bars `existsSync` from classifying a
+  // failure CODE, which it cannot do. This asks a different question.
+  if (dbPath && existsSync(dbPath)) {
     try {
       // SMI-5139: this is a pure-read version lookup — open read-only so the
       // WASM driver does not persist (write) on close() and throw EROFS when
-      // dbPath is unwritable/absent. A read-only open of an absent db throws
-      // (native driver), which the catch below degrades to hasUpdates: false.
+      // dbPath is unwritable.
       dbConn = await openCliDatabase(dbPath, { readonly: true })
       versionRepo = new SkillVersionRepository(dbConn)
-    } catch {
-      // DB not available yet — fall back to hasUpdates: false
+    } catch (error) {
       versionRepo = null
       dbConn = null
+      unknownReason = classifyOpenFailure(error, dbPath)
     }
   }
 
@@ -237,19 +278,20 @@ export async function getSkillsFromDirectory(
           // on-disk hash — see computeHasUpdates()'s doc comment for why the
           // pre-fix version of this block never actually reached the
           // manifest's stored hash.
-          let hasUpdates = false
-          if (versionRepo && parsed) {
-            try {
-              const parsedAny = parsed as unknown as Record<string, unknown>
-              const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
-              const latestVersion = await versionRepo.getLatestVersion(skillId)
-              const manifestEntry = manifestEntries[manifestKeyFor(entry.name, effectiveClient)]
-              hasUpdates = computeHasUpdates(manifestEntry, content, latestVersion, skillsDir)
-            } catch {
-              // Version check failed — safe to ignore, fall back to false
-              hasUpdates = false
-            }
-          }
+          const repo = versionRepo
+          const { updateStatus, updateStatusReason } = await resolveUpdateStatus(
+            repo && parsed
+              ? async () => {
+                  const parsedAny = parsed as unknown as Record<string, unknown>
+                  const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
+                  const latestVersion = await repo.getLatestVersion(skillId)
+                  const manifestEntry = manifestEntries[manifestKeyFor(entry.name, effectiveClient)]
+                  return computeHasUpdates(manifestEntry, content, latestVersion, skillsDir)
+                }
+              : null,
+            unknownReason,
+            dbPath
+          )
 
           skills.push({
             name: parsed?.name || entry.name,
@@ -257,7 +299,8 @@ export async function getSkillsFromDirectory(
             version: parsed?.version || null,
             trustTier: parsed ? parser.inferTrustTier(parsed) : 'unknown',
             installDate: skillMdStat.mtime.toISOString().split('T')[0] || 'Unknown',
-            hasUpdates,
+            updateStatus,
+            updateStatusReason,
             installedVia,
             scope,
             untracked: manifestKeys
@@ -282,7 +325,11 @@ export async function getSkillsFromDirectory(
             version: null,
             trustTier: 'unknown',
             installDate: dirStat.mtime.toISOString().split('T')[0] || 'Unknown',
-            hasUpdates: false,
+            // No SKILL.md, so there is no installed version to be behind — but
+            // a database fault still makes the answer unknowable, so it is not
+            // unconditionally `current`.
+            updateStatus: unknownReason ? 'unknown' : 'current',
+            updateStatusReason: unknownReason,
             installedVia,
             scope,
             untracked: manifestKeys

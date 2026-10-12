@@ -42,10 +42,11 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import { probePath, requirePresence } from './_lib/probe-path.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..', '..')
@@ -75,8 +76,16 @@ afterEach(() => {
   }
 })
 
+// SMI-6771: probePath + requirePresence replace a bare existsSync() here --
+// see plan-review-rubric-parity.test.ts's own migration comment for why
+// existsSync's EACCES/ENOTDIR-as-false collapse matters for a submodule
+// path like docs/internal's own .git.
+const REAL_DOCS_INTERNAL_GIT_DIR = join(REAL_DOCS_INTERNAL, '.git')
 const realDocsInternalReady =
-  existsSync(join(REAL_DOCS_INTERNAL, '.git')) &&
+  requirePresence(
+    probePath(REAL_DOCS_INTERNAL_GIT_DIR),
+    `docs/internal .git (${REAL_DOCS_INTERNAL_GIT_DIR})`
+  ) &&
   shaResolvable(REAL_DOCS_INTERNAL, S_SHA) &&
   shaResolvable(REAL_DOCS_INTERNAL, B_SHA)
 

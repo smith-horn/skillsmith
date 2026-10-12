@@ -21,6 +21,7 @@ import { parseArgs } from 'node:util'
 import {
   cooldownDecision,
   readEntry,
+  readEntryResult,
   recordResult,
   renderAutohealBanner,
   resolveAutohealLogPath,
@@ -88,8 +89,11 @@ function main(): void {
   if (command === 'banner') {
     const now = new Date()
     const logPath = typeof values.log === 'string' ? values.log : resolveAutohealLogPath(now)
-    const entry = key ? readEntry(key) : null
-    process.stdout.write(renderAutohealBanner(entry, { now, logPath }))
+    // SMI-6995: the banner reader is the result-shaped one. `key` being null
+    // is a genuine "nothing to look up", which renders as `missing` -> silent,
+    // matching the previous behaviour for that case exactly.
+    const read = key ? readEntryResult(key) : ({ status: 'missing' } as const)
+    process.stdout.write(renderAutohealBanner(read, { now, logPath }))
     return
   }
 

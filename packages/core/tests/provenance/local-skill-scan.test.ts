@@ -6,7 +6,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
-import { scanLocalSkills } from '../../src/provenance/local-skill-scan.js'
+import { scanLocalSkills, isBackupDir } from '../../src/provenance/local-skill-scan.js'
 
 let root = ''
 
@@ -58,5 +58,90 @@ describe('scanLocalSkills', () => {
 
   it('returns [] for an absent root', async () => {
     expect(await scanLocalSkills(path.join(os.tmpdir(), 'prov-does-not-exist-xyz'))).toEqual([])
+  })
+
+  // SMI-6532 A2 §4.2 / SMI-6358: ActivationManager.ts:329 creates
+  // `${installPath}.backup-${Date.now()}` — a bare epoch-ms suffix with no
+  // internal hyphen. The original `/\.backup-\d{8}-/` never matched this
+  // shape, so this backup directory was enumerated as an ordinary skill
+  // instead of being flagged `isBackup`. Seen failing against the unfixed
+  // narrow regex before the fix landed (SMI-6598).
+  it('flags an ActivationManager-style backup dir (bare Date.now() suffix, no hyphen)', async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'prov-scan-'))
+    const backupName = 'linear.backup-1758600000000'
+    fs.mkdirSync(path.join(root, backupName), { recursive: true })
+    fs.writeFileSync(path.join(root, backupName, 'SKILL.md'), 'snapshot')
+
+    const entries = await scanLocalSkills(root)
+    const backup = entries.find((e) => e.skillName === backupName)
+
+    expect(backup).toBeDefined()
+    expect(backup!.isBackup).toBe(true)
+    expect(backup!.skillMd).toBeNull()
+  })
+})
+
+describe('isBackupDir', () => {
+  it('matches both live backup-dir naming shapes', () => {
+    // Known-positive: the documented YYYYMMDD-HHMMSS shape.
+    expect(isBackupDir('linear.backup-20260419-124019')).toBe(true)
+    // Known-positive: ActivationManager.ts:329's bare Date.now() shape.
+    expect(isBackupDir('x.backup-1758600000000')).toBe(true)
+    // A shape with digits but no trailing hyphen segment.
+    expect(isBackupDir('y.backup-20260419')).toBe(true)
+  })
+
+  it('rejects a known-negative control and a skill legitimately named *.backup-<non-digits>', () => {
+    // Known-negative control.
+    expect(isBackupDir('plain-skill')).toBe(false)
+    // A false positive here would silently hide a real skill from updates
+    // (see the predicate's own doc comment on failure direction) — a
+    // non-digit suffix must never match.
+    expect(isBackupDir('my.backup-notes')).toBe(false)
+  })
+
+  // SMI-6532 F4: `/\.backup-\d+(-\d+)*$/` (this branch's own prior
+  // version) end-anchored the match, which NARROWED it below even the
+  // original `/\.backup-\d{8}-/` for any name carrying a suffix after the
+  // digit run — a real false negative, the opposite of the direction the
+  // predicate's docstring claims it errs toward. Every row below is
+  // load-bearing regression coverage for that defect, grouped by how each
+  // regex generation treated it:
+  //   - widened:            old `\d{8}-` regex missed it, current matches.
+  //   - same:                every regex generation matches it.
+  //   - previously-narrowed: old `\d{8}-` regex matched it, but the
+  //                          `$`-anchored intermediate regex did not.
+  //   - controls:            must never match, under any generation.
+  describe('case table (widened / same / previously-narrowed / controls)', () => {
+    const cases: Array<[name: string, expected: boolean]> = [
+      // widened
+      ['x.backup-1758600000000', true],
+      ['y.backup-20260419', true],
+      // same
+      ['linear.backup-20260419-124019', true],
+      // previously-narrowed — the `$`-anchored regex rejected all five.
+      ['foo.backup-20260419-124019.old', true],
+      ['foo.backup-20260419-124019-bak', true],
+      ['foo.backup-20260419-', true],
+      ['foo.backup-20260419-124019 (1)', true],
+      ['foo.backup-20260419-124019.tmp', true],
+      // controls
+      ['plain-skill', false],
+      ['my.backup-notes', false],
+    ]
+
+    // A parameterized suite over an empty or truncated table reports PASS
+    // (measured in this repo: forcing a fixture array to `[]` took a file
+    // from 31 tests to "7 passed", silently, per SMI-6598) — pin the
+    // table's own length against a literal so a future edit that empties
+    // or truncates it fails loudly instead of reporting a clean, vacuous
+    // run.
+    it('covers exactly 10 cases (2 widened + 1 same + 5 previously-narrowed + 2 controls)', () => {
+      expect(cases.length).toBe(10)
+    })
+
+    it.each(cases)('isBackupDir(%j) === %j', (name, expected) => {
+      expect(isBackupDir(name)).toBe(expected)
+    })
   })
 })

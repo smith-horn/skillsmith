@@ -14,6 +14,33 @@ import { vi } from 'vitest'
 import type { ToolContext } from '../context.js'
 
 export const RESOLVED_TEAM = 'team-alpha'
+
+/** ADR-178: the RPC every client-reported registry audit event goes through. */
+export const AUDIT_RPC = 'record_private_registry_audit_attempt'
+
+/**
+ * The ten named parameters the RPC accepts, sorted. There is deliberately no actor, transport or
+ * auth_path parameter: the database derives them (ADR-178), so a client cannot name them.
+ */
+export const AUDIT_RPC_PARAM_KEYS = [
+  'p_auth_role',
+  'p_content_hash',
+  'p_detail',
+  'p_file_count',
+  'p_license_key_fingerprint',
+  'p_operation',
+  'p_result',
+  'p_skill_id',
+  'p_team_id',
+  'p_version',
+]
+
+/** Just the audit RPC calls out of a fake client's recorded `rpcCalls`. */
+export function auditRpcCalls(
+  rpcCalls: Array<{ fn: string; params: Record<string, unknown> }>
+): Array<{ fn: string; params: Record<string, unknown> }> {
+  return rpcCalls.filter((c) => c.fn === AUDIT_RPC)
+}
 export const SAMPLE_CONTENT = { 'SKILL.md': '# My Skill\n\nDoes a useful thing.' }
 
 // ============================================================================

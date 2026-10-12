@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join, resolve, dirname, basename, sep, relative } from 'node:path'
-import matter from 'gray-matter'
+import { parseFrontmatter, type FrontmatterResult } from '../utils/frontmatter.js'
 import type { LocalSkillRecord } from './import-local.types.js'
 
 const SKILL_FILENAME = 'SKILL.md'
@@ -118,9 +118,9 @@ export async function parseSkillFile(filePath: string): Promise<LocalSkillRecord
     }
   }
 
-  let parsed: ReturnType<typeof matter>
+  let parsed: FrontmatterResult
   try {
-    parsed = matter(content)
+    parsed = parseFrontmatter(content)
   } catch (error) {
     return {
       id,
@@ -133,7 +133,7 @@ export async function parseSkillFile(filePath: string): Promise<LocalSkillRecord
     }
   }
 
-  const data = (parsed.data ?? {}) as Record<string, unknown>
+  const data = parsed.data
   const name =
     typeof data['name'] === 'string' && data['name'].length > 0
       ? (data['name'] as string)

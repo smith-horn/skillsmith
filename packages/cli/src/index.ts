@@ -60,6 +60,7 @@ import { displayStartupHeader } from './utils/license.js'
 import { resolveCommandPath, shouldShowStartupHeader } from './utils/startup-header-gate.js'
 import { applyRootQuietOption } from './utils/quiet-mode-gate.js'
 import { checkNodeVersion } from './utils/node-version.js'
+import { installFatalHandler } from './utils/fatal.js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { packageRoot } from './utils/package-root.js'
@@ -224,4 +225,10 @@ program.addCommand(createInventoryCommand())
 // SMI-5456 Wave 1 Step 5: install/uninstall the portable Skillsmith Agent pack
 program.addCommand(createAgentCommand())
 
-program.parse()
+// SMI-6961 F6: `parse()` does not await an async action's promise, so a
+// rejection escaped as an unhandled rejection — Node printed the raw message
+// plus a stack, bypassing `sanitizeError` and leaking absolute home paths.
+// `parseAsync` plus the handler routes every such failure through the
+// sanitizer. See utils/fatal.ts for why this is the mechanism-level fix.
+installFatalHandler()
+void program.parseAsync()

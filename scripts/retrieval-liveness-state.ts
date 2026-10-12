@@ -24,6 +24,7 @@ import { parseArgs } from 'node:util'
 import {
   alertDecision,
   readEntry,
+  readEntryResult,
   recordAlert,
   recordCheck,
   renderLivenessBanner,
@@ -108,8 +109,11 @@ function main(): void {
     const now = new Date()
     const logPath = typeof values.log === 'string' ? values.log : resolveLivenessLogPath(now)
     const autohealFailed = values['autoheal-failed'] === true
-    const entry = key ? readEntry(key) : null
-    process.stdout.write(renderLivenessBanner(entry, { now, logPath, autohealFailed }))
+    // SMI-6995: the banner reader is the result-shaped one. `key` being null
+    // is a genuine "nothing to look up", which renders as `missing` -> silent,
+    // matching the previous behaviour for that case exactly.
+    const read = key ? readEntryResult(key) : ({ status: 'missing' } as const)
+    process.stdout.write(renderLivenessBanner(read, { now, logPath, autohealFailed }))
     return
   }
 

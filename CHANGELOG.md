@@ -731,7 +731,7 @@ This release completes the migration from Claude-Flow V2 to V3, bringing signifi
   - Factory functions: `createApiClient()`, `generateAnonymousId()`
 
 - **API Response Caching** (SMI-1245)
-  - `ApiCache` class with LRU eviction
+  - `ApiCache` class with lowest-`hitCount` eviction (this entry read "LRU eviction" until SMI-6826; it was never recency-based)
   - Endpoint-specific TTLs (24h for skills, 1h for search)
   - Cache statistics and hit rate tracking
   - Global cache singleton via `getGlobalCache()`

@@ -29,7 +29,7 @@
  *     aren't in the curated affix list.
  *
  * Consumer-surface decision (Wave 1 Step 6): the install-time scanner path
- * (risk-score wiring — see types.ts/weights.ts/SecurityScanner.helpers.ts) is
+ * (risk-score wiring — see types.ts/weights.ts/SecurityScanner.risk-score.ts) is
  * the primary *enforcement* surface (blocks/warns before a skill lands on
  * disk). `skill_audit` (existing MCP tool) is the recommended primary
  * *consumer-facing* surface for on-demand querying of typosquat status on an

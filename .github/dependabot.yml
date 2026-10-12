@@ -1,5 +1,12 @@
 version: 2
 updates:
+  # SMI-6954 (owner decision 3, ADR-176 section 6): the second tracked lockfile,
+  # scripts/ruflo-seed/package-lock.json, deliberately gets NO version-update
+  # entry. Its pins are exact and every change moves SEED-MANIFEST.sha256, which
+  # is regenerated on arm64. The detector is the daily dependency-registry-expiry.yml
+  # seed reconcile (every unaccepted seed advisory fails it), plus Dependabot
+  # alerts, which do cover the seed manifest as non-blocking detection (measured;
+  # ADR-176 section 6).
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
@@ -95,20 +102,14 @@ updates:
       # tree-sitter 0.26.x. Re-evaluate when tree-sitter-wasms ≥ 0.2 ships.
       - dependency-name: 'web-tree-sitter'
         versions: ['>=0.26.0']
-      # SMI-4875: @opentelemetry/sdk-node <0.217.0 (GHSA-q7rr-3cgh-j5r3,
-      # Prometheus exporter process crash) is reachable ONLY via the
-      # ruflo → @claude-flow/cli → agentdb@3.0.0-alpha.11 devDependency path.
-      # ruflo is dev-only tooling (hive-mind / agent-spawning), not shipped at
-      # runtime: `npm audit --omit=dev` is clean and the CI Security Audit job
-      # already omits devDeps. agentdb pulls sdk-node transitively (it declares
-      # no direct sdk-node dep) so a Dependabot version-update PR cannot reach
-      # it; this entry is forward-defensive. Risk-accepted disposition.
-      # The version scope keeps alerts LIVE for the prod-tracked
-      # @skillsmith/core dependency (currently @opentelemetry/sdk-node@0.218.0,
-      # i.e. ≥0.217.0 — already patched). Drop this entry once @claude-flow/cli
-      # bumps agentdb's otel chain past 0.217.0.
-      - dependency-name: '@opentelemetry/sdk-node'
-        versions: ['<0.217.0']
+      # SMI-6956: vsce refuses to package when @types/vscode is newer than the
+      # extension's engines.vscode (packages/vscode-extension). Move it only by
+      # hand, together with engines.vscode, because raising engines.vscode raises
+      # the minimum VS Code version users need. Note: the pin on main already
+      # breaks this (1.125.0 against ^1.110.0, measured with vsce 3.9.2); that
+      # is tracked in SMI-7008; this rule only stops Dependabot widening it.
+      - dependency-name: '@types/vscode'
+        update-types: ['version-update:semver-minor', 'version-update:semver-major']
 
   - package-ecosystem: 'github-actions'
     directory: '/'

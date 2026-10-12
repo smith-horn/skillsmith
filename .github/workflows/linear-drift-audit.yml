@@ -42,7 +42,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/audit-linear-drift.mjs --json > /tmp/drift-results.json 2>&1
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
       - name: Check for drift
         id: check

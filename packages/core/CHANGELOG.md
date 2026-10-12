@@ -4,6 +4,574 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-7030 -- the scanner now raises an `executable_frontmatter` finding (critical,
+  flag-only) when any scanned file (SKILL.md or a bundled sibling file) opens with an executable
+  `---js` / `---javascript` frontmatter block. The finding carries a score coefficient of 0, so it
+  never changes `riskScore` on its own; it is reported so it can be acted on. Current clients
+  refuse to install a skill whose SKILL.md carries it, and a bundled non-doc file that opens with
+  `---js` is likewise rejected at install on new clients (except `package.json`, where only lifecycle-hook values are scanned). `skill_rescan` quarantines locally only
+  when SKILL.md itself carries it; a bundled sibling carrying it is not quarantined by rescan.
+- **Changed** (breaking for hand-built literals): SMI-7030 -- `RiskScoreBreakdown` gains a required
+  `executableFrontmatter` field. Code that constructs a `RiskScoreBreakdown` by hand must add it.
+- **Added**: SMI-7030 -- `calculateRiskScore` accepts an optional second `coefficients` argument.
+  It is a test seam; production callers pass one argument, and a lowered map would weaken the
+  quarantine gate.
+- **Added**: SMI-7030 -- `CATEGORY_COEFFICIENTS` is exported from the internal `weights.ts` module
+  (not re-exported from the scanner index, so not part of the package's public API).
+
+## v0.13.0
+
+- **Fix**: SMI-6991 -- a corruption refusal told users to switch to the driver that also refuses it (#3013)
+- **Removed** (breaking): SMI-6961 -- `isCorruptionError` and `backupCorruptDbFile` are gone, along
+  with `db/drivers/corruption.ts`. This is an API removal, not a deprecation, and it is deliberate
+  for both.
+
+  `backupCorruptDbFile` renamed a database out of the way. ADR-175 § 1 forbids that: SQLite
+  coordinates through file paths rather than inodes, so renaming a database another process may hold
+  open is undefined behaviour, and the two files then share a journal **by name** -- meaning one
+  database's recovery can read the other's content. Leaving it exported invited a consumer to
+  reintroduce the exact defect this release removes.
+
+  `isCorruptionError` matched substrings against arbitrary error text, so an incidental word in a
+  wrapper message or a file path could classify a healthy failure as corruption. Use
+  `isCorruptDatabaseError`, which matches `CorruptDatabaseError`'s stable `code`.
+
+  There is **no replacement for the backup helper**, by design. The refusal's message names the
+  files to move and the commands to run; which copy to keep is the user's decision, not a library's.
+
+- **Fixed**: SMI-6961 / ADR-175 § 1 -- the WASM (sql.js) driver no longer renames a corrupt
+  database aside and rebuilds an empty one. It now refuses with the same structured
+  `CorruptDatabaseError` the native driver throws, so a consumer branching on `error.code` gets
+  identical behaviour from either driver.
+
+  **Corrected (SMI-6991): `error.code` is identical, `remedyKind` is not.** `remedyKind: 'reindex'`
+  requires the extended code `SQLITE_CORRUPT_INDEX`, and it is reachable **only from the native
+  driver's thrown path**. The WASM driver cannot supply that code at all — `sqlJsCorruptionCode`
+  resolves exactly two messages, neither the index case. And **both** drivers' `quick_check` paths
+  report a verdict carrying no code, so index damage that `quick_check` finds yields `replace` on
+  native too: the divergence is per-path, not simply native-versus-WASM. A first draft of this entry
+  said "native yields `reindex` for an index-corrupt database", which generalised one fixture.
+
+  The user-visible consequence where it does diverge: for a file whose damage is reported as a
+  thrown index code, a native user is offered a non-destructive REINDEX and an npx user (where WASM
+  is the default driver) is told to move the database aside. Tracked in SMI-6991; until it is fixed,
+  treat `remedyKind: 'reindex'` as reachable only from native's thrown path. The old path was worse than a divergence: WASM `close()`
+  skips `persist()` on a read-only handle, so the rename left the database path **gone** rather than
+  replaced, and the next run opened an absent database and reported every skill up to date. Renaming
+  a database another process may hold open is what SQLite's own howtocorrupt documents as undefined
+  behaviour -- the two files then share a journal by name, so one database's recovery can read the
+  other's content.
+
+- **Fixed**: SMI-6961 -- the WASM driver now runs `PRAGMA quick_check(1)` before publishing a
+  handle. Measured: a database with a valid header and every page from 4096 onward overwritten --
+  the exact condition SMI-6931 was filed for -- **passes** the old `SELECT name FROM sqlite_master`
+  probe and opens cleanly, while `quick_check` reports the damage. Because `quick_check` *reports*
+  rather than throws, no `try`/`catch` around the open can observe it, which is why this is a
+  separate step rather than another catch arm -- and why its refusal carries no `sqliteCode`, there
+  being no thrown error to read one from.
+
+- **Changed**: SMI-6961 -- the refusal builder moved to `db/corrupt-refusal.ts` so both drivers
+  construct the identical error. No behaviour change on its own; it exists so the two drivers cannot
+  drift apart again.
+
+- **Fixed**: SMI-6961 -- two defects in the text of the refusal itself, both found in review, both
+  in words a user reads while deciding what to do with a database they cannot open.
+
+  The message claimed the database "holds no data that cannot be rebuilt from the registry". **That
+  was false.** Skills added with `import-local` are tagged `source='local'` precisely so registry
+  sync -- `--force` included -- will not overwrite them, so a sync cannot recreate them; quarantine
+  review decisions have no registry source either. It was the sentence telling the user there was
+  nothing to lose. It now says what a sync does and does not restore, and why the instructions move
+  the files rather than deleting them.
+
+  Separately, the `SQLITE_CORRUPT_INDEX` branch ended "move the files aside **as below**" with
+  nothing below it -- the `mv` block lived in the mutually exclusive `replace` arm of the same
+  ternary, so the fallback the message directed users to carried no command at all. Both branches
+  now render it from one binding. Nothing had ever rendered that branch: the existing assertion only
+  checked `remedyKind` membership, and both fixtures yield `replace`.
+
+- **Test**: SMI-6946 / ADR-175 -- the driver's refusal is now asserted on its **structured
+  contract**, not only its message. A pre-merge gate found that all seven refusal arms matched the
+  message text, so replacing `CorruptDatabaseError` with a plain `Error` carrying the same words left
+  the entire suite green -- and then a consumer's only discriminator is English prose again, which is
+  the defect SMI-6946 exists to remove. `CorruptDatabaseError` was constructed at exactly one site
+  and asserted in **zero** tests; `sqliteCode`, `remedyKind` and `verdict` appeared in no test in
+  either package. Three arms now assert `code`, `path`, `verdict` and `remedyKind` on both fixture
+  routes -- the open-throws route and the `quick_check`-reports route, which is the case that makes
+  `sqliteCode` a field rather than something read off `cause`, since nothing is thrown there and no
+  `cause` exists. The paired negative forbids the degenerate predicate: a plain `Error` carrying the
+  identical message must **not** be recognised. Measured: the mutation kills the three new arms and
+  all seven message arms survive it, which is the finding itself.
+
+- **Test**: SMI-6946 / ADR-175 -- a **consumer inventory**, run as a check rather than cited as a
+  count. ADR-175 required this and PR-1 shipped without it. SMI-6931 passed nine independent reviews
+  and still shipped a regression, because the driver was correct in isolation and the consumer was
+  correct before the driver changed -- and every one of those reviews scoped to the diff, which does
+  not contain its consumers. The check enumerates every file opening a database across all packages
+  (31 files today; 13 of them are CLI command files, across 17 call sites, all opening read-write
+  through one wrapper) and fails on any addition or removal, naming the path. A plain `grep` over the
+  same tree returns 35 files, and the four-file gap is the point: those four name an opener only in a
+  comment or an `@deprecated` note, which the known-negative control excludes by design. The red is not a defect report: it is a prompt to answer one
+  question for the new site -- when the driver refuses a corrupt database, what does this caller do
+  with the refusal? -- and record the answer. Because a source scan is the kind of instrument that
+  answers plausibly when aimed wrongly, it ships with a known-positive, a known-negative (a prose
+  mention must not count as a call site) and a file-count denominator; without those a scan matching
+  nothing would report a clean inventory forever.
+
+- **Docs**: SMI-6946 -- corrected, for the third time, the paragraph describing what the corruption
+  suite's refusal arms assert. It claimed two arms "additionally" compare the `-wal`, which reads as
+  a superset of the arms calling `expectUntouched`; the two sets are in fact **disjoint**. The
+  consequence is real: the arms with the strongest non-mutation claim are the ones that do not check
+  the directory listing. Per `pr-reviewer`'s own rule for a third correction to one piece of prose,
+  the review narrative is **deleted** rather than corrected again, and only the three disjoint groups
+  are stated. Both surfaces -- this file and the test's own header -- now say the same thing.
+
+- **Fix (reliability)**: SMI-6931 -- the **native** `better-sqlite3` driver now detects a corrupt
+  database and **refuses with an actionable diagnostic**, instead of throwing a raw SQLite error from
+  whatever query happened to touch a damaged page. The corruption handling added by SMI-4484 was
+  wired only into the WASM driver, while `createDatabase` prefers native -- so on any machine where
+  the native module loads, which is the normal configuration, a corrupt `skills.db` produced an
+  undiagnosable failure with no stated cause and no remedy. Found live: `get_skill` failed on every
+  call on the owner's machine, with `integrity_check` reporting 101 damaged pages.
+
+  **It refuses rather than repairing.** An earlier draft backed the file aside and rebuilt it,
+  mirroring the WASM driver. A cross-family review rejected that as Critical and was right: this
+  database is shared between processes -- a CLI invocation and a long-lived MCP server can both hold
+  it -- and SQLite coordinates processes through the file **paths**, not the inodes. Renaming it out
+  from under a live handle leaves that process writing into the renamed file while new connections
+  use the replacement, and the two diverge silently -- worse than divergence, in fact, since the two
+  files then **share a journal by name**, so one database's recovery can read the other's content.
+  SQLite states this itself: renaming an open database "results in behavior that is undefined and
+  probably undesirable." **ADR-175** records the decision. An earlier version of this entry cited
+  *ADR-155: "Recovery never runs automatically"* as settled policy here; that was a misattribution --
+  ADR-155 governs skill-folder recovery and mentions no database.
+
+  **The probe runs on a separate read-only connection**, opened and closed before the caller's
+  connection exists. This is the part that makes the refusal non-mutating, and a second review round
+  was needed to get it right: a read-write open mutates on close, because SQLite checkpoints
+  committed WAL content into the main file and unlinks the journal sidecars. A first version claimed
+  non-mutation while probing through the caller's own handle, which cannot deliver it. Measured: after
+  a read-only open and close, the main file and `-wal` are byte-identical and both sidecars remain.
+
+  Two things about the probe itself were measured rather than carried over from the WASM driver:
+
+  - **A `sqlite_master` read is not sufficient.** That is the WASM driver's probe and it validates
+    only the schema page. On a database whose schema page is intact and whose data pages are damaged
+    -- the reported condition -- it **succeeds**, while `SELECT COUNT(*)` on a real table throws
+    `database disk image is malformed`. Mirroring it would have detected nothing on the machine that
+    prompted the fix. The probe is `PRAGMA quick_check(1)`, chosen over `integrity_check(1)` on
+    measured cost: 114 ms vs 190 ms on a fresh 59.6 MB database.
+  - **`quick_check` reports rather than throws.** It returns `ok` for a healthy database and the
+    damage as a *string* for a corrupt one, so a `try`/`catch` around it alone is a no-op whose catch
+    never fires.
+
+- **Fix (reliability)**: SMI-6931 -- the native driver classifies corruption on SQLite's **result
+  code** (`SQLITE_CORRUPT*`, `SQLITE_NOTADB`) rather than on message substrings. The shared
+  `isCorruptionError` matches bare `malformed` / `file is encrypted` / `not a database` against a
+  message, which discards the structured code and can match incidental text from a wrapper or from
+  the *file path* itself. Under a refusal design a collision becomes confident advice to move the
+  user's data, so this driver classifies locally and narrowly; the shared helper is left untouched
+  because the WASM driver depends on it. A regression test opens a healthy database living under a
+  directory named `malformed-fixtures` and requires it to open normally.
+
+- **Fix (reliability)**: SMI-6931 -- an unrecognised `quick_check` result is a **probe fault**,
+  reported as such, rather than a corruption verdict; whitespace-only output is normalised before
+  validation rather than becoming an empty reason. An earlier draft mapped any unexpected shape to
+  "corrupt" on the reasoning that unknown should be treated as unsafe. That is backwards where the
+  unsafe branch refuses to open the user's database: a `pragma()` return-shape change in a dependency
+  would then have bricked every open.
+
+- **Fix (diagnostics)**: SMI-6931 -- the refusal's remedy **shell-quotes every path** and names a
+  timestamped destination that cannot already exist. These lines are instructions a user pastes into
+  a shell: an unquoted path containing a space changes what the command does, and a fixed `.corrupt`
+  destination silently overwrites an earlier diagnosis. It also tells the user to stop every
+  Skillsmith process first, including any running MCP server, and to keep the moved files.
+
+- **Test**: SMI-6931 -- a dedicated suite covering the native driver's **file-open** path, which had
+  none: all nine `createBetterSqlite3Database` call sites in the existing driver test pass
+  `:memory:`, which is why a missing probe reached production unnoticed. The arms fall into three
+  **disjoint** groups, and no arm belongs to two, so each group's guarantee is exactly as wide as its
+  own membership: arms calling `expectUntouched` assert main-file bytes, mtime and the directory
+  listing, so "no backup, no rebuild, no stray sidecar" rests on those and nothing else; arms
+  comparing the `-wal` byte-for-byte assert neither the mtime nor the listing; arms asserting the
+  refusal itself -- message, remedy, structured fields -- assert no file contents at all. **The
+  membership is deliberately not counted**, here or in the test's own header: five consecutive
+  versions of this description carried counts and every one was wrong, the last because the commit
+  that added the structured arms left its own census behind. The `-shm`'s
+  bytes are deliberately **not**
+  asserted, and that narrowing is measured rather than assumed: with the `-shm` deleted outright
+  every committed row remained readable and the `-wal` stayed byte-identical, so it is SQLite's
+  shared-memory WAL index and byte-identity on it asserts the wrong property. Includes propagation
+  controls -- a `SQLITE_CANTOPEN` open failure must surface as itself, not as a corruption verdict --
+  and known-positive controls -- a healthy database, an absent path, an in-memory path -- without
+  which a driver that refused unconditionally would satisfy every other arm.
+
+  One arm uses a **genuine WAL fixture** — a real WAL database with a row committed into an
+  uncheckpointed `-wal`, whose main file is then damaged past the schema page. A review round caught
+  that the earlier sidecar arm paired a not-a-database main file with arbitrary sidecar bytes, so the
+  probe failed reading the invalid main file and need not enter WAL handling at all: it looked like it
+  proved WAL preservation and did not. The row's presence is established **before** anything is
+  damaged, because asserting it is readable afterwards would be circular.
+
+  Red-tested one site at a time, each mutation confirmed to still compile: removing the refusal kills
+  exactly the refusal arms and leaves the controls green, and **opening the probe read-write instead
+  of read-only kills two arms, including the genuine-WAL one**. That mutation was suggested by the
+  reviewer rather than chosen by the author, and it matters because an earlier round of this work
+  deleted the sidecar assertion as over-reaching when it failed. Its failure was evidence the
+  non-mutation claim was false, and it is now among the few things that discriminate the correct
+  design from the incorrect one.
+
+- **Docs (internal)**: SMI-6733 -- the prose explaining why `installedSkills: null` classifies `ok` is
+  **deleted**, not reworded. Three cross-family review rounds on PR #2980 each found a false claim in
+  it: *"byte-identical to absent"*, then *"byte-identical for every consumer"*, then
+  *"indistinguishable to every consumer"* -- the last false because `Object.hasOwn`, `JSON.stringify`
+  and `=== null` each distinguish the two shapes (measured). What remains is three facts and no causal
+  clause joining them: ADR-171 § 5 accepts both an explicit `null` and an absent key, § 3 **preserves**
+  the difference (that form is the raw `JSON.parse` value where *"`null` stays `null`, and an absent
+  key stays absent"*), and `installedSkillsOf` normalises either to an empty map for a map-oriented
+  reader. The false versions had reached five files across three packages; ADR-171 itself never made
+  any of the claims.
+
+- **Docs (internal)**: SMI-6733 -- `update-target.evidence.ts` cited `skill-manifest.ts:120` for a
+  defaulting of `installedSkills`. Wrong twice: that line is inside `assertNotRealUserHome`, and
+  nothing in that file defaults the field at all (`installedSkillsOf` normalises it for a reader
+  without writing a default). Now names constructs rather than lines, after a stale-citation sweep
+  found six across the repo -- the sixth only because the first sweep's regex, `install\.ts:[0-9]+`,
+  structurally could not match `install.conflict.ts:67`.
+
+- **Fix (diagnostics)**: SMI-6733 Phase 2 Wave 1 -- a `ManifestUnwritableError`'s own message (ADR-171
+  § 8: names the file, the exact byte offset on a parse failure, and a remedy) now reaches the user
+  instead of being replaced by `sanitizeInstallError`'s generic "Installation failed due to an
+  internal error" fallback. `ManifestUnwritableError` matched none of the 12-member
+  `KNOWN_ERROR_PREFIXES` allowlist, so a correctly-classified refusal became an undiagnosable one.
+  Fixed the same way `InstallRestoreError` already bypasses that allowlist in
+  `skill-installation.helpers.ts`'s `sanitizeInstallError`: an `instanceof` arm, not a 13th
+  message-content prefix -- a prefix would couple the sanitizer to ADR-171 § 8's exact wording.
+
+- **Fix (data integrity)**: SMI-6733 -- untracked-skill adoption no longer overwrites a manifest it
+  could not read. `adoptUntrackedSkillEntry` took a tolerant load unconditionally, which substitutes
+  an empty document for a corrupt/unreadable/version-unsupported manifest and then saves over the
+  original bytes. Measured: against a manifest whose readable prefix recorded a real skill followed
+  by trailing garbage, one adoption left a valid 410-byte file holding only the adopted entry, and
+  the recorded skill was gone. Tolerance is now an explicit `tolerateDegradedRead` argument
+  defaulting to refuse; `performUninstall` passes its own `force`, and the CLI `update` path (which
+  has no `force`) passes nothing. A refused adoption returns a distinct `adoptionRefusal` outcome
+  rather than a hard error, so `performUninstall`'s more specific identity checks still run first.
+
+- **Fix**: SMI-6733 -- a manifest whose `installedSkills` is `null` or absent classifies `ok` (both
+  mean "nothing installed"), but `SkillManifest` declares the field non-optional, so consumers
+  subscripting it type-checked and then threw `Cannot read properties of null`. Added
+  `installedSkillsOf()` and routed every consumer of `ManifestManager.load()` through it. The
+  classifier is unchanged -- ADR-171 § 3 forbids it transforming the parsed value, so the fix is on
+  the consumer side.
+
+- **Fix (diagnostics)**: SMI-6733 -- a manifest that is well-formed JSON but the wrong shape no
+  longer reports "is not valid JSON" and no longer advises running a JSON validator, which would
+  find nothing; it names the offending field in the user's own vocabulary instead of citing an
+  internal ADR section. The `corrupt` state carries a new `kind`
+  (`unparseable`/`shape`/`version_malformed`) to distinguish them. Unparseable-JSON refusals also
+  stop restating the byte position twice in one sentence.
+
+- **Tests**: SMI-6733 -- every refusal test now asserts the file's BYTES (length + SHA-256), not
+  only the message, per ADR-171's own test plan. That assertion is the one that catches a silent
+  clobber: the existing test covering this exact scenario asserted a refusal message, never looked
+  at the file, and passed throughout the window in which a refused uninstall was rewriting it. The
+  `raw`/`manifest` non-transform guarantee gained a reference-identity assertion, since `toEqual`
+  alone passes against the single spread the rule exists to forbid.
+
+## v0.12.6
+
+- **Fix (critical, release-mechanical)**: this version exists because the published
+  `@skillsmith/core@0.12.5` and this repo's `0.12.5` had the **same version number and different
+  contents**. Exports added to core's source after `0.12.5` was published — `withFileLock` among
+  them — were never released, because the version was not bumped when they landed. That is invisible
+  inside the monorepo, where every workspace resolves to the local tree, and only surfaces once a
+  published consumer resolves `core` from npm: `@skillsmith/mcp-server@0.7.17` did, and could not be
+  imported at all. Publishing `0.12.6` makes the registry's `core` match this tree again.
+  No behavioural change to core itself is intended by the bump.
+- **Tests**: SMI-6532 -- the render-parity test's parse guard is now itself tested, and its failure
+  mode is loud rather than silent. The guard reads TypeScript's INTERNAL `parseDiagnostics` field
+  through a cast, so a rename upstream would have read `undefined`, skipped the check, and restored
+  the exact hole the guard exists to close -- quietly. Its absence is now fatal. The guard was split
+  out of `extractObjectLiteral` into its own `assertParsesCleanly` helper so both of its branches --
+  a missing field, and parse errors present -- can be pinned by a direct test instead of only the
+  parse-error branch; the missing-field branch is exercised with a fabricated `SourceFile`, since
+  nothing can make TypeScript itself stop setting the field. A separate canary confirms today's real
+  `SourceFile` still exposes the field as an array (the guard itself only rejects `undefined`, so
+  some future non-array replacements -- a `Set`, say -- would pass it silently and only the canary
+  would catch them; not all, since `null` throws on the length read and a non-empty string trips the
+  parse-error branch), and
+  a third direct test pins the unrelated absent-export refusal. Red-tested by disabling each guard
+  branch and by feeding the canary an object without the field. Found by the post-merge retro on PR
+  #2952 -- I had verified the guard once by hand when adding it, which protected nothing afterwards.
+
+- **Feature (internal)**: SMI-6532 step 6 -- the root barrel now exports the two closed-set
+  `UpdateTargetReason`/`UpdateResultCode` types from `update-target-reason.ts` (previously internal
+  to this package). `@skillsmith/mcp-server`'s `update-target-render.ts` needs them for its
+  `Record<UpdateTargetReason | UpdateResultCode, string>` renderer signature; only the types are
+  exported, not the arrays or `remediationFor`, since no production consumer outside this package
+  needs the values -- the one caller that did (this package's own new
+  `update-target-render-parity.test.ts`) reaches them via a plain relative import, the same as its
+  sibling `update-target-reason.test.ts` already does.
+
+- **Test**: SMI-6532 step 6 -- `update-target-render-parity.test.ts` checks, for all 38
+  reason/result members, that `@skillsmith/mcp-server`'s renderer and the VS Code extension's
+  mirrored text are both non-empty, and that the VS Code extension's mirrored remediation kind
+  agrees with this package's own `remediationFor()`. Reads both external files via the TypeScript
+  AST (the same technique the sibling `update-target-reason.test.ts` already uses for its VS Code
+  array-mirror check) rather than importing them, so no new dependency is needed in either
+  direction.
+
+- **Tests**: SMI-6841 -- the update-eligibility gate's fs-purity guard could not detect a whole
+  class of filesystem call, and now can. The guard replaces `node:fs` and `node:fs/promises` with
+  recording spies that throw; it re-attached only own, enumerable, string-keyed members, so the
+  four stream constructors' 142 inherited statics and `opendir`'s promisify symbol were absent from
+  the mock -- a real `fs.opendir[util.promisify.custom](...)` call would have performed I/O in
+  silence with every assertion green. Demonstrated rather than argued: the same injection fails both
+  purity tests under the new mock and passes both under the old one. `wrapNamespace` now wraps the
+  same reflective surface the differential walks, excluding only keys where the target already
+  resolves the identical function, so gaps went 143 -> 0 and roughly 130 lines that existed purely
+  to DESCRIBE the gap were deleted. Own members mirror their real descriptor; inherited members sit
+  on a shadow prototype so `Object.hasOwn` still answers as production does; and exactly one symbol,
+  `Symbol.hasInstance`, is handed through real, because wrapping `Writable`'s custom implementation
+  made `x instanceof fs.WriteStream` -- a pure type check -- report a purity violation. That
+  exception is keyed on the one implementation that was READ (Node 22's runs the default
+  `Function.prototype` test, then compares identities and `_writableState instanceof
+  WritableState`), not on well-known-symbol status: `Symbol.iterator`, `asyncIterator` and the
+  disposal hooks are extension points that may perform I/O, so they get a throwing spy. Wrapping
+  something pure fails visibly; handing something impure through fails silently. Twelve review rounds; the last four each found a defect introduced by the fix before it. Every
+  behavioural defect is pinned by an assertion that fails when reverted; the one exception is the
+  policy narrowing that restricts the symbol passthrough to `hasInstance`, which no realistic `fs`
+  surface can exercise today and which is justified by reading the implementation and by the
+  failure-direction asymmetry rather than by a red test -- a direct assertion on the policy set now
+  makes an accidental widening fail even so.
+
+- **Docs**: SMI-6841 -- three comment corrections in the update-eligibility gate's own files, with
+  no behaviour change: every changed line in `update-target-reason.ts` and `update-target.probe.ts`
+  is inside a comment. PR #2939 replaced seven unresolvable "task brief" referents on the stated
+  ground that a referent no later reader can resolve is not durable, and left eight more -- one of
+  them four lines above a referent it did fix, and five in the file its own docstring sends the
+  reader to, so the source said `SMI-6532` while routing you to a file that still said "the
+  brief's". The sweep is now mechanism-wide and must be run multiline-aware: the phrase wraps
+  across JSDoc line breaks, and a line-based `grep` undercounts it by six. Separately, the note on
+  `hasGitAncestorBetween`'s export status was corrected at the fourth of four sites, and the plan
+  doc's own `§4` bullet alongside it, so the two surfaces agree rather than one lending the other
+  false authority.
+
+- **Docs**: SMI-6840 -- the comments around the `sk_live_` redaction rule and the gitleaks rules
+  made claims the repository does not establish: that Stripe's and Clerk's keys are alphanumeric,
+  that our alphabet differs from theirs, and that SMI-6840 was caused by someone changing an
+  issuer's pattern. None of that was measured, and the last is not what happened -- the defect was
+  an alphanumeric pattern written against base64url keys. Four review rounds each found a fresh
+  error in the explanation, so under a stopping rule fixed in advance the explanation is now
+  deleted rather than reworded again: each site states the instruction (what the class must include,
+  what must not be re-added, which neighbouring rules are unexamined) and points at this issue for
+  the evidence. No behaviour change -- every pattern byte-identical.
+
+- **Security**: SMI-6840 (PR #2936; found while enumerating redaction sites for SMI-6636) --
+  `redactSensitiveData` / `redactSensitiveObject` masked only part of a Skillsmith API key, or none
+  of it. The `sk_live_` pattern's body was `[a-zA-Z0-9]`, but `generateLicenseKey` emits base64url,
+  so a real key can contain `-` and `_`. The rate is derivable, not merely sampled: a base64url
+  body draws from 64 symbols, 62 of them alphanumeric, so the old pattern failed to match outright
+  for 1 - (62/64)^24 = 53.3% of keys, and the true leak rate is higher because a `_` later in the
+  body also defeated the trailing `\b`. A 10,000-key sample from a verbatim port of the generator
+  agreed, with a matching-positive and a non-matching-negative control both passing: 6,353 not
+  redacted at all, 1,024 redacted only as far as the first hyphen, 7,377 leaked in whole or in
+  part. Two mechanisms: a `-` or `_` inside the first 24 body characters ends
+  the run below the `{24,}` minimum so the match fails outright, and `_` is itself a word character,
+  so no trailing `\b` can ever match after an alphanumeric run followed by one -- backtracking
+  cannot rescue that, since every shorter run is also followed by a word character. The
+  partial-match case was the worst of the three, because the line carried a `[REDACTED]` marker with
+  the tail of the key beside it. Fixed by widening the class to the emitted alphabet and removing
+  the trailing `\b` rather than replacing it: the greedy quantifier already consumes the whole body,
+  so no terminator is needed. The precise defect was `\b` specifically, which cannot match after a
+  base64url body; a base64url-aware assertion would have been correct, merely redundant. Over-matching
+  into adjacent `[A-Za-z0-9_-]` text is the deliberate failure direction, but it is only safe on the
+  confidentiality axis -- adjacent log content can be swallowed, which is a real diagnostic cost,
+  accepted because a leaked credential is not recoverable and lost context is. `redactSensitiveObject`
+  returns a new object and never mutates its input, so this is confined to the emitted copy. Widening
+  is monotonic, so every string the old pattern matched this one still matches -- a statement about
+  the two patterns, not a claim that any issuer's keys were fully covered before. The `sk_test_`, `pk_live_` and `pk_test_`
+  rules are deliberately left untouched -- nothing in this repo mints those, and their issuer's real
+  key alphabet was never measured here, so widening them would have no evidence behind it either. Consumers of
+  `@skillsmith/core`'s logging and telemetry modules get the fix with no API change.
+
+- **Docs**: SMI-6826 (PR #2930; found by the PR #2929 post-merge retro) -- `ApiCache`'s
+  documentation said it evicts least-recently-used entries. It does not, and never did: when full,
+  `evictLeastUsed()` takes the first EXPIRED entry its scan meets, and failing that the one with the
+  lowest `hitCount`. Recency is never read. The JSDoc directly above that method contradicted the
+  method's own inline comment three lines below it. Corrected at five sites -- the module header and
+  that JSDoc in `api/cache.ts`, and the `search()` / `getSkill()` / `getRecommendations()` JSDoc in
+  `api/client.ts`, which each called it an "LRU cache". No behaviour change; `ApiCache` is re-exported
+  from the package root, so this is documentation an external consumer can read. `cache/lru.ts`'s
+  `L1Cache` is deliberately untouched -- it is a genuine LRU backed by the `lru-cache` package and
+  says so correctly. Whether `evictLeastUsed` should simply be renamed, since the name is what keeps
+  inviting the wrong reading, is left open on SMI-6826.
+
+- **Feature**: SMI-6532 -- the first internal pieces of the update eligibility gate, which will
+  decide whether an update may write into a given skill directory. Nothing reads them from a
+  command yet, so there is no user-visible behaviour change in this release. Adds a manifest
+  evidence resolver behind a swappable seam (`update-target.evidence.ts`); a closed set of skip
+  reasons and result codes carrying machine-readable remediation data
+  (`update-target-reason.ts`), so an unhandled member fails typecheck instead of falling through
+  at runtime; and a probe (`update-target.probe.ts`) that performs the filesystem reads and fails
+  closed -- a permission or read error becomes an explicit `probe-failed`/`unreadable` outcome
+  rather than a value that reads as "nothing to do". New export: `isBackupDir` (below).
+  `hasGitAncestorBetween` is unrelated to this seam -- it is A0's own pre-write install-target
+  guard, already shipped. An earlier commit on this work did add an `export` keyword to it so a
+  test could import it directly; that is reverted, and it is module-private again. It was never
+  reachable by a consumer of this package in either state: it is absent from the root barrel
+  (`src/index.ts`) and there is no `exports` subpath for its file, so no published entrypoint
+  led to it.
+
+- **Fix**: SMI-6532 -- the backup-directory check matched only a `<name>.backup-YYYYMMDD-HHMMSS`
+  form that no code in the tree actually writes, and missed the `<name>.backup-<epoch-ms>` form
+  `ActivationManager` really creates -- e.g. `linear.backup-1758600000000` or
+  `notes.backup-20260419` previously read as an ordinary skill, not a backup. It is now a shared,
+  exported `isBackupDir` matching `.backup-` followed by a digit, which covers both forms and any
+  trailing suffix, so both examples above now flip from `false` to `true`. That flip changes what
+  `SourceRecoveryService.recoverSources()` reports today (its only live consumer, via
+  `scanLocalSkills`): a directory like those two used to be scanned and offered for source
+  recovery as though it were a real skill; it is now correctly reported as a backup and skipped.
+  It does NOT yet change what anything writes -- the update-eligibility gate that would use this
+  same flag to decide whether a write may overwrite a directory (`update-target-gate.rules.ts` row
+  2, described above) is not wired into any command yet. It deliberately errs toward treating a
+  directory as a backup: the cost of a false match is a skill that is not offered for source
+  recovery today (and, once the gate ships, not auto-updated), weighed against the cost of a real
+  backup directory being treated as an ordinary skill.
+
+- **Fix**: SMI-6744 / SMI-6814 (PR #2923 post-merge retro G3/G4; PR #2924 governance F1 and retro
+  C3/C4/C5/C8; PR #2925 retro F-A/F-B) -- `buildHighlights()` no longer wraps every character of
+  a result in `<mark></mark>` when the query carries an empty term (a trailing space, a lone `*`,
+  an empty query): empty terms are dropped before the alternation is built, the same
+  filter-then-guard shape as the log sweep below. The description snippet is placed at the
+  match's real offset (`exec()`, whose `index` is required) instead of an `indexOf()` into a
+  lowercased copy, which `toLowerCase()` can shift (U+0130) or lose (Greek final sigma), so a
+  description whose only match sat past such a character lost its highlight. The truncation `...`
+  markers are added after the `<mark>` replacement, so a term of dots no longer highlights the
+  markers themselves, and the window is snapped to code-point boundaries, so an emoji straddling
+  its edge is no longer cut into a lone surrogate (an already-lone surrogate in the description
+  is left alone). Matching uses the `u` flag as well as `i`, so the Kelvin sign, Ohm, Angstrom,
+  capital sharp s, the Greek capital theta symbol and the Greek iota-subscript capitals fold to
+  their lowercase forms, and the query term is no longer lowercased (the flags fold case;
+  lowercasing turned a query of U+0130 into two code units that matched nothing). It also no
+  longer relies on a shared global-flag regex between the two `.test()` calls: the shipped
+  sequence never saw a leaked `lastIndex`, but for three different reasons (a falsy name
+  short-circuits, a failing name test resets it itself, and only on a matching name did the
+  interleaved `.replace()` reset it); matching and replacing now use separate objects and the
+  matcher is non-global, so a reordering cannot make a description silently lose its highlight
+  after a name match. The docblock now states that the return values are HTML fragments around
+  un-escaped registry text (escaping inside the function is SMI-6815). Red-tested, nineteen
+  mutations, each watched to fail against the committed tests: removing the empty-term filter;
+  making the matcher global; restoring the lowercased `indexOf()`; removing the window clamp;
+  deleting the operator filter; wrapping before replacing; dropping `u`; dropping `[` and,
+  separately, `*` from the escape class; deleting the quote/paren strip; deleting the
+  trailing-`*` strip; restoring the term lowercasing; forcing the name branch on; dropping every
+  term after the first and, separately, after the second; removing the window's surrogate snap;
+  and dropping the snap's real-pair check, whole or either half alone. (#2924, #2925, #2927)
+
+- **Fix (data loss)**: SMI-6744 / SMI-6806 (PR #2919 post-merge retro, governance C1) --
+  `pruneExpiredLogs()` deleted every file older than 14 days in `~/.skillsmith/logs`, a
+  directory shared with other writers, including `native-attribution.jsonl`, which ADR-165
+  keeps for its lifetime as a denominator. It now deletes only this module's own
+  `skillsmith-<surface>-<date>.jsonl[.n]` files, where `<surface>` is the enumerated
+  `mcp|cli|vscode|doc-retrieval` set (regex-escaped),
+  so an owned-shaped foreign name such as `skillsmith-foreign-<date>.jsonl` is left alone.
+  Red-tested: removing `OWNED_LOG`'s test in `pruneExpiredLogs()` fails the new ownership test's
+  `foreign` survives-expectation (six fixtures, including `native-attribution.jsonl` and four
+  owned-shaped names). (#2921)
+
+- **Fix (data integrity)**: SMI-6358 -- `backfillManifest()` keys manifest writes through
+  `manifestKeyFor(name, client)` instead of the bare name. A skill installed for a non-canonical
+  client is stored as `name::client`; writing provenance under the bare name landed it on the
+  canonical client's entry instead, or on nothing. Red-tested: reverting the key takes down 2 of 15
+  tests in `backfill.test.ts`. For the canonical client the key is byte-identical to the old one,
+  so single-client installs are unaffected. (#2920)
+
+- **Fix**: SMI-6764 (post-merge round 5) -- `held`'s remedy no longer asserts the holder is alive.
+  The round-4 message read "A live holder is expected to release", which is the same liveness claim
+  the same commit had just deleted from `describeReason` as "a conclusion this function has no
+  standing to draw" -- relocated one sentence to the right rather than removed. `describeRemedy`
+  has strictly less standing than `describeReason`: it receives only `reason`, never the claim.
+  Three states reach `held` with no live holder, each measured: a definitely-dead pid when the
+  probe never ran (`timeoutMs` below `RECLAIM_PROBE_AFTER_MS`), a claim naming another host
+  (`isV1OwnerDead` bails on the host mismatch before signalling), and a pid `<= 0` or non-integer
+  (which `parseClaim` accepts as v1 and nothing will ever reclaim). The last two do not clear by
+  retrying, so the old wording also promised a recovery that cannot happen -- the same never-clears
+  trap this issue removed from `reclaim_unavailable`, surviving under the one reason the first four
+  rounds read as determined. `held` now states what is known and names the two cases that need the
+  manual steps. Test 4 was strengthened (it grepped the single literal `still alive`, so the
+  replacement phrasing passed it) and a new test 6 drives the real acquire loop into all three
+  states.
+
+- **Fix**: SMI-6764 -- lock-failure messages no longer guess whether retrying will help. Every
+  reason now opens `Could not acquire <label> at <path>`, followed by a reason-specific remedy.
+  The previous message picked between "Timed out waiting" and "Could not acquire" per reason; that
+  split is **removed**, not corrected, because `StuckLockReason` does not determine the thing the
+  verb asserted. Three of the five reasons depend on facts the reason does not carry:
+  `reclaim_unavailable` on whether the reclaim lock is merely busy or was orphaned by a crash,
+  `unreclaimable_legacy` on whether the legacy holder is still alive, and `reclaim_disabled` on
+  whether a differently-configured peer exists. The verb had to guess, and for an orphaned reclaim
+  lock -- which never clears, since nothing probes the reclaim lock's own owner -- it guessed
+  "Timed out waiting". The new `describeRemedy` (exported from the package root) states each case,
+  including "it depends, and on this" where that is the truth. Two related corrections in the same
+  message: `held` no longer claims the holder is "(still alive)", which was rendered for pids that
+  were never probed, and the unstick procedure is unchanged for every reason -- step 1 stays,
+  because an `unreclaimable_legacy` claim can be a perfectly live process. (#2894)
+
+- **Docs**: SMI-6759 -- `file-lock.ts`'s `RETRYABLE_REASONS` comment justified waiting out
+  `reclaim_disabled` with "it still ends when that holder releases". That holder is dead by
+  construction, so it never releases. The reason stays retryable -- a differently-configured peer
+  without the opt-out can still reclaim and release it -- but the comment now states that actual
+  mechanism instead of one that cannot occur. No behaviour change. (#2893)
+
+- **Fix**: SMI-6735 -- the installed-skills manifest lock is now ownership-verified. `ManifestManager`
+  previously judged an existing lock stale by its file age and released by unconditional `unlink`, so a
+  holder could delete a lock it did not own and two writers could each believe they held it exclusively.
+  Locking now delegates to the `owned-lock` primitive (random per-acquire token, liveness-checked
+  staleness, ownership-verified release) through a new shared `withFileLock` helper. The lock file path
+  and the 30s acquisition budget are unchanged. `acquireLock()`/`releaseLock()` are **removed** --
+  `updateSafely()` is now the only locked entry point, so an unchecked release is unreachable rather
+  than guarded. `withFileLock` and `StuckLockError` are newly exported from the package root.
+  **Note for anyone upgrading past a running older process**: a lock file written by a pre-fix version
+  carries a bare PID, which `owned-lock` classifies as a legacy claim and never auto-reclaims by design
+  (SMI-5883 D-5). A `StuckLockError` names the exact file to remove. (#2891)
+- **Fix (data loss)**: SMI-6732 -- uninstalling a skill no longer deletes whatever the
+  manifest happens to name. `installPath` was read straight out of manifest JSON and passed
+  to the removal with no absoluteness or containment check, so an entry naming a folder
+  outside the skills directory, a relative path (resolved against the current working
+  directory), or the skills root itself was deleted and reported as
+  `"uninstalled successfully"`. The workspace-scoped manifest lives inside the project tree
+  and is not gitignored, so a cloned repository could carry such an entry. Removal now
+  refuses anything that is not a direct child of the skills directory.
+- **Fix (data loss)**: SMI-6732 -- a skill reached by a *second spelling* of its name is no
+  longer deleted past its own manifest record. On case-insensitive or Unicode-normalizing
+  volumes (APFS, HFS+), removing `myskill` when the manifest recorded `MySkill` -- or an NFD
+  spelling of an NFC name -- adopted the directory as untracked, backdated its install time,
+  and so skipped the "modified since installation" check that the honest spelling correctly
+  tripped. Your edited work was deleted without `force`. Removal now compares kernel
+  identity rather than spellings, which no alias can defeat.
+- **Fix**: SMI-6732 -- `uninstall('.git')` no longer deletes a git-versioned skills
+  directory's history, and a removal target that cannot be checked is now refused rather
+  than assumed absent. Previously any error while checking a path was treated as "nothing
+  there", so a transient permissions error could let a tracked, modified skill be deleted.
+- **Fix (data loss)**: SMI-6732 -- if the skill directory disappears *while* uninstall is
+  checking it, the removal is now refused instead of continuing. Previously the check
+  treated that as "nothing here" and carried on, so anything that appeared at the same path
+  in the intervening moment -- including one of your other, modified skills renamed into
+  place -- was adopted and deleted, reported as success, leaving the real record pointing at
+  a path that no longer existed. You now get a message saying the directory changed under
+  the check, and nothing is removed.
+- **Known limits**, stated because they are real: on filesystems that reuse a freed inode
+  number immediately (ext4, so most Linux installs), a directory deleted and recreated
+  during the removal's own check window is still not reliably detected -- birthtime narrows
+  this but does not close it, and how much it catches depends on the filesystem and on
+  load — measured between roughly a sixth and three quarters of cases, so treat it as a
+  narrowing rather than a fix. On Windows, identity comparisons
+  elsewhere in the install path can still collapse two distinct entries into one for
+  directories whose underlying record has been reused many times (SMI-6763). Neither
+  affects the containment fixes above.
+
 ## v0.12.5
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.12.4).

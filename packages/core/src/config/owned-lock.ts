@@ -71,7 +71,7 @@
  * `docs/internal/process/guards-and-opt-outs.md`.
  */
 
-import { acquireOwnedLockCore, StuckLockError } from './owned-lock.acquire.js'
+import { acquireOwnedLockCore, describeRemedy, StuckLockError } from './owned-lock.acquire.js'
 import type { AcquireOwnedLockOptions } from './owned-lock.types.js'
 
 export type { AcquireOwnedLockOptions, StuckLockReason } from './owned-lock.types.js'
@@ -83,7 +83,7 @@ export {
   RECLAIM_PROBE_AFTER_MS,
   RECLAIM_PROBE_INTERVAL_MS,
 } from './owned-lock.types.js'
-export { StuckLockError }
+export { describeRemedy, StuckLockError }
 
 /**
  * Acquire an exclusive, cross-process, OWNED lock guarding `target`. Unlike

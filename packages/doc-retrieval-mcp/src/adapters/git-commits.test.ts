@@ -9,7 +9,11 @@ import type { CorpusConfig } from '../config.js'
 // SMI-4693: per-package copy of the fixture helpers. Mirrors
 // scripts/tests/_lib/git-fixture-env.ts; cross-package import is blocked
 // by composite TypeScript's rootDir constraint.
-import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
+import {
+  makeFixtureEnv,
+  makeFixtureTempDir,
+  stripGitDiscoveryEnv,
+} from '../_lib/git-fixture-env.js'
 
 function makeCtx(
   repoRoot: string,
@@ -371,6 +375,43 @@ describe('git-commits fixture isolation (SMI-4699)', () => {
       expect(after).toBe(before)
     } finally {
       rmSync(sentinel, { recursive: true, force: true })
+    }
+  })
+})
+
+// SMI-6919 (round 30, the cross-family gate): the production scrub and the
+// fixture env strip DIFFERENT lists. A user who runs the adapters under
+// `git -c k=v <cmd>` has that override exported as GIT_CONFIG_PARAMETERS, and
+// the read path must keep it (it outranks every config file), while a
+// fixture must drop it. When the two lists were one, every adapter lost the
+// override. Red arm: with the injection list folded back into the scrub,
+// the first assertion fails; the second is the twin that pins the fixture side.
+describe('git-commits adapter — read-path scrub keeps a git -c override (SMI-6919)', () => {
+  const saved = process.env.GIT_CONFIG_PARAMETERS
+  afterEach(() => {
+    if (saved === undefined) delete process.env.GIT_CONFIG_PARAMETERS
+    else process.env.GIT_CONFIG_PARAMETERS = saved
+  })
+
+  it('stripGitDiscoveryEnv keeps GIT_CONFIG_PARAMETERS; makeFixtureEnv strips it', () => {
+    const repo = makeFixtureTempDir('smi-6919-override')
+    try {
+      git(repo, 'init', '-q', '-b', 'main')
+      git(repo, 'config', '--local', 'remote.origin.url', 'https://stored.example/stored.git')
+      process.env.GIT_CONFIG_PARAMETERS =
+        "'remote.origin.url=https://override.example/override.git'"
+      const read = (env: NodeJS.ProcessEnv) =>
+        execFileSync('git', ['config', '--get', 'remote.origin.url'], {
+          cwd: repo,
+          env,
+          encoding: 'utf8',
+        }).trim()
+      // The production read path sees what the user passed on the command line.
+      expect(read(stripGitDiscoveryEnv())).toBe('https://override.example/override.git')
+      // A fixture does not: the stored value is what it reads.
+      expect(read(makeFixtureEnv())).toBe('https://stored.example/stored.git')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 })

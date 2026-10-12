@@ -435,6 +435,23 @@ export {
   type ContentComparisonResult,
 } from '../services/skill-content-comparison.js'
 
+// SMI-6532 (A2/step 6, §4.4): the two closed-set reason/result-code types.
+// Not previously exported from the package root or any subpath. Narrowly
+// scoped to what a PRODUCTION consumer genuinely needs at compile time —
+// `packages/mcp-server/src/tools/update-target-render.ts`'s
+// `Record<UpdateTargetReason | UpdateResultCode, string>` signature is the
+// only thing outside core that reaches this module today, and it needs
+// only these two types, not the values (`UPDATE_TARGET_REASONS`,
+// `UPDATE_RESULT_CODES`, `remediationFor`) or the other types
+// (`UpdateTargetGroup`, `UpdateRemediation`, etc.) — those stay internal to
+// core. A value export here would exist solely to serve a test (this
+// package's own cross-package renderer-parity test, which lives inside
+// `packages/core` and reaches the arrays/`remediationFor` via a relative
+// import of `../services/update-target-reason.js` instead), which is
+// exactly the wrong-direction widening SMI-6841 finding 5 flagged for
+// `hasGitAncestorBetween` in this same issue family.
+export { type UpdateTargetReason, type UpdateResultCode } from '../services/update-target-reason.js'
+
 // Install/adoption, discovery-tool-consistency, and the billing-relocation
 // notice all live in the sibling services.install.ts (SMI-6274 Wave 4,
 // file-length gate) — re-exported here so the root barrel's own public

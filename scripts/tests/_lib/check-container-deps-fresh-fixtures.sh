@@ -105,6 +105,12 @@ assert_eq() {
 TMP_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# SMI-6684 Wave 3: check-native-modules.sh appends a JSONL row to
+# $HOME/.skillsmith/logs on every failure-path run (S10, S12). Sandbox HOME so
+# this suite can never write fake rows into an operator's real log (SMI-5847).
+export HOME="$TMP_ROOT/home"
+mkdir -p "$HOME"
+
 NPM_CALL_LOG="$TMP_ROOT/npm-calls.log"
 : > "$NPM_CALL_LOG"
 npm_call_count() { wc -l < "$NPM_CALL_LOG" | tr -d ' '; }

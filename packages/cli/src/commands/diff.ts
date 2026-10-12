@@ -14,7 +14,7 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { classifyChange } from '@skillsmith/core'
+import { classifyChange, installedSkillsOf } from '@skillsmith/core'
 import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { getCliLogger } from '../cli-logger.js'
 import { withTelemetry } from '@skillsmith/core/telemetry'
@@ -138,7 +138,7 @@ async function fetchLatestContent(
 ): Promise<{ content: string | null; sourceTracked: boolean }> {
   try {
     const manifest = await loadManifest()
-    const entry = manifest.installedSkills[skillName]
+    const entry = installedSkillsOf(manifest)[skillName]
     if (!entry?.source) return { content: null, sourceTracked: false }
 
     // Try main then master (raw URLs are branch-specific); dedup so a

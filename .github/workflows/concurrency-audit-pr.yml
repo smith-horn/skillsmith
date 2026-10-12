@@ -230,8 +230,8 @@ jobs:
           while IFS= read -r plan; do
             [[ -z "$plan" || ! -f "$plan" ]] && continue
             echo "=== --strict $plan ==="
+            EXIT=0
             OUT=$(bash .claude/skills/concurrency-auditor/scripts/scan-plan.sh --strict "$plan" 2>&1) || EXIT=$?
-            EXIT=${EXIT:-0}
             echo "$OUT"
             echo "(exit: $EXIT)"
             AGG=$(printf '%s\n\n---\n\n### scan-plan --strict %s (exit %s)\n\n%s' "$AGG" "$plan" "$EXIT" "$OUT")

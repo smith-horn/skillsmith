@@ -60,11 +60,12 @@
  *   SMI-6080), and surface an actionable error when no user credential is present.
  *
  * - **Content reads** (`getContent`, SMI-5905 Wave 3) are member-level like the operations above:
- *   the signed-in user's own JWT (so `_member_read` decides visibility against a real
- *   `auth.uid()`). `getAdminUserClient()` / `getMemberUserClient()` (`registry-tools.live.auth.ts`)
+ *   the signed-in user's own JWT, so the release RPC resolves visibility against a real
+ *   `auth.uid()`. `getAdminUserClient()` / `getMemberUserClient()` (`registry-tools.live.auth.ts`)
  *   are two explicitly-named getters for exactly this reason — the choice cannot be defaulted or
- *   omitted at a call site. What decides whether a content read is *entitled* is in
- *   `registry-tools.live.content.ts`, and is scoped to the row's own team, not the caller's tier.
+ *   omitted at a call site. Visibility, entitlement (scoped to the row's own team, not the
+ *   caller's tier) and the audit row all live in the `release_private_registry_skill_content`
+ *   RPC that `registry-tools.live.content.ts` calls (SMI-6651).
  *
  * - **`publish`** (SMI-5949 Wave 2 Step 2, D-7) is member-level like `getContent` — not admin: any
  *   team member may submit a version, not only admins. `published_by` is `DEFAULT auth.uid()`
@@ -86,18 +87,18 @@
  * NOT touched by SMI-6109, deliberately (see docs/internal/implementation, SMI-6109 plan,
  * "Explicitly out of scope"): `team-workspace.live.ts`'s identical service-role pattern across 8
  * methods (writes, not just reads, with no existing member-client precedent to reuse);
- * `registry-tools.live.audit.ts`'s own audit-log write path (a system-table insert, fail-soft,
- * structurally different from a tenant-data read); `SKILLSMITH_API_KEY_HMAC_SECRET`'s
+ * `SKILLSMITH_API_KEY_HMAC_SECRET`'s
  * distribution (an unrelated secret, not consumed by any Supabase call).
  *
  * AUDIT (SMI-6114): a committed publish/deprecate/undeprecate/approve/reject is audited by the
  * database trigger `trg_prs_audit`, never by a client-side success row from this file. The
- * `recordRegistryAudit()` calls that remain record reads and attempts that did not commit, and
- * only reach `audit_logs` on a host holding a service-role key — see that module's docstring.
+ * `recordRegistryAudit()` calls that remain record reads and attempts that did not commit, through
+ * `record_private_registry_audit_attempt()` over the same authenticated client (ADR-178) — see
+ * that module's docstring.
  */
 
 import { sha256Hex } from '@skillsmith/core'
-import { recordRegistryAudit } from './registry-tools.live.audit.js'
+import { recordRegistryAudit, withNoClientAudit } from './registry-tools.live.audit.js'
 import { getAdminUserClient, getMemberUserClient } from './registry-tools.live.auth.js'
 import {
   REGISTRY_METADATA_COLUMNS,
@@ -212,7 +213,11 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
   // ADMIN getter — never getMemberUserClient(). `authRole` on every audit row below is read back
   // off this binding rather than hard-coded, so a swapped call site would show up in the audit
   // trail rather than only in a test that could itself be edited to match.
-  const { client, actorUserId, role } = await getAdminUserClient(operation)
+  // A getter failure is audited with a null client (stderr only) and rethrown unchanged.
+  const { client, actorUserId, role } = await withNoClientAudit(
+    { operation, teamId, skillId, authPath: 'user_jwt', authRole: 'admin' },
+    () => getAdminUserClient(operation)
+  )
   // .select() is REQUIRED here: PostgREST only returns affected-row data (the
   // `Prefer: return=representation` the JS client sets via .select()) when asked; without it,
   // `resp.data` is null on every call — including a successful update — and this method would
@@ -224,7 +229,7 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
     .eq('skill_id', skillId)
     .select(METADATA_COLUMNS)
   if (resp.error) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       operation,
       teamId,
       skillId,
@@ -253,7 +258,7 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
   // indistinguishable from a skill that does not exist, and would silently return `false` to a
   // caller who asked us to change something.
   if (probe.error && !isNoRowsError(probe.error)) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       operation,
       teamId,
       skillId,
@@ -270,7 +275,7 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
     )
   }
   if (Array.isArray(probe.data) && probe.data.length > 0) {
-    await recordRegistryAudit({
+    await recordRegistryAudit(client, {
       operation,
       teamId,
       skillId,
@@ -285,12 +290,13 @@ async function setDeprecated(teamId: string, skillId: string, value: boolean): P
         'not an admin — ask a team admin to run this, or have them promote you.'
     )
   }
-  await recordRegistryAudit({
+  await recordRegistryAudit(client, {
     operation,
     teamId,
     skillId,
     result: 'not_found',
     authPath: 'user_jwt',
+    authRole: role,
     actorUserId,
   })
   return false
@@ -337,7 +343,17 @@ export function createLiveRegistryService(): PrivateRegistryService {
       // self-approval check can only refuse a submitter approving their own work if it can name
       // the submitter. A shared team license key can do neither — see registry-tools.live.auth.ts
       // for the actionable login-required error this throws when no user is signed in.
-      const { client, actorUserId } = await getMemberUserClient('publish')
+      const { client, actorUserId } = await withNoClientAudit(
+        {
+          operation: 'publish',
+          teamId,
+          skillId,
+          version,
+          authPath: 'user_jwt',
+          authRole: 'member',
+        },
+        () => getMemberUserClient('publish')
+      )
 
       // D-4(a): the approval-gate RLS policy hides a fresh `pending` row from a SELECT —
       // including from its own submitter — so `INSERT … RETURNING` (the `.select().single()`
@@ -363,7 +379,7 @@ export function createLiveRegistryService(): PrivateRegistryService {
         content,
       })
       if (insertResp.error) {
-        await recordRegistryAudit({
+        await recordRegistryAudit(client, {
           operation: 'publish',
           teamId,
           skillId,
@@ -412,18 +428,28 @@ export function createLiveRegistryService(): PrivateRegistryService {
 
     // SMI-5905 Wave 3. MEMBER getter — never getAdminUserClient(): reading a skill you may
     // install is not an admin action, and claiming it is would lock every non-admin member out of
-    // their own team's registry. The entitlement check that DOES gate this lives in
-    // registry-tools.live.content.ts and is scoped to the row's own team, not the caller's tier.
+    // their own team's registry. The entitlement check that DOES gate this runs inside the
+    // release RPC that registry-tools.live.content.ts calls, scoped to the row's own team.
     async getContent(teamId, skillId, version): Promise<RegistrySkillContent | null> {
-      const binding = await getMemberUserClient('install')
+      const binding = await withNoClientAudit(
+        {
+          operation: 'content_read',
+          teamId,
+          skillId,
+          version,
+          authPath: 'user_jwt',
+          authRole: 'member',
+        },
+        () => getMemberUserClient('install')
+      )
       return getSkillContent({ binding, teamId, skillId, version })
     },
 
     // Deprecates every version of the skill within this team. SMI-5949 Wave 3: no longer just
     // "hidden from search, remains installable" — since the deprecated=false predicate below is
-    // now real (registry-tools.live.reads.ts, registry-tools.live.content.ts, the Edge Function),
-    // this makes every version genuinely unreachable through list/get/install, not just absent
-    // from a search surface the private registry never had. Admin-gated: runs as the signed-in
+    // now real (registry-tools.live.reads.ts, plus the release RPC behind install and the Edge
+    // Function), this makes every version genuinely unreachable through list/get/install, not
+    // just absent from a search surface the private registry never had. Admin-gated: runs as the signed-in
     // user so RLS authorizes it (SMI-5822). The team_id filter is still load-bearing — never
     // cross-team — and is now backed by `_admin_update`'s own USING clause rather than standing
     // alone.
@@ -450,8 +476,10 @@ export function createLiveRegistryService(): PrivateRegistryService {
     },
 
     async review(teamId, skillId, version, decision, note): Promise<RegistryReviewDecision> {
-      const { client, actorUserId } = await getMemberUserClient(
-        decision === 'approved' ? 'approve' : 'reject'
+      const operation = decision === 'approved' ? 'approve' : 'reject'
+      const { client, actorUserId } = await withNoClientAudit(
+        { operation, teamId, skillId, version, authPath: 'user_jwt', authRole: 'member' },
+        () => getMemberUserClient(operation)
       )
       return reviewSubmission({ client, teamId, skillId, version, decision, note, actorUserId })
     },

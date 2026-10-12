@@ -357,6 +357,7 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 | `process-pending-subscription` | Service Role | No |
 | `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
 | `quota-monitor` | Service Role (every 30 min cron) | Yes |
+| `registry-audit-volume-monitor` | Service Role (in-handler `isServiceRoleCallerBySecretCompare`, hourly cron at :12) (SMI-7050) | Yes |
 | `skills-outreach` | Service Role | No |
 | `advance-notice-email` | Service Role | Yes |
 | `auth-device-code` | Anonymous (RFC 8628 device auth) | Yes |

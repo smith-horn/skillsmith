@@ -24,6 +24,8 @@
  *     pattern, same rationale as this file's own self-exemption below),
  *     producing a host-history-dependent false positive in any worktree
  *     that's ever run a Codex dispatch, found live 2026-08-06)
+ *   - .turbo/, .swarm/, .claude-flow/ (build cache and ruflo stores -- SMI-6760)
+ *   - any file over 2 MB, skipped and counted rather than read (SMI-6760)
  *   - .ruvector/ (the local skillsmith-doc-retrieval semantic-search index,
  *     gitignored and never present in CI -- its embeddings payload verbatim-
  *     copies chunked text from indexed docs, including historical snippets
@@ -65,7 +67,14 @@ const EXCLUDED_DIR_NAMES = new Set([
   '.git-crypt',
   '.beads',
   '.ruvector',
+  '.turbo', // Turborepo cache -- 1.8 GB measured, never carries prose (SMI-6760)
+  '.swarm', // ruflo store -- a 545 MB SQLite, never carries prose (SMI-6760)
+  '.claude-flow', // ruflo state files (SMI-6760)
 ])
+
+/** Files larger than this are skipped and counted, not read (SMI-6760). */
+const MAX_SCANNED_FILE_BYTES = 2 * 1024 * 1024
+let skippedBySize = 0
 
 // Files that legitimately contain the literal banned substrings in
 // comments, regex source, or descriptive strings, not as an executable
@@ -128,6 +137,12 @@ function walk(dir, out) {
     if (st.isDirectory()) {
       walk(full, out)
     } else if (st.isFile()) {
+      // SMI-6760: a 170 MB simulation JSON is never a remediation-text carrier,
+      // and reading it is what pushed the walk past T11's 60 s budget.
+      if (st.size > MAX_SCANNED_FILE_BYTES) {
+        skippedBySize++
+        continue
+      }
       out.push(full)
     }
   }
@@ -170,5 +185,10 @@ export function findGitCryptUnsetRemediations(repoRoot) {
       }
     }
   }
+  if (skippedBySize > 0)
+    console.error(
+      `[git-crypt-remediation] skipped ${skippedBySize} file(s) over ${MAX_SCANNED_FILE_BYTES} bytes (SMI-6760)`
+    )
+  skippedBySize = 0
   return findings
 }

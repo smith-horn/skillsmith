@@ -15,13 +15,14 @@
  * cleanly when either copy is absent (external contributors; CI runners with
  * no `~/.claude`).
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 import { resolveRealHome } from './_lib/resolve-real-home.js'
+import { probePath, requirePresence } from './_lib/probe-path.js'
 
 /**
  * Extract the P-N rubric-check IDs a copy of agent-prompt.md actually
@@ -135,6 +136,16 @@ describe('resolveRealHome (SMI-6514 finding 2)', () => {
     expect(resolveRealHome('   ', () => '/fallback')).toBe('/fallback')
   })
 
+  it('returns a padded value TRIMMED -- passed through verbatim, join() would make it relative', () => {
+    expect(resolveRealHome('  /Users/x  ', () => '/fallback')).toBe('/Users/x')
+    expect(
+      join(
+        resolveRealHome('  /Users/x  ', () => '/fallback'),
+        '.npm'
+      )
+    ).toBe('/Users/x/.npm')
+  })
+
   it('reproduces the real aliasing bug: `?? ` alone lets an empty value make the path relative', () => {
     const suffix = '.claude/skills/plan-review-skill/agent-prompt.md'
     // Pre-fix shape: `process.env.SKILLSMITH_TEST_REAL_HOME ?? homedir()` with
@@ -153,6 +164,44 @@ describe('resolveRealHome (SMI-6514 finding 2)', () => {
     )
     expect(postFixGlobalPath).not.toBe(suffix)
     expect(isAbsolute(postFixGlobalPath)).toBe(true)
+  })
+})
+
+describe('probePath + requirePresence integration on a real permission-denied path (SMI-6771)', () => {
+  // This gate's own PROJECT_EXISTS/GLOBAL_EXISTS migration (below) cannot be
+  // exercised against a genuinely unreachable real path without chmod-ing a
+  // live repo/submodule or ~/.claude path -- invasive and out of scope for a
+  // shared dev environment. This proves the exact integration point instead,
+  // against a synthetic mode-000 fixture: the same probePath()+
+  // requirePresence() call shape this file's own migration uses.
+  it('a child of a mode-000 directory throws via requirePresence, not a silent skip-as-absent', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const dir = mkdtempSync(join(tmpdir(), 'rubric-parity-unreachable-'))
+    const blocked = join(dir, 'blocked')
+    mkdirSync(blocked)
+    const target = join(blocked, 'agent-prompt.md')
+    writeFileSync(target, 'x')
+    try {
+      chmodSync(blocked, 0o000)
+      const isRoot = process.getuid?.() === 0
+      if (isRoot) {
+        // Same root-bypass fact probe-path.test.ts pins: this assertion
+        // documents why this integration test can only prove the SHAPE of
+        // the call (probePath -> requirePresence), not a live unreachable
+        // classification, while running as root.
+        expect(probePath(target)).toBe('present')
+        expect(requirePresence(probePath(target), 'synthetic gate path')).toBe(true)
+      } else {
+        expect(probePath(target)).toBe('unreachable')
+        expect(() => requirePresence(probePath(target), 'synthetic gate path')).toThrow(
+          /synthetic gate path/
+        )
+      }
+    } finally {
+      chmodSync(blocked, 0o755)
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -210,8 +259,15 @@ const PROJECT_PATH = join(REPO_ROOT, '.claude/skills/plan-review-skill/agent-pro
 const REAL_HOME = resolveRealHome(process.env.SKILLSMITH_TEST_REAL_HOME, homedir)
 const GLOBAL_PATH = join(REAL_HOME, '.claude/skills/plan-review-skill/agent-prompt.md')
 
-const PROJECT_EXISTS = existsSync(PROJECT_PATH)
-const GLOBAL_EXISTS = existsSync(GLOBAL_PATH)
+// SMI-6771: probePath + requirePresence replace a bare existsSync() here.
+// existsSync() collapses "does not exist" and "exists but EACCES/ENOTDIR"
+// into the same `false`, so a permissions problem on either copy would have
+// silently rendered as "copy absent" and skipped -- exactly the failure
+// mode a legitimate external-contributor skip must not be confused with.
+// requirePresence throws (rather than returning false) on 'unreachable', so
+// a broken fixture fails loudly here instead of masquerading as a skip.
+const PROJECT_EXISTS = requirePresence(probePath(PROJECT_PATH), `project copy (${PROJECT_PATH})`)
+const GLOBAL_EXISTS = requirePresence(probePath(GLOBAL_PATH), `global copy (${GLOBAL_PATH})`)
 const COMPARED_COUNT = [PROJECT_EXISTS, GLOBAL_EXISTS].filter(Boolean).length
 
 // The denominator is baked into the describe/it names (computed once, at

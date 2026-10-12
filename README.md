@@ -157,13 +157,17 @@ The per-client snippets above already include the `env.SKILLSMITH_API_KEY` slot 
 
 Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli-token).
 
-| Tier | Rate Limit | Cost |
-|------|------------|------|
-| Trial | 10 total | Free |
-| Community | 30/min | Free |
-| Individual | 60/min | $9.99/mo |
-| Team | 120/min | $25/user/mo |
-| Enterprise | 300/min | Custom |
+| Tier | Monthly quota | Per-minute limit | Cost |
+|------|---------------|------------------|------|
+| No API key (MCP default) | Community rate, shared public key | 30/min per endpoint, shared across all keyless clients | Free |
+| Community | 100 | 30/min | Free |
+| Individual | 1,000 | 200/min | $9.99/mo |
+| Team | 10,000 | 300/min | $25/user/mo |
+| Enterprise | Unlimited | 600/min | Contact Sales |
+
+> **Quota note:** the monthly figure is a hard limit only where enforced. Edge functions hard-block on monthly quota for Community only, and only when `ENFORCE_COMMUNITY_QUOTA` is `'true'`. The MCP server's own monthly quota counts only `skill_suggest` and the tier-gated tools, and hard-blocks them by default (`SKILLSMITH_ENFORCE_MCP_QUOTA=false` turns that off).
+
+The MCP server falls back to a built-in public key when none is set, so keyless MCP use is Community-rate and shares one 30/min bucket per edge endpoint (search, get, recommend, …) with every other keyless client. The 10-call trial (100/min per IP) applies to direct HTTP requests that do not successfully authenticate, including ones with a malformed or expired credential; normal keyless MCP requests authenticate with the built-in key and never reach it. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
 
 > **Note:** Never paste API keys in chat. Configure via settings.json only.
 
@@ -182,15 +186,15 @@ node packages/cli/dist/index.js search "testing"
 Once more than one team is publishing skills, these are the questions that matter:
 
 1. **Which team is this scoped to?** Every skill in the registry is scoped to a team.
-2. **Which version is installed here?** Versions are immutable; `skill_diff` and `skill_outdated` report drift for what's installed on the machine you run them from.
-3. **Has it been flagged by the security scan?** Skills pulled from the public index are scored automatically; flagged or suspicious ones are quarantined pending review — unflagged means it wasn't flagged, not that it was formally approved. Skills carry one of five trust tiers, from Official to Unverified ([Security Guide](docs/internal/security/skill-security-guide.md)).
+2. **Which version is installed here?** Versions are immutable; `skill_diff` (Individual tier) and `skill_outdated` report drift for what's installed on the machine you run them from.
+3. **Has it been flagged by the security scan?** Skills pulled from the public index are scored automatically; flagged or suspicious ones are quarantined pending review — unflagged means it wasn't flagged, not that it was formally approved. Each skill carries one of eight trust tiers, from Official to Unverified ([Security Guide](https://skillsmith.app/docs/security)).
 4. **What happens to the ones nobody maintains?** Stale skills can be deprecated instead of quietly rotting in someone's repo.
 
 ## How it works
 
 - **Publish** — skills are published to a registry scoped to your team, versioned immutably.
 - **Version** — every publish creates a new immutable version; nothing is overwritten in place.
-- **Drift detection** — `skill_diff` and `skill_outdated` show what's installed and where it has fallen behind, at the point you check.
+- **Drift detection** — `skill_diff` (Individual tier) and `skill_outdated` show what's installed and where it has fallen behind, at the point you check.
 - **Deprecate** — skills that go stale can be deprecated instead of quietly rotting in someone's repo.
 
 ## Scopes and permissions
@@ -203,15 +207,72 @@ Search, install, and manage skills for yourself, free. When your team needs the 
 
 ## MCP Tools
 
+Skillsmith registers 43 tools. 19 of the 43 work on the free Community tier. Higher tiers add version tracking, team features and enterprise controls. Tools above your tier return an upgrade message. [Pricing](https://skillsmith.app/pricing).
+
+### Community (free)
+
 | Tool | Description |
 |------|-------------|
 | `search` | Search skills with filters (query, category, trust tier, min score) |
 | `get_skill` | Get detailed skill information including install command |
 | `install_skill` | Install a skill to your local environment |
 | `uninstall_skill` | Remove an installed skill |
-| `recommend` | Get contextual skill recommendations |
-| `validate` | Validate a skill's structure and quality |
-| `compare` | Compare multiple skills side-by-side |
+| `skill_recommend` | Get contextual skill recommendations |
+| `skill_suggest` | Suggest skills from your current project context (counts against your monthly quota) |
+| `skill_validate` | Validate a skill's structure and quality |
+| `skill_compare` | Compare two skills side-by-side |
+| `skill_outdated` | Check installed skills for staleness and dependency status |
+| `skill_rescan` | Re-scan an installed skill with the latest security patterns |
+| `skill_publish` | Validate a skill and prepare it for publishing |
+| `skill_recover_source` | Recover the GitHub source of locally installed skills (read-only) |
+| `index_local` | Index skills from a local directory |
+| `inventory_push` | Push this machine's installed-skill inventory to your dashboard (read-only; needs `skillsmith login`) |
+| `skill_inventory_audit` | Check every installed client's skills for name collisions and get rename suggestions |
+| `apply_namespace_rename` | Apply or revert a rename suggestion (previews first, changes files only when confirmed) |
+| `apply_recommended_edit` | Apply a suggested prose edit from an audit (previews first, changes files only when confirmed) |
+| `undo_apply` | Undo the most recent rename or edit from this session |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous manifest entry |
+
+### Individual
+
+| Tool | Description |
+|------|-------------|
+| `skill_updates` | Check the registry for newer versions of installed skills |
+| `skill_diff` | Section-level diff between two versions of a skill |
+| `skill_pack_audit` | Audit a directory of skills for version drift and weak triggers |
+
+### Team
+
+| Tool | Description |
+|------|-------------|
+| `skill_audit` | Check installed skills for known security advisories |
+| `team_workspace` | Create, list, get and delete team workspaces |
+| `share_skill` | Add, remove or list skills in a team workspace |
+| `publish_private` | Hide a skill from your own search results on this machine (local only) |
+| `team_analytics_dashboard` | Per-user tool usage, top tools and daily trend |
+| `team_usage_report` | Weekly or monthly usage summary with period comparison |
+| `compliance_report` | Generate SOC2, CycloneDX SBOM or JSON reports for your local skill inventory |
+
+### Enterprise
+
+| Tool | Description |
+|------|-------------|
+| `private_registry_publish` | Publish a skill version to your private registry for approval |
+| `private_registry_manage` | List, get, install, deprecate, approve or reject private registry skills |
+| `configure_sso` | Set up SSO/SAML, including DNS domain verification |
+| `sso_settings` | View the current SSO/SAML configuration |
+| `rbac_manage` | Inspect and adjust what each team role can do |
+| `rbac_assign_role` | Assign or revoke member roles, or list members |
+| `rbac_create_policy` | Bulk-set or clear permission overrides for a role |
+| `audit_export` | Export audit log events for a time range |
+| `audit_query` | Query audit logs with filters |
+| `siem_export` | Export audit events to your SIEM |
+| `analytics_dashboard` | Recommendation accuracy, usage trends and team-wide aggregation |
+| `usage_report` | Full usage report across all metrics |
+| `webhook_configure` | Signed webhooks for skill lifecycle events (preview) |
+| `api_key_manage` | Create, list and revoke API keys (preview) |
+
+The automatic session-start namespace audit is a Team and Enterprise feature. The audit and rename tools above can be run by hand on any tier.
 
 **Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` (a Team+ tier feature) keeps the cache fresh.
 
@@ -221,16 +282,18 @@ Skillsmith uses the Model Context Protocol (MCP):
 
 ```text
 ┌─────────────────────────────────────────────────────┐
-│  MCP Client (Claude Code, Cursor, etc.)               │
+│  MCP Client (Claude Code, Cursor, etc.)             │
 │  ┌─────────────────────────────────────────────────┐│
 │  │  Skillsmith MCP Server                          ││
 │  │  └── @skillsmith/mcp-server                     ││
-│  │      ├── search, get_skill, compare             ││
+│  │      ├── search, get_skill, skill_compare       ││
 │  │      ├── install_skill, uninstall_skill         ││
-│  │      └── recommend, validate                    ││
+│  │      ├── skill_recommend, skill_validate        ││
+│  │      ├── skill_outdated, skill_diff, ...        ││
+│  │      └── 43 tools across four tiers             ││
 │  └─────────────────────────────────────────────────┘│
-│                          │                           │
-│                          ▼                           │
+│                          │                          │
+│                          ▼                          │
 │  ┌─────────────────────────────────────────────────┐│
 │  │  ~/.skillsmith/skills.db (SQLite + FTS5)        ││
 │  │  ~/.claude/skills/ (installed skills)           ││
@@ -253,7 +316,13 @@ Once configured, your MCP client can use Skillsmith tools:
 → Uses install_skill tool to add it to ~/.claude/skills
 
 "Compare jest-helper and vitest-helper"
-→ Uses compare tool to show side-by-side comparison
+→ Uses skill_compare tool to show side-by-side comparison
+
+"Are any of my installed skills out of date?"
+→ Uses skill_outdated tool to check for staleness and missing dependencies
+
+"Do any of my skills clash with each other?"
+→ Uses skill_inventory_audit tool to find name collisions and suggest renames
 ```
 
 ### CLI Usage (Development)
@@ -267,21 +336,10 @@ node packages/cli/dist/index.js install community/jest-helper
 
 ## Documentation
 
-### Public
-
 - [**Security Guide**](https://skillsmith.app/docs/security) - Understanding skill trust, safety, and protections
 - [5-Minute Setup](https://skillsmith.app/docs/quickstart) - Quick start guide
 - [Configuration Guide](https://skillsmith.app/docs/getting-started) - Complete setup and usage
 - [Status](https://www.skillsmith.app/status) - Live status and uptime history for Skillsmith's core services
-
-### Internal
-
-Internal documentation is in a private submodule at `docs/internal/`. Access requires repository membership. Run `git submodule update --init` after cloning.
-
-- [Engineering Standards](docs/internal/architecture/standards.md) - Code quality policies (requires repository access)
-- [ADR Index](docs/internal/adr/index.md) - Architecture Decision Records (requires repository access)
-- [Security Checklist](docs/internal/security/checklists/code-review.md) - Security review guidelines (requires repository access)
-- [Phase Retrospectives](docs/internal/retros/) - Phase learnings (requires repository access)
 
 ## Development
 
@@ -366,7 +424,7 @@ docker volume rm skillsmith_node_modules
 docker compose --profile dev up -d
 ```
 
-Don't follow the volume wipe with a bare install. Print and follow the ordered refresh sequence instead (ADR-158; SMI-6614), the same recovery `.claude/development/docker-guide.md` gives for a missing `node_modules`:
+The wipe does not block startup at the entrypoint's `node_modules` pre-check — the root volume re-seeds from the image, so that check passes rather than exiting (SMI-6674); later startup steps are a separate matter. What the wipe does leave is a mixed dependency state, so don't follow it with a bare install. Print and follow the ordered refresh sequence instead (ADR-158; SMI-6614):
 
 ```bash
 ( cd <main-checkout-path> && sh scripts/lib/print-deps-refresh-advice.sh <main-checkout-path> )
@@ -395,8 +453,6 @@ docker exec skillsmith-dev-1 npm test
 ### Why Docker?
 
 Skillsmith uses native Node.js modules (`better-sqlite3`, `onnxruntime-node`) that require **glibc**. Docker provides a consistent Debian-based environment with glibc, avoiding compatibility issues on systems using musl libc (like Alpine Linux).
-
-For the full technical decision, see [ADR-002: Docker with glibc for Native Module Compatibility](docs/internal/adr/002-docker-glibc-requirement.md).
 
 See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration.
 

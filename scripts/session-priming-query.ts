@@ -27,29 +27,39 @@
  * state, and the CLI entry point.
  */
 
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+
 import {
-  readEntry,
+  readEntryResult as readAutohealEntryResult,
   renderAutohealBanner,
   resolveAutohealLogPath,
   resolveMainRepoKey,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/autoheal-state.js'
+import { assessInstrumentationHealth } from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
 import {
-  assessInstrumentationHealth,
-  type ProbeResult,
-} from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
-import {
-  readEntry as readLivenessEntry,
+  readEntryResult as readLivenessEntryResult,
   renderLivenessBanner,
   resolveLivenessLogPath,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/liveness-state.js'
 import {
-  readEntry as readReindexEntry,
+  readEntryResult as readReindexEntryResult,
   renderReindexBanner,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/reindex-state.js'
 import {
-  readAndAck,
-  renderDisconnectBanner,
+  readAndAckResult,
+  renderDisconnectBannerResult,
 } from '../packages/doc-retrieval-mcp/src/retrieval-log/mcp-disconnect-state.js'
+import {
+  BRIDGE_VERDICT_SHADOW_VAR,
+  isValidCount,
+  LIVENESS_DAYS_VAR,
+  PROBE_COMMAND,
+  readEntryResult as readBridgeEntryResult,
+  renderBridgeBanner,
+  resolveBridgeLogPath,
+  STALE_HOURS_VAR,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/ruflo-bridge-state.js'
 import {
   logRetrievalEvent,
   resolveRetrievalLogPaths,
@@ -62,7 +72,6 @@ import {
   type CliArgs,
   countRecentJsonlSessions,
   extractRecentBullets,
-  formatRelativeAge,
   getCurrentHeadSha,
   loadSearch,
   parseCliArgs,
@@ -79,42 +88,16 @@ export interface PrimingResult {
   additionalContext: string
 }
 
-/**
- * SMI-4549 Wave 2 — render the stale-instrumentation banner. Prepended to
- * the priming markdown when `assessInstrumentationHealth` returns
- * `stale: true`. Uses the same `**bold**` style as `renderPrimingMarkdown`
- * because GitHub `[!WARNING]` callouts render as literal text inside the
- * SessionStart `additionalContext` payload.
- */
-export function renderInstrumentationBanner(
-  probe: ProbeResult,
-  now: Date,
-  autohealLine?: string
-): string {
-  const lastReal =
-    probe.lastRealSessionTs !== null
-      ? `${probe.lastRealSessionTs} (${formatRelativeAge(probe.lastRealSessionTs, now)})`
-      : 'never'
-  const markerTs = probe.outageMarker?.ts ?? 'absent'
-  const dockerLine = probe.isDockerOnHost ? 'set' : 'unset'
-  // D5: when the host auto-heal has a FAILED entry, surface its one-liner in
-  // place of the generic repair hint so the developer knows healing has been
-  // attempted and gets the copy-paste escape hatch. Otherwise keep the static
-  // repair hint for backward compatibility.
-  const repairLine =
-    autohealLine && autohealLine.length > 0
-      ? `- ${autohealLine}`
-      : '- Repair: `./scripts/repair-host-native-deps.sh`'
-  return [
-    '**Warning — SessionStart instrumentation appears stale.**',
-    '',
-    `- Last real-session retrieval_events row: ${lastReal}.`,
-    `- Outage marker: ${markerTs}. Reason: ${probe.reason}.`,
-    `- IS_DOCKER on host: ${dockerLine}.`,
-    repairLine,
-    '',
-  ].join('\n')
-}
+// SMI-6995: `renderInstrumentationBanner` and its `describeOutageMarker` helper
+// moved to ./session-priming-query.banners.ts when this file crossed the
+// 500-line gate. Re-exported so existing importers (including
+// scripts/tests/session-priming-query.test.ts) are unaffected.
+// NOTE: imported AND re-exported, deliberately. A bare `export { x } from '...'`
+// re-exports without binding `x` in this module's own scope, and this file
+// still calls it below. tsc caught that; the test suite did not, because the
+// only call sites are behind `probe.stale` being true.
+import { renderInstrumentationBanner } from './session-priming-query.banners.js'
+export { renderInstrumentationBanner }
 
 export function renderPrimingMarkdown(query: string, hits: SearchHit[]): string {
   const head = '<!-- session-priming v1 — SMI-4451 Wave 1 Step 7 -->'
@@ -156,9 +139,23 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   try {
     const key = resolveMainRepoKey(args.cwd)
     if (key) {
-      const e = readEntry(key)
-      if (e && e.lastVerdict === 'fail') {
-        autohealLine = renderAutohealBanner(e, { now, logPath: resolveAutohealLogPath(now) })
+      // SMI-6995: the predicate is now "the read failed, OR the entry says
+      // what it used to say". The old `e && e.lastVerdict === 'fail'` form
+      // swallowed a malformed/unreadable state file silently, because a failed
+      // read is neither `fail` nor anything else -- a correct reader alone does
+      // not fix that, since the collapse had TWO layers and this is the second.
+      // SMI-6995: admit a read FAULT, not merely "not ok". There are four
+      // statuses and only two are faults. `missing` is not-ok but it is not a
+      // failure -- it means nothing has run yet, which this banner has always
+      // and correctly treated as silence. An earlier revision of this line
+      // used `status !== 'ok'` and so rendered "[autoheal] first run launched"
+      // into the priming banner on every session with no state file. The CLI
+      // (--print-banner) DOES want that message for `missing`; this consumer
+      // does not. Same reader, two consumers, two different policies.
+      const read = readAutohealEntryResult(key)
+      const autohealFault = read.status === 'malformed' || read.status === 'unreadable'
+      if (autohealFault || (read.status === 'ok' && read.entry.lastVerdict === 'fail')) {
+        autohealLine = renderAutohealBanner(read, { now, logPath: resolveAutohealLogPath(now) })
       }
     }
   } catch {
@@ -187,8 +184,15 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
   try {
     const livenessKey = resolveMainRepoKey(args.cwd)
     if (livenessKey) {
-      const le = readLivenessEntry(livenessKey)
-      if (le && le.lastVerdict === 'stale') {
+      // SMI-6995: same two-layer collapse as the autoheal block above -- a
+      // malformed read is neither `stale` nor anything else, so the pre-filter
+      // has to admit a failed read or the reader fix changes nothing here.
+      // SMI-6995: same correction as the autoheal block above -- `missing` is
+      // not a fault, and admitting it here rendered "retrieval feed health
+      // unknown" on every session with no state file.
+      const le = readLivenessEntryResult(livenessKey)
+      const livenessFault = le.status === 'malformed' || le.status === 'unreadable'
+      if (livenessFault || (le.status === 'ok' && le.entry.lastVerdict === 'stale')) {
         livenessLine = renderLivenessBanner(le, {
           now,
           logPath: resolveLivenessLogPath(now),
@@ -213,14 +217,17 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     try {
       const reindexKey = resolveMainRepoKey(args.cwd)
       if (reindexKey) {
-        const re = readReindexEntry(reindexKey)
-        if (re) {
-          const currentHeadSha = await getCurrentHeadSha(args.cwd)
-          const staleHoursEnv = Number(process.env.SKILLSMITH_REINDEX_STALE_HOURS)
-          const staleHours =
-            Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
-          reindexLine = renderReindexBanner(re, { now, currentHeadSha, staleHours })
-        }
+        // SMI-6995: no pre-filter at all now. The old `if (re)` skipped the
+        // renderer whenever the read produced nothing, which is exactly the
+        // malformed/unreadable case this issue is about. The renderer itself is
+        // silent on `missing`, so calling it unconditionally is both correct and
+        // simpler -- the decision belongs in one place, not two.
+        const re = readReindexEntryResult(reindexKey)
+        const currentHeadSha = await getCurrentHeadSha(args.cwd)
+        const staleHoursEnv = Number(process.env.SKILLSMITH_REINDEX_STALE_HOURS)
+        const staleHours =
+          Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
+        reindexLine = renderReindexBanner(re, { now, currentHeadSha, staleHours })
       }
     } catch {
       /* fail-soft — must never crash the priming hook */
@@ -239,8 +246,14 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       if (disconnectKey) {
         const lines: string[] = []
         for (const server of ['skillsmith', 'skillsmith-doc-retrieval'] as const) {
-          const entry = readAndAck(disconnectKey, server)
-          if (entry) lines.push(renderDisconnectBanner(server, entry))
+          // SMI-6995: the result-shaped reader. The old `if (entry)` form
+          // swallowed four distinct outcomes -- no state file, no unacked
+          // event, a corrupt file, and a lock-acquisition timeout -- into one
+          // silent branch. Only `missing` should be silent; the renderer owns
+          // that decision now, so there is no pre-filter here.
+          const read = readAndAckResult(disconnectKey, server)
+          const line = renderDisconnectBannerResult(server, read, now)
+          if (line) lines.push(line)
         }
         disconnectLine = lines.join('\n')
       }
@@ -249,8 +262,87 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     }
   }
 
-  // Combined banner: stale-probe section first, liveness one-liner, reindex one-liner, disconnect one-liner below.
-  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine]
+  // SMI-6744 A5.5.2 delta — ruflo bridge-verdict banner (session-priming
+  // state-consumer, mirrors the autoheal/liveness/reindex/disconnect banners
+  // above). Computed BEFORE the disabled short-circuit, same rationale: a
+  // silently-degraded bridge should surface even when priming itself is
+  // disabled for this session. D2 (owner-decided 2026-10-03): this delta
+  // ships LIVE — `.claude/settings.json` sets SKILLSMITH_RUFLO_VERDICT_SHADOW
+  // to "0" — but the shadow predicate itself (unset or non-'0' = shadow)
+  // stays in force as the lever: shadow mode still computes the line and
+  // appends it to the probe's own log, it just never renders.
+  let bridgeLine = ''
+  if (process.env.SKILLSMITH_RUFLO_VERDICT_DISABLE !== '1') {
+    // Reader-axis failures RENDER; they do not vanish. An earlier revision
+    // skipped the line entirely when the key resolved null, and swallowed any
+    // throw in a bare fail-soft catch — two silent paths, which the code gate
+    // found as its fifth finding. Silence is the exact state this banner
+    // exists to remove, so a reader that cannot do its job says so.
+    //
+    // Shape: the fallible work produces EITHER a rendered line OR a named
+    // fault, and the decision to render happens outside the try, so a throw
+    // while rendering cannot also swallow the fault it produced.
+    let computed = ''
+    let fault = ''
+    try {
+      const bridgeKey = resolveMainRepoKey(args.cwd)
+      if (!bridgeKey) {
+        fault = 'the host repo key could not be resolved, so no verdict could be read'
+      } else {
+        // SMI-6967 H-2: both tunables are documented but were never actually
+        // read from the environment — wired here following the reindex
+        // precedent above (same parsing, same fallback-on-garbage behavior,
+        // same precedence: an invalid/garbage value falls through to the
+        // renderer's own default rather than being passed through raw).
+        // `staleHours` is a duration in HOURS, which is dimensionally fine as
+        // a fraction, so it keeps the plain finite/positive check. SMI-6985
+        // L-3: `livenessDays` counts consecutive PROBES (an integer streak,
+        // see renderBridgeLivenessLine's own M-13 note) — the same
+        // `Number.isFinite(x) && x > 0` check wrongly accepted `0.5` and
+        // fired the liveness arm after a single probe, rendering "across 0.5
+        // consecutive probes." Route it through the shared `isValidCount`
+        // (non-negative integer) instead, the same validator the liveness
+        // fold already uses for the counters themselves.
+        const staleHoursEnv = Number(process.env[STALE_HOURS_VAR])
+        const staleHours =
+          Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : undefined
+        const livenessDaysEnv = Number(process.env[LIVENESS_DAYS_VAR])
+        const livenessDays =
+          isValidCount(livenessDaysEnv) && livenessDaysEnv > 0 ? livenessDaysEnv : undefined
+        computed = renderBridgeBanner(readBridgeEntryResult(bridgeKey), {
+          now,
+          staleHours,
+          livenessDays,
+        })
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      fault = `the bridge-verdict reader failed: ${msg}`
+    }
+    const rendered = fault
+      ? `**[ruflo-bridge]** verdict not evaluated: ${fault} — run: ${PROBE_COMMAND} — disable: SKILLSMITH_RUFLO_VERDICT_DISABLE=1`
+      : computed
+    if (rendered) {
+      const shadow = process.env[BRIDGE_VERDICT_SHADOW_VAR] !== '0'
+      if (shadow) {
+        // Best-effort only: a failure to LOG the shadow line must not become a
+        // second silent path, and must not crash the hook either.
+        try {
+          const logPath = resolveBridgeLogPath(now)
+          mkdirSync(dirname(logPath), { recursive: true })
+          appendFileSync(logPath, `${now.toISOString()} [shadow] would render:\n${rendered}\n`)
+        } catch {
+          /* logging is diagnostic; never block the hook on it */
+        }
+      } else {
+        bridgeLine = rendered
+      }
+    }
+  }
+
+  // Combined banner: stale-probe section first, liveness one-liner, reindex
+  // one-liner, disconnect one-liner, ruflo-bridge one-liner below.
+  const contextBanner = [probeBanner, livenessLine, reindexLine, disconnectLine, bridgeLine]
     .filter(Boolean)
     .join('\n')
 

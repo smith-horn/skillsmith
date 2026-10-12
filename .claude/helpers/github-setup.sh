@@ -22,7 +22,7 @@ fi
 
 echo ""
 echo "📦 GitHub swarm commands available:"
-echo "  - node node_modules/ruflo/bin/ruflo.js github swarm"
-echo "  - node node_modules/ruflo/bin/ruflo.js repo analyze"
-echo "  - node node_modules/ruflo/bin/ruflo.js pr enhance"
-echo "  - node node_modules/ruflo/bin/ruflo.js issue triage"
+echo "  - docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js github swarm"
+echo "  - docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js repo analyze"
+echo "  - docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js pr enhance"
+echo "  - docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js issue triage"

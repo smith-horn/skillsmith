@@ -1,4 +1,13 @@
 #!/bin/sh
+# SMI-6967: Husky invokes every hook through `sh -e` (.husky/_/h:17), so
+# errexit is always on here regardless of this file's own shebang -- the
+# shebang is never consulted. `set +e` restores this hook's documented
+# non-blocking behavior: without it, the first non-zero-exit command
+# (including the classifier status/token check below) would abort the
+# whole hook immediately, silently skipping everything after it. See
+# .husky/post-merge's identical header note for the fuller rationale
+# (SMI-6967 H-6/P-1) — this hook shares the exact same construct.
+set +e
 # Post-checkout hook — SMI-5343: originally auto-installed / advised when
 # package-lock.json differed between the old and new HEAD after a branch
 # switch. SMI-6614 (ADR-158): no longer installs anything here — see
@@ -23,7 +32,17 @@
 # diff gate (condition 4) makes that a no-op for the common case where the
 # rebase doesn't change package-lock.json.
 #
-# Non-blocking (git ignores the exit code of post-checkout; we always exit 0).
+# Unlike post-commit and post-merge, git DOES propagate post-checkout's own
+# exit status into the invoking `git checkout`'s exit code -- measured
+# (SMI-6985): a hook that exits 7 makes `git checkout` itself return 1, even
+# though the branch switch has already completed by the time this hook runs
+# (a CONTROL run of the same exit-7 hook as pre-commit confirmed the
+# instrument discriminates: pre-commit's non-zero DOES block the commit,
+# which is expected and unrelated to this propagation behavior). Before the
+# `set +e` above, an errexit abort inside this hook made `git checkout`
+# return 1, which would break any `set -e` script or `&&` chain wrapping a
+# checkout -- including sync-main.sh, rebase-worktree.sh, and
+# create-worktree.sh. This hook always exits 0, so it never does.
 
 # Color codes (match post-merge style)
 GREEN='\033[0;32m'
@@ -62,8 +81,16 @@ echo ""
 
 # SMI-5628: linked-worktree detection (same idiom as .husky/post-merge's
 # SMI-5624 guard and scripts/lib/check-node-modules-fresh.sh).
-_gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
-_gd="$(git rev-parse --git-dir 2>/dev/null)"
+# SMI-6967 L-3: the `|| echo ''` on each line below is belt-and-braces, not
+# load-bearing -- `set +e` at the top of this file (SMI-6967 H-6/P-1) is the
+# real errexit protection for this hook; these two predate that fix, from
+# when each line had to defend itself individually. Measured: the assigned
+# value is identical either way (a failing `git rev-parse` with stderr
+# redirected already yields empty stdout), so dropping `|| echo ''` would
+# change nothing observable -- kept only to avoid re-verifying that under
+# every shell this hook might run under.
+_gcd="$(git rev-parse --git-common-dir 2>/dev/null || echo '')"
+_gd="$(git rev-parse --git-dir 2>/dev/null || echo '')"
 _IS_LINKED_WT=0
 _MAIN_CHECKOUT=""
 if [ -n "$_gcd" ] && [ "$_gcd" != "$_gd" ]; then

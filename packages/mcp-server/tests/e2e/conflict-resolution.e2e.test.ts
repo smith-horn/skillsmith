@@ -21,6 +21,7 @@ import {
   getBackupsDir,
 } from '../../src/tools/install.helpers.js'
 import type { SkillManifest } from '../../src/tools/install.types.js'
+import { CANONICAL_CLIENT } from '@skillsmith/core/install'
 
 // Test configuration
 const TEST_DIR = join(
@@ -207,7 +208,8 @@ describe('E2E: conflict resolution merge flow', () => {
         installPath,
         manifest,
         'cancel',
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // Verify installation was aborted
@@ -244,7 +246,8 @@ describe('E2E: conflict resolution merge flow', () => {
         installPath,
         manifest,
         'overwrite',
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // Verify proceed is allowed
@@ -283,7 +286,8 @@ describe('E2E: conflict resolution merge flow', () => {
         manifest,
         'test',
         'test-skill',
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // For clean merge, should proceed with merged content
@@ -313,7 +317,8 @@ describe('E2E: conflict resolution merge flow', () => {
         manifest,
         'test',
         'test-skill',
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // For conflict merge, should stop and report
@@ -352,7 +357,8 @@ describe('E2E: conflict resolution merge flow', () => {
         installPath,
         manifest,
         undefined,
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // No modifications means proceed without action needed
@@ -370,7 +376,8 @@ describe('E2E: conflict resolution merge flow', () => {
         installPath,
         manifest,
         undefined,
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // Should not proceed and require action
@@ -408,7 +415,8 @@ describe('E2E: conflict resolution merge flow', () => {
         installPath,
         manifest,
         undefined,
-        'test/test-skill'
+        'test/test-skill',
+        CANONICAL_CLIENT
       )
 
       // Should proceed (can't detect conflicts without original hash)

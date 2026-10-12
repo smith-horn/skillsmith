@@ -87,7 +87,7 @@ export type StuckLockReason =
 export interface AcquireOwnedLockOptions {
   /** Override the acquire timeout. Production callers should omit this and use the default. */
   timeoutMs?: number
-  /** Human label used in the timeout message, e.g. `'config lock'` -> "Timed out waiting for config lock at ...". Defaults to `'lock'`. */
+  /** Human label used in the failure message, e.g. `'config lock'` -> "Could not acquire config lock at ...". One verb for every reason since SMI-6764. Defaults to `'lock'`. */
   label?: string
   /** Delay before the first reclaim probe (ms). Production callers should omit this; test-only override. */
   reclaimProbeAfterMs?: number

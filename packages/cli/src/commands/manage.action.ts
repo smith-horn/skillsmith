@@ -43,6 +43,9 @@ import {
   type InstalledSkill,
 } from '../utils/skills-directory.js'
 import { getSkillDiff, updateSkill, updateSkills } from './manage.update.js'
+// ADR-175 § 5 / SMI-6946: extracted to stay under the 500-line standard, same
+// reason manage.update.helpers.ts exists.
+import { warnUndetermined } from './manage.update-status.js'
 
 const logger = getCliLogger()
 
@@ -158,7 +161,13 @@ function displaySkillsTable(skills: InstalledSkill[], client: ClientId = CANONIC
       colorFn(skill.trustTier),
       skill.scope,
       skill.installDate,
-      skill.hasUpdates ? chalk.green('Available') : chalk.dim('Up to date'),
+      // ADR-175 § 5: three states, because a database fault makes the answer
+      // unknowable and printing "Up to date" for it is a claim with no basis.
+      skill.updateStatus === 'available'
+        ? chalk.green('Available')
+        : skill.updateStatus === 'unknown'
+          ? chalk.yellow('Unknown')
+          : chalk.dim('Up to date'),
     ])
   }
 
@@ -363,14 +372,31 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
       clientOpt !== undefined
         ? await getInstalledSkillsForClient(resolvedClient, dbPath)
         : await getInstalledSkills(dbPath)
-    const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
+    // ADR-175 § 5. `--outdated` filters on a CONFIRMED newer version, so an
+    // entry whose state could not be determined is neither listed as outdated
+    // nor silently counted as current — it is reported separately below.
+    const undetermined = skills.filter((s) => s.updateStatus === 'unknown')
+    const filtered = outdated ? skills.filter((s) => s.updateStatus === 'available') : skills
 
     if (outdated && filtered.length === 0) {
-      console.log(chalk.green('\nAll installed skills are up to date.\n'))
+      // The old message here was "All installed skills are up to date." — a
+      // second false statement on exactly the same fault as the table's "Up to
+      // date", and reachable whenever the database cannot be read. It may only
+      // be printed when every skill was actually checked.
+      if (undetermined.length === 0) {
+        console.log(chalk.green('\nAll installed skills are up to date.\n'))
+      } else if (undetermined.length < skills.length) {
+        // Partial: say what WAS established, then let the warning say what
+        // was not. When nothing could be checked, this line would only
+        // restate the warning, so it is omitted rather than duplicated.
+        console.log(chalk.yellow('\nNo updates found among the skills that could be checked.\n'))
+      }
+      warnUndetermined(undetermined, skills.length)
       return
     }
 
     displaySkillsTable(filtered, resolvedClient)
+    warnUndetermined(undetermined, skills.length)
   } catch (error) {
     logger.error(`${chalk.red('Error listing skills:')} ${sanitizeError(error)}`)
     process.exit(1)
