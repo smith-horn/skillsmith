@@ -224,6 +224,23 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before `compose down`'
   })
 })
 
+describe('SMI-7089: an empty sanitized name in docker-required mode', () => {
+  it('start refuses, makes no docker call, and advises a rename -- not a worktree remove', () => {
+    const fx = mk('wd-empty-name')
+    const x = wt(fx, '___')
+    composeOverride(x)
+    primeAttribution(fx, x)
+
+    const r = runDocker(fx, ['start', x])
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual([])
+    expect(text(r)).toContain('sanitizes to an empty Compose project name')
+    expect(text(r)).toContain('git worktree move')
+    expect(text(r)).not.toContain('worktree remove')
+  })
+})
+
 describe('SMI-7089 (OD-8): worktree-docker.sh start is attributed before `compose up`', () => {
   it('T28. refuses when a registered worktree shares the project: no `up`', () => {
     const fx = mk('wd-t28')

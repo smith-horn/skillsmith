@@ -94,8 +94,7 @@ worktree_project_peers() {
     done <<< "$raw"
     [[ "$found" -eq 1 ]] || return 2
 
-    while IFS= read -r d; do
-        [[ -n "$d" ]] || continue
+    while IFS= read -r -d '' d; do
         [[ "$d" -ef "$x" ]] && continue
         seen=0
         for entry in ${registered[@]+"${registered[@]}"}; do
@@ -109,7 +108,7 @@ worktree_project_peers() {
         if [[ "$base" == "$p" ]]; then
             printf 'unregistered .worktrees directory|%s\n' "$d"
         fi
-    done <<< "$(worktree_lifecycle_worktrees_dirs "$main")"
+    done < <(worktree_lifecycle_worktrees_dirs "$main")
     if is_own_non_worktree_project "$p"; then
         printf 'own non-worktree Compose project|%s\n' "$p"
     fi
@@ -189,7 +188,13 @@ worktree_project_attribution_or_die() {
     local main="$1" x="$2" p="$3" mode="$4" t rc peers reason
     WPA_DOCKER=""
     [[ -n "$main" && -d "$main" ]] || error "could not resolve the main checkout for $x -- refusing: without it the Compose project cannot be attributed (SMI-7089). Nothing was changed."
-    [[ -n "$p" ]] || error "the directory name of $x sanitizes to an empty Compose project name -- refusing: it cannot be attributed (SMI-7089). Nothing was changed. No Compose project can exist for an empty name, so there is nothing for Docker to clean up: remove the worktree with git directly: git worktree remove --force $x"
+    if [[ -z "$p" ]]; then
+        if [[ "$mode" == docker-optional ]]; then
+            error "the directory name of $x sanitizes to an empty Compose project name -- refusing: it cannot be attributed (SMI-7089). Nothing was changed. No Compose project can exist for an empty name, so there is nothing for Docker to clean up. Check that the worktree has nothing to lose (git -C $x status --porcelain), then remove it with git directly: git worktree remove --force $x"
+        else
+            error "the directory name of $x sanitizes to an empty Compose project name -- refusing: it cannot be attributed (SMI-7089). Nothing was changed. Rename the worktree so its name has letters or digits (git worktree move $x <new-path>), then retry."
+        fi
+    fi
 
     t="$(_wpa_timeout)"
     if ! command -v docker >/dev/null 2>&1; then

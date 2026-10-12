@@ -75,11 +75,17 @@ check_docker_networks() {
     # Captured with `if !`, never a bare `x=$(a | b)`: under `set -euo pipefail` a
     # failing `docker network ls` (daemon gone) would abort the script AFTER
     # `git worktree remove` already ran, with no summary.
-    local network_count names
-    if ! names="$(docker network ls --format '{{.Name}}' 2>&1)"; then
-        warn "Could not list Docker networks: ${names:-no output}"
+    # stdout only is the list of names: stderr from a SUCCESSFUL call (a daemon
+    # warning) must not be counted as networks, so it goes to a scratch file that
+    # is read only to explain a failure.
+    local network_count names errfile
+    errfile="$(mktemp "${TMPDIR:-/tmp}/rwd-netls.XXXXXX" 2>/dev/null)" || errfile=/dev/null
+    if ! names="$(docker network ls --format '{{.Name}}' 2>"$errfile")"; then
+        warn "Could not list Docker networks (docker network ls failed): $(cat "$errfile" 2>/dev/null)"
+        [[ "$errfile" == /dev/null ]] || rm -f "$errfile"
         return 0
     fi
+    [[ "$errfile" == /dev/null ]] || rm -f "$errfile"
     if [[ -z "$names" ]]; then
         network_count=0
     else

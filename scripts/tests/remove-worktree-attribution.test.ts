@@ -246,6 +246,25 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     expect(out.split('\n')).toContain('foo')
   })
 
+  it('T4d. a .worktrees directory whose name contains a NEWLINE is one entry, and a peer', () => {
+    const fx = mk('attr-t4d')
+    // `fo\no` sanitizes to `foo` (Compose drops the newline), so it shares the project.
+    const stray = join(fx.repoDir, '.worktrees', 'fo\no')
+    mkdirSync(stray, { recursive: true })
+    const wt = addWt(fx, 'foo', { parent: join(fx.repoDir, '.worktrees') })
+    primeAttribution(fx, wt)
+
+    const r = runRemove(fx, [wt, '--force'])
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual(['info'])
+    expect(existsSync(wt)).toBe(true)
+    expect(text(r)).toContain('unregistered .worktrees directory')
+    // The peer list is printed line by line, so the message shows the name up to
+    // its newline; the refusal itself (above) is what matters.
+    expect(text(r)).toContain(join(fx.repoDir, '.worktrees', 'fo'))
+  })
+
   it('T16b. a directory name that sanitizes to nothing is refused with the way out', () => {
     const fx = mk('attr-t16b')
     const wt = addWt(fx, '___')
@@ -257,6 +276,9 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     expect(r.dockerCalls).toEqual([])
     expect(existsSync(wt)).toBe(true)
     expect(text(r)).toContain('sanitizes to an empty Compose project name')
+    // Under remove-worktree this hint would bypass its own dirty-tree check, so it
+    // must send the user to look at the tree FIRST.
+    expect(text(r)).toContain(`git -C ${wt} status --porcelain`)
     expect(text(r)).toContain(`git worktree remove --force ${wt}`)
   })
 

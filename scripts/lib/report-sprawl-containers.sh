@@ -25,8 +25,7 @@ worktree_shared_projects() {
         proj="$(sanitize_project_name "$(basename "$entry")")"
         [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${entry}"$'\n'
     done <<< "$wt_paths"
-    while IFS= read -r d; do
-        [[ -n "$d" ]] || continue
+    while IFS= read -r -d '' d; do
         seen=0
         for entry in ${registered[@]+"${registered[@]}"}; do
             if [[ "$entry" -ef "$d" ]]; then
@@ -37,7 +36,7 @@ worktree_shared_projects() {
         [[ "$seen" -eq 1 ]] && continue
         proj="$(sanitize_project_name "$(basename "$d")")"
         [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${d}"$'\n'
-    done <<< "$(worktree_lifecycle_worktrees_dirs "$main")"
+    done < <(worktree_lifecycle_worktrees_dirs "$main")
     [[ -n "$rows" ]] || return 0
     printf '%s' "$rows" | sort | awk -F'\t' '
         { n[$1]++; list[$1] = (list[$1] == "" ? $2 : list[$1] ", " $2) }

@@ -111,6 +111,11 @@ case "$1" in
     echo "$@" >> "$LOG"
     rc="$(rc_of "network_$2")"
     if [ "$rc" != 0 ]; then echo "Cannot connect to the Docker daemon" >&2; exit "$rc"; fi
+    # Optional canned output: network_ls_out on stdout, network_ls_err on stderr.
+    if [ "$2" = ls ]; then
+      if [ -f "$RESP/network_ls_err" ]; then cat "$RESP/network_ls_err" >&2; fi
+      if [ -f "$RESP/network_ls_out" ]; then cat "$RESP/network_ls_out"; fi
+    fi
     exit 0
     ;;
   ps)

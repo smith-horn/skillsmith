@@ -133,8 +133,18 @@ attr "$TMP/_foo" foo; check "T19b colliding _foo beside foo refuses" 1 $?
 attr "$TMP.link/_foo" foo; check "T19b colliding _foo through a symlinked path refuses" 1 $?
 attr "$TMP/bar" bar; check "T19b near miss bar beside bar_ passes" 0 $?
 attr "$TMP.link/bar" bar; check "T19b near miss through a symlinked path passes" 0 $?
-mkdir -p "$REPO/.worktrees/.dot"
-check "T19b worktrees_dirs lists a dot-named directory" "$REPO/.worktrees/.dot" "$(worktree_lifecycle_worktrees_dirs "$REPO")"
+# One directory per glob arm: `*/` (plain), `.[!.]*/` (.dot) and `..?*/` (..dd).
+# Output is NUL-delimited; translate to newlines to compare.
+mkdir -p "$REPO/.worktrees/plain" "$REPO/.worktrees/.dot" "$REPO/.worktrees/..dd"
+dirs="$(worktree_lifecycle_worktrees_dirs "$REPO" | tr '\0' '\n')"
+check "T19b worktrees_dirs: plain arm" 1 "$(printf '%s\n' "$dirs" | grep -cxF "$REPO/.worktrees/plain")"
+check "T19b worktrees_dirs: .[!.]* arm (.dot)" 1 "$(printf '%s\n' "$dirs" | grep -cxF "$REPO/.worktrees/.dot")"
+check "T19b worktrees_dirs: ..?* arm (..dd)" 1 "$(printf '%s\n' "$dirs" | grep -cxF "$REPO/.worktrees/..dd")"
+check "T19b sanitize_project_name drops an interior newline" foo "$(sanitize_project_name "fo
+o")"
+mkdir -p "$REPO/.worktrees/new
+line"
+check "T19b worktrees_dirs: a name with a newline is ONE entry (4 NULs for 4 dirs)" 4 "$(worktree_lifecycle_worktrees_dirs "$REPO" | tr -cd '\000' | wc -c | tr -d ' ')"
 
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]

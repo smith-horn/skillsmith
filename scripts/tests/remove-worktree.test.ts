@@ -16,7 +16,8 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, rmSync } from 'fs'
+import { existsSync, rmSync, writeFileSync } from 'fs'
+import { join } from 'path'
 
 import {
   addWt,
@@ -329,6 +330,24 @@ describe('SMI-7089: global --prune steps and an unusable Docker never abort a re
     expect(result.stderr + result.stdout).toContain('Could not list Docker networks')
     expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
     expect(result.stdout).toContain('Worktree removal complete!')
+    expect(result.status).toBe(0)
+  })
+
+  it('(b3) stderr from a SUCCESSFUL `network ls` is not counted as networks', () => {
+    const fx = mk('rmwt-netls-stderr')
+    const wt = addWt(fx, 'wt-netstderr')
+    primeAttribution(fx, wt)
+    writeFileSync(join(fx.responsesDir, 'network_ls_out'), 'bridge\nhost\n')
+    writeFileSync(
+      join(fx.responsesDir, 'network_ls_err'),
+      Array.from({ length: 10 }, (_, i) => `daemon warning ${i}`).join('\n') + '\n'
+    )
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain('network ls --format {{.Name}}')
+    expect(result.stdout).toContain('Docker network count OK (2 networks)')
+    expect(result.stdout).not.toContain('Docker has')
     expect(result.status).toBe(0)
   })
 

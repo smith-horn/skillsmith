@@ -23,7 +23,10 @@ enumerate_worktree_paths() {
 }
 
 # worktree_lifecycle_worktrees_dirs MAIN -- every directory directly under
-# MAIN/.worktrees, one path per line (no trailing slash), dot-named ones included.
+# MAIN/.worktrees, NUL-delimited (no trailing slash), dot-named ones included.
+# NUL, not newline: a directory name may contain a newline, which a line reader
+# would split into two bogus paths. Read it with
+# `while IFS= read -r -d '' d; do ...; done < <(worktree_lifecycle_worktrees_dirs M)`.
 # `*/` alone misses `.foo`, whose project name sanitizes to `foo` (leading
 # separators are stripped), so an unregistered `.worktrees/.foo` would be invisible
 # to the liveness set, the attribution check and the shared-project report. The
@@ -33,7 +36,7 @@ worktree_lifecycle_worktrees_dirs() {
     local d
     for d in "$1"/.worktrees/*/ "$1"/.worktrees/.[!.]*/ "$1"/.worktrees/..?*/; do
         [[ -d "$d" ]] || continue
-        printf '%s\n' "${d%/}"
+        printf '%s\0' "${d%/}"
     done
 }
 
@@ -51,10 +54,9 @@ derive_protected() {
     done <<< "$wt_paths"
 
     local d
-    while IFS= read -r d; do
-        [[ -n "$d" ]] || continue
+    while IFS= read -r -d '' d; do
         sanitize_project_name "$(basename "$d")"
-    done <<< "$(worktree_lifecycle_worktrees_dirs "$main_repo")"
+    done < <(worktree_lifecycle_worktrees_dirs "$main_repo")
 }
 
 # The positive control is derived INDEPENDENTLY of the listing it checks, from
