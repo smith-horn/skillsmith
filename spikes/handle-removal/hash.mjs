@@ -32,6 +32,36 @@ function childRel(parentRel, name) {
 }
 
 /**
+ * Read exactly `size` bytes from `fd` at offset 0, and report whether the file
+ * held exactly that many.
+ *
+ * SMI-6711 HIGH 5: both content-hash sites used to call
+ * `fs.readSync(fd, buf, 0, size, 0)` once and ignore its return value. readSync
+ * may return fewer bytes than asked -- a file truncated after its stat, or an
+ * ordinary short read -- and the unread suffix of `buf` stays zero-filled, so
+ * the digest described bytes nobody read. The guard pass and V2's re-verify
+ * share the pattern, so they could agree on the same incomplete view.
+ *
+ * `complete` is false when EOF arrives before `size` bytes (the file shrank)
+ * or when a byte exists at offset `size` (the file grew). Callers must treat
+ * an incomplete read as a changed entry and never hash `buf`.
+ *
+ * @returns {{buf: Buffer, complete: boolean}}
+ */
+export function readExactly(fd, size) {
+  const buf = Buffer.alloc(size)
+  let filled = 0
+  while (filled < size) {
+    const n = fs.readSync(fd, buf, filled, size - filled, filled)
+    if (n === 0) return { buf, complete: false }
+    filled += n
+  }
+  const probe = Buffer.alloc(1)
+  const extra = fs.readSync(fd, probe, 0, 1, size)
+  return { buf, complete: extra === 0 }
+}
+
+/**
  * @param {object} shim - the loaded native-c addon
  * @param {number} topFd - already-open fd for the top of the tree (T)
  * @param {object} [options]
@@ -161,9 +191,11 @@ export function guardPass(shim, topFd, options = {}) {
         callHook('beforeRead', rel, 'file')
         const opened = shim.openAt(dirFd, name, false)
         if (opened.errno !== 0) return stop('entry-removed', rel, opened.errno)
-        const size = Number(st.size)
-        const buf = size > 0 ? Buffer.alloc(size) : Buffer.alloc(0)
-        if (size > 0) fs.readSync(opened.fd, buf, 0, size, 0)
+        const { buf, complete } = readExactly(opened.fd, Number(st.size))
+        if (!complete) {
+          fs.closeSync(opened.fd)
+          return stop('entry-changed', rel, null)
+        }
         const contentHash = crypto.createHash('sha256').update(buf).digest('hex')
         fs.closeSync(opened.fd)
         record.set(rel, {

@@ -20,7 +20,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import { loadShim } from './native-c/load.mjs'
-import { guardPass, computeTreeHash } from './hash.mjs'
+import { guardPass, computeTreeHash, readExactly } from './hash.mjs'
 
 const EXDEV_ERRNO = -os.constants.errno.EXDEV
 
@@ -241,9 +241,11 @@ function removeVRInner(targetRoot, options = {}) {
       fs.closeSync(opened.fd)
       return stop('identity-changed', rel, null)
     }
-    const size = Number(pinned.size)
-    const buf = size > 0 ? Buffer.alloc(size) : Buffer.alloc(0)
-    if (size > 0) fs.readSync(opened.fd, buf, 0, size, 0)
+    const { buf, complete } = readExactly(opened.fd, Number(pinned.size))
+    if (!complete) {
+      fs.closeSync(opened.fd)
+      return stop('entry-changed', rel, null)
+    }
     const contentHash = crypto.createHash('sha256').update(buf).digest('hex')
     if (pinned.size !== rec.size || pinned.mode !== rec.mode || contentHash !== rec.contentHash) {
       fs.closeSync(opened.fd)
