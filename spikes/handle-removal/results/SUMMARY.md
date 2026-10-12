@@ -2,6 +2,8 @@
 
 Regenerated from 60 `results/raw/*.jsonl` files, 136240 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
 
+Not attack cells, so not counted above: measurement files `c4-guard-window.jsonl` (210); malformed lines skipped: 0.
+
 ## Verdict tally
 
 | Verdict | Cells |

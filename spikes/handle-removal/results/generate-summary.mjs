@@ -32,20 +32,46 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const RAW_DIR = path.join(HERE, 'raw')
 const OUT_PATH = path.join(HERE, 'SUMMARY.md')
 
+/**
+ * Attack-cell records carry `cell`. Measurement artifacts written to the same
+ * directory carry a `schema` instead (e.g. `c4-guard-window/1`) and are not
+ * cells, so they are set aside BY NAME and reported in the summary header.
+ *
+ * SMI-6711, 2026-10-12: `c4-guard-window.jsonl` (2026-09-17) holds 210
+ * schema-only records, and this loader passed them to `cellKey()`, which threw
+ * on `r.cell.attack`. So SUMMARY.md could not be regenerated at all from that
+ * day on. A record with neither `cell` nor `schema` still throws: it is
+ * neither a cell nor a known measurement, and dropping it silently would
+ * change the tallies with nothing saying so. Malformed lines are still
+ * skipped, but are now counted and reported rather than vanishing.
+ */
 function loadAllRecords() {
   const records = []
+  const measurementFiles = new Map()
+  const attackFiles = new Set()
+  let malformed = 0
   for (const file of fs.readdirSync(RAW_DIR).sort()) {
     if (!file.endsWith('.jsonl')) continue
     const lines = fs.readFileSync(path.join(RAW_DIR, file), 'utf8').split('\n').filter(Boolean)
     for (const line of lines) {
+      let r
       try {
-        records.push({ ...JSON.parse(line), _file: file })
+        r = JSON.parse(line)
       } catch {
-        /* skip a malformed line rather than fail the whole regen */
+        malformed += 1
+        continue
+      }
+      if (r && typeof r.cell === 'object' && r.cell !== null) {
+        records.push({ ...r, _file: file })
+        attackFiles.add(file)
+      } else if (r && typeof r.schema === 'string') {
+        measurementFiles.set(file, (measurementFiles.get(file) ?? 0) + 1)
+      } else {
+        throw new Error(`${file}: a record with neither "cell" nor "schema" -- refusing to guess`)
       }
     }
   }
-  return records
+  return { records, attackFiles, measurementFiles, malformed }
 }
 
 function cellKey(r) {
@@ -109,7 +135,7 @@ function verdict(row, controlState) {
 }
 
 function main() {
-  const records = loadAllRecords()
+  const { records, attackFiles, measurementFiles, malformed } = loadAllRecords()
   const rows = aggregate(records).sort((a, b) =>
     (a.attack + a.fs + a.candidate + a.variant).localeCompare(
       b.attack + b.fs + b.candidate + b.variant
@@ -131,7 +157,12 @@ function main() {
   lines.push('# SMI-6676 spike results summary')
   lines.push('')
   lines.push(
-    `Regenerated from ${fs.readdirSync(RAW_DIR).filter((f) => f.endsWith('.jsonl')).length} \`results/raw/*.jsonl\` files, ${records.length} total records. Do not hand-edit -- run \`node results/generate-summary.mjs\` after any new attack run.`
+    `Regenerated from ${attackFiles.size} \`results/raw/*.jsonl\` files, ${records.length} total records. Do not hand-edit -- run \`node results/generate-summary.mjs\` after any new attack run.`
+  )
+  lines.push('')
+  const measured = [...measurementFiles].map(([f, n]) => `\`${f}\` (${n})`).join(', ')
+  lines.push(
+    `Not attack cells, so not counted above: measurement files ${measured || 'none'}; malformed lines skipped: ${malformed}.`
   )
   lines.push('')
   lines.push('## Verdict tally')
