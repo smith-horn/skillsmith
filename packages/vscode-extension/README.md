@@ -8,7 +8,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 - **Browse the Skillsmith skill registry** from your VS Code sidebar
 - **View skill details** with rendered SKILL.md documentation
-- **One-click install** skills to your configured skills directory (default `~/.claude/skills`). When installing through the Skillsmith MCP server, a registry skill whose trust tier hasn't been reviewed (for example Unverified) shows a warning with the tier and the reason, and installs only if you choose **Install anyway**; the security scan runs on that path. If the MCP server is unavailable, the extension offers to install a placeholder instead.
+- **One-click install** skills to your configured skills directory (default `~/.claude/skills`). When installing through the Skillsmith MCP server, a registry skill whose trust tier is not official, verified, curated, community or local (for example Unverified) shows a warning with the tier and the reason, and installs only if you choose **Install anyway**; the security scan runs on that path. If the MCP server is unavailable, the extension offers to install a placeholder instead.
 
 ## Features
 

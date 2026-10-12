@@ -15,7 +15,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 ## What's New in v0.14.0
 
 - **Fail-closed install gates (behaviour change):** `SkillInstallationService.install()` now requires `confirmed: true` for any registry skill whose trust tier is not official, verified, curated, community or local, and refuses `skipScan` for those tiers (`SKIP_SCAN_FORBIDDEN`). Before, only `experimental` and `unknown` were gated, so an `unverified`, empty or unrecognised tier passed both checks. A missing or unrecognised tier is now scanned with the strictest options. Callers that never pass `confirmed` get `CONFIRMATION_REQUIRED` for these skills.
-- **New `executable_frontmatter` finding:** the scanner flags any scanned file that opens with an executable `---js` or `---javascript` frontmatter block (critical, flag-only: it doesn't change `riskScore`). Current clients refuse to install a skill whose SKILL.md carries it, unless the scan is skipped (allowed only for reviewed tiers).
+- **New `executable_frontmatter` finding:** the scanner flags any scanned file that opens with an executable `---js` or `---javascript` frontmatter block (critical, flag-only: it doesn't change `riskScore`). Current clients refuse to install a skill whose SKILL.md carries it, unless the scan is skipped (allowed only for the official, verified, curated, community or local tiers).
 - **`RiskScoreBreakdown` gains a required `executableFrontmatter` field.** Code that builds a `RiskScoreBreakdown` by hand must add it.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.

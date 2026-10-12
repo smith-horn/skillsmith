@@ -352,8 +352,8 @@ EOF`}</code></pre>
 {
   "skillId": "community/jest-helper", // Skill ID (owner/repo/skill) or GitHub URL (required)
   "force": false,                     // Reinstall if already installed
-  "skipScan": false,                  // Skip the security scan (reviewed tiers only)
-  "confirmed": false                  // Confirm an unreviewed trust tier
+  "skipScan": false,                  // Skip the security scan (allowlisted tiers only)
+  "confirmed": false                  // Confirm a tier outside the allowlist
 }`}</code></pre>
 
   <p>
@@ -362,7 +362,7 @@ EOF`}</code></pre>
     <code>CONFIRMATION_REQUIRED</code> with the tier and the reason. <code>confirmed</code> never
     skips the security scan, and <code>skipScan</code> is refused for these tiers and for direct
     GitHub URL installs. The security scan rejects a skill whose SKILL.md opens with executable
-    <code>---js</code> frontmatter; only a reviewed-tier install with <code>skipScan</code> bypasses
+    <code>---js</code> frontmatter; only an install in the official, verified, curated, community or local tiers with <code>skipScan</code> bypasses
     that check. (<code>local</code> means a skill imported from disk with <code>skillsmith import-local</code>;
     <code>experimental</code> and <code>unknown</code> are legacy names that are also gated.)
   </p>
