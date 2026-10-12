@@ -788,7 +788,7 @@ describe('SMI-7089: a copy of the script inside the worktree it would remove', (
     return join(wt, 'scripts')
   }
 
-  it('T31. is refused before ANY side effect (not even `docker info`), naming the main checkout copy', () => {
+  it('T33. is refused before ANY side effect (not even `docker info`), naming the main checkout copy', () => {
     const fx = mk('attr-t31')
     const wt = addWt(fx, 'x')
     primeAttribution(fx, wt)
@@ -804,7 +804,7 @@ describe('SMI-7089: a copy of the script inside the worktree it would remove', (
     expect(text(r)).toContain(`${fx.repoDir}/scripts/remove-worktree.sh ${wt}`)
   })
 
-  it('T31b. a script copy nested deeper inside the worktree is refused too', () => {
+  it('T33b. a script copy nested deeper inside the worktree is refused too', () => {
     const fx = mk('attr-t31b')
     const wt = addWt(fx, 'x')
     primeAttribution(fx, wt)
@@ -819,7 +819,7 @@ describe('SMI-7089: a copy of the script inside the worktree it would remove', (
     expect(existsSync(wt)).toBe(true)
   })
 
-  it('T32. a SIBLING whose name merely starts with the target\u2019s (x2 holds the script, x is removed) is not "inside" it', () => {
+  it('T34. a SIBLING whose name merely starts with the target\u2019s (x2 holds the script, x is removed) is not "inside" it', () => {
     const fx = mk('attr-t32')
     const x = addWt(fx, 'x')
     const x2 = addWt(fx, 'x2')
