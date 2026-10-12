@@ -112,8 +112,8 @@ describe('core <-> edge gatekeeper_bypass/archive_evasion weight + coefficient e
     ).toBe(core.CATEGORY_WEIGHTS.archive_evasion)
   })
 
-  // Core does not export its coefficients as a lookup table (inlined literals
-  // in calculateRiskScore's weighted sum) — pin edge's data-driven equivalent
+  // Core's coefficients live in weights.ts CATEGORY_COEFFICIENTS (keyed by
+  // breakdown field, not finding type) — pin edge's equivalent
   // directly, same as the sensitive_path/typosquat precedent in parity.test.ts.
   it('gatekeeper_bypass and archive_evasion CATEGORY_COEFFICIENTS are 0.4 on edge (matching core weights.ts CATEGORY_COEFFICIENTS)', async () => {
     const edge = await import(NODE_SCANNER_CONTEXT)

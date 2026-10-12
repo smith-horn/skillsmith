@@ -198,7 +198,7 @@ Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
 ### Why Configure an API Key?
 
-Without an API key, the MCP server falls back to a built-in public key: you get the Community per-minute rate (30/min), but that bucket is shared by every keyless client, so it can be exhausted by others. (The 10-call trial with a 100/min per-IP cap applies only to direct HTTP callers that send no Authorization header.) With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills.
+Without an API key, the MCP server falls back to a built-in public key: you get the Community per-minute rate (30/min), but that bucket is shared by every keyless client, so it can be exhausted by others. (The 10-call trial with a 100/min per-IP cap applies only to direct HTTP callers that send no Authorization header.) With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
 
 **Benefits of API key:**
 - Access to live indexed skills (not just cached)

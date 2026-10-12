@@ -167,7 +167,7 @@ Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/ac
 
 > **Quota note:** the monthly figure is a hard limit only where enforced. Edge functions hard-block on monthly quota for Community only, and only when `ENFORCE_COMMUNITY_QUOTA` is `'true'`. The MCP server's own monthly quota counts only `skill_suggest` and the tier-gated tools, and hard-blocks them by default (`SKILLSMITH_ENFORCE_MCP_QUOTA=false` turns that off).
 
-The MCP server falls back to a built-in public key when none is set, so keyless MCP use is Community-rate and shares one 30/min bucket with every other keyless client. The 10-call trial (100/min per IP) applies only to direct HTTP callers that send no Authorization header.
+The MCP server falls back to a built-in public key when none is set, so keyless MCP use is Community-rate and shares one 30/min bucket with every other keyless client. The 10-call trial (100/min per IP) applies only to direct HTTP callers that send no Authorization header. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
 
 > **Note:** Never paste API keys in chat. Configure via settings.json only.
 
