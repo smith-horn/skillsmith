@@ -28,6 +28,11 @@ set -euo pipefail
 WORKTREE_DOCKER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_lib.sh
 source "$WORKTREE_DOCKER_LIB_DIR/_lib.sh"
+# SMI-7089: the Compose-project attribution check gating `start` and `stop`.
+# shellcheck source=lib/worktree-lifecycle.sh
+source "$WORKTREE_DOCKER_LIB_DIR/lib/worktree-lifecycle.sh"
+# shellcheck source=lib/worktree-project-attribution.sh
+source "$WORKTREE_DOCKER_LIB_DIR/lib/worktree-project-attribution.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -48,6 +53,10 @@ Docker helper for git worktrees with isolated containers.
 Commands:
   start     Start Docker containers in worktree (docker compose up -d)
   stop      Stop Docker containers in worktree (docker compose down)
+            start and stop REFUSE, changing nothing, when another checkout
+            (a registered worktree, the main checkout, a .worktrees directory)
+            or a container created elsewhere shares this worktree's Compose
+            project, or when that cannot be established (SMI-7089)
   status    Show status of worktree containers
   generate  Generate docker-compose.override.yml for worktree
   ports     Show port mappings for worktree
@@ -201,6 +210,13 @@ cmd_start() {
         error "No docker-compose.yml found in $worktree_path"
     fi
 
+    # SMI-7089: `up` replaces every container of this Compose project, whichever
+    # directory created it, and the project name is computed from the basename,
+    # so a second directory resolving to it would lose its container. Attribute
+    # the project to this checkout alone, or refuse -- BEFORE the auto-generate
+    # block below, so a refused start leaves no override file behind.
+    worktree_project_gate_for_path "$worktree_path" docker-required
+
     # Generate override if missing
     if [[ ! -f "$worktree_path/docker-compose.override.yml" ]]; then
         warn "No docker-compose.override.yml found. Generating..."
@@ -237,6 +253,12 @@ cmd_stop() {
     if [[ ! -f "$worktree_path/docker-compose.yml" ]]; then
         error "No docker-compose.yml found in $worktree_path"
     fi
+
+    # SMI-7089: `down` removes every container and the network of this Compose
+    # project, whichever directory created them -- attribute it to this checkout
+    # alone, or refuse. Stopping the main checkout's own container is legitimate:
+    # it has no peer, so it passes.
+    worktree_project_gate_for_path "$worktree_path" docker-required
 
     info "Stopping Docker containers..."
     (cd "$worktree_path" && docker compose --profile dev down)
