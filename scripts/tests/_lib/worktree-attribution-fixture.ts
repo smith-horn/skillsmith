@@ -259,14 +259,15 @@ export function run(
   script: 'remove-worktree.sh' | 'worktree-docker.sh',
   args: string[],
   extraEnv: Record<string, string> = {},
-  pathOverride?: string
+  pathOverride?: string,
+  scriptDir?: string
 ): RunResult {
   const env = {
     ...makeFixtureEnv(),
     PATH: pathOverride ?? `${fx.binDir}:${makeFixtureEnv().PATH ?? ''}`,
     ...extraEnv,
   }
-  const r = spawnSync('bash', [join(fx.repoDir, 'scripts', script), ...args], {
+  const r = spawnSync('bash', [join(scriptDir ?? join(fx.repoDir, 'scripts'), script), ...args], {
     encoding: 'utf8',
     timeout: 60_000,
     env,

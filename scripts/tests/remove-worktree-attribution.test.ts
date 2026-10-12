@@ -19,6 +19,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync } from 'child_process'
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -682,6 +683,61 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     expect(r.dockerCalls).toContain('info')
     expect(r.dockerCalls.some((c) => c.startsWith('compose'))).toBe(false)
     expect(existsSync(wt)).toBe(false)
+  })
+})
+
+describe('SMI-7089: a copy of the script inside the worktree it would remove', () => {
+  const copyScriptsInto = (fx: AttrFixture, wt: string): string => {
+    cpSync(join(fx.repoDir, 'scripts'), join(wt, 'scripts'), { recursive: true })
+    return join(wt, 'scripts')
+  }
+
+  it('T31. is refused before ANY side effect (not even `docker info`), naming the main checkout copy', () => {
+    const fx = mk('attr-t31')
+    const wt = addWt(fx, 'x')
+    primeAttribution(fx, wt)
+    const inside = copyScriptsInto(fx, wt)
+
+    const r = run(fx, 'remove-worktree.sh', [wt, '--force'], {}, undefined, inside)
+
+    expect(r.status).toBe(1)
+    // The refusal comes before Step 0, so no Docker call of any kind was made.
+    expect(r.dockerCalls).toEqual([])
+    expect(listed(fx)).toContain(`worktree ${wt}\n`)
+    expect(existsSync(wt)).toBe(true)
+    expect(text(r)).toContain(`${fx.repoDir}/scripts/remove-worktree.sh ${wt}`)
+  })
+
+  it('T31b. a script copy nested deeper inside the worktree is refused too', () => {
+    const fx = mk('attr-t31b')
+    const wt = addWt(fx, 'x')
+    primeAttribution(fx, wt)
+    const deep = join(wt, 'tools', 'bin')
+    mkdirSync(join(wt, 'tools'), { recursive: true })
+    cpSync(join(fx.repoDir, 'scripts'), deep, { recursive: true })
+
+    const r = run(fx, 'remove-worktree.sh', [wt, '--force'], {}, undefined, deep)
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual([])
+    expect(existsSync(wt)).toBe(true)
+  })
+
+  it('T32. a SIBLING whose name merely starts with the target\u2019s (x2 holds the script, x is removed) is not "inside" it', () => {
+    const fx = mk('attr-t32')
+    const x = addWt(fx, 'x')
+    const x2 = addWt(fx, 'x2')
+    primeAttribution(fx, x)
+    const inX2 = copyScriptsInto(fx, x2)
+
+    const r = run(fx, 'remove-worktree.sh', [x, '--force'], {}, undefined, inX2)
+
+    // Presence: it ran to completion and removed x; x2 (which holds the script) stays.
+    expect(r.dockerCalls).toContain('info')
+    expect(existsSync(x)).toBe(false)
+    expect(existsSync(x2)).toBe(true)
+    expect(text(r)).not.toContain('lives inside the worktree')
+    expect(r.status).toBe(0)
   })
 })
 

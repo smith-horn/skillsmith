@@ -183,6 +183,19 @@ main() {
         fi
     fi
 
+    # Refuse BEFORE any side effect if this very script lives inside the worktree
+    # being removed. Step 3.5 runs `$SCRIPT_DIR/prune-orphaned-docker-volumes.sh`
+    # after `git worktree remove`, by which time SCRIPT_DIR is gone: the prune would
+    # fail and the printed re-run command would name a deleted path. Compared on
+    # RESOLVED paths with a trailing slash, so a sibling `x2` is not "inside" `x`.
+    local _rw _sd
+    _rw="$(cd "$worktree_path" && pwd -P)"
+    _sd="$(cd "$SCRIPT_DIR" && pwd -P)"
+    if [[ "$_sd" == "$_rw" || "$_sd/" == "$_rw/"* || "$_sd" -ef "$_rw" ]]; then
+        error "This copy of remove-worktree.sh lives inside the worktree it would remove ($_sd), so its own scripts would be deleted before the Docker cleanup runs. Nothing was changed. Run the main checkout's copy instead:
+  ${_main_repo:-<main checkout>}/scripts/remove-worktree.sh $worktree_path"
+    fi
+
     echo ""
     info "Removing worktree: $worktree_path"
     echo ""
