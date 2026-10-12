@@ -9,7 +9,7 @@ All notable changes to `@skillsmith/core` are documented here.
   `---js` / `---javascript` frontmatter block. The finding carries a score coefficient of 0, so it
   never changes `riskScore` on its own; it is reported so it can be acted on. Current clients
   refuse to install a skill whose SKILL.md carries it, and a bundled non-doc file that opens with
-  `---js` is likewise rejected at install on new clients. `skill_rescan` quarantines locally only
+  `---js` is likewise rejected at install on new clients (except `package.json`, where only lifecycle-hook values are scanned). `skill_rescan` quarantines locally only
   when SKILL.md itself carries it; a bundled sibling carrying it is not quarantined by rescan.
 - **Changed** (breaking for hand-built literals): SMI-7030 -- `RiskScoreBreakdown` gains a required
   `executableFrontmatter` field. Code that constructs a `RiskScoreBreakdown` by hand must add it.

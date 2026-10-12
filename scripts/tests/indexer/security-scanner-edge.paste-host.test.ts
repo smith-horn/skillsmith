@@ -78,7 +78,7 @@ describe('core <-> edge paste_host_fetch weight + coefficient equality (SMI-6033
   // Core does not export its coefficients as a lookup table (inlined literals
   // in calculateRiskScore's weighted sum) — pin edge's data-driven equivalent
   // directly, same as the sensitive_path/typosquat/archive_evasion precedent.
-  it('paste_host_fetch CATEGORY_COEFFICIENTS is 0.4 on edge (matching core SecurityScanner.helpers.ts)', async () => {
+  it('paste_host_fetch CATEGORY_COEFFICIENTS is 0.4 on edge (matching core weights.ts CATEGORY_COEFFICIENTS)', async () => {
     const edge = await import(NODE_SCANNER_CONTEXT)
     expect(edge.CATEGORY_COEFFICIENTS.paste_host_fetch).toBe(0.4)
   })

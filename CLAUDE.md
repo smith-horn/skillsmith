@@ -218,7 +218,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `apply_namespace_rename` | Apply a rename suggestion from a local namespace-collision audit (`apply` / `custom` / `skip` / `revert`) (Community; SMI-4590; `revert` SMI-5671) |
 | `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (Community; SMI-4590) |
 | `undo_apply` | Session-scoped undo of the most recent apply_namespace_rename/apply_recommended_edit changeset(s), restored from the apply tool's own backup (Community; SMI-5456/SMI-5470) |
-| `apply_manifest_reconcile` | Repair a corrupted or ambiguous `~/.skillsmith/manifest.json` entry through a supported path — `mark_local` / `relink` / `drop_entry` / `verify` / `revert` (SMI-6343 Wave 4, ADR-144 §6 / ADR-145) |
+| `apply_manifest_reconcile` | Repair a corrupted or ambiguous `~/.skillsmith/manifest.json` entry through a supported path — `mark_local` / `relink` / `drop_entry` / `verify` / `revert` (Community; SMI-6343 Wave 4, ADR-144 §6 / ADR-145) |
 | `team_workspace` | Manage team workspaces: create, list, get, delete (Team+) |
 | `share_skill` | Add, remove, or list skills in a team workspace (Team+) |
 | `publish_private` | Mark a skill private on this device, hidden from your own search results (Team+) |
@@ -240,7 +240,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `api_key_manage` | Manage API keys for programmatic access: create, list, revoke, get (Enterprise; in preview, SMI-4135) |
 | `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports (Team+) |
 
-**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial, plus a 100/min per-IP cap). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env. Shell exports don't reach MCP subprocesses. Team-tool resolution chain (SMI-4312/ADR-116), trust tiers, CLI surface: see [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md).
+**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min; one bucket shared across all anon-key callers, including every keyless MCP client), No Auth (10 trial, plus a 100/min per-IP cap; direct HTTP callers with no Authorization header only). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env. Shell exports don't reach MCP subprocesses. Team-tool resolution chain (SMI-4312/ADR-116), trust tiers, CLI surface: see [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md).
 
 ---
 

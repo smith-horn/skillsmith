@@ -190,7 +190,7 @@ The Skillsmith API provides access to **hundreds of thousands of indexed skills*
 - **Indexed daily** from GitHub repositories
 - **Security screened hourly** for vulnerabilities and malicious patterns
 - **Quality scored** based on documentation, structure, and community feedback
-- **Categorized** by trust tier (Verified, Community, Experimental)
+- **Categorized** by trust tier (eight tiers, from Official to Unverified; see Trust Tiers below)
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
@@ -198,7 +198,7 @@ Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
 ### Why Configure an API Key?
 
-Without an API key, you're limited to **10 total requests** (trial mode), plus a 100 requests/minute cap per IP address. With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills.
+Without an API key, the MCP server falls back to a built-in public key: you get the Community per-minute rate (30/min), but that bucket is shared by every keyless client, so it can be exhausted by others. (The 10-call trial with a 100/min per-IP cap applies only to direct HTTP callers that send no Authorization header.) With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills.
 
 **Benefits of API key:**
 - Access to live indexed skills (not just cached)
@@ -242,11 +242,13 @@ Without an API key, you're limited to **10 total requests** (trial mode), plus a
 
 | Tier | Monthly quota | Per-minute limit | Monthly Cost | Best For |
 |------|---------------|------------------|--------------|----------|
-| No auth (trial) | 10 calls total | 100/min per IP | Free | Quick evaluation |
+| No API key (MCP default) | Community rate, shared public key | 30/min, shared across all keyless clients | Free | Quick evaluation |
 | Community | 100 | 30/min | Free | Personal projects |
 | Individual | 1,000 | 200/min | $9.99/mo | Active developers |
 | Team | 10,000 | 300/min | $25/user/mo | Development teams |
 | Enterprise | Unlimited | 600/min | Contact Sales | Large organizations |
+
+> **Quota note:** the monthly figure is a hard limit only where enforced. Edge functions hard-block on monthly quota for Community only, and only when `ENFORCE_COMMUNITY_QUOTA` is `'true'`. The MCP server's own monthly quota counts only `skill_suggest` and the tier-gated tools, and hard-blocks them by default (`SKILLSMITH_ENFORCE_MCP_QUOTA=false` turns that off).
 
 All tiers include:
 - Full access to skill search, details, and recommendations

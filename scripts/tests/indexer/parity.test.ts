@@ -1026,15 +1026,15 @@ describe('core <-> edge sensitive_path/typosquat weight, coefficient, and co-sig
     )
   })
 
-  // Core does not export its coefficients as a lookup table — they're inlined
-  // literals in calculateRiskScore's weighted sum (SecurityScanner.helpers.ts:
-  // `breakdown.sensitivePaths * 0.04` / `breakdown.typosquat * 0.04`, both
-  // documented there as the shared 0.04 "advisory tier" coefficient — the same
-  // one used for externalUrls/ssrf). Pin edge's data-driven equivalent directly
-  // since there is no core export to diff against; the behavioral fixture suite
+  // Core's coefficients live in weights.ts (CATEGORY_COEFFICIENTS) and are applied by
+  // calculateRiskScore in SecurityScanner.risk-score.ts (`breakdown.sensitivePaths * 0.04` /
+  // `breakdown.typosquat * 0.04`, the shared 0.04 "advisory tier" coefficient — the same
+  // one used for externalUrls/ssrf). Pin edge's data-driven equivalent directly:
+  // core keys its map by breakdown field and edge by finding type, so the two
+  // are not diffed key-for-key here; the behavioral fixture suite
   // below cross-checks the actual end-to-end riskScore instead, which is the
   // real proof that core's inlined 0.04 and edge's tabled 0.04 behave alike.
-  it('sensitive_path and typosquat CATEGORY_COEFFICIENTS are 0.04 on edge (matching core SecurityScanner.helpers.ts)', async () => {
+  it('sensitive_path and typosquat CATEGORY_COEFFICIENTS are 0.04 on edge (matching core weights.ts CATEGORY_COEFFICIENTS)', async () => {
     const edge = await import(NODE_SCANNER_CONTEXT)
     expect(edge.CATEGORY_COEFFICIENTS.sensitive_path).toBe(0.04)
     expect(edge.CATEGORY_COEFFICIENTS.typosquat).toBe(0.04)

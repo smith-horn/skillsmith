@@ -159,11 +159,15 @@ Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/ac
 
 | Tier | Monthly quota | Per-minute limit | Cost |
 |------|---------------|------------------|------|
-| No auth (trial) | 10 calls total | 100/min per IP | Free |
+| No API key (MCP default) | Community rate, shared public key | 30/min, shared across all keyless clients | Free |
 | Community | 100 | 30/min | Free |
 | Individual | 1,000 | 200/min | $9.99/mo |
 | Team | 10,000 | 300/min | $25/user/mo |
 | Enterprise | Unlimited | 600/min | Contact Sales |
+
+> **Quota note:** the monthly figure is a hard limit only where enforced. Edge functions hard-block on monthly quota for Community only, and only when `ENFORCE_COMMUNITY_QUOTA` is `'true'`. The MCP server's own monthly quota counts only `skill_suggest` and the tier-gated tools, and hard-blocks them by default (`SKILLSMITH_ENFORCE_MCP_QUOTA=false` turns that off).
+
+The MCP server falls back to a built-in public key when none is set, so keyless MCP use is Community-rate and shares one 30/min bucket with every other keyless client. The 10-call trial (100/min per IP) applies only to direct HTTP callers that send no Authorization header.
 
 > **Note:** Never paste API keys in chat. Configure via settings.json only.
 
@@ -183,7 +187,7 @@ Once more than one team is publishing skills, these are the questions that matte
 
 1. **Which team is this scoped to?** Every skill in the registry is scoped to a team.
 2. **Which version is installed here?** Versions are immutable; `skill_diff` (Individual tier) and `skill_outdated` report drift for what's installed on the machine you run them from.
-3. **Has it been flagged by the security scan?** Skills pulled from the public index are scored automatically; flagged or suspicious ones are quarantined pending review — unflagged means it wasn't flagged, not that it was formally approved. Skills carry one of five trust tiers, from Official to Unverified ([Security Guide](https://skillsmith.app/docs/security)).
+3. **Has it been flagged by the security scan?** Skills pulled from the public index are scored automatically; flagged or suspicious ones are quarantined pending review — unflagged means it wasn't flagged, not that it was formally approved. Each skill carries one of eight trust tiers, from Official to Unverified ([Security Guide](https://skillsmith.app/docs/security)).
 4. **What happens to the ones nobody maintains?** Stale skills can be deprecated instead of quietly rotting in someone's repo.
 
 ## How it works
@@ -203,7 +207,7 @@ Search, install, and manage skills for yourself, free. When your team needs the 
 
 ## MCP Tools
 
-Skillsmith registers 43 tools. Most work on the free Community tier. Higher tiers add version tracking, team features and enterprise controls. Tools above your tier return an upgrade message. [Pricing](https://skillsmith.app/pricing).
+Skillsmith registers 43 tools. 19 of the 43 work on the free Community tier. Higher tiers add version tracking, team features and enterprise controls. Tools above your tier return an upgrade message. [Pricing](https://skillsmith.app/pricing).
 
 ### Community (free)
 
@@ -278,7 +282,7 @@ Skillsmith uses the Model Context Protocol (MCP):
 
 ```text
 ┌─────────────────────────────────────────────────────┐
-│  MCP Client (Claude Code, Cursor, etc.)               │
+│  MCP Client (Claude Code, Cursor, etc.)             │
 │  ┌─────────────────────────────────────────────────┐│
 │  │  Skillsmith MCP Server                          ││
 │  │  └── @skillsmith/mcp-server                     ││
@@ -288,8 +292,8 @@ Skillsmith uses the Model Context Protocol (MCP):
 │  │      ├── skill_outdated, skill_diff, ...        ││
 │  │      └── 43 tools across four tiers             ││
 │  └─────────────────────────────────────────────────┘│
-│                          │                           │
-│                          ▼                           │
+│                          │                          │
+│                          ▼                          │
 │  ┌─────────────────────────────────────────────────┐│
 │  │  ~/.skillsmith/skills.db (SQLite + FTS5)        ││
 │  │  ~/.claude/skills/ (installed skills)           ││
