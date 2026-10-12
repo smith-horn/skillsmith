@@ -321,7 +321,8 @@ export function run(
   args: string[],
   extraEnv: Record<string, string> = {},
   pathOverride?: string,
-  scriptDir?: string
+  scriptDir?: string,
+  cwd?: string
 ): RunResult {
   const env = {
     ...makeFixtureEnv(),
@@ -332,7 +333,7 @@ export function run(
     encoding: 'utf8',
     timeout: 60_000,
     env,
-    cwd: fx.repoDir,
+    cwd: cwd ?? fx.repoDir,
   })
   return {
     status: r.status ?? 1,

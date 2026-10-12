@@ -809,6 +809,49 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     expect(text(r)).toContain(`Use the real path: ${real}`)
   })
 
+  it('T17g. SHELLOPTS=physical does not turn a symlinked worktree path into its target (SMI-7111)', () => {
+    const fx = mk('attr-t17g')
+    const real = addWt(fx, 'fooreal')
+    primeAttribution(fx, real)
+    const link = join(fx.tempRoot, 'foolink')
+    symlinkSync(real, link)
+
+    const r = runRemove(fx, [link, '--force'], { SHELLOPTS: 'physical' })
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual([])
+    expect(existsSync(real)).toBe(true)
+    expect(text(r)).toContain('foolink')
+    expect(text(r)).toContain(`Use the real path: ${real}`)
+  })
+
+  it.each([
+    ['the repo root', (fx: AttrFixture) => fx.repoDir],
+    ['a subdirectory of the repo', (fx: AttrFixture) => join(fx.repoDir, 'scripts')],
+  ])('T17h. a repository-relative path works with the cwd at %s (SMI-7111)', (_n, cwdOf) => {
+    const fx = mk('attr-t17h')
+    mkdirSync(join(fx.repoDir, '.worktrees'), { recursive: true })
+    const foo = addWt(fx, 'foo', { parent: join(fx.repoDir, '.worktrees') })
+    primeAttribution(fx, foo)
+    ourContainers(fx, foo, ['c1'])
+
+    const r = run(
+      fx,
+      'remove-worktree.sh',
+      ['.worktrees/foo', '--force'],
+      {},
+      undefined,
+      undefined,
+      cwdOf(fx)
+    )
+
+    expect(r.status).toBe(0)
+    expect(removals(r.dockerCalls)).toEqual(['rm -f c1'])
+    expect(text(r)).toContain('Orphan prune scope: foo')
+    expect(existsSync(foo)).toBe(false)
+    expect(listed(fx)).not.toContain(`worktree ${foo}\n`)
+  })
+
   it('T17b. a worktree with no Compose files is attributed on git alone: no Compose call is made', () => {
     const fx = mk('attr-t17b')
     const wt = addWt(fx, 'foo', { override: false })

@@ -23,6 +23,7 @@ import {
   makeAttrFixture,
   ourContainers,
   primeAttribution,
+  run,
   runDocker,
   setExit,
   setContainers,
@@ -215,6 +216,35 @@ describe('SMI-7089: worktree-docker.sh stop is attributed before it removes anyt
       expect(r.status).toBe(1)
       expect(r.dockerCalls).toEqual([])
       expect(text(r)).toContain('fooreal')
+      expect(text(r)).toContain(`Use the real path: ${real}`)
+    }
+  })
+
+  it('T24g. SHELLOPTS=physical does not defeat the symlinked-worktree refusal (SMI-7111)', () => {
+    const fx = mk('wd-t24e')
+    const real = wt(fx, 'fooreal')
+    composeOverride(real)
+    primeAttribution(fx, real)
+    const link = join(fx.tempRoot, 'foolink')
+    symlinkSync(real, link)
+
+    // A RELATIVE path is the one resolved by the script's own `cd && pwd`.
+    const inTemp = (f: typeof fx, args: string[]) =>
+      run(
+        f,
+        'worktree-docker.sh',
+        args,
+        { SHELLOPTS: 'physical' },
+        undefined,
+        undefined,
+        f.tempRoot
+      )
+    const stop = inTemp(fx, ['stop', 'foolink'])
+    const start = inTemp(fx, ['start', 'foolink'])
+
+    for (const r of [stop, start]) {
+      expect(r.status).toBe(1)
+      expect(r.dockerCalls).toEqual([])
       expect(text(r)).toContain(`Use the real path: ${real}`)
     }
   })
