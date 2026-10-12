@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-7056 -- `skillsmith install` and `skillsmith update` accept `--yes` (`-y`) to
+  confirm installing a registry skill whose trust tier has not been reviewed, such as `unverified`.
+  The registry now asks for that confirmation, and the CLI had no way to give it. Without `--yes`,
+  an interactive terminal shows the skill's trust tier and a warning and asks y/N (default No); a
+  script or pipe exits non-zero with a message naming `--yes`. Installing from interactive
+  `skillsmith search` asks the same question. `--yes` never skips the security scan, and
+  `--skip-scan` is still refused for these tiers. `update --yes` also answers
+  the existing "Update <skill>?" prompt, so it works from a script. Answering no, or pressing
+  Ctrl-C, cancels the install. `install --json` output now includes `errorCode` on failure (for
+  example `CONFIRMATION_REQUIRED`).
+
 ## v0.8.15
 
 - **Fixed**: SMI-7018 -- when a SKILL.md's frontmatter contains a line such as `--- # note` or

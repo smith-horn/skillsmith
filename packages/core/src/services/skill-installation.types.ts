@@ -359,3 +359,28 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
     maxContentLength: 250_000,
   },
 }
+
+/**
+ * SMI-7056: the only tiers that may use `skipScan` and that install without
+ * the pre-install confirmation. Fail-closed allowlist: any value not listed
+ * (unverified, unknown, experimental, missing, empty, or any other string) is
+ * gated. Both gates in `SkillInstallationService.install()` read this set.
+ */
+export const TRUSTED_INSTALL_TIERS: ReadonlySet<string> = new Set<TrustTier>([
+  'official',
+  'verified',
+  'curated',
+  'community',
+  'local',
+])
+
+/**
+ * SMI-7056: scanner options for a tier, falling back to the strictest
+ * (`unknown`) options for a missing or unrecognised value. Uses an own-property
+ * check so inherited keys such as `constructor` cannot match.
+ */
+export function scannerOptionsForTier(tier: string | null | undefined): ScannerOptions {
+  return typeof tier === 'string' && Object.hasOwn(TRUST_TIER_SCANNER_OPTIONS, tier)
+    ? TRUST_TIER_SCANNER_OPTIONS[tier as TrustTier]
+    : TRUST_TIER_SCANNER_OPTIONS.unknown
+}

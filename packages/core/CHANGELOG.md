@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7056 -- `SkillInstallationService.install()` gated `skipScan` and the
+  pre-install confirmation on a deny-list (`experimental`, `unknown`) written before the public
+  tier vocabulary. A registry skill served as `unverified` (the public name for `unknown`), or
+  carrying an empty or unrecognised tier, passed both gates. Both now share one internal,
+  fail-closed allowlist (official, verified, curated, community, local): any other
+  value is refused `skipScan` (`SKIP_SCAN_FORBIDDEN`) and needs `confirmed=true` for a registry
+  install. A missing or unrecognised tier is also scanned with the strictest (`unknown`) options
+  instead of the scanner default. A registry skill whose tier is `unverified` now needs
+  `confirmed=true`; clients that cannot pass it will see `CONFIRMATION_REQUIRED`.
 - **Added**: SMI-7030 -- the scanner now raises an `executable_frontmatter` finding (critical,
   flag-only) when any scanned file (SKILL.md or a bundled sibling file) opens with an executable
   `---js` / `---javascript` frontmatter block. The finding carries a score coefficient of 0, so it

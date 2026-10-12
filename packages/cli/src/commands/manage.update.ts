@@ -20,6 +20,7 @@ import { DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkillsForClient, type InstalledSkill } from '../utils/skills-directory.js'
 import { createApiBackedRegistryLookup } from './install.js'
+import { installWithConfirmation } from './install.confirm.js'
 import { installedViaFor, getSkillDiff } from './manage.update.helpers.js'
 import {
   classifyManifestEntryForUpdate,
@@ -109,7 +110,8 @@ async function updateSkillWithOutcome(
   dbPath: string,
   dryRun = false,
   client: ClientId = CANONICAL_CLIENT,
-  scopeTarget?: ScopedInstallTarget
+  scopeTarget?: ScopedInstallTarget,
+  yes = false
 ): Promise<UpdateSkillResult> {
   const spinner = ora(`Checking updates for ${skillName}...`).start()
 
@@ -178,10 +180,14 @@ async function updateSkillWithOutcome(
       return { outcome: 'up-to-date' }
     }
 
-    const proceed = await confirm({
-      message: `Update ${skillName}?`,
-      default: true,
-    })
+    // SMI-7056: `--yes` answers this prompt as well as the trust-tier one, so
+    // `update --yes` works without a terminal.
+    const proceed =
+      yes ||
+      (await confirm({
+        message: `Update ${skillName}?`,
+        default: true,
+      }))
 
     if (!proceed) {
       console.log(chalk.yellow('Update cancelled'))
@@ -248,14 +254,31 @@ async function updateSkillWithOutcome(
       // entry was written under a different scope's path); using the
       // manifest's value here would let this guard compare against a
       // directory that was never the one actually diffed.
-      const result = await service.install(diff.skillId, {
-        force: true,
-        expectedInstallPath: diff.installedPath,
-      })
+      //
+      // SMI-7056: `--yes` only answers core's confirmation gate (an unreviewed
+      // trust tier). It adds no skipScan, so the scan and its limits still apply.
+      const result = await installWithConfirmation(
+        (o) => service.install(diff.skillId, o),
+        { force: true, expectedInstallPath: diff.installedPath },
+        {
+          yes,
+          beforePrompt: () => updateSpinner.stop(),
+          beforeRetry: () => updateSpinner.start(),
+        }
+      )
 
       if (result.success) {
         updateSpinner.succeed(`Updated ${skillName}`)
         return { outcome: 'updated' }
+      }
+
+      // A person answering "no" at the confirmation prompt is a cancellation,
+      // like declining the update prompt above; a non-interactive refusal
+      // (no --yes, no terminal) stays a failure so scripts notice it.
+      if (result.declined) {
+        updateSpinner.stop()
+        console.log(chalk.yellow(`Update cancelled: ${result.error}`))
+        return { outcome: 'cancelled' }
       }
 
       updateSpinner.fail(`Failed to update ${skillName}: ${result.error}`)
@@ -280,9 +303,10 @@ async function updateSkill(
   dbPath: string,
   dryRun = false,
   client: ClientId = CANONICAL_CLIENT,
-  scopeTarget?: ScopedInstallTarget
+  scopeTarget?: ScopedInstallTarget,
+  yes = false
 ): Promise<boolean> {
-  const result = await updateSkillWithOutcome(skillName, dbPath, dryRun, client, scopeTarget)
+  const result = await updateSkillWithOutcome(skillName, dbPath, dryRun, client, scopeTarget, yes)
   return result.outcome === 'updated' || result.outcome === 'up-to-date'
 }
 
@@ -306,7 +330,8 @@ async function updateSkills(
   dbPath: string,
   dryRun: boolean,
   client: ClientId = CANONICAL_CLIENT,
-  scopeTarget?: ScopedInstallTarget
+  scopeTarget?: ScopedInstallTarget,
+  yes = false
 ): Promise<void> {
   const wantedVia = installedViaFor(client)
   const targetNames =
@@ -331,7 +356,7 @@ async function updateSkills(
   const skipReasons: string[] = []
 
   for (const name of targetNames) {
-    const result = await updateSkillWithOutcome(name, dbPath, dryRun, client, scopeTarget)
+    const result = await updateSkillWithOutcome(name, dbPath, dryRun, client, scopeTarget, yes)
     // Every outcome is named. This was an `else` catch-all, which is how
     // `cancelled` came to be counted as a failure (SMI-6961 review F1): once
     // `failed > 0` began setting a non-zero exit code, declining the confirm

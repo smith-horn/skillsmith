@@ -8,7 +8,8 @@ import type { SkillDependencyRepository } from '../repositories/SkillDependencyR
 import type { RiskScoreHistoryRepository } from '../repositories/RiskScoreHistoryRepository.js'
 import type { Database } from '../db/database-interface.js'
 import {
-  TRUST_TIER_SCANNER_OPTIONS,
+  TRUSTED_INSTALL_TIERS,
+  scannerOptionsForTier,
   type ProgressCallback,
   type InstallOptions,
   type InstallResult,
@@ -219,8 +220,8 @@ export class SkillInstallationService {
 
       const contentHashMismatch = // SMI-3510
         indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
-      // Security scan — GAP-06: Restrict skipScan to trusted tiers only
-      if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
+      // Security scan — GAP-06: Restrict skipScan to trusted tiers only (SMI-7056: fail-closed allowlist)
+      if (options.skipScan && !TRUSTED_INSTALL_TIERS.has(trustTier)) {
         return buildInstallFailure('SKIP_SCAN_FORBIDDEN', {
           skillId,
           installPath: '',
@@ -229,7 +230,7 @@ export class SkillInstallationService {
             'Cannot skip security scan for ' +
             trustTier +
             ' tier skills. ' +
-            'Only verified, curated, community, and local tier skills may use skipScan.',
+            'Only official, verified, curated, community, and local tier skills may use skipScan.',
           tips: [
             'Trust tier "' + trustTier + '" requires a security scan before installation',
             'If you believe this skill is safe, request a trust tier upgrade from the author',
@@ -239,7 +240,7 @@ export class SkillInstallationService {
       let securityReport: InstallResult['securityReport']
       if (!options.skipScan) {
         this.onProgress('scan', 'Running security scan')
-        const scannerOptions = TRUST_TIER_SCANNER_OPTIONS[trustTier]
+        const scannerOptions = scannerOptionsForTier(trustTier)
         const scanner = new SecurityScanner(scannerOptions)
         securityReport = scanner.scan(skillId, skillMdContent)
 
@@ -270,7 +271,7 @@ export class SkillInstallationService {
               criticalFindings.length +
               ' critical/high findings' +
               tierContext +
-              (trustTier === 'experimental' || trustTier === 'unknown'
+              (!TRUSTED_INSTALL_TIERS.has(trustTier)
                 ? '. skipScan is not available for ' + trustTier + ' tier skills.'
                 : '. Use skipScan=true to override (not recommended).'),
             tips: [
@@ -281,11 +282,9 @@ export class SkillInstallationService {
         }
       }
 
-      // SMI-3863: Pre-install confirmation gate for experimental/unknown registry skills
+      // SMI-3863: Pre-install confirmation gate for registry skills outside the trusted tiers (SMI-7056: fail-closed)
       const needsConfirmation =
-        fromRegistry &&
-        (trustTier === 'experimental' || trustTier === 'unknown') &&
-        !options.confirmed
+        fromRegistry && !TRUSTED_INSTALL_TIERS.has(trustTier) && !options.confirmed
       if (needsConfirmation) {
         const scanNote = securityReport
           ? securityReport.passed
@@ -329,7 +328,7 @@ export class SkillInstallationService {
         basePath,
         branch,
         skillId,
-        options.skipScan ? null : TRUST_TIER_SCANNER_OPTIONS[trustTier]
+        options.skipScan ? null : scannerOptionsForTier(trustTier)
       )
       if (optionalFiles.failedScans.length > 0) {
         const first = optionalFiles.failedScans[0]
