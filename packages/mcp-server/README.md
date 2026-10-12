@@ -198,7 +198,7 @@ Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
 ### Why Configure an API Key?
 
-Without an API key, the MCP server falls back to a built-in public key: you get the Community per-minute rate (30/min), but that bucket is shared by every keyless client, so it can be exhausted by others. (The 10-call trial with a 100/min per-IP cap applies only to direct HTTP callers that send no Authorization header.) With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
+Without an API key, the MCP server falls back to a built-in public key: you get the Community per-minute rate (30/min), but each edge endpoint has one bucket shared by every keyless client, so it can be exhausted by others. (The 10-call trial with a 100/min per-IP cap applies to direct HTTP requests that do not successfully authenticate; keyless MCP requests authenticate with the built-in key and never reach it.) With a free Community account, you get **100 calls/month at up to 30 requests/minute** with access to all live skills. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
 
 **Benefits of API key:**
 - Access to live indexed skills (not just cached)
@@ -242,7 +242,7 @@ Without an API key, the MCP server falls back to a built-in public key: you get 
 
 | Tier | Monthly quota | Per-minute limit | Monthly Cost | Best For |
 |------|---------------|------------------|--------------|----------|
-| No API key (MCP default) | Community rate, shared public key | 30/min, shared across all keyless clients | Free | Quick evaluation |
+| No API key (MCP default) | Community rate, shared public key | 30/min per endpoint, shared across all keyless clients | Free | Quick evaluation |
 | Community | 100 | 30/min | Free | Personal projects |
 | Individual | 1,000 | 200/min | $9.99/mo | Active developers |
 | Team | 10,000 | 300/min | $25/user/mo | Development teams |

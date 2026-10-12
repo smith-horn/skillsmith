@@ -159,7 +159,7 @@ Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/ac
 
 | Tier | Monthly quota | Per-minute limit | Cost |
 |------|---------------|------------------|------|
-| No API key (MCP default) | Community rate, shared public key | 30/min, shared across all keyless clients | Free |
+| No API key (MCP default) | Community rate, shared public key | 30/min per endpoint, shared across all keyless clients | Free |
 | Community | 100 | 30/min | Free |
 | Individual | 1,000 | 200/min | $9.99/mo |
 | Team | 10,000 | 300/min | $25/user/mo |
@@ -167,7 +167,7 @@ Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/ac
 
 > **Quota note:** the monthly figure is a hard limit only where enforced. Edge functions hard-block on monthly quota for Community only, and only when `ENFORCE_COMMUNITY_QUOTA` is `'true'`. The MCP server's own monthly quota counts only `skill_suggest` and the tier-gated tools, and hard-blocks them by default (`SKILLSMITH_ENFORCE_MCP_QUOTA=false` turns that off).
 
-The MCP server falls back to a built-in public key when none is set, so keyless MCP use is Community-rate and shares one 30/min bucket with every other keyless client. The 10-call trial (100/min per IP) applies only to direct HTTP callers that send no Authorization header. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
+The MCP server falls back to a built-in public key when none is set, so keyless MCP use is Community-rate and shares one 30/min bucket per edge endpoint (search, get, recommend, …) with every other keyless client. The 10-call trial (100/min per IP) applies to direct HTTP requests that do not successfully authenticate, including ones with a malformed or expired credential; normal keyless MCP requests authenticate with the built-in key and never reach it. When enabled, a per-IP daily budget can also apply to that shared key (`ENFORCE_ANON_BUDGET`; off by default).
 
 > **Note:** Never paste API keys in chat. Configure via settings.json only.
 
