@@ -225,6 +225,11 @@ describe('SMI-7089 (OD-5): --report-containers lists projects shared by two or m
     mkdirSync(stray, { recursive: true })
     const registeredBaz = join(f.repoDir, '.worktrees', '_baz')
     addWorktree(f.repoDir, registeredBaz, 'od5-e')
+    // A dot-named unregistered directory: `.dot` sanitizes to `dot`.
+    const strayDot = join(f.repoDir, '.worktrees', '.dot')
+    mkdirSync(strayDot, { recursive: true })
+    const registeredDot = join(f.repoDir, '.worktrees', 'dot')
+    addWorktree(f.repoDir, registeredDot, 'od5-f')
 
     const r = runPrune(f, ['--report-containers'])
 
@@ -237,6 +242,8 @@ describe('SMI-7089 (OD-5): --report-containers lists projects shared by two or m
     expect(lineFor('foo')).toContain(underscoreFoo)
     expect(lineFor('baz')).toContain(stray)
     expect(lineFor('baz')).toContain(registeredBaz)
+    expect(lineFor('dot')).toContain(strayDot)
+    expect(lineFor('dot')).toContain(registeredDot)
     expect(r.stdout).not.toMatch(/^\s+bar:/m)
     expect(r.stdout).not.toMatch(/^\s+bar_:/m)
   })

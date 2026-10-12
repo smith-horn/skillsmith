@@ -214,6 +214,52 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     expect(text(r)).toContain('not listed exactly once')
   })
 
+  it('T4b. an unregistered DOT-named .worktrees directory (.foo -> project foo) is a peer too', () => {
+    const fx = mk('attr-t4b')
+    const stray = join(fx.repoDir, '.worktrees', '.foo')
+    mkdirSync(stray, { recursive: true })
+    const wt = addWt(fx, 'foo', { parent: join(fx.repoDir, '.worktrees') })
+    primeAttribution(fx, wt)
+
+    const r = runRemove(fx, [wt, '--force'])
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual(['info'])
+    expect(existsSync(wt)).toBe(true)
+    expect(text(r)).toContain(stray)
+  })
+
+  it('T4c. derive_protected counts a dot-named .worktrees directory as live', () => {
+    const fx = mk('attr-t4c')
+    mkdirSync(join(fx.repoDir, '.worktrees', '.foo'), { recursive: true })
+    const scripts = join(fx.repoDir, 'scripts')
+
+    const out = execFileSync(
+      'bash',
+      [
+        '-c',
+        `source "${scripts}/_lib.sh"; source "${scripts}/lib/worktree-lifecycle.sh"; derive_protected "" "${fx.repoDir}"`,
+      ],
+      { encoding: 'utf8', env: makeFixtureEnv() }
+    )
+
+    expect(out.split('\n')).toContain('foo')
+  })
+
+  it('T16b. a directory name that sanitizes to nothing is refused with the way out', () => {
+    const fx = mk('attr-t16b')
+    const wt = addWt(fx, '___')
+    primeAttribution(fx, wt)
+
+    const r = runRemove(fx, [wt, '--force'])
+
+    expect(r.status).toBe(1)
+    expect(r.dockerCalls).toEqual([])
+    expect(existsSync(wt)).toBe(true)
+    expect(text(r)).toContain('sanitizes to an empty Compose project name')
+    expect(text(r)).toContain(`git worktree remove --force ${wt}`)
+  })
+
   it('T16. refuses an own non-worktree Compose project (skillsmith-eval-cron)', () => {
     const fx = mk('attr-t16')
     const wt = addWt(fx, 'skillsmith-eval-cron')
@@ -235,7 +281,7 @@ describe('SMI-7089: every container of the project must point at this worktree (
     return d
   }
   const inspects = (calls: string[], id: string): boolean =>
-    calls.includes(`inspect ${id} --format {{json .Config.Labels}}`)
+    calls.includes(`inspect --type container ${id} --format {{json .Config.Labels}}`)
 
   it('T7. a container created from another existing directory refuses, naming it', () => {
     const fx = mk('attr-t7')
@@ -448,9 +494,11 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     const hookRc = join(fx.tempRoot, 'hook.rc')
     const hookErr = join(fx.tempRoot, 'hook.err')
     const hookList = join(fx.tempRoot, 'hook.list')
+    // Fires on the FIRST effect-phase docker call, whatever it is, so the test
+    // does not depend on `down` still running.
     setHook(
       fx,
-      'down',
+      'effect',
       [
         'set +e',
         `cd "${fx.repoDir}"`,
@@ -464,17 +512,18 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
 
     const r = runRemove(fx, [wt, '--force'])
 
-    // Presence: the stop ran and the hook ran inside it.
-    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    // The property first: the racing creator was REFUSED because the worktree
+    // being removed was still registered when the hook fired.
     expect(existsSync(hookRc)).toBe(true)
-    // The property: the racing creator was REFUSED because the worktree being
-    // removed was still registered when the stop ran.
     expect(readFileSync(hookRc, 'utf8').trim()).toBe('1')
     expect(readFileSync(hookErr, 'utf8')).toContain('already used by a live worktree')
     expect(readFileSync(hookList, 'utf8')).not.toContain('foo.bar')
     expect(readFileSync(hookList, 'utf8')).toContain('foobar')
-    // (Last: a creator that got in would make the pruner refuse the project later,
-    // so the exit status follows from the property rather than proving it.)
+    // Then that the effect phase it interrupted was the stop itself.
+    expect(readFileSync(join(fx.responsesDir, 'hook.trigger'), 'utf8')).toContain('down')
+    expect(downs(r.dockerCalls)).toEqual(['compose --profile dev down'])
+    // Last: a creator that got in would make the pruner refuse the project later,
+    // so the exit status follows from the property rather than proving it.
     expect(r.status).toBe(0)
   })
 

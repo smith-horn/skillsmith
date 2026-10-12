@@ -67,6 +67,11 @@ if [ -n "$watch" ]; then
   echo "$*|registered=$st" >> "$REG"
 fi
 rc_of() { if [ -f "$RESP/exit__$1" ]; then cat "$RESP/exit__$1"; else echo 0; fi; }
+# One-shot "effect" hook: fires on the FIRST effect-phase call -- a \`down\`, or the
+# first call that falls through to the delegate (Step 3 reads, the pruner) -- and
+# records which call it was in hook.trigger. Unlike a hook keyed on \`down\`, it
+# still fires if a mutation stops \`down\` from ever running.
+fire_effect() { f="$RESP/hook__effect"; if [ -f "$f" ]; then mv "$f" "$f.ran"; echo "$1" > "$RESP/hook.trigger"; bash "$f.ran"; fi; }
 run_hook() { f="$RESP/hook__$1"; if [ -f "$f" ]; then mv "$f" "$f.ran"; bash "$f.ran"; fi; }
 case "$1" in
   info)
@@ -87,6 +92,7 @@ case "$1" in
         exit 0
         ;;
       *down)
+        fire_effect "$*"
         run_hook down
         exit "$(rc_of down)"
         ;;
@@ -110,16 +116,17 @@ case "$1" in
     ;;
   inspect)
     case "$*" in
-      *"json .Config.Labels"*)
+      "inspect --type container "*"json .Config.Labels"*)
         echo "$@" >> "$LOG"
         rc="$(rc_of inspect)"
         if [ "$rc" != 0 ]; then exit "$rc"; fi
-        cat "$RESP/inspect__$2" 2>/dev/null
+        cat "$RESP/inspect__$4" 2>/dev/null
         exit 0
         ;;
     esac
     ;;
 esac
+fire_effect "$*"
 exec "$DELEGATE" "$@"
 `
 

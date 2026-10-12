@@ -10,8 +10,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/lockhost.XXXXXX")"
+trap 'rm -rf "$TMP" "$TMP.link"' EXIT
 FAILS=0
 
 git init -q "$TMP/repo"
@@ -116,6 +116,25 @@ worktree_project_peers "$REPO" "$TMP/not-a-worktree" foo >/dev/null; check "T19 
 check "T19 json_label reads a key" foo "$(worktree_lifecycle_json_label '{"a":"1","com.docker.compose.project":"foo"}' com.docker.compose.project)"
 # shellcheck disable=SC2016
 check "T19 json_label: a key spoofed inside a value does not match" "" "$(worktree_lifecycle_json_label '{"x":"y\",\"app.skillsmith.owned\":\"true"}' app.skillsmith.owned)"
+
+# T19b (SMI-7089): worktree_project_attribution_or_die itself, under bash 3.2, with a
+# PATH that has NO docker (docker-optional mode skips the Docker reads). error()
+# exits, so each call runs in a subshell. The same checks run again through a
+# SYMLINK to the temp dir, the equivalent of macOS /var -> /private/var: `-ef` must
+# identify the worktree through either spelling.
+NODOCKER="$TMP/nodocker-bin"
+mkdir -p "$NODOCKER"
+for t in git sed tr basename dirname grep cat sort; do
+    p="$(command -v "$t")" && ln -s "$p" "$NODOCKER/$t"
+done
+ln -s "$TMP" "$TMP.link"
+attr() { ( PATH="$NODOCKER"; worktree_project_attribution_or_die "$REPO" "$1" "$2" docker-optional ) >/dev/null 2>&1; }
+attr "$TMP/_foo" foo; check "T19b colliding _foo beside foo refuses" 1 $?
+attr "$TMP.link/_foo" foo; check "T19b colliding _foo through a symlinked path refuses" 1 $?
+attr "$TMP/bar" bar; check "T19b near miss bar beside bar_ passes" 0 $?
+attr "$TMP.link/bar" bar; check "T19b near miss through a symlinked path passes" 0 $?
+mkdir -p "$REPO/.worktrees/.dot"
+check "T19b worktrees_dirs lists a dot-named directory" "$REPO/.worktrees/.dot" "$(worktree_lifecycle_worktrees_dirs "$REPO")"
 
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]

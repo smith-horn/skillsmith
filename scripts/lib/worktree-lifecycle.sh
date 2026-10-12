@@ -22,6 +22,21 @@ enumerate_worktree_paths() {
     printf '%s\n' "$raw" | sed -n 's/^worktree //p'
 }
 
+# worktree_lifecycle_worktrees_dirs MAIN -- every directory directly under
+# MAIN/.worktrees, one path per line (no trailing slash), dot-named ones included.
+# `*/` alone misses `.foo`, whose project name sanitizes to `foo` (leading
+# separators are stripped), so an unregistered `.worktrees/.foo` would be invisible
+# to the liveness set, the attribution check and the shared-project report. The
+# three globs cover `.x`, `..x` and `*`; unmatched globs stay literal and the
+# `-d` guard drops them. bash 3.2 safe (no nullglob/dotglob).
+worktree_lifecycle_worktrees_dirs() {
+    local d
+    for d in "$1"/.worktrees/*/ "$1"/.worktrees/.[!.]*/ "$1"/.worktrees/..?*/; do
+        [[ -d "$d" ]] || continue
+        printf '%s\n' "${d%/}"
+    done
+}
+
 # derive_protected(): sanitized project names for the captured listing in $1,
 # UNIONED with a `.worktrees/*/` scan of the main checkout $2 (names sanitizing
 # alike only OVER-protect). sanitize_project_name (_lib.sh) is the single
@@ -35,13 +50,11 @@ derive_protected() {
         sanitize_project_name "$base"
     done <<< "$wt_paths"
 
-    if [[ -d "$main_repo/.worktrees" ]]; then
-        local d
-        for d in "$main_repo"/.worktrees/*/; do
-            [[ -d "$d" ]] || continue
-            sanitize_project_name "$(basename "${d%/}")"
-        done
-    fi
+    local d
+    while IFS= read -r d; do
+        [[ -n "$d" ]] || continue
+        sanitize_project_name "$(basename "$d")"
+    done <<< "$(worktree_lifecycle_worktrees_dirs "$main_repo")"
 }
 
 # The positive control is derived INDEPENDENTLY of the listing it checks, from

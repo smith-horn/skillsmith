@@ -94,25 +94,22 @@ worktree_project_peers() {
     done <<< "$raw"
     [[ "$found" -eq 1 ]] || return 2
 
-    if [[ -d "$main/.worktrees" ]]; then
-        for d in "$main"/.worktrees/*/; do
-            [[ -d "$d" ]] || continue
-            d="${d%/}"
-            [[ "$d" -ef "$x" ]] && continue
-            seen=0
-            for entry in ${registered[@]+"${registered[@]}"}; do
-                if [[ "$entry" -ef "$d" ]]; then
-                    seen=1
-                    break
-                fi
-            done
-            [[ "$seen" -eq 1 ]] && continue
-            base="$(sanitize_project_name "$(basename "$d")")"
-            if [[ "$base" == "$p" ]]; then
-                printf 'unregistered .worktrees directory|%s\n' "$d"
+    while IFS= read -r d; do
+        [[ -n "$d" ]] || continue
+        [[ "$d" -ef "$x" ]] && continue
+        seen=0
+        for entry in ${registered[@]+"${registered[@]}"}; do
+            if [[ "$entry" -ef "$d" ]]; then
+                seen=1
+                break
             fi
         done
-    fi
+        [[ "$seen" -eq 1 ]] && continue
+        base="$(sanitize_project_name "$(basename "$d")")"
+        if [[ "$base" == "$p" ]]; then
+            printf 'unregistered .worktrees directory|%s\n' "$d"
+        fi
+    done <<< "$(worktree_lifecycle_worktrees_dirs "$main")"
     if is_own_non_worktree_project "$p"; then
         printf 'own non-worktree Compose project|%s\n' "$p"
     fi
@@ -148,7 +145,7 @@ worktree_project_docker_check() {
     fi
     while IFS= read -r id; do
         [[ -z "$id" ]] && continue
-        if ! labels="$(worktree_lifecycle_bounded "$t" docker inspect "$id" --format '{{json .Config.Labels}}' 2>/dev/null)"; then
+        if ! labels="$(worktree_lifecycle_bounded "$t" docker inspect --type container "$id" --format '{{json .Config.Labels}}' 2>/dev/null)"; then
             echo "could not inspect container $id of project '$p'"
             return 1
         fi
@@ -192,7 +189,7 @@ worktree_project_attribution_or_die() {
     local main="$1" x="$2" p="$3" mode="$4" t rc peers reason
     WPA_DOCKER=""
     [[ -n "$main" && -d "$main" ]] || error "could not resolve the main checkout for $x -- refusing: without it the Compose project cannot be attributed (SMI-7089). Nothing was changed."
-    [[ -n "$p" ]] || error "the directory name of $x sanitizes to an empty Compose project name -- refusing: it cannot be attributed (SMI-7089). Nothing was changed."
+    [[ -n "$p" ]] || error "the directory name of $x sanitizes to an empty Compose project name -- refusing: it cannot be attributed (SMI-7089). Nothing was changed. No Compose project can exist for an empty name, so there is nothing for Docker to clean up: remove the worktree with git directly: git worktree remove --force $x"
 
     t="$(_wpa_timeout)"
     if ! command -v docker >/dev/null 2>&1; then

@@ -54,7 +54,7 @@ const text = (r: { stdout: string; stderr: string }): string => r.stdout + r.std
 const downs = (calls: string[]): string[] => calls.filter((c) => /^compose .*\bdown$/.test(c))
 const ups = (calls: string[]): string[] => calls.filter((c) => /^compose .* up /.test(c))
 const inspects = (calls: string[], id: string): boolean =>
-  calls.includes(`inspect ${id} --format {{json .Config.Labels}}`)
+  calls.includes(`inspect --type container ${id} --format {{json .Config.Labels}}`)
 
 const foreignDir = (fx: AttrFixture): string => {
   const d = join(fx.tempRoot, 'someone-elses-checkout')
@@ -251,8 +251,9 @@ describe('SMI-7089 (OD-8): worktree-docker.sh start is attributed before `compos
     const r = runDocker(fx, ['start', x])
 
     expect(r.status).toBe(1)
-    expect(r.dockerCalls).toEqual(['info'])
+    // The property first: a refused start wrote nothing.
     expect(existsSync(override)).toBe(false)
+    expect(r.dockerCalls).toEqual(['info'])
   })
 
   it('T29. a near miss (foo_ beside foo) is not a peer: `compose --profile dev up -d` runs', () => {

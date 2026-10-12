@@ -25,22 +25,19 @@ worktree_shared_projects() {
         proj="$(sanitize_project_name "$(basename "$entry")")"
         [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${entry}"$'\n'
     done <<< "$wt_paths"
-    if [[ -d "$main/.worktrees" ]]; then
-        for d in "$main"/.worktrees/*/; do
-            [[ -d "$d" ]] || continue
-            d="${d%/}"
-            seen=0
-            for entry in ${registered[@]+"${registered[@]}"}; do
-                if [[ "$entry" -ef "$d" ]]; then
-                    seen=1
-                    break
-                fi
-            done
-            [[ "$seen" -eq 1 ]] && continue
-            proj="$(sanitize_project_name "$(basename "$d")")"
-            [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${d}"$'\n'
+    while IFS= read -r d; do
+        [[ -n "$d" ]] || continue
+        seen=0
+        for entry in ${registered[@]+"${registered[@]}"}; do
+            if [[ "$entry" -ef "$d" ]]; then
+                seen=1
+                break
+            fi
         done
-    fi
+        [[ "$seen" -eq 1 ]] && continue
+        proj="$(sanitize_project_name "$(basename "$d")")"
+        [[ -n "$proj" ]] && rows+="${proj}"$'\t'"${d}"$'\n'
+    done <<< "$(worktree_lifecycle_worktrees_dirs "$main")"
     [[ -n "$rows" ]] || return 0
     printf '%s' "$rows" | sort | awk -F'\t' '
         { n[$1]++; list[$1] = (list[$1] == "" ? $2 : list[$1] ", " $2) }
