@@ -135,7 +135,7 @@ export type InstallErrorCode =
   | 'VALIDATION_FAILED' // SKILL.md missing required frontmatter / too short
   | 'SKIP_SCAN_FORBIDDEN' // skipScan requested but trust tier disallows it
   | 'SCAN_REJECTED' // Security scan returned non-passing report
-  | 'CONFIRMATION_REQUIRED' // Experimental/unknown registry skill needs confirmed=true
+  | 'CONFIRMATION_REQUIRED' // Registry skill outside official/verified/curated/community/local needs confirmed=true
   | 'INVALID_CONTENT' // SMI-5905: installFromContent() content shape/path-safety rejected
   // SMI-6529 Wave A0: pre-write install-target safety guard (checkInstallTarget).
   | 'INSTALL_TARGET_MISMATCH' // update() would write outside the directory it diffed against

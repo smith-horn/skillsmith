@@ -12,8 +12,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   `skillsmith search` asks the same question. `--yes` never skips the security scan, and
   `--skip-scan` is still refused for these tiers. `update --yes` also answers
   the existing "Update <skill>?" prompt, so it works from a script. Answering no, or pressing
-  Ctrl-C, cancels the install. `install --json` output now includes `errorCode` on failure (for
-  example `CONFIRMATION_REQUIRED`).
+  Ctrl-C, cancels the install. `--json` output from `install` and `registry install` now includes
+  `errorCode` when the install fails with a known error code (for example
+  `CONFIRMATION_REQUIRED`); an unexpected error still reports only `error`.
 
 ## v0.8.15
 

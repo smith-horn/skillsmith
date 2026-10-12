@@ -70,7 +70,7 @@ const CONFIRMATION_REQUIRED = {
   trustTier: 'unverified',
   requiresConfirmation: true,
   confirmationReason:
-    'This is an unverified tier skill. unverified tier skills have not been reviewed. ' +
+    'This skill is in the "unverified" trust tier. Skills in this tier have not been reviewed. ' +
     'Re-run with confirmed=true to proceed.',
   tips: ['Trust tier: unverified', 'Use confirmed=true to proceed with installation'],
 }

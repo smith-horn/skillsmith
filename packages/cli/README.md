@@ -124,7 +124,16 @@ Install a skill (alias for MCP server's install_skill).
 
 ```bash
 skillsmith install author/skill-name
+
+# Confirm a skill from an unreviewed trust tier (for example, unverified)
+skillsmith install author/skill-name --yes
 ```
+
+**Common options** (`skillsmith install --help` lists them all):
+- `-y, --yes` - Confirm installing a skill whose trust tier is not official, verified, curated, community or local. It never skips the security scan, and `--skip-scan` is still refused for these tiers. Without it, a terminal asks y/N (default No); a script or `--json` run exits non-zero with a message naming `--yes`.
+- `-f, --force` - Reinstall if already installed
+- `--skip-scan` - Skip the security scan (not recommended; refused for unreviewed trust tiers)
+- `--json` - Output a structured JSON result. When the install fails with a known error code, the result includes `errorCode` (for example `CONFIRMATION_REQUIRED` when it needs `--yes`, or `SCAN_REJECTED`). An unexpected error reports only `error`.
 
 ### remove
 
@@ -163,6 +172,7 @@ skillsmith update skill-name --dry-run
 **Options:**
 - `-a, --all` - Update all installed skills
 - `-n, --dry-run` - Show what would update without installing
+- `-y, --yes` - Answer the "Update <skill>?" prompt and confirm an unreviewed trust tier, so update can run from a script. It never skips the security scan.
 - `-d, --db <path>` - Database file path
 
 ### inventory
