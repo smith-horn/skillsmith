@@ -292,11 +292,18 @@ Commit or discard them first, or re-run with --force to discard:
     # Skipped (the call is never attempted) when --keep-docker, --no-orphan-prune
     # or SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 is set, or when Step 0 found Docker
     # unavailable. All of them therefore KEEP this worktree's own volumes and image.
-    local prune_failed=false
+    local prune_failed=false prune_reason="the targeted orphan prune failed or refused"
     if [[ "$keep_docker" == true ]]; then
         info "Skipping targeted orphan prune (--keep-docker: this worktree's image and volumes are kept)"
     elif [[ "$no_orphan_prune" == true || "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
         info "Skipping targeted orphan prune (--no-orphan-prune or SKILLSMITH_ORPHAN_PRUNE_DISABLE=1: this worktree's image and volumes are kept)"
+    elif [[ "$WPA_DOCKER" == unreachable ]]; then
+        # Docker is installed but its daemon did not answer at Step 0: the user asked
+        # for this worktree's image and volumes to go (no --keep-docker, no opt-out)
+        # and they are still there. That is an incomplete removal, not a success:
+        # same tail as a failed prune, so the re-run command is printed and exit is 1.
+        prune_failed=true
+        prune_reason="the Docker daemon was unreachable, so its image and volumes were NOT removed"
     elif [[ "$WPA_DOCKER" != reachable ]]; then
         info "Skipping targeted orphan prune (Docker is $WPA_DOCKER: no Docker resources were touched)"
     else
@@ -308,8 +315,8 @@ Commit or discard them first, or re-run with --force to discard:
 
     if [[ "$prune_failed" == true ]]; then
         echo ""
-        warn "Worktree removed; Docker cleanup incomplete (the targeted orphan prune failed or refused)."
-        warn "  Re-run it once the cause above is fixed:"
+        warn "Worktree removed; Docker cleanup incomplete ($prune_reason)."
+        warn "  Re-run it once the cause above is fixed (Docker must be reachable):"
         warn "    $SCRIPT_DIR/prune-orphaned-docker-volumes.sh --only-project $orphan_project"
         exit 1
     fi

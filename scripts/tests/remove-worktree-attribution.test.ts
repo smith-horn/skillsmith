@@ -609,26 +609,53 @@ describe('SMI-7089: ordering, deletes and failure reporting', () => {
     expect(existsSync(wt)).toBe(false)
     expect(listed(fx)).not.toContain(wt)
     expect(r.dockerCalls).toEqual([])
+    // A missing binary is a different state from an unreachable daemon: still a success.
+    expect(text(r)).not.toContain('cleanup incomplete')
+    expect(text(r)).toContain('Worktree removal complete!')
   })
 
-  it('T15d. an unreachable daemon is the same: removal proceeds, no mutating Docker step runs', () => {
-    const fx = mk('attr-t15c')
+  it('T15d. an unreachable daemon: the worktree is removed, but the run ends incomplete (exit 1) with the re-run command', () => {
+    const fx = mk('attr-t15d')
     const wt = addWt(fx, 'foo')
     primeAttribution(fx, wt)
     setExit(fx, 'info', 1)
 
     const r = runRemove(fx, [wt, '--force'])
 
-    expect(r.status).toBe(0)
-    expect(text(r)).toContain('Docker is unreachable')
-    // Presence: R0 ran. Only the pre-existing read-only Step 3 report may follow
-    // it; no Compose, ps, inspect, volume or image call of any kind.
-    expect(r.dockerCalls).toContain('info')
-    expect(
-      r.dockerCalls.every((c) => c === 'info' || c === 'system df' || c.startsWith('network ls'))
-    ).toBe(true)
+    // Presence: R0 ran and nothing but R0 did (no Compose, ps, inspect, volume,
+    // image, network or df call).
+    expect(r.dockerCalls).toEqual(['info'])
     expect(existsSync(wt)).toBe(false)
+    expect(listed(fx)).not.toContain(wt)
+    expect(text(r)).toContain('Docker is unreachable')
+    expect(text(r)).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(text(r)).toContain(
+      `${join(fx.repoDir, 'scripts')}/prune-orphaned-docker-volumes.sh --only-project foo`
+    )
+    expect(text(r)).not.toContain('Worktree removal complete!')
+    expect(r.status).toBe(1)
   })
+
+  it.each([
+    ['--keep-docker', ['--keep-docker']],
+    ['--no-orphan-prune', ['--no-orphan-prune']],
+  ])(
+    'T15e. an unreachable daemon with %s: the user asked to keep the resources, so exit 0',
+    (_n, flags) => {
+      const fx = mk('attr-t15e')
+      const wt = addWt(fx, 'foo')
+      primeAttribution(fx, wt)
+      setExit(fx, 'info', 1)
+
+      const r = runRemove(fx, [wt, '--force', ...flags])
+
+      expect(r.dockerCalls).toEqual(['info'])
+      expect(existsSync(wt)).toBe(false)
+      expect(text(r)).not.toContain('cleanup incomplete')
+      expect(text(r)).toContain('Worktree removal complete!')
+      expect(r.status).toBe(0)
+    }
+  )
 
   it('T17. profiles are discovered: `down` carries each, and never --volumes/--rmi', () => {
     const fx = mk('attr-t17')

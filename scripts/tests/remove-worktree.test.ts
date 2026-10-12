@@ -278,7 +278,7 @@ describe('SMI-7089: global --prune steps and an unusable Docker never abort a re
   const pruneCalls = (calls: string[]): string[] =>
     calls.filter((c) => /^(network prune|image prune|builder prune)/.test(c))
 
-  it('(a) daemon unreachable + --prune: exit 0, worktree gone, no global prune is attempted', () => {
+  it('(a) daemon unreachable + --prune: worktree gone, no global prune attempted, run ends incomplete (exit 1)', () => {
     const fx = mk('rmwt-prune-unreachable')
     const wt = addWt(fx, 'wt-unreach')
     primeAttribution(fx, wt)
@@ -296,8 +296,12 @@ describe('SMI-7089: global --prune steps and an unusable Docker never abort a re
     expect(result.dockerCalls).not.toContain('network ls --format {{.Name}}')
     expect(result.dockerCalls).not.toContain('system df')
     expect(result.stdout).toContain('global prune was skipped because Docker is unreachable')
-    expect(result.stdout).toContain('Worktree removal complete!')
-    expect(result.status).toBe(0)
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stderr + result.stdout).toContain(
+      'prune-orphaned-docker-volumes.sh --only-project wt-unreach'
+    )
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
   })
 
   it('(b) a failing `network prune` warns and the run continues to the targeted prune', () => {
