@@ -696,13 +696,19 @@ Assistant: [Uses compare tool] Here's a comparison:
         <td>No verification performed</td>
         <td>None</td>
       </tr>
+      <tr>
+        <td><code>local</code></td>
+        <td>Imported from disk with <code>skillsmith import-local</code></td>
+        <td>None; you control this skill</td>
+      </tr>
     </tbody>
   </table>
 
   <p>
     Installing a registry skill outside the official, verified, curated, community and local tiers
     needs confirmation (<code>confirmed: true</code>, or <code>--yes</code> in the CLI), and the
-    security scan can't be skipped for it.
+    security scan can't be skipped for it. That list is an install policy, not a review claim: a
+    <code>local</code> skill is on it because you imported it yourself, not because anyone reviewed it.
   </p>
 
   <h2>Lifecycle Tutorials</h2>

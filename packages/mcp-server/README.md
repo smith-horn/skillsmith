@@ -447,6 +447,8 @@ Every skill carries one of eight trust tiers. Descriptions are the ones the serv
 | `unverified` | No verification performed. Review carefully before installing. |
 | `local` | Local skill from your ~/.claude/skills/ directory. You control this skill. |
 
+Installing a registry skill outside official, verified, curated, community and local needs `confirmed: true`, and those skills can't use `skipScan`. That list is an install policy, not a review claim: `local` is on it because you control the skill, not because anyone reviewed it.
+
 ## Environment Variables
 
 | Variable | Description | Default |
