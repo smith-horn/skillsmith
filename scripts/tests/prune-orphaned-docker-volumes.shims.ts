@@ -145,8 +145,9 @@ export function shimDockerFailures(
   if (!existsSync(real)) renameSync(join(fixture.binDir, 'docker'), real)
   const body = rules.flatMap((r, i) => [
     `case "$*" in`,
-    // Spaces must be escaped or the `case` pattern splits into several words.
-    `  ${r.glob.replace(/ /g, '\\ ')})`,
+    // Escape backslashes first, then spaces: an unescaped space splits the `case`
+    // pattern into several words, and a bare backslash would escape the next character.
+    `  ${r.glob.replace(/\\/g, '\\\\').replace(/ /g, '\\ ')})`,
     `    n=$(cat "${fixture.binDir}/rule${i}.count" 2>/dev/null || echo 0); n=$((n+1))`,
     `    echo "$n" > "${fixture.binDir}/rule${i}.count"`,
     `    if [ "$n" -gt ${r.passFirst ?? 0} ]; then`,
