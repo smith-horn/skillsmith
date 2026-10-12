@@ -27,6 +27,8 @@ import {
   type FixtureRepo,
 } from './prune-orphaned-docker-volumes.helpers.js'
 import { hookRan, setDockerHook } from './worktree-lifecycle.helpers.js'
+import { shimDockerFailures } from './prune-orphaned-docker-volumes.shims.js'
+import { pathWithoutDocker } from './_lib/worktree-attribution-fixture.js'
 
 const only = (project: string): string[] => ['--only-project', project]
 const rmiOf = (calls: string[], tag: string): boolean => calls.includes(`rmi ${imageIdFor(tag)}`)
@@ -259,5 +261,36 @@ describe('SMI-7089 (OD-5): --report-containers lists projects shared by two or m
     // Presence: the run reached the container report (it asked Docker for containers).
     expect(r.dockerCalls.some((c) => c.startsWith('ps -q'))).toBe(true)
     expect(r.stdout).not.toContain('Shared Compose projects')
+  })
+})
+
+describe('SMI-7089: an unusable Docker is a failure when a project was named, a skip otherwise', () => {
+  it('docker missing: --only-project exits non-zero and says nothing was removed; a bare run still exits 0', () => {
+    const f = fixture('sc-nodocker')
+    const nodocker = pathWithoutDocker(f)
+
+    const scoped = runPrune(f, only('foo'), { PATH: nodocker })
+    const bare = runPrune(f, [], { PATH: nodocker })
+
+    // Presence: the bare run really reached the "docker not found" branch.
+    expect(bare.stderr).toContain('Docker not found')
+    expect(bare.status).toBe(0)
+    expect(scoped.status).toBe(1)
+    expect(scoped.stderr).toContain('NOT removed')
+  })
+
+  it('docker info failing: --only-project exits non-zero; a bare run still exits 0', () => {
+    const f = fixture('sc-info-fails')
+    shimDockerFailures(f, [{ glob: 'info', stderr: 'Cannot connect to the Docker daemon' }])
+
+    const bare = runPrune(f, [])
+    const scoped = runPrune(f, only('foo'))
+
+    expect(bare.dockerCalls).toContain('info')
+    expect(bare.stderr).toContain('Docker daemon not reachable')
+    expect(bare.status).toBe(0)
+    expect(scoped.dockerCalls).toContain('info')
+    expect(scoped.status).toBe(1)
+    expect(scoped.stderr).toContain('NOT removed')
   })
 })

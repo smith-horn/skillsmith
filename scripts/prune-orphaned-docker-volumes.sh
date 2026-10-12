@@ -183,14 +183,22 @@ if [[ "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
     exit 0
 fi
 
-if ! command -v docker &>/dev/null; then
-    warn "Docker not found -- skipping targeted orphan prune"
+# SMI-7089: a caller that NAMED a project (remove-worktree.sh) asked for that
+# project's resources to be removed; "Docker unusable" must not read as success.
+unusable_docker() {
+    if [[ "$ONLY_PROJECT_SET" == true ]]; then
+        error "$1 -- the targeted orphan prune for '$ONLY_PROJECT' could not run, so its image and volumes were NOT removed. Re-run once Docker is available: $0 --only-project $ONLY_PROJECT"
+    fi
+    warn "$1 -- skipping targeted orphan prune"
     exit 0
+}
+
+if ! command -v docker &>/dev/null; then
+    unusable_docker "Docker not found"
 fi
 
 if ! docker info &>/dev/null; then
-    warn "Docker daemon not reachable -- skipping targeted orphan prune"
-    exit 0
+    unusable_docker "Docker daemon not reachable"
 fi
 
 repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"

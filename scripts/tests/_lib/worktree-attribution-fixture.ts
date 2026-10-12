@@ -66,7 +66,12 @@ if [ -n "$watch" ]; then
   if git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $watch"; then st=yes; else st=no; fi
   echo "$*|registered=$st" >> "$REG"
 fi
-rc_of() { if [ -f "$RESP/exit__$1" ]; then cat "$RESP/exit__$1"; else echo 0; fi; }
+# \`exit__<key>.seq\` gives one exit code per successive call (consumed); \`exit__<key>\` a fixed one.
+rc_of() {
+  if [ -s "$RESP/exit__$1.seq" ]; then
+    head -n 1 "$RESP/exit__$1.seq"; tail -n +2 "$RESP/exit__$1.seq" > "$RESP/exit__$1.seq.n"; mv "$RESP/exit__$1.seq.n" "$RESP/exit__$1.seq"
+  elif [ -f "$RESP/exit__$1" ]; then cat "$RESP/exit__$1"; else echo 0; fi
+}
 # One-shot "effect" hook: fires on the FIRST effect-phase call -- a \`down\`, or the
 # first call that falls through to the delegate (Step 3 reads, the pruner) -- and
 # records which call it was in hook.trigger. Unlike a hook keyed on \`down\`, it
@@ -100,6 +105,12 @@ case "$1" in
         exit "$(rc_of up)"
         ;;
     esac
+    exit 0
+    ;;
+  network)
+    echo "$@" >> "$LOG"
+    rc="$(rc_of "network_$2")"
+    if [ "$rc" != 0 ]; then echo "Cannot connect to the Docker daemon" >&2; exit "$rc"; fi
     exit 0
     ;;
   ps)
@@ -159,6 +170,11 @@ export function setResp(fx: AttrFixture, key: string, value: string): void {
 /** Make the wrapper's `docker <key>` answer exit `code` (keys: info, compose_config, compose_profiles, down, up, ps, inspect). */
 export function setExit(fx: AttrFixture, key: string, code: number): void {
   writeFileSync(join(fx.responsesDir, `exit__${key}`), String(code))
+}
+
+/** One exit code per successive \`docker <key>\` call (e.g. info: R0 answers 0, the pruner's own check 1). */
+export function setExitSequence(fx: AttrFixture, key: string, codes: number[]): void {
+  writeFileSync(join(fx.responsesDir, `exit__${key}.seq`), `${codes.join('\n')}\n`)
 }
 
 /** Declare the ID lists `docker ps` answers: running ones to `-q`/`-aq`, stopped ones to `-aq` only. */
@@ -268,7 +284,7 @@ export const runDocker = (fx: AttrFixture, args: string[], env: Record<string, s
  * A PATH with the tools the scripts need and NO `docker`, for the "docker is not
  * installed" case: `command -v docker` must fail, which a shim on PATH never does.
  */
-export function pathWithoutDocker(fx: AttrFixture): string {
+export function pathWithoutDocker(fx: { tempRoot: string }): string {
   const dir = join(fx.tempRoot, 'nodocker-bin')
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })

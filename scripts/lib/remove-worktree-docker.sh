@@ -72,8 +72,19 @@ check_docker_networks() {
         return 0
     fi
 
-    local network_count
-    network_count=$(docker network ls --format '{{.Name}}' 2>/dev/null | wc -l | tr -d ' ')
+    # Captured with `if !`, never a bare `x=$(a | b)`: under `set -euo pipefail` a
+    # failing `docker network ls` (daemon gone) would abort the script AFTER
+    # `git worktree remove` already ran, with no summary.
+    local network_count names
+    if ! names="$(docker network ls --format '{{.Name}}' 2>&1)"; then
+        warn "Could not list Docker networks: ${names:-no output}"
+        return 0
+    fi
+    if [[ -z "$names" ]]; then
+        network_count=0
+    else
+        network_count=$(printf '%s\n' "$names" | wc -l | tr -d ' ')
+    fi
 
     if [[ "$network_count" -gt "$NETWORK_WARN_THRESHOLD" ]]; then
         warn "Docker has $network_count networks (threshold: $NETWORK_WARN_THRESHOLD)"
@@ -101,7 +112,13 @@ prune_docker_networks() {
 
     info "Pruning stale Docker networks..."
     local pruned
-    pruned=$(docker network prune -f 2>&1)
+    # Best-effort and user-requested: a failure warns and returns 0 (a bare
+    # `pruned=$(...)` would abort the script under `set -e` after the worktree
+    # was already removed).
+    if ! pruned="$(docker network prune -f 2>&1)"; then
+        warn "  network prune failed: ${pruned:-no output}"
+        return 0
+    fi
 
     if echo "$pruned" | grep -q "Deleted Networks"; then
         success "  $pruned"

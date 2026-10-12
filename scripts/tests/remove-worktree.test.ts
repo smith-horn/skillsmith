@@ -25,6 +25,7 @@ import {
   readRegLog,
   runRemove,
   setExit,
+  setExitSequence,
   setResp,
   type AttrFixture,
 } from './_lib/worktree-attribution-fixture.js'
@@ -269,5 +270,83 @@ describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)',
     const rm = readRegLog(fx).filter((l) => l.startsWith('volume rm'))
     expect(rm.length).toBeGreaterThan(0)
     expect(rm.every((l) => l.endsWith('registered=no'))).toBe(true)
+  })
+})
+
+describe('SMI-7089: global --prune steps and an unusable Docker never abort a removal half-way', () => {
+  const pruneCalls = (calls: string[]): string[] =>
+    calls.filter((c) => /^(network prune|image prune|builder prune)/.test(c))
+
+  it('(a) daemon unreachable + --prune: exit 0, worktree gone, no global prune is attempted', () => {
+    const fx = mk('rmwt-prune-unreachable')
+    const wt = addWt(fx, 'wt-unreach')
+    primeAttribution(fx, wt)
+    setExit(fx, 'info', 1)
+    setExit(fx, 'network_ls', 1)
+    setExit(fx, 'network_prune', 1)
+
+    const result = runRemove(fx, [wt, '--force', '--prune'])
+
+    // Presence: R0 ran, so the absences below are not "docker never ran".
+    expect(result.dockerCalls).toContain('info')
+    expect(existsSync(wt)).toBe(false)
+    expect(pruneCalls(result.dockerCalls)).toEqual([])
+    // The Step 3 report is gated the same way.
+    expect(result.dockerCalls).not.toContain('network ls --format {{.Name}}')
+    expect(result.dockerCalls).not.toContain('system df')
+    expect(result.stdout).toContain('global prune was skipped because Docker is unreachable')
+    expect(result.stdout).toContain('Worktree removal complete!')
+    expect(result.status).toBe(0)
+  })
+
+  it('(b) a failing `network prune` warns and the run continues to the targeted prune', () => {
+    const fx = mk('rmwt-netprune-fails')
+    const wt = addWt(fx, 'wt-netfail')
+    primeAttribution(fx, wt)
+    setExit(fx, 'network_prune', 1)
+
+    const result = runRemove(fx, [wt, '--force', '--prune'])
+
+    // Presence: the failing call really was made, and the later steps still ran.
+    expect(result.dockerCalls).toContain('network prune -f')
+    expect(result.dockerCalls).toContain('image prune -f')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
+    expect(result.stdout).toContain('Orphan prune scope: wt-netfail')
+    expect(result.stderr + result.stdout).toContain('network prune failed')
+    expect(result.stdout).toContain('Worktree removal complete!')
+    expect(result.status).toBe(0)
+  })
+
+  it('(b2) a failing `network ls` in the Step 3 report does not abort either', () => {
+    const fx = mk('rmwt-netls-fails')
+    const wt = addWt(fx, 'wt-netls')
+    primeAttribution(fx, wt)
+    setExit(fx, 'network_ls', 1)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain('network ls --format {{.Name}}')
+    expect(result.stderr + result.stdout).toContain('Could not list Docker networks')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
+    expect(result.stdout).toContain('Worktree removal complete!')
+    expect(result.status).toBe(0)
+  })
+
+  it('(c) Docker reachable at Step 0 but unusable for the pruner: exit 1 with the re-run hint', () => {
+    const fx = mk('rmwt-pruner-docker-gone')
+    const wt = addWt(fx, 'wt-prunergone')
+    primeAttribution(fx, wt)
+    // 1st `docker info` is Step 0 (R0); the 2nd is the pruner's own check.
+    setExitSequence(fx, 'info', [0, 1])
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: both info calls happened, the worktree is gone, no volume was listed.
+    expect(result.dockerCalls.filter((c) => c === 'info')).toHaveLength(2)
+    expect(existsSync(wt)).toBe(false)
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
   })
 })

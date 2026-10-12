@@ -257,14 +257,24 @@ Commit or discard them first, or re-run with --force to discard:
 
     # Step 3: Check Docker resources — network count + global reclaimable report
     echo ""
-    check_docker_networks
-    check_docker_reclaimable
+    if [[ "$WPA_DOCKER" == reachable ]]; then
+        check_docker_networks
+        check_docker_reclaimable
+    else
+        info "Skipping the Docker network and reclaimable report (Docker is $WPA_DOCKER)"
+    fi
 
     # Step 4: Prune networks + SAFE global categories (dangling images + build
     # cache) if requested. Aggressive image -a / volume prune stay manual.
+    # Best-effort, never part of the per-project guarantee: skipped when Step 0
+    # found Docker unavailable, and the helpers warn rather than abort.
     if [[ "$prune_flag" == true ]]; then
-        prune_docker_networks
-        prune_docker_safe
+        if [[ "$WPA_DOCKER" == reachable ]]; then
+            prune_docker_networks
+            prune_docker_safe
+        else
+            info "Skipping the global prune (--prune): the global prune was skipped because Docker is $WPA_DOCKER"
+        fi
     fi
 
     # Step 3.5: Targeted orphaned-volume/image prune (SMI-5750) -- runs
