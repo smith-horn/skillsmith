@@ -6,18 +6,17 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v0130)
+- [What's New](#whats-new-in-v0140)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Exports](#exports)
 
-## What's New in v0.13.0
+## What's New in v0.14.0
 
-- **New `resolveSessionTier` client** (`sync/license-status-client.ts`): authenticates a stored `skillsmith login` session against `/license-status` so the MCP server can resolve a real subscription tier without a separately-configured `SKILLSMITH_API_KEY`, instead of silently falling back to `community`.
-- **Scanner: bundled-file scan expanded to operational code** (Gap 8 of the ClawHavoc remediation): the indexer now reads `scripts/`, `src/`, and `bin/` alongside `SKILL.md`, closing a blind spot where a backdoor buried mid-function in working operational code was structurally invisible.
-- **Scanner fix**: the markdown indented-code-block heuristic was silently downgrading real non-markdown source findings from `high` to `medium` — `analyzeMarkdownContext`/`SecurityScanner.scan()` now take an explicit `isMarkdown` parameter instead of assuming every scanned file is documentation.
-- **Five new scanner detectors** (SMI-6033 Waves 3–4): `gatekeeper_bypass` (macOS quarantine-attribute stripping), `archive_evasion` (password-protected archives correlated with a fetch), a paste/snippet-host reputation detector, an encoded-payload decode-and-recursively-rescan detector, and `decoy_misdirection` (a fetch domain that doesn't match a nearby vendor-authority claim) — plus a stronger multi-signal co-signal escalation model so several individually sub-threshold findings can now jointly escalate a weak `code_execution` finding to critical.
+- **Fail-closed install gates (behaviour change):** `SkillInstallationService.install()` now requires `confirmed: true` for any registry skill whose trust tier is not official, verified, curated, community or local, and refuses `skipScan` for those tiers (`SKIP_SCAN_FORBIDDEN`). Before, only `experimental` and `unknown` were gated, so an `unverified`, empty or unrecognised tier passed both checks. A missing or unrecognised tier is now scanned with the strictest options. Callers that never pass `confirmed` get `CONFIRMATION_REQUIRED` for these skills.
+- **New `executable_frontmatter` finding:** the scanner flags any scanned file that opens with an executable `---js` or `---javascript` frontmatter block (critical, flag-only: it doesn't change `riskScore`). Current clients refuse to install a skill whose SKILL.md carries it, unless the scan is skipped (allowed only for reviewed tiers).
+- **`RiskScoreBreakdown` gains a required `executableFrontmatter` field.** Code that builds a `RiskScoreBreakdown` by hand must add it.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
