@@ -18,6 +18,7 @@ import { buildSymlinkFixture, verifyOutsideIntact } from './_shared.mjs'
 import { runC4Candidate } from './c4-shared.mjs'
 import {
   assertC4Candidate,
+  applyDirs,
   resolveWindow,
   checkEachFile,
   scoreUserFiles,
@@ -37,7 +38,7 @@ export function labelFor({ subcase }) {
   return subcase === 'a' ? 'A8a-C4' : 'A8-C4'
 }
 
-export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
+export function runOnce({ harnessRoot, candidate, subcase, window, dirs, _test }) {
   assertC4Candidate(candidate)
   if (subcase !== 'a' && subcase !== 'b') {
     throw new TypeError(`subcase must be 'a' or 'b', got ${String(subcase)}`)
@@ -45,8 +46,10 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
   const win = resolveWindow(window, WINDOWS)
   const label = labelFor({ subcase })
   const fx = makeFixtureRoot({ harnessRoot })
+  let actualDirs = null
   try {
     const sf = buildSymlinkFixture(fx.root)
+    actualDirs = applyDirs(fx.root, dirs)
     let completed = false
     let onFire
     let score
@@ -76,7 +79,12 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
         if (
           completed &&
           r.result?.status === 'quarantined' &&
-          !trashHasSymlink(fx.root, 'target', sf.outsideDir)
+          !trashHasSymlink(
+            fx.root,
+            sf.targetAbs,
+            sf.outsideDir,
+            whereFor(fx.root, r, sf.outsideDir)
+          )
         ) {
           throw new Error('quarantined but the substituted symlink is not in the trash')
         }
@@ -115,7 +123,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
       outcome: c4Outcome(r, fx.root, candidate),
       userFiles: (_test?.beforeScore?.({ fxRoot: fx.root }), score(r)),
       durationMs,
-      extra: c4Extra(r, label, win, { subcase }),
+      extra: c4Extra(r, label, win, { subcase, dirs: dirs ?? null, actualDirs }),
     }
   } finally {
     fx.cleanup()

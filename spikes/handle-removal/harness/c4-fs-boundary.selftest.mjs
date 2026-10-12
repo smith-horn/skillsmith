@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkFsBoundary, checkFsBoundarySource } from './attacks/c4-fs-boundary.mjs'
+import { makeFixtureRoot, resolveHarnessRoot } from './fixture-root.mjs'
 
 const SPIKE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 let allOk = true
@@ -71,7 +72,7 @@ const NEGATIVES = [
   [
     'createRequire',
     "import { createRequire } from 'node:module'\nconst r = createRequire(import.meta.url)",
-    'createRequire() call',
+    "import of 'node:module'",
   ],
   ['dynamic import of fs', "const m = await import('node:fs')", "dynamic import of 'node:fs'"],
   [
@@ -93,6 +94,69 @@ const NEGATIVES = [
     "import fs from 'node:fs'\nconst t = `${fs.statSync}`",
     'referenced without being called',
   ],
+  [
+    'fs.promises call (G3-5b)',
+    "import fs from 'node:fs'\nawait fs.promises.stat('/x')",
+    'fs.promises',
+  ],
+  [
+    'fs.promises captured (G3-5b)',
+    "import fs from 'node:fs'\nconst p = fs.promises",
+    'fs.promises',
+  ],
+  // rt3 (a): module loader access, aliased or not.
+  [
+    'aliased createRequire (rt3 a)',
+    "import { createRequire as cr } from 'node:module'\ncr(import.meta.url)('node:fs')",
+    "import of 'node:module'",
+  ],
+  [
+    'module default import (rt3 a)',
+    "import mod from 'module'\nconst r = mod['create' + 'Require'](import.meta.url)",
+    "import of 'module'",
+  ],
+  [
+    'dynamic import of node:module (rt3 a)',
+    "const m = await import('node:module')",
+    "import of 'node:module'",
+  ],
+  // rt3 (b): process.getBuiltinModule in any spelling.
+  [
+    'process.getBuiltinModule call (rt3 b)',
+    "const f = process.getBuiltinModule('node:fs')",
+    'getBuiltinModule',
+  ],
+  [
+    'getBuiltinModule destructured (rt3 b)',
+    "const { getBuiltinModule } = process\ngetBuiltinModule('fs')",
+    'getBuiltinModule',
+  ],
+  [
+    'getBuiltinModule computed (rt3 b)',
+    "const f = process['getBuiltinModule']('fs')",
+    'getBuiltinModule',
+  ],
+  // rt3 (c): members of the fs default that the interposition never wraps.
+  [
+    'async fs.rm (rt3 c)',
+    "import fs from 'node:fs'\nfs.rm('/x', {}, () => {})",
+    'is not a traced *Sync function',
+  ],
+  [
+    'async fs.readFile (rt3 c)',
+    "import fs from 'node:fs'\nfs.readFile('/x', () => {})",
+    'is not a traced *Sync function',
+  ],
+  [
+    'stream fs.createReadStream (rt3 c)',
+    "import fs from 'node:fs'\nfs.createReadStream('/x')",
+    'is not a traced *Sync function',
+  ],
+  [
+    'unknown fs member (rt3 c)',
+    "import fs from 'node:fs'\nfs.notARealFunctionSync('/x')",
+    'is not a traced *Sync function',
+  ],
   ['computed member', "import fs from 'node:fs'\nfs['stat' + 'Sync']('/x')", 'computed member'],
 ]
 for (const [label, src, expect] of NEGATIVES) {
@@ -102,6 +166,84 @@ for (const [label, src, expect] of NEGATIVES) {
     violations.some((v) => v.includes(expect)),
     violations.join('; ') || 'no violation'
   )
+}
+
+// 4. Sol round 2: the WALK must follow every way one module pulls in another,
+//    and must fail closed on a specifier it cannot check. Each case is a real
+//    on-disk entry module pointing at a helper with a named fs import.
+{
+  const fx = makeFixtureRoot({ harnessRoot: resolveHarnessRoot() })
+  try {
+    const put = (name, src) => fs.writeFileSync(path.join(fx.root, name), src)
+    put('unsafe-helper.mjs', "import { statSync } from 'node:fs'\nexport const x = statSync\n")
+    put(
+      'clean-helper.mjs',
+      "import fs from 'node:fs'\nexport function y(p) { return fs.lstatSync(p) }\n"
+    )
+    const walk = (entrySrc) => {
+      put('entry.mjs', entrySrc)
+      try {
+        const r = checkFsBoundary(path.join(fx.root, 'entry.mjs'))
+        return {
+          r,
+          text: r.violations.map((v) => `${path.basename(v.file)}: ${v.violation}`).join('; '),
+        }
+      } catch (err) {
+        return { r: null, text: `THREW ${err.code ?? err.name}: ${err.message.slice(0, 60)}` }
+      }
+    }
+    const flagsHelper = ({ r }) =>
+      r !== null &&
+      r.violations.some(
+        (v) =>
+          path.basename(v.file) === 'unsafe-helper.mjs' &&
+          v.violation.includes('non-default import')
+      )
+    for (const [label, entrySrc] of [
+      ['control: plain relative import', "import { x } from './unsafe-helper.mjs'\n"],
+      ['export * from a relative module', "export * from './unsafe-helper.mjs'\n"],
+      ['export { x } from a relative module', "export { x } from './unsafe-helper.mjs'\n"],
+      [
+        'literal dynamic import of a relative module',
+        "const m = await import('./unsafe-helper.mjs')\n",
+      ],
+    ]) {
+      const w = walk(entrySrc)
+      check(`walk: ${label} -> helper's named fs import flagged`, flagsHelper(w), w.text || 'clean')
+    }
+    for (const [label, entrySrc, expect] of [
+      ['missing relative file', "import './missing.mjs'\n", 'unresolvable'],
+      [
+        'extensionless relative specifier (ESM does not resolve it)',
+        "import './clean-helper'\n",
+        'unresolvable',
+      ],
+      ['directory specifier', "import './'\n", 'unresolvable'],
+      ['bare package specifier', "import x from 'some-package'\n", 'unchecked'],
+      ['absolute file URL specifier', "import x from 'file:///etc/x.mjs'\n", 'unchecked'],
+    ]) {
+      const w = walk(entrySrc)
+      check(
+        `walk: ${label} -> flagged, not skipped`,
+        w.r !== null && w.r.violations.some((v) => v.violation.includes(expect)),
+        w.text || 'clean'
+      )
+    }
+    {
+      const w = walk(
+        "import { y } from './clean-helper.mjs'\nimport path from 'node:path'\nimport os from 'os'\nexport * from './clean-helper.mjs'\n"
+      )
+      check(
+        'walk control: clean relative helper and builtins -> walked, not flagged',
+        w.r !== null &&
+          w.r.violations.length === 0 &&
+          w.r.files.some((f) => path.basename(f) === 'clean-helper.mjs'),
+        w.text || `files=${w.r?.files.map((f) => path.basename(f)).join(',')}`
+      )
+    }
+  } finally {
+    fx.cleanup()
+  }
 }
 
 // 3. Known positives: ordinary, conforming code must NOT be flagged.

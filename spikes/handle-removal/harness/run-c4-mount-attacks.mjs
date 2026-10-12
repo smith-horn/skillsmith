@@ -4,6 +4,8 @@
 // mount/umount, requires --privileged. Never run outside a throwaway container.
 //
 // Usage: node harness/run-c4-mount-attacks.mjs --out <path> [--fs-label <name>] [--target <n>]
+//   [--dirs <n>]   pad each fixture tree to n directories (see run-c4-attacks.mjs); the
+//                  variant tag gains '/dirs=<n>' and records carry cell.dirs
 //
 // --out is REQUIRED: there is no default under results/raw/ (a mis-parsed command
 // line must not be able to write into the evidence corpus). C4_RESULTS_RAW_DIR
@@ -19,7 +21,7 @@ import {
   formatVerdict,
 } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
-import { shortTargetRefusal, parseFlags } from './c4-target-guard.mjs'
+import { shortTargetRefusal, parseFlags, harnessErrorRaw } from './c4-target-guard.mjs'
 import { resolveControl, controlFailedFlag, controlTag } from './control-spec.mjs'
 import * as a1 from './attacks/a1-c4.mjs'
 import * as a2 from './attacks/a2-c4.mjs'
@@ -28,6 +30,7 @@ const FLAGS = {
   '--target': { key: 'target', kind: 'int' },
   '--out': { key: 'out', kind: 'string' },
   '--fs-label': { key: 'fsLabel', kind: 'string' },
+  '--dirs': { key: 'dirs', kind: 'int' },
 }
 
 // Arguments are validated BEFORE the platform check so a typo is reported as a
@@ -60,24 +63,29 @@ const ATTACKS = [
 const SUBCASES = ['bind', 'tmpfs']
 const CANDIDATES = ['C4', 'C4-naive']
 
-function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, out) {
+function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, out, dirs) {
   const records = []
   for (let run = 0; run < target; run += 1) {
     let raw
     try {
-      raw = mod.runOnce({ harnessRoot: resolveHarnessRoot(), candidate, subcase })
-    } catch (err) {
-      raw = {
-        precondition: { hookFired: false, mutationApplied: false, traceMatched: false },
-        outcome: { status: 'harness-error', reason: err.message },
-        userFiles: { checked: 0, lost: 0, changed: 0 },
-        durationMs: null,
-        extra: { error: String(err.stack ?? err.message).slice(0, 600) },
+      raw = mod.runOnce({
+        harnessRoot: resolveHarnessRoot(),
+        candidate,
+        subcase,
+        ...(dirs ? { dirs } : {}),
+      })
+      if (dirs && raw.extra?.actualDirs !== dirs) {
+        throw new Error(
+          `module did not pad to the requested ${dirs} directories (extra.actualDirs=${String(raw.extra?.actualDirs)})`
+        )
       }
+    } catch (err) {
+      raw = harnessErrorRaw(err)
     }
     const cell = {
       attack: label,
-      variant: `${subcase}/${window}`,
+      // dirs is part of the cell key: a padded cell must never merge with a fixture-scale one.
+      variant: `${subcase}/${window}${dirs ? `/dirs=${dirs}` : ''}`,
       candidate,
       fs: fsLabel,
       runner: 'run-c4-mount-attacks.mjs',
@@ -95,13 +103,7 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
     } catch (err) {
       // A malformed module result becomes a harness-error record instead of
       // killing the runner mid-cell.
-      raw = {
-        precondition: { hookFired: false, mutationApplied: false, traceMatched: false },
-        outcome: { status: 'harness-error', reason: err?.message ?? String(err) },
-        userFiles: { checked: 0, lost: 0, changed: 0 },
-        durationMs: null,
-        extra: { error: String(err?.stack ?? err).slice(0, 600) },
-      }
+      raw = harnessErrorRaw(err)
       record = makeRecord({
         cell,
         run,
@@ -112,6 +114,7 @@ function runCell({ label, mod, window }, subcase, candidate, target, fsLabel, ou
       })
     }
     record.cell.target = mod.target
+    record.cell.dirs = dirs ?? null
     records.push(record)
     // `record` is the plain object makeRecord just built (object literal), so
     // the spread copies every field and nothing is lost.
@@ -145,11 +148,11 @@ function main() {
     const target = opts.target ?? atk.mod.target
     for (const subcase of SUBCASES) {
       for (const candidate of CANDIDATES) {
-        const records = runCell(atk, subcase, candidate, target, opts.fsLabel, out)
+        const records = runCell(atk, subcase, candidate, target, opts.fsLabel, out, opts.dirs)
         const failed = records.filter((r) => classifyRecord(r) === 'failed').length
         cells.push({
           attack: atk.label,
-          variant: `${subcase}/${atk.window}`,
+          variant: `${subcase}/${atk.window}${opts.dirs ? `/dirs=${opts.dirs}` : ''}`,
           candidate,
           fs: opts.fsLabel,
           target,

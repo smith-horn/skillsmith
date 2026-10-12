@@ -160,6 +160,7 @@ export function deriveHashEvidence({ candidate, pristineHash, guardHash, postMov
  */
 export function landingFromRacer({
   racer,
+  callerHashStartAt,
   callerHashAt,
   inModelEnd,
   moveEnd,
@@ -199,6 +200,14 @@ export function landingFromRacer({
     } else if (last.endAt == null || !(last.endAt < callerHashAt)) {
       cls = 'in-model'
       evidence = 'last-step-after-caller-hash'
+    } else if (typeof callerHashStartAt !== 'number' || !(last.endAt < callerHashStartAt)) {
+      // Landed DURING the caller's own hash (found at --dirs 200, where that
+      // hash takes ~10 ms): the caller may have read the entry before the
+      // mutation, so the timestamps cannot say it hashed the racer's content.
+      // Only the hash proof below can; without it the run is scored. A
+      // missing start stamp cannot prove anything either (fail-closed).
+      cls = 'in-model'
+      evidence = 'landed-during-caller-hash'
     }
   }
   const byHash = !partial && provenPreCallerHash === true && cls !== 'pre-caller-hash'

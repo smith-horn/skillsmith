@@ -42,6 +42,7 @@ import { buildSwapFixture, buildSymlinkFixture, swapFileSameTick } from './_shar
 import { runC4Candidate } from './c4-shared.mjs'
 import {
   assertC4Candidate,
+  applyDirs,
   checkEachFile,
   scoreUserFiles,
   c4Precondition,
@@ -127,7 +128,7 @@ export function labelFor() {
   return id
 }
 
-function symlinkUserFiles(fxRoot, linkAbs, newTarget) {
+function symlinkUserFiles(fxRoot, linkAbs, newTarget, where) {
   let lost = 0
   let changed = 0
   try {
@@ -136,11 +137,11 @@ function symlinkUserFiles(fxRoot, linkAbs, newTarget) {
   } catch {
     lost = 1
   }
-  const displaced = lost === 1 && trashHasSymlink(fxRoot, 'link', newTarget) ? 1 : 0
+  const displaced = lost === 1 && trashHasSymlink(fxRoot, linkAbs, newTarget, where) ? 1 : 0
   return { checked: 1, lost, changed, displaced, deleted: lost - displaced }
 }
 
-export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, _test }) {
+export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, dirs, _test }) {
   assertC4Candidate(candidate)
   if (!Object.hasOwn(SUBCASE_WINDOW, subcase)) {
     throw new TypeError(`subcase must be 'between' or 'late', got ${String(subcase)}`)
@@ -157,6 +158,7 @@ export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, _t
   }
 
   const fx = makeFixtureRoot({ harnessRoot })
+  let actualDirs = null
   try {
     let completed = false
     let reuseObserved = null
@@ -166,6 +168,7 @@ export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, _t
 
     if (isEdit) {
       const bf = buildSwapFixture(fx.root)
+      actualDirs = applyDirs(fx.root, dirs)
       const plan = editPlan(subcase, fx.root, bf.targetAbs, _test)
       onFire = () => {
         plan.mutate()
@@ -175,6 +178,7 @@ export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, _t
       score = plan.score
     } else if (entryKind === 'symlink') {
       const sf = buildSymlinkFixture(fx.root)
+      actualDirs = applyDirs(fx.root, dirs)
       start0.newLinkTarget = `${sf.treeRoot}/../substituted-outside-marker`
       const mutate =
         _test?.mutate ??
@@ -191,9 +195,16 @@ export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, _t
         }
         completed = true
       }
-      score = () => symlinkUserFiles(fx.root, sf.linkAbs, start0.newLinkTarget)
+      score = (r) =>
+        symlinkUserFiles(
+          fx.root,
+          sf.linkAbs,
+          start0.newLinkTarget,
+          whereFor(fx.root, r, sf.treeRoot)
+        )
     } else {
       const bf = buildSwapFixture(fx.root)
+      actualDirs = applyDirs(fx.root, dirs)
       start0.replacementContent = `substituted-${Date.now()}-${Math.random()}`
       const mutate =
         _test?.mutate ??
@@ -225,7 +236,13 @@ export function runOnce({ harnessRoot, candidate, subcase, entryKind, window, _t
       outcome: c4Outcome(r, fx.root, candidate),
       userFiles: score(r),
       durationMs,
-      extra: c4Extra(r, id, win, { subcase, entryKind: entryKind ?? null, reuseObserved }),
+      extra: c4Extra(r, id, win, {
+        subcase,
+        entryKind: entryKind ?? null,
+        reuseObserved,
+        dirs: dirs ?? null,
+        actualDirs,
+      }),
     }
   } finally {
     fx.cleanup()

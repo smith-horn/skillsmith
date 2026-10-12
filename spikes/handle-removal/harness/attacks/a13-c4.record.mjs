@@ -84,7 +84,90 @@ export function decideRecord({
   return {
     status: c4Status,
     mutationApplied,
-    excludedReason: mutationApplied && scored?.vacuous === true ? VACUOUS_REASON : null,
+    // Only a vacuous check that HELD leaves the floor (review G3-2): when it
+    // failed (the deleted path came back, changed 1) that is a loss, and a
+    // loss is never excluded from the denominator.
+    excludedReason:
+      mutationApplied && scored?.vacuous === true && scored.lost + scored.changed === 0
+        ? VACUOUS_REASON
+        : null,
     harnessErrors,
   }
+}
+
+/**
+ * Converted c4-shared stamps may not lie after this process stamped the call's
+ * return. A missing or non-numeric stamp FAILS (review G3-8): "not measured"
+ * is not "in order", and decideRecord turns the failure into a harness-error
+ * counted against the cell.
+ */
+export function clockOrderOk({ callerHashStartAt, callAttemptAtH, callEndAt, callReturnedAtH }) {
+  // Both sides (rt3): a late shift puts the converted call end after this
+  // process's post-call stamp; an EARLY shift puts the converted caller-hash
+  // start before this process's pre-call stamp. The caller hash runs inside
+  // runC4Candidate, so it cannot start before the call was made. 0.01 ms
+  // tolerance on each side, the same as before; the in-process conversion
+  // offset measured constant to 0.25 us.
+  return (
+    typeof callerHashStartAt === 'number' &&
+    typeof callAttemptAtH === 'number' &&
+    typeof callEndAt === 'number' &&
+    typeof callReturnedAtH === 'number' &&
+    callerHashStartAt >= callAttemptAtH - 0.01 &&
+    callEndAt <= callReturnedAtH + 0.01
+  )
+}
+
+/**
+ * The caller-hash window for the R2-7 relatedness check (review G3-7).
+ * c4-shared's own stamps when the thrown error carries them (performance
+ * clock, converted to hrtime with `offset`); otherwise this process's bracket
+ * around the throwing call, which contains the caller hash because
+ * runC4Candidate throws from it.
+ */
+export function callerHashWindowFrom(err, { offset, callAttemptAtH, catchAtH }) {
+  const own = typeof err?.callerHashStartAt === 'number' && typeof err?.callerHashAt === 'number'
+  return own
+    ? {
+        startAt: toH(err.callerHashStartAt, offset),
+        endAt: toH(err.callerHashAt, offset),
+        source: 'c4-shared',
+      }
+    : { startAt: callAttemptAtH, endAt: catchAtH, source: 'call-bracket' }
+}
+
+/**
+ * Puts a c4-shared timestamp on hrtime. The two clocks are told apart by
+ * magnitude, not assumed: the performance clock is epoch-based (~1.7e12 ms),
+ * hrtime is boot-based (orders of magnitude smaller).
+ */
+export function toH(t, offset) {
+  if (t == null) return null
+  if (typeof t !== 'number' || !Number.isFinite(t)) {
+    throw new TypeError(`a13-c4: non-numeric timestamp ${String(t)}`)
+  }
+  return t > 1e12 ? t + offset : t
+}
+
+/**
+ * Whether the tree provably changed after the caller hashed it, from
+ * clock-independent evidence (found at --dirs 200, where four C4 'kept' runs
+ * were being dropped as pre-caller-hash):
+ *   - a moved tree that does not match the caller's hash (or could not be
+ *     hashed: the conservative reading);
+ *   - C4 'kept': its own hash or identity check saw the tree differ from what
+ *     the caller hashed, and C4's checks all run after the caller's hash;
+ *   - C4 'stopped' by its own hash read (reason guard-*): an entry the caller
+ *     read was gone or unreadable when C4 read it.
+ * A 'stopped' at the rename (quarantine-failed) is not hash evidence.
+ */
+export function treeChangedAfterCallerHash({
+  c4Status,
+  c4Reason,
+  destPath,
+  movedTreeMatchesCallerHash,
+}) {
+  if (destPath != null) return movedTreeMatchesCallerHash !== true
+  if (c4Status === 'kept') return true
+  return c4Status === 'stopped' && typeof c4Reason === 'string' && c4Reason.startsWith('guard-')
 }

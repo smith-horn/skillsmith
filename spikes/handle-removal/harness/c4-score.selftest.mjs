@@ -17,6 +17,7 @@ import {
   existsSync,
   linkSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   realpathSync,
   renameSync,
@@ -28,7 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { makeRecord, classifyRecord } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
 import { shortTargetRefusal } from './c4-target-guard.mjs'
-import { c4Precondition } from './attacks/c4-score.mjs'
+import { c4Precondition, padTree, trashHasSymlink } from './attacks/c4-score.mjs'
 import * as a3 from './attacks/a3-c4.mjs'
 import * as a4 from './attacks/a4-c4.mjs'
 import * as a7 from './attacks/a7-c4.mjs'
@@ -241,6 +242,108 @@ for (const arm of ARMS) {
     return raw.precondition.mutationApplied === false && cls === 'never-ran' ? true : `class=${cls}`
   })
 }
+
+// ---- S2-Low: displaced symlinks are located against THIS run's destination -------------
+{
+  const root = mkdtempSync(path.join(os.tmpdir(), 'c4-sym-'))
+  const tree = path.join(root, 'tree')
+  const trash = path.join(root, '.skillsmith-trash')
+  const thisOp = path.join(trash, 'op-this', 'tree-aaa')
+  const staleOp = path.join(trash, 'op-stale', 'tree-bbb')
+  for (const d of [thisOp, staleOp]) mkdirSync(d, { recursive: true })
+  const original = path.join(tree, 'link')
+  const decoy = path.join(staleOp, 'link') // a stale link left by another operation
+  symlinkSync('/wanted-target', decoy)
+  const where = (destination) => ({ destination, originRoot: tree })
+  check('trashHasSymlink: a decoy link in ANOTHER op is not counted (destination null)', () =>
+    trashHasSymlink(root, original, '/wanted-target', where(null)) === false ? true : 'counted'
+  )
+  check(
+    'trashHasSymlink: a decoy link in ANOTHER op is not counted when this run moved elsewhere',
+    () =>
+      trashHasSymlink(root, original, '/wanted-target', where(thisOp)) === false ? true : 'counted'
+  )
+  symlinkSync('/wanted-target', path.join(thisOp, 'link'))
+  check(
+    "trashHasSymlink: the link inside THIS run's destination is counted (positive control)",
+    () =>
+      trashHasSymlink(root, original, '/wanted-target', where(thisOp)) === true ? true : 'not found'
+  )
+  check('trashHasSymlink: the wrong link text inside this destination is not counted', () =>
+    trashHasSymlink(root, original, '/other-target', where(thisOp)) === false ? true : 'counted'
+  )
+  check('trashHasSymlink: a destination outside the trash root is rejected', () => {
+    try {
+      trashHasSymlink(root, original, '/wanted-target', where(path.join(root, 'elsewhere')))
+    } catch (err) {
+      return /not inside/.test(err.message) ? true : err.message
+    }
+    return 'did not throw'
+  })
+  rmSync(root, { recursive: true, force: true })
+}
+
+// ---- STEP-1: --dirs pads the fixture tree without touching attacked paths -----------------
+const countDirs = (d) =>
+  1 +
+  readdirSync(d, { withFileTypes: true }).reduce(
+    (n, e) => n + (e.isDirectory() ? countDirs(path.join(d, e.name)) : 0),
+    0
+  )
+check('padTree: pads to exactly n directories under zz-pad, leaving other paths alone', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'c4-pad-'))
+  try {
+    mkdirSync(path.join(d, 'tree', 'target'), { recursive: true })
+    const actual = padTree(path.join(d, 'tree'), 50)
+    const dirs = countDirs(path.join(d, 'tree'))
+    const top = readdirSync(path.join(d, 'tree')).sort().join()
+    return actual === 50 && dirs === 50 && top === 'target,zz-pad'
+      ? true
+      : `actual=${actual} dirs=${dirs} top=${top}`
+  } finally {
+    rmSync(d, { recursive: true, force: true })
+  }
+})
+check('padTree: asking for fewer directories than the fixture already has throws', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'c4-pad-'))
+  try {
+    mkdirSync(path.join(d, 'tree', 'a', 'b'), { recursive: true })
+    padTree(path.join(d, 'tree'), 2)
+  } catch (err) {
+    return /below the fixture minimum/.test(err.message) ? true : err.message
+  } finally {
+    rmSync(d, { recursive: true, force: true })
+  }
+  return 'did not throw'
+})
+for (const [mod, name, attack, args, c4Class = 'passed'] of [
+  [a3, 'A3', 'A3-C4', {}],
+  [a4, 'A4', 'A4-C4', {}, 'failed'], // the root-only re-check cannot see a post-hash swap
+  [a8, 'A8b', 'A8-C4', { subcase: 'b' }],
+  [a10, 'A10a', 'A10-C4', { subcase: 'a' }],
+]) {
+  check(
+    `${name} --dirs 50: actualDirs is 50 on both arms; C4 ${c4Class}, naive failed (as unpadded)`,
+    () => {
+      const c4 = mod.runOnce({ harnessRoot, candidate: 'C4', dirs: 50, ...args })
+      const nv = mod.runOnce({ harnessRoot, candidate: 'C4-naive', dirs: 50, ...args })
+      const ok =
+        c4.extra.actualDirs === 50 &&
+        nv.extra.actualDirs === 50 &&
+        classify(c4, attack, 'C4') === c4Class &&
+        classify(nv, attack, 'C4-naive') === 'failed'
+      return ok
+        ? true
+        : `actual=${c4.extra.actualDirs}/${nv.extra.actualDirs} c4=${classify(c4, attack, 'C4')} naive=${classify(nv, attack, 'C4-naive')}`
+    }
+  )
+}
+check('A7 late-append --dirs 50: padded fixture, naive still displaces', () => {
+  const nv = a7.runOnce({ harnessRoot, candidate: 'C4-naive', subcase: 'late-append', dirs: 50 })
+  return nv.extra.actualDirs === 50 && classify(nv, 'A7-C4', 'C4-naive') === 'failed'
+    ? true
+    : JSON.stringify(nv.extra.actualDirs)
+})
 
 // ---- R2-3: the short-target guard compares file IDENTITY, not spellings ---------
 {

@@ -243,6 +243,7 @@ export function resolveControl(row, allRows) {
     if (r.attack !== wantAttack) return false
     if (r.fs !== row.fs) return false
     if (r.candidate !== c.candidate) return false
+    if (r.dirs !== row.dirs) return false
     if (c.matchVariant === 'exact') return r.variant === row.variant
     if (c.matchVariant === 'head') return headVariant(r.variant) === headVariant(row.variant)
     return true

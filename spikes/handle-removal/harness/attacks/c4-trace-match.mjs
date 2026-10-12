@@ -35,11 +35,18 @@
 //  alias. ./c4-fs-boundary.mjs checks exactly that by parsing those files, and
 //  c4-fs-boundary.selftest.mjs fails if it stops holding.
 //
+//  PATH ARGUMENTS (G3-9). A string, a Buffer or a file: URL is normalised and
+//  traced alike (see asPath).
+//
 //  It does NOT verify the hash's per-entry traversal order, calls on paths
-//  outside the root and destination, or anything the mutation itself does
-//  (calls made inside onFire are deliberately untraced).
+//  outside the root and destination, anything the mutation itself does
+//  (calls made inside onFire are deliberately untraced), FD-BASED calls
+//  (fstatSync, readSync, closeSync, ... take an fd, not a path, so they cannot
+//  be attributed to the root without tracking opens), or a Buffer path of
+//  non-UTF-8 bytes (decoded as UTF-8, it no longer equals the root's path).
 
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const FIRE = 'FIRE'
 
@@ -90,13 +97,28 @@ const isInside = (child, parent) => {
 }
 
 /**
+ * G3-9: a path argument as fs accepts it -- a string, a Buffer, or a file: URL --
+ * normalised to a string; anything else (an fd, a non-file URL) is null, i.e.
+ * not a path and not traced. A Buffer is decoded as UTF-8, which is what every
+ * path this harness builds is; a Buffer of non-UTF-8 bytes would decode to a
+ * different string and go untraced (stated in the header).
+ */
+export function asPath(p) {
+  if (typeof p === 'string') return p
+  if (Buffer.isBuffer(p)) return p.toString('utf8')
+  if (p instanceof URL) return p.protocol === 'file:' ? fileURLToPath(p) : null
+  return null
+}
+
+/**
  * Returns `scopesOf(fnName, args) -> {scope, scope2}` for one run: 'origin'
  * (the root itself), 'desc' (inside the root), 'dest' (inside destDir), or null.
  */
 export function makeScoper(originPath, destDir) {
   const one = (p) => {
-    if (typeof p !== 'string') return null
-    const abs = path.resolve(p)
+    const s = asPath(p)
+    if (s === null) return null
+    const abs = path.resolve(s)
     if (abs === originPath) return 'origin'
     if (isInside(abs, originPath)) return 'desc'
     if (isInside(abs, destDir)) return 'dest'

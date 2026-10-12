@@ -334,6 +334,47 @@ for (const stray of ['statSync', 'existsSync']) {
   }
 }
 
+// 10. G3-7: a caller-hash failure carries its own timing (same clock as times.*),
+//     so a consumer can still place it. Forced for real: an unreadable file in
+//     the tree makes computePathTreeHash fail before quarantineTree is called.
+{
+  const fx = makeFixtureRoot({ harnessRoot })
+  try {
+    const f = buildSwapFixture(fx.root)
+    fs.chmodSync(path.join(f.targetAbs, 'orig-f1'), 0)
+    const before = performance.timeOrigin + performance.now()
+    let thrown = null
+    try {
+      runC4Candidate({
+        candidate: 'C4',
+        parentAbs: fx.root,
+        name: 'tree',
+        window: 'pre-call',
+        onFire() {},
+      })
+    } catch (err) {
+      thrown = err
+    }
+    const after = performance.timeOrigin + performance.now()
+    const s = thrown?.callerHashStartAt
+    const e = thrown?.callerHashAt
+    check(
+      'G3-7: caller-hash failure throws with callerHashStartAt <= callerHashAt, both inside the call',
+      thrown instanceof Error &&
+        thrown.message.includes('caller hash failed') &&
+        Number.isFinite(s) &&
+        Number.isFinite(e) &&
+        before <= s &&
+        s <= e &&
+        e <= after,
+      thrown ? `${thrown.message.slice(0, 50)} start=${s} end=${e}` : 'no throw'
+    )
+    check('G3-7: wrappers untouched by a caller-hash failure', restored())
+  } finally {
+    fx.cleanup()
+  }
+}
+
 if (!allOk) {
   console.error('[c4-shared self-test] FAIL')
   process.exit(1)

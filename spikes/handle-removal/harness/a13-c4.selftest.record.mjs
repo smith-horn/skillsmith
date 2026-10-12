@@ -4,8 +4,21 @@
 // vacuous checks; review R2-7, R2-10 (K1/K3) and R2-11 (K2). Each rule has a
 // positive case and a control that differs in one input.
 
-import { decideRecord, SKEW_MIN_MS, SKEW_MAX_MS } from './attacks/a13-c4.record.mjs'
-import { recordForRunError, CALLER_HASH_FAILED_PREFIX } from './attacks/a13-c4.classify.mjs'
+import {
+  decideRecord,
+  clockOrderOk,
+  callerHashWindowFrom,
+  treeChangedAfterCallerHash,
+  SKEW_MIN_MS,
+  SKEW_MAX_MS,
+} from './attacks/a13-c4.record.mjs'
+import {
+  recordForRunError,
+  landingFromRacer,
+  windowEnds,
+  routeRun,
+  CALLER_HASH_FAILED_PREFIX,
+} from './attacks/a13-c4.classify.mjs'
 
 const BASE = {
   c4Status: 'quarantined',
@@ -184,6 +197,19 @@ export function runRecordCases(check) {
       r.rec !== null,
       r.thrown && String(r.thrown.message)
     )
+    const early = { ...racer, steps: [{ ...racer.steps[0], startAt: 1, endAt: 2 }] }
+    const earlyErr = hashErr()
+    r = attempt({
+      ...base,
+      racer: early,
+      err: earlyErr,
+      callerHashWindow: { startAt: 4, endAt: 7 },
+    })
+    check(
+      'rt3: racer step ENDED before the caller hash started (1..2 vs 4..7) rethrows (R2-7 lower bound)',
+      r.thrown === earlyErr,
+      r.rec && r.rec.outcome
+    )
     r = attempt({ ...base, err: hashErr(), callerHashWindow: { startAt: 6, endAt: 7 } })
     check(
       'control: first step touching the window start (closed overlap) -> record',
@@ -216,6 +242,207 @@ export function runRecordCases(check) {
       'caller-hash failure without a measured window rethrows (fail-closed)',
       r.thrown === noWindow,
       r.rec && r.rec.outcome
+    )
+  }
+
+  // --- governance round 3 -----------------------------------------------------
+  {
+    // G3-2: a FAILED vacuous check is a loss, never excluded from the floor.
+    let d = dec({ scored: { lost: 0, changed: 1, vacuous: true } })
+    check(
+      'G3-2: vacuous check that failed (changed 1) is NOT excluded from the floor',
+      d.excludedReason === null && d.mutationApplied === true,
+      d
+    )
+    d = dec({ scored: { lost: 0, changed: 0, vacuous: true } })
+    check(
+      "G3-2 control: vacuous check that held is excluded ('vacuous-check')",
+      d.excludedReason === 'vacuous-check',
+      d
+    )
+
+    // G3-8: a missing converted stamp fails the clock-order check.
+    check(
+      'G3-8: missing callEndAt fails clockOrderOk',
+      clockOrderOk({ callEndAt: null, callReturnedAtH: 10 }) === false
+    )
+    check(
+      'G3-8: non-numeric callEndAt fails clockOrderOk',
+      clockOrderOk({ callEndAt: undefined, callReturnedAtH: 10 }) === false
+    )
+    check(
+      'G3-8 control: callEndAt before the return passes',
+      clockOrderOk({
+        callerHashStartAt: 1,
+        callAttemptAtH: 1,
+        callEndAt: 9,
+        callReturnedAtH: 10,
+        ...{},
+      }) === true
+    )
+    check(
+      'G3-8 control: callEndAt after the return fails',
+      clockOrderOk({ callEndAt: 10.02, callReturnedAtH: 10 }) === false
+    )
+    d = dec({ clockOrderOk: clockOrderOk({ callEndAt: null, callReturnedAtH: 10 }) })
+    check(
+      'G3-8: a missing stamp makes the run a counted harness-error',
+      isHarnessError(d, 'clock-order'),
+      d
+    )
+
+    // G3-7: c4-shared's own stamps on the error are taken, converted to hrtime.
+    const err = Object.assign(new Error('x'), {
+      callerHashStartAt: 1.7e12 + 5,
+      callerHashAt: 1.7e12 + 6,
+    })
+    const w = callerHashWindowFrom(err, { offset: -1.7e12 + 100, callAttemptAtH: 1, catchAtH: 999 })
+    check(
+      "G3-7: error carrying c4-shared stamps -> window from them, source 'c4-shared', converted",
+      w.source === 'c4-shared' && w.startAt === 105 && w.endAt === 106,
+      w
+    )
+    const b = callerHashWindowFrom(new Error('x'), { offset: 0, callAttemptAtH: 1, catchAtH: 999 })
+    check(
+      "G3-7 control: plain error -> this process's call bracket",
+      b.source === 'call-bracket' && b.startAt === 1 && b.endAt === 999,
+      b
+    )
+    const half = Object.assign(new Error('x'), { callerHashStartAt: 1.7e12 + 5 })
+    check(
+      'G3-7 control: only one stamp present -> call bracket, not a half window',
+      callerHashWindowFrom(half, { offset: 0, callAttemptAtH: 1, catchAtH: 999 }).source ===
+        'call-bracket'
+    )
+  }
+
+  // --- landings during the caller's own hash (found at --dirs 200) ----------
+  {
+    // The caller hash runs 6..10 (it takes ~10 ms at 200 dirs).
+    const T = {
+      callerHashStartAt: 6,
+      callerHashAt: 10,
+      recheckAt: 20,
+      renameAt: 21,
+      renameReturnedAt: 22,
+      callEndAt: 25,
+    }
+    const E = windowEnds('C4', T)
+    const F = '/fx/tree/target/orig-f1'
+    const racer = (s0, e0, s1, e1) => ({
+      mutation: 'a7',
+      steps: [
+        { op: 'unlink', path: F, startAt: s0, endAt: e0 },
+        { op: 'write', path: F, startAt: s1, endAt: e1, content: 'u' },
+      ],
+      failedStep: null,
+    })
+    const L = (r, proven = false, differs = false) =>
+      landingFromRacer({
+        racer: r,
+        callerHashStartAt: T.callerHashStartAt,
+        callerHashAt: T.callerHashAt,
+        ...E,
+        provenPreCallerHash: proven,
+        movedTreeDiffersFromCallerHash: differs,
+      })[0]
+    let l = L(racer(7, 7.1, 7.2, 7.3))
+    check(
+      'mutation landed DURING the caller hash, no hash proof -> in-model (landed-during-caller-hash), scored',
+      l?.cls === 'in-model' &&
+        l?.evidence === 'landed-during-caller-hash' &&
+        routeRun(l ? [l] : []).mutationApplied === true,
+      l
+    )
+    l = L(racer(4, 4.1, 4.2, 5.9))
+    check(
+      'control: mutation complete before the caller hash STARTED -> pre-caller-hash',
+      l?.cls === 'pre-caller-hash' && routeRun(l ? [l] : []).mutationApplied === false,
+      l
+    )
+    l = L(racer(7, 7.1, 7.2, 7.3), true)
+    check(
+      'control: landed during the caller hash WITH hash proof -> pre-caller-hash (hash)',
+      l?.cls === 'pre-caller-hash' && l?.evidence === 'hash',
+      l
+    )
+    l = L({ ...racer(4, 4.1, 4.2, 5.9) })
+    const lMissing = landingFromRacer({
+      racer: racer(4, 4.1, 4.2, 5.9),
+      callerHashAt: 10,
+      ...E,
+      provenPreCallerHash: false,
+      movedTreeDiffersFromCallerHash: false,
+    })[0]
+    check(
+      'missing callerHashStartAt -> cannot prove pre-caller-hash, scored (fail-closed)',
+      lMissing?.cls === 'in-model',
+      lMissing
+    )
+
+    // C4's own outcome is clock-independent evidence the tree changed after the caller hashed.
+    const t = (o) =>
+      treeChangedAfterCallerHash({ destPath: null, movedTreeMatchesCallerHash: false, ...o })
+    check(
+      "C4 'kept' (its hash or identity check saw a change) -> changed after the caller hash",
+      t({ c4Status: 'kept', c4Reason: 'identity-changed' }) === true
+    )
+    check(
+      "C4 'stopped' by its own hash read (guard-unreadable) -> changed after the caller hash",
+      t({ c4Status: 'stopped', c4Reason: 'guard-unreadable' }) === true
+    )
+    check(
+      "control: 'stopped' at the rename (quarantine-failed) is not hash evidence",
+      t({ c4Status: 'stopped', c4Reason: 'quarantine-failed' }) === false
+    )
+    check(
+      'control: moved tree matching the caller hash -> not changed',
+      t({ c4Status: 'quarantined', destPath: '/d', movedTreeMatchesCallerHash: true }) === false
+    )
+    check(
+      'moved tree differing from the caller hash -> changed',
+      t({ c4Status: 'quarantined', destPath: '/d', movedTreeMatchesCallerHash: false }) === true
+    )
+  }
+
+  // --- rt3: SHIFTED converted stamps (not just missing ones) ----------------
+  {
+    const ok = (o) =>
+      clockOrderOk({
+        callerHashStartAt: 1,
+        callAttemptAtH: 1,
+        callEndAt: 9,
+        callReturnedAtH: 10,
+        ...o,
+      })
+    check(
+      'rt3: callEndAt 0.02 ms AFTER callReturnedAtH (stamps shifted late) fails',
+      ok({ callEndAt: 10.02 }) === false
+    )
+    check(
+      'rt3 control: callEndAt exactly at the 0.01 ms tolerance passes',
+      ok({ callEndAt: 10.01 }) === true
+    )
+    check(
+      'rt3: callerHashStartAt 0.02 ms BEFORE callAttemptAtH (stamps shifted early) fails',
+      ok({ callerHashStartAt: 0.98 }) === false
+    )
+    check(
+      'rt3 control: callerHashStartAt exactly at the 0.01 ms tolerance passes',
+      ok({ callerHashStartAt: 0.99 }) === true
+    )
+    check('rt3: missing callAttemptAtH fails (fail-closed)', ok({ callAttemptAtH: null }) === false)
+    let d = dec({ clockOrderOk: ok({ callEndAt: 10.02 }) })
+    check(
+      'rt3: a late-shifted stamp makes the run a counted harness-error',
+      isHarnessError(d, 'clock-order'),
+      d
+    )
+    d = dec({ clockOrderOk: ok({ callerHashStartAt: 0.98 }) })
+    check(
+      'rt3: an early-shifted stamp makes the run a counted harness-error',
+      isHarnessError(d, 'clock-order'),
+      d
     )
   }
 }

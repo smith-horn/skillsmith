@@ -11,6 +11,8 @@ import crypto from 'node:crypto'
 import { makeFixtureRoot, resolveHarnessRoot } from './fixture-root.mjs'
 import { buildSwapFixture } from './attacks/_shared.mjs'
 import { runC4Candidate, matchC4Trace, FIRE } from './attacks/c4-shared.mjs'
+import { makeScoper } from './attacks/c4-trace-match.mjs'
+import { pathToFileURL } from 'node:url'
 
 const harnessRoot = resolveHarnessRoot()
 let allOk = true
@@ -330,6 +332,64 @@ check(
     `${out.result.status}/${out.result.reason} threw=${threw.map((e) => `${e.fn}${e.nested ? '(nested)' : ''}:${e.threw}`).join(',')}`
   )
   fx.cleanup()
+}
+
+// ---- G3-9: non-string path arguments ----
+// Decision: a Buffer or file: URL path is normalised and traced like a string;
+// an fd is not a path and is not traced (pinned below, so the gap is visible).
+{
+  const root = '/srv/fixture/tree'
+  const scopesOf = makeScoper(root, '/srv/fixture/.skillsmith-trash/op')
+  const sc = (arg) => scopesOf('statSync', [arg]).scope
+  check('scoper: Buffer path at the root -> origin', sc(Buffer.from(root)) === 'origin')
+  check(
+    'scoper: Buffer path inside the root -> desc',
+    sc(Buffer.from(`${root}/target/f`)) === 'desc'
+  )
+  check(
+    'scoper: file: URL inside the root -> desc',
+    sc(pathToFileURL(`${root}/target/f`)) === 'desc'
+  )
+  check('scoper: non-file URL -> not traced', sc(new URL('http://x/srv/fixture/tree')) === null)
+  check('scoper (pinned limitation): an fd -> not traced', sc(3) === null)
+  check(
+    'scoper: Buffer outside root and destination -> not traced',
+    sc(Buffer.from('/elsewhere')) === null
+  )
+}
+// Real runs: C4 itself touching the root through a Buffer or URL path must be
+// traced and break the match (injected through crypto.randomBytes, as above).
+for (const [label, toArg] of [
+  ['Buffer', (p) => Buffer.from(p)],
+  ['file: URL', (p) => pathToFileURL(p)],
+]) {
+  const origRandom = crypto.randomBytes
+  let injected = false
+  let r
+  try {
+    r = runOn('C4', 'at-rename', (f, fx) => {
+      crypto.randomBytes = (...a) => {
+        if (!injected) {
+          injected = true
+          fs.statSync(toArg(path.join(fx.root, 'tree')))
+        }
+        return origRandom.apply(crypto, a)
+      }
+      return () => {}
+    })
+  } finally {
+    crypto.randomBytes = origRandom
+  }
+  const stray = r.out.trace.find((e) => e.fn === 'statSync')
+  check(
+    `real: C4 touching the root via a ${label} path is traced -> traceMatched false`,
+    injected &&
+      stray?.scope === 'origin' &&
+      stray.path === path.resolve(r.fx.root, 'tree') &&
+      r.out.traceMatched === false,
+    stray ? `scope=${stray.scope} path=${stray.path}` : 'not traced'
+  )
+  r.fx.cleanup()
 }
 
 if (!allOk) {

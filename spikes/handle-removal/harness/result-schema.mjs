@@ -177,6 +177,9 @@ export function makeRecord(fields) {
       runner: cellSrc.runner ?? 'unknown',
       // C4 only: the module's intended run count, so a short run can never render PASS.
       ...(c4 ? { target: cellSrc.target ?? null } : {}),
+      // C4 only, and only when present (an absent key stays absent):
+      ...(c4 && cellSrc.targetScope !== undefined ? { targetScope: cellSrc.targetScope } : {}),
+      ...(c4 && cellSrc.dirs !== undefined ? { dirs: cellSrc.dirs } : {}),
     },
     run,
     precondition: c4
@@ -283,12 +286,17 @@ export function classifyRecord(record, isContradictory = () => false) {
  */
 export function aggregateCell(records, isContradictory = () => false, options = {}) {
   const target = options.target ?? records.length
-  const t = tallyCell(records, (record) => classifyRecord(record, isContradictory))
+  const t = tallyCell(
+    records,
+    (record) => classifyRecord(record, isContradictory),
+    options.universe
+  )
   const { passed, failed, neverRan, excluded } = t
 
   const ran = records.length
   let verdict
-  if (ran !== target) {
+  // Failures win over a short run, as in cellVerdict(): a loss is evidence at any n.
+  if (ran !== target && t.failed === 0) {
     verdict = `INCOMPLETE (ran ${ran}/${target})`
   } else {
     // DERIVED, NOT REQUESTED. This used to read `options.attack ?? null`, an

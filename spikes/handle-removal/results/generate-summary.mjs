@@ -76,7 +76,11 @@ function loadAllRecords() {
 }
 
 function cellKey(r) {
-  return [r.cell.attack, r.cell.variant, r.cell.candidate, r.cell.fs].join('\u0000')
+  const parts = [r.cell.attack, r.cell.variant, r.cell.candidate, r.cell.fs]
+  // A cell scaled by a directory count is a different cell; only when present, so
+  // every record that has no `dirs` keys exactly as before.
+  if (r.cell.dirs !== undefined) parts.push('dirs=' + r.cell.dirs)
+  return parts.join('\u0000')
 }
 
 function aggregate(records) {
@@ -89,6 +93,7 @@ function aggregate(records) {
         variant: r.cell.variant,
         candidate: r.cell.candidate,
         fs: r.cell.fs,
+        ...(r.cell.dirs !== undefined ? { dirs: r.cell.dirs } : {}),
         records: [],
       })
     }
@@ -96,7 +101,7 @@ function aggregate(records) {
   }
   const rows = []
   for (const cell of byCell.values()) {
-    const t = tallyCell(cell.records, (r) => classifyRecord(r, () => false))
+    const t = tallyCell(cell.records, (r) => classifyRecord(r, () => false), records)
     rows.push({ ...cell, ...t })
   }
   return rows
@@ -189,7 +194,7 @@ function main() {
   lines.push('|---|---|---|---|---|---|---|---|---|---|')
   for (const row of rows) {
     lines.push(
-      `| ${row.attack} | ${row.variant ?? ''} | ${row.candidate} | ${row.fs} | ${row.ran} | ${row.passed} | ${row.failed} | ${row.neverRan} | ${controlTag(row.controlState)} | ${row.verdict} |`
+      `| ${row.attack} | ${row.variant ?? ''}${row.dirs !== undefined ? ` [dirs=${row.dirs}]` : ''} | ${row.candidate} | ${row.fs} | ${row.ran} | ${row.passed} | ${row.failed} | ${row.neverRan} | ${controlTag(row.controlState)} | ${row.verdict} |`
     )
   }
   lines.push('')

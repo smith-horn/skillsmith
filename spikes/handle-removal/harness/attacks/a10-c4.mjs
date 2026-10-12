@@ -27,6 +27,7 @@ import {
 import { runC4Candidate } from './c4-shared.mjs'
 import {
   assertC4Candidate,
+  applyDirs,
   resolveWindow,
   checkEachFile,
   scoreUserFiles,
@@ -45,7 +46,7 @@ export function labelFor({ subcase }) {
   return subcase === 'b' ? 'A10b-C4' : 'A10-C4'
 }
 
-export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
+export function runOnce({ harnessRoot, candidate, subcase, window, dirs, _test }) {
   assertC4Candidate(candidate)
   if (subcase !== 'a' && subcase !== 'b') {
     throw new TypeError(`subcase must be 'a' or 'b', got ${String(subcase)}`)
@@ -53,6 +54,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
   const win = resolveWindow(window, WINDOWS)
   const label = labelFor({ subcase })
   const fx = makeFixtureRoot({ harnessRoot })
+  let actualDirs = null
   try {
     let completed = false
     let reuseObserved = null
@@ -61,6 +63,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
 
     if (subcase === 'a') {
       const { treeRoot } = buildSwapFixture(fx.root)
+      actualDirs = applyDirs(fx.root, dirs)
       const replacementFiles = { 'orig-f1': `replacement-${Date.now()}-${Math.random()}` }
       const mutate =
         _test?.mutate ??
@@ -80,6 +83,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
         )
     } else {
       const fixture = buildHardlinkFixture(fx.root)
+      actualDirs = applyDirs(fx.root, dirs)
       const { outsideFile, hardlinkAbs, treeRoot } = fixture
       _test?.afterFixture?.(fixture)
       onFire = () => {
@@ -119,7 +123,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, _test }) {
       outcome: c4Outcome(r, fx.root, candidate),
       userFiles: score(r),
       durationMs,
-      extra: c4Extra(r, label, win, { subcase, reuseObserved }),
+      extra: c4Extra(r, label, win, { subcase, reuseObserved, dirs: dirs ?? null, actualDirs }),
     }
   } finally {
     fx.cleanup()

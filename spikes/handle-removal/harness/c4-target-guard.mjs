@@ -119,3 +119,21 @@ export function parseFlags(argv, spec) {
   }
   return { opts }
 }
+
+/**
+ * The raw result both C4 runners file when a module throws or returns something
+ * makeRecord rejects. mutationApplied is TRUE on purpose: a probabilistic tally
+ * (R6) drops runs whose racer did not land (mutationApplied false) from the
+ * denominator, and a harness failure must never be dropped that way -- it has to
+ * count against the cell. The status 'harness-error' already classifies the
+ * record as never-ran.
+ */
+export function harnessErrorRaw(err) {
+  return {
+    precondition: { hookFired: false, mutationApplied: true, traceMatched: false },
+    outcome: { status: 'harness-error', reason: err?.message ?? String(err) },
+    userFiles: { checked: 0, lost: 0, changed: 0 },
+    durationMs: null,
+    extra: { error: String(err?.stack ?? err).slice(0, 600) },
+  }
+}

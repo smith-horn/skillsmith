@@ -2,7 +2,12 @@
 // SMI-6715 milestone 1: runs A3/A4/A7/A8/A10/A13 against C4 and C4-naive.
 //
 // Usage: node harness/run-c4-attacks.mjs --out <path> [--fs-label <name>]
-//   [--target <n>] [--only a3,a4,a7,a8,a10,a13]
+//   [--target <n>] [--only a3,a4,a7,a8,a10,a13] [--dirs <n>]
+//
+// --dirs <n> pads each fixture tree with directories (one small file each, under
+// tree/zz-pad) up to n directories in total; the attacked paths do not move. The
+// requested n is recorded as cell.dirs and in the variant tag ('<variant>/dirs=<n>'),
+// and the measured count as extra.actualDirs. Default: the small fixed fixtures.
 //
 // --out is REQUIRED: there is no default under results/raw/. A default there let a
 // mis-parsed command line write into the evidence corpus; the caller must name the
@@ -18,7 +23,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { appendJsonl, makeRecord, aggregateCell, formatVerdict } from './result-schema.mjs'
 import { resolveHarnessRoot } from './fixture-root.mjs'
-import { shortTargetRefusal, parseFlags } from './c4-target-guard.mjs'
+import { shortTargetRefusal, parseFlags, harnessErrorRaw } from './c4-target-guard.mjs'
 import { resolveControl, controlFailedFlag, controlTag, isProbabilistic } from './control-spec.mjs'
 import * as a3 from './attacks/a3-c4.mjs'
 import * as a4 from './attacks/a4-c4.mjs'
@@ -84,6 +89,7 @@ const FLAGS = {
   '--only': { key: 'only', kind: 'list' },
   '--target': { key: 'target', kind: 'int' },
   '--fs-label': { key: 'fsLabel', kind: 'string' },
+  '--dirs': { key: 'dirs', kind: 'int' },
 }
 const KNOWN_KEYS = [...Object.keys(ATTACKS), 'a13']
 
@@ -107,18 +113,6 @@ function parseArgs(argv) {
   return opts
 }
 
-const HARNESS_ERROR_FILES = { checked: 0, lost: 0, changed: 0 }
-
-function harnessErrorRaw(err) {
-  return {
-    precondition: { hookFired: null },
-    outcome: { status: 'harness-error', reason: err?.message ?? String(err) },
-    userFiles: HARNESS_ERROR_FILES,
-    durationMs: null,
-    extra: null,
-  }
-}
-
 /**
  * One run of one arm, appended to `cell`. `armOrder` is set only for interleaved
  * (A13) runs and is stamped into the run's extra so the order is auditable.
@@ -135,6 +129,7 @@ async function runOne({
   out,
   cell: acc,
   armOrder,
+  dirs,
 }) {
   let raw
   // Harness errors need a label too. For a per-run-label attack (A13) it is the
@@ -144,7 +139,15 @@ async function runOne({
   let label = labels[0]
   let variant = tag
   try {
-    raw = await mod.runOnce({ harnessRoot, candidate, ...args })
+    // `dirs` is passed only when requested, so default runs call modules exactly as before.
+    raw = await mod.runOnce({ harnessRoot, candidate, ...args, ...(dirs ? { dirs } : {}) })
+    // A module that ignored --dirs would otherwise file an unpadded run under a dirs=N
+    // cell. The module must report the directory count it actually built.
+    if (dirs && raw.extra?.actualDirs !== dirs) {
+      throw new Error(
+        `module did not pad to the requested ${dirs} directories (extra.actualDirs=${String(raw.extra?.actualDirs)})`
+      )
+    }
     const got = raw.extra?.label
     if (labels.length === 1) {
       if (got !== undefined && got !== label)
@@ -160,6 +163,8 @@ async function runOne({
     label = errorLabel
     variant = tag
   }
+  // dirs is part of the cell key: a padded cell must never merge with a fixture-scale one.
+  if (dirs) variant = `${variant}/dirs=${dirs}`
   const cell = { attack: label, variant, candidate, fs: fsLabel, runner: 'run-c4-attacks.mjs' }
   let record
   try {
@@ -189,6 +194,10 @@ async function runOne({
   // can tell a short run from a complete one. `record` and `record.cell` are the
   // plain literals makeRecord built.
   record.cell.target = mod.target ?? null
+  // A13 routes each run into one of several labels that are tallied separately, so
+  // its target is the attempt count across all of them for this candidate.
+  if (labels.length > 1) record.cell.targetScope = 'across-a13-labels'
+  record.cell.dirs = dirs ?? null
   acc.records.push(record)
   acc.extras.push(extra)
   acc.runLabels.push(label)
@@ -211,11 +220,12 @@ export async function runCells({
   fsLabel,
   out,
   interleave,
+  dirs,
   rng = Math.random,
 }) {
   const cells = {}
   for (const c of CANDIDATES) cells[c] = { records: [], extras: [], runLabels: [] }
-  const common = { mod, args, labels, tag, harnessRoot, fsLabel, out }
+  const common = { mod, args, labels, tag, harnessRoot, fsLabel, out, dirs }
   if (interleave) {
     for (let run = 0; run < target; run += 1) {
       const naiveFirst = rng() >= 0.5
@@ -351,6 +361,7 @@ async function main() {
         fsLabel: opts.fsLabel,
         out,
         interleave: perRun,
+        dirs: opts.dirs,
       })
       const groups = {}
       for (const candidate of CANDIDATES) groups[candidate] = groupByLabel(cells[candidate], labels)

@@ -33,6 +33,7 @@ import {
   effectiveWindow,
   makeScoper,
   matchC4Trace,
+  asPath,
 } from './c4-trace-match.mjs'
 
 export { FIRE, expectedTrace, matchC4Trace } from './c4-trace-match.mjs'
@@ -121,7 +122,12 @@ export function runC4Candidate(args) {
   const h = computePathTreeHash(originPath)
   const callerHashAt = now()
   if (!h.ok || typeof h.treeHash !== 'string' || h.treeHash.length === 0) {
-    throw new Error(`runC4Candidate: caller hash failed on the fixture: ${JSON.stringify(h)}`)
+    // G3-7: carry the timing (same clock as times.*), so a consumer can still
+    // place the failure, e.g. a13-c4's narrower-window branch.
+    const err = new Error(`runC4Candidate: caller hash failed on the fixture: ${JSON.stringify(h)}`)
+    err.callerHashStartAt = callerHashStartAt
+    err.callerHashAt = callerHashAt
+    throw err
   }
   const guardHash = h.treeHash
 
@@ -186,7 +192,8 @@ export function runC4Candidate(args) {
       }
       const entry = {
         fn: n,
-        path: typeof callArgs[0] === 'string' ? path.resolve(callArgs[0]) : String(callArgs[0]),
+        path:
+          asPath(callArgs[0]) !== null ? path.resolve(asPath(callArgs[0])) : String(callArgs[0]),
         scope,
         scope2,
         nested,
@@ -198,7 +205,7 @@ export function runC4Candidate(args) {
       const rootRename = root && n === 'renameSync'
       if (rootRename) {
         entry.dest =
-          typeof callArgs[1] === 'string' ? path.resolve(callArgs[1]) : String(callArgs[1])
+          asPath(callArgs[1]) !== null ? path.resolve(asPath(callArgs[1])) : String(callArgs[1])
         if (times.renameAt === null) times.renameAt = entry.at
       }
       trace.push(entry)

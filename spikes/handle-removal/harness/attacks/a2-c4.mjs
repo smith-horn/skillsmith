@@ -12,6 +12,6 @@ import { runMountCase } from './a1-c4.mjs'
 export const id = 'A2-C4'
 export const target = 10
 
-export function runOnce({ harnessRoot, candidate, subcase }) {
-  return runMountCase({ harnessRoot, candidate, subcase, window: 'after-bind' })
+export function runOnce({ harnessRoot, candidate, subcase, dirs }) {
+  return runMountCase({ harnessRoot, candidate, subcase, window: 'after-bind', dirs })
 }

@@ -41,6 +41,7 @@ const mk = (cell, i, over = {}) =>
 const many = (n, cell, over) => Array.from({ length: n }, (_, i) => mk(cell, i, over))
 const vacuous = (cell, i) =>
   mk(cell, i, { outcome: { status: 'kept', excludedReason: 'vacuous-check' } })
+const n100 = (fn) => Array.from({ length: 100 }, (_, i) => fn(i))
 const agg = (records, extra = {}) =>
   aggregateCell(records, () => false, { controlFailed: true, controlState: 'satisfied', ...extra })
 
@@ -67,17 +68,25 @@ check(
   agg(many(105, cellOf('A13-C4', 105))).verdict,
   'PASS'
 )
-// a vacuous record with a loss is impossible: harness-error, otherNeverRan
-// (these cells run 111 records, so their recorded target is 111)
+// G3-2: a vacuous record whose absent check FAILED is a loss, not an exclusion:
+// failures beat exclusion. (These cells run 111 records: target 111.)
 const A111 = cellOf('A13-C4', 111)
 const lossVac = mk(A111, 200, {
   outcome: { status: 'kept', excludedReason: 'vacuous-check' },
   userFiles: { checked: 1, lost: 1, changed: 0, displaced: 1, deleted: 0 },
 })
 const r3 = agg([...many(100, A111), ...v10(A111), lossVac], {})
-check('V4 vacuous-with-loss is not scored as a failure', r3.failed, 0)
-check('V4 vacuous-with-loss forbids a PASS (otherNeverRan)', r3.verdict, 'NEVER-RAN')
+check('V4 vacuous-with-loss IS scored as a failure (loss beats exclusion)', r3.failed, 1)
+check('V4 vacuous-with-loss makes the cell FAIL', r3.verdict, 'FAIL')
 check('V4 vacuous-with-loss is not counted as excluded', r3.excluded, 10)
+const changedVac = (i) =>
+  mk(cellOf('A13-C4', 100), i, {
+    outcome: { status: 'kept', excludedReason: 'vacuous-check' },
+    userFiles: { checked: 1, lost: 0, changed: 1, displaced: 0, deleted: 0 },
+  })
+const r3b = agg(n100(changedVac))
+check('V4 100 vacuous runs whose check FAILED read FAIL, not NEVER-RAN', r3b.verdict, 'FAIL')
+check('V4 and every one is counted failed', r3b.failed, 100)
 // any other excludedReason: never-ran AND otherNeverRan
 for (const bad of ['Vacuous-Check', 'vacuous', 'other', '', 7, true, { a: 1 }]) {
   const r = agg([
@@ -176,6 +185,93 @@ check(
   'T10 options.target that disagrees with the run still wins as INCOMPLETE',
   agg(many(5, A3(5)), { target: 9 }).verdict,
   'INCOMPLETE (ran 5/9)'
+)
+
+check(
+  'V4 an unrecognised excludedReason on a run that lost bytes stays failed',
+  agg(
+    n100((i) =>
+      mk(cellOf('A13-C4', 100), i, {
+        outcome: { status: 'kept', excludedReason: 'mystery' },
+        userFiles: { checked: 1, lost: 1, changed: 0, displaced: 1, deleted: 0 },
+      })
+    )
+  ).verdict,
+  'FAIL'
+)
+
+// --- G3-1: a harness-error is never a non-landing -------------------------------
+const A101 = cellOf('A13-C4', 101)
+const noLand = (i, status) =>
+  mk(A101, 500 + i, {
+    precondition: { ...goodPre(), mutationApplied: false },
+    outcome: { status },
+    userFiles: { checked: 0, lost: 0, changed: 0 },
+  })
+const clean100 = many(100, A101)
+check(
+  'H1 100 passed + 1 harness-error carrying mutationApplied:false is NOT a PASS',
+  agg([...clean100, noLand(0, 'harness-error')]).verdict,
+  'NEVER-RAN'
+)
+check(
+  'H1 positive control: 100 passed + 1 genuine non-landing is PASS',
+  agg([...clean100, noLand(0, 'kept')]).verdict,
+  'PASS'
+)
+check(
+  'H1 a harness-error with mutationApplied:true is not a PASS either',
+  agg([
+    ...clean100,
+    mk(A101, 600, {
+      outcome: { status: 'harness-error' },
+      userFiles: { checked: 0, lost: 0, changed: 0 },
+    }),
+  ]).verdict,
+  'NEVER-RAN'
+)
+// legacy output is unchanged: the old rule still applies to non-C4 cells
+const legacyHE = Array.from({ length: 101 }, (_, i) =>
+  makeRecord({
+    cell: { attack: 'A13', variant: 'v', candidate: 'baseline', fs: 'f', runner: 't' },
+    run: i,
+    precondition: { hookFired: true, mutationApplied: i < 100 },
+    outcome: { status: i < 100 ? 'kept' : 'harness-error' },
+    userFiles: { checked: 1 },
+  })
+)
+check(
+  'H2 legacy cell: harness-error with mutationApplied:false is still a non-landing (unchanged)',
+  aggregateCell(legacyHE, () => false, { controlFailed: true, controlState: 'satisfied' }).verdict,
+  'PASS'
+)
+
+// --- G3-4: failures win over a short run in aggregateCell too ---------------------
+const lostRec = (i) =>
+  mk(cellOf('A3-C4', 100), i, {
+    userFiles: { checked: 1, lost: 1, changed: 0, displaced: 1, deleted: 0 },
+  })
+check(
+  'I1 5 runs that lost bytes with options.target 100 is FAIL, not INCOMPLETE',
+  aggregateCell(
+    Array.from({ length: 5 }, (_, i) => lostRec(i)),
+    () => false,
+    {
+      controlFailed: true,
+      controlState: 'satisfied',
+      target: 100,
+    }
+  ).verdict,
+  'FAIL'
+)
+check(
+  'I1 positive control: 5 clean runs with options.target 100 is still INCOMPLETE',
+  aggregateCell(many(5, cellOf('A3-C4', 100)), () => false, {
+    controlFailed: true,
+    controlState: 'satisfied',
+    target: 100,
+  }).verdict,
+  'INCOMPLETE (ran 5/100)'
 )
 
 // --- aggregateCell and generate-summary agree (one shared function) ---------------

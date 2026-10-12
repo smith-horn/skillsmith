@@ -27,6 +27,7 @@ const USER = 'racer-a5-user-bytes'
 
 // C4 window: callerHashAt 10, recheck 20, rename call 21..22.
 const C4_TIMES = {
+  callerHashStartAt: 9.95,
   callerHashAt: 10,
   recheckAt: 20,
   renameAt: 21,
@@ -46,6 +47,7 @@ const racerOf = (mutation, steps, failedStep = null) => ({
 const land = (racer, proven = false, differs = false) =>
   landingFromRacer({
     racer,
+    callerHashStartAt: C4_TIMES.callerHashStartAt,
     callerHashAt: C4_TIMES.callerHashAt,
     ...ENDS,
     provenPreCallerHash: proven,

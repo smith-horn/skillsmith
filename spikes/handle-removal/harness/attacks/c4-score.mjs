@@ -2,7 +2,7 @@
 // (a3/a4/a7/a8/a10-c4). Kept apart from c4-shared.mjs (the interposition
 // driver) so no attack module depends on another.
 
-import { lstatSync, readdirSync, readlinkSync } from 'node:fs'
+import { lstatSync, mkdirSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { scanQuarantineLeftovers } from '../result-schema.mjs'
 import { verifyReplacementIntact } from './_shared.mjs'
@@ -126,23 +126,104 @@ export function c4Extra(r, label, window, more) {
   }
 }
 
+const isInsideDir = (child, parent) => {
+  const rel = path.relative(parent, child)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
 /**
- * Whether a symlink named `name` pointing at `linkTarget` exists anywhere under
- * <fxRoot>/.skillsmith-trash. locateDisplaced deliberately does not follow or
- * count symlinks, so a moved symlink needs this instead.
+ * Whether the symlink that was at `originalAbs` (pointing at `linkTarget`) is now at
+ * the matching place inside THIS run's destination. Same confinement as
+ * locateDisplaced (c4-displaced.mjs): only the run's own destination is searched
+ * (null when nothing moved), the destination must lie inside <fxRoot>/.skillsmith-trash,
+ * and every directory down to the link must be a real directory. A stale link left
+ * by another operation is therefore never counted.
+ *
+ * @param {string} fxRoot
+ * @param {string} originalAbs - where the link was, inside originRoot
+ * @param {string} linkTarget - the link text expected
+ * @param {{destination:string|null, originRoot:string}} where - as whereFor() builds
  */
-export function trashHasSymlink(fxRoot, name, linkTarget) {
-  const walk = (abs) => {
+export function trashHasSymlink(fxRoot, originalAbs, linkTarget, where) {
+  const { destination, originRoot } = where
+  if (destination === null) return false
+  const trashRoot = path.resolve(fxRoot, '.skillsmith-trash')
+  if (typeof destination !== 'string' || !path.isAbsolute(destination)) {
+    throw new TypeError(
+      `trashHasSymlink: destination must be an absolute path or null, got ${String(destination)}`
+    )
+  }
+  if (!isInsideDir(path.resolve(destination), trashRoot)) {
+    throw new TypeError(`trashHasSymlink: destination ${destination} is not inside ${trashRoot}`)
+  }
+  const rel = path.relative(path.resolve(originRoot), path.resolve(originalAbs))
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return false
+  let cur = path.resolve(destination)
+  for (const part of rel.split(path.sep)) {
     let st
     try {
-      st = lstatSync(abs)
+      st = lstatSync(cur)
     } catch (err) {
-      if (err.code === 'ENOENT') return false
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return false
       throw err
     }
-    if (st.isSymbolicLink()) return path.basename(abs) === name && readlinkSync(abs) === linkTarget
     if (!st.isDirectory()) return false
-    return readdirSync(abs).some((n) => walk(path.join(abs, n)))
+    cur = path.join(cur, part)
   }
-  return walk(path.join(fxRoot, '.skillsmith-trash'))
+  try {
+    return lstatSync(cur).isSymbolicLink() && readlinkSync(cur) === linkTarget
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return false
+    throw err
+  }
+}
+
+/** Directories in `root`'s subtree, root included; symlinks are not followed. */
+export function countDirs(root) {
+  let n = 1
+  for (const e of readdirSync(root, { withFileTypes: true })) {
+    if (e.isDirectory()) n += countDirs(path.join(root, e.name))
+  }
+  return n
+}
+
+/**
+ * STEP-1 scale option: pads `treeRoot` with directories (one small file each), under
+ * a separate `zz-pad` subtree so no attacked path changes, until the tree holds exactly
+ * `n` directories counted from the root. Shape follows buildTree in
+ * measure-c4-guard-window.mjs (32-wide fan-out). Returns the measured count.
+ */
+export function padTree(treeRoot, n) {
+  const existing = countDirs(treeRoot)
+  if (n < existing) throw new Error(`--dirs ${n} is below the fixture minimum of ${existing}`)
+  const extra = n - existing
+  if (extra > 0) {
+    const root = path.join(treeRoot, 'zz-pad')
+    mkdirSync(root)
+    writeFileSync(path.join(root, 'f.txt'), 'x')
+    let made = 1
+    let level = [root]
+    while (made < extra) {
+      const next = []
+      for (const parent of level) {
+        for (let i = 0; i < 32 && made < extra; i += 1) {
+          const d = path.join(parent, `d${i}`)
+          mkdirSync(d)
+          writeFileSync(path.join(d, 'f.txt'), 'x')
+          next.push(d)
+          made += 1
+        }
+        if (made >= extra) break
+      }
+      level = next
+    }
+  }
+  const actual = countDirs(treeRoot)
+  if (actual !== n) throw new Error(`padTree: asked for ${n} directories, built ${actual}`)
+  return actual
+}
+
+/** padTree on <fxRoot>/tree when `dirs` is set; null when no padding was requested. */
+export function applyDirs(fxRoot, dirs) {
+  return dirs === undefined || dirs === null ? null : padTree(path.join(fxRoot, 'tree'), dirs)
 }

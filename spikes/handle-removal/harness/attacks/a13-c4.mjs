@@ -78,7 +78,16 @@ import {
   recordForRunError,
 } from './a13-c4.classify.mjs'
 import { expectationsFromSteps, scoreExpectations } from './a13-c4.score.mjs'
-import { decideRecord, SKEW_MIN_MS, SKEW_MAX_MS } from './a13-c4.record.mjs'
+import {
+  decideRecord,
+  clockOrderOk as clockOrderOkOf,
+  callerHashWindowFrom,
+  treeChangedAfterCallerHash,
+  toH,
+  SKEW_MIN_MS,
+  SKEW_MAX_MS,
+} from './a13-c4.record.mjs'
+import { applyDirs } from './c4-score.mjs'
 import { spawnStepRacer } from './a13-c4.racer.mjs'
 import { computePathTreeHash } from '../../quarantine.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
@@ -109,19 +118,6 @@ function hrMinusPerf(n = 64) {
     if (!best || b - a < best.gap) best = { gap: b - a, offset: (a + b) / 2 - p }
   }
   return best
-}
-
-/**
- * Puts a c4-shared timestamp on hrtime. The two clocks are told apart by
- * magnitude, not assumed: the performance clock is epoch-based (~1.7e12 ms),
- * hrtime is boot-based (orders of magnitude smaller).
- */
-function toH(t, offset) {
-  if (t == null) return null
-  if (typeof t !== 'number' || !Number.isFinite(t)) {
-    throw new TypeError(`a13-c4: non-numeric timestamp ${String(t)}`)
-  }
-  return t > 1e12 ? t + offset : t
 }
 
 /**
@@ -179,11 +175,23 @@ const userFilesOf = (s) =>
       }
     : NO_FILES
 
-export async function runOnce({ harnessRoot, candidate }) {
+/**
+ * @param {object} args
+ * @param {number} [args.dirs] - STEP-1 scale: pad the tree to exactly this many
+ *   directories under tree/zz-pad (c4-score.mjs applyDirs), outside every path
+ *   the step racer touches (tree/target, tree/target.aside-*). Recorded as
+ *   extra.dirs / extra.actualDirs on every record, the caller-hash-race one
+ *   included; the runner appends '/dirs=<n>' to the variant itself.
+ */
+export async function runOnce({ harnessRoot, candidate, dirs }) {
   if (!CANDIDATES.has(candidate)) throw new TypeError(`a13-c4: unknown candidate ${candidate}`)
   const fx = makeFixtureRoot({ harnessRoot })
   try {
     const { treeRoot } = buildSwapFixture(fx.root)
+    // Padded BEFORE the pristine hash, so the caller, C4 and the pristine
+    // reference all hash the same padded tree.
+    const actualDirs = applyDirs(fx.root, dirs)
+    const scale = { dirs: dirs ?? null, actualDirs }
     const targetAbs = path.join(treeRoot, 'target')
     const opId = randomToken()
     // The pristine tree's hash, before any racer exists (hash evidence).
@@ -215,23 +223,18 @@ export async function runOnce({ harnessRoot, candidate }) {
       // bracket around the throwing call, which contains the caller hash
       // because runC4Candidate throws from it. Attached to the error so the
       // relatedness check, and anyone reading a rethrown error, has the times.
-      const off = hrMinusPerf().offset
-      const own =
-        typeof err?.callerHashStartAt === 'number' && typeof err?.callerHashAt === 'number'
-      const callerHashWindow = own
-        ? {
-            startAt: toH(err.callerHashStartAt, off),
-            endAt: toH(err.callerHashAt, off),
-            source: 'c4-shared',
-          }
-        : { startAt: callAttemptAtH, endAt: catchAtH, source: 'call-bracket' }
+      const callerHashWindow = callerHashWindowFrom(err, {
+        offset: hrMinusPerf().offset,
+        callAttemptAtH,
+        catchAtH,
+      })
       if (err instanceof Error && Object.isExtensible(err)) err.callerHashWindow = callerHashWindow
       // The relatedness check compares racer stamps with ours, so it is only
       // as good as the racer clock: out-of-tolerance skew rethrows (counted).
       const skew = racer.markerWrittenAt == null ? null : markerObservedAt - racer.markerWrittenAt
       if (typeof skew !== 'number' || skew < SKEW_MIN_MS || skew > SKEW_MAX_MS) throw err
       const s = scoreRacer(racer, treeRoot, null)
-      return recordForRunError({
+      const rec = recordForRunError({
         callerHashWindow,
         err,
         candidate,
@@ -242,6 +245,10 @@ export async function runOnce({ harnessRoot, candidate }) {
         quarantineLeft: scanC4Leftovers(fx.root, { status: null, opId: null }),
         scored: s.scored ?? null,
       })
+      rec.extra.dirs = scale.dirs
+      rec.extra.actualDirs = scale.actualDirs
+      rec.extra.callerHashWindow = callerHashWindow
+      return rec
     }
     const durationMs = performance.now() - start
     const callReturnedAtH = nowH()
@@ -264,7 +271,13 @@ export async function runOnce({ harnessRoot, candidate }) {
     // A converted c4-shared stamp may not lie after this process stamped the
     // call's return; a violation means the conversion is wrong, and the run
     // is made a harness-error rather than scored.
-    const clockOrderOk = times.callEndAt == null || times.callEndAt <= callReturnedAtH + 0.01
+    // A missing stamp FAILS (review G3-8); decideRecord counts the failure.
+    const clockOrderOk = clockOrderOkOf({
+      callerHashStartAt: times.callerHashStartAt,
+      callAttemptAtH,
+      callEndAt: times.callEndAt,
+      callReturnedAtH,
+    })
     const { inModelEnd, moveEnd } = windowEnds(candidate, times)
 
     // Hash the moved tree after the racer is joined (nothing can change it now).
@@ -288,14 +301,20 @@ export async function runOnce({ harnessRoot, candidate }) {
     if (!unscorable) {
       landings = landingFromRacer({
         racer,
+        callerHashStartAt: times.callerHashStartAt,
         callerHashAt: times.callerHashAt,
         inModelEnd,
         moveEnd,
         provenPreCallerHash: hashEvidence.provenPreCallerHash,
-        // A moved tree that could not be hashed counts as differing: the
-        // conservative reading, which keeps the run out of pre-caller-hash.
-        movedTreeDiffersFromCallerHash:
-          destPath != null && !hashEvidence.movedTreeMatchesCallerHash,
+        // Clock-independent evidence the tree changed after the caller
+        // hashed (a13-c4.record.mjs): a non-matching or unhashable moved
+        // tree, a C4 'kept', or a C4 'stopped' by its own hash read.
+        movedTreeDiffersFromCallerHash: treeChangedAfterCallerHash({
+          c4Status: r.result?.status,
+          c4Reason: r.result?.reason,
+          destPath,
+          movedTreeMatchesCallerHash: hashEvidence.movedTreeMatchesCallerHash,
+        }),
       })
     }
     const routed = routeRun(landings)
@@ -351,6 +370,8 @@ export async function runOnce({ harnessRoot, candidate }) {
       extra: {
         label,
         variant: VARIANT,
+        dirs: scale.dirs,
+        actualDirs: scale.actualDirs,
         candidate,
         firedAt: r.firedAt ?? null,
         trace: r.trace,

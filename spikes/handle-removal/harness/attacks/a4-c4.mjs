@@ -10,6 +10,7 @@ import { buildSwapFixture, renameAsideAndReplace } from './_shared.mjs'
 import { runC4Candidate } from './c4-shared.mjs'
 import {
   assertC4Candidate,
+  applyDirs,
   resolveWindow,
   checkEachFile,
   scoreUserFiles,
@@ -28,12 +29,14 @@ export function labelFor() {
   return id
 }
 
-export function runOnce({ harnessRoot, candidate, window, _test }) {
+export function runOnce({ harnessRoot, candidate, window, dirs, _test }) {
   assertC4Candidate(candidate)
   const win = resolveWindow(window, WINDOWS)
   const fx = makeFixtureRoot({ harnessRoot })
+  let actualDirs = null
   try {
     const { targetAbs } = buildSwapFixture(fx.root)
+    actualDirs = applyDirs(fx.root, dirs)
     const replacementFiles = { 'orig-f1': `replacement-${Date.now()}-${Math.random()}` }
     let completed = false
     const mutate = _test?.mutate ?? (() => renameAsideAndReplace(targetAbs, replacementFiles))
@@ -56,7 +59,7 @@ export function runOnce({ harnessRoot, candidate, window, _test }) {
         whereFor(fx.root, r, targetAbs)
       ),
       durationMs,
-      extra: c4Extra(r, id, win, {}),
+      extra: c4Extra(r, id, win, { dirs: dirs ?? null, actualDirs }),
     }
   } finally {
     fx.cleanup()
