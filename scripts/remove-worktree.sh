@@ -166,7 +166,11 @@ main() {
     # basename, so the Compose project must not be derived from the raw argument.
     # LOGICAL pwd (no -P) resolves `.`/`..` but keeps a symlink's own name, so the
     # symlink-basename refusal still sees it (same as worktree-docker.sh).
-    worktree_path="$(CDPATH= cd -- "$worktree_path" && pwd)"
+    local raw_worktree_path="$worktree_path"
+    worktree_path="$(CDPATH='' cd -- "$worktree_path" 2>/dev/null && pwd)" || error "Could not enter $raw_worktree_path -- refusing. Nothing was changed."
+    # A `..` after a symlink is resolved logically by pwd but physically by the
+    # kernel, so the two can name different directories; refuse rather than guess.
+    [[ "$raw_worktree_path" -ef "$worktree_path" ]] || error "$raw_worktree_path and $worktree_path are not the same directory (a symlink inside the path) -- use the worktree's real path. Nothing was changed."
 
     # The Compose project this removal may prune, derived with the SAME sanitizer
     # the Compose project name uses and BEFORE anything is removed. It is the only

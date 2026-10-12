@@ -180,5 +180,19 @@ else
     worktree_lifecycle_worktrees_dir_readable "$REPO"; check "T19d permissions restored: readable() passes" 0 $?
 fi
 
+# T20 (SMI-7111): a worktree path that exists but cannot be entered is refused with
+# our own message and nothing changed, not a raw `cd` error. Needs a non-root user.
+if [ "$(id -u)" = 0 ]; then
+    echo "SKIP T20: running as root, chmod cannot make a directory unenterable"
+else
+    mkdir "$TMP/noenter"
+    chmod 000 "$TMP/noenter"
+    out="$( cd "$REPO" && /bin/bash "$ROOT/scripts/remove-worktree.sh" "$TMP/noenter" --force 2>&1 )"; rc=$?
+    chmod 755 "$TMP/noenter"
+    check "T20 unenterable worktree path exits 1" 1 "$rc"
+    case "$out" in *"Could not enter $TMP/noenter -- refusing. Nothing was changed."*) r=says-so ;; *) r=silent ;; esac
+    check "T20 unenterable worktree path names itself and the no-change guarantee" says-so "$r"
+fi
+
 echo "failures: $FAILS"
 [ "$FAILS" -eq 0 ]

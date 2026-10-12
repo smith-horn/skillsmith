@@ -312,6 +312,24 @@ describe('SMI-7089: attribution refuses a project another checkout shares (U1-U4
     }
   )
 
+  it('T16d. `<wt>/sl/..` with sl pointing outside the worktree is refused, not canonicalized to <wt> (SMI-7111)', () => {
+    const fx = mk('attr-t16d')
+    const wt = addWt(fx, 'foo')
+    const outside = join(fx.tempRoot, 'elsewhere', 'inner')
+    mkdirSync(outside, { recursive: true })
+    symlinkSync(outside, join(wt, 'sl'))
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1'])
+
+    const r = runRemove(fx, [`${wt}/sl/..`, '--force'])
+
+    expect(r.status).toBe(1)
+    expect(text(r)).toContain('are not the same directory (a symlink inside the path)')
+    expect(text(r)).toContain('Nothing was changed.')
+    expect(r.dockerCalls).toEqual([])
+    expect(existsSync(wt)).toBe(true)
+  })
+
   it('T16. refuses an own non-worktree Compose project (skillsmith-eval-cron)', () => {
     const fx = mk('attr-t16')
     const wt = addWt(fx, 'skillsmith-eval-cron')
