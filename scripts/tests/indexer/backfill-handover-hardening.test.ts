@@ -268,6 +268,19 @@ describe('--first-link: the variable flips LAST', () => {
     ])
   })
 
+  it('ORDERING: the restore-to-1 itself fails (only that call) => NO-GO, no second dispatch, set-it-by-hand warning', () => {
+    const seam = allClear()
+    changeRunOnFlip(seam, { status: 'completed', updated_at: '2026-10-12T12:00:00Z' })
+    writeFileSync(join(seam.dir, 'fail-varset-1'), '')
+    const r = runScript(HELPER, ['--first-link'], seam)
+    expect(verdict(r), r.out).toBe('NO-GO')
+    expect(varWrites(seam)).toEqual(['VARIABLE_SET value=0', 'VARIABLE_SET value=1'])
+    expect(r.out).toContain('could NOT restore BACKFILL_AUTOCHAIN_DISABLE to 1')
+    expect(r.out).toContain('set it to 1 by hand')
+    expect(r.out).not.toContain('the variable is restored to 1')
+    expect(seam.count('WORKFLOW_RUN')).toBe(1)
+  })
+
   it('ORDERING: a first-link status that is unreadable after the flip is not trusted: variable restored to 1, NO-GO', () => {
     const seam = allClear()
     changeRunOnFlip(seam, {})

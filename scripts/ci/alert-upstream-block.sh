@@ -82,7 +82,7 @@ if (newly.length > 0) {
   parts.push(`${newly.length} newly blocked row(s) refused by the upstream WAF (identity only, no content): ${rows.join("; ")}`)
 }
 if (ex === true) parts.push("the per-flush bisect request budget was exhausted, so some rows failed unisolated")
-if (tr === true) parts.push("the 48h block-history lookup hit its page bound, so every repo it saw was deferred and none was classified as newly blocked")
+if (tr === true) parts.push("the 48h block-history lookup hit its page bound, so the whole upsert flush was deferred (no rows sent, none classified as newly blocked)")
 const message = `The indexer upsert was blocked upstream: ${parts.join(". Also, ")}.`
 out("ALERT", JSON.stringify({ type: "indexer_upsert_blocked", message, workflow, runId, runUrl }))
 ' "$FILE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${RUN_URL:-}" "${WORKFLOW_NAME:-Skill Indexer}" > "$VERDICT_FILE"

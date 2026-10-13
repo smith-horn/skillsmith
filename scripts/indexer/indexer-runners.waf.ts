@@ -143,8 +143,8 @@ export interface RecentBlocks {
 /**
  * SMI-7113: repo_url -> newest `indexer_upsert_blocked` audit time (ms) in the lookback window.
  * Pages through the WHOLE window (newest first, deduplicating by repo_url as it goes). If
- * `MAX_BLOCK_LOOKUP_PAGES` full pages are still not enough, `truncated` is true and the caller
- * must treat every repo seen as blocked rather than new.
+ * `MAX_BLOCK_LOOKUP_PAGES` full pages are still not enough, `truncated` is true: the map is
+ * partial, so the caller defers the WHOLE flush (nothing sent, nothing newly blocked).
  */
 export async function loadRecentBlocks(
   supabase: SupabaseClient,
@@ -175,7 +175,7 @@ export async function loadRecentBlocks(
       if (page + 1 >= MAX_BLOCK_LOOKUP_PAGES) {
         truncated = true
         console.warn(
-          `[upsert-block] backoff lookup hit its ${MAX_BLOCK_LOOKUP_PAGES}-page bound; deferring every repo seen and treating none as newly blocked`
+          `[upsert-block] backoff lookup hit its ${MAX_BLOCK_LOOKUP_PAGES}-page bound; deferring the whole flush and treating none as newly blocked`
         )
         break
       }

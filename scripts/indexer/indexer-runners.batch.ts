@@ -330,11 +330,15 @@ export async function flushUpsertAccumulator(
   const { recent, truncated: lookupTruncated } = bisectDisabled
     ? { recent: new Map<string, number>(), truncated: false }
     : await loadRecentBlocks(supabase, nowMs)
-  // A truncated lookup cannot prove any seen repo is past its window, so every one is deferred.
-  const sendItems = fullItems.filter((a) => {
-    const at = recent.get(a.skillData.repo_url as string)
-    return at === undefined || (!lookupTruncated && nowMs - at >= BLOCK_DEFER_MS)
-  })
+  // A truncated lookup holds only part of the window, so it can prove nothing about ANY repo:
+  // one absent from the partial map may still be blocked. The whole flush is deferred (nothing
+  // sent, no block audit, nothing newly blocked); deferredCount reports every held-back row.
+  const sendItems = lookupTruncated
+    ? []
+    : fullItems.filter((a) => {
+        const at = recent.get(a.skillData.repo_url as string)
+        return at === undefined || nowMs - at >= BLOCK_DEFER_MS
+      })
   const deferredCount = fullItems.length - sendItems.length
 
   // C-3 + SMI-5934 + SMI-5968: PostgREST batch upsert is NOT row-atomic, and

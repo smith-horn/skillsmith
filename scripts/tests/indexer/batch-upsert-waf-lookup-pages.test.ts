@@ -86,12 +86,12 @@ describe.each([
     expect(r.newlyBlocked).toEqual([])
   })
 
-  it('at the page bound it defers every repo it saw, treats none as new, and says so', async () => {
-    // 19,999 newer rows, then the target (25h old: normally probed), then 100 older rows.
+  it('at the page bound the WHOLE flush is deferred: a target past row 20,000 is not sent, not newly blocked', async () => {
+    // 20,000 newer rows fill the 20-page bound; the target (25h old: normally probed) is row 20,001.
     const t = makeDb({
       respond: blockingRows([TARGET]),
       recent: [
-        ...fillerBlocks(19_999, 10 * 60 * 1000),
+        ...fillerBlocks(20_000, 10 * 60 * 1000),
         targetRow(25 * HOUR),
         ...fillerBlocks(100, 30 * HOUR),
       ],
@@ -100,12 +100,29 @@ describe.each([
 
     expect(t.ranges).toHaveLength(20)
     expect(r.lookupTruncated).toBe(true)
+    expect(t.upserts).toEqual([])
     expect(sentUrls(t.upserts)).not.toContain(TARGET)
-    expect(r.deferredCount).toBe(1)
+    expect(r.deferredCount).toBe(53)
+    expect(r.indexed + r.updated + r.failed).toBe(0)
+    expect(r.blocked).toEqual([])
     expect(r.newlyBlocked).toEqual([])
     expect(t.blockAudits()).toEqual([])
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('page bound')
-    expect(m.toBlockReport(r).upsert_block_lookup_truncated).toBe(true)
+    const report = m.toBlockReport(r)
+    expect(report.upsert_block_lookup_truncated).toBe(true)
+    expect(report.upsert_deferred_count).toBe(53)
+  })
+
+  it('CONTROL: the same target 25h old, with the window fully read (19,000 rows ahead), IS sent and known', async () => {
+    const t = makeDb({
+      respond: blockingRows([TARGET]),
+      recent: [...fillerBlocks(19_000, 10 * 60 * 1000), targetRow(25 * HOUR)],
+    })
+    const r = await flush(m, t)
+    expect(r.lookupTruncated).toBe(false)
+    expect(sentUrls(t.upserts)).toContain(TARGET)
+    expect(r.blocked.map((b) => b.repoUrl)).toEqual([TARGET])
+    expect(r.newlyBlocked).toEqual([])
   })
 
   it('a page read that fails mid-lookup fails open: page one is discarded, nothing deferred, not truncated', async () => {

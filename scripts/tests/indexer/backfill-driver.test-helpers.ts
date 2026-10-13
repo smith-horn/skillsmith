@@ -37,6 +37,8 @@ case "$1" in
       echo "VARIABLE_SET value=$val at=$clock" >> "$LOG"
       # Test hook: run a script at the moment of every variable-set call (an ordering seam).
       [ -f "$D/on-varset.sh" ] && bash "$D/on-varset.sh" "$val"
+      # Test hook: fail ONLY the set call carrying this value (e.g. the restore-to-1).
+      [ -f "$D/fail-varset-$val" ] && { echo "gh: HTTP 500" >&2; exit 1; }
       [ -n "\${STUB_VARSET_FAIL:-}" ] && { echo "gh: HTTP 500" >&2; exit 1; }
       echo "$val" > "$D/varstate"; exit 0
     fi
