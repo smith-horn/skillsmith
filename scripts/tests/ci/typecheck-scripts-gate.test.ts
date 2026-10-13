@@ -39,13 +39,14 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 // Derived from this file's own location, NOT from `git rev-parse`. Under
 // Docker-first the container sees /app as a bind mount whose .git is a FILE
@@ -248,6 +249,23 @@ function markingStub(marker: string, real: string): string {
   return `#!/bin/sh\ntouch '${marker}'\nexec ${real} "$@"\n`
 }
 
+/**
+ * Where planted files go (SMI-7071). They must stay INSIDE the gate's scope
+ * (find over scripts/ minus scripts/tests/*, and tsconfig.scripts.json's
+ * `scripts/**` include) so the gate tests keep testing the gate, but OUTSIDE
+ * what dependency-registry-expiry.test.ts's runFromBareCopy walks: that copy
+ * filters every path whose basename is `tests` BEFORE it lstats it. A file
+ * planted directly in scripts/ is listed, then lstat'ed, and ENOENTs if this
+ * file deletes it in between (parallel vitest workers). So every plant lives in
+ * a `tests/` directory below a scripts/ subdirectory, never in a directory the
+ * copy descends into. Do not plant anywhere else.
+ */
+const PLANT_BASE = 'scripts/ci'
+const SCOPE_DIRS = ['scripts/e2e', 'scripts/ci', 'scripts/lib', 'scripts/indexer/_shared']
+function plantRel(name: string, base: string = PLANT_BASE): string {
+  return `${base}/tests/${name}`
+}
+
 /** Plants a file under REPO_ROOT (creating parents); its path carries a zz-smi6975- segment. */
 function plant(rel: string, content: string): string {
   const abs = join(REPO_ROOT, rel)
@@ -358,6 +376,7 @@ afterEach(() => {
 beforeAll(() => {
   const dir = join(REPO_ROOT, 'scripts')
   sweepPlanted(dir)
+  mkdirSync(join(REPO_ROOT, PLANT_BASE, 'tests'), { recursive: true })
   // A killed run can leave tsconfig.scripts.json parked under CONFIG_ASIDE.
   const cfg = join(REPO_ROOT, 'tsconfig.scripts.json')
   const aside = join(REPO_ROOT, CONFIG_ASIDE)
@@ -368,12 +387,26 @@ beforeAll(() => {
   // Backstop copies embed their writer's pid and creation time. Remove a copy
   // when its pid is gone, or when it is older than any run could last: a live
   // pid alone is best-effort, because pids are reused.
-  const ciDir = join(dir, 'ci')
+  // Kept in scripts/tests/, not scripts/ci/: the copy runFromBareCopy makes skips
+  // scripts/tests entirely, and the gate copy still resolves REPO_ROOT two levels up.
+  const ciDir = join(dir, 'tests')
   const staleMs = 60 * 60 * 1000
   for (const f of readdirSync(ciDir)) {
     const m = /^\.backstop-(?:subject|control)-(\d+)-(\d+)\.sh$/.exec(f)
     if (m && (!pidAlive(Number(m[1])) || Date.now() - Number(m[2]) > staleMs)) {
       rmSync(join(ciDir, f), { force: true })
+    }
+  }
+})
+
+// Removes the planting directories created by plant()/beforeAll. rmdir, not rm -r:
+// only an EMPTY directory is removed, so nothing real under a `tests/` is touched.
+afterAll(() => {
+  for (const base of new Set([PLANT_BASE, ...SCOPE_DIRS])) {
+    try {
+      rmdirSync(join(REPO_ROOT, base, 'tests'))
+    } catch {
+      // not empty or already gone; the beforeAll sweep removes leftover zz- entries next run
     }
   }
 })
@@ -460,7 +493,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     const probe = spawnSync(join(dir, 'perl'), ['-e', 'print "partial"'], { encoding: 'utf8' })
     expect(probe.stdout).toBe('partial')
     expect(probe.status).toBe(13)
-    const file = plant(`scripts/${name}`, "export const planted: number = 'not a number'\n")
+    const file = plant(plantRel(name), "export const planted: number = 'not a number'\n")
     try {
       const r = runGate(dir)
       expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
@@ -491,7 +524,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       try {
         for (const ext of ['.probeext', '.js']) {
           const name = `zz-smi6975-probe-${process.pid}${ext}`
-          const file = join(REPO_ROOT, 'scripts', name)
+          const file = join(REPO_ROOT, plantRel(name))
           planted.push(file)
           writeFileSync(file, '# planted by typecheck-scripts-gate.test.ts\n')
           const r = runGate()
@@ -521,13 +554,13 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     const planted: string[] = []
     try {
       for (const name of cases) {
-        const file = plant(`scripts/${name}`, '# planted by typecheck-scripts-gate.test.ts\n')
+        const file = plant(plantRel(name), '# planted by typecheck-scripts-gate.test.ts\n')
         planted.push(file)
         const r = runGate()
         expect(r.out, `${name}: RESULT`).toContain('RESULT         INCONCLUSIVE')
         expect(r.out, `${name}: cause`).toContain('extension this gate does not classify')
         const listed = r.out.slice(r.out.indexOf('--- unclassified ---'))
-        expect(listed, `${name}: listed as unclassified`).toContain(`scripts/${name}`)
+        expect(listed, `${name}: listed as unclassified`).toContain(plantRel(name))
         expect(r.out, `${name}: next`).toMatch(/^ {2}next: \S/m)
         expect(r.status, `${name}: exit`).not.toBe(0)
         expect(r.out, `${name}: verdict`).not.toContain('VERDICT        PASS')
@@ -773,7 +806,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         expect(r.out, `${a.name}: next line`).toMatch(/^ {2}next: \S/m)
       }
       // And an arm driven by a real input rather than a stub.
-      const file = join(REPO_ROOT, 'scripts', `zz-smi6975-next-${process.pid}.probeext`)
+      const file = join(REPO_ROOT, plantRel(`zz-smi6975-next-${process.pid}.probeext`))
       try {
         writeFileSync(file, 'x\n')
         const r = runGate()
@@ -853,7 +886,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     // "global failure" arm would pass the clean control and the unreadable-file
     // test, and never say what was wrong with the code.
     const name = `zz-smi6975-typeerr-${process.pid}.ts`
-    const file = join(REPO_ROOT, 'scripts', name)
+    const file = join(REPO_ROOT, plantRel(name))
     try {
       writeFileSync(file, "export const planted: number = 'not a number'\n")
       const r = runGate()
@@ -865,7 +898,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       expect(r.status, 'exit').toBe(1)
       // Properties, not the rendered format: the planted file is named in the
       // by-file output, and the two derivations agree with each other.
-      expect(r.out, 'names the file').toContain(`scripts/${name}`)
+      expect(r.out, 'names the file').toContain(plantRel(name))
       const m = /(\d+) total \/ (\d+) attributed/.exec(r.out)
       expect(m, 'reconciliation line present').not.toBeNull()
       expect((m as RegExpExecArray)[1], 'total == attributed').toBe((m as RegExpExecArray)[2])
@@ -1292,7 +1325,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
   it.skipIf(process.getuid?.() === 0)(
     'an unreadable .ts under scripts/ is INCONCLUSIVE (tsc cannot read it), never PASS',
     () => {
-      const file = join(REPO_ROOT, 'scripts', `zz-smi6975-unreadable-${process.pid}.ts`)
+      const file = join(REPO_ROOT, plantRel(`zz-smi6975-unreadable-${process.pid}.ts`))
       try {
         writeFileSync(file, 'export const a: number = 1\n')
         chmodSync(file, 0o000)
@@ -1328,7 +1361,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       const backstopRe = /\nif \[\[ "\$RESULT" != "EVALUATED" \]\]; then\n[\s\S]*?\nfi\n/
       expect(backstopRe.test(planted), 'backstop block not found').toBe(true)
       const control = planted.replace(backstopRe, '\n')
-      const dir = join(REPO_ROOT, 'scripts', 'ci')
+      const dir = join(REPO_ROOT, 'scripts', 'tests')
       const tag = `${process.pid}-${Date.now()}`
       const subjectPath = join(dir, `.backstop-subject-${tag}.sh`)
       const controlPath = join(dir, `.backstop-control-${tag}.sh`)
@@ -1408,8 +1441,8 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       // A scope that is wrong CONSISTENTLY -- the inventory's find and the
       // tsconfig both skipping a directory -- reconciles perfectly and PASSES, so
       // only a planted error in each directory can see it.
-      const dirs = ['scripts/e2e', 'scripts/ci', 'scripts/lib', 'scripts/indexer/_shared']
-      const files = dirs.map((d) => `${d}/zz-smi6975-scope-${process.pid}.ts`)
+      const dirs = SCOPE_DIRS
+      const files = dirs.map((d) => plantRel(`zz-smi6975-scope-${process.pid}.ts`, d))
       try {
         for (const f of files) plant(f, "export const planted: number = 'not a number'\n")
         const r = runGate()
@@ -1436,7 +1469,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     () => {
       // An include of depth-limited globs (scripts/*/*/*.ts ...) agrees with an
       // equally shallow inventory and never sees a deeper file.
-      const top = `scripts/zz-smi6975-deep-${process.pid}`
+      const top = plantRel(`zz-smi6975-deep-${process.pid}`)
       const deep = `${top}/d1/d2/d3/d4`
       try {
         const base = /discovered\s+(\d+)/.exec(runGate().out)?.[1]
@@ -1472,14 +1505,14 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     // A `[^:]*` path in the attribution pattern cannot span the colon, so the
     // header goes uncounted and REPORTED (1) disagrees with ATTRIB (0).
     const name = `zz-smi6975-a:b-${process.pid}.ts`
-    const file = plant(`scripts/${name}`, "export const planted: number = 'not a number'\n")
+    const file = plant(plantRel(name), "export const planted: number = 'not a number'\n")
     try {
       const r = runGate()
       expect(r.out, 'RESULT').not.toContain('RESULT         INCONCLUSIVE')
       expect(r.out, 'RESULT').toContain('RESULT         EVALUATED')
       expect(r.out, 'VERDICT').toContain('VERDICT        FAIL')
       expect(r.out, 'no mismatch').not.toContain('[MISMATCH]')
-      expect(r.out, 'names the whole path').toContain(`scripts/${name}`)
+      expect(r.out, 'names the whole path').toContain(plantRel(name))
       expect(r.status, 'exit').toBe(1)
     } finally {
       rmSync(file, { force: true })
@@ -1493,7 +1526,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     // `x:1:2 - error TS1:` must not be counted as a second diagnostic.
     const name = `zz-smi6975-frame-${process.pid}.ts`
     const file = plant(
-      `scripts/${name}`,
+      plantRel(name),
       "export const planted: number = 'x:1:2 - error TS1: looks like a diagnostic'\n"
     )
     try {
@@ -1589,7 +1622,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       // inventory simply vanishes from the program; only the compiled-file list
       // shows it. The stub deletes the file immediately before the real compile.
       const name = `zz-smi6975-vanish-${process.pid}.ts`
-      const file = join(REPO_ROOT, 'scripts', name)
+      const file = join(REPO_ROOT, plantRel(name))
       const dir = scratchDir('vanish')
       const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
       makeStub(
@@ -1599,7 +1632,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       )
       makeStub(dir, 'tsc-keep', `#!/bin/sh\nexec ${real} "$@"\n`)
       try {
-        plant(`scripts/${name}`, 'export const vanishing: number = 1\n')
+        plant(plantRel(name), 'export const vanishing: number = 1\n')
         // Known-positive control: the same file, not deleted, is a root of an
         // EVALUATED run -- so the INCONCLUSIVE below is caused by the deletion.
         const keep = runGate(undefined, {
@@ -1611,7 +1644,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         })
         expect(r.out, 'RESULT').toContain('RESULT         INCONCLUSIVE')
         expect(r.out, 'cause').toContain('tsc did not read 1 discovered file(s)')
-        expect(r.out, 'names the file').toContain(`scripts/${name}`)
+        expect(r.out, 'names the file').toContain(plantRel(name))
         expect(r.out, 'next').toMatch(/^ {2}next: \S/m)
         expect(r.out, 'not a pass').not.toContain('VERDICT        PASS')
         expect(r.status, 'exit').not.toBe(0)
