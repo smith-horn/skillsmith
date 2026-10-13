@@ -20,7 +20,7 @@
     "build:worker": "npx wrangler deploy --dry-run --outdir dist-worker"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.117.2",
+    "@supabase/supabase-js": "2.117.3",
     "@tailwindcss/vite": "4.1.18",
     "cookie": "2.0.1",
     "sharp": "0.35.5",
