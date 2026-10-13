@@ -219,14 +219,12 @@ function heldCase(
 
 // --- R5: the re-hash cannot read a file -> held, diagnosis kept -------------
 {
-  // The trace is NOT asserted here. S9's readFileSync at the destination throws
-  // EACCES and the sidecar calls follow it, and matchC4Trace accepts a thrown
-  // call only as the LAST top-level call. Whether a thrown destination READ
-  // before the sidecar is an acceptable held trace is a matcher-design question
-  // left open in the Step 1b part 1 hand-back; today it reads traceMatched:false,
-  // which a runner scores never-ran (fail-closed, not a pass).
+  // S9's readFileSync inside the destination throws EACCES and the sidecar calls
+  // follow it. Coordinator decision (Step 1b part 2): matchC4Trace accepts a
+  // thrown READ strictly inside destPath, before the sidecar write, for a
+  // held/changed-during-move result only (c4-trace-match.threw.selftest.mjs
+  // pins the negatives). So the trace IS asserted here.
   const { f, r } = heldCase('R5 unreadable', {
-    assertTrace: false,
     mutate: (fx) => fs.chmodSync(path.join(fx.target, 'orig-f1'), 0o000),
   })
   check(

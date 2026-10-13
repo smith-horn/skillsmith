@@ -5,6 +5,7 @@
 import { lstatSync, mkdirSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { scanQuarantineLeftovers } from '../result-schema.mjs'
+import { verifyHeldSidecar } from '../result-schema.c4.mjs'
 import { verifyReplacementIntact } from './_shared.mjs'
 import { locateDisplaced } from './c4-shared.mjs'
 import { compactTrace } from './c4-trace-match.mjs'
@@ -52,9 +53,52 @@ export function checkEachFile(dir, files) {
  */
 export function whereFor(fxRoot, r, baseDir) {
   const res = r.result
-  const destination =
-    res?.status === 'quarantined' && typeof res.path === 'string' ? res.path : null
+  // SMI-6715 Step 1b part 2: a `held` run's tree is whole at result.path too, so
+  // that is its destination; otherwise its moved bytes would read `deleted`.
+  const moved = res?.status === 'quarantined' || res?.status === 'held'
+  const destination = moved && typeof res.path === 'string' ? res.path : null
   return { destination, originRoot: path.join(fxRoot, 'tree'), baseDir }
+}
+
+/**
+ * Where a run's user files are SCORED (SMI-6715 Step 1b part 2; design §9 item
+ * 3): for a `held` result the held copy is the location of record, so `absPath`
+ * (a path inside <fxRoot>/tree) is mapped to the same relative path inside
+ * result.path; for every other outcome it is returned unchanged. A held result
+ * without a string path, or a path outside the tree, throws (the runner records
+ * a harness-error rather than scoring the wrong place).
+ */
+export function scoringDir(fxRoot, r, absPath) {
+  const res = r.result
+  if (res?.status !== 'held') return absPath
+  const rel = path.relative(path.join(fxRoot, 'tree'), absPath)
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new TypeError(`scoringDir: ${absPath} is not inside ${path.join(fxRoot, 'tree')}`)
+  }
+  if (typeof res.path !== 'string') throw new TypeError('scoringDir: held result has no path')
+  return path.join(res.path, rel)
+}
+
+/** The scoring location scoringDir chose: 'held-copy' for a held result, else 'origin'. */
+export const scoreLocation = (r) => (r.result?.status === 'held' ? 'held-copy' : 'origin')
+
+/**
+ * The evidence the strict held predicate reads (result-schema.c4.mjs
+ * c4HeldClass), or undefined for a non-held result. `location` must be what the
+ * module actually scored against (scoreLocation when it used scoringDir);
+ * omitted, it reads 'origin' and the predicate fails closed.
+ */
+export function heldEvidenceOf(
+  r,
+  { location = 'origin', originRecreated = false, originIntact = null } = {}
+) {
+  if (r.result?.status !== 'held') return undefined
+  return {
+    location,
+    sidecarVerified: verifyHeldSidecar(r.result).ok,
+    originRecreated,
+    originIntact,
+  }
 }
 
 /**
@@ -97,17 +141,22 @@ export function c4Precondition(r, mutationCompleted) {
   }
 }
 
-export function c4Outcome(r, fxRoot, candidate) {
+export function c4Outcome(r, fxRoot, candidate, held) {
   const res = r.result ?? {}
+  const heldEvidence = heldEvidenceOf(r, held)
   return {
     status: res.status,
     reason: res.reason,
     path: res.path,
     errno: res.errno,
     opId: r.opId,
+    ...(heldEvidence === undefined ? {} : { heldEvidence }),
     quarantineLeft: scanQuarantineLeftovers(fxRoot, candidate, {
       status: res.status,
       opId: r.opId,
+      heldPath: res.heldPath ?? null,
+      originPath: res.originPath ?? null,
+      sidecarPath: res.sidecarPath ?? null,
     }),
   }
 }

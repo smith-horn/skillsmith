@@ -370,7 +370,14 @@ export function controlTag(state) {
  * beside the scored A13 cells, so a reader weighing the removal decision sees
  * them.
  */
-export const PROBABILISTIC_ATTACKS = new Set(['A13', 'A13-VR', 'A13-TIMING', 'A13-C4'])
+export const PROBABILISTIC_ATTACKS = new Set([
+  'A13',
+  'A13-VR',
+  'A13-TIMING',
+  'A13-C4',
+  // SMI-6715 Step 1b part 2: the same racer released at C4's hash end; R6 applies.
+  'A13-C4-POSTHASH',
+])
 export const LANDED_FLOOR = 100
 
 export { RECORD_ONLY_ATTACKS, verdictTallyKey }
@@ -411,6 +418,16 @@ export function verdictFor(row, controlFailed, controlState) {
   // on purpose: for these cells a loss is recorded, not scored as a falsifier.
   if (RECORD_ONLY_ATTACKS.has(row.attack)) return recordOnlyVerdict(row)
 
+  // SMI-6715 Step 1b part 2: `held` runs (strict predicate, cell-tally.mjs)
+  // count as landed and clean for every gate below, and a PASS names how many
+  // there were. Absent means 0; present must be a non-negative integer.
+  const held = row.held ?? 0
+  if (!Number.isInteger(held) || held < 0) {
+    throw new TypeError(`verdictFor: held must be a non-negative integer, got ${String(row.held)}`)
+  }
+  const withHeld = (v) =>
+    held === 0 ? v : v === 'PASS' ? `PASS (${held} held)` : `${v.slice(0, -1)}, ${held} held)`
+
   // FAILURES BEAT EVERYTHING, AND THIS CLAUSE GOES FIRST.
   //
   // One observed loss proves the defect; no sample size is required to conclude
@@ -437,7 +454,7 @@ export function verdictFor(row, controlFailed, controlState) {
   if (row.failed > 0) return 'FAIL'
 
   const probabilistic = isProbabilistic(row.attack)
-  const landed = row.passed + row.failed
+  const landed = row.passed + held + row.failed
   const otherNeverRan = row.otherNeverRan ?? row.neverRan
 
   if (!probabilistic && row.neverRan > 0) return 'NEVER-RAN'
@@ -458,6 +475,6 @@ export function verdictFor(row, controlFailed, controlState) {
   // a control-verified one. A13-VR is one run away from that: it is in
   // PROBABILISTIC_ATTACKS and has no CONTROL_SPEC row.
   if (controlState === 'unspecified') return 'NEVER-RAN (control unspecified)'
-  if (controlState === 'external') return 'PASS (control unverified)'
-  return 'PASS'
+  if (controlState === 'external') return withHeld('PASS (control unverified)')
+  return withHeld('PASS')
 }

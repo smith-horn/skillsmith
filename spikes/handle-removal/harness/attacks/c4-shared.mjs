@@ -60,7 +60,7 @@ function validateRunArgs(args) {
     throw new TypeError('runC4Candidate: expected an options object')
   }
   // One read of each property, then only the locals are used.
-  const { candidate, parentAbs, name, window, onFire, opId } = args
+  const { candidate, parentAbs, name, window, onFire, opId, onHashEnd } = args
   if (typeof candidate !== 'string' || !C4_CANDIDATES.includes(candidate)) {
     throw new TypeError(
       `runC4Candidate: candidate must be one of ${C4_CANDIDATES.join(', ')} (a primitive string)`
@@ -74,6 +74,9 @@ function validateRunArgs(args) {
   if (typeof onFire !== 'function') {
     throw new TypeError('runC4Candidate: onFire must be a function')
   }
+  if (onHashEnd !== undefined && typeof onHashEnd !== 'function') {
+    throw new TypeError('runC4Candidate: onHashEnd must be a function when given')
+  }
   if (typeof parentAbs !== 'string' || !path.isAbsolute(parentAbs)) {
     throw new TypeError(
       `runC4Candidate: parentAbs must be an absolute path string, got ${String(parentAbs)}`
@@ -83,7 +86,7 @@ function validateRunArgs(args) {
   let resolvedOpId = opId
   if (resolvedOpId === undefined) resolvedOpId = `c4-${crypto.randomBytes(6).toString('hex')}`
   assertPathSegment('opId', resolvedOpId)
-  return { candidate, parentAbs, name, window, onFire, opId: resolvedOpId }
+  return { candidate, parentAbs, name, window, onFire, opId: resolvedOpId, onHashEnd }
 }
 
 function errorSummary(err) {
@@ -110,7 +113,7 @@ function errorSummary(err) {
  * `times.renameEndAt` (the A13 out-of-model window ends when rename RETURNS).
  */
 export function runC4Candidate(args) {
-  const { candidate, parentAbs, name, window, onFire, opId } = validateRunArgs(args)
+  const { candidate, parentAbs, name, window, onFire, opId, onHashEnd } = validateRunArgs(args)
   const eff = effectiveWindow(candidate, window)
   const originPath = path.resolve(path.join(parentAbs, name))
   const destDir = path.resolve(parentAbs, '.skillsmith-trash', opId)
@@ -140,6 +143,9 @@ export function runC4Candidate(args) {
     renameAt: null,
     renameEndAt: null,
     callEndAt: null,
+    // SMI-6715 Step 1b part 2 (A13-C4-POSTHASH): the instant C4's own pre-move
+    // hash had certainly ENDED. See the hash-end clock below.
+    hashEndAt: null,
   }
   let recording = false
   let firing = false
@@ -148,6 +154,37 @@ export function runC4Candidate(args) {
   let mutationError = null
   let lstatOrdinal = 0
   let depth = 0
+  // HASH-END CLOCK (SMI-6715 Step 1b part 2). C4's pre-move guard is: walk the
+  // tree (traced root lstat + readdir + descendant reads), realpath(parentAbs),
+  // [Linux: read mountinfo], compute and compare the hash (CPU only), and then
+  // ensureTrashRoot's FIRST call, statSync(parentAbs). So the first
+  // statSync(parentAbs) after the root readdir returned is the earliest fs call
+  // after S2c, and its instant is a tight upper bound on the hash's end.
+  // C4-naive has no hash: its first statSync(parentAbs) is the same code point
+  // (the start of trash setup), which keeps the two arms' release points
+  // comparable. onHashEnd runs there UNTRACED (like onFire) and must not touch
+  // the tree: it is a clock, not a mutation.
+  const parentResolved = path.resolve(parentAbs)
+  let rootReaddirSeen = false
+  let hashEndSeen = false
+  let hashEndError = null
+  const hashEndTick = (n, callArgs) => {
+    if (hashEndSeen || n !== 'statSync') return
+    const p = asPath(callArgs[0])
+    if (p === null || path.resolve(p) !== parentResolved) return
+    if (candidate === 'C4' && !rootReaddirSeen) return
+    hashEndSeen = true
+    times.hashEndAt = now()
+    if (onHashEnd === undefined) return
+    firing = true
+    try {
+      onHashEnd()
+    } catch (err) {
+      hashEndError = errorSummary(err)
+    } finally {
+      firing = false
+    }
+  }
 
   const fire = () => {
     if (fired) return
@@ -176,6 +213,7 @@ export function runC4Candidate(args) {
     const orig = PRISTINE.get(n)
     const wrapper = function c4Traced(...callArgs) {
       if (!recording || firing) return orig.apply(this, callArgs)
+      hashEndTick(n, callArgs)
       const { scope, scope2 } = scopesOf(n, callArgs)
       if (scope === null && scope2 === null) return orig.apply(this, callArgs)
       const nested = depth > 0
@@ -221,6 +259,7 @@ export function runC4Candidate(args) {
         entry.endAt = now()
         if (rootRename && times.renameEndAt === null) times.renameEndAt = entry.endAt
       }
+      if (root && n === 'readdirSync') rootReaddirSeen = true
       if (
         root &&
         n === 'lstatSync' &&
@@ -314,5 +353,8 @@ export function runC4Candidate(args) {
     onFireInvoked: fired === true,
     mutationError,
     opId,
+    // Only when the caller asked for the hash-end clock, so every other run's
+    // return shape is unchanged.
+    ...(onHashEnd === undefined ? {} : { hashEndError }),
   }
 }

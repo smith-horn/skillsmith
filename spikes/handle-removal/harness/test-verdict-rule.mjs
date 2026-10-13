@@ -187,9 +187,9 @@ check(
 )
 // Guards the set's own contents against a silent edit.
 check(
-  '6f the set is exactly the ids R6 names (A13-C4 added by SMI-6715; A13-C4-OOM excluded)',
+  '6f the set is exactly the ids R6 names (A13-C4 and A13-C4-POSTHASH added by SMI-6715; A13-C4-OOM excluded)',
   [...PROBABILISTIC_ATTACKS].sort().join(','),
-  'A13,A13-C4,A13-TIMING,A13-VR'
+  'A13,A13-C4,A13-C4-POSTHASH,A13-TIMING,A13-VR'
 )
 
 // --- 7. aggregateCell DERIVES THE ATTACK RATHER THAN ASKING FOR IT -------
@@ -330,6 +330,15 @@ for (const v of [
 ]) {
   check('9d ' + v + ' is untouched by the tally key', verdictTallyKey(v), v)
 }
+// SMI-6715 Step 1b part 2 (coordinator change B): every `PASS (<n> held)` tallies
+// under ONE key, as RECORD-ONLY does; the cell's own verdict keeps its count.
+for (const [v, key] of [
+  ['PASS (30 held)', 'PASS (held)'],
+  ['PASS (1 held)', 'PASS (held)'],
+  ['PASS (control unverified, 7 held)', 'PASS (control unverified, held)'],
+]) {
+  check('9g ' + v + ' tallies as ' + key, verdictTallyKey(v), key)
+}
 check(
   '9e CONTROL_SPEC is a plain object',
   Object.getPrototypeOf(CONTROL_SPEC) === Object.prototype,
@@ -340,7 +349,7 @@ check(
   Object.keys(CONTROL_SPEC)
     .slice(Object.keys(CONTROL_SPEC).indexOf('A3-C4'), Object.keys(CONTROL_SPEC).indexOf('N1'))
     .join(','),
-  'A3-C4,A4-C4,A7-C4,A8-C4,A10-C4,A1-C4,A2-C4,A13-C4,A8a-C4,A10b-C4,A13-C4-OOM'
+  'A3-C4,A4-C4,A7-C4,A8-C4,A10-C4,A1-C4,A2-C4,A13-C4,A13-C4-POSTHASH,A8a-C4,A10b-C4,A13-C4-OOM,B0-C4'
 )
 
 if (!allOk) {

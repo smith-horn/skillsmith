@@ -76,8 +76,9 @@ import {
   lossPrecededBy,
   landingCounts,
   recordForRunError,
+  phaseClass,
 } from './a13-c4.classify.mjs'
-import { expectationsFromSteps, scoreExpectations } from './a13-c4.score.mjs'
+import { scoreRacer, userFilesOf } from './a13-c4.scoreracer.mjs'
 import {
   decideRecord,
   clockOrderOk as clockOrderOkOf,
@@ -91,7 +92,7 @@ import {
   SKEW_MIN_MS,
   SKEW_MAX_MS,
 } from './a13-c4.record.mjs'
-import { applyDirs } from './c4-score.mjs'
+import { applyDirs, heldEvidenceOf } from './c4-score.mjs'
 import { spawnStepRacer } from './a13-c4.racer.mjs'
 import { computePathTreeHash } from '../../quarantine.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
@@ -101,6 +102,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 export { VARIANT, classifyLanding } from './a13-c4.classify.mjs'
+export { scoreRacer } from './a13-c4.scoreracer.mjs'
 export const id = 'A13-C4'
 export const target = 300
 
@@ -125,61 +127,6 @@ function hrMinusPerf(n = 64) {
 }
 
 /**
- * A probe for scoreExpectations rooted at `base`: what is at base/rel, never
- * following the final component. Absent (ENOENT, or ENOTDIR because a parent
- * is no longer a directory) is null; any other error throws, which makes the
- * run unscorable rather than silently "absent".
- */
-function probeAt(base) {
-  return (rel) => {
-    const abs = path.join(base, ...rel.split('/'))
-    let st
-    try {
-      st = fs.lstatSync(abs)
-    } catch (err) {
-      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null
-      throw err
-    }
-    if (st.isSymbolicLink()) return { kind: 'symlink', linkText: fs.readlinkSync(abs) }
-    if (st.isFile()) return { kind: 'file', content: fs.readFileSync(abs, 'utf8') }
-    if (st.isDirectory()) return { kind: 'dir' }
-    return { kind: 'other' }
-  }
-}
-
-/** Scores the racer's completed steps; returns {scored} or {unscorable: reason}. */
-function scoreRacer(racer, treeRoot, destPath) {
-  try {
-    if (!Array.isArray(racer.steps))
-      return { unscorable: `racer-report-unknown:${racer.error ?? 'no-steps'}` }
-    const expectations = expectationsFromSteps(racer.steps, treeRoot)
-    const scored = scoreExpectations({
-      expectations,
-      probeOrigin: probeAt(treeRoot),
-      probeDest: destPath ? probeAt(destPath) : null,
-    })
-    if (scored.displaced + scored.deleted !== scored.lost) {
-      return { unscorable: 'displaced+deleted!=lost' }
-    }
-    return { scored, expectations }
-  } catch (err) {
-    return { unscorable: `scoring-threw:${err instanceof Error ? err.message : String(err)}` }
-  }
-}
-
-const NO_FILES = { checked: 0, lost: 0, changed: 0, displaced: 0, deleted: 0 }
-const userFilesOf = (s) =>
-  s
-    ? {
-        checked: s.checked,
-        lost: s.lost,
-        changed: s.changed,
-        displaced: s.displaced,
-        deleted: s.deleted,
-      }
-    : NO_FILES
-
-/**
  * @param {object} args
  * @param {number} [args.dirs] - STEP-1 scale: pad the tree to exactly this many
  *   directories under tree/zz-pad (c4-score.mjs applyDirs), outside every path
@@ -191,7 +138,19 @@ const userFilesOf = (s) =>
  *   trace: without it, or on a write/verify failure, the run is a counted
  *   harness-error (a matched run's compact drops the full trace).
  */
-export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
+export async function runOnce(args) {
+  return runA13Once(args, null)
+}
+
+/**
+ * The A13 run body, shared by A13-C4 (`posthash` null) and A13-C4-POSTHASH
+ * (a13-c4.posthash.mjs). With `posthash` = {label, variant, delayCeilingMs} the
+ * racer waits on a go marker that runC4Candidate's hash-end clock writes the
+ * moment C4's own pre-move hash has ended (c4-shared.mjs onHashEnd), then
+ * delays uniformly over [0, delayCeilingMs); every record carries that label
+ * and each landing's phase class against the hash end.
+ */
+export async function runA13Once({ harnessRoot, candidate, dirs, traceDir }, posthash) {
   if (!CANDIDATES.has(candidate)) throw new TypeError(`a13-c4: unknown candidate ${candidate}`)
   const fx = makeFixtureRoot({ harnessRoot })
   try {
@@ -207,8 +166,18 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
     if (!pristine.ok) throw new Error(`a13-c4: pristine hash failed: ${JSON.stringify(pristine)}`)
 
     const readyMarkerPath = path.join(fx.root, '.racer-ready')
-    const spawned = spawnStepRacer(targetAbs, readyMarkerPath)
+    const goMarkerPath = path.join(fx.root, '.racer-go')
+    const delayMs = posthash ? Math.random() * posthash.delayCeilingMs : undefined
+    const spawned = posthash
+      ? spawnStepRacer(targetAbs, readyMarkerPath, undefined, { goMarkerPath, delayMs })
+      : spawnStepRacer(targetAbs, readyMarkerPath)
     const markerObservedAt = spawned.wait()
+    // The go marker is written at C4's hash end; if the call never reached it
+    // (a throw, a kept), it is written right after the call so the racer is
+    // released and joined rather than left spinning.
+    const release = () => {
+      if (posthash && !fs.existsSync(goMarkerPath)) fs.writeFileSync(goMarkerPath, '1')
+    }
 
     const start = performance.now()
     const callAttemptAtH = nowH()
@@ -221,9 +190,11 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
         window: 'pre-call',
         onFire: () => {},
         opId,
+        ...(posthash ? { onHashEnd: release } : {}),
       })
     } catch (err) {
       const catchAtH = nowH()
+      release()
       // Joined before deciding, so the decision sees what the racer completed.
       const racer = await spawned.result
       // The caller-hash window (review R2-7): c4-shared's own stamps when the
@@ -256,10 +227,16 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
       rec.extra.dirs = scale.dirs
       rec.extra.actualDirs = scale.actualDirs
       rec.extra.callerHashWindow = callerHashWindow
+      if (posthash) {
+        rec.extra.label = posthash.label
+        rec.extra.variant = posthash.variant
+        rec.extra.posthashCalibration = posthash.calibration ?? null
+      }
       return rec
     }
     const durationMs = performance.now() - start
     const callReturnedAtH = nowH()
+    release()
     const clock = hrMinusPerf()
 
     const racer = await spawned.result
@@ -275,6 +252,8 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
       // c4-shared's renameEndAt: the instant renameSync(originPath) returned
       // (or threw). Decision 5's out-of-model window ends here.
       renameReturnedAt: toH(t.renameEndAt, clock.offset),
+      // C4's own hash end (c4-shared.mjs hash-end clock); the POSTHASH release.
+      hashEndAt: toH(t.hashEndAt, clock.offset),
     }
     // A converted c4-shared stamp may not lie after this process stamped the
     // call's return; a violation means the conversion is wrong, and the run
@@ -289,8 +268,12 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
     const { inModelEnd, moveEnd } = windowEnds(candidate, times)
 
     // Hash the moved tree after the racer is joined (nothing can change it now).
+    // A held run's tree is whole at result.path as well (SMI-6715 Step 1b part 2).
+    const heldRun = r.result?.status === 'held'
     const destPath =
-      r.result?.status === 'quarantined' && typeof r.result.path === 'string' ? r.result.path : null
+      (r.result?.status === 'quarantined' || heldRun) && typeof r.result.path === 'string'
+        ? r.result.path
+        : null
     let postMoveHash = null
     if (destPath) {
       const h = computePathTreeHash(destPath)
@@ -315,7 +298,7 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
     const traceCompact = traceCompactOf(r.trace, r.traceMatched)
     const artifact = traceArtifactFor(r.trace, traceCompact, traceDir)
 
-    const s = scoreRacer(racer, treeRoot, destPath)
+    const s = scoreRacer(racer, treeRoot, destPath, { held: heldRun })
     let unscorable = s.unscorable ?? null
     let landings = []
     if (!unscorable) {
@@ -364,12 +347,26 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
       traceArtifactError: artifact.error,
     })
     const { mutationApplied, status } = decided
-    const label = decided.status === 'harness-error' ? 'A13-C4' : routed.label
+    const label = posthash
+      ? posthash.label
+      : decided.status === 'harness-error'
+        ? 'A13-C4'
+        : routed.label
+    const phaseClasses = landings.map((x) =>
+      phaseClass({ s: x.mutationStartedAt, l: x.landedAt, hashEndAt: times.hashEndAt, moveEnd })
+    )
+    const heldEvidence = heldEvidenceOf(r, { location: 'held-copy' })
 
     // Scanned against quarantineTree's OWN status and opId, even when the run
     // is later marked harness-error: the layout on disk follows what
     // quarantineTree did, not how this record is scored.
-    const quarantineLeft = scanC4Leftovers(fx.root, { status: r.result?.status, opId })
+    const quarantineLeft = scanC4Leftovers(fx.root, {
+      status: r.result?.status,
+      opId,
+      heldPath: r.result?.heldPath ?? null,
+      originPath: r.result?.originPath ?? null,
+      sidecarPath: r.result?.sidecarPath ?? null,
+    })
 
     const hookFired = r.hookFired === true && traceMatched
 
@@ -386,13 +383,29 @@ export async function runOnce({ harnessRoot, candidate, dirs, traceDir }) {
         path: r.result?.path ?? null,
         entry: r.result?.entry ?? null,
         errno: r.result?.errno ?? null,
+        ...(heldEvidence === undefined ? {} : { heldEvidence }),
         quarantineLeft,
       },
       userFiles,
       durationMs,
       extra: {
         label,
-        variant: VARIANT,
+        variant: posthash ? posthash.variant : VARIANT,
+        phaseClasses,
+        // The racer's FIRST attempted step, landed or not (a step that failed
+        // with ENOENT because the tree had already moved has no landing).
+        racerAttemptPhase: (() => {
+          const a = racer.steps?.[0] ?? racer.failedStep ?? null
+          return a
+            ? phaseClass({ s: a.startAt, l: a.endAt, hashEndAt: times.hashEndAt, moveEnd })
+            : null
+        })(),
+        posthashDelayMs: delayMs ?? null,
+        posthashDelayCeilingMs: posthash ? posthash.delayCeilingMs : null,
+        // The calibration the ceiling came from (a13-c4.posthash.mjs), auditable.
+        posthashCalibration: posthash?.calibration ?? null,
+        racerGoSeenAt: racer.goSeenAt ?? null,
+        hashEndError: r.hashEndError ?? null,
         dirs: scale.dirs,
         actualDirs: scale.actualDirs,
         candidate,

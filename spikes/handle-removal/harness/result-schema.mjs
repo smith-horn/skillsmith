@@ -21,6 +21,8 @@ import {
   c4RecordJsonSafe,
   c4UserFileExtras,
   c4Validate,
+  c4HeldClass,
+  C4_BASELINE_ATTACKS,
 } from './result-schema.c4.mjs'
 
 /**
@@ -206,6 +208,10 @@ export function makeRecord(fields) {
       ...(c4 && Object.hasOwn(outcome, 'callerIntentProof')
         ? { callerIntentProof: outcome.callerIntentProof }
         : {}),
+      // C4 only: the evidence the strict held predicate reads (SMI-6715 Step 1b).
+      ...(c4 && Object.hasOwn(outcome, 'heldEvidence')
+        ? { heldEvidence: outcome.heldEvidence }
+        : {}),
     },
     userFiles: {
       checked: userFiles.checked,
@@ -239,7 +245,7 @@ export function makeRecord(fields) {
  *   `removed` after an identity mismatch, or anything removed after an
  *   injected error). Defaults to never contradictory (userFiles is then the
  *   sole failure signal).
- * @returns {'failed'|'passed'|'never-ran'}
+ * @returns {'failed'|'passed'|'held'|'never-ran'} ('held': C4 only, strict predicate)
  */
 export function classifyRecord(record, isContradictory = () => false) {
   if (record.outcome.status === 'harness-error') {
@@ -252,6 +258,17 @@ export function classifyRecord(record, isContradictory = () => false) {
     // let a Proxy validate one number and score another.
     const v = c4Validate(record)
     if (v === null) return 'never-ran'
+    // SMI-6715 Step 1b part 2: in the no-attack baseline (B0-C4) anything but
+    // `quarantined` is a false positive of the repair and fails the run,
+    // whatever its bytes say.
+    if (C4_BASELINE_ATTACKS.has(record.cell?.attack) && record.outcome.status !== 'quarantined') {
+      return 'failed'
+    }
+    // SMI-6715 Step 1b part 2: a held run is 'held' only under the strict
+    // predicate (c4HeldClass); otherwise it is a failure, never a pass.
+    if (record.outcome.status === 'held') {
+      return isContradictory(record) ? 'failed' : c4HeldClass(record, v)
+    }
     return v.lost + v.changed > 0 || isContradictory(record) ? 'failed' : 'passed'
   }
 
@@ -296,6 +313,7 @@ export function aggregateCell(records, isContradictory = () => false, options = 
     options.universe
   )
   const { passed, failed, neverRan, excluded } = t
+  const held = t.held ?? 0
 
   const ran = records.length
   let verdict
@@ -322,6 +340,7 @@ export function aggregateCell(records, isContradictory = () => false, options = 
     ran,
     passed,
     failed,
+    held,
     controlFailures: t.controlFailures,
     neverRan,
     excluded,
@@ -335,7 +354,9 @@ export function aggregateCell(records, isContradictory = () => false, options = 
  * failed/never-ran beside every verdict."
  */
 export function formatVerdict(label, agg) {
-  return `${agg.verdict}\t${label}\tran=${agg.ran} passed=${agg.passed} failed=${agg.failed} never-ran=${agg.neverRan}`
+  // `held=` is printed only when a cell has held runs, so every existing line is unchanged.
+  const held = agg.held > 0 ? ` held=${agg.held}` : ''
+  return `${agg.verdict}\t${label}\tran=${agg.ran} passed=${agg.passed}${held} failed=${agg.failed} never-ran=${agg.neverRan}`
 }
 
 /**

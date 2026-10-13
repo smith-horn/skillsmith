@@ -93,6 +93,26 @@ export function classifyLanding({ s, l, callerHashAt, inModelEnd, moveEnd }) {
 }
 
 /**
+ * A13-C4-POSTHASH (SMI-6715 Step 1b part 2): a landing's class against C4's OWN
+ * pre-move hash end, from the destructive step's interval [s, l] (hrtime ms):
+ *   pre-hash     l < hashEndAt: landed before C4's hash had certainly ended,
+ *                so C4's pre-move hash may have seen it.
+ *   post-rename  s > moveEnd: began after the rename returned.
+ *   post-hash    otherwise: the interval reaches [hashEndAt, moveEnd]. These
+ *                are the landings the variant exists to produce; the repaired
+ *                C4 can only catch them after the move (held).
+ * Boundaries as classifyLanding: l == hashEndAt is post-hash, s == moveEnd is
+ * post-hash. A missing stamp is 'unknown'. Informational: routing and scoring
+ * use classifyLanding/routeRun; this is the distribution the variant reports.
+ */
+export function phaseClass({ s, l, hashEndAt, moveEnd }) {
+  if (s == null || l == null || hashEndAt == null || moveEnd == null) return 'unknown'
+  if (l < hashEndAt) return 'pre-hash'
+  if (s > moveEnd) return 'post-rename'
+  return 'post-hash'
+}
+
+/**
  * The in-model end and the move end for an arm, from times on one clock.
  * C4 falls back renameAt -> callEndAt only when the re-check never ran (a
  * 'kept' from a hash mismatch), in which case no out-of-model window existed.

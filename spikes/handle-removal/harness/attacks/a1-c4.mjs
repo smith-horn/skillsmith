@@ -31,7 +31,14 @@ import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { runC4Candidate, locateDisplaced } from './c4-shared.mjs'
 import { makeFixtureRoot } from '../fixture-root.mjs'
-import { applyDirs, keepTrace } from './c4-score.mjs'
+import {
+  applyDirs,
+  keepTrace,
+  scoringDir,
+  scoreLocation,
+  heldEvidenceOf,
+  whereFor,
+} from './c4-score.mjs'
 import { scanQuarantineLeftovers } from '../result-schema.mjs'
 import { bindMount, tmpfsMount, isMounted, buildMountFixture } from './mount-shared.mjs'
 
@@ -167,7 +174,8 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, tr
     })
     const durationMs = performance.now() - start
 
-    const originalFile = path.join(targetAbs, USER_FILE)
+    // SMI-6715 Step 1b part 2: a held run is scored in its held copy.
+    const originalFile = scoringDir(fx.root, r, path.join(targetAbs, USER_FILE))
     const got = readUserFile(originalFile)
     const lost = got.exists ? 0 : 1
     const changed = got.exists && got.content !== userContent ? 1 : 0
@@ -178,15 +186,9 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, tr
       const loc = locateDisplaced(
         fx.root,
         { [USER_FILE]: userContent },
-        // destination is this run's own result.path (null if nothing moved)
-        {
-          destination:
-            r.result?.status === 'quarantined' && typeof r.result.path === 'string'
-              ? r.result.path
-              : null,
-          originRoot: path.join(fx.root, 'tree'),
-          baseDir: targetAbs,
-        }
+        // destination is this run's own result.path for a quarantined or held
+        // run (null if nothing moved): whereFor, shared with the other modules
+        whereFor(fx.root, r, targetAbs)
       )
       displaced = loc.displaced
       deleted = loc.deleted
@@ -198,7 +200,14 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, tr
     const userFiles = { checked: 1, lost, changed, displaced, deleted }
 
     const status = r.result?.status
-    const quarantineLeft = scanQuarantineLeftovers(fx.root, candidate, { status, opId })
+    const quarantineLeft = scanQuarantineLeftovers(fx.root, candidate, {
+      status,
+      opId,
+      heldPath: r.result?.heldPath ?? null,
+      originPath: r.result?.originPath ?? null,
+      sidecarPath: r.result?.sidecarPath ?? null,
+    })
+    const heldEvidence = heldEvidenceOf(r, { location: scoreLocation(r) })
     const mountsAtScore = mountsFn(fx.root)
     // The record says BOTH things: the user file is displaced from its path
     // (userFiles, owner decision 2), and whether the BACKING bytes survived. For a
@@ -236,6 +245,7 @@ export function runMountCase({ harnessRoot, candidate, subcase, window, dirs, tr
         path: r.result?.path ?? null,
         entry: r.result?.entry ?? null,
         errno: r.result?.errno ?? null,
+        ...(heldEvidence === undefined ? {} : { heldEvidence }),
         quarantineLeft,
       },
       userFiles,

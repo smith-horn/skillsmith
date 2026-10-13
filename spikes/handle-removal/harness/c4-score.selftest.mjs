@@ -318,7 +318,11 @@ check('padTree: asking for fewer directories than the fixture already has throws
 })
 for (const [mod, name, attack, args, c4Class = 'passed'] of [
   [a3, 'A3', 'A3-C4', {}],
-  [a4, 'A4', 'A4-C4', {}, 'failed'], // the root-only re-check cannot see a post-hash swap
+  // SMI-6715 Step 1b: this pinned 'failed' -- the pre-repair defect (the
+  // root-only re-check could not see a post-hash swap, so C4 moved it). The
+  // repaired C4 verifies at the destination and holds the swap; scored in the
+  // held copy under the strict predicate, that is 'held'.
+  [a4, 'A4', 'A4-C4', {}, 'held'],
   [a8, 'A8b', 'A8-C4', { subcase: 'b' }],
   [a10, 'A10a', 'A10-C4', { subcase: 'a' }],
 ]) {

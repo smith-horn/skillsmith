@@ -13,6 +13,8 @@ import {
   applyDirs,
   resolveWindow,
   checkEachFile,
+  scoringDir,
+  scoreLocation,
   scoreUserFiles,
   c4Precondition,
   c4Outcome,
@@ -52,10 +54,11 @@ export function runOnce({ harnessRoot, candidate, window, dirs, traceDir, _test 
 
     return {
       precondition: c4Precondition(r, completed),
-      outcome: c4Outcome(r, fx.root, candidate),
+      // SMI-6715 Step 1b part 2: a held run is scored in its held copy.
+      outcome: c4Outcome(r, fx.root, candidate, { location: scoreLocation(r) }),
       userFiles: scoreUserFiles(
         fx.root,
-        checkEachFile(targetAbs, replacementFiles),
+        checkEachFile(scoringDir(fx.root, r, targetAbs), replacementFiles),
         whereFor(fx.root, r, targetAbs)
       ),
       durationMs,

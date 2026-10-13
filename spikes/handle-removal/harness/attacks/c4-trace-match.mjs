@@ -240,6 +240,43 @@ function matchPhases(candidate, trace) {
 }
 
 /**
+ * SMI-6715 Step 1b part 2 (coordinator decision): the thrown entries a held
+ * post-move re-hash may leave mid-trace. C4's S9 walk reads the MOVED tree; when
+ * a file there cannot be read (R5: chmod 000 after C4's hash) the read throws,
+ * C4 returns held/changed-during-move and then writes its sidecar, so the thrown
+ * read is not the last call. Tolerated, and only, when ALL hold:
+ *   - result.status 'held' AND result.reason 'changed-during-move';
+ *   - the entry is a top-level READ (DESC_READS or a read-only open);
+ *   - its path is STRICTLY inside result.path (the moved tree). No separate
+ *     scope test: every path inside result.path is inside this run's op dir,
+ *     and a mutation that dropped such a test survived (equivalent mutant);
+ *   - it comes after a root rename that returned, and before the first call on
+ *     the sidecar path (`<result.path>.json`), if there is one.
+ * Every other thrown call (quarantined, another reason, origin side, a write,
+ * the destination root itself, after the sidecar) stays a mismatch.
+ */
+function heldReadFailureTolerance(trace, result) {
+  const ok = new Set()
+  if (result?.status !== 'held' || result?.reason !== 'changed-during-move') return ok
+  if (typeof result.path !== 'string') return ok
+  const dest = path.resolve(result.path)
+  const renameIdx = trace.findIndex((e) => isRootCall(e, 'renameSync'))
+  if (renameIdx === -1 || trace[renameIdx].threw !== null) return ok
+  const sidecar = `${dest}.json`
+  let sidecarIdx = trace.findIndex((e) => typeof e.path === 'string' && e.path === sidecar)
+  if (sidecarIdx === -1) sidecarIdx = trace.length
+  for (let i = renameIdx + 1; i < sidecarIdx; i++) {
+    const e = trace[i]
+    if (e.nested === true || e.threw === null) continue
+    const isRead =
+      DESC_READS.has(e.fn) ||
+      (e.fn === 'openSync' && (e.flags === undefined || e.flags === 'r' || e.flags === 0))
+    if (isRead && typeof e.path === 'string' && isInside(path.resolve(e.path), dest)) ok.add(e)
+  }
+  return ok
+}
+
+/**
  * True only when the trace is provably one of the shapes in the header:
  * interposition intact, every entry scoped, timestamps non-decreasing, only the
  * last TOP-LEVEL call may have thrown (a call nested inside another, e.g. the
@@ -262,7 +299,10 @@ export function matchC4Trace({
   }
   for (let i = 1; i < trace.length; i++) if (!(trace[i].at >= trace[i - 1].at)) return false
   const top = trace.filter((e) => e.nested !== true)
-  for (let i = 0; i < top.length - 1; i++) if (top[i].threw !== null) return false
+  const tolerated = heldReadFailureTolerance(trace, result)
+  for (let i = 0; i < top.length - 1; i++) {
+    if (top[i].threw !== null && !tolerated.has(top[i])) return false
+  }
   const rootTrace = trace.filter(
     (e) => e.fn === FIRE || (e.scope === 'origin' && e.nested !== true)
   )

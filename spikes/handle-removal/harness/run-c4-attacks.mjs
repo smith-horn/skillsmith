@@ -31,6 +31,7 @@ import * as a4 from './attacks/a4-c4.mjs'
 import * as a7 from './attacks/a7-c4.mjs'
 import * as a8 from './attacks/a8-c4.mjs'
 import * as a10 from './attacks/a10-c4.mjs'
+import * as b0 from './attacks/b0-c4.mjs'
 
 const CANDIDATES = ['C4', 'C4-naive']
 
@@ -75,6 +76,8 @@ const ATTACKS = {
       tag: `${subcase}/pre-call`,
     })),
   },
+  // SMI-6715 Step 1b part 2: no-attack baseline (1,630 dirs unless --dirs).
+  b0: { mod: b0, combos: [{ args: {}, tag: 'untouched' }] },
 }
 
 // a13-c4.mjs is imported lazily so the five fixed-label attacks never depend on
@@ -85,6 +88,14 @@ const A13 = {
   combos: [{ args: {}, tag: 'racer/by-timestamp' }],
 }
 
+// SMI-6715 Step 1b part 2: A13 released at C4's own hash end. One label, so it
+// is interleaved like A13 but tallied as a single cell per arm.
+const A13P = {
+  perRunLabels: ['A13-C4-POSTHASH'],
+  load: () => import('./attacks/a13-c4.posthash.mjs'),
+  combos: [{ args: {}, tag: 'racer/post-hash' }],
+}
+
 const FLAGS = {
   '--out': { key: 'out', kind: 'string' },
   '--only': { key: 'only', kind: 'list' },
@@ -92,7 +103,7 @@ const FLAGS = {
   '--fs-label': { key: 'fsLabel', kind: 'string' },
   '--dirs': { key: 'dirs', kind: 'int' },
 }
-const KNOWN_KEYS = [...Object.keys(ATTACKS), 'a13']
+const KNOWN_KEYS = [...Object.keys(ATTACKS), 'a13', 'a13p']
 
 function usageError(message) {
   console.error(`[run-c4-attacks] ${message}`)
@@ -413,7 +424,7 @@ async function main() {
   const out = opts.out
 
   const selected = []
-  for (const [key, entry] of [...Object.entries(ATTACKS), ['a13', A13]]) {
+  for (const [key, entry] of [...Object.entries(ATTACKS), ['a13', A13], ['a13p', A13P]]) {
     if (opts.only && !opts.only.includes(key)) continue
     selected.push([key, entry, entry.mod ?? (await entry.load())])
   }

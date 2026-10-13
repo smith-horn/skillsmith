@@ -5,7 +5,7 @@
 // result-schema.c4.classify.selftest.mjs, result-schema.c4.shapes.selftest.mjs
 // and result-schema.c4.gate.selftest.mjs pin it.
 
-import { lstatSync, readdirSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 /**
@@ -45,6 +45,8 @@ const NO_SCAN = (scanError) => ({
  * which is why the scan takes `{status, opId}` from the outcome:
  *  - status `quarantined`: THIS op dir's contents are the expected result of a
  *    successful move. Reported in `expected`, excluded from `dirs`/`entries`.
+ *  - status `held` (SMI-6715 Step 1b): as `quarantined`, plus `expected.held`
+ *    and `expected.sidecarVerified` (options heldPath / originPath / sidecarPath).
  *  - status `kept`/`stopped`: THIS op dir, when empty, is litter (`litter`),
  *    not stranding. When NON-empty it is unexpected and counted.
  *  - everything else under `.skillsmith-*`, including any other op dir and any
@@ -56,7 +58,7 @@ const NO_SCAN = (scanError) => ({
 export function scanC4Leftovers(parentAbs, options) {
   const status = options?.status
   const opId = options?.opId
-  if (!['quarantined', 'kept', 'stopped'].includes(status)) {
+  if (!['quarantined', 'kept', 'stopped', 'held'].includes(status)) {
     return NO_SCAN(`c4-scan-needs-status:${String(status)}`)
   }
   if (
@@ -125,10 +127,23 @@ export function scanC4Leftovers(parentAbs, options) {
         continue
       }
       if (op === opId) {
-        if (status === 'quarantined') {
+        if (status === 'quarantined' || status === 'held') {
           expected.present = inner.length > 0
           expected.entries = inner.length
           expected.path = `${name}/${op}`
+          // SMI-6715 Step 1b part 2: a held op dir is the expected result of a
+          // held call (the tree whole in the trash, plus its hold sidecar), not
+          // an unexpected leftover; its sidecar is verified here (design §9).
+          if (status === 'held') {
+            expected.held = true
+            expected.sidecarVerified = verifyHeldSidecar({
+              sidecarPath:
+                options?.sidecarPath ??
+                (typeof options?.heldPath === 'string' ? `${options.heldPath}.json` : null),
+              path: options?.heldPath,
+              originPath: options?.originPath,
+            }).ok
+          }
           continue
         }
         if (inner.length === 0) {
@@ -321,4 +336,73 @@ export function c4Validate(record) {
   // inconsistent record, not a loss to count.
   if (lost + changed > checked) return null
   return { lost, changed }
+}
+
+/**
+ * No-attack baselines (SMI-6715 Step 1b part 2): guarded C4 on an untouched
+ * tree, where the only correct outcome is `quarantined`. classifyRecord fails
+ * any other status for these attacks: a `held` or `kept` there is a false
+ * positive of the repair (design §9 "No-attack, one per filesystem").
+ */
+export const C4_BASELINE_ATTACKS = new Set(['B0-C4'])
+
+/**
+ * THE STRICT HELD PREDICATE (SMI-6715 Step 1b part 2; design §9 items 1-6).
+ * Called only for a record whose status is 'held' and that passed c4Validate
+ * (every precondition strictly true, so the trace matched; checked >= 1; valid
+ * counts). Returns 'held' only when ALL hold, else 'failed' -- never 'passed':
+ *   - lost === 0 AND changed === 0, scored against the held copy;
+ *   - outcome.heldEvidence is a plain object of own data properties with
+ *       location === 'held-copy' (the bytes were checked in the held copy,
+ *         byte-exact, not at the now-empty origin),
+ *       sidecarVerified === true (the hold sidecar parses, hold:true, and its
+ *         heldPath/originPath match the result: verifyHeldSidecar),
+ *       originRecreated a boolean, and originIntact === true when it is true
+ *         (null when it is false).
+ * A held run that loses or changes bytes, or cannot prove where it scored them,
+ * is a failure: `held` is decision 3's sanctioned exception only when nothing
+ * the user had is missing.
+ */
+export function c4HeldClass(record, v) {
+  if (record?.outcome?.status !== 'held') return 'failed'
+  if (!(v && v.lost === 0 && v.changed === 0)) return 'failed'
+  const ev = strictOwn(record.outcome, 'heldEvidence')
+  if (!ev.ok || !isPlain(ev.value)) return 'failed'
+  const get = (k) => strictOwn(ev.value, k)
+  const [loc, side, rec, intact] = [
+    'location',
+    'sidecarVerified',
+    'originRecreated',
+    'originIntact',
+  ].map(get)
+  if (!loc.ok || loc.value !== 'held-copy') return 'failed'
+  if (!side.ok || side.value !== true) return 'failed'
+  if (!rec.ok || typeof rec.value !== 'boolean' || !intact.ok) return 'failed'
+  if (rec.value ? intact.value !== true : intact.value !== null) return 'failed'
+  return 'held'
+}
+
+/**
+ * Verifies the hold sidecar of a held RESULT (design §9 "Leftover scan"): it
+ * exists at result.sidecarPath, parses, carries hold:true, and its heldPath and
+ * originPath equal the result's. Returns {ok, detail}; never throws.
+ */
+export function verifyHeldSidecar(result) {
+  const sp = result?.sidecarPath
+  if (typeof sp !== 'string') return { ok: false, detail: 'no-sidecarPath' }
+  let s
+  try {
+    s = JSON.parse(readFileSync(sp, 'utf8'))
+  } catch (err) {
+    return { ok: false, detail: `unreadable:${err.code ?? err.name}` }
+  }
+  if (s === null || typeof s !== 'object') return { ok: false, detail: 'not-an-object' }
+  if (s.hold !== true) return { ok: false, detail: 'hold-not-true' }
+  if (typeof result.path !== 'string' || s.heldPath !== result.path) {
+    return { ok: false, detail: 'heldPath-mismatch' }
+  }
+  if (typeof result.originPath !== 'string' || s.originPath !== result.originPath) {
+    return { ok: false, detail: 'originPath-mismatch' }
+  }
+  return { ok: true, detail: null }
 }

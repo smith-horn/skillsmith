@@ -91,6 +91,9 @@ const validTarget = (x) => Number.isSafeInteger(x) && x > 0
  */
 export function tallyCell(records, classify, universe = records) {
   let passed = 0
+  // SMI-6715 Step 1b part 2: C4 runs the strict held predicate accepted
+  // (classify -> 'held'). Kept apart from `passed` so a verdict can say how many.
+  let held = 0
   let failed = 0
   // Failures from NON-ERROR records only. A harness-error that reports a loss
   // counts `failed` for its own cell (failures beat everything) but is not a
@@ -151,7 +154,9 @@ export function tallyCell(records, classify, universe = records) {
       } else if (!EXCLUDED_REASONS.has(er)) {
         neverRan += 1
         otherNeverRan += 1
-      } else if (cls === 'passed') {
+      } else if (cls === 'passed' || (cls === 'held' && isC4)) {
+        // A vacuous HELD run (strict predicate met) is as clean as a vacuous
+        // passed one (SMI-6715 Step 1b part 2; found by the POSTHASH smoke).
         // 'vacuous-check' on a clean run leaves the denominator, counted apart.
         neverRan += 1
         excluded += 1
@@ -162,6 +167,7 @@ export function tallyCell(records, classify, universe = records) {
       continue
     }
     if (cls === 'passed') passed += 1
+    else if (cls === 'held' && isC4) held += 1
     else if (cls === 'failed') fail()
     else {
       neverRan += 1
@@ -206,6 +212,7 @@ export function tallyCell(records, classify, universe = records) {
   return {
     ran: records.length,
     passed,
+    held,
     failed,
     controlFailures,
     neverRan,
@@ -241,6 +248,7 @@ export function cellVerdict(t, attack, controlFailed, controlState) {
     {
       attack,
       passed: t.passed,
+      held: t.held ?? 0,
       failed: t.failed,
       neverRan: t.neverRan,
       otherNeverRan: t.otherNeverRan,

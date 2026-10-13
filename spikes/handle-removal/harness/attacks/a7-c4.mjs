@@ -44,6 +44,8 @@ import {
   assertC4Candidate,
   applyDirs,
   checkEachFile,
+  scoringDir,
+  scoreLocation,
   scoreUserFiles,
   c4Precondition,
   c4Outcome,
@@ -110,9 +112,15 @@ function editPlan(subcase, fxRoot, targetAbs, _test) {
     }
   }
   const score = (r) => {
-    const check = checkEachFile(targetAbs, files)
+    // SMI-6715 Step 1b part 2: a held run is scored in its held copy.
+    const dir = scoringDir(fxRoot, r, targetAbs)
+    const check = checkEachFile(dir, files)
     let changed = check.changed
-    if (wantMode !== null && check.lost === 0 && (statSync(leaf).mode & 0o777) !== wantMode) {
+    if (
+      wantMode !== null &&
+      check.lost === 0 &&
+      (statSync(`${dir}/orig-f1`).mode & 0o777) !== wantMode
+    ) {
       changed += 1
     }
     return scoreUserFiles(
@@ -128,12 +136,13 @@ export function labelFor() {
   return id
 }
 
-function symlinkUserFiles(fxRoot, linkAbs, newTarget, where) {
+/** `probeAbs` is where the link is checked (scoringDir: the held copy for a held run). */
+function symlinkUserFiles(fxRoot, linkAbs, newTarget, where, probeAbs = linkAbs) {
   let lost = 0
   let changed = 0
   try {
-    lstatSync(linkAbs)
-    if (readlinkSync(linkAbs) !== newTarget) changed = 1
+    lstatSync(probeAbs)
+    if (readlinkSync(probeAbs) !== newTarget) changed = 1
   } catch {
     lost = 1
   }
@@ -209,7 +218,8 @@ export function runOnce({
           fx.root,
           sf.linkAbs,
           start0.newLinkTarget,
-          whereFor(fx.root, r, sf.treeRoot)
+          whereFor(fx.root, r, sf.treeRoot),
+          scoringDir(fx.root, r, sf.linkAbs)
         )
     } else {
       const bf = buildSwapFixture(fx.root)
@@ -231,7 +241,9 @@ export function runOnce({
       score = (r) =>
         scoreUserFiles(
           fx.root,
-          checkEachFile(bf.targetAbs, { 'orig-f1': start0.replacementContent }),
+          checkEachFile(scoringDir(fx.root, r, bf.targetAbs), {
+            'orig-f1': start0.replacementContent,
+          }),
           whereFor(fx.root, r, bf.targetAbs)
         )
     }
@@ -242,7 +254,7 @@ export function runOnce({
 
     return {
       precondition: c4Precondition(r, completed),
-      outcome: c4Outcome(r, fx.root, candidate),
+      outcome: c4Outcome(r, fx.root, candidate, { location: scoreLocation(r) }),
       userFiles: score(r),
       durationMs,
       extra: c4Extra(

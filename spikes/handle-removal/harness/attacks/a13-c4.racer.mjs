@@ -34,7 +34,7 @@ const CHILD = `
 const fs = require('node:fs');
 const path = require('node:path');
 const now = () => Number(process.hrtime.bigint()) / 1e6;
-const [target, delayArg, mutation, readyMarker] = process.argv.slice(1);
+const [target, delayArg, mutation, readyMarker, goMarker] = process.argv.slice(1);
 const delayMs = Number(delayArg);
 const steps = [];
 let failedStep = null;
@@ -71,8 +71,17 @@ const content = 'racer-' + mutation + '-' + Date.now() + '-' + Math.random();
 const file = path.join(target, 'orig-f1');
 const markerWrittenAt = now();
 fs.writeFileSync(readyMarker, '1');
-const t0 = Date.now();
-while (Date.now() - t0 < delayMs) { /* busy-wait: real jitter, no timer overhead */ }
+let goSeenAt = null;
+if (goMarker) {
+  // GO-MARKER MODE (A13-C4-POSTHASH): wait, without mutating, until the parent
+  // releases the racer at C4's hash end; then a sub-millisecond hrtime delay.
+  while (!fs.existsSync(goMarker)) { /* tight poll -- deliberately not a timer */ }
+  goSeenAt = now();
+  while (now() - goSeenAt < delayMs) { /* busy-wait on hrtime */ }
+} else {
+  const t0 = Date.now();
+  while (Date.now() - t0 < delayMs) { /* busy-wait: real jitter, no timer overhead */ }
+}
 if (mutation === 'a5' || mutation === 'a8') {
   unlinkAll(target);
   step({ op: 'rmdir', path: target }, () => fs.rmdirSync(target));
@@ -102,24 +111,35 @@ if (mutation === 'a5' || mutation === 'a8') {
   step({ op: 'write', path: file, content }, () => fs.writeFileSync(file, content));
 }
 process.stdout.write(JSON.stringify({
-  mutation, delayMs, markerWrittenAt, steps, failedStep,
+  mutation, delayMs, markerWrittenAt, goSeenAt, steps, failedStep,
   complete: failedStep === null && steps.length > 0,
 }));
 `
 
 /**
+ * `opts.goMarkerPath` (A13-C4-POSTHASH): the child waits, mutating nothing,
+ * until that file exists, then busy-waits `opts.delayMs` (a float, hrtime) and
+ * mutates; it reports `goSeenAt`. Without it the behaviour is unchanged: a
+ * random 0-2 ms integer delay right after the ready marker.
  * @returns {{wait: (timeoutMs?:number) => number, result: Promise<object>, mutation: string}}
  *   result: {mutation, delayMs, markerWrittenAt, steps[], failedStep|null,
  *   complete} or {error:'child-output-unparseable'|<spawn error>, steps:null}.
  *   `steps: null` means "unknown", never "none".
  */
-export function spawnStepRacer(targetAbs, readyMarkerPath, mutation) {
+export function spawnStepRacer(targetAbs, readyMarkerPath, mutation, opts = {}) {
   const m = mutation ?? RACER_MUTATIONS[Math.floor(Math.random() * RACER_MUTATIONS.length)]
   if (!RACER_MUTATIONS.includes(m)) throw new TypeError(`spawnStepRacer: unknown mutation ${m}`)
-  const delayMs = Math.floor(Math.random() * 3)
+  const go = opts.goMarkerPath
+  if (go !== undefined && (typeof go !== 'string' || go.length === 0)) {
+    throw new TypeError('spawnStepRacer: goMarkerPath must be a non-empty string')
+  }
+  if (go !== undefined && !(Number.isFinite(opts.delayMs) && opts.delayMs >= 0)) {
+    throw new TypeError('spawnStepRacer: go-marker mode needs a finite delayMs >= 0')
+  }
+  const delayMs = go === undefined ? Math.floor(Math.random() * 3) : opts.delayMs
   const child = spawn(
     process.execPath,
-    ['-e', CHILD, '--', targetAbs, String(delayMs), m, readyMarkerPath],
+    ['-e', CHILD, '--', targetAbs, String(delayMs), m, readyMarkerPath, ...(go ? [go] : [])],
     { stdio: ['ignore', 'pipe', 'ignore'] }
   )
   let out = ''
