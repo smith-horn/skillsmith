@@ -197,6 +197,7 @@ export { runCodeSearch } from './indexer-runners.codesearch.ts'
  * @param validationCache - Request-scoped SKILL.md validation cache
  * @param dryRun - If true, skip all writes and return zero values
  * @param telemetry - Run-scoped rate-limit telemetry bag (SMI-4852)
+ * @param backfillMode - Backfill flush: never defer a recently WAF-blocked row (SMI-7113)
  */
 export async function runUpsertPhase(
   supabase: SupabaseClient,
@@ -204,7 +205,8 @@ export async function runUpsertPhase(
   highTrustSkillMap: Map<string, HighTrustAuthor>,
   validationCache: Map<string, SkillMdValidation>,
   dryRun: boolean,
-  telemetry: RateLimitTelemetry
+  telemetry: RateLimitTelemetry,
+  backfillMode = false
 ): Promise<
   UpsertBlockReport & {
     indexed: number
@@ -522,13 +524,10 @@ export async function runUpsertPhase(
   // SMI-4846 + C-3: Single batched upsert — drains the accumulator, writes
   // null-url audit logs pre-batch, surfaces partial failures.
   // SMI-7113: WAF-block bisect knobs come from this process's env; the batch module is env-free.
-  const flush = await flushUpsertAccumulator(
-    supabase,
-    accumulator,
-    existingUrls,
-    undefined,
-    resolveWafOptions((name) => process.env[name])
-  )
+  const flush = await flushUpsertAccumulator(supabase, accumulator, existingUrls, undefined, {
+    ...resolveWafOptions((name) => process.env[name]),
+    backfillMode,
+  })
   indexed += flush.indexed
   updated += flush.updated
   failed += flush.failed

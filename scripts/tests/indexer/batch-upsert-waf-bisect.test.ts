@@ -158,6 +158,45 @@ describe.each([
     expect(t.blockAudits()).toEqual([])
   })
 
+  it('BACKFILL never defers: a row blocked 2h ago is still sent, bisected, recorded, and not re-alerted', async () => {
+    // A backfill's crawl cursor has already moved past these rows, so a held-back row is lost.
+    const t = makeDb({
+      respond: blockingRows([urlOf(17)]),
+      recent: [
+        { created_at: new Date(T0 - 2 * HOUR).toISOString(), metadata: { repo_url: urlOf(17) } },
+      ],
+    })
+    const r = await flush(m, t, 53, { backfillMode: true })
+    expect(sentUrls(t.upserts)).toContain(urlOf(17))
+    expect(r.deferredCount).toBe(0)
+    expect(r.blocked.map((b) => b.repoUrl)).toEqual([urlOf(17)])
+    expect(r.failed).toBe(1)
+    expect(r.indexed).toBe(52)
+    expect(r.newlyBlocked).toEqual([]) // known from the lookup: classification, not deferral
+    expect(t.blockAudits()).toHaveLength(1)
+  })
+
+  it('BACKFILL with no block history: the blocked row is sent and IS newly blocked', async () => {
+    const t = makeDb({ respond: blockingRows([urlOf(17)]) })
+    const r = await flush(m, t, 53, { backfillMode: true })
+    expect(r.deferredCount).toBe(0)
+    expect(r.newlyBlocked.map((b) => b.repoUrl)).toEqual([urlOf(17)])
+    expect(t.blockAudits()).toHaveLength(1)
+  })
+
+  it('CONTROL: backfillMode false defers the same row exactly like scheduled discovery', async () => {
+    const t = makeDb({
+      respond: blockingRows([urlOf(17)]),
+      recent: [
+        { created_at: new Date(T0 - 2 * HOUR).toISOString(), metadata: { repo_url: urlOf(17) } },
+      ],
+    })
+    const r = await flush(m, t, 53, { backfillMode: false })
+    expect(sentUrls(t.upserts)).not.toContain(urlOf(17))
+    expect(r.deferredCount).toBe(1)
+    expect(t.blockAudits()).toEqual([])
+  })
+
   it('probes a row whose newest block is 25h old; it is known, so it does not re-alert', async () => {
     const t = makeDb({
       respond: blockingRows([urlOf(17)]),

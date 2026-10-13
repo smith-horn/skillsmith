@@ -323,22 +323,28 @@ export async function flushUpsertAccumulator(
     }
   }
 
-  // SMI-7113: rows the WAF refused in the last 24h are held back (not sent, not failed, and --
-  // crucially -- given NO fresh audit row, so their newest block time ages and they are probed
-  // again once it passes 24h). One lookup per flush; skipped when bisecting is switched off.
+  // SMI-7113: in a scheduled-discovery flush, rows the WAF refused in the last 24h are held back
+  // (not sent, not failed, and -- crucially -- given NO fresh audit row, so their newest block
+  // time ages and they are probed again once it passes 24h). A BACKFILL flush never defers: its
+  // crawl cursor has already advanced past these rows, so a held-back row would never be retried
+  // and would be lost. A backfill run sends every row, lets the bisect isolate the blocked ones,
+  // and records each (audit row + identity). One lookup per flush; skipped when bisecting is off.
+  // The lookup also classifies "newly blocked" (no block row in the last 48h) in both modes.
   const nowMs = waf.nowMs ?? Date.now()
   const { recent, truncated: lookupTruncated } = bisectDisabled
     ? { recent: new Map<string, number>(), truncated: false }
     : await loadRecentBlocks(supabase, nowMs)
-  // A truncated lookup holds only part of the window, so it can prove nothing about ANY repo:
-  // one absent from the partial map may still be blocked. The whole flush is deferred (nothing
-  // sent, no block audit, nothing newly blocked); deferredCount reports every held-back row.
-  const sendItems = lookupTruncated
-    ? []
-    : fullItems.filter((a) => {
+  // A truncated lookup holds only part of the window, so it can prove nothing about ANY repo.
+  // It must never cost a row: every row is sent (the bisect still isolates and records blocked
+  // ones), none is classified newly blocked (so a partial map cannot raise a false alert), and
+  // the truncation is reported via lookupTruncated.
+  const mayDefer = waf.backfillMode !== true && !lookupTruncated
+  const sendItems = mayDefer
+    ? fullItems.filter((a) => {
         const at = recent.get(a.skillData.repo_url as string)
         return at === undefined || nowMs - at >= BLOCK_DEFER_MS
       })
+    : fullItems
   const deferredCount = fullItems.length - sendItems.length
 
   // C-3 + SMI-5934 + SMI-5968: PostgREST batch upsert is NOT row-atomic, and
@@ -405,7 +411,7 @@ export async function flushUpsertAccumulator(
     errors,
     upsertOkUrls,
     blocked: ctx.blocked,
-    newlyBlocked: ctx.blocked.filter((b) => !recent.has(b.repoUrl)),
+    newlyBlocked: lookupTruncated ? [] : ctx.blocked.filter((b) => !recent.has(b.repoUrl)),
     deferredCount,
     blockBudgetExhausted: ctx.budgetExhausted,
     bisectDisabled,

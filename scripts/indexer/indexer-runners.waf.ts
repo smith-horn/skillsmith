@@ -40,6 +40,8 @@ export interface WafOptions {
   bisectDisabled?: boolean
   budget?: number
   nowMs?: number
+  /** Backfill flush: never defer a row (the crawl cursor already moved past it). */
+  backfillMode?: boolean
 }
 
 /** SMI-7113: the block fields `flushUpsertAccumulator` adds to its result. */
@@ -48,11 +50,11 @@ export interface BlockOutcome {
   blocked: BlockedRow[]
   /** The subset of `blocked` with no `indexer_upsert_blocked` row in the last 48h. */
   newlyBlocked: BlockedRow[]
-  /** Rows held back because they were blocked less than 24h ago (not sent, not failed). */
+  /** Rows held back (scheduled discovery only; always 0 in backfill or on a truncated lookup). */
   deferredCount: number
   blockBudgetExhausted: boolean
   bisectDisabled: boolean
-  /** The 48h lookup hit its page bound: every repo it saw was deferred, none treated as new. */
+  /** The 48h lookup hit its page bound: all rows were still sent, none classified newly blocked. */
   lookupTruncated: boolean
 }
 
@@ -144,7 +146,7 @@ export interface RecentBlocks {
  * SMI-7113: repo_url -> newest `indexer_upsert_blocked` audit time (ms) in the lookback window.
  * Pages through the WHOLE window (newest first, deduplicating by repo_url as it goes). If
  * `MAX_BLOCK_LOOKUP_PAGES` full pages are still not enough, `truncated` is true: the map is
- * partial, so the caller defers the WHOLE flush (nothing sent, nothing newly blocked).
+ * partial, so the caller sends every row and classifies none as newly blocked.
  */
 export async function loadRecentBlocks(
   supabase: SupabaseClient,
@@ -175,7 +177,7 @@ export async function loadRecentBlocks(
       if (page + 1 >= MAX_BLOCK_LOOKUP_PAGES) {
         truncated = true
         console.warn(
-          `[upsert-block] backoff lookup hit its ${MAX_BLOCK_LOOKUP_PAGES}-page bound; deferring the whole flush and treating none as newly blocked`
+          `[upsert-block] backoff lookup hit its ${MAX_BLOCK_LOOKUP_PAGES}-page bound; sending every row and treating none as newly blocked`
         )
         break
       }

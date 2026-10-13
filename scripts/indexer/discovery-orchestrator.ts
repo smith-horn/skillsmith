@@ -400,7 +400,8 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     highTrustSkillMap,
     validationCache,
     dryRun,
-    telemetry
+    telemetry,
+    backfillMode
   )
   applyUpsertResult(result, upsertResult)
 
