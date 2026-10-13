@@ -23,6 +23,7 @@ import {
   verbs,
 } from './dependency-registry-expiry.harness'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
+import { PLANT_BASE, SCOPE_DIRS, plantRel, scriptsCopyFilter } from './_lib/scripts-copy-plants'
 
 describe('workflow shape', () => {
   it('exists, is ASCII only, and has a daily schedule plus workflow_dispatch', () => {
@@ -401,9 +402,6 @@ globalThis.Date = class extends R {
    * below drops before it is stat'ed. Both halves are asserted: nothing planted survives into the
    * copy, so a plant moved back into a walked directory fails here deterministically.
    */
-  function scriptsCopyFilter(src: string): boolean {
-    return !/[\\/](node_modules|tests|package-lock\.json)$/.test(src)
-  }
   function copyScriptsTree(dir: string, srcRoot: string = join(REPO_ROOT, 'scripts')): void {
     cpSync(srcRoot, join(dir, 'scripts'), { recursive: true, filter: scriptsCopyFilter })
     expect(
@@ -513,6 +511,16 @@ globalThis.Date = class extends R {
     expect(existsSync(join(out, 'scripts/node_modules')), 'absence: node_modules dropped').toBe(
       false
     )
+  })
+  it('SMI-7071 invariant: every directory the gate test plants into is dropped by the copy filter', () => {
+    // Known-positive: a directory the copy must descend into is kept, so a filter that drops
+    // everything cannot satisfy the loop below.
+    expect(scriptsCopyFilter(join(REPO_ROOT, 'scripts', 'ci'))).toBe(true)
+    expect(scriptsCopyFilter(join(REPO_ROOT, 'scripts', 'ci', 'test'))).toBe(true)
+    for (const base of new Set([PLANT_BASE, ...SCOPE_DIRS])) {
+      const plantDir = dirname(join(REPO_ROOT, plantRel('zz-smi6975-x.ts', base)))
+      expect(scriptsCopyFilter(plantDir), `plants below ${plantDir} must be dropped`).toBe(false)
+    }
   })
   it.each([
     // fixed clocks: the fixture acceptance (R4, expires 2027-04-01) is live under both, on any real date

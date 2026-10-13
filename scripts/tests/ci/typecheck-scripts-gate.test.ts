@@ -46,6 +46,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PLANT_BASE, SCOPE_DIRS, plantRel } from '../_lib/scripts-copy-plants'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 // Derived from this file's own location, NOT from `git rev-parse`. Under
@@ -249,22 +250,9 @@ function markingStub(marker: string, real: string): string {
   return `#!/bin/sh\ntouch '${marker}'\nexec ${real} "$@"\n`
 }
 
-/**
- * Where planted files go (SMI-7071). They must stay INSIDE the gate's scope
- * (find over scripts/ minus scripts/tests/*, and tsconfig.scripts.json's
- * `scripts/**` include) so the gate tests keep testing the gate, but OUTSIDE
- * what dependency-registry-expiry.test.ts's runFromBareCopy walks: that copy
- * filters every path whose basename is `tests` BEFORE it lstats it. A file
- * planted directly in scripts/ is listed, then lstat'ed, and ENOENTs if this
- * file deletes it in between (parallel vitest workers). So every plant lives in
- * a `tests/` directory below a scripts/ subdirectory, never in a directory the
- * copy descends into. Do not plant anywhere else.
- */
-const PLANT_BASE = 'scripts/ci'
-const SCOPE_DIRS = ['scripts/e2e', 'scripts/ci', 'scripts/lib', 'scripts/indexer/_shared']
-function plantRel(name: string, base: string = PLANT_BASE): string {
-  return `${base}/tests/${name}`
-}
+// Where planted files go (SMI-7071) is defined, with its reasoning, in
+// _lib/scripts-copy-plants.ts: inside the gate's scope, outside what the bare copy walks.
+// Do not plant anywhere else.
 
 /** Plants a file under REPO_ROOT (creating parents); its path carries a zz-smi6975- segment. */
 function plant(rel: string, content: string): string {
