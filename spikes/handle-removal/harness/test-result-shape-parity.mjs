@@ -67,6 +67,10 @@ const CONTRACT_FIELDS = [
   'sidecarPath',
   'detail',
   'fallbackTrigger',
+  // SMI-6715 Step 1b (C4 repair, D-8): a `held` result names where the tree was
+  // and where it is now. Declared, not passed through, per the F13 lesson.
+  'originPath',
+  'heldPath',
 ]
 check(
   '1a every declared field is present after shaping',

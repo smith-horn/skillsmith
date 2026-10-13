@@ -51,10 +51,21 @@ export const RESULT_FIELDS = [
   // because the parity suite compared `removeVR` against `quarantineTree`
   // directly and never `removeTree` against `removeTree`.
   'fallbackTrigger',
+  // SMI-6715 Step 1b (C4 repair, ADR-166 D-8): a `held` result names where the
+  // tree was and where it now sits. Declared rather than passed through, for
+  // the F13 reason above. `heldPath` equals `path` on a held result and is null
+  // on every other outcome; `originPath` is set only on a held result.
+  'originPath',
+  'heldPath',
 ]
 
-/** Outcomes either path may report. `removed` and `quarantined` are both success. */
-export const RESULT_STATUSES = new Set(['removed', 'quarantined', 'kept', 'stopped'])
+/**
+ * Outcomes either path may report. `removed` and `quarantined` are both success.
+ * `held` (SMI-6715, C4 repair): the tree was moved into the trash and then
+ * found changed, unreadable or mounted-into at its destination. Nothing was
+ * moved back and nothing deleted. It is NOT success -- see isSuccess.
+ */
+export const RESULT_STATUSES = new Set(['removed', 'quarantined', 'kept', 'stopped', 'held'])
 
 /**
  * Normalizes a partial result to the full shape. Absent fields become `null`,
@@ -85,7 +96,11 @@ export function shapeResult(partial) {
   return out
 }
 
-/** True when the tree is gone from its original location. */
+/**
+ * True when the removal is done. A `held` tree is also gone from its original
+ * location, but the operation is not done: the caller keeps the manifest entry
+ * and points the user at `skillsmith restore <id>` (ADR-166 D-8, held row).
+ */
 export function isSuccess(result) {
   return result.status === 'removed' || result.status === 'quarantined'
 }

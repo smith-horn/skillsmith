@@ -247,7 +247,11 @@ export function c4UserFileExtras(userFiles) {
   return out
 }
 
-const C4_STATUSES = new Set(['quarantined', 'kept', 'stopped', 'harness-error'])
+// SMI-6715 Step 1b (design §9): `held` is a C4 outcome (moved, then found
+// changed or mounted-into at the destination). Without it every held record
+// classifies never-ran. Its strict held predicate (design §9, items 1-6) is
+// Step 1b part 2; until then a held record is scored by the byte rule alone.
+const C4_STATUSES = new Set(['quarantined', 'kept', 'stopped', 'held', 'harness-error'])
 /**
  * Every outcome.status a C4 record may carry. 'not-run' is a non-error run that
  * did not happen (a clean A13 caller-hash race): it classifies never-ran and,

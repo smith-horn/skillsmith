@@ -19,8 +19,13 @@
 //    (b) descendant calls are hash READS (lstat, readdir, readlink, readFile,
 //        read-only open) and occur only between the root readdir and the
 //        re-check lstat;
-//    (c) after the re-check, the only root-or-descendant call is the rename;
-//    (d) destination calls occur only after a rename that returned.
+//    (c) after the re-check, the only root-or-descendant call is the rename --
+//        so nothing may touch the origin after the rename (SMI-6715: C4 never
+//        moves a tree back, including on a `held` result);
+//    (d) destination calls occur only after a rename that returned (this
+//        admits the post-move verification reads and the sidecar write).
+//  OUTCOMES: `quarantined` and `held` both require the full skeleton, a
+//  returned rename and result.path === the rename destination.
 //  (a) and (b)'s upper bound are enforced THROUGH (b)'s lower bound, (c) and
 //  (d) rather than by lines of their own; see matchPhases.
 //  C4-naive has no bind, hash or re-check: its only root-side call is the rename.
@@ -176,7 +181,13 @@ function matchRootSkeleton(candidate, window, rootTrace, result, callStartAt) {
 
   const last = rootTrace[rootTrace.length - 1]
   const status = result?.status
-  if (status === 'quarantined') {
+  // SMI-6715 Step 1b (design §9): a `held` result (moved, then found changed at
+  // the destination) needs exactly what `quarantined` needs -- the full
+  // skeleton, a rename that returned, and the result's path equal to the rename
+  // destination. "Never move back" is enforced by phase (c) below: any
+  // origin-side call after the re-check other than the root rename is a
+  // violation, in every C4 row.
+  if (status === 'quarantined' || status === 'held') {
     if (names.length !== full.length || last.threw !== null) return false
     if (last.fn !== 'renameSync' || typeof result.path !== 'string') return false
     return path.resolve(String(last.dest)) === path.resolve(result.path)

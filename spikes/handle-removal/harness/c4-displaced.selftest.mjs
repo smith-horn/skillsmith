@@ -44,12 +44,20 @@ function layout(fx) {
 }
 const U = 'user-bytes-unique'
 
-// 1. Real run: post-hash swap moves the replacement into this run's destination.
+// 1. Real run: a swap the candidate cannot see moves the replacement into this
+// run's destination.
+//
+// SMI-6715 Step 1b: this used to run guarded C4 at 'post-hash', which moved the
+// swapped tree and reported `quarantined` -- the very defect the C4 repair
+// removes (that run now ends `held`). The TRIGGER rode on the defect; the
+// assertion (locateDisplaced finds the bytes in THIS run's destination) is the
+// subject and is unchanged. Re-pointed to C4-naive, which has no guard, maps
+// 'post-hash' to 'at-rename', and still quarantines the replacement.
 withFx((fx) => {
   const f = buildSwapFixture(fx.root)
   const content = `displaced-${fx.runId}`
   const out = runC4Candidate({
-    candidate: 'C4',
+    candidate: 'C4-naive',
     parentAbs: fx.root,
     name: 'tree',
     window: 'post-hash',
