@@ -1,6 +1,6 @@
 # SMI-6676 spike results summary
 
-Regenerated from 69 `results/raw/*.jsonl` files, 143760 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
+Regenerated from 69 `results/raw/*.jsonl` files, 147060 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
 
 Not attack cells, so not counted above: measurement files `c4-guard-window.jsonl` (210); malformed lines skipped: 0.
 
@@ -8,11 +8,13 @@ Not attack cells, so not counted above: measurement files `c4-guard-window.jsonl
 
 | Verdict | Cells |
 |---|---|
-| FAIL | 321 |
+| FAIL | 283 |
 | NEVER-RAN (control) | 56 |
-| NEVER-RAN | 36 |
+| NEVER-RAN (underpowered) | 1 |
+| NEVER-RAN | 37 |
 | PASS (control unverified) | 90 |
-| PASS | 285 |
+| PASS (held) | 39 |
+| PASS | 302 |
 
 The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `never-ran == 0`, `failed == 0` **and** a same-filesystem control cell with `failed >= 1`. `NEVER-RAN (control)` means the candidate itself was clean but the plan's named control never demonstrated the loss on that filesystem, so the fixture proves nothing. `PASS (control unverified)` means the control the plan names is real but lives outside this JSONL (a feasibility script, or a cited earlier experiment) and this harness can neither confirm nor refute it.
 
@@ -23,9 +25,9 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | ABSENT | 15 |
 | DID-NOT-FAIL | 62 |
 | external-unverified | 105 |
-| is-control | 152 |
-| none-by-design | 96 |
-| ok | 358 |
+| is-control | 157 |
+| none-by-design | 106 |
+| ok | 363 |
 
 ## Cells
 
@@ -33,20 +35,20 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 |---|---|---|---|---|---|---|---|---|---|
 | A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 10 | 0 | 10 | 0 | is-control | FAIL |
 | A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 10 | 0 | 10 | 0 | is-control | FAIL |
-| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | ext4vol | 10 | 0 | 10 | 0 | ok | FAIL |
-| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | ext4vol | 10 | 0 | 10 | 0 | ok | FAIL |
+| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | ext4vol | 10 | 10 | 0 | 0 | ok | PASS |
+| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | ext4vol | 10 | 10 | 0 | 0 | ok | PASS |
 | A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 10 | 0 | 10 | 0 | is-control | FAIL |
 | A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 10 | 0 | 10 | 0 | is-control | FAIL |
-| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 10 | 0 | 10 | 0 | ok | FAIL |
-| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 10 | 0 | 10 | 0 | ok | FAIL |
+| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 10 | 10 | 0 | 0 | ok | PASS |
+| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 10 | 10 | 0 | 0 | ok | PASS |
 | A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 10 | 0 | 10 | 0 | is-control | FAIL |
 | A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 10 | 0 | 10 | 0 | is-control | FAIL |
-| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | overlayfs | 10 | 0 | 10 | 0 | ok | FAIL |
-| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | overlayfs | 10 | 0 | 10 | 0 | ok | FAIL |
+| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | overlayfs | 10 | 10 | 0 | 0 | ok | PASS |
+| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | overlayfs | 10 | 10 | 0 | 0 | ok | PASS |
 | A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 10 | 0 | 10 | 0 | is-control | FAIL |
 | A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 10 | 0 | 10 | 0 | is-control | FAIL |
-| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 10 | 0 | 10 | 0 | ok | FAIL |
-| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 10 | 0 | 10 | 0 | ok | FAIL |
+| A1-C4 | bind/pre-call/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 10 | 10 | 0 | 0 | ok | PASS |
+| A1-C4 | tmpfs/pre-call/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A10-C0 | a | C0 | darwin-apfs | 30 | 30 | 0 | 0 | external-unverified | PASS (control unverified) |
 | A10-C0 | b | C0 | darwin-apfs | 30 | 30 | 0 | 0 | external-unverified | PASS (control unverified) |
 | A10-C0 | a | C0 | ext4vol | 30 | 30 | 0 | 0 | external-unverified | PASS (control unverified) |
@@ -192,16 +194,26 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A12 | ebusy-rmdir | V1 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A12 | eacces-unlink | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A12 | ebusy-rmdir | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 300 | 0 | 300 | 0 | is-control | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 300 | 300 | 0 | 0 | ok | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 292 | 8 | is-control | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 299 | 0 | 1 | ok | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 300 | 0 | 161 | 139 | is-control | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 300 | 168 | 0 | 132 | ok | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 300 | 0 | 286 | 14 | is-control | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | overlayfs | 300 | 294 | 0 | 6 | ok | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 300 | 0 | 285 | 15 | is-control | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 300 | 285 | 0 | 15 | ok | PASS |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 300 | 0 | 128 | 172 | is-control | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 300 | 0 | 0 | 190 | ok | PASS (110 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 156 | 144 | is-control | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 0 | 0 | 182 | ok | PASS (118 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 300 | 0 | 300 | 0 | is-control | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 300 | 0 | 0 | 3 | ok | PASS (297 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 300 | 0 | 150 | 150 | is-control | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 300 | 0 | 0 | 168 | ok | PASS (132 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 300 | 0 | 6 | 294 | is-control | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 300 | 0 | 0 | 293 | ok | NEVER-RAN (underpowered) |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 300 | 0 | 290 | 10 | is-control | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 300 | 293 | 0 | 7 | ok | PASS |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 287 | 13 | is-control | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 285 | 0 | 15 | ok | NEVER-RAN |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 300 | 0 | 225 | 75 | is-control | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 300 | 222 | 0 | 78 | ok | PASS |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 300 | 0 | 279 | 21 | is-control | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | overlayfs | 300 | 293 | 0 | 7 | ok | PASS |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 300 | 0 | 258 | 42 | is-control | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 300 | 264 | 0 | 36 | ok | PASS |
 | A13-TIMING | guard-guardHash | V2 | darwin-apfs | 300 | 170 | 0 | 130 | ok | PASS |
 | A13-TIMING | guard-none | V2 | darwin-apfs | 300 | 134 | 1 | 165 | ok | FAIL |
 | A13-TIMING | guard-guardHash | V2 | ext4vol | 300 | 145 | 0 | 155 | ok | PASS |
@@ -356,15 +368,15 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A3 | guardHash | V2 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
 | A3 | none | V2 | virtiofsroot | 30 | 11 | 19 | 0 | ok | FAIL |
 | A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 30 | 0 | 30 | 0 | is-control | FAIL |
-| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
-| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
+| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 30 | 0 | 30 | 0 | is-control | FAIL |
-| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
+| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
-| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
-| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
+| A4-C4 | target-swap/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A4 | baseline | baseline | darwin-apfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A4 | default | C0 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A4 | ud25 | ud25 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
@@ -535,12 +547,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 30 | 0 | 0 | ok | PASS |
-| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
@@ -551,12 +563,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 30 | 0 | 0 | ok | PASS |
-| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 30 | 0 | ok | FAIL |
+| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 30 | 0 | 30 | 0 | is-control | FAIL |
@@ -567,12 +579,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 30 | 0 | 0 | ok | PASS |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 30 | 0 | 0 | ok | PASS |
-| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 30 | 0 | ok | FAIL |
+| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
@@ -583,12 +595,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 30 | 0 | 0 | ok | PASS |
-| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 30 | 0 | ok | FAIL |
+| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
@@ -599,12 +611,12 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 30 | 0 | 30 | 0 | is-control | FAIL |
 | A7-C4 | between-file/after-bind/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
 | A7-C4 | between-symlink/after-bind/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 30 | 0 | 0 | ok | PASS |
-| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
-| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 30 | 0 | ok | FAIL |
+| A7-C4 | late-append/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-chmod/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-create/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-file/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-renameover/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
+| A7-C4 | late-symlink/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 0 | 0 | 0 | ok | PASS (30 held) |
 | A7 | before-unlink/file | C0 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
 | A7 | before-unlink/symlink | C0 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
 | A7 | between/file | C0 | darwin-apfs | 30 | 0 | 30 | 0 | ok | FAIL |
@@ -787,6 +799,16 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A9-VR | stub/none | V1 | virtiofsroot | 30 | 3 | 27 | 0 | ok | FAIL |
 | A9-VR | stub/guardHash | V2 | virtiofsroot | 30 | 30 | 0 | 0 | ok | PASS |
 | A9-VR | stub/none | V2 | virtiofsroot | 30 | 7 | 23 | 0 | ok | FAIL |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4 | ext4vol | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4 | overlayfs | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4-naive | tmpfsroot | 30 | 30 | 0 | 0 | none-by-design | PASS |
+| B0-C4 | untouched/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 30 | 30 | 0 | 0 | none-by-design | PASS |
 | N1-VR | guardHash | V0 | darwin-apfs | 300 | 300 | 0 | 0 | none-by-design | PASS |
 | N1-VR | none | V0 | darwin-apfs | 300 | 300 | 0 | 0 | none-by-design | PASS |
 | N1-VR | guardHash | V1 | darwin-apfs | 300 | 300 | 0 | 0 | none-by-design | PASS |
@@ -820,7 +842,7 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | N1 | ud25 | ud25 | apfs | 300 | 300 | 0 | 0 | external-unverified | PASS (control unverified) |
 | N1 | ud25 | ud25 | overlayfs | 300 | 300 | 0 | 0 | external-unverified | PASS (control unverified) |
 
-Total: 788 cells, 143760 runs.
+Total: 808 cells, 147060 runs.
 
 ## Cells with excluded runs
 
@@ -828,12 +850,25 @@ A C4 run flagged `vacuous-check` (its only check was vacuous, e.g. a partial rac
 
 | Attack | Variant | Candidate | FS | Ran | Excluded (vacuous) | Excluded (caller-intent) | Verdict |
 |---|---|---|---|---|---|---|---|
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | ext4vol | 300 | 0 | 5 | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | ext4vol | 300 | 0 | 1 | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | overlayfs | 300 | 0 | 11 | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | overlayfs | 300 | 0 | 4 | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | tmpfsroot | 300 | 0 | 13 | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | tmpfsroot | 300 | 0 | 14 | PASS |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | darwin-apfs | 300 | 74 | 0 | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | darwin-apfs | 300 | 73 | 0 | PASS (110 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | ext4vol | 300 | 95 | 0 | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | ext4vol | 300 | 79 | 0 | PASS (118 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | hostshare-fuseblk | 300 | 1 | 0 | PASS (297 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | overlayfs | 300 | 102 | 0 | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | overlayfs | 300 | 73 | 0 | PASS (132 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | tmpfsroot | 300 | 29 | 0 | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | tmpfsroot | 300 | 15 | 0 | NEVER-RAN (underpowered) |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | darwin-apfs | 300 | 0 | 6 | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | darwin-apfs | 300 | 0 | 6 | PASS |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | ext4vol | 300 | 0 | 9 | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | ext4vol | 300 | 0 | 12 | NEVER-RAN |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | hostshare-fuseblk | 300 | 0 | 8 | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | hostshare-fuseblk | 300 | 0 | 4 | PASS |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | overlayfs | 300 | 0 | 16 | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | overlayfs | 300 | 0 | 6 | PASS |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | tmpfsroot | 300 | 0 | 28 | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | tmpfsroot | 300 | 0 | 30 | PASS |
 
 ## Cells whose control did not bite
 
