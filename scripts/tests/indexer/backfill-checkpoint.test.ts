@@ -5,7 +5,7 @@
  * Covers:
  *  - resolveTokenSource: app/pat detection from env vars
  *  - writeCheckpoint: insert shape, fail-soft on error/throw, dry_run tag
- *  - readLatestCheckpoint: payload parsing, runId filter, null on no row/error,
+ *  - readCheckpoint: payload parsing, runId filter, three-way found/none/error,
  *    excludeDryRun filter (SMI-5319 W3)
  *  - Round-trip: write then read back preserves cursor (path, facet, last_page)
  */
@@ -15,7 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   resolveTokenSource,
   writeCheckpoint,
-  readLatestCheckpoint,
+  readCheckpoint,
   BACKFILL_CHECKPOINT_EVENT_TYPE,
   CHECKPOINT_WRITE_TIMEOUT_MS,
   type BackfillCheckpointPayload,
@@ -298,7 +298,7 @@ describe('writeCheckpoint', () => {
 })
 
 // ---------------------------------------------------------------------------
-// readLatestCheckpoint mock builder
+// readCheckpoint mock builder
 // ---------------------------------------------------------------------------
 
 type ReadQueryState = {
@@ -339,100 +339,102 @@ function makeReadMock(state: ReadQueryState): SupabaseClient {
 }
 
 // ---------------------------------------------------------------------------
-// readLatestCheckpoint
+// readCheckpoint (SMI-7112: three-way found / none / error)
 // ---------------------------------------------------------------------------
 
-describe('readLatestCheckpoint', () => {
-  it('returns the parsed BackfillCheckpointPayload when a row exists', async () => {
+/** Unwrap a `found` result; fails the test (with the real kind) on anything else. */
+async function readFound(...args: Parameters<typeof readCheckpoint>) {
+  const r = await readCheckpoint(...args)
+  expect(r.kind).toBe('found')
+  if (r.kind !== 'found') throw new Error(`expected found, got ${r.kind}`)
+  return r.payload
+}
+
+describe('readCheckpoint', () => {
+  it('returns found with the parsed BackfillCheckpointPayload when a row exists', async () => {
     const payload = makePayload()
-    const state: ReadQueryState = {
-      row: { metadata: payload },
-      error: null,
-      eqFilters: {},
-    }
-    const supabase = makeReadMock(state)
+    const state: ReadQueryState = { row: { metadata: payload }, error: null, eqFilters: {} }
+    const result = await readFound(makeReadMock(state))
 
-    const result = await readLatestCheckpoint(supabase)
-
-    expect(result).not.toBeNull()
-    expect(result?.run_id).toBe('run-abc-123')
-    expect(result?.cursor.path).toBe('.agents/skills')
-    expect(result?.cursor.last_page).toBe(3)
-    expect(result?.facets_completed).toBe(4)
-    expect(result?.facets_total).toBe(10)
-    expect(result?.cap_saturated).toBe(false)
-    expect(result?.truncated_repo_count).toBe(2)
+    expect(result.run_id).toBe('run-abc-123')
+    expect(result.cursor.path).toBe('.agents/skills')
+    expect(result.cursor.last_page).toBe(3)
+    expect(result.facets_completed).toBe(4)
+    expect(result.facets_total).toBe(10)
+    expect(result.cap_saturated).toBe(false)
+    expect(result.truncated_repo_count).toBe(2)
   })
 
-  it('returns null when no row exists (cold start)', async () => {
+  it('returns none ONLY when the query succeeded and matched no row (cold start)', async () => {
     const state: ReadQueryState = { row: null, error: null, eqFilters: {} }
-    const supabase = makeReadMock(state)
-
-    expect(await readLatestCheckpoint(supabase)).toBeNull()
+    expect(await readCheckpoint(makeReadMock(state))).toEqual({ kind: 'none' })
   })
 
-  it('returns null when supabase returns an error', async () => {
+  it('returns error (never none) when supabase returns an error', async () => {
     const state: ReadQueryState = {
       row: null,
       error: { message: 'permission denied' },
       eqFilters: {},
     }
-    const supabase = makeReadMock(state)
+    const result = await readCheckpoint(makeReadMock(state))
+    expect(result.kind).toBe('error')
+    if (result.kind === 'error') expect(result.reason).toContain('permission denied')
+  })
 
-    expect(await readLatestCheckpoint(supabase)).toBeNull()
+  it('returns error (never none) when the client throws', async () => {
+    const throwing = {
+      from: () => {
+        throw new Error('socket hang up')
+      },
+    } as unknown as SupabaseClient
+    const result = await readCheckpoint(throwing)
+    expect(result.kind).toBe('error')
+    if (result.kind === 'error') expect(result.reason).toContain('socket hang up')
+  })
+
+  it.each([
+    ['empty metadata object', {}],
+    ['run_id not a string', { run_id: 7, cursor: { facet: 'f1' } }],
+    ['cursor missing', { run_id: 'r1' }],
+    ['cursor.facet not a string', { run_id: 'r1', cursor: { facet: 3 } }],
+  ])('returns error for a row with malformed metadata: %s', async (_label, metadata) => {
+    const state: ReadQueryState = {
+      row: { metadata } as unknown as ReadQueryState['row'],
+      error: null,
+      eqFilters: {},
+    }
+    const result = await readCheckpoint(makeReadMock(state))
+    expect(result.kind).toBe('error')
+  })
+
+  it('returns error for a row whose metadata is null (a row exists, so it is not "none")', async () => {
+    const state: ReadQueryState = {
+      row: { metadata: null } as unknown as ReadQueryState['row'],
+      error: null,
+      eqFilters: {},
+    }
+    expect((await readCheckpoint(makeReadMock(state))).kind).toBe('error')
   })
 
   it('applies run_id filter when a specific runId is given', async () => {
     const payload = makePayload({ run_id: 'specific-run' })
-    const state: ReadQueryState = {
-      row: { metadata: payload },
-      error: null,
-      eqFilters: {},
-    }
-    const supabase = makeReadMock(state)
-
-    await readLatestCheckpoint(supabase, 'specific-run')
-
+    const state: ReadQueryState = { row: { metadata: payload }, error: null, eqFilters: {} }
+    await readCheckpoint(makeReadMock(state), 'specific-run')
     // The implementation filters via `metadata->>run_id`
     expect(state.eqFilters['metadata->>run_id']).toBe('specific-run')
   })
 
-  it('does NOT apply a run_id filter when runId is undefined (reads latest across all runs)', async () => {
+  it.each([
+    ['undefined', undefined],
+    ['empty string', ''],
+    ['"latest"', 'latest'],
+  ])('does NOT apply a run_id filter when runId is %s', async (_label, runId) => {
     const state: ReadQueryState = {
       row: { metadata: makePayload() },
       error: null,
       eqFilters: {},
     }
-    const supabase = makeReadMock(state)
-
-    await readLatestCheckpoint(supabase, undefined)
-
-    expect(state.eqFilters['metadata->>run_id']).toBeUndefined()
-  })
-
-  it('does NOT apply a run_id filter when runId is empty string', async () => {
-    const state: ReadQueryState = {
-      row: { metadata: makePayload() },
-      error: null,
-      eqFilters: {},
-    }
-    const supabase = makeReadMock(state)
-
-    await readLatestCheckpoint(supabase, '')
-
-    expect(state.eqFilters['metadata->>run_id']).toBeUndefined()
-  })
-
-  it('does NOT apply a run_id filter when runId is "latest"', async () => {
-    const state: ReadQueryState = {
-      row: { metadata: makePayload() },
-      error: null,
-      eqFilters: {},
-    }
-    const supabase = makeReadMock(state)
-
-    await readLatestCheckpoint(supabase, 'latest')
-
+    await readCheckpoint(makeReadMock(state), runId)
     expect(state.eqFilters['metadata->>run_id']).toBeUndefined()
   })
 
@@ -442,10 +444,7 @@ describe('readLatestCheckpoint', () => {
       error: null,
       eqFilters: {},
     }
-    const supabase = makeReadMock(state)
-
-    await readLatestCheckpoint(supabase)
-
+    await readCheckpoint(makeReadMock(state))
     expect(state.eqFilters['event_type']).toBe(BACKFILL_CHECKPOINT_EVENT_TYPE)
   })
 })
@@ -493,22 +492,21 @@ describe('backfill checkpoint round-trip (SPARC AC §#5)', () => {
       eqFilters: {},
     }
     const readSupabase = makeReadMock(readState)
-    const readBack = await readLatestCheckpoint(readSupabase, 'roundtrip-run-001')
+    const readBack = await readFound(readSupabase, 'roundtrip-run-001')
 
-    expect(readBack).not.toBeNull()
     // SPARC AC: cursor fields survive intact
-    expect(readBack?.cursor.path).toBe('.agents/skills')
-    expect(readBack?.cursor.facet).toBe('2026-06-17')
-    expect(readBack?.cursor.last_page).toBe(5)
+    expect(readBack.cursor.path).toBe('.agents/skills')
+    expect(readBack.cursor.facet).toBe('2026-06-17')
+    expect(readBack.cursor.last_page).toBe(5)
     // Progress counters too
-    expect(readBack?.facets_completed).toBe(7)
-    expect(readBack?.facets_total).toBe(20)
-    expect(readBack?.cap_saturated).toBe(true)
-    expect(readBack?.truncated_repo_count).toBe(3)
+    expect(readBack.facets_completed).toBe(7)
+    expect(readBack.facets_total).toBe(20)
+    expect(readBack.cap_saturated).toBe(true)
+    expect(readBack.truncated_repo_count).toBe(3)
     // SMI-6073: survives the round-trip too, not just the direct-write assertion
-    expect(readBack?.incomplete_results_ranges).toBe(2)
-    expect(readBack?.run_id).toBe('roundtrip-run-001')
+    expect(readBack.incomplete_results_ranges).toBe(2)
+    expect(readBack.run_id).toBe('roundtrip-run-001')
     // SMI-5319 W3: dry_run tag survives the round-trip
-    expect(readBack?.dry_run).toBe(false)
+    expect(readBack.dry_run).toBe(false)
   })
 })

@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import {
+  IncompleteIntent,
   resolveForProject,
   countConsecutiveSkipsForResumeFrom,
   buildRetryCapOutcome,
@@ -24,7 +25,7 @@ const dispatchInputs = {
 }
 
 /**
- * Both `readLatestCheckpoint()` (event_type='indexer_backfill_checkpoint')
+ * Both `readCheckpoint()` (event_type='indexer_backfill_checkpoint')
  * and this module's own audit-row fallback query (event_type='indexer:run')
  * resolve via `.maybeSingle()` — this mock discriminates by which
  * `event_type` was queried, since it's the only argument that tells the two
@@ -127,7 +128,7 @@ describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
     expect(result?.isRetry).toBe(false)
   })
 
-  it('returns null (never defaults) when the exact-match checkpoint is missing dispatch_inputs', async () => {
+  it('throws IncompleteIntent (never defaults, never skips) when the exact-match checkpoint is missing dispatch_inputs', async () => {
     const { supabase } = makeSupabase({
       checkpointRow: {
         metadata: {
@@ -143,8 +144,9 @@ describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
         },
       },
     })
-    const result = await resolveForProject(supabase as never, 'run-42', 'prod')
-    expect(result).toBeNull()
+    await expect(resolveForProject(supabase as never, 'run-42', 'prod')).rejects.toBeInstanceOf(
+      IncompleteIntent
+    )
   })
 })
 
@@ -201,16 +203,17 @@ describe("SMI-6246: resolveForProject — fallback to the failed attempt's own a
     expect(result?.isRetry).toBe(true)
   })
 
-  it('fails closed (returns null) when the audit row itself is missing dispatch_inputs', async () => {
+  it('throws IncompleteIntent when the audit row itself is missing dispatch_inputs', async () => {
     const { supabase } = makeSupabase({
       checkpointRow: null,
       auditRow: { metadata: { meta: { status: 'skipped_lock' } } },
     })
-    const result = await resolveForProject(supabase as never, 'run-1', 'prod')
-    expect(result).toBeNull()
+    await expect(resolveForProject(supabase as never, 'run-1', 'prod')).rejects.toBeInstanceOf(
+      IncompleteIntent
+    )
   })
 
-  it('fails closed (returns null) when neither a checkpoint nor an audit row exists for this run at all', async () => {
+  it('returns null (the only legitimate "no row") when neither a checkpoint nor an audit row exists', async () => {
     const { supabase } = makeSupabase({ checkpointRow: null, auditRow: null })
     const result = await resolveForProject(supabase as never, 'run-1', 'prod')
     expect(result).toBeNull()
@@ -265,7 +268,8 @@ describe('SMI-6246 change #4c: countConsecutiveSkipsForResumeFrom', () => {
     expect(count).toBe(3)
   })
 
-  it('returns 0 when the query errors (fails open — never blocks a real dispatch on this alone)', async () => {
+  it('returns 0 WITH a ::warning:: when the query errors (fails open, but visibly)', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const supabase = {
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
@@ -276,6 +280,8 @@ describe('SMI-6246 change #4c: countConsecutiveSkipsForResumeFrom', () => {
     }
     const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
     expect(count).toBe(0)
+    expect(logSpy.mock.calls.some((c) => String(c[0]).startsWith('::warning::'))).toBe(true)
+    logSpy.mockRestore()
   })
 
   it('returns 0 when no rows exist at all', async () => {

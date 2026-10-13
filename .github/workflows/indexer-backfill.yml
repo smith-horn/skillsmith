@@ -44,6 +44,8 @@
 
 name: Skill Indexer Backfill
 
+run-name: "Skill Indexer Backfill (env=${{ inputs.supabase_env || 'prod' }}) [tok=${{ inputs.dispatch_token }}]"
+
 on:
   workflow_dispatch:
     inputs:
@@ -113,6 +115,11 @@ on:
         options:
           - backfill
           - fallback
+      dispatch_token:
+        description: 'SMI-7112 dispatch-intent token (optional). Embedded in run-name as [tok=...] so the dispatcher can resolve this exact run. Leave empty for manual dispatches.'
+        required: false
+        default: ''
+        type: string
 
 env:
   NODE_VERSION: '22'
@@ -155,9 +162,7 @@ jobs:
       - name: Validate Secrets
         env:
           SUPABASE_ENV: ${{ github.event.inputs.supabase_env || 'prod' }}
-          SUPABASE_URL_PROD: ${{ secrets.SUPABASE_URL_PROD }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
-          SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -177,8 +182,8 @@ jobs:
             URL_VAL="$SUPABASE_URL_STAGING"
             KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY_STAGING"
           else
-            URL_VAL="${SUPABASE_URL_PROD:-$SUPABASE_URL}"
-            KEY_VAL="${SUPABASE_SERVICE_ROLE_KEY_PROD:-$SUPABASE_SERVICE_ROLE_KEY}"
+            URL_VAL="$SUPABASE_URL"
+            KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY"
           fi
           if [ -z "$URL_VAL" ] || [ -z "$KEY_VAL" ]; then
             echo "::error::Required Supabase secrets not configured for env=$SUPABASE_ENV."

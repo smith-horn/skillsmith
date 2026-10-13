@@ -72,8 +72,8 @@ jobs:
           RUN_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
           RUN_UPDATED_AT: ${{ github.event.workflow_run.updated_at }}
           GH_REPOSITORY: ${{ github.repository }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL_PROD }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -eo pipefail
 

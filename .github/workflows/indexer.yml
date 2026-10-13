@@ -152,11 +152,9 @@ jobs:
           # Issue #17: select prod vs staging secret pair based on supabase_env input.
           # Schedule + repository_dispatch always use prod.
           SUPABASE_ENV: ${{ github.event.inputs.supabase_env || 'prod' }}
-          SUPABASE_URL_PROD: ${{ secrets.SUPABASE_URL_PROD }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
-          SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
-          # Back-compat: existing single-secret form. Used when *_PROD/_STAGING aren't yet provisioned.
+          # Prod pair (the only prod secrets that exist).
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
@@ -165,8 +163,8 @@ jobs:
             URL_VAL="$SUPABASE_URL_STAGING"
             KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY_STAGING"
           else
-            URL_VAL="${SUPABASE_URL_PROD:-$SUPABASE_URL}"
-            KEY_VAL="${SUPABASE_SERVICE_ROLE_KEY_PROD:-$SUPABASE_SERVICE_ROLE_KEY}"
+            URL_VAL="$SUPABASE_URL"
+            KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY"
           fi
           if [ -z "$URL_VAL" ] || [ -z "$KEY_VAL" ]; then
             echo "::error::Required secrets not configured for env=$SUPABASE_ENV."
