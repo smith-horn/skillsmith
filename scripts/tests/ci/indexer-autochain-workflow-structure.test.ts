@@ -117,6 +117,14 @@ describe('autochain workflow structure', () => {
       expect(cmds[read]).not.toContain('--verify-read')
     })
 
+    it('the fence is told the triggering ATTEMPT and event (a re-run keeps its run id)', () => {
+      expect(dispatchStep!.env!.TRIGGER_EVENT).toContain('github.event_name')
+      expect(dispatchStep!.env!.TRIGGER_RUN_ATTEMPT).toContain(
+        'github.event.workflow_run.run_attempt'
+      )
+      expect(dispatchStep!.env!.TRIGGER_RUN_ATTEMPT).toContain('inputs.completed_run_attempt')
+    })
+
     it('a verify-only manual run ALSO executes the read, in --verify-read mode, and never dispatches', () => {
       const s = steps.find((x) => (x.run ?? '').includes('--verify-read'))
       expect(s, 'no verify-read step').toBeDefined()

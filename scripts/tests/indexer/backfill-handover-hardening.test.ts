@@ -175,6 +175,51 @@ describe('--first-link: the variable flips LAST', () => {
     expect(verdict(r), r.out).toBe('NO-GO')
     expect(r.out).toMatch(/not queued\/in_progress/)
     expect(seam.count('VARIABLE_SET')).toBe(0)
+    // the operator is told exactly what happened and what to do next
+    expect(r.out).toContain(
+      'The first link finished before the flip. The variable is still 1, so nothing chained. Run --first-link again to dispatch the next link.'
+    )
+  })
+
+  it('RECOVERY: a first link that finished before the flip => NO-GO; running --first-link again dispatches the next link and flips', () => {
+    const seam = allClear()
+    seam.fixture(runPath(111), { status: 'completed', updated_at: '2026-10-12T12:00:00Z' })
+    const first = runScript(HELPER, ['--first-link'], seam)
+    expect(verdict(first), first.out).toBe('NO-GO')
+    expect(seam.count('WORKFLOW_RUN')).toBe(1)
+    expect(seam.count('VARIABLE_SET')).toBe(0)
+
+    // The completed first link is a RESOLVED intent carrying every input, so the
+    // second run's checks pass, and the next link (a new run) is visible and live.
+    seam.env.STUB_RUN_ID = '112'
+    seam.fixture(runPath(112), { status: 'in_progress' })
+    const second = runScript(HELPER, ['--first-link'], seam)
+    expect(verdict(second), second.out).toBe('GO')
+    expect(seam.count('WORKFLOW_RUN')).toBe(2)
+    expect(seam.count('VARIABLE_SET')).toBe(1)
+    expect(seam.log()).toContain('VARIABLE_SET value=0')
+    // the second dispatch replays the FIRST link's recorded inputs (not defaults)
+    const secondCall = seam
+      .calls()
+      .split('\n')
+      .filter((l) => l.includes('workflow run'))
+      .pop()!
+    for (const frag of [
+      '-f resume_from=latest',
+      '-f path_prefix=.gemini/skills',
+      '-f min_size_bytes=2048',
+      '-f max_ranges=7',
+      '-f max_skills_per_dispatch=4321',
+      '-f max_skills_per_repo=33',
+      '-f max_elapsed_minutes=199',
+    ])
+      expect(secondCall, frag).toContain(frag)
+    const events = seam
+      .intents()
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l).event)
+    expect(events).toEqual(['intent', 'resolved', 'intent', 'resolved', 'intent', 'resolved'])
   })
 
   it('an unreadable first-link status body => NO-GO, variable never set', () => {

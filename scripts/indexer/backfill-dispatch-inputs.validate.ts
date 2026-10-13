@@ -16,8 +16,20 @@ export class MalformedDispatchInputs extends Error {
   }
 }
 
-const isNonNegInt = (v: unknown): v is number =>
-  typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
+/**
+ * Parity with the real execution path, deliberately NOT stricter. The workflow
+ * declares every numeric input as `type: string`, and `getInt()` in
+ * `parse-env.ts` accepts whatever `Number(raw)` finds finite (fractions,
+ * negatives, exponents, hex), treating only an empty string as "use the
+ * default". A recovered value the original dispatch ran with must therefore
+ * never be rejected on recovery, or the chain strands on an input that already
+ * ran. JSON cannot carry NaN or Infinity, so `Number.isFinite` is the whole test.
+ */
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** The workflow-input string form of {@link isFiniteNumber}: `getInt()`'s test, plus single-line. */
+const isNumericInputString = (v: unknown): v is string =>
+  typeof v === 'string' && !/[\r\n]/.test(v) && (v === '' || Number.isFinite(Number(v)))
 
 /**
  * TypeScript types are erased at the JSONB boundary, so a truthy-but-wrong
@@ -36,8 +48,8 @@ export function validateDispatchInputs(value: unknown): BackfillDispatchInputs {
   }
   need(
     'maxSkillsPerRepo',
-    typeof v.maxSkillsPerRepo === 'string' && /^\d+$/.test(v.maxSkillsPerRepo),
-    'a string of digits'
+    isNumericInputString(v.maxSkillsPerRepo),
+    'a single-line string that parses as a finite number'
   )
   need(
     'pathPrefix',
@@ -45,7 +57,7 @@ export function validateDispatchInputs(value: unknown): BackfillDispatchInputs {
     'a single-line string'
   )
   for (const k of ['maxRanges', 'minSizeBytes', 'maxSkillsPerDispatch', 'maxElapsedMinutes']) {
-    need(k, isNonNegInt(v[k]), 'a non-negative integer')
+    need(k, isFiniteNumber(v[k]), 'a finite number')
   }
   need('acceptTruncation', typeof v.acceptTruncation === 'boolean', 'a boolean')
   need(

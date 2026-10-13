@@ -221,10 +221,45 @@ describe('recover -- dispatch_inputs are validated against the workflow_dispatch
     expect(out.max_ranges).toBe('10')
   })
 
+  // PARITY: the workflow declares these inputs as strings and parse-env's getInt() accepts
+  // any value Number() finds finite, so a value the ORIGINAL dispatch ran with must never
+  // be rejected on recovery. Each case below is accepted by the real parser.
+  it.each([
+    ['a negative number', { minSizeBytes: -1 }, 'min_size_bytes', '-1'],
+    ['a fractional number', { maxRanges: 2.5 }, 'max_ranges', '2.5'],
+    ['an exponent-form number', { maxElapsedMinutes: 1e3 }, 'max_elapsed_minutes', '1000'],
+    [
+      'a fractional maxSkillsPerRepo string',
+      { maxSkillsPerRepo: '2.5' },
+      'max_skills_per_repo',
+      '2.5',
+    ],
+    ['a negative maxSkillsPerRepo string', { maxSkillsPerRepo: '-3' }, 'max_skills_per_repo', '-3'],
+    ['a hex maxSkillsPerRepo string', { maxSkillsPerRepo: '0x10' }, 'max_skills_per_repo', '0x10'],
+    [
+      'an empty maxSkillsPerRepo string (getInt: default)',
+      { maxSkillsPerRepo: '' },
+      'max_skills_per_repo',
+      '',
+    ],
+  ])('CONTROL: %s is accepted and replayed unchanged', async (_l, over, key, expected) => {
+    const out = await recoverWith({
+      auditRow: retryAudit({ ...dispatchInputs, ...over }),
+      count: { data: [], error: null },
+    })
+    expect(out.skip).toBe('false')
+    expect(out[key]).toBe(expected)
+  })
+
   it.each([
     ['an empty object', {}, /missing required key/],
     ['a wrong type (maxRanges as a string)', { ...dispatchInputs, maxRanges: '10' }, /maxRanges/],
-    ['a negative number', { ...dispatchInputs, minSizeBytes: -1 }, /minSizeBytes/],
+    ['a null number (not finite)', { ...dispatchInputs, minSizeBytes: null }, /minSizeBytes/],
+    [
+      'a maxSkillsPerRepo with a trailing newline (Number() alone would accept it)',
+      { ...dispatchInputs, maxSkillsPerRepo: '5\n' },
+      /maxSkillsPerRepo/,
+    ],
     ['an out-of-enum supabaseEnv', { ...dispatchInputs, supabaseEnv: 'dev' }, /supabaseEnv/],
     ['an out-of-enum tokenSource', { ...dispatchInputs, tokenSource: 'x' }, /tokenSource/],
     [

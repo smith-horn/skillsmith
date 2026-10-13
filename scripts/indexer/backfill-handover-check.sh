@@ -44,6 +44,13 @@
 # triggered by the driver's last completion, firing after the flip, sees the first
 # link as a newer backfill run and refuses (scripts/ci/autochain-newest-run-fence.sh).
 #
+# FAST FIRST LINK: if the first link is already `completed` when step 5 polls it, it
+# finished before the flip, so no autochain run could have chained from it (the variable
+# was still 1). The helper keeps the variable at 1, prints NO-GO and the next step, and
+# does NOT flip. Re-running --first-link is the recovery: the completed link's intent is
+# resolved and carries every input, so checks (a)-(c) pass and the next link is dispatched.
+# Before re-running, confirm that link's conclusion was `success` (runbook section 3.4).
+#
 # Env: BACKFILL_REPO, BACKFILL_DRIVER_INTENTS (same defaults as the driver).
 # TEST SEAM: SKILLSMITH_BACKFILL_DRIVER_TEST=<dir> fakes the clock and sleep and
 # redirects the intent log to <dir>/intents.jsonl (see the driver); `gh` is whatever
@@ -220,6 +227,10 @@ first_link() {
   done
   case "$st" in
     queued|in_progress) say "FIRST-LINK run_id=$RESOLVED_ID token=$tok is $st" ;;
+    completed)
+      say "HALT: first link run $RESOLVED_ID is 'completed', not queued/in_progress; the variable stays 1."
+      say "The first link finished before the flip. The variable is still 1, so nothing chained. Run --first-link again to dispatch the next link."
+      return 1 ;;
     *) say "HALT: first link run $RESOLVED_ID is '${st:-unreadable}', not queued/in_progress; the variable stays 1. Reconcile before enabling the autochain."; return 1 ;;
   esac
 }

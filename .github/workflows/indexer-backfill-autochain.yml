@@ -21,7 +21,8 @@
 #     access is unmeasured (its token failed to mint).)
 #   - Immediately above that read sits the newest-run fence
 #     (scripts/ci/autochain-newest-run-fence.sh): if any indexer-backfill.yml
-#     run was created after the completed run, another dispatcher already
+#     run began at or after the triggering attempt, or the triggering run was
+#     re-run (or is itself a re-run, attempt > 1), another dispatcher already
 #     continued the chain, so this link is skipped LOUDLY (red job, warning,
 #     step summary) rather than dispatching a second chain.
 #   - Only the Supabase project the completed run targeted is queried, with only
@@ -54,6 +55,11 @@ on:
       completed_run_id:
         description: 'Run id of a completed Skill Indexer Backfill run to recover inputs from'
         required: true
+        type: string
+      completed_run_attempt:
+        description: 'Attempt number of that run being resumed (default 1; pass 2 or more only to resume a run that was re-run)'
+        required: false
+        default: '1'
         type: string
       verify_only:
         description: 'true = recover and report only; no cooldown, alert or dispatch'
@@ -282,9 +288,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
+          # The triggering ATTEMPT, not just the run: a re-run keeps its run id.
+          TRIGGER_EVENT: ${{ github.event_name }}
+          TRIGGER_RUN_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.completed_run_attempt || github.event.workflow_run.run_attempt }}
         run: |
           # SMI-7112: newest-run fence. Exits non-zero (red, no dispatch) when
-          # any backfill run newer than the completed one exists, or when that
+          # any backfill run newer than the triggering attempt exists, when the
+          # triggering run was re-run (or is itself a re-run), or when that
           # cannot be determined.
           bash scripts/ci/autochain-newest-run-fence.sh || exit 1
           # SMI-7112 (R3-1): the authoritative enable check is the command
