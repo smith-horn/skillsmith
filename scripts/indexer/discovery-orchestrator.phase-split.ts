@@ -17,7 +17,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { summarizeRateLimitTelemetry, type RateLimitTelemetry } from './_shared/rate-limit.ts'
 import { writeIndexerAuditLog } from './indexer-runners.ts'
-import type { ScoreDistribution } from './indexer-runners.ts'
+import type { ScoreDistribution, runUpsertPhase } from './indexer-runners.ts'
+import { emptyBlockReport } from './indexer-runners.batch.ts'
 import type { RotationSource } from './topic-rotation.ts'
 import {
   reconcileStaleSkills,
@@ -28,6 +29,33 @@ import {
 } from './stale-reconciliation.ts'
 import { notifyBulkQuarantine } from './_shared/notification.ts'
 import type { IndexerResult } from './indexer-types.ts'
+
+/**
+ * SMI-7113: copy Phase 4's counters (and the upstream-block report) onto the run result.
+ * Extracted from `runDiscovery`, which sits at its line gate; every `upsert_*` field is
+ * copied explicitly so a new one cannot be dropped silently (the alert keys on them).
+ */
+export function applyUpsertResult(
+  result: IndexerResult,
+  u: Awaited<ReturnType<typeof runUpsertPhase>>
+): void {
+  result.indexed = u.indexed
+  result.updated = u.updated
+  result.failed = u.failed
+  result.quarantined = u.quarantined
+  result.unchanged = u.unchanged
+  result.quality_gate_filtered = u.quality_gate_filtered
+  result.meta_list_filtered = u.meta_list_filtered
+  result.multiline_truncated = u.multiline_truncated
+  result.upsert_blocked_count = u.upsert_blocked_count
+  result.upsert_blocked = u.upsert_blocked
+  result.upsert_newly_blocked = u.upsert_newly_blocked
+  result.upsert_deferred_count = u.upsert_deferred_count
+  result.upsert_block_budget_exhausted = u.upsert_block_budget_exhausted
+  result.upsert_bisect_disabled = u.upsert_bisect_disabled
+  result.upsert_block_lookup_truncated = u.upsert_block_lookup_truncated
+  result.errors.push(...u.errors)
+}
 
 /**
  * SMI-5551 follow-up: extracted from `runDiscovery`'s `result` initializer
@@ -46,6 +74,7 @@ export function buildInitialDiscoveryResult(dryRun: boolean): IndexerResult {
     quality_gate_filtered: 0,
     meta_list_filtered: 0,
     multiline_truncated: 0,
+    ...emptyBlockReport(),
     unchanged: 0,
     github_skill_count: 0,
     high_trust_wildcard: {

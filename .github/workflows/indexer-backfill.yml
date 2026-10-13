@@ -44,6 +44,8 @@
 
 name: Skill Indexer Backfill
 
+run-name: "Skill Indexer Backfill (env=${{ inputs.supabase_env || 'prod' }}) [tok=${{ inputs.dispatch_token }}]"
+
 on:
   workflow_dispatch:
     inputs:
@@ -113,6 +115,11 @@ on:
         options:
           - backfill
           - fallback
+      dispatch_token:
+        description: 'SMI-7112 dispatch-intent token (optional). Embedded in run-name as [tok=...] so the dispatcher can resolve this exact run. Leave empty for manual dispatches.'
+        required: false
+        default: ''
+        type: string
 
 env:
   NODE_VERSION: '22'
@@ -155,9 +162,7 @@ jobs:
       - name: Validate Secrets
         env:
           SUPABASE_ENV: ${{ github.event.inputs.supabase_env || 'prod' }}
-          SUPABASE_URL_PROD: ${{ secrets.SUPABASE_URL_PROD }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
-          SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -177,8 +182,8 @@ jobs:
             URL_VAL="$SUPABASE_URL_STAGING"
             KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY_STAGING"
           else
-            URL_VAL="${SUPABASE_URL_PROD:-$SUPABASE_URL}"
-            KEY_VAL="${SUPABASE_SERVICE_ROLE_KEY_PROD:-$SUPABASE_SERVICE_ROLE_KEY}"
+            URL_VAL="$SUPABASE_URL"
+            KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY"
           fi
           if [ -z "$URL_VAL" ] || [ -z "$KEY_VAL" ]; then
             echo "::error::Required Supabase secrets not configured for env=$SUPABASE_ENV."
@@ -220,6 +225,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --omit=dev
+
+      - name: Reset indexer output
+        # SMI-7113 (R2-6): the alert step trusts this file only if line 1 names THIS run and
+        # attempt, so a file left by an earlier attempt on a reused runner must not survive.
+        run: |
+          rm -f "$RUNNER_TEMP/indexer-output.jsonl"
 
       - name: Run backfill indexer
         id: backfill_run
@@ -294,15 +305,23 @@ jobs:
           # the "Kill-switch gate" step above (checks EFFECTIVE_KILL_SWITCH itself,
           # sourced from BACKFILL_KILL_SWITCH / the kill_switch input).
           CONCURRENCY_KILL_SWITCH: ${{ env.EFFECTIVE_KILL_SWITCH }}
+          # SMI-7113: kill switch + request budget for the WAF-block bisect in the upsert
+          # phase (scripts/indexer/indexer-runners.batch.ts). Empty = bisect on, budget 64.
+          SKILLSMITH_INDEXER_UPSERT_BISECT_DISABLE: ${{ vars.SKILLSMITH_INDEXER_UPSERT_BISECT_DISABLE || '' }}
+          INDEXER_UPSERT_BLOCK_BISECT_BUDGET: ${{ vars.INDEXER_UPSERT_BLOCK_BISECT_BUDGET || '' }}
         run: |
           set -eo pipefail
-          OUTPUT_FILE="$(mktemp)"
-          if npx tsx scripts/indexer/run.ts | tee "$OUTPUT_FILE"; then
+          OUTPUT_FILE="$RUNNER_TEMP/indexer-output.jsonl"
+          # SMI-7113 (R2-6): create the file exclusively (noclobber) with a provenance line
+          # naming this run + attempt; scripts/ci/alert-upstream-block.sh rejects a mismatch.
+          ( set -o noclobber; printf '{"provenance":{"run_id":"%s","run_attempt":"%s"}}\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$OUTPUT_FILE" )
+          if npx tsx scripts/indexer/run.ts | tee -a "$OUTPUT_FILE"; then
             HTTP_CODE=200
           else
             HTTP_CODE=500
           fi
-          RESPONSE=$(tail -n1 "$OUTPUT_FILE" || echo '{}')
+          # Skip the provenance line: an empty indexer output must still read as empty.
+          RESPONSE=$(tail -n +2 "$OUTPUT_FILE" | tail -n1 || echo '{}')
           echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
           echo "response=$RESPONSE" >> "$GITHUB_OUTPUT"
           if [ "$HTTP_CODE" -ne 200 ]; then
@@ -386,6 +405,24 @@ jobs:
               echo "**Backfill continues** (current_facet=$CURRENT_FACET, pending_subranges=$PENDING_SUBRANGES). Re-dispatch with resume_from=latest to pick up from checkpoint $CHECKPOINT_ID."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Alert on upstream upsert block
+        # SMI-7113: a Cloudflare block page that refused rows. Runs after a green OR red
+        # earlier step (always) but never after a cancel; the script skips a non-success
+        # indexer step itself (Send Alert on Failure already covers that). Independent of
+        # the SMI-6220 degraded-alert shadow. SKILLSMITH_INDEXER_UPSERT_BLOCK_ALERT_DISABLE=1
+        # skips only the POST.
+        if: always() && !cancelled()
+        env:
+          INDEXER_OUTPUT_FILE: ${{ runner.temp }}/indexer-output.jsonl
+          INDEXER_STEP_OUTCOME: ${{ steps.backfill_run.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_NAME: Skill Indexer Backfill
+          SUPABASE_URL: ${{ env.SELECTED_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
+          SKILLSMITH_INDEXER_UPSERT_BLOCK_ALERT_DISABLE: ${{ vars.SKILLSMITH_INDEXER_UPSERT_BLOCK_ALERT_DISABLE || '' }}
+        run: |
+          bash scripts/ci/alert-upstream-block.sh
 
       - name: Report Failure
         if: failure()

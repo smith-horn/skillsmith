@@ -12,11 +12,14 @@
  * (fail closed). See docs/internal/implementation/
  * indexer-backfill-lock-yield-plan.md, change #3, and ADR-140.
  *
- * Tries the PROD Supabase project first, then STAGING, since the watcher
- * doesn't know ahead of time which project the completed run's own campaign
- * targeted — reading that is exactly what this script is trying to recover.
- * Whichever project has a matching row (checkpoint or audit row) for the
- * given run id wins; if PROD has neither, STAGING is tried next.
+ * SMI-7112: queries ONLY the Supabase project the completed run targeted.
+ * That project comes from the run's `display_title` (`run-name` carries
+ * `env=<prod|staging>`), handed in as RUN_DISPLAY_TITLE (or an explicit
+ * RECOVERY_ENV for an operator running this by hand). A title with no env
+ * marker is `indeterminate` and fails the job red -- it is never defaulted to
+ * prod. Missing credentials for the selected project, a read error, a
+ * malformed row and an incomplete intent all THROW; only "no checkpoint and no
+ * audit row" is a legitimate skip.
  *
  * Emits GITHUB_OUTPUT keys for the calling workflow step to consume:
  *   skip=true|false, skip_reason=<string>, and (only when skip=false) every
@@ -28,7 +31,48 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { appendFileSync } from 'node:fs'
-import { readLatestCheckpoint, type BackfillCheckpointPayload } from './backfill-checkpoint.ts'
+import { readCheckpoint } from './backfill-checkpoint.ts'
+import type { BackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
+import {
+  MalformedDispatchInputs,
+  validateDispatchInputs,
+} from './backfill-dispatch-inputs.validate.ts'
+
+export { MalformedDispatchInputs }
+
+/** Credentials for the selected project are absent: red, never a silent skip. */
+export class MissingCredentials extends Error {
+  constructor(public readonly supabaseEnv: 'prod' | 'staging') {
+    super(`Missing Supabase credentials for env=${supabaseEnv}; refusing to guess another project`)
+    this.name = 'MissingCredentials'
+  }
+}
+
+/** A checkpoint/audit row exists but lacks the recorded dispatch intent. */
+export class IncompleteIntent extends Error {
+  constructor(detail: string) {
+    super(`Incomplete dispatch intent: ${detail}`)
+    this.name = 'IncompleteIntent'
+  }
+}
+
+/** The run's env could not be determined (no `env=` marker in its title). */
+export class IndeterminateEnv extends Error {
+  constructor(title: string | undefined) {
+    super(`Cannot determine supabase_env from run display_title: ${JSON.stringify(title ?? null)}`)
+    this.name = 'IndeterminateEnv'
+  }
+}
+
+const TITLE_PATTERN = /^Skill Indexer Backfill \(env=(prod|staging)\)( \[tok=[A-Za-z0-9-]*\])?$/
+
+/** Parse the env out of a backfill run's `display_title`; never defaults. */
+export function parseSupabaseEnvFromTitle(
+  title: string | undefined
+): 'prod' | 'staging' | 'indeterminate' {
+  const m = title === undefined ? null : TITLE_PATTERN.exec(title)
+  return m ? (m[1] as 'prod' | 'staging') : 'indeterminate'
+}
 
 /**
  * SMI-6246 change #4c: consecutive retries against the same resume_from
@@ -43,7 +87,7 @@ interface ResolvedDispatch {
   supabaseEnv: 'prod' | 'staging'
   resumeFrom: string
   dryRun: boolean
-  dispatchInputs: NonNullable<BackfillCheckpointPayload['dispatch_inputs']>
+  dispatchInputs: BackfillDispatchInputs
   cursorDone: boolean
   /**
    * True when this resolution came from the failed attempt's own skip-branch
@@ -58,39 +102,43 @@ interface ResolvedDispatch {
 /**
  * Resolves what to re-dispatch for one Supabase project: exact-match
  * checkpoint first, then the completed run's own skip-branch audit row
- * (never a global "latest" lookup — round-3 fix). Returns `null` if this
- * project has neither, so the caller can try the other project.
+ * (never a global "latest" lookup -- round-3 fix).
+ *
+ * Returns `null` ONLY when the project has neither (legitimate "no row").
+ * Throws on a read error, a malformed row, or a row lacking dispatch_inputs.
  */
 export async function resolveForProject(
   supabase: SupabaseClient,
   completedRunId: string,
   supabaseEnv: 'prod' | 'staging'
 ): Promise<ResolvedDispatch | null> {
-  const checkpoint = await readLatestCheckpoint(supabase, completedRunId, { excludeDryRun: false })
-  if (checkpoint) {
+  const read = await readCheckpoint(supabase, completedRunId, { excludeDryRun: false })
+  if (read.kind === 'error') {
+    throw new Error(`Checkpoint read failed for run ${completedRunId}: ${read.reason}`)
+  }
+  if (read.kind === 'found') {
+    const checkpoint = read.payload
     if (!checkpoint.dispatch_inputs) {
-      return null // predates SMI-6246 or malformed — caller fails closed
+      throw new IncompleteIntent(`checkpoint for run ${completedRunId} has no dispatch_inputs`)
+    }
+    if (typeof checkpoint.dry_run !== 'boolean') {
+      throw new MalformedDispatchInputs(
+        `checkpoint for run ${completedRunId} has a non-boolean dry_run`
+      )
     }
     return {
       supabaseEnv,
       resumeFrom: completedRunId,
       dryRun: checkpoint.dry_run,
-      dispatchInputs: checkpoint.dispatch_inputs,
+      dispatchInputs: validateDispatchInputs(checkpoint.dispatch_inputs),
       cursorDone: checkpoint.cursor.facet === 'done',
       isRetry: false,
     }
   }
 
-  // No checkpoint of its own — query the skip-branch's audit row, keyed by
-  // the new github_run_id field (request_id is a fresh UUID per invocation
-  // and cannot be correlated to a GitHub Actions run id at all).
-  //
-  // pr-reviewer finding (round 1): github_run_id lives at metadata.meta.github_run_id,
-  // NOT metadata.github_run_id -- writeIndexerAuditLog (indexer-audit-log.ts) nests
-  // the whole skip-branch meta object under a `meta` key, matching the documented
-  // `metadata->'meta'->>'...'` convention (see indexer-audit-log.ts's own header
-  // comment). The original `metadata->>github_run_id` path here would never match
-  // any row, silently failing every fallback recovery.
+  // No checkpoint of its own -- query the skip-branch's audit row, keyed by
+  // metadata.meta.github_run_id (writeIndexerAuditLog nests the skip-branch meta
+  // under `meta`; request_id is a fresh UUID and cannot be correlated).
   const { data, error } = await supabase
     .from('audit_logs')
     .select('metadata')
@@ -100,43 +148,59 @@ export async function resolveForProject(
     .limit(1)
     .maybeSingle()
 
-  if (error || !data) {
-    return null
+  if (error) {
+    throw new Error(`Audit-row fallback read failed for run ${completedRunId}: ${error.message}`)
+  }
+  if (!data) {
+    return null // zero rows: the only legitimate "no row"
   }
 
-  // `dry_run` is a top-level metadata field (writeIndexerAuditLog's own
-  // params.dryRun, sibling to `.meta`) reflecting env.DRY_RUN for THIS exact
-  // failed attempt — the most precise source, since it needs no inference
-  // from any other row.
-  const metadata = data.metadata as {
-    dry_run?: boolean
-    meta?: Record<string, unknown>
-  } | null
+  // `dry_run` is a top-level metadata field (sibling to `.meta`) reflecting
+  // env.DRY_RUN for THIS exact failed attempt -- the most precise source.
+  const metadata = data.metadata as { dry_run?: boolean; meta?: Record<string, unknown> } | null
   const meta = metadata?.meta
-  const resumedFrom = meta?.resumed_from as string | null | undefined
-  const dispatchInputs = meta?.dispatch_inputs as ResolvedDispatch['dispatchInputs'] | undefined
-  if (!dispatchInputs) {
-    return null
+  if (
+    typeof metadata !== 'object' ||
+    metadata === null ||
+    typeof meta !== 'object' ||
+    meta === null
+  ) {
+    throw new Error(`Audit row for run ${completedRunId} is malformed (no metadata.meta object)`)
+  }
+  const resumedFrom = meta.resumed_from as string | null | undefined
+  if (!meta.dispatch_inputs) {
+    throw new IncompleteIntent(`audit row for run ${completedRunId} has no dispatch_inputs`)
+  }
+  const dispatchInputs = validateDispatchInputs(meta.dispatch_inputs)
+  if (resumedFrom !== undefined && resumedFrom !== null && typeof resumedFrom !== 'string') {
+    throw new MalformedDispatchInputs(
+      `audit row for run ${completedRunId} has a non-string resumed_from`
+    )
+  }
+  if (metadata.dry_run !== undefined && typeof metadata.dry_run !== 'boolean') {
+    throw new MalformedDispatchInputs(
+      `audit row for run ${completedRunId} has a non-boolean dry_run`
+    )
   }
 
   // The failed attempt's own resumed_from names the checkpoint it was trying
-  // to continue — retry that SAME handoff, never a "latest" lookup. If it was
-  // the literal 'latest' (a genuinely fresh campaign that unluckily lock-skipped
-  // on its first attempt), there is no prior checkpoint to check "done" against.
+  // to continue -- retry that SAME handoff, never a "latest" lookup. A literal
+  // 'latest' (fresh campaign that lock-skipped first time) has nothing to check
+  // "done" against.
   let cursorDone = false
   if (resumedFrom && resumedFrom !== 'latest') {
-    const priorCheckpoint = await readLatestCheckpoint(supabase, resumedFrom, {
-      excludeDryRun: false,
-    })
-    cursorDone = priorCheckpoint?.cursor.facet === 'done'
+    const prior = await readCheckpoint(supabase, resumedFrom, { excludeDryRun: false })
+    if (prior.kind === 'error') {
+      throw new Error(`Prior checkpoint read failed for ${resumedFrom}: ${prior.reason}`)
+    }
+    cursorDone = prior.kind === 'found' && prior.payload.cursor.facet === 'done'
   }
 
   return {
     supabaseEnv,
-    // Retry the identical handoff — no progress was made, so resuming from
-    // whatever this failed attempt was itself given is correct.
+    // Retry the identical handoff -- no progress was made.
     resumeFrom: resumedFrom ?? 'latest',
-    dryRun: metadata?.dry_run ?? false,
+    dryRun: metadata.dry_run ?? false,
     dispatchInputs,
     cursorDone,
     isRetry: true,
@@ -163,7 +227,12 @@ export async function countConsecutiveSkipsForResumeFrom(
     .limit(limit)
 
   if (error || !data) {
-    return 0 // fail open on a query error — never block a real dispatch on this alone
+    // SMI-7112: fail CLOSED. A count that cannot be read must never become 0 --
+    // that would silently disable the retry cap during the exact prolonged
+    // contention it protects. Throwing turns the job red and runs the alert.
+    throw new Error(
+      `Retry-cap count unavailable (${error?.message ?? 'no data'}); refusing to treat it as 0`
+    )
   }
 
   // Scheduled discovery/maintenance/recheck rows share this same table and
@@ -220,75 +289,54 @@ function emitOutputs(outputs: Record<string, string>): void {
   }
 }
 
-async function main(): Promise<void> {
-  const completedRunId = process.env.COMPLETED_RUN_ID
-  if (!completedRunId) {
-    throw new Error('Missing required environment variable: COMPLETED_RUN_ID')
-  }
+/**
+ * Full recovery for one completed run: select the project from the run's env,
+ * require ITS credentials (and only its), resolve, apply the retry cap, and
+ * return the GITHUB_OUTPUT map. Throws on every non-"no row" failure.
+ */
+export async function recover(opts: {
+  completedRunId: string
+  supabaseEnv: 'prod' | 'staging'
+  processEnv?: NodeJS.ProcessEnv
+  makeClient?: (url: string, key: string) => SupabaseClient
+}): Promise<Record<string, string>> {
+  const { completedRunId, supabaseEnv } = opts
+  const penv = opts.processEnv ?? process.env
+  const url = supabaseEnv === 'prod' ? penv.SUPABASE_URL : penv.SUPABASE_URL_STAGING
+  const key =
+    supabaseEnv === 'prod' ? penv.SUPABASE_SERVICE_ROLE_KEY : penv.SUPABASE_SERVICE_ROLE_KEY_STAGING
+  if (!url || !key) throw new MissingCredentials(supabaseEnv)
+  const makeClient =
+    opts.makeClient ??
+    ((u: string, k: string) =>
+      createClient(u, k, { auth: { autoRefreshToken: false, persistSession: false } }))
+  const client = makeClient(url, key)
 
-  const projects: Array<{ env: 'prod' | 'staging'; url?: string; key?: string }> = [
-    {
-      env: 'prod',
-      url: process.env.SUPABASE_URL_PROD,
-      key: process.env.SUPABASE_SERVICE_ROLE_KEY_PROD,
-    },
-    {
-      env: 'staging',
-      url: process.env.SUPABASE_URL_STAGING,
-      key: process.env.SUPABASE_SERVICE_ROLE_KEY_STAGING,
-    },
-  ]
-
-  let resolved: ResolvedDispatch | null = null
-  let resolvedClient: SupabaseClient | null = null
-  for (const project of projects) {
-    if (!project.url || !project.key) continue
-    const client = createClient(project.url, project.key, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
-    resolved = await resolveForProject(client, completedRunId, project.env)
-    if (resolved) {
-      resolvedClient = client
-      break
+  const resolved = await resolveForProject(client, completedRunId, supabaseEnv)
+  if (!resolved) {
+    return {
+      skip: 'true',
+      skip_reason: `No checkpoint or skip-branch audit row found for this run in the ${supabaseEnv} project -- failing closed rather than guessing from a global "latest" lookup.`,
     }
   }
-
-  if (!resolved || !resolvedClient) {
-    emitOutputs({
-      skip: 'true',
-      skip_reason:
-        'No checkpoint or skip-branch audit row found for this run in either Supabase project — failing closed rather than guessing from a global "latest" lookup.',
-    })
-    return
-  }
-
   if (resolved.cursorDone) {
-    emitOutputs({
+    return {
       skip: 'true',
       skip_reason: 'The underlying campaign already reached cursor.facet === "done".',
-    })
-    return
+    }
   }
 
-  // SMI-6246 change #4c: the retry cap only applies on the retry path (no
-  // progress this attempt) — a fresh checkpoint's own success is not itself
-  // a "consecutive skip" and never trips this. pr-reviewer round-1 finding:
-  // this was designed in the plan and documented in the runbook/CLAUDE.md as
-  // already shipped, but was never actually implemented — closing that gap.
+  // SMI-6246 change #4c: the retry cap only applies on the retry path.
   if (resolved.isRetry) {
-    const consecutiveSkips = await countConsecutiveSkipsForResumeFrom(
-      resolvedClient,
+    const capOutcome = buildRetryCapOutcome(
+      await countConsecutiveSkipsForResumeFrom(client, resolved.resumeFrom),
       resolved.resumeFrom
     )
-    const capOutcome = buildRetryCapOutcome(consecutiveSkips, resolved.resumeFrom)
-    if (capOutcome) {
-      emitOutputs(capOutcome)
-      return
-    }
+    if (capOutcome) return capOutcome
   }
 
   const d = resolved.dispatchInputs
-  emitOutputs({
+  return {
     skip: 'false',
     supabase_env: resolved.supabaseEnv,
     resume_from: resolved.resumeFrom,
@@ -301,7 +349,23 @@ async function main(): Promise<void> {
     max_elapsed_minutes: String(d.maxElapsedMinutes),
     accept_truncation: String(d.acceptTruncation),
     token_source: d.tokenSource,
-  })
+  }
+}
+
+async function main(): Promise<void> {
+  const completedRunId = process.env.COMPLETED_RUN_ID
+  if (!completedRunId) {
+    throw new Error('Missing required environment variable: COMPLETED_RUN_ID')
+  }
+  const override = process.env.RECOVERY_ENV
+  const supabaseEnv =
+    override === 'prod' || override === 'staging'
+      ? override
+      : parseSupabaseEnvFromTitle(process.env.RUN_DISPLAY_TITLE)
+  if (supabaseEnv === 'indeterminate') {
+    throw new IndeterminateEnv(process.env.RUN_DISPLAY_TITLE)
+  }
+  emitOutputs(await recover({ completedRunId, supabaseEnv }))
 }
 
 // Only run when invoked directly (npx tsx), not when imported for its

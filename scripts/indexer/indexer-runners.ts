@@ -40,7 +40,14 @@ import {
   resolveHighTrustAuthor,
 } from './indexer-runners.helpers.ts'
 import { fetchRepoReadme, isMetaListRepo } from './meta-list-filter.ts'
-import { flushUpsertAccumulator, type UpsertAccumulatorItem } from './indexer-runners.batch.ts'
+import {
+  emptyBlockReport,
+  flushUpsertAccumulator,
+  resolveWafOptions,
+  toBlockReport,
+  type UpsertAccumulatorItem,
+  type UpsertBlockReport,
+} from './indexer-runners.batch.ts'
 
 /**
  * SMI-4842: Cheap `awesome-*` prefix pre-check. Used to gate the README fetch
@@ -190,6 +197,7 @@ export { runCodeSearch } from './indexer-runners.codesearch.ts'
  * @param validationCache - Request-scoped SKILL.md validation cache
  * @param dryRun - If true, skip all writes and return zero values
  * @param telemetry - Run-scoped rate-limit telemetry bag (SMI-4852)
+ * @param backfillMode - Backfill flush: never defer a recently WAF-blocked row (SMI-7113)
  */
 export async function runUpsertPhase(
   supabase: SupabaseClient,
@@ -197,31 +205,35 @@ export async function runUpsertPhase(
   highTrustSkillMap: Map<string, HighTrustAuthor>,
   validationCache: Map<string, SkillMdValidation>,
   dryRun: boolean,
-  telemetry: RateLimitTelemetry
-): Promise<{
-  indexed: number
-  updated: number
-  failed: number
-  quarantined: number
-  unchanged: number
-  quality_gate_filtered: number
-  // SMI-4842: Count of repos rejected as curated `awesome-*` link-lists
-  // (no SKILL.md, README dominated by external links). Mirrors the
-  // quality_gate_filtered telemetry pattern.
-  meta_list_filtered: number
-  scoreDistribution: ScoreDistribution
-  errors: string[]
-  // SMI-4387: Per-discovery-path yield counts (indexed + updated only).
-  discoveryPathCounts: Record<string, number>
-  // SMI-4386: Count of upserts where the Phase-1 highTrustSkillMap missed but
-  // the HIGH_TRUST_AUTHORS registry resolved the owner+repo. Load-bearing
-  // signal for Phase-1/Phase-2 URL-scheme drift.
-  high_trust_fallback_hits: number
-  // SMI-6020 (design §3.3.6, §2.5 item 12): count of repos whose scan hit the
-  // multiline iteration ceiling this run — the run-level telemetry counter.
-  multiline_truncated: number
-}> {
+  telemetry: RateLimitTelemetry,
+  backfillMode = false
+): Promise<
+  UpsertBlockReport & {
+    indexed: number
+    updated: number
+    failed: number
+    quarantined: number
+    unchanged: number
+    quality_gate_filtered: number
+    // SMI-4842: Count of repos rejected as curated `awesome-*` link-lists
+    // (no SKILL.md, README dominated by external links). Mirrors the
+    // quality_gate_filtered telemetry pattern.
+    meta_list_filtered: number
+    scoreDistribution: ScoreDistribution
+    errors: string[]
+    // SMI-4387: Per-discovery-path yield counts (indexed + updated only).
+    discoveryPathCounts: Record<string, number>
+    // SMI-4386: Count of upserts where the Phase-1 highTrustSkillMap missed but
+    // the HIGH_TRUST_AUTHORS registry resolved the owner+repo. Load-bearing
+    // signal for Phase-1/Phase-2 URL-scheme drift.
+    high_trust_fallback_hits: number
+    // SMI-6020 (design §3.3.6, §2.5 item 12): count of repos whose scan hit the
+    // multiline iteration ceiling this run — the run-level telemetry counter.
+    multiline_truncated: number
+  }
+> {
   const zeroResult = {
+    ...emptyBlockReport(),
     indexed: dryRun ? repositories.length : 0,
     updated: 0,
     failed: 0,
@@ -511,7 +523,11 @@ export async function runUpsertPhase(
 
   // SMI-4846 + C-3: Single batched upsert — drains the accumulator, writes
   // null-url audit logs pre-batch, surfaces partial failures.
-  const flush = await flushUpsertAccumulator(supabase, accumulator, existingUrls)
+  // SMI-7113: WAF-block bisect knobs come from this process's env; the batch module is env-free.
+  const flush = await flushUpsertAccumulator(supabase, accumulator, existingUrls, undefined, {
+    ...resolveWafOptions((name) => process.env[name]),
+    backfillMode,
+  })
   indexed += flush.indexed
   updated += flush.updated
   failed += flush.failed
@@ -612,6 +628,7 @@ export async function runUpsertPhase(
     discoveryPathCounts,
     high_trust_fallback_hits,
     multiline_truncated,
+    ...toBlockReport(flush),
   }
 }
 

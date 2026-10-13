@@ -4,7 +4,7 @@
  *
  * Covers the W3 additions to backfill-checkpoint.ts:
  *  - writeCheckpoint stamps dry_run: true/false into audit_logs.metadata
- *  - readLatestCheckpoint excludeDryRun: true applies the PostgREST .not() filter
+ *  - readCheckpoint excludeDryRun: true applies the PostgREST .not() filter
  *  - excludeDryRun is NULL-safe: legacy rows with no dry_run field are NOT excluded
  *  - excludeDryRun: false (default) — dry-run rows are still returned
  *
@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   writeCheckpoint,
-  readLatestCheckpoint,
+  readCheckpoint,
   type BackfillCheckpointPayload,
 } from '../../indexer/backfill-checkpoint.ts'
 
@@ -125,11 +125,18 @@ describe('writeCheckpoint — dry_run tag (SMI-5319 W3)', () => {
   })
 })
 
+/** SMI-7112: the filter tests below only care about found/none; an error would be a test bug. */
+async function readPayload(...args: Parameters<typeof readCheckpoint>) {
+  const r = await readCheckpoint(...args)
+  if (r.kind === 'error') throw new Error(`unexpected read error: ${r.reason}`)
+  return r.kind === 'found' ? r.payload : null
+}
+
 // ---------------------------------------------------------------------------
-// readLatestCheckpoint: excludeDryRun filter (SMI-5319 W3)
+// readCheckpoint: excludeDryRun filter (SMI-5319 W3)
 // ---------------------------------------------------------------------------
 
-describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
+describe('readCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
   it('does NOT apply an or() filter when excludeDryRun is false (default)', async () => {
     const state: ReadQueryState = {
       row: { metadata: makePayload() },
@@ -139,7 +146,7 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
     }
     const supabase = makeReadMock(state)
 
-    await readLatestCheckpoint(supabase, undefined, { excludeDryRun: false })
+    await readPayload(supabase, undefined, { excludeDryRun: false })
 
     expect(state.orFilters).toHaveLength(0)
   })
@@ -154,7 +161,7 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
     const supabase = makeReadMock(state)
 
     // No options arg — default behaviour must be back-compat (no filter).
-    await readLatestCheckpoint(supabase)
+    await readPayload(supabase)
 
     expect(state.orFilters).toHaveLength(0)
   })
@@ -168,7 +175,7 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
     }
     const supabase = makeReadMock(state)
 
-    await readLatestCheckpoint(supabase, undefined, { excludeDryRun: true })
+    await readPayload(supabase, undefined, { excludeDryRun: true })
 
     expect(state.orFilters).toHaveLength(1)
     expect(state.orFilters[0]).toBe('metadata->>dry_run.neq.true,metadata->>dry_run.is.null')
@@ -186,7 +193,7 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
     }
     const supabase = makeReadMock(state)
 
-    const result = await readLatestCheckpoint(supabase, undefined, { excludeDryRun: true })
+    const result = await readPayload(supabase, undefined, { excludeDryRun: true })
 
     expect(state.orFilters).toHaveLength(1)
     expect(result).not.toBeNull()
@@ -206,7 +213,7 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
     }
     const supabase = makeReadMock(state)
 
-    const result = await readLatestCheckpoint(supabase, undefined, { excludeDryRun: false })
+    const result = await readPayload(supabase, undefined, { excludeDryRun: false })
 
     // No or() filter applied.
     expect(state.orFilters).toHaveLength(0)
@@ -236,7 +243,7 @@ describe('readLatestCheckpoint — excludeDryRun (SMI-5319 W3)', () => {
     }
     const supabase = makeReadMock(state)
 
-    const result = await readLatestCheckpoint(supabase, undefined, { excludeDryRun: true })
+    const result = await readPayload(supabase, undefined, { excludeDryRun: true })
 
     // The NULL-safe .or() filter was applied — its `is.null` branch is what keeps
     // legacy rows; assert the exact null-inclusive form (proof, not a tautology).

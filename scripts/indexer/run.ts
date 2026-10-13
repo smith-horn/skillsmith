@@ -40,12 +40,7 @@ import type { SkillMdValidation } from './skill-processor.ts'
 import { prefetchExistingSkills } from './prefetch-existing-skills.ts'
 // SMI-5286 Wave 1b (§#5): resume cursor read on backfill dispatches.
 // (§#2): token-source derivation + backfill summary sub-object emitted on stdout.
-import {
-  readLatestCheckpoint,
-  writeCheckpoint,
-  resolveTokenSource,
-  type BackfillSummary,
-} from './backfill-checkpoint.ts'
+import { writeCheckpoint, resolveTokenSource, type BackfillSummary } from './backfill-checkpoint.ts'
 // SMI-5286 1c: the facet-crawl plan handed to the orchestrator's Phase 3b.
 import type { BackfillFacetPlan } from './subdirectory-search.ts'
 // SMI-5311: periodic holder-scoped lock refresh + abort-on-steal. Armed only on
@@ -67,6 +62,8 @@ import {
 } from './run-lock-retry.ts'
 // SMI-6246: campaign-defining inputs echoed onto the backfill checkpoint.
 import { buildBackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
+// SMI-7112: resume-checkpoint read that aborts (never cold-starts) on error.
+import { loadResumeCheckpoint } from './backfill-resume.ts'
 
 interface RunSummary {
   data: unknown
@@ -172,9 +169,8 @@ async function runDiscoveryBranch(
   const backfillRunId = process.env.GITHUB_RUN_ID ?? requestId
   if (env.BACKFILL_MODE) {
     const resumeFrom = process.env.RESUME_FROM
-    const checkpoint = await readLatestCheckpoint(supabase, resumeFrom, {
-      excludeDryRun: !env.DRY_RUN,
-    })
+    // SMI-7112: throws on a failed read (never cold-starts); null only on `none`.
+    const checkpoint = await loadResumeCheckpoint(supabase, resumeFrom, env.DRY_RUN)
     if (checkpoint) {
       const { path, facet, last_page } = checkpoint.cursor
       console.log(
@@ -245,7 +241,7 @@ async function runDiscoveryBranch(
   // SMI-5286 1c (§#5): persist the advanced facet cursor so the next dispatch
   // continues mid-facet; written even in DRY_RUN so the resume loop is
   // verifiable pre-live. SMI-5319 (W3): dry_run tag lets resume_from=latest
-  // skip these via readLatestCheckpoint's excludeDryRun option.
+  // skip these via loadResumeCheckpoint's excludeDryRun option.
   if (env.BACKFILL_MODE && result.backfill_crawl) {
     const bc = result.backfill_crawl
     const wrote = await writeCheckpoint(supabase, {
