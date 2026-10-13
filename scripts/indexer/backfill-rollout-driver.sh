@@ -183,7 +183,12 @@ while [ "$n" -lt "$MAXDISP" ]; do
 
   # (c) log the intent BEFORE dispatching; a log we cannot write is a dispatch we do not make.
   TOKEN="$(new_token)"; ISSUED_EPOCH="$(now_epoch)"; ISSUED_AT="$(iso_from_epoch "$ISSUED_EPOCH")"
-  if ! append_intent "$TOKEN" "$ISSUED_AT" "$PREFIX" "$RESUME" "$CAP" "$MODE"; then
+  # Every input the dispatch below passes is recorded, so the handover helper's
+  # --first-link can replay them exactly (a missing field there is NO-GO).
+  if ! append_intent "$TOKEN" "$ISSUED_AT" "$MODE" \
+      ref=main dry_run=false resume_from="$RESUME" path_prefix="$PREFIX" \
+      min_size_bytes="$MIN_SIZE_BYTES" max_ranges="$MAX_RANGES" max_skills_per_dispatch="$CAP" \
+      max_skills_per_repo="$MAX_SKILLS_PER_REPO" max_elapsed_minutes="$MAX_ELAPSED_MIN"; then
     halt "HALT: cannot append the dispatch intent to $INTENTS — NOT dispatching."; break
   fi
   say "DISPATCH #$((n+1)) [$MODE] UTC ${H}:$(printf %02d "$M") mtb=${mtb}m resume=$RESUME cap=$CAP coverage=$COV0 token=$TOKEN -> launching"

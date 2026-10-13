@@ -96,6 +96,31 @@ describe('(c) intents and token resolution', () => {
     expect(intent.token).toMatch(/^drv-\d+-[0-9a-f]{8}$/)
   })
 
+  it('the intent records EVERY input the dispatch passes (the first-link replay depends on it)', () => {
+    const { seam, out } = drive({
+      BACKFILL_MAX_RANGES: '13',
+      BACKFILL_MAX_SKILLS_PER_REPO: '41',
+      BACKFILL_MAX_ELAPSED_MIN: '211',
+      BACKFILL_MIN_SIZE_BYTES: '777',
+    })
+    const intent = JSON.parse(seam.intents().trim().split('\n')[0])
+    expect(intent.params, out).toMatchObject({
+      ref: 'main',
+      dry_run: false,
+      path_prefix: '.agents/skills',
+      min_size_bytes: 777,
+      max_ranges: 13,
+      max_skills_per_repo: 41,
+      max_elapsed_minutes: 211,
+      mode: expect.stringMatching(/^(COLD-START|RESUME)$/),
+      resume_from: expect.any(String),
+      max_skills_per_dispatch: expect.any(Number),
+    })
+    // and the values recorded are the ones actually passed to `gh workflow run`
+    for (const k of ['min_size_bytes', 'max_ranges', 'max_skills_per_repo', 'max_elapsed_minutes'])
+      expect(seam.calls()).toContain(`-f ${k}=${intent.params[k]}`)
+  })
+
   it('resolves by TOKEN, not by newest/first run: polls 111 though `gh run list` says 222 and 222 is listed first', () => {
     const { seam, out } = drive()
     const polled = seam
@@ -124,6 +149,34 @@ describe('(c) intents and token resolution', () => {
       .split('\n')
       .filter((l) => l.startsWith('sleep 15')).length
     expect(slept).toBeGreaterThanOrEqual(19)
+  })
+
+  it('API errors on EVERY token lookup => HALT (an error is not "found" and not a pass), intent unresolved', () => {
+    const { seam, status, out } = drive({ STUB_RUNS_MODE: 'err', STUB_URL_ID: '111' })
+    expect(status, out).toBe(1)
+    expect(out).toMatch(/matched no run/)
+    expect(seam.count('API_RUNS_QUERY mode=err')).toBeGreaterThan(3) // it kept retrying
+    expect(seam.count('RUN_VIEW')).toBe(0)
+    expect(
+      seam
+        .intents()
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l).event)
+    ).toEqual(['intent'])
+  })
+
+  it('TRANSIENT API errors on the first token lookups are retried, then resolved by token', () => {
+    const { seam, status, out } = drive({ STUB_RUNS_MODE: 'flaky' })
+    expect(status, out).toBe(0)
+    expect(seam.count('API_RUNS_QUERY mode=flaky n=')).toBeGreaterThanOrEqual(4)
+    expect(
+      seam
+        .intents()
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l).event)
+    ).toEqual(['intent', 'resolved'])
   })
 
   it('a token that matches TWO runs => HALT (never takes the first)', () => {

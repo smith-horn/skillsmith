@@ -9,46 +9,18 @@
 import { describe, it, expect } from 'vitest'
 import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { HELPER, REPO, makeSeam, runScript, type Seam } from './backfill-driver.test-helpers.ts'
-
-const WORKFLOWS = ['indexer-backfill.yml', 'indexer-backfill-autochain.yml']
-const STATUSES = ['queued', 'in_progress', 'waiting', 'pending', 'requested']
-const DONE_AT = '2026-10-12T10:00:00Z'
-
-const statusPath = (wf: string, s: string) =>
-  `repos/${REPO}/actions/workflows/${wf}/runs?status=${s}&per_page=1`
-const AUTOCHAIN_LIST = `repos/${REPO}/actions/workflows/indexer-backfill-autochain.yml/runs?per_page=100`
-const runPath = (id: number) => `repos/${REPO}/actions/runs/${id}`
-
-function intentLines(events: object[]) {
-  return events.map((e) => JSON.stringify(e)).join('\n') + '\n'
-}
-
-/** Everything passes: one resolved+completed intent, zero non-terminal runs, no open autochain runs. */
-function allClear(): Seam {
-  const seam = makeSeam({ STUB_RUNS_MODE: 'one', STUB_RUN_ID: '111' })
-  writeFileSync(
-    join(seam.dir, 'intents.jsonl'),
-    intentLines([
-      {
-        event: 'intent',
-        token: 'drv-1-aaaaaaaa',
-        issued_at: '2026-10-12T09:00:00Z',
-        params: { path_prefix: '.agents/skills', max_skills_per_dispatch: 5000 },
-      },
-      { event: 'resolved', token: 'drv-1-aaaaaaaa', run_id: 500 },
-    ])
-  )
-  seam.fixture(runPath(500), { status: 'completed', updated_at: DONE_AT })
-  for (const wf of WORKFLOWS)
-    for (const s of STATUSES) seam.fixture(statusPath(wf, s), { total_count: 0, workflow_runs: [] })
-  seam.fixture(AUTOCHAIN_LIST, {
-    workflow_runs: [{ id: 9, status: 'completed', created_at: '2026-10-12T11:00:00Z' }],
-  })
-  return seam
-}
-
-const verdict = (r: { stdout: string }) => r.stdout.trim().split('\n').pop()
+import { HELPER, runScript, type Seam } from './backfill-driver.test-helpers.ts'
+import {
+  AUTOCHAIN_LIST,
+  DONE_AT,
+  STATUSES,
+  WORKFLOWS,
+  allClear,
+  intentLines,
+  runPath,
+  statusPath,
+  verdict,
+} from './backfill-handover.fixtures.ts'
 
 describe('CONTROL', () => {
   it('all clear => GO, exit 0', () => {
@@ -118,7 +90,7 @@ describe('NO-GO: exactly one broken condition per case', () => {
     })
     const r = runScript(HELPER, [], seam)
     expect(verdict(r), r.out).toBe('NO-GO')
-    expect(r.out).toMatch(/autochain run\(s\) not completed: 10:in_progress/)
+    expect(r.out).toMatch(/autochain run\(s\) not completed \(page 1\): 10:in_progress/)
   })
 
   it("(c) an OLD open autochain run (created before the last completion) is not this check's concern", () => {
@@ -159,37 +131,5 @@ describe('NO-GO: exactly one broken condition per case', () => {
     const r = runScript(HELPER, [], seam)
     expect(verdict(r), r.out).toBe('NO-GO')
     expect(r.out).toMatch(/API error/)
-  })
-})
-
-describe('--first-link', () => {
-  it('re-check fails => NO-GO and NO dispatch', () => {
-    const seam = allClear()
-    seam.fixture(statusPath('indexer-backfill-autochain.yml', 'queued'), {
-      total_count: 2,
-      workflow_runs: [],
-    })
-    const r = runScript(HELPER, ['--first-link'], seam)
-    expect(verdict(r), r.out).toBe('NO-GO')
-    expect(seam.count('WORKFLOW_RUN')).toBe(0)
-    expect(seam.intents().trim().split('\n')).toHaveLength(2) // no new intent either
-  })
-
-  it('re-check passes => exactly one dispatch, intent logged first, resolved by token, run id printed', () => {
-    const seam = allClear()
-    const r = runScript(HELPER, ['--first-link'], seam)
-    expect(verdict(r), r.out).toBe('GO')
-    expect(seam.count('WORKFLOW_RUN')).toBe(1)
-    const m = /^WORKFLOW_RUN token=(drv-\d+-[0-9a-f]{8}) intent_present=1/m.exec(seam.log())
-    expect(m).not.toBeNull()
-    expect(r.out).toContain(`FIRST-LINK run_id=111 token=${m![1]}`)
-    expect(seam.calls()).toContain('-f resume_from=latest')
-    expect(seam.calls()).toContain('-f path_prefix=.agents/skills')
-    const events = seam
-      .intents()
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l).event)
-    expect(events).toEqual(['intent', 'resolved', 'intent', 'resolved'])
   })
 })

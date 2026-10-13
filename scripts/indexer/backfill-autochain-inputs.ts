@@ -31,7 +31,14 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { appendFileSync } from 'node:fs'
-import { readCheckpoint, type BackfillCheckpointPayload } from './backfill-checkpoint.ts'
+import { readCheckpoint } from './backfill-checkpoint.ts'
+import type { BackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
+import {
+  MalformedDispatchInputs,
+  validateDispatchInputs,
+} from './backfill-dispatch-inputs.validate.ts'
+
+export { MalformedDispatchInputs }
 
 /** Credentials for the selected project are absent: red, never a silent skip. */
 export class MissingCredentials extends Error {
@@ -80,7 +87,7 @@ interface ResolvedDispatch {
   supabaseEnv: 'prod' | 'staging'
   resumeFrom: string
   dryRun: boolean
-  dispatchInputs: NonNullable<BackfillCheckpointPayload['dispatch_inputs']>
+  dispatchInputs: BackfillDispatchInputs
   cursorDone: boolean
   /**
    * True when this resolution came from the failed attempt's own skip-branch
@@ -114,11 +121,16 @@ export async function resolveForProject(
     if (!checkpoint.dispatch_inputs) {
       throw new IncompleteIntent(`checkpoint for run ${completedRunId} has no dispatch_inputs`)
     }
+    if (typeof checkpoint.dry_run !== 'boolean') {
+      throw new MalformedDispatchInputs(
+        `checkpoint for run ${completedRunId} has a non-boolean dry_run`
+      )
+    }
     return {
       supabaseEnv,
       resumeFrom: completedRunId,
       dryRun: checkpoint.dry_run,
-      dispatchInputs: checkpoint.dispatch_inputs,
+      dispatchInputs: validateDispatchInputs(checkpoint.dispatch_inputs),
       cursorDone: checkpoint.cursor.facet === 'done',
       isRetry: false,
     }
@@ -156,9 +168,19 @@ export async function resolveForProject(
     throw new Error(`Audit row for run ${completedRunId} is malformed (no metadata.meta object)`)
   }
   const resumedFrom = meta.resumed_from as string | null | undefined
-  const dispatchInputs = meta.dispatch_inputs as ResolvedDispatch['dispatchInputs'] | undefined
-  if (!dispatchInputs) {
+  if (!meta.dispatch_inputs) {
     throw new IncompleteIntent(`audit row for run ${completedRunId} has no dispatch_inputs`)
+  }
+  const dispatchInputs = validateDispatchInputs(meta.dispatch_inputs)
+  if (resumedFrom !== undefined && resumedFrom !== null && typeof resumedFrom !== 'string') {
+    throw new MalformedDispatchInputs(
+      `audit row for run ${completedRunId} has a non-string resumed_from`
+    )
+  }
+  if (metadata.dry_run !== undefined && typeof metadata.dry_run !== 'boolean') {
+    throw new MalformedDispatchInputs(
+      `audit row for run ${completedRunId} has a non-boolean dry_run`
+    )
   }
 
   // The failed attempt's own resumed_from names the checkpoint it was trying
@@ -205,12 +227,12 @@ export async function countConsecutiveSkipsForResumeFrom(
     .limit(limit)
 
   if (error || !data) {
-    // Fail open on a query error -- never block a real dispatch on this alone --
-    // but say so: a silently-zero count would disable the retry cap unseen.
-    console.log(
-      `::warning::retry-cap count unavailable (${error?.message ?? 'no data'}); treating as 0`
+    // SMI-7112: fail CLOSED. A count that cannot be read must never become 0 --
+    // that would silently disable the retry cap during the exact prolonged
+    // contention it protects. Throwing turns the job red and runs the alert.
+    throw new Error(
+      `Retry-cap count unavailable (${error?.message ?? 'no data'}); refusing to treat it as 0`
     )
-    return 0
   }
 
   // Scheduled discovery/maintenance/recheck rows share this same table and

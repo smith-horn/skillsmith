@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   IncompleteIntent,
+  MalformedDispatchInputs,
   MissingCredentials,
   parseSupabaseEnvFromTitle,
   recover,
@@ -42,6 +43,8 @@ interface MockOpts {
   checkpointRow?: { metadata: unknown } | null
   auditRow?: { metadata: unknown } | null
   checkpointError?: { message: string } | null
+  /** Result of the retry-cap count query (the audit_logs query limited to 50 rows). */
+  count?: { data: unknown; error: { message: string } | null }
 }
 
 /** Discriminates the two audit_logs queries by their event_type filter. */
@@ -60,7 +63,11 @@ function makeClient(opts: MockOpts) {
           }),
           or: vi.fn().mockReturnThis(),
           order: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockReturnThis(),
+          limit: vi
+            .fn()
+            .mockImplementation((n: number) =>
+              n === 50 && opts.count ? Promise.resolve(opts.count) : b
+            ),
           maybeSingle: vi.fn().mockImplementation(() =>
             Promise.resolve(
               eventType === 'indexer:run'
@@ -187,6 +194,112 @@ describe('recover -- incomplete intent', () => {
         makeClient: factory,
       })
     ).rejects.toBeInstanceOf(IncompleteIntent)
+  })
+})
+
+const retryAudit = (dispatch_inputs: unknown, over: Record<string, unknown> = {}) => ({
+  metadata: {
+    dry_run: false,
+    meta: { status: 'skipped_lock', resumed_from: 'latest', dispatch_inputs, ...over },
+  },
+})
+const recoverWith = (opts: MockOpts) =>
+  recover({
+    completedRunId: 'r1',
+    supabaseEnv: 'prod',
+    processEnv: PROD_ONLY,
+    makeClient: makeClient(opts).factory,
+  })
+
+describe('recover -- dispatch_inputs are validated against the workflow_dispatch schema', () => {
+  it('CONTROL: a well-formed audit row on the retry path re-dispatches', async () => {
+    const out = await recoverWith({
+      auditRow: retryAudit(dispatchInputs),
+      count: { data: [], error: null },
+    })
+    expect(out.skip).toBe('false')
+    expect(out.max_ranges).toBe('10')
+  })
+
+  it.each([
+    ['an empty object', {}, /missing required key/],
+    ['a wrong type (maxRanges as a string)', { ...dispatchInputs, maxRanges: '10' }, /maxRanges/],
+    ['a negative number', { ...dispatchInputs, minSizeBytes: -1 }, /minSizeBytes/],
+    ['an out-of-enum supabaseEnv', { ...dispatchInputs, supabaseEnv: 'dev' }, /supabaseEnv/],
+    ['an out-of-enum tokenSource', { ...dispatchInputs, tokenSource: 'x' }, /tokenSource/],
+    [
+      'a non-numeric maxSkillsPerRepo',
+      { ...dispatchInputs, maxSkillsPerRepo: 'lots' },
+      /maxSkillsPerRepo/,
+    ],
+    ['a multi-line pathPrefix', { ...dispatchInputs, pathPrefix: 'a\nb' }, /pathPrefix/],
+    [
+      'a non-boolean acceptTruncation',
+      { ...dispatchInputs, acceptTruncation: 'false' },
+      /acceptTruncation/,
+    ],
+    ['an array', [], /not an object/],
+  ])(
+    'an audit row whose dispatch_inputs is %s THROWS MalformedDispatchInputs',
+    async (_l, bad, re) => {
+      const p = recoverWith({ auditRow: retryAudit(bad), count: { data: [], error: null } })
+      await expect(p).rejects.toBeInstanceOf(MalformedDispatchInputs)
+      await expect(p).rejects.toThrow(re)
+    }
+  )
+
+  it('a missing required key (tokenSource deleted) THROWS', async () => {
+    const rest: Record<string, unknown> = { ...dispatchInputs }
+    delete rest.tokenSource
+    await expect(recoverWith({ auditRow: retryAudit(rest) })).rejects.toThrow(
+      /missing required key 'tokenSource'/
+    )
+  })
+
+  it('a malformed CHECKPOINT dispatch_inputs THROWS too (not only the audit path)', async () => {
+    await expect(
+      recoverWith({ checkpointRow: { metadata: { ...prodCheckpoint, dispatch_inputs: {} } } })
+    ).rejects.toBeInstanceOf(MalformedDispatchInputs)
+  })
+
+  it('a non-boolean checkpoint dry_run THROWS', async () => {
+    await expect(
+      recoverWith({ checkpointRow: { metadata: { ...prodCheckpoint, dry_run: 'false' } } })
+    ).rejects.toBeInstanceOf(MalformedDispatchInputs)
+  })
+
+  it('a non-string audit resumed_from THROWS', async () => {
+    await expect(
+      recoverWith({ auditRow: retryAudit(dispatchInputs, { resumed_from: 7 }) })
+    ).rejects.toBeInstanceOf(MalformedDispatchInputs)
+  })
+})
+
+describe('recover -- the retry-cap count fails CLOSED', () => {
+  it('a count query ERROR makes recovery THROW (job red, alert runs), never a dispatch', async () => {
+    await expect(
+      recoverWith({
+        auditRow: retryAudit(dispatchInputs),
+        count: { data: null, error: { message: 'pooler down' } },
+      })
+    ).rejects.toThrow(/Retry-cap count unavailable \(pooler down\)/)
+  })
+
+  it('absent count data makes recovery THROW', async () => {
+    await expect(
+      recoverWith({ auditRow: retryAudit(dispatchInputs), count: { data: null, error: null } })
+    ).rejects.toThrow(/Retry-cap count unavailable/)
+  })
+
+  it('five consecutive lock-skips still trip the cap (the cap itself is not lost)', async () => {
+    const rows = Array.from({ length: 5 }, () => ({
+      metadata: { meta: { status: 'skipped_lock', resumed_from: 'latest' } },
+    }))
+    const out = await recoverWith({
+      auditRow: retryAudit(dispatchInputs),
+      count: { data: rows, error: null },
+    })
+    expect(out.retry_cap_exceeded).toBe('true')
   })
 })
 

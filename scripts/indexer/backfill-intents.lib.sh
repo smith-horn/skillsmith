@@ -24,9 +24,18 @@ fi
 iso_from_epoch(){ date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
 
 new_token(){ printf 'drv-%s-%s' "$(now_epoch)" "$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"; }
-append_intent(){ # token issued_at path_prefix resume_from cap mode
+# append_intent token issued_at mode key=value...   (every input the dispatch passes)
+# Numeric inputs are stored as numbers and dry_run as a boolean; the rest as strings.
+# backfill-handover-check.sh --first-link replays these EXACTLY, so every input
+# `gh workflow run` is given must be recorded here.
+append_intent(){
   mkdir -p "$(dirname "$INTENTS")" || return 1
-  node -e 'const [t,i,p,r,c,m]=process.argv.slice(1);process.stdout.write(JSON.stringify({event:"intent",token:t,issued_at:i,params:{path_prefix:p,resume_from:r,max_skills_per_dispatch:Number(c),mode:m}})+"\n")' "$@" >> "$INTENTS"
+  node -e '
+const [t,i,m,...kv]=process.argv.slice(1);
+const NUM=new Set(["max_skills_per_dispatch","max_ranges","min_size_bytes","max_skills_per_repo","max_elapsed_minutes"]);
+const p={mode:m};
+for(const a of kv){const x=a.indexOf("=");const k=a.slice(0,x),v=a.slice(x+1);p[k]=NUM.has(k)?Number(v):k==="dry_run"?v==="true":v}
+process.stdout.write(JSON.stringify({event:"intent",token:t,issued_at:i,params:p})+"\n")' "$@" >> "$INTENTS"
 }
 append_resolved(){ # token run_id
   node -e 'const [t,r]=process.argv.slice(1);process.stdout.write(JSON.stringify({event:"resolved",token:t,run_id:Number(r)})+"\n")' "$@" >> "$INTENTS"

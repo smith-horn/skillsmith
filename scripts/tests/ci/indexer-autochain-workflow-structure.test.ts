@@ -106,6 +106,38 @@ describe('autochain workflow structure', () => {
       )
     })
 
+    it('the newest-run fence is the command directly above the read (so read stays adjacent to the dispatch)', () => {
+      const cmds = commands(dispatchStep!.run!)
+      const read = cmds.findIndex((c) => c.includes('autochain-read-enable.sh'))
+      expect(read, `commands: ${JSON.stringify(cmds)}`).toBeGreaterThan(0)
+      expect(cmds[read - 1]).toMatch(
+        /^bash scripts\/ci\/autochain-newest-run-fence\.sh \|\| exit 1$/
+      )
+      // the dispatch step runs the read WITHOUT --verify-read (which authorises nothing)
+      expect(cmds[read]).not.toContain('--verify-read')
+    })
+
+    it('a verify-only manual run ALSO executes the read, in --verify-read mode, and never dispatches', () => {
+      const s = steps.find((x) => (x.run ?? '').includes('--verify-read'))
+      expect(s, 'no verify-read step').toBeDefined()
+      expect(s!.run).toContain('autochain-read-enable.sh --verify-read')
+      expect(s!.run).not.toContain('gh workflow run')
+      expect(s!.if).toContain("env.DISPATCH_ALLOWED != 'true'")
+      expect(s!.if).toContain("github.event_name == 'workflow_dispatch'")
+      expect(s!.env!.VARIABLE_READ_PAT).toContain('secrets.BACKFILL_VARIABLE_READ_PAT')
+      // it must run after Checkout (the script lives in the repo)
+      const idx = (n: string) => steps.findIndex((x) => x.name === n)
+      expect(steps.indexOf(s!)).toBeGreaterThan(idx('Checkout'))
+    })
+
+    it('the post-cooldown collision (non_terminal != 0) has its own explicit reporting step', () => {
+      const s = steps.find((x) => x.name === 'Report post-cooldown collision')
+      expect(s, 'no collision step').toBeDefined()
+      expect(s!.if).toContain("steps.recheck.outputs.non_terminal != '0'")
+      expect(s!.run).toContain('GITHUB_STEP_SUMMARY')
+      expect(steps.indexOf(s!)).toBeLessThan(steps.indexOf(dispatchStep!))
+    })
+
     it('the dispatch step has no delay and no `vars.` reference', () => {
       expect(commands(dispatchStep!.run!).join('\n')).not.toMatch(/\bsleep\b/)
       expect(JSON.stringify(dispatchStep)).not.toContain('vars.')

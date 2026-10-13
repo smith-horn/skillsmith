@@ -32,6 +32,17 @@ echo "gh $*" >> "$D/calls.log"
 clock=$(cat "$D/clock")
 case "$1" in
   variable)
+    if [ "$2" = "set" ]; then
+      val=""; for a in "$@"; do prev_a="\${cur_a:-}"; cur_a="$a"; [ "$prev_a" = "--body" ] && val="$a"; done
+      echo "VARIABLE_SET value=$val at=$clock" >> "$LOG"
+      [ -n "\${STUB_VARSET_FAIL:-}" ] && { echo "gh: HTTP 500" >&2; exit 1; }
+      echo "$val" > "$D/varstate"; exit 0
+    fi
+    if [ -f "$D/varstate" ]; then
+      v=$(cat "$D/varstate"); echo "FLAG_READ phase=after-set value=$v at=$clock" >> "$LOG"
+      [ -n "\${STUB_VARGET_AFTER_SET:-}" ] && v="$STUB_VARGET_AFTER_SET"
+      echo "$v"; exit 0
+    fi
     # STARTUP read (before the driver's first VACUUM) -> STUB_FLAG_STARTUP.
     # Per-dispatch reads (after a VACUUM) -> STUB_FLAG_SEQ by per-dispatch index.
     if ! grep -q '^vacuum' "$LOG" 2>/dev/null; then
@@ -70,7 +81,15 @@ case "$1" in
         other='{"id":222,"display_title":"Skill Indexer Backfill (env=prod) [tok=drv-other]"}'
         mine="{\\"id\\":$rid,\\"display_title\\":\\"Skill Indexer Backfill (env=prod) [tok=$tok]\\"}"
         twin="{\\"id\\":333,\\"display_title\\":\\"Skill Indexer Backfill (env=prod) [tok=$tok]\\"}"
-        case "\${STUB_RUNS_MODE:-one}" in
+        mode="\${STUB_RUNS_MODE:-one}"
+        if [ "$mode" = "err" ] || [ "$mode" = "flaky" ]; then
+          # API errors on token lookup: always (err), or the first 3 calls (flaky).
+          qn=$(cat "$D/qcount" 2>/dev/null || echo 0); qn=$((qn+1)); echo "$qn" > "$D/qcount"
+          echo "API_RUNS_QUERY mode=$mode n=$qn at=$clock" >> "$LOG"
+          if [ "$mode" = "err" ] || [ "$qn" -le 3 ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+          mode=one
+        fi
+        case "$mode" in
           one) body="$other,$mine" ;;
           none) body="$other" ;;
           two) body="$other,$mine,$twin" ;;

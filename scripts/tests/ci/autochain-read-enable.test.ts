@@ -22,6 +22,7 @@ echo "$*" >> "$STUB_DIR/args.log"
 case "$STUB_MODE" in
   value) printf '%s\\n' "$STUB_VALUE"; exit 0 ;;
   raw) printf '%s' "$STUB_VALUE"; exit 0 ;;
+  401) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
   404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   403) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;;
   net) echo "error connecting to api.github.com" >&2; exit 1 ;;
@@ -30,7 +31,12 @@ esac
 exit 99
 `
 
-function run(mode: string, value = '', over: Record<string, string | undefined> = {}) {
+function run(
+  mode: string,
+  value = '',
+  over: Record<string, string | undefined> = {},
+  cliArgs: string[] = []
+) {
   const dir = mkdtempSync(join(tmpdir(), 'smi7112-read-'))
   writeFileSync(join(dir, 'gh'), GH_STUB)
   chmodSync(join(dir, 'gh'), 0o755)
@@ -45,7 +51,7 @@ function run(mode: string, value = '', over: Record<string, string | undefined> 
     ...over,
   }
   for (const k of Object.keys(env)) if (env[k] === undefined) delete env[k]
-  const r = spawnSync('bash', [SCRIPT], { env, encoding: 'utf8', timeout: 30_000 })
+  const r = spawnSync('bash', [SCRIPT, ...cliArgs], { env, encoding: 'utf8', timeout: 30_000 })
   let args = ''
   try {
     args = readFileSync(join(dir, 'args.log'), 'utf8')
@@ -109,5 +115,50 @@ describe('autochain-read-enable.sh', () => {
     const r = run('value', '0', { GITHUB_REPOSITORY: '' })
     expect(r.status, r.out).toBe(1)
     expect(r.args).toBe('')
+  })
+
+  it('401 (PAT expired or revoked) => exit 1, classified explicitly (fail closed)', () => {
+    const r = run('401')
+    expect(r.status, r.out).toBe(1)
+    expect(r.out).toMatch(/401/)
+    expect(r.out).toMatch(/expired or revoked/)
+  })
+
+  it('an unknown argument => exit 1 WITHOUT calling gh', () => {
+    const r = run('value', '0', {}, ['--dispatch'])
+    expect(r.status, r.out).toBe(1)
+    expect(r.args).toBe('')
+  })
+
+  describe('--verify-read (verify-only autochain runs)', () => {
+    it.each([
+      ['"0" (enabled)', '0'],
+      ['"1" (disabled)', '1'],
+    ])('a readable well-formed %s => exit 0 (the PAT works; nothing is authorised)', (_l, v) => {
+      const r = run('value', v, {}, ['--verify-read'])
+      expect(r.status, r.out).toBe(0)
+      expect(r.out).toMatch(/no dispatch authorised/)
+    })
+
+    it.each([
+      ['empty', 'value', ''],
+      ['malformed "yes"', 'value', 'yes'],
+      ['padded " 1"', 'value', ' 1'],
+      ['404', '404', ''],
+      ['403', '403', ''],
+      ['401', '401', ''],
+      ['network error', 'net', ''],
+      ['5xx', '500', ''],
+    ])('%s => exit 1 (a failed or malformed read turns the verify run red)', (_l, mode, v) => {
+      const r = run(mode, v, {}, ['--verify-read'])
+      expect(r.status, r.out).toBe(1)
+      expect(r.out).toMatch(/::error::/)
+    })
+
+    it('a missing token => exit 1 WITHOUT calling gh', () => {
+      const r = run('value', '0', { GH_TOKEN: '' }, ['--verify-read'])
+      expect(r.status, r.out).toBe(1)
+      expect(r.args).toBe('')
+    })
   })
 })

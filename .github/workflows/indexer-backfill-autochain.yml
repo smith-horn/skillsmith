@@ -17,7 +17,13 @@
 #     AUTHORITATIVE check is scripts/ci/autochain-read-enable.sh, run as the
 #     command immediately before `gh workflow run`: a successful API read of the
 #     variable using the secret BACKFILL_VARIABLE_READ_PAT that yields exactly
-#     "0". (GITHUB_TOKEN and the GitHub App cannot read variables.)
+#     "0". (GITHUB_TOKEN gets 403 on this read (measured, W0-7); GitHub App
+#     access is unmeasured (its token failed to mint).)
+#   - Immediately above that read sits the newest-run fence
+#     (scripts/ci/autochain-newest-run-fence.sh): if any indexer-backfill.yml
+#     run was created after the completed run, another dispatcher already
+#     continued the chain, so this link is skipped LOUDLY (red job, warning,
+#     step summary) rather than dispatching a second chain.
 #   - Only the Supabase project the completed run targeted is queried, with only
 #     its credentials: its project comes from the run's display_title
 #     (`run-name` carries env=<prod|staging>). No env marker = indeterminate =
@@ -190,6 +196,15 @@ jobs:
             echo "Recovered from run ${{ env.COMPLETED_RUN_ID }}: resume_from=${{ steps.recover.outputs.resume_from }}, supabase_env=${{ steps.recover.outputs.supabase_env }}, dry_run=${{ steps.recover.outputs.dry_run }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify the enable-variable read (verify only)
+        # A verify-only manual run proves the PAT can read BACKFILL_AUTOCHAIN_DISABLE
+        # and that it holds a well-formed value. Read only: it never dispatches
+        # (--verify-read authorises nothing). A failed read turns this run red.
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED != 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
+        run: GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh --verify-read
+
       - name: Alert on retry cap (SMI-6246 change #4c)
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.retry_cap_exceeded == 'true'
         env:
@@ -250,12 +265,28 @@ jobs:
             --jq '[.[] | select(.status != "completed")] | length')
           echo "non_terminal=$NON_TERMINAL" >> "$GITHUB_OUTPUT"
 
+      - name: Report post-cooldown collision
+        # Another backfill run appeared during the cooldown. Skipping is
+        # intentional, but it must never be silent.
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip != 'true' && steps.recheck.outputs.non_terminal != '0'
+        run: |
+          echo "::warning::Another backfill run is queued/in-progress (${{ steps.recheck.outputs.non_terminal }}) after the cooldown -- NOT dispatching."
+          {
+            echo "### Backfill auto-chain: not re-dispatched (post-cooldown collision)"
+            echo ""
+            echo "${{ steps.recheck.outputs.non_terminal }} other Skill Indexer Backfill run(s) were queued or in progress after the cooldown, so this link was skipped to avoid displacing or duplicating them. The chain continues from that run's own completion."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Dispatch next chunk
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip != 'true' && steps.recheck.outputs.non_terminal == '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
         run: |
+          # SMI-7112: newest-run fence. Exits non-zero (red, no dispatch) when
+          # any backfill run newer than the completed one exists, or when that
+          # cannot be determined.
+          bash scripts/ci/autochain-newest-run-fence.sh || exit 1
           # SMI-7112 (R3-1): the authoritative enable check is the command
           # IMMEDIATELY before the dispatch -- no delay, no other command, and
           # no variables-context reference in between. It exits non-zero (red, no dispatch)

@@ -268,8 +268,7 @@ describe('SMI-6246 change #4c: countConsecutiveSkipsForResumeFrom', () => {
     expect(count).toBe(3)
   })
 
-  it('returns 0 WITH a ::warning:: when the query errors (fails open, but visibly)', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  it('THROWS (never returns 0) when the query errors -- a failed read must not disable the retry cap', async () => {
     const supabase = {
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnThis(),
@@ -278,10 +277,23 @@ describe('SMI-6246 change #4c: countConsecutiveSkipsForResumeFrom', () => {
         limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'boom' } }),
       }),
     }
-    const count = await countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')
-    expect(count).toBe(0)
-    expect(logSpy.mock.calls.some((c) => String(c[0]).startsWith('::warning::'))).toBe(true)
-    logSpy.mockRestore()
+    await expect(countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')).rejects.toThrow(
+      /Retry-cap count unavailable \(boom\)/
+    )
+  })
+
+  it('THROWS when the query returns no data and no error (absent data is not zero)', async () => {
+    const supabase = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+    }
+    await expect(countConsecutiveSkipsForResumeFrom(supabase as never, 'run-1')).rejects.toThrow(
+      /no data/
+    )
   })
 
   it('returns 0 when no rows exist at all', async () => {
