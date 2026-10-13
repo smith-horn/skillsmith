@@ -72,14 +72,17 @@ const nb = data.upsert_newly_blocked
 if (nb !== undefined && !Array.isArray(nb)) out("UNPARSEABLE", "data.upsert_newly_blocked is not an array")
 const ex = data.upsert_block_budget_exhausted
 if (ex !== undefined && typeof ex !== "boolean") out("UNPARSEABLE", "data.upsert_block_budget_exhausted is not a boolean")
+const tr = data.upsert_block_lookup_truncated
+if (tr !== undefined && typeof tr !== "boolean") out("UNPARSEABLE", "data.upsert_block_lookup_truncated is not a boolean")
 const newly = nb ?? []
-if (newly.length === 0 && ex !== true) out("CLEAN")
+if (newly.length === 0 && ex !== true && tr !== true) out("CLEAN")
 const parts = []
 if (newly.length > 0) {
   const rows = newly.slice(0, 20).map((b) => `${b.fullName} (${b.repoUrl}, ${b.payloadBytes} bytes, Ray ID ${b.rayId ?? "unknown"})`)
   parts.push(`${newly.length} newly blocked row(s) refused by the upstream WAF (identity only, no content): ${rows.join("; ")}`)
 }
 if (ex === true) parts.push("the per-flush bisect request budget was exhausted, so some rows failed unisolated")
+if (tr === true) parts.push("the 48h block-history lookup hit its page bound, so every repo it saw was deferred and none was classified as newly blocked")
 const message = `The indexer upsert was blocked upstream: ${parts.join(". Also, ")}.`
 out("ALERT", JSON.stringify({ type: "indexer_upsert_blocked", message, workflow, runId, runUrl }))
 ' "$FILE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${RUN_URL:-}" "${WORKFLOW_NAME:-Skill Indexer}" > "$VERDICT_FILE"

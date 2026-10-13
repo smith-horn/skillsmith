@@ -6,6 +6,8 @@
  *    dispatch input of the last intent exactly (a missing field is NO-GO).
  * Real script, stubbed `gh`; nothing calls GitHub.
  */
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { HELPER, runScript, type Seam } from './backfill-driver.test-helpers.ts'
 import {
@@ -220,6 +222,59 @@ describe('--first-link: the variable flips LAST', () => {
       .split('\n')
       .map((l) => JSON.parse(l).event)
     expect(events).toEqual(['intent', 'resolved', 'intent', 'resolved', 'intent', 'resolved'])
+  })
+
+  /** Make the first link (run 111) report `body` the instant the variable is set to 0. */
+  const changeRunOnFlip = (seam: Seam, body: object) => {
+    const key = runPath(111).replace(/[^a-zA-Z0-9]/g, '_')
+    writeFileSync(
+      join(seam.dir, 'on-varset.sh'),
+      `[ "$1" = "0" ] && printf '%s' '${JSON.stringify(body)}' > "$STUB_DIR/api/${key}.json"\nexit 0\n`
+    )
+  }
+  const varWrites = (seam: Seam) =>
+    seam
+      .log()
+      .split('\n')
+      .filter((l) => l.startsWith('VARIABLE_SET'))
+      .map((l) => l.replace(/ at=.*/, ''))
+
+  it('ORDERING: the first link completes DURING the flip => the variable is restored to 1, NO-GO, next-step guidance', () => {
+    const seam = allClear()
+    changeRunOnFlip(seam, { status: 'completed', updated_at: '2026-10-12T12:00:00Z' })
+    const r = runScript(HELPER, ['--first-link'], seam)
+    expect(verdict(r), r.out).toBe('NO-GO')
+    expect(varWrites(seam)).toEqual(['VARIABLE_SET value=0', 'VARIABLE_SET value=1'])
+    expect(seam.log()).toMatch(/FLAG_READ phase=after-set value=1/)
+    expect(r.out).toContain('completed while the variable was being flipped')
+    expect(r.out).toContain('Run --first-link again to dispatch the next link.')
+    expect(seam.count('WORKFLOW_RUN')).toBe(1)
+  })
+
+  it('ORDERING RECOVERY: after a completion during the flip, running --first-link again dispatches the next link and ends at 0', () => {
+    const seam = allClear()
+    changeRunOnFlip(seam, { status: 'completed', updated_at: '2026-10-12T12:00:00Z' })
+    expect(verdict(runScript(HELPER, ['--first-link'], seam))).toBe('NO-GO')
+    writeFileSync(join(seam.dir, 'on-varset.sh'), 'exit 0\n')
+    seam.env.STUB_RUN_ID = '112'
+    seam.fixture(runPath(112), { status: 'in_progress' })
+    const second = runScript(HELPER, ['--first-link'], seam)
+    expect(verdict(second), second.out).toBe('GO')
+    expect(seam.count('WORKFLOW_RUN')).toBe(2)
+    expect(varWrites(seam)).toEqual([
+      'VARIABLE_SET value=0',
+      'VARIABLE_SET value=1',
+      'VARIABLE_SET value=0',
+    ])
+  })
+
+  it('ORDERING: a first-link status that is unreadable after the flip is not trusted: variable restored to 1, NO-GO', () => {
+    const seam = allClear()
+    changeRunOnFlip(seam, {})
+    const r = runScript(HELPER, ['--first-link'], seam)
+    expect(verdict(r), r.out).toBe('NO-GO')
+    expect(varWrites(seam)).toEqual(['VARIABLE_SET value=0', 'VARIABLE_SET value=1'])
+    expect(r.out).toContain('cannot be confirmed')
   })
 
   it('an unreadable first-link status body => NO-GO, variable never set', () => {

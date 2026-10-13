@@ -35,6 +35,8 @@ case "$1" in
     if [ "$2" = "set" ]; then
       val=""; for a in "$@"; do prev_a="\${cur_a:-}"; cur_a="$a"; [ "$prev_a" = "--body" ] && val="$a"; done
       echo "VARIABLE_SET value=$val at=$clock" >> "$LOG"
+      # Test hook: run a script at the moment of every variable-set call (an ordering seam).
+      [ -f "$D/on-varset.sh" ] && bash "$D/on-varset.sh" "$val"
       [ -n "\${STUB_VARSET_FAIL:-}" ] && { echo "gh: HTTP 500" >&2; exit 1; }
       echo "$val" > "$D/varstate"; exit 0
     fi

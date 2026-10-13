@@ -6,7 +6,9 @@
  * every side effect, and -- the one that matters most -- the authoritative
  * enable read being the command IMMEDIATELY before the dispatch.
  */
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
@@ -106,13 +108,30 @@ describe('autochain workflow structure', () => {
       )
     })
 
+    it('SEQUENCE: before the dispatch there are EXACTLY two commands, the fence then the read, each a single simple command', () => {
+      const cmds = commands(dispatchStep!.run!)
+      const at = cmds.findIndex((c) => c.startsWith('timeout 60 gh workflow run'))
+      expect(cmds.slice(0, at), `commands: ${JSON.stringify(cmds)}`).toEqual([
+        'bash scripts/ci/autochain-newest-run-fence.sh || exit $?',
+        'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh || exit 1',
+      ])
+      // nothing alters the shell's error handling or the step's execution, and nothing runs in the background
+      const whole = commands(dispatchStep!.run!).join('\n')
+      expect(whole).not.toMatch(/\bset\s+[+-]|\btrap\b|\bsleep\b|\bwait\b|(^|[^&])&\s*$/m)
+      expect(dispatchStep).not.toHaveProperty('continue-on-error')
+      expect(dispatchStep).not.toHaveProperty('shell')
+    })
+
     it('the newest-run fence is the command directly above the read (so read stays adjacent to the dispatch)', () => {
       const cmds = commands(dispatchStep!.run!)
       const read = cmds.findIndex((c) => c.includes('autochain-read-enable.sh'))
       expect(read, `commands: ${JSON.stringify(cmds)}`).toBeGreaterThan(0)
+      // The fence's own exit status must be the step's: a lossy wrapper (`|| exit 1`) collapses
+      // its documented 3 (skipped loudly) into 1 (could not evaluate).
       expect(cmds[read - 1]).toMatch(
-        /^bash scripts\/ci\/autochain-newest-run-fence\.sh \|\| exit 1$/
+        /^bash scripts\/ci\/autochain-newest-run-fence\.sh \|\| exit \$\?$/
       )
+      expect(cmds[read - 1]).not.toMatch(/exit [0-9]/)
       // the dispatch step runs the read WITHOUT --verify-read (which authorises nothing)
       expect(cmds[read]).not.toContain('--verify-read')
     })
@@ -153,6 +172,72 @@ describe('autochain workflow structure', () => {
 
     it('the read uses ONLY the BACKFILL_VARIABLE_READ_PAT secret', () => {
       expect(dispatchStep!.env!.VARIABLE_READ_PAT).toContain('secrets.BACKFILL_VARIABLE_READ_PAT')
+    })
+  })
+})
+
+describe('the dispatch step executed with stubbed scripts (exit-status propagation)', () => {
+  /** Run the dispatch step's real `run:` text the way Actions does, with the three scripts stubbed. */
+  function runStep(fenceRc: number, readRc: number, shellFlags: string[]) {
+    const dir = mkdtempSync(join(tmpdir(), 'smi7112-wf-'))
+    mkdirSync(join(dir, 'scripts', 'ci'), { recursive: true })
+    mkdirSync(join(dir, 'bin'))
+    const stub = (p: string, body: string) => {
+      writeFileSync(p, body)
+      chmodSync(p, 0o755)
+    }
+    stub(
+      join(dir, 'scripts/ci/autochain-newest-run-fence.sh'),
+      `echo fence >> "$MARK"; exit ${fenceRc}\n`
+    )
+    stub(join(dir, 'scripts/ci/autochain-read-enable.sh'), `echo read >> "$MARK"; exit ${readRc}\n`)
+    stub(join(dir, 'bin/timeout'), 'shift; echo dispatch >> "$MARK"; exit 0\n')
+    const script = join(dir, 'step.sh')
+    writeFileSync(script, dispatchStep!.run!.replace(/\$\{\{[^}]*\}\}/g, 'x'))
+    const r = spawnSync('bash', [...shellFlags, script], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`,
+        MARK: join(dir, 'marks'),
+        GITHUB_REPOSITORY: 'o/r',
+        GITHUB_RUN_ID: '1',
+        VARIABLE_READ_PAT: 'pat',
+      },
+    })
+    const marks = existsSync(join(dir, 'marks'))
+      ? readFileSync(join(dir, 'marks'), 'utf8').trim()
+      : ''
+    return { status: r.status, marks: marks === '' ? [] : marks.split('\n'), err: r.stderr }
+  }
+
+  describe.each([
+    ['bash -e (the Actions default)', ['-e']],
+    ['bash -eo pipefail', ['-eo', 'pipefail']],
+  ] as [string, string[]][])('under %s', (_n, flags) => {
+    it('CONTROL: fence 0 and read 0 reach the dispatch', () => {
+      const r = runStep(0, 0, flags)
+      expect(r.marks, r.err).toEqual(['fence', 'read', 'dispatch'])
+      expect(r.status).toBe(0)
+    })
+
+    it('fence exit 3 (skipped loudly) is the step exit status: 3, no read, no dispatch', () => {
+      const r = runStep(3, 0, flags)
+      expect(r.status).toBe(3)
+      expect(r.marks).toEqual(['fence'])
+    })
+
+    it('fence exit 1 (could not evaluate) is the step exit status: 1, no read, no dispatch', () => {
+      const r = runStep(1, 0, flags)
+      expect(r.status).toBe(1)
+      expect(r.marks).toEqual(['fence'])
+    })
+
+    it('a failing enable read stops the step before the dispatch', () => {
+      const r = runStep(0, 4, flags)
+      expect(r.status).toBe(1)
+      expect(r.marks).toEqual(['fence', 'read'])
     })
   })
 })

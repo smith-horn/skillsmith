@@ -63,6 +63,8 @@ export interface DbCfg {
   recent?: { created_at: string; metadata: { repo_url: string } }[]
   /** The audit lookup throws (a mock with no `.select`, or a network fault). */
   selectThrows?: boolean
+  /** The audit lookup answers with an error for any page starting at or after this row offset. */
+  errorFromOffset?: number
   /** Stamp for new block rows; shared so a test can advance time between flushes. */
   clock?: { now: number }
 }
@@ -71,6 +73,8 @@ export function makeDb(cfg: DbCfg) {
   const upserts: Row[][] = []
   const audits: Row[] = []
   const store = [...(cfg.recent ?? [])]
+  /** Every `.range(from, to)` the lookup issued, in order. */
+  const ranges: [number, number][] = []
   const clock = cfg.clock ?? { now: T0 }
   const audit = {
     insert(row: Row) {
@@ -90,7 +94,15 @@ export function makeDb(cfg: DbCfg) {
         eq: () => q,
         gte: () => q,
         order: () => q,
-        limit: () => Promise.resolve({ data: [...store], error: null }),
+        // The lookup must page: a bare `.limit(n)` answers the first n rows only.
+        limit: (n: number) => Promise.resolve({ data: store.slice(0, n), error: null }),
+        range: (from: number, to: number) => {
+          ranges.push([from, to])
+          if (cfg.errorFromOffset !== undefined && from >= cfg.errorFromOffset) {
+            return Promise.resolve({ data: null, error: { message: 'page read failed' } })
+          }
+          return Promise.resolve({ data: store.slice(from, to + 1), error: null })
+        },
       }
       return q
     },
@@ -104,7 +116,15 @@ export function makeDb(cfg: DbCfg) {
   }
   const db = { from: (table: string) => (table === 'audit_logs' ? audit : skills) }
   const blockAudits = () => audits.filter((a) => a.event_type === 'indexer_upsert_blocked')
-  return { db: db as unknown as SupabaseClient, upserts, audits, blockAudits, clock }
+  return { db: db as unknown as SupabaseClient, upserts, audits, blockAudits, clock, ranges }
 }
 
 export const sentUrls = (upserts: Row[][]) => upserts.flat().map((p) => p.repo_url as string)
+
+/** `n` audit rows for distinct repos, newest first, `ageMs` old at the newest and one second apart. */
+export function fillerBlocks(n: number, ageMs: number, now = T0) {
+  return Array.from({ length: n }, (_, i) => ({
+    created_at: new Date(now - ageMs - i * 1000).toISOString(),
+    metadata: { repo_url: `https://github.com/filler/repo-${ageMs}-${i}` },
+  }))
+}

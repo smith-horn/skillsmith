@@ -53,6 +53,7 @@ export function applyUpsertResult(
   result.upsert_deferred_count = u.upsert_deferred_count
   result.upsert_block_budget_exhausted = u.upsert_block_budget_exhausted
   result.upsert_bisect_disabled = u.upsert_bisect_disabled
+  result.upsert_block_lookup_truncated = u.upsert_block_lookup_truncated
   result.errors.push(...u.errors)
 }
 

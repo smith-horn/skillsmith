@@ -21,6 +21,10 @@ export const BLOCK_DEFER_MS = 24 * 60 * 60 * 1000
 /** SMI-7113: how far back the defer lookup reads (a row keeps counting as known for 48h). */
 const BLOCK_LOOKBACK_MS = 48 * 60 * 60 * 1000
 const BLOCK_REPORT_CAP = 20
+/** SMI-7113: PostgREST caps one response (default 1,000 rows), so the lookup pages. */
+export const BLOCK_LOOKUP_PAGE_SIZE = 1000
+/** SMI-7113: bound on lookup pages; hitting it is reported, never silently treated as complete. */
+export const MAX_BLOCK_LOOKUP_PAGES = 20
 
 /** SMI-7113: one row the upstream WAF refused, identified without its content. */
 export interface BlockedRow {
@@ -48,6 +52,8 @@ export interface BlockOutcome {
   deferredCount: number
   blockBudgetExhausted: boolean
   bisectDisabled: boolean
+  /** The 48h lookup hit its page bound: every repo it saw was deferred, none treated as new. */
+  lookupTruncated: boolean
 }
 
 /** SMI-7113: run-level report; every producer sets all fields, consumers treat absent as 0. */
@@ -58,6 +64,7 @@ export interface UpsertBlockReport {
   upsert_deferred_count: number
   upsert_block_budget_exhausted: boolean
   upsert_bisect_disabled: boolean
+  upsert_block_lookup_truncated: boolean
 }
 
 export function emptyBlockReport(): UpsertBlockReport {
@@ -68,6 +75,7 @@ export function emptyBlockReport(): UpsertBlockReport {
     upsert_deferred_count: 0,
     upsert_block_budget_exhausted: false,
     upsert_bisect_disabled: false,
+    upsert_block_lookup_truncated: false,
   }
 }
 
@@ -79,6 +87,7 @@ export function toBlockReport(flush: BlockOutcome): UpsertBlockReport {
     upsert_deferred_count: flush.deferredCount,
     upsert_block_budget_exhausted: flush.blockBudgetExhausted,
     upsert_bisect_disabled: flush.bisectDisabled,
+    upsert_block_lookup_truncated: flush.lookupTruncated,
   }
 }
 
@@ -125,32 +134,60 @@ function fieldLengthsOf(skillData: Record<string, unknown>): Record<string, numb
   return out
 }
 
-/** SMI-7113: repo_url -> newest `indexer_upsert_blocked` audit time (ms) in the lookback window. */
+/** SMI-7113: the lookup result; `truncated` means the page bound was hit before the window was exhausted. */
+export interface RecentBlocks {
+  recent: Map<string, number>
+  truncated: boolean
+}
+
+/**
+ * SMI-7113: repo_url -> newest `indexer_upsert_blocked` audit time (ms) in the lookback window.
+ * Pages through the WHOLE window (newest first, deduplicating by repo_url as it goes). If
+ * `MAX_BLOCK_LOOKUP_PAGES` full pages are still not enough, `truncated` is true and the caller
+ * must treat every repo seen as blocked rather than new.
+ */
 export async function loadRecentBlocks(
   supabase: SupabaseClient,
   nowMs: number
-): Promise<Map<string, number>> {
+): Promise<RecentBlocks> {
   const recent = new Map<string, number>()
+  let truncated = false
+  const since = new Date(nowMs - BLOCK_LOOKBACK_MS).toISOString()
   try {
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .select('created_at, metadata')
-      .eq('event_type', 'indexer_upsert_blocked')
-      .gte('created_at', new Date(nowMs - BLOCK_LOOKBACK_MS).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(1000)
-    if (error) throw new Error(error.message)
-    for (const row of (data ?? []) as { created_at: string; metadata: { repo_url?: string } }[]) {
-      const url = row.metadata?.repo_url
-      const at = Date.parse(row.created_at)
-      if (url && Number.isFinite(at) && !recent.has(url)) recent.set(url, at)
+    for (let page = 0; ; page++) {
+      const from = page * BLOCK_LOOKUP_PAGE_SIZE
+      const { data, error } = await supabase
+        .from('audit_logs')
+        .select('created_at, metadata')
+        .eq('event_type', 'indexer_upsert_blocked')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, from + BLOCK_LOOKUP_PAGE_SIZE - 1)
+      if (error) throw new Error(error.message)
+      const rows = (data ?? []) as { created_at: string; metadata: { repo_url?: string } }[]
+      for (const row of rows) {
+        const url = row.metadata?.repo_url
+        const at = Date.parse(row.created_at)
+        if (url && Number.isFinite(at) && !recent.has(url)) recent.set(url, at)
+      }
+      if (rows.length < BLOCK_LOOKUP_PAGE_SIZE) break
+      if (page + 1 >= MAX_BLOCK_LOOKUP_PAGES) {
+        truncated = true
+        console.warn(
+          `[upsert-block] backoff lookup hit its ${MAX_BLOCK_LOOKUP_PAGES}-page bound; deferring every repo seen and treating none as newly blocked`
+        )
+        break
+      }
     }
   } catch (lookupError) {
     // Fail open: with no history every blocked row is re-probed (and re-alerted), never hidden.
     const why = lookupError instanceof Error ? lookupError.message : String(lookupError)
     console.warn(`[upsert-block] backoff lookup failed, treating all rows as unblocked: ${why}`)
+    recent.clear()
+    truncated = false
   }
-  return recent
+  return { recent, truncated }
 }
 
 /** SMI-7113: log the identity (never the content) and write ONE audit row for a sent-and-blocked row. */

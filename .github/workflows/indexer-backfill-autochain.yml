@@ -295,8 +295,9 @@ jobs:
           # SMI-7112: newest-run fence. Exits non-zero (red, no dispatch) when
           # any backfill run newer than the triggering attempt exists, when the
           # triggering run was re-run (or is itself a re-run), or when that
-          # cannot be determined.
-          bash scripts/ci/autochain-newest-run-fence.sh || exit 1
+          # cannot be determined. The step's exit status IS the fence's (0 clear,
+          # 3 skipped loudly, 1 could not evaluate): never collapse it.
+          bash scripts/ci/autochain-newest-run-fence.sh || exit $?
           # SMI-7112 (R3-1): the authoritative enable check is the command
           # IMMEDIATELY before the dispatch -- no delay, no other command, and
           # no variables-context reference in between. It exits non-zero (red, no dispatch)

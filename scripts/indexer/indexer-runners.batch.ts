@@ -222,7 +222,13 @@ export async function flushUpsertAccumulator(
   const upsertOkUrls = new Set<string>()
   const bisectDisabled = waf.bisectDisabled === true
   // SMI-7113: every return carries the block fields; the early returns carry the zero set.
-  const noBlock = { blocked: [], newlyBlocked: [], deferredCount: 0, blockBudgetExhausted: false }
+  const noBlock = {
+    blocked: [],
+    newlyBlocked: [],
+    deferredCount: 0,
+    blockBudgetExhausted: false,
+    lookupTruncated: false,
+  }
 
   // SMI-2731 + H-2: Quarantine audit-log writes for repos discovered without
   // a valid SKILL.md (repo_url === null). Must run BEFORE the batch — the
@@ -321,12 +327,13 @@ export async function flushUpsertAccumulator(
   // crucially -- given NO fresh audit row, so their newest block time ages and they are probed
   // again once it passes 24h). One lookup per flush; skipped when bisecting is switched off.
   const nowMs = waf.nowMs ?? Date.now()
-  const recent = bisectDisabled
-    ? new Map<string, number>()
+  const { recent, truncated: lookupTruncated } = bisectDisabled
+    ? { recent: new Map<string, number>(), truncated: false }
     : await loadRecentBlocks(supabase, nowMs)
+  // A truncated lookup cannot prove any seen repo is past its window, so every one is deferred.
   const sendItems = fullItems.filter((a) => {
     const at = recent.get(a.skillData.repo_url as string)
-    return at === undefined || nowMs - at >= BLOCK_DEFER_MS
+    return at === undefined || (!lookupTruncated && nowMs - at >= BLOCK_DEFER_MS)
   })
   const deferredCount = fullItems.length - sendItems.length
 
@@ -398,5 +405,6 @@ export async function flushUpsertAccumulator(
     deferredCount,
     blockBudgetExhausted: ctx.budgetExhausted,
     bisectDisabled,
+    lookupTruncated,
   }
 }

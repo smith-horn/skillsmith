@@ -237,6 +237,7 @@ describe('call-site plumbing', () => {
       upsert_deferred_count: 4,
       upsert_block_budget_exhausted: true,
       upsert_bisect_disabled: true,
+      upsert_block_lookup_truncated: true,
     }
     const result = { errors: [] as string[] } as unknown as IndexerResult
     applyUpsertResult(result, {

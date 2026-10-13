@@ -114,6 +114,15 @@ describe('alert-upstream-block.sh', () => {
     expect(JSON.parse(r.body).message).toContain('budget')
   })
 
+  it('a truncated block-history lookup alerts even with no newly blocked row', () => {
+    const r = run({
+      lines: [prov(), summary({ upsert_newly_blocked: [], upsert_block_lookup_truncated: true })],
+    })
+    expect(r.status).toBe(0)
+    expect(r.args, 'no POST was made').not.toBe('')
+    expect(JSON.parse(r.body).message).toContain('page bound')
+  })
+
   it.each([
     ['a different run id', prov('9999', '1')],
     ['a different run attempt', prov('4242', '2')],
@@ -159,6 +168,7 @@ describe('alert-upstream-block.sh', () => {
     ['a summary with no data object', JSON.stringify({ meta: {} })],
     ['newly_blocked of the wrong type', summary({ upsert_newly_blocked: 'acme/skill-17' })],
     ['budget flag of the wrong type', summary({ upsert_block_budget_exhausted: 'yes' })],
+    ['truncation flag of the wrong type', summary({ upsert_block_lookup_truncated: 'yes' })],
   ])('treats %s after a successful step as an error (exit 1, no POST)', (_n, last) => {
     const r = run({ lines: [prov(), last] })
     expect(r.status).toBe(1)

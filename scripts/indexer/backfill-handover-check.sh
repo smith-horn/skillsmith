@@ -252,6 +252,27 @@ if [ "$FIRST_LINK" -eq 1 ]; then
     say "HALT: BACKFILL_AUTOCHAIN_DISABLE did not read back exactly 0 ($FLAG_SEEN); inspect it by hand."
     echo "NO-GO"; exit 1
   fi
+  # The first link was live BEFORE the flip; it may have completed DURING it. A completion in that
+  # window fires workflow_run while the variable still read 1, so the autochain stood down and
+  # nothing will continue the chain. Re-read the status now that the variable reads 0.
+  st2=$(gh api "repos/$REPO/actions/runs/$RESOLVED_ID" 2>/dev/null | js status)
+  case "$st2" in
+    queued|in_progress) ;;
+    *)
+      if gh variable set BACKFILL_AUTOCHAIN_DISABLE --body 1 --repo "$REPO" >/dev/null 2>&1 && flag_reads 1; then
+        say "HALT: the variable is restored to 1."
+      else
+        say "HALT: could NOT restore BACKFILL_AUTOCHAIN_DISABLE to 1 ($FLAG_SEEN). It may still read 0: set it to 1 by hand before anything else."
+      fi
+      if [ "$st2" = "completed" ]; then
+        say "First link run $RESOLVED_ID completed while the variable was being flipped, so the autochain may not have continued the chain."
+        say "Run --first-link again to dispatch the next link."
+        say "(If the autochain did dispatch a successor, the re-run's checks (a)-(c) will refuse until it has completed.)"
+      else
+        say "First link run $RESOLVED_ID status after the flip is '${st2:-unreadable}', not queued/in_progress; whether the chain continues cannot be confirmed. Reconcile before enabling the autochain."
+      fi
+      echo "NO-GO"; exit 1 ;;
+  esac
   say "BACKFILL_AUTOCHAIN_DISABLE set to 0 after the first link went live; the autochain is now the only dispatcher."
   echo "GO"; exit 0
 fi
