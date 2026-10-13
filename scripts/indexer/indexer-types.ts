@@ -14,6 +14,7 @@
 
 import type { BackfillCrawlOutcome } from './backfill-checkpoint.ts'
 import type { StaleVerificationCounters } from './stale-reconciliation.ts'
+import type { UpsertBlockReport } from './indexer-runners.batch.ts'
 
 /**
  * Indexer request body
@@ -44,7 +45,7 @@ export interface IndexerRequest {
 /**
  * Indexer result
  */
-export interface IndexerResult {
+export interface IndexerResult extends Partial<UpsertBlockReport> {
   found: number
   indexed: number
   updated: number

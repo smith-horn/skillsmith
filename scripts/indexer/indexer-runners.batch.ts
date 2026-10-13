@@ -32,11 +32,35 @@
  * `security_findings` JSONB) can still hit the 8s statement timeout and lose
  * the whole chunk; confirmed live 2026-08-09, a 1977-row `.claude/skills`
  * chunk under the 2000-row `UPSERT_CHUNK_SIZE` still timed out and was
- * entirely discarded).
+ * entirely discarded), SMI-7113 (a Cloudflare block page refusing ONE row failed every
+ * chunk holding it, every run -- bisected to the row in `indexer-runners.waf.ts` helpers).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { GitHubRepository } from './topic-search.ts'
+import {
+  BLOCK_DEFER_MS,
+  DEFAULT_BLOCK_BISECT_BUDGET,
+  MAX_WAF_SPLIT_DEPTH,
+  isUpstreamBlock,
+  loadRecentBlocks,
+  recordBlocked,
+  type BlockOutcome,
+  type BlockedRow,
+  type WafOptions,
+} from './indexer-runners.waf.ts'
+
+// Re-exported so the runners and tests keep a single import surface.
+export {
+  DEFAULT_BLOCK_BISECT_BUDGET,
+  emptyBlockReport,
+  isUpstreamBlock,
+  resolveWafOptions,
+  toBlockReport,
+  type BlockedRow,
+  type UpsertBlockReport,
+  type WafOptions,
+} from './indexer-runners.waf.ts'
 
 /**
  * One accumulator entry: the repo discovered in this run + the skill row
@@ -59,7 +83,7 @@ export interface UpsertAccumulatorItem {
   unchangedSkip?: boolean
 }
 
-export interface FlushResult {
+export interface FlushResult extends BlockOutcome {
   indexed: number
   updated: number
   failed: number
@@ -93,73 +117,88 @@ const STATEMENT_TIMEOUT_CODE = '57014'
  */
 const MAX_TIMEOUT_SPLIT_DEPTH = 8
 
+interface UpsertCtx {
+  supabase: SupabaseClient
+  totalLen: number
+  upsertOkUrls: Set<string>
+  chunkErrorUrls: Set<string>
+  errors: string[]
+  requests: number
+  budget: number
+  bisectDisabled: boolean
+  blocked: BlockedRow[]
+  budgetExhausted: boolean
+}
+
+function failChunk(ctx: UpsertCtx, chunk: UpsertAccumulatorItem[], start: number, why: string) {
+  ctx.errors.push(
+    `Batch upsert failed (rows ${start}-${start + chunk.length - 1} of ${ctx.totalLen}): ${why}`
+  )
+  for (const { skillData } of chunk) {
+    const url = skillData.repo_url as string | null
+    if (url) ctx.chunkErrorUrls.add(url)
+  }
+}
+
 /**
  * SMI-5968: Upsert one chunk, retrying with a halved chunk on a statement
  * timeout instead of discarding the whole chunk. A fixed row-count
  * `chunkSize` only bounds row COUNT, not query execution time -- per-row
- * payload weight (long descriptions, large `security_findings` JSONB,
- * embeddings) varies enough that a sub-threshold chunk can still exceed
+ * payload weight varies enough that a sub-threshold chunk can still exceed
  * PostgREST's 8s `statement_timeout`. Halving isolates the actually-heavy
- * rows instead of losing the entire chunk to them. `startIndex`/`totalLen`
- * are carried through purely for error-message row ranges -- they play no
- * part in the retry logic itself.
+ * rows instead of losing the entire chunk to them. `startIndex` is carried
+ * purely for error-message row ranges.
+ *
+ * SMI-7113: a Cloudflare block page (403, edge-served before PostgREST, so the
+ * statement never ran) is bisected to the single row that triggers it, bounded by
+ * `MAX_WAF_SPLIT_DEPTH` and a per-flush request budget (`viaWaf` children only;
+ * the first request of each chunk always goes). 5xx / status 0 are ambiguous and
+ * are never bisected.
  */
 async function upsertChunkWithRetry(
-  supabase: SupabaseClient,
+  ctx: UpsertCtx,
   chunk: UpsertAccumulatorItem[],
   startIndex: number,
-  totalLen: number,
-  upsertOkUrls: Set<string>,
-  chunkErrorUrls: Set<string>,
-  errors: string[],
-  depth = 0
+  depth = 0,
+  viaWaf = false
 ): Promise<void> {
+  if (viaWaf && ctx.requests >= ctx.budget) {
+    ctx.budgetExhausted = true
+    failChunk(ctx, chunk, startIndex, 'upstream-block bisect request budget exhausted')
+    return
+  }
+  ctx.requests++
   const payload = chunk.map((a) => a.skillData)
-  const { data, error } = await supabase
+  const { data, error, status } = await ctx.supabase
     .from('skills')
     .upsert(payload, { onConflict: 'repo_url_canonical', ignoreDuplicates: false })
     .select('repo_url')
 
   if (error) {
-    const isTimeout =
-      error.code === STATEMENT_TIMEOUT_CODE || error.message?.includes('statement timeout')
-    if (isTimeout && chunk.length > 1 && depth < MAX_TIMEOUT_SPLIT_DEPTH) {
+    const split = async (waf: boolean) => {
       const mid = Math.ceil(chunk.length / 2)
-      await upsertChunkWithRetry(
-        supabase,
-        chunk.slice(0, mid),
-        startIndex,
-        totalLen,
-        upsertOkUrls,
-        chunkErrorUrls,
-        errors,
-        depth + 1
-      )
-      await upsertChunkWithRetry(
-        supabase,
-        chunk.slice(mid),
-        startIndex + mid,
-        totalLen,
-        upsertOkUrls,
-        chunkErrorUrls,
-        errors,
-        depth + 1
-      )
+      await upsertChunkWithRetry(ctx, chunk.slice(0, mid), startIndex, depth + 1, waf)
+      await upsertChunkWithRetry(ctx, chunk.slice(mid), startIndex + mid, depth + 1, waf)
+    }
+    if (!ctx.bisectDisabled && isUpstreamBlock(error, status)) {
+      if (chunk.length === 1) {
+        ctx.blocked.push(await recordBlocked(ctx.supabase, chunk[0], error.message))
+        failChunk(ctx, chunk, startIndex, 'blocked by upstream WAF (row isolated)')
+        return
+      }
+      if (depth < MAX_WAF_SPLIT_DEPTH) return split(true)
+      failChunk(ctx, chunk, startIndex, 'blocked by upstream WAF (bisect depth cap)')
       return
     }
-    const endIndex = startIndex + chunk.length - 1
-    errors.push(
-      `Batch upsert failed (rows ${startIndex}-${endIndex} of ${totalLen}): ${error.message}`
-    )
-    for (const { skillData } of chunk) {
-      const url = skillData.repo_url as string | null
-      if (url) chunkErrorUrls.add(url)
-    }
+    const isTimeout =
+      error.code === STATEMENT_TIMEOUT_CODE || error.message?.includes('statement timeout')
+    if (isTimeout && chunk.length > 1 && depth < MAX_TIMEOUT_SPLIT_DEPTH) return split(viaWaf)
+    failChunk(ctx, chunk, startIndex, error.message)
     return
   }
 
   for (const row of (data ?? []) as { repo_url: string | null }[]) {
-    if (row.repo_url) upsertOkUrls.add(row.repo_url)
+    if (row.repo_url) ctx.upsertOkUrls.add(row.repo_url)
   }
 }
 
@@ -172,7 +211,8 @@ export async function flushUpsertAccumulator(
   supabase: SupabaseClient,
   accumulator: UpsertAccumulatorItem[],
   existingUrls: Set<string>,
-  chunkSize: number = UPSERT_CHUNK_SIZE
+  chunkSize: number = UPSERT_CHUNK_SIZE,
+  waf: WafOptions = {}
 ): Promise<FlushResult> {
   let indexed = 0
   let updated = 0
@@ -180,6 +220,9 @@ export async function flushUpsertAccumulator(
   let quarantined = 0
   const errors: string[] = []
   const upsertOkUrls = new Set<string>()
+  const bisectDisabled = waf.bisectDisabled === true
+  // SMI-7113: every return carries the block fields; the early returns carry the zero set.
+  const noBlock = { blocked: [], newlyBlocked: [], deferredCount: 0, blockBudgetExhausted: false }
 
   // SMI-2731 + H-2: Quarantine audit-log writes for repos discovered without
   // a valid SKILL.md (repo_url === null). Must run BEFORE the batch — the
@@ -202,7 +245,16 @@ export async function flushUpsertAccumulator(
 
   const validUrlItems = accumulator.filter((a) => a.skillData.repo_url != null)
   if (validUrlItems.length === 0) {
-    return { indexed, updated, failed, quarantined, errors, upsertOkUrls }
+    return {
+      indexed,
+      updated,
+      failed,
+      quarantined,
+      errors,
+      upsertOkUrls,
+      ...noBlock,
+      bisectDisabled,
+    }
   }
 
   // SMI-4858: Split skinny (unchanged-skip) vs full payloads BEFORE the batch
@@ -253,8 +305,30 @@ export async function flushUpsertAccumulator(
   }
 
   if (fullItems.length === 0) {
-    return { indexed, updated, failed, quarantined, errors, upsertOkUrls }
+    return {
+      indexed,
+      updated,
+      failed,
+      quarantined,
+      errors,
+      upsertOkUrls,
+      ...noBlock,
+      bisectDisabled,
+    }
   }
+
+  // SMI-7113: rows the WAF refused in the last 24h are held back (not sent, not failed, and --
+  // crucially -- given NO fresh audit row, so their newest block time ages and they are probed
+  // again once it passes 24h). One lookup per flush; skipped when bisecting is switched off.
+  const nowMs = waf.nowMs ?? Date.now()
+  const recent = bisectDisabled
+    ? new Map<string, number>()
+    : await loadRecentBlocks(supabase, nowMs)
+  const sendItems = fullItems.filter((a) => {
+    const at = recent.get(a.skillData.repo_url as string)
+    return at === undefined || nowMs - at >= BLOCK_DEFER_MS
+  })
+  const deferredCount = fullItems.length - sendItems.length
 
   // C-3 + SMI-5934 + SMI-5968: PostgREST batch upsert is NOT row-atomic, and
   // (since SMI-5934) is issued in `chunkSize`-row chunks rather than one call
@@ -276,21 +350,24 @@ export async function flushUpsertAccumulator(
   // post-loop walk over all of `fullItems` is the single source of truth for
   // counting, so a row is never booked failed both inside the chunk loop and
   // again in the per-row walk.
-  const chunkErrorUrls = new Set<string>()
-  for (let i = 0; i < fullItems.length; i += chunkSize) {
-    const chunk = fullItems.slice(i, i + chunkSize)
-    await upsertChunkWithRetry(
-      supabase,
-      chunk,
-      i,
-      fullItems.length,
-      upsertOkUrls,
-      chunkErrorUrls,
-      errors
-    )
+  const ctx: UpsertCtx = {
+    supabase,
+    totalLen: sendItems.length,
+    upsertOkUrls,
+    chunkErrorUrls: new Set<string>(),
+    errors,
+    requests: 0,
+    budget: waf.budget ?? DEFAULT_BLOCK_BISECT_BUDGET,
+    bisectDisabled,
+    blocked: [],
+    budgetExhausted: false,
+  }
+  const chunkErrorUrls = ctx.chunkErrorUrls
+  for (let i = 0; i < sendItems.length; i += chunkSize) {
+    await upsertChunkWithRetry(ctx, sendItems.slice(i, i + chunkSize), i)
   }
 
-  for (const { repo, skillData } of fullItems) {
+  for (const { repo, skillData } of sendItems) {
     const url = skillData.repo_url as string | null
     if (!url || !upsertOkUrls.has(url)) {
       failed++
@@ -309,5 +386,17 @@ export async function flushUpsertAccumulator(
     }
   }
 
-  return { indexed, updated, failed, quarantined, errors, upsertOkUrls }
+  return {
+    indexed,
+    updated,
+    failed,
+    quarantined,
+    errors,
+    upsertOkUrls,
+    blocked: ctx.blocked,
+    newlyBlocked: ctx.blocked.filter((b) => !recent.has(b.repoUrl)),
+    deferredCount,
+    blockBudgetExhausted: ctx.budgetExhausted,
+    bisectDisabled,
+  }
 }

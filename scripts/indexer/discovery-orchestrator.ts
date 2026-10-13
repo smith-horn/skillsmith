@@ -44,6 +44,7 @@ import {
   writeDiscoveryAuditLog,
   runStaleReconciliationPhase,
   buildInitialDiscoveryResult,
+  applyUpsertResult,
 } from './discovery-orchestrator.phase-split.ts'
 
 /**
@@ -401,15 +402,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     dryRun,
     telemetry
   )
-  result.indexed = upsertResult.indexed
-  result.updated = upsertResult.updated
-  result.failed = upsertResult.failed
-  result.quarantined = upsertResult.quarantined
-  result.unchanged = upsertResult.unchanged
-  result.quality_gate_filtered = upsertResult.quality_gate_filtered
-  result.meta_list_filtered = upsertResult.meta_list_filtered
-  result.multiline_truncated = upsertResult.multiline_truncated
-  result.errors.push(...upsertResult.errors)
+  applyUpsertResult(result, upsertResult)
 
   let categorizedCount = 0
   let categoryAssignments = 0
