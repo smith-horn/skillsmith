@@ -7,7 +7,7 @@
  * dependency-registry-expiry.seed.test.ts.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -23,6 +23,12 @@ import {
   verbs,
 } from './dependency-registry-expiry.harness'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
+import {
+  ALL_WRITE_BASES,
+  copyDropsPath,
+  plantRel,
+  scriptsCopyFilter,
+} from './_lib/scripts-copy-plants'
 
 describe('workflow shape', () => {
   it('exists, is ASCII only, and has a daily schedule plus workflow_dispatch', () => {
@@ -392,6 +398,31 @@ globalThis.Date = class extends R {
     lockfileVersion: 3,
     packages: { '': {}, 'node_modules/devpkg': { dev: true } },
   }
+  /**
+   * The whole scripts/ tree (minus tests, any node_modules and any lockfile): the closure must
+   * resolve in it. A copied seed lockfile would be tracked below and need a seeds entry (SMI-6954).
+   * SMI-7071: the copy walks the live tree while typecheck-scripts-gate.test.ts plants and deletes
+   * zz-smi6975-* files in it under a parallel worker; a file listed and then deleted fails the copy
+   * with ENOENT. The gate test therefore plants only below a `tests/` directory, which the filter
+   * below drops before it is stat'ed. Both halves are asserted: nothing planted survives into the
+   * copy, so a plant moved back into a walked directory fails here deterministically.
+   */
+  function copyScriptsTree(dir: string, srcRoot: string = join(REPO_ROOT, 'scripts')): void {
+    cpSync(srcRoot, join(dir, 'scripts'), { recursive: true, filter: scriptsCopyFilter })
+    expect(
+      plantedEntries(join(dir, 'scripts')),
+      'copy never contains a zz-smi6975-* entry'
+    ).toEqual([])
+  }
+  function plantedEntries(root: string): string[] {
+    const found: string[] = []
+    for (const e of readdirSync(root, { withFileTypes: true })) {
+      const p = join(root, e.name)
+      if (e.name.startsWith('zz-smi6975-')) found.push(p)
+      else if (e.isDirectory()) found.push(...plantedEntries(p))
+    }
+    return found
+  }
   function runFromBareCopy(
     opts: {
       inject?: string
@@ -401,12 +432,7 @@ globalThis.Date = class extends R {
     } = {}
   ) {
     const dir = makeFixtureTempDir('smi6949-bare')
-    // The whole scripts/ tree (minus tests, any node_modules and any lockfile): the closure must
-    // resolve in it. A copied seed lockfile would be tracked below and need a seeds entry (SMI-6954).
-    cpSync(join(REPO_ROOT, 'scripts'), join(dir, 'scripts'), {
-      recursive: true,
-      filter: (src) => !/[\\/](node_modules|tests|package-lock\.json)$/.test(src),
-    })
+    copyScriptsTree(dir)
     mkdirSync(join(dir, '.github'), { recursive: true })
     writeFileSync(
       join(dir, '.github/dependency-registry.json'),
@@ -456,6 +482,60 @@ globalThis.Date = class extends R {
       bad.push('no-banner')
     return bad
   }
+  it('SMI-7071: the scripts/ copy never sees a zz-smi6975-* gate-test plant (detector proven on a known positive)', () => {
+    // Known-positive: the detector finds a planted name in a walked directory, and in a nested one.
+    const probe = makeFixtureTempDir('smi7071-detector')
+    mkdirSync(join(probe, 'a/b'), { recursive: true })
+    writeFileSync(join(probe, 'zz-smi6975-top.ts'), 'x\n')
+    writeFileSync(join(probe, 'a/b/zz-smi6975-nested.ts'), 'x\n')
+    writeFileSync(join(probe, 'a/keep.ts'), 'x\n')
+    expect(plantedEntries(probe).sort()).toEqual([
+      join(probe, 'a/b/zz-smi6975-nested.ts'),
+      join(probe, 'zz-smi6975-top.ts'),
+    ])
+    // Known-negative: a tree with no planted name reports none.
+    const clean = makeFixtureTempDir('smi7071-clean')
+    writeFileSync(join(clean, 'keep.ts'), 'x\n')
+    expect(plantedEntries(clean)).toEqual([])
+    // The real copy: copyScriptsTree itself asserts the property for the live tree.
+    copyScriptsTree(makeFixtureTempDir('smi7071-copy'))
+    // The filter, pinned deterministically on a fixture (the live tree has no tests/ dir to
+    // observe while the gate test is idle). Presence and absence are both asserted.
+    const src = makeFixtureTempDir('smi7071-src')
+    mkdirSync(join(src, 'ci/tests'), { recursive: true })
+    mkdirSync(join(src, 'node_modules'), { recursive: true })
+    writeFileSync(join(src, 'ci/keep.ts'), 'x\n')
+    writeFileSync(join(src, 'ci/tests/zz-smi6975-x.ts'), 'x\n')
+    writeFileSync(join(src, 'keep2.ts'), 'x\n')
+    writeFileSync(join(src, 'node_modules/dep.js'), 'x\n')
+    const out = makeFixtureTempDir('smi7071-fixture-out')
+    copyScriptsTree(out, src)
+    expect(existsSync(join(out, 'scripts/ci/keep.ts')), 'presence: ci/keep.ts copied').toBe(true)
+    expect(existsSync(join(out, 'scripts/keep2.ts')), 'presence: keep2.ts copied').toBe(true)
+    expect(existsSync(join(out, 'scripts/ci/tests')), 'absence: ci/tests dropped').toBe(false)
+    expect(existsSync(join(out, 'scripts/node_modules')), 'absence: node_modules dropped').toBe(
+      false
+    )
+  })
+  it('SMI-7071 invariant: every directory the gate test plants into is dropped by the copy filter', () => {
+    // Known-positive: a directory the copy must descend into is kept, so a filter that drops
+    // everything cannot satisfy the loop below.
+    expect(scriptsCopyFilter(join(REPO_ROOT, 'scripts', 'ci'))).toBe(true)
+    expect(scriptsCopyFilter(join(REPO_ROOT, 'scripts', 'ci', 'test'))).toBe(true)
+    for (const base of new Set(ALL_WRITE_BASES)) {
+      const plantDir = dirname(join(REPO_ROOT, plantRel('zz-smi6975-x.ts', base)))
+      expect(scriptsCopyFilter(plantDir), `plants below ${plantDir} must be dropped`).toBe(false)
+    }
+  })
+  it('SMI-7071: copyDropsPath agrees with the filter (known-positives and known-negatives)', () => {
+    const r = (p: string) => join(REPO_ROOT, p)
+    expect(copyDropsPath(r('scripts/ci/tests/zz-smi6975-x.ts'))).toBe(true)
+    expect(copyDropsPath(r('scripts/tests/.backstop-subject-1-2.sh'))).toBe(true)
+    expect(copyDropsPath(r('scripts/tests/zz-smi6975-swap-1/a.ts'))).toBe(true)
+    expect(copyDropsPath(r('scripts/ci/zz-smi6975-x.ts'))).toBe(false)
+    expect(copyDropsPath(r('scripts/ci/.backstop-subject-1-2.sh'))).toBe(false)
+    expect(copyDropsPath(r('scripts/zz-smi6975-x.ts'))).toBe(false)
+  })
   it.each([
     // fixed clocks: the fixture acceptance (R4, expires 2027-04-01) is live under both, on any real date
     ['a fixed clock (2026-10-04)', '2026-10-04'],
