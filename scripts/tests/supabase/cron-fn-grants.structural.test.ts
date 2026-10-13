@@ -24,6 +24,11 @@ import {
 } from './cron-fn-grants.test-helpers.ts'
 
 const NEW_MIGRATION = '20261011000000_lockdown_cron_fn_grants.sql'
+// SMI-7114: its two cron-called functions are picked up by the extractor; the third (the observer's
+// read RPC) is not cron-called, so its revoke is asserted by name, as check_scan_coverage's is.
+const REFRESH_MIGRATION = '20261013000000_skills_refresh_metadata_pg_cron.sql'
+const REFRESH_CRON_FNS = ['invoke_skills_refresh_metadata', 'check_refresh_observer_heartbeat']
+const REFRESH_RPC = 'refresh_metadata_health'
 
 // Measured live from staging cron.job on 2026-10-11.
 const MEASURED_CRON_FNS = [
@@ -115,6 +120,38 @@ describe.skipIf(locked)('SMI-7075 -- cron-called functions are locked to non-API
     const mine = corpus.filter((f) => f.name === NEW_MIGRATION)
     expect(revokes(mine)).toHaveLength(1)
     expect(revokes(without), 'known-negative: earlier migrations never did').toHaveLength(0)
+  })
+})
+
+describe.skipIf(locked)('SMI-7114 -- the refresh functions are covered by the grants guard', () => {
+  const mine = () => corpus.filter((f) => f.name === REFRESH_MIGRATION)
+  const without7114 = () => corpus.filter((f) => f.name !== REFRESH_MIGRATION)
+
+  it('presence: the extractor finds both new cron-called functions, and neither is a violation', () => {
+    expect(mine(), 'refresh migration present').toHaveLength(1)
+    const found = cronCalledFunctions(orderedStatements(corpus))
+    for (const fn of REFRESH_CRON_FNS) expect(found.has(fn), `${fn} extracted`).toBe(true)
+    expect(fnNames(corpus).filter((f) => REFRESH_CRON_FNS.includes(f))).toEqual([])
+  })
+
+  it('known-negative: with the migration present but its revokes removed, both are flagged', () => {
+    const stripped = mine().map((f) => ({
+      ...f,
+      sql: f.sql.replace(/REVOKE EXECUTE ON FUNCTION public\.[^;]*;/g, ''),
+    }))
+    const flagged = fnNames([...without7114(), ...stripped])
+    for (const fn of REFRESH_CRON_FNS) expect(flagged, `${fn} flagged`).toContain(fn)
+  })
+
+  it('refresh_metadata_health (not cron-called) is revoked from all three roles exactly once', () => {
+    const re = new RegExp(
+      `REVOKE\\s+EXECUTE\\s+ON\\s+FUNCTION\\s+public\\.${REFRESH_RPC}\\s*\\(\\s*interval\\s*\\)\\s+FROM\\s+PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated\\b`,
+      'i'
+    )
+    const revokes = (files: MigrationFile[]) =>
+      files.flatMap((f) => splitStatements(stripComments(f.sql))).filter((s) => re.test(s))
+    expect(revokes(mine())).toHaveLength(1)
+    expect(revokes(without7114()), 'known-negative: no other migration does').toHaveLength(0)
   })
 })
 
