@@ -23,7 +23,12 @@ import {
   verbs,
 } from './dependency-registry-expiry.harness'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env'
-import { PLANT_BASE, SCOPE_DIRS, plantRel, scriptsCopyFilter } from './_lib/scripts-copy-plants'
+import {
+  ALL_WRITE_BASES,
+  copyDropsPath,
+  plantRel,
+  scriptsCopyFilter,
+} from './_lib/scripts-copy-plants'
 
 describe('workflow shape', () => {
   it('exists, is ASCII only, and has a daily schedule plus workflow_dispatch', () => {
@@ -517,10 +522,19 @@ globalThis.Date = class extends R {
     // everything cannot satisfy the loop below.
     expect(scriptsCopyFilter(join(REPO_ROOT, 'scripts', 'ci'))).toBe(true)
     expect(scriptsCopyFilter(join(REPO_ROOT, 'scripts', 'ci', 'test'))).toBe(true)
-    for (const base of new Set([PLANT_BASE, ...SCOPE_DIRS])) {
+    for (const base of new Set(ALL_WRITE_BASES)) {
       const plantDir = dirname(join(REPO_ROOT, plantRel('zz-smi6975-x.ts', base)))
       expect(scriptsCopyFilter(plantDir), `plants below ${plantDir} must be dropped`).toBe(false)
     }
+  })
+  it('SMI-7071: copyDropsPath agrees with the filter (known-positives and known-negatives)', () => {
+    const r = (p: string) => join(REPO_ROOT, p)
+    expect(copyDropsPath(r('scripts/ci/tests/zz-smi6975-x.ts'))).toBe(true)
+    expect(copyDropsPath(r('scripts/tests/.backstop-subject-1-2.sh'))).toBe(true)
+    expect(copyDropsPath(r('scripts/tests/zz-smi6975-swap-1/a.ts'))).toBe(true)
+    expect(copyDropsPath(r('scripts/ci/zz-smi6975-x.ts'))).toBe(false)
+    expect(copyDropsPath(r('scripts/ci/.backstop-subject-1-2.sh'))).toBe(false)
+    expect(copyDropsPath(r('scripts/zz-smi6975-x.ts'))).toBe(false)
   })
   it.each([
     // fixed clocks: the fixture acceptance (R4, expires 2027-04-01) is live under both, on any real date

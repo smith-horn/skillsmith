@@ -46,7 +46,13 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PLANT_BASE, SCOPE_DIRS, plantRel } from '../_lib/scripts-copy-plants'
+import {
+  BACKSTOP_BASE,
+  PLANT_BASE,
+  SCOPE_DIRS,
+  copyDropsPath,
+  plantRel,
+} from '../_lib/scripts-copy-plants'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 // Derived from this file's own location, NOT from `git rev-parse`. Under
@@ -254,9 +260,22 @@ function markingStub(marker: string, real: string): string {
 // _lib/scripts-copy-plants.ts: inside the gate's scope, outside what the bare copy walks.
 // Do not plant anywhere else.
 
+/** Throws unless the bare scripts/ copy can never stat `abs` (SMI-7071); every write below goes through it. */
+function assertOutsideCopy(abs: string): void {
+  if (!copyDropsPath(abs)) throw new Error(`${abs} is in a directory the bare scripts/ copy walks`)
+}
+
+/** Absolute path for a plant named `name`, checked to lie outside what the copy walks. */
+function absPlant(name: string, base: string = PLANT_BASE): string {
+  const abs = join(REPO_ROOT, plantRel(name, base))
+  assertOutsideCopy(abs)
+  return abs
+}
+
 /** Plants a file under REPO_ROOT (creating parents); its path carries a zz-smi6975- segment. */
 function plant(rel: string, content: string): string {
   const abs = join(REPO_ROOT, rel)
+  assertOutsideCopy(abs)
   mkdirSync(dirname(abs), { recursive: true })
   writeFileSync(abs, content)
   return abs
@@ -377,7 +396,7 @@ beforeAll(() => {
   // pid alone is best-effort, because pids are reused.
   // Kept in scripts/tests/, not scripts/ci/: the copy runFromBareCopy makes skips
   // scripts/tests entirely, and the gate copy still resolves REPO_ROOT two levels up.
-  const ciDir = join(dir, 'tests')
+  const ciDir = join(REPO_ROOT, dirname(plantRel('x', BACKSTOP_BASE)))
   const staleMs = 60 * 60 * 1000
   for (const f of readdirSync(ciDir)) {
     const m = /^\.backstop-(?:subject|control)-(\d+)-(\d+)\.sh$/.exec(f)
@@ -512,7 +531,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       try {
         for (const ext of ['.probeext', '.js']) {
           const name = `zz-smi6975-probe-${process.pid}${ext}`
-          const file = join(REPO_ROOT, plantRel(name))
+          const file = absPlant(name)
           planted.push(file)
           writeFileSync(file, '# planted by typecheck-scripts-gate.test.ts\n')
           const r = runGate()
@@ -794,7 +813,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
         expect(r.out, `${a.name}: next line`).toMatch(/^ {2}next: \S/m)
       }
       // And an arm driven by a real input rather than a stub.
-      const file = join(REPO_ROOT, plantRel(`zz-smi6975-next-${process.pid}.probeext`))
+      const file = absPlant(`zz-smi6975-next-${process.pid}.probeext`)
       try {
         writeFileSync(file, 'x\n')
         const r = runGate()
@@ -874,7 +893,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     // "global failure" arm would pass the clean control and the unreadable-file
     // test, and never say what was wrong with the code.
     const name = `zz-smi6975-typeerr-${process.pid}.ts`
-    const file = join(REPO_ROOT, plantRel(name))
+    const file = absPlant(name)
     try {
       writeFileSync(file, "export const planted: number = 'not a number'\n")
       const r = runGate()
@@ -1313,7 +1332,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
   it.skipIf(process.getuid?.() === 0)(
     'an unreadable .ts under scripts/ is INCONCLUSIVE (tsc cannot read it), never PASS',
     () => {
-      const file = join(REPO_ROOT, plantRel(`zz-smi6975-unreadable-${process.pid}.ts`))
+      const file = absPlant(`zz-smi6975-unreadable-${process.pid}.ts`)
       try {
         writeFileSync(file, 'export const a: number = 1\n')
         chmodSync(file, 0o000)
@@ -1349,10 +1368,11 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       const backstopRe = /\nif \[\[ "\$RESULT" != "EVALUATED" \]\]; then\n[\s\S]*?\nfi\n/
       expect(backstopRe.test(planted), 'backstop block not found').toBe(true)
       const control = planted.replace(backstopRe, '\n')
-      const dir = join(REPO_ROOT, 'scripts', 'tests')
+      const dir = join(REPO_ROOT, dirname(plantRel('x', BACKSTOP_BASE)))
       const tag = `${process.pid}-${Date.now()}`
       const subjectPath = join(dir, `.backstop-subject-${tag}.sh`)
       const controlPath = join(dir, `.backstop-control-${tag}.sh`)
+      for (const p of [subjectPath, controlPath]) assertOutsideCopy(p)
       const run = (p: string) => {
         const r = spawnGate('bash', [p], {
           cwd: REPO_ROOT,
@@ -1610,7 +1630,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
       // inventory simply vanishes from the program; only the compiled-file list
       // shows it. The stub deletes the file immediately before the real compile.
       const name = `zz-smi6975-vanish-${process.pid}.ts`
-      const file = join(REPO_ROOT, plantRel(name))
+      const file = absPlant(name)
       const dir = scratchDir('vanish')
       const real = join(REPO_ROOT, 'node_modules', '.bin', 'tsc')
       makeStub(
@@ -1656,7 +1676,7 @@ describe.sequential('SMI-6975 typecheck-scripts.sh gate: PASS only when establis
     )
     expect(dropped, 'no scripts/lib/*.ts to drop').toBeDefined()
     const droppedPath = `scripts/lib/${dropped}`
-    const added = `scripts/tests/zz-smi6975-swap-${process.pid}/${dropped}`
+    const added = plantRel(`zz-smi6975-swap-${process.pid}/${dropped}`, BACKSTOP_BASE)
     expect(basename(added), 'premise: same basename').toBe(basename(droppedPath))
     expect(added, 'premise: different path').not.toBe(droppedPath)
     expect(text.includes('"exclude": ['), 'exclude array not found').toBe(true)
