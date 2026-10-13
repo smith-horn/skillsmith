@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.8.0
+
+- **Changed** (behaviour change for every caller): SMI-7056 -- `validateTrustTier` accepted only six of the eight `TrustTier` values, so a
+  registry `official` skill was treated as `unknown` (needing confirmation, scanned at the strict
+  threshold, refused `skipScan`). It now accepts all eight (adds `official` and `unverified`);
+  unrecognised values still map to `unknown`. With core's fail-closed install gates (SMI-7056),
+  `unverified`, empty and unrecognised tiers need `confirmed=true` and cannot use `skipScan`.
+  The `install_skill` `confirmed` parameter description now states that rule: confirmation is
+  needed for any registry skill whose tier is not official, verified, curated, community or local.
 - **Changed**: SMI-7030 -- through `@skillsmith/core`'s new flag-only `executable_frontmatter`
   finding (critical severity, zero score weight), `install_skill` now refuses a skill whose
   SKILL.md frontmatter opens with `---js` or `---javascript` (unless `skipScan` on an eligible

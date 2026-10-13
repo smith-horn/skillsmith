@@ -190,8 +190,9 @@ describe('SMI-5650 (Wave 1 + Wave 2): alias-scope tmpfs overlays and native-modu
     // annotation at all (the fix for Compose's tmpfs-hardcodes-noexec
     // discovery is an ordinary named volume, not a tmpfs variant of it) —
     // plus the SMI-5750 `app.skillsmith.owned` ownership label so
-    // prune-orphaned-docker-volumes.sh can identify and auto-reclaim
-    // orphaned native-seed volumes.
+    // prune-orphaned-docker-volumes.sh can identify orphaned native-seed
+    // volumes (and reclaim them when remove-worktree.sh names the project
+    // with --only-project).
     expect(doc.volumes, 'top-level volumes: key').toBeDefined()
     const topLevelVolumeNames = Object.keys(doc.volumes!).sort()
     expect(topLevelVolumeNames).toEqual(

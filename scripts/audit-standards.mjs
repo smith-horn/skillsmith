@@ -405,9 +405,11 @@ if (existsSync('docker-compose.yml')) {
     }
 
     // SMI-4653: assert no service has an explicit `image:` field. Load-bearing
-    // for `remove-worktree.sh`'s `docker compose down --rmi local` cleanup —
-    // adding an `image:` field would silently turn `--rmi local` into a no-op
-    // and orphan worktree images would accumulate again.
+    // for the orphan pruner (`prune-orphaned-docker-volumes.sh --only-project`,
+    // remove-worktree.sh's only deleter since SMI-7089): it finds a worktree's
+    // image by the `<project>-<service>` tag Compose gives a `build:` service,
+    // which an `image:` field would replace, so worktree images would accumulate
+    // again.
     // Match `^[ \t]*image:` at the start of a line (allowing 2-6 leading spaces),
     // anywhere in the file. Comments (`# image:`) and substring matches in
     // values are excluded by anchoring on whitespace-only indent.
@@ -415,7 +417,7 @@ if (existsSync('docker-compose.yml')) {
     if (imageFieldRegex.test(dockerCompose)) {
       fail(
         'docker-compose.yml has an explicit `image:` field on a service (SMI-4653)',
-        'Remove the `image:` field; rely on `build:` so `docker compose down --rmi local` in remove-worktree.sh can clean up the per-worktree image. If an `image:` field is genuinely required, update remove-worktree.sh to remove the image by tag explicitly and document the new contract.'
+        'Remove the `image:` field; rely on `build:` so the orphan pruner (scripts/prune-orphaned-docker-volumes.sh --only-project, run by remove-worktree.sh) can find the per-worktree image by its `<project>-<service>` tag. If an `image:` field is genuinely required, update the pruner to select that image and document the new contract.'
       )
     } else {
       pass('docker-compose.yml has no explicit `image:` fields (SMI-4653 cleanup contract)')
@@ -5832,6 +5834,13 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
       "vi.mock('fs/promises') (bare, no factory) auto-mocks every export as a stub — acquireManifestLock/saveManifest/updateManifestSafely never reach real fs regardless of what MANIFEST_PATH resolves to",
     'packages/cli/src/commands/registry-install.action.leak-and-errors.test.ts':
       'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
+    // SMI-7056: the CLI --yes / confirmation-prompt tests pin what the CLI
+    // sends to install(); the real installer is exercised separately by
+    // install-confirmation.contract.test.ts, which passes an explicit manifestPath.
+    'packages/cli/tests/install-confirmation.test.ts':
+      'SkillInstallationService is replaced by a vi.fn() mock implementation — no real installer is constructed',
+    'packages/vscode-extension/src/__tests__/installCommand.confirmation.test.ts':
+      "McpClient is vi.mock()ed and installSkill is a vi.fn() — the suite drives the extension's confirm-and-retry path, and no installer or manifest is ever reached",
     'packages/cli/src/commands/registry-install.action.test.ts':
       'SkillInstallationService is vi.mock()ed; the assertions are on constructor arguments, not on an install',
     'packages/cli/tests/install-quarantine.test.ts':

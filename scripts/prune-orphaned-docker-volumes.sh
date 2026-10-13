@@ -3,66 +3,122 @@
 # prune-orphaned-docker-volumes.sh - Targeted reclaim of orphaned per-worktree
 # Docker volumes/images (SMI-5750)
 #
-# Problem: <slug>_node_modules and <slug>_native-seed-<module> volumes (the
-# latter declared per-worktree by _lib.sh's enumerate_native_module_volumes,
-# SMI-5650 for the root-only volumes, SMI-5784 for the per-package
-# native-seed-<pkg>-<module> volumes layered on top of the SAME naming
-# convention) and <slug>-dev images accumulate whenever a worktree disappears
-# without remove-worktree.sh running (crashes, manual `rm -rf`, `git worktree
-# remove` by hand), and nothing safe ever reclaims them. On this machine, the
-# native-seed volumes are the numerically DOMINANT orphan class -- SMI-5650
-# shipped a fixed 5 per worktree (one per NATIVE_MODULES_FOR_OVERLAY entry);
-# SMI-5784 added an UNBOUNDED number more on top (up to 5 additional per
-# package that diverges from root, so the total varies per worktree rather
-# than being a fixed count) -- both conventions must be covered or this
-# script does not meet its own goal of preventing unbounded orphan
-# accumulation (SMI-5616). A blanket `docker volume prune` is unsafe: it
-# deletes ANY volume not attached to a RUNNING container, including a
-# still-existing worktree's volume whose container is merely stopped, forcing
-# an expensive native-module rebuild (better-sqlite3 / onnxruntime-node /
-# hnswlib-node, SMI-4698) in a concurrently-active session.
+# <slug>_node_modules, <slug>_native-seed-<module> and
+# <slug>_native-seed-<pkg>-<module> volumes (_lib.sh's
+# enumerate_native_module_volumes; the per-package count is unbounded, SMI-5784)
+# and <slug>-dev images accumulate whenever a worktree disappears without
+# remove-worktree.sh running. A blanket `docker volume prune` is unsafe: it
+# deletes ANY volume not attached to a RUNNING container, including a live
+# worktree's whose container is merely stopped (forcing a native-module rebuild,
+# SMI-4698).
 #
-# Safety predicate: WORKTREE EXISTENCE (`git worktree list`), NOT
-# container-running-state. A volume/image is only a deletion candidate if its
-# derived project name is absent from every worktree git currently knows
-# about, regardless of whether that worktree's container is running,
-# stopped, or was never started. This is what makes the prune safe at ANY
-# concurrency level, unlike a blanket `docker volume prune`.
+# Safety predicate: WORKTREE EXISTENCE (`git worktree list`), NOT container
+# state. A volume/image is a deletion candidate only if its derived project
+# name is absent from every worktree git knows about, whether that worktree's
+# container is running, stopped or never started.
 #
-# Ownership gate: the generic Compose-label shape checks below
-# (com.docker.compose.volume=<key>, com.docker.compose.service=dev) are
-# conventions ANY other repo's `dev` service + same-named volume also
-# satisfies -- they are not proof a resource belongs to Skillsmith. Real
-# ownership is the `app.skillsmith.owned=true` label (added to
-# docker-compose.yml's node_modules volume and to each per-worktree
-# native-seed-<module> volume declaration in _lib.sh's
-# enumerate_native_module_volumes, by this same change). A candidate that
-# passes the generic checks but lacks that label is REPORT-ONLY ("UNCONFIRMED
-# ownership") unless --include-unlabeled is passed explicitly.
+# Deletion scope: NOTHING is deleted unless the caller names the one Compose
+# project it may delete with `--only-project <name>`. Without it the run is
+# report-only (never `volume rm` / `rmi`, whatever other flags are set). With
+# it, only owned, unattached resources whose project equals <name> exactly are
+# deleted; every other orphan is report-only. SMI-7089: under --only-project P the
+# scope also covers every other owned volume of P (name `P_<key>`, project label P,
+# volume label <key>: e.g. website-vercel-output) and P's `-test` image; an image
+# must say it belongs to P (project label) and to the expected service. This is
+# remove-worktree.sh's only deleter. The ownership and attachment gates
+# run once at selection and AGAIN inside the critical section, just before the
+# delete, against the identity recorded at selection: an image's ID (it is
+# deleted BY ID, and only if its tag still resolves to that ID and the ID is
+# owned) and a volume's CreatedAt (it must be unchanged and the volume still
+# owned and unused). A mismatch skips that candidate; an unreadable re-inspect
+# stops the run. <name> must not be the main checkout's project or a
+# live worktree's. remove-worktree.sh passes the removed worktree's project.
 #
-# Residual risks (accepted, NOT eliminated -- see docs/internal/implementation/
-# smi-5750-targeted-volume-prune.md § Shared-State audit):
-#   1. TOCTOU -- narrowed, not eliminated. The protected set is re-derived
-#      immediately before the delete loop, but this is NOT a locking
-#      mechanism: a concurrent create-worktree.sh can still register a
-#      worktree after that re-scan and before `docker volume rm` /
-#      `docker rmi` runs. Worst case: a just-created worktree's still-empty
-#      volume is deleted and silently recreated empty by its next
-#      `compose up` -- one redundant native-module rebuild, no data loss.
-#   2. Cross-repo -- another repo's `*_node_modules` / `*_native-seed-*`
-#      volume or `*-dev` image that happens to pass the generic Compose-shape
-#      checks is never auto-deleted (the ownership gate above). The residual
-#      is confined to explicit --include-unlabeled runs, where the operator
-#      reviews the reported UNCONFIRMED list first, and the deleted artifact
-#      is always a rebuildable dependency cache, never data.
+# Ownership gate: the generic Compose-label shape checks are conventions any
+# other repo's `dev` service also satisfies. Real ownership is the
+# `app.skillsmith.owned=true` label; a candidate lacking it is REPORT-ONLY
+# ("UNCONFIRMED ownership") and no flag waives that (SMI-6981; own unlabelled
+# volumes: SMI-7028). The label proves Skillsmith-BUILT, not "belongs to a live
+# worktree" (SMI-7033): see risk 3.
 #
-# Usage: ./scripts/prune-orphaned-docker-volumes.sh [--dry-run] [--include-unlabeled] [--report-containers]
+# Fail-closed (SMI-6981): the protected set is used only if `git worktree list`
+# COMPLETED successfully; a failing docker query that gates a deletion means skip.
+# A listing or label read that fails is skipped AND makes the run exit 1, so it
+# never reads as "nothing to prune". A DELETE that fails stops the run with exit
+# 1 (C5 below).
+#
+# Concurrency (SMI-6981, ADR-180). Every delete is a critical section under the
+# worktree lifecycle lock (lib/worktree-lifecycle.sh): a kernel-released flock on
+# the git common directory that create-worktree.sh also takes around `git worktree
+# add`. Inside it the order is: liveness re-read, lock-identity check, Docker
+# re-inspect (attachment, ownership, and the image ID / volume CreatedAt recorded
+# at selection), then the one bounded `docker volume rm` / `rmi <image ID>`.
+#   G1. A worktree registered by create-worktree.sh is never deleted from after
+#       its registration became observable -- while ALL of these hold: C1 it was
+#       created through create-worktree.sh; C2 the common directory inode is not
+#       replaced (detected at each check, NOT after the final check before the
+#       delete); C3 no creator skips the lock (it has no opt-out); C4 the
+#       filesystem is on the allow-list (apfs/hfs; overlayfs/tmpfs), else this
+#       script refuses; C5 the delete completed (a timed-out delete has an UNKNOWN
+#       outcome the daemon may still execute; the run stops with exit 1). ANY
+#       failed delete does the same, whatever the CLI printed: a docker CLI can
+#       send the request, lose the connection and exit nonzero while the daemon
+#       still carries it out, and the output is never trusted to say which. The
+#       cost: one refusal (in use, already gone) ends the run with exit 1 and
+#       the remaining candidates wait for the next run. An
+#       interrupt (INT/TERM/HUP, or this shell dying) mid-delete is forwarded to
+#       the delete's process group and waited out (TERM, 2 s, KILL) before the
+#       lock is released, but SIGKILL of this script releases the lock at once:
+#       the supervisor then notices the lost parent within ~50 ms and kills the
+#       group, which a delete already sent to the daemon can still outlive.
+#   G1 DOES NOT HOLD for these (explicit exceptions: the delete can hit the
+#   wrong object): E1 a VOLUME replaced between the in-lock re-inspect and
+#   `volume rm` (Docker ignores our lock and has no compare-and-delete); E2 a
+#   volume removed and re-created within the SAME SECOND as the one selected
+#   (CreatedAt has one-second resolution; Docker has no volume ID). Nothing else.
+#   Covered exactly: an IMAGE's ID is captured first, every Docker-observed
+#   predicate (service, ownership, attachment) is judged on that ID (project and
+#   scope come from the tag name that was resolved to it), and the section re-checks that
+#   the tag still resolves to it, that it is owned and unattached, then deletes
+#   BY ID. A VOLUME's CreatedAt, shape, project and ownership come from ONE
+#   inspect at selection, and the section requires CreatedAt unchanged, owned and
+#   unused. (A container started on an image between the in-lock check and `rmi`
+#   is not detected here; docker's own in-use refusal would stop the run -- not
+#   measured.)
+#   G2. A worktree registered WITHOUT the lock (plain `git worktree add`, the
+#       Claude Code harness, any other tool) is not excluded. The in-lock liveness
+#       read shrinks the race to the gap between that read and the delete, which
+#       is not zero and not measured. Inside it this script can DELETE DATA the
+#       new worktree meant to reuse (a populated node_modules or native-seed
+#       volume) or one Compose has already decided exists. Possible data loss,
+#       accepted by design and tracked in SMI-7033 / SMI-7046.
+# Fail-closed: an unobtainable lock, filesystem type, liveness read or identity
+# deletes nothing further and exits 1.
+#
+# Residual risks (accepted, NOT eliminated):
+#   1. See G2 above.
+#   2. Cross-repo -- eliminated (SMI-6981): another repo's resource is never
+#      auto-deleted, and --only-project cannot name a project into scope that
+#      lacks the ownership label.
+#   3. OUR OWN non-worktree Compose projects -- only the MEASURED FAMILY is gated
+#      (is_own_non_worktree_project, SMI-7033, a second layer behind
+#      --only-project). Add other names there.
+#
+# Usage: ./scripts/prune-orphaned-docker-volumes.sh [--only-project <name>] [--dry-run] [--include-unlabeled] [--report-containers]
+#   --only-project <name> The ONLY Compose project that may be deleted from.
+#                          Omitted: report-only. Refused if <name> is empty,
+#                          malformed, the main checkout, or a live worktree.
 #   --dry-run             Report what would be deleted; delete nothing.
-#   --include-unlabeled   Also delete UNCONFIRMED-ownership candidates (the
-#                          one-time pre-label backlog escape hatch).
+#   --include-unlabeled   REPORT-ONLY since SMI-6981; deletes nothing. Retained
+#                          so passing it warns rather than silently behaving
+#                          differently than an operator expects.
+#   --report-containers   Report live-old, excessive, and orphaned Skillsmith
+#                          dev containers; mutate nothing.
 #
 # Opt-out: SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 skips the prune entirely (exit
-# 0), used when invoked from remove-worktree.sh. Registered in
+# 0), used when invoked from remove-worktree.sh. It is the only switch: the lock
+# has no off-switch on either side. Tuning: SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT
+# (seconds per section, default 30), SKILLSMITH_ORPHAN_PRUNE_RM_TIMEOUT (default 60). Registered in
 # docs/internal/process/guards-and-opt-outs.md (SMI-5418).
 
 set -euo pipefail
@@ -72,8 +128,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 
 DRY_RUN=false
-INCLUDE_UNLABELED=false
 REPORT_CONTAINERS=false
+ONLY_PROJECT=""
+ONLY_PROJECT_SET=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -81,8 +138,24 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --only-project|--only-project=*)
+            if [[ "$1" == --only-project=* ]]; then
+                ONLY_PROJECT="${1#--only-project=}"
+                shift
+            else
+                [[ $# -ge 2 ]] || error "--only-project requires a project name"
+                ONLY_PROJECT="$2"
+                shift 2
+            fi
+            ONLY_PROJECT_SET=true
+            ;;
         --include-unlabeled)
-            INCLUDE_UNLABELED=true
+            # SMI-6981: retained but NO LONGER DESTRUCTIVE, so an operator who
+            # passes it is told what changed. Deliberately sets no variable:
+            # dead state a later reader assumes is live is its own hazard.
+            warn "--include-unlabeled is REPORT-ONLY since SMI-6981 and no longer deletes anything."
+            warn "  It used to waive the app.skillsmith.owned check, so unconfirmed resources are now"
+            warn "  always listed, never removed. Reclaiming our OWN unlabelled volumes needs SMI-7028."
             shift
             ;;
         --report-containers)
@@ -90,8 +163,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $(basename "$0") [--dry-run] [--include-unlabeled] [--report-containers]"
-            echo "  --report-containers  Report live-old, excessive, and orphaned Skillsmith dev containers; mutate nothing."
+            # The header's Usage block is the single source of the help text.
+            sed -n '/^# Usage:/,/^# Opt-out/{/^# Opt-out/d;s/^# \{0,1\}//;p;}' "${BASH_SOURCE[0]}"
             exit 0
             ;;
         *)
@@ -100,19 +173,32 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate before any docker call: the shape sanitize_project_name emits.
+if [[ "$ONLY_PROJECT_SET" == true && ! "$ONLY_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+    error "--only-project '$ONLY_PROJECT' is not a valid Compose project name (expected [a-z0-9][a-z0-9_-]*) -- refusing to prune."
+fi
+
 if [[ "${SKILLSMITH_ORPHAN_PRUNE_DISABLE:-}" == "1" ]]; then
     info "SKILLSMITH_ORPHAN_PRUNE_DISABLE=1 set -- skipping targeted orphan prune"
     exit 0
 fi
 
-if ! command -v docker &>/dev/null; then
-    warn "Docker not found -- skipping targeted orphan prune"
+# SMI-7089: a caller that NAMED a project (remove-worktree.sh) asked for that
+# project's resources to be removed; "Docker unusable" must not read as success.
+unusable_docker() {
+    if [[ "$ONLY_PROJECT_SET" == true ]]; then
+        error "$1 -- the targeted orphan prune for '$ONLY_PROJECT' could not run, so its image and volumes were NOT removed. Re-run once Docker is available: $0 --only-project $ONLY_PROJECT"
+    fi
+    warn "$1 -- skipping targeted orphan prune"
     exit 0
+}
+
+if ! command -v docker &>/dev/null; then
+    unusable_docker "Docker not found"
 fi
 
 if ! docker info &>/dev/null; then
-    warn "Docker daemon not reachable -- skipping targeted orphan prune"
-    exit 0
+    unusable_docker "Docker daemon not reachable"
 fi
 
 repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -123,116 +209,39 @@ else
     main_repo="$repo_root"
 fi
 
-report_containers() {
-    local max_age="${SKILLSMITH_CONTAINER_SPRAWL_MAX_AGE_HOURS:-24}"
-    local max_count="${SKILLSMITH_CONTAINER_SPRAWL_MAX_COUNT:-3}"
-    [[ "$max_age" =~ ^[0-9]+$ ]] || max_age=24
-    [[ "$max_count" =~ ^[0-9]+$ ]] || max_count=3
-
-    local worktrees now count=0 shown=0
-    worktrees="$(git -C "$main_repo" worktree list --porcelain 2>/dev/null |
-        awk '/^worktree / { sub(/^worktree /, ""); print }' || true)"
-    now="$(date +%s)"
-    local -a findings=()
-    local id name created path created_epoch age_hours class normalized
-
-    while IFS= read -r id; do
-        [[ -n "$id" ]] || continue
-        name="$(docker inspect "$id" --format '{{.Name}}' 2>/dev/null | sed 's#^/##' || true)"
-        created="$(docker inspect "$id" --format '{{.Created}}' 2>/dev/null || true)"
-        path="$(docker inspect "$id" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null || true)"
-        [[ -n "$name" && -n "$created" && -n "$path" && "$path" = /* ]] || continue
-        count=$((count + 1))
-        normalized="$(cd "$path" 2>/dev/null && pwd -P || printf '%s' "$path")"
-        if date -j -f '%Y-%m-%dT%H:%M:%S' "${created%%.*}" +%s >/dev/null 2>&1; then
-            created_epoch="$(date -j -f '%Y-%m-%dT%H:%M:%S' "${created%%.*}" +%s)"
-        else
-            created_epoch="$(date -d "$created" +%s 2>/dev/null || printf '%s' "$now")"
-        fi
-        age_hours=$(((now - created_epoch) / 3600))
-        class=""
-        if ! grep -qxF "$normalized" <<< "$worktrees"; then
-            class="orphaned"
-        elif (( age_hours >= max_age )); then
-            class="live-old"
-        fi
-        [[ -n "$class" ]] && findings+=("$name"$'\t'"$class"$'\t'"${age_hours}h"$'\t'"$normalized")
-    done < <(docker ps -q \
-        --filter 'label=app.skillsmith.owned=true' \
-        --filter 'label=com.docker.compose.service=dev' 2>/dev/null || true)
-
-    if (( count > max_count )); then
-        findings+=("all-live"$'\t'"excessive"$'\t'"${count}/${max_count}"$'\t'"$main_repo")
-    fi
-    (( ${#findings[@]} == 0 )) && return 0
-    echo "Skillsmith container inventory: ${#findings[@]} finding(s); inspect resource use with: docker stats"
-    for finding in "${findings[@]}"; do
-        (( shown >= 5 )) && break
-        printf '  %s\n' "$finding"
-        shown=$((shown + 1))
-    done
-}
+# shellcheck source=lib/worktree-lifecycle.sh
+source "$SCRIPT_DIR/lib/worktree-lifecycle.sh"
+# shellcheck source=lib/worktree-lifecycle-docker.sh
+source "$SCRIPT_DIR/lib/worktree-lifecycle-docker.sh"
+# shellcheck source=lib/report-sprawl-containers.sh
+source "$SCRIPT_DIR/lib/report-sprawl-containers.sh"
 
 if [[ "$REPORT_CONTAINERS" == true ]]; then
-    report_containers
+    report_containers "$main_repo" || exit 1
     exit 0
 fi
 
-# sanitize_project_name() (_lib.sh) is the single canonical sanitization
-# implementation -- shared with remove-worktree.sh's project_name derivation
-# so the two can never drift apart (SMI-5750 governance fix; a prior version
-# of this script had its own verbatim copy). Its trailing '\n' matters here
-# specifically: derive_protected() below calls it in a loop and concatenates
-# every call's stdout into one command substitution -- without a guaranteed
-# trailing newline per call, BSD sed (macOS) would silently glue consecutive
-# sanitized names together on one line (e.g. "foo-bar" + "baz-qux" ->
-# "foo-barbaz-qux"), breaking is_protected()'s exact-line grep -qxF match for
-# every case with more than one worktree registered (i.e. almost always).
+info "Orphan prune scope: ${ONLY_PROJECT:-none (report-only; pass --only-project to delete)}"
 
-# derive_protected(): canonical enumeration via `git worktree list
-# --porcelain` (covers out-of-tree worktrees -- create-worktree.sh:49-52),
-# UNIONED with a `.worktrees/*/` directory scan as conservative
-# belt-and-braces. Two distinct names sanitizing to the same project name
-# can only OVER-protect (both land in the set) -- never false-orphan.
-derive_protected() {
-    local wt_path base
-    while IFS= read -r wt_path; do
-        [[ -z "$wt_path" ]] && continue
-        base="$(basename "$wt_path")"
-        sanitize_project_name "$base"
-    done < <(git -C "$main_repo" worktree list --porcelain 2>/dev/null | awk '/^worktree / { print $2 }')
+# Set when a docker LISTING fails: nothing is deleted from it, but the run must
+# not read as "nothing to prune" (exit 1).
+LISTING_FAILED=false
+# Set when a gating inspect or a delete FAILS for a reason other than the object
+# having vanished: the run did not do what it was asked to, so it exits 1.
+OP_FAILED=false
+# Filled via `printf -v` / image_labels_of, which shellcheck cannot see; declared here.
+# shellcheck disable=SC2034
+vol_shape_label="" vol_project_label="" vol_owned_label="" vol_created=""
+img_service_label="" img_owned_label="" img_project_label="" img_labels_json="" img_expect_service="" img_id=""
+# shellcheck disable=SC2034  # filled by attached_or_unknown (lib/worktree-lifecycle-docker.sh)
+ATTACHED_IDS=""
 
-    if [[ -d "$main_repo/.worktrees" ]]; then
-        local d
-        for d in "$main_repo"/.worktrees/*/; do
-            [[ -d "$d" ]] || continue
-            sanitize_project_name "$(basename "${d%/}")"
-        done
-    fi
-}
-
-is_protected() {
-    local project="$1" protected_set="$2"
-    grep -qxF "$project" <<< "$protected_set"
-}
-
-# Classify a volume name into a (project, expected compose.volume label)
-# pair, covering both conventions this script recognizes: the base
-# `<project>_node_modules` volume (docker-compose.yml) and the per-module
-# `<project>_native-seed-<module>` / `<project>_native-seed-<pkg>-<module>`
-# volumes (_lib.sh's enumerate_native_module_volumes, SMI-5650 root-only +
-# SMI-5784 per-package) -- the numerically dominant orphan class on this
-# machine, and no longer a fixed count per worktree now that per-package
-# overlays exist (see header). Sets
-# $project and $expected_vol_key; returns 1 (no match) for anything else, so
-# `classify_volume "$vol" || continue` skips unrelated volumes cleanly.
-# Native module names can themselves contain hyphens (e.g.
-# onnxruntime-node), so the split point is the LAST "_native-seed-"
-# occurrence (bash `%pattern` removes the shortest matching suffix, which
-# for a "*_native-seed-*" glob means matching starts as late as possible in
-# the string, i.e. at the last occurrence) -- project names never embed that
-# literal substring in practice, so there is normally only one occurrence
-# anyway.
+# Classify a volume name into (project, expected compose.volume label), covering
+# `<project>_node_modules` and `<project>_native-seed-<module>` /
+# `<project>_native-seed-<pkg>-<module>`. Sets $project and $expected_vol_key;
+# returns 1 for anything else, so `classify_volume "$vol" || continue` skips
+# unrelated volumes. Module names can contain hyphens, so the split point is the
+# LAST "_native-seed-" (bash `%pattern` removes the shortest matching suffix).
 classify_volume() {
     local vol="$1"
     if [[ "$vol" == *_node_modules ]]; then
@@ -246,74 +255,204 @@ classify_volume() {
     fi
 }
 
-protected="$(derive_protected)"
+protected="$(derive_protected_or_die "$main_repo")"
+
+if [[ -n "$ONLY_PROJECT" ]] && is_protected "$ONLY_PROJECT" "$protected"; then
+    error "--only-project '$ONLY_PROJECT' is the main checkout or a live worktree -- refusing to prune."
+fi
+
+# incarnation_of VOLUME CREATED_VAR SHAPE_VAR PROJECT_VAR OWNED_VAR -- ONE inspect
+# at selection yields the identity (CreatedAt) AND every predicate label, so
+# nothing is judged on a different incarnation than the one recorded. Like
+# image_labels_of: a volume that merely vanished is silent, any other failure warns and
+# sets OP_FAILED; returns 1.
+incarnation_of() {
+    local out rest
+    if out="$(worktree_lifecycle_volume_state "$1")"; then
+        printf -v "$2" '%s' "${out%%|*}"
+        rest="${out#*|}"
+        printf -v "$3" '%s' "${rest%%|*}"
+        rest="${rest#*|}"
+        printf -v "$4" '%s' "${rest%%|*}"
+        printf -v "$5" '%s' "${rest##*|}"
+        return 0
+    fi
+    if ! grep -qiE 'no such volume' <<< "$out"; then
+        warn "  Could not inspect volume $1 (${out:-no output}) -- skipping"
+        OP_FAILED=true
+    fi
+    return 1
+}
+
+# The deletion-scope predicate (candidate build AND pre-delete re-check).
+in_scope() { [[ -n "$ONLY_PROJECT" && "$1" == "$ONLY_PROJECT" ]]; }
+
+vol_list=""
+if ! vol_list="$(docker volume ls --format '{{.Name}}' 2>/dev/null)"; then
+    warn "Could not list volumes (docker volume ls failed) -- no volume candidates considered"
+    LISTING_FAILED=true
+    vol_list=""
+fi
 
 # --- volumes: build candidates against the initial protected snapshot ---
-declare -a vol_candidates=()
+# Selection. Unscoped (report-only) runs keep classify_volume's two shapes. Under
+# --only-project P a volume is ALSO considered when its name starts with `P_`
+# (SMI-7089): a per-worktree volume such as `P_website-vercel-output` fits neither
+# classify_volume shape and used to leak on every removal. It is a candidate only
+# when ALL hold, judged on the one inspect that records CreatedAt: its
+# com.docker.compose.project label is P, its com.docker.compose.volume label equals
+# the name with `P_` removed, and it is owned. A `P_x_node_modules` that belongs to
+# the project `P_x` fails the project label and is reported under its own project.
+declare -a vol_candidates=() vol_candidate_created=() vol_candidate_project=()
 while IFS= read -r vol; do
     [[ -z "$vol" ]] && continue
-    classify_volume "$vol" || continue
-    is_protected "$project" "$protected" && continue
+    cand_scoped=false
+    if [[ -n "$ONLY_PROJECT" && "$vol" == "${ONLY_PROJECT}_"* ]]; then
+        cand_scoped=true
+    else
+        classify_volume "$vol" || continue
+        is_protected "$project" "$protected" && continue
+    fi
 
-    vol_shape_label="$(docker volume inspect "$vol" --format '{{index .Labels "com.docker.compose.volume"}}' 2>/dev/null || true)"
-    vol_project_label="$(docker volume inspect "$vol" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
-    vol_owned_label="$(docker volume inspect "$vol" --format '{{index .Labels "app.skillsmith.owned"}}' 2>/dev/null || true)"
+    incarnation_of "$vol" vol_created vol_shape_label vol_project_label vol_owned_label || continue
+
+    if [[ "$cand_scoped" == true ]]; then
+        # P's own volume iff its volume label is the name minus `P_`. The project
+        # label is judged ONCE, by the shared check below -- not here as well.
+        if [[ "$vol_shape_label" == "${vol#"${ONLY_PROJECT}"_}" ]]; then
+            project="$ONLY_PROJECT"
+            expected_vol_key="${vol#"${ONLY_PROJECT}"_}"
+        else
+            # Not P's own volume: fall back to the shapes classify_volume knows, so
+            # another project's orphan is still REPORTED (never deleted).
+            classify_volume "$vol" || continue
+            is_protected "$project" "$protected" && continue
+        fi
+    fi
 
     [[ "$vol_shape_label" == "$expected_vol_key" ]] || continue
     [[ "$vol_project_label" == "$project" ]] || continue
-    [[ -n "$(docker ps -aq --filter "volume=$vol" 2>/dev/null || true)" ]] && continue
+    # Container attachment is mutable state, not identity: it is re-read inside the
+    # critical section. Every identity-bound predicate above came from the one
+    # inspect that recorded CreatedAt, so no window exists between them.
+    skip_if_attached "volume=$vol" "$vol" && continue
 
+    # SMI-6981: an unconfirmed volume is NEVER a deletion candidate, whatever
+    # --include-unlabeled says. `app.skillsmith.owned` is the only NON-CIRCULAR
+    # ownership signal in this chain. The project-label check above cannot
+    # substitute: it compares against a $project parsed from the candidate's own
+    # NAME, so it passes for any foreign Compose project using default naming.
+    # On a shared daemon, absence of ownership evidence means DO NOT DELETE.
     if [[ "$vol_owned_label" != "true" ]]; then
-        echo "UNCONFIRMED ownership: $vol"
-        [[ "$INCLUDE_UNLABELED" != true ]] && continue
+        echo "UNCONFIRMED ownership: $vol (report only -- never deleted)"
+        continue
+    fi
+
+    if is_own_non_worktree_project "$project"; then
+        echo "NON-WORKTREE project: $vol (owned, but not a worktree's -- report only, never deleted)"
+        continue
+    fi
+
+    if ! in_scope "$project"; then
+        echo "REPORT-ONLY orphan: $vol (project not named by --only-project -- never deleted)"
+        continue
     fi
 
     vol_candidates+=("$vol")
-done < <(docker volume ls --format '{{.Name}}' 2>/dev/null || true)
+    vol_candidate_created+=("$vol_created")
+    vol_candidate_project+=("$project")
+done <<< "$vol_list"
 
-# TOCTOU narrowing (NOT elimination -- see header + Shared-State audit):
-# re-derive the protected set once, immediately before the delete loop. A
-# concurrent create-worktree.sh can still register a worktree after this
-# re-scan and before `volume rm` -- that residual window is accepted, not
-# closed. This is a narrowing measure, not a locking mechanism.
-protected="$(derive_protected)"
-
+# Every delete below runs inside worktree_lifecycle_delete (lib/worktree-lifecycle.sh):
+# one critical section per candidate under the worktree lifecycle lock, with the
+# liveness read and the lock-identity check as the last operations before the one
+# bounded delete. The protected set sampled above only pre-filters candidates.
+# A failed delete never returns here: it exits the run (C5). The `|| OP_FAILED=true`
+# on both calls only keeps the function in an errexit-suppressed `||` context,
+# which its internal `x="$(…)" || error` checks were written and measured under.
 if (( ${#vol_candidates[@]} > 0 )); then
-    for vol in "${vol_candidates[@]}"; do
-        classify_volume "$vol" || continue
-        is_protected "$project" "$protected" && continue
-        if [[ "$DRY_RUN" == true ]]; then
-            info "[dry-run] would remove volume $vol"
-        elif docker volume rm "$vol" >/dev/null 2>&1; then
-            success "  Removed volume $vol"
-        else
-            warn "  Could not remove volume $vol (already gone or in use -- continuing)"
-        fi
+    for i in "${!vol_candidates[@]}"; do
+        vol="${vol_candidates[$i]}"
+        project="${vol_candidate_project[$i]}"
+        # Attachment, ownership and CreatedAt are re-checked INSIDE the section,
+        # not here: any Docker actor can replace the volume while we wait for the
+        # lock, and Docker deletes by name.
+        worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" volume "$vol" "${vol_candidate_created[$i]}" || OP_FAILED=true
     done
 fi
 
-# --- images: same existence + ownership checks, against the re-derived set ---
+# --- images: same existence + ownership checks, each delete in its own section ---
+img_list=""
+if ! img_list="$(docker images --format '{{.Repository}}' 2>/dev/null)"; then
+    warn "Could not list images (docker images failed) -- no image candidates considered"
+    LISTING_FAILED=true
+    img_list=""
+fi
+img_list="$(printf '%s\n' "$img_list" | sort -u)"
+
 while IFS= read -r img; do
     [[ -z "$img" || "$img" == "<none>" ]] && continue
-    [[ "$img" == *-dev ]] || continue
-    project="${img%-dev}"
+    # Report every `*-dev` image. Under --only-project P also consider P's `-test`
+    # image (SMI-7089): the dev container is not the only service a worktree
+    # builds, and that image leaked on every removal.
+    if [[ "$img" == *-dev ]]; then
+        project="${img%-dev}"
+        img_expect_service="dev"
+    elif [[ -n "$ONLY_PROJECT" && "$img" == "${ONLY_PROJECT}-test" ]]; then
+        project="$ONLY_PROJECT"
+        img_expect_service="test"
+    else
+        continue
+    fi
     is_protected "$project" "$protected" && continue
 
-    img_service_label="$(docker image inspect "$img" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || true)"
-    [[ "$img_service_label" == "dev" ]] || continue
-    [[ -n "$(docker ps -aq --filter "ancestor=$img" 2>/dev/null || true)" ]] && continue
+    # IDENTITY FIRST: resolve the immutable image ID once, then judge every
+    # Docker-observed image predicate (service, ownership, project, attachment) on
+    # that ID (labels are immutable per ID), never on the tag. The scope comes from
+    # the `<project>-<service>` tag name, which is what is resolved to the ID. A
+    # tag retargeted after this line changes nothing that was checked; the section
+    # re-checks that the tag still resolves to this ID and deletes BY ID.
+    if ! img_id="$(worktree_lifecycle_image_id "$img")"; then
+        warn "  Could not resolve image $img (${img_id:-no output}) -- skipping"
+        OP_FAILED=true
+        continue
+    fi
+    image_labels_of "$img_id" || continue
+    if [[ "$img_labels_json" == "null" || "$img_labels_json" == "{}" ]]; then
+        echo "UNCONFIRMED ownership: $img (the image carries no labels -- report only, never deleted)"
+        continue
+    fi
+    [[ "$img_service_label" == "$img_expect_service" ]] || continue
+    skip_if_attached "ancestor=$img_id" "$img" && continue
 
-    img_owned_label="$(docker image inspect "$img" --format '{{index .Config.Labels "app.skillsmith.owned"}}' 2>/dev/null || true)"
+    # SMI-6981: --include-unlabeled gated `docker rmi` exactly as it gated
+    # `volume rm`, so a foreign `*-dev` image with no attached container and no
+    # ownership label was deletable. Same rule, same reason.
     if [[ "$img_owned_label" != "true" ]]; then
-        echo "UNCONFIRMED ownership: $img"
-        [[ "$INCLUDE_UNLABELED" != true ]] && continue
+        echo "UNCONFIRMED ownership: $img (report only -- never deleted)"
+        continue
     fi
 
-    if [[ "$DRY_RUN" == true ]]; then
-        info "[dry-run] would remove image $img"
-    elif docker rmi "$img" >/dev/null 2>&1; then
-        success "  Removed image $img"
-    else
-        warn "  Could not remove image $img (already gone or in use -- continuing)"
+    if is_own_non_worktree_project "$project"; then
+        echo "NON-WORKTREE project: $img (owned, but not a worktree's -- report only, never deleted)"
+        continue
     fi
-done < <(docker images --format '{{.Repository}}' 2>/dev/null | sort -u || true)
+
+    if ! in_scope "$project"; then
+        echo "REPORT-ONLY orphan: $img (project not named by --only-project -- never deleted)"
+        continue
+    fi
+
+    # SMI-7089: a tag is only a name. `P-test` can be retagged onto another
+    # project's image, so the project the IMAGE says it belongs to must be P.
+    if [[ "$img_project_label" != "$project" ]]; then
+        echo "UNCONFIRMED project: $img (its image says project '${img_project_label:-<none>}', not '$project' -- report only, never deleted)"
+        continue
+    fi
+
+    worktree_lifecycle_delete "$main_repo" "$project" "$DRY_RUN" image "$img" "$img_id" || OP_FAILED=true
+done <<< "$img_list"
+
+if [[ "$LISTING_FAILED" == true || "$OP_FAILED" == true ]]; then
+    exit 1
+fi

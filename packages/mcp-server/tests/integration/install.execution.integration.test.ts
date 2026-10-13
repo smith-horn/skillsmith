@@ -173,7 +173,25 @@ describe('Install Skill Tool — Execution & Trust Tier', () => {
         expect(validateTrustTier('invalid')).toBe('unknown')
         expect(validateTrustTier('premium')).toBe('unknown')
         expect(validateTrustTier('trusted')).toBe('unknown')
-        expect(validateTrustTier('official')).toBe('unknown')
+        expect(validateTrustTier('constructor')).toBe('unknown')
+      })
+
+      // SMI-7056: the old assertion here pinned official -> unknown, the defect.
+      it('should round-trip all eight TrustTier values (official is not collapsed)', () => {
+        const all: TrustTier[] = [
+          'official',
+          'verified',
+          'curated',
+          'community',
+          'experimental',
+          'unknown',
+          'unverified',
+          'local',
+        ]
+        for (const tier of all) {
+          expect(validateTrustTier(tier)).toBe(tier)
+          expect(validateTrustTier(tier.toUpperCase())).toBe(tier)
+        }
       })
     })
 

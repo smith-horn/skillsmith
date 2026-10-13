@@ -146,7 +146,7 @@ export function spawnCli(opts: SpawnCliOpts): CliHandle {
 // strip dashes/whitespace, and validate it matches an 8-char alnum code.
 //
 // strip-ANSI is plan-review fix #11; we use the strip-ansi npm package
-// (already hoisted at top-level node_modules; CJS export). Avoids stuffing
+// (v7, ESM-only, imported as an ES module; this package is "type": "module"). Avoids stuffing
 // raw escape sequences into source.
 
 const CODE_RE = /│\s*([A-Z0-9]{4})-?([A-Z0-9]{4})\s*│/

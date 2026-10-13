@@ -143,8 +143,10 @@ derive_tier_b_paths() {
 
 #######################################
 # Sanitize an arbitrary name (worktree directory basename, branch name) into
-# a Docker Compose v2 project name: lowercase, then strip any character
-# outside [a-z0-9_-]. This is the single canonical implementation --
+# a Docker Compose v2 project name: lowercase, strip any character outside
+# [a-z0-9_-], then strip LEADING '_' and '-' (Compose does; measured with
+# Compose v5.3.1: `_Abc.Def` -> `abcdef`, `--x__y` -> `x__y`). This is the
+# single canonical implementation --
 # remove-worktree.sh's project_name derivation and
 # prune-orphaned-docker-volumes.sh's protected-set derivation both call this
 # rather than each inlining their own copy of the tr/sed pipeline, so the two
@@ -162,7 +164,11 @@ derive_tier_b_paths() {
 #   Sanitized project-name-safe string, followed by a newline, to stdout
 #######################################
 sanitize_project_name() {
-    printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g'
+    # A newline inside a name is dropped like any other invalid character (sed
+    # works line by line, so it would otherwise survive and split the result into
+    # two "names"). The inner substitution strips whatever trailing newline the
+    # local sed adds, so the output is one line on GNU and BSD alike.
+    printf '%s\n' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '\n' | sed -e 's/[^a-z0-9_-]//g' -e 's/^[_-]*//')"
 }
 
 #######################################
@@ -1975,9 +1981,10 @@ enumerate_native_module_volumes() {
             printf '    driver: local\n'
             # SMI-5750: positive ownership marker so
             # prune-orphaned-docker-volumes.sh can identify these as
-            # Skillsmith-owned and auto-reclaim orphaned ones (worktree
-            # removed without going through remove-worktree.sh) instead of
-            # leaving them perpetually UNCONFIRMED. Same label/rationale as
+            # Skillsmith-owned instead of leaving them perpetually
+            # UNCONFIRMED. Ownership makes an orphan ELIGIBLE, not deleted:
+            # the pruner reports orphans and deletes only the one project
+            # named by --only-project. Same label/rationale as
             # docker-compose.yml's node_modules volume.
             printf '    labels:\n'
             printf '      app.skillsmith.owned: "true"\n'

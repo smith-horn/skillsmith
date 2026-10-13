@@ -1,480 +1,217 @@
 /**
- * Integration tests for remove-worktree.sh (SMI-4653)
+ * Integration tests for remove-worktree.sh.
  *
- * Verifies the per-worktree Docker resource cleanup added in SMI-4653:
- *   - Default flow runs `docker compose down --volumes --rmi local`
- *   - Name-based fallback always runs (`docker rmi`, `docker volume rm`)
- *   - Compose-fail / rmi-fail paths still continue
- *   - --keep-docker skips all cleanup
- *   - Main-repo guard refuses to operate on the main repo
- *   - Project-name sanitization matches Docker Compose v2 rules
+ * History: SMI-4653 added per-worktree Docker cleanup, SMI-6401 made it
+ * profile-aware, SMI-5145 added the reclaimable report, SMI-5750 the targeted
+ * orphan prune. SMI-7089 then removed every delete from this script except the
+ * orphan prune: the stop no longer uses `compose down` at all (it removes the approved ids), and the
+ * name-based `docker rmi` / `docker volume rm` fallback is gone, because both
+ * acted on a Compose project by NAME and a second directory resolving to the same
+ * project lost its resources. The attribution and ordering guarantees are tested
+ * in remove-worktree-attribution.test.ts; this file keeps the per-feature
+ * behaviour.
  *
- * SMI-6401: `dev`/`test` are Compose-profile-gated, so `down`/`config`
- * silently no-op without an explicit `--profile`. `cleanup_worktree_docker_resources()`
- * now discovers the repo's declared profiles (`docker compose config --profiles`)
- * and applies them to both the `down` call AND a `docker compose config --format
- * json`-derived enumeration of every declared named volume (replacing a
- * fallback that only ever guessed `_node_modules`). This inserts TWO new
- * docker invocations ahead of the pre-existing `rmi`/`volume rm` calls in the
- * scripted-exit-code tests below — see the per-test comments for the updated
- * call-index accounting.
- *
- * Tests use a fake `docker` shim on PATH that records invocations.
- * No real Docker daemon is needed; no git-crypt encryption is used.
+ * The script runs from a COPY inside a throwaway repo (_lib/worktree-attribution-fixture.ts)
+ * with a recording `docker` on PATH. No real Docker daemon is needed.
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { execSync } from 'child_process'
-import { rmSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'fs'
+import { existsSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
-import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
-
-const SCRIPT_PATH = join(__dirname, '..', 'remove-worktree.sh')
-
-/**
- * SMI-4693: GIT_DISCOVERY_VARS-stripped env for every git invocation AND
- * the remove-worktree.sh subprocess. Same pattern as rebase-worktree.test.ts.
- */
-const GIT_ENV = makeFixtureEnv()
-
-function makeTempDir(prefix: string): string {
-  return makeFixtureTempDir(prefix)
-}
-
-function git(cwd: string, args: string): string {
-  return execSync(`git -c init.defaultBranch=main -c protocol.file.allow=always ${args}`, {
-    cwd,
-    encoding: 'utf8',
-    env: GIT_ENV,
-  }).trim()
-}
-
-function sh(cmd: string, opts?: { cwd?: string }): string {
-  return execSync(cmd, { encoding: 'utf8', env: GIT_ENV, ...opts }).trim()
-}
-
-/**
- * Write a docker shim to `binDir/docker`. Records invocations to `logPath`.
- * Optional `exitCodesPath` — newline-delimited exit codes consumed in order;
- * defaults to 0 when exhausted/unset.
- */
-function writeDockerShim(binDir: string, logPath: string, exitCodesPath?: string): void {
-  const shim = `#!/bin/sh
-echo "$@" >> "${logPath}"
-${
-  exitCodesPath
-    ? `if [ -f "${exitCodesPath}" ] && [ -s "${exitCodesPath}" ]; then
-  code="$(head -n 1 "${exitCodesPath}")"
-  tail -n +2 "${exitCodesPath}" > "${exitCodesPath}.tmp" && mv "${exitCodesPath}.tmp" "${exitCodesPath}"
-  exit "$\{code:-0}"
-fi
-`
-    : ''
-}exit 0
-`
-  const shimPath = join(binDir, 'docker')
-  writeFileSync(shimPath, shim)
-  chmodSync(shimPath, 0o755)
-}
-
-/**
- * SMI-6401: docker shim variant that also fakes `compose config --profiles`
- * and `compose ... config --format json` output, so the profile-discovery
- * and Compose-config-derived volume-list logic in
- * cleanup_worktree_docker_resources() can be exercised end-to-end without a
- * real Docker daemon. Every other command (stop, down, rmi, volume rm, ...)
- * always exits 0 -- this variant proves the derivation itself works; it is
- * not used for the failure-interplay tests above (those use the plain
- * `writeDockerShim` + exit-codes queue, where an empty discovery result is
- * exactly what exercises the pre-fix-equivalent fallback path).
- */
-function writeSmartDockerShim(binDir: string, logPath: string): void {
-  const shim = `#!/bin/sh
-echo "$@" >> "${logPath}"
-case "$*" in
-  *"config --profiles")
-    printf '%s\\n' dev test
-    exit 0
-    ;;
-  *"config --format json")
-    cat <<'JSON'
-{"volumes":{"node_modules":{},"website-vercel-output":{},"an-external-vol":{"external":true}}}
-JSON
-    exit 0
-    ;;
-esac
-exit 0
-`
-  const shimPath = join(binDir, 'docker')
-  writeFileSync(shimPath, shim)
-  chmodSync(shimPath, 0o755)
-}
-
-/**
- * Run remove-worktree.sh with a fake docker on PATH; return logged invocations + script result.
- * cwd defaults to the binDir's parent (the test's tempRoot) so git/auto-discovery doesn't
- * pick up the host's vitest cwd repo.
- */
-function runScriptWithDockerShim(
-  args: string,
-  binDir: string,
-  logPath: string,
-  cwd?: string
-): { status: number; stdout: string; stderr: string; dockerCalls: string[] } {
-  const env = {
-    ...GIT_ENV,
-    PATH: `${binDir}:${GIT_ENV.PATH ?? ''}`,
-  }
-  let result: { status: number; stdout: string; stderr: string }
-  try {
-    const stdout = execSync(`bash "${SCRIPT_PATH}" ${args}`, {
-      encoding: 'utf8',
-      timeout: 30_000,
-      env,
-      cwd,
-    })
-    result = { status: 0, stdout, stderr: '' }
-  } catch (err) {
-    const e = err as { status: number; stdout: string; stderr: string }
-    result = { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' }
-  }
-
-  const dockerCalls = existsSync(logPath)
-    ? readFileSync(logPath, 'utf8')
-        .split('\n')
-        .filter((line) => line.length > 0)
-    : []
-
-  return { ...result, dockerCalls }
-}
-
-/**
- * Set up a throwaway repo + worktree at the given dir name. Returns paths.
- * Optionally drops a docker-compose.override.yml in the worktree to trigger Path A.
- */
-function setupRepoWithWorktree(
-  tempRoot: string,
-  worktreeDirName: string,
-  withComposeOverride = true
-): { repoDir: string; worktreeDir: string } {
-  const repoDir = join(tempRoot, 'repo')
-  const worktreeDir = join(tempRoot, worktreeDirName)
-
-  git(tempRoot, `init "${repoDir}"`)
-  sh(`touch "${join(repoDir, 'README.md')}"`)
-  git(repoDir, 'add README.md')
-  git(repoDir, 'commit -m "initial"')
-
-  git(repoDir, `worktree add -b feat "${worktreeDir}"`)
-
-  if (withComposeOverride) {
-    writeFileSync(join(worktreeDir, 'docker-compose.override.yml'), 'services: {}\n')
-  }
-
-  return { repoDir, worktreeDir }
-}
+import {
+  addWt,
+  makeAttrFixture,
+  ourContainers,
+  primeAttribution,
+  readRegLog,
+  runRemove,
+  setExit,
+  setExitSequence,
+  setNetworkUsers,
+  setProjectNetworks,
+  type AttrFixture,
+} from './_lib/worktree-attribution-fixture.js'
+import {
+  volumeLabels,
+  volumeListResponse,
+  volumePsResponse,
+} from './prune-orphaned-docker-volumes.helpers.js'
 
 const tempDirs: string[] = []
 
 afterEach(() => {
   for (const dir of tempDirs) {
-    if (existsSync(dir)) {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
   }
   tempDirs.length = 0
 })
 
-describe('SMI-4653: remove-worktree.sh per-worktree Docker cleanup', () => {
-  it('runs `docker compose down --volumes --rmi local` then name-based fallback', () => {
-    const tempRoot = makeTempDir('rmwt-default')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-feature')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+function mk(prefix: string): AttrFixture {
+  const fx = makeAttrFixture(prefix)
+  tempDirs.push(fx.tempRoot)
+  return fx
+}
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+const deletes = (c: string): boolean => /^(rmi|image rm|volume rm|volume remove)\b/.test(c)
+
+describe('SMI-4653/SMI-7089: remove-worktree.sh Docker cleanup', () => {
+  it('removes exactly the approved containers (no `compose down`) and issues no delete of its own', () => {
+    const fx = mk('rmwt-default')
+    const wt = addWt(fx, 'wt-feature')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1', 'c2'])
+
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Path A: with the plain (dumb, empty-output) shim, `compose config
-    // --profiles` (SMI-6401 discovery) returns nothing, so no --profile
-    // flags get appended -- the down call is byte-identical to the
-    // pre-SMI-6401 invocation. The pre-existing stop_worktree_containers
-    // does emit `compose --profile dev down` separately — we assert on the
-    // exact cleanup string.
-    expect(result.dockerCalls).toContain('compose down --volumes --rmi local')
-    // Path B: fallback rmi + volume rm (SMI-6401: `compose config --format
-    // json` also returns nothing from the dumb shim, so declared_volume_keys
-    // falls back to the single historical "node_modules" name).
-    expect(result.dockerCalls).toContain('rmi wt-feature-dev')
-    expect(result.dockerCalls).toContain('volume rm wt-feature_node_modules')
-  })
-
-  it('--keep-docker skips compose down AND fallback rmi/volume rm', () => {
-    const tempRoot = makeTempDir('rmwt-keep')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-keep')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
-
-    const result = runScriptWithDockerShim(
-      `"${worktreeDir}" --force --keep-docker`,
-      binDir,
-      logPath,
-      repoDir
+    // Presence: the stop path removed the approved ids, and nothing is project-scoped.
+    expect(result.dockerCalls).toContain('rm -f c1 c2')
+    expect(result.dockerCalls.some((c) => c.startsWith('compose') && /\bdown\b/.test(c))).toBe(
+      false
     )
-
-    expect(result.status).toBe(0)
-    // No cleanup-related docker calls. The pre-existing stop_worktree_containers
-    // path may emit `compose --profile dev down` (without --rmi/--volumes), which
-    // is the existing behavior we are preserving — that one is allowed.
-    expect(result.dockerCalls.some((c) => c.includes('--rmi'))).toBe(false)
-    expect(result.dockerCalls.some((c) => c === 'volume rm wt-keep_node_modules')).toBe(false)
-    expect(result.dockerCalls.some((c) => c === 'rmi wt-keep-dev')).toBe(false)
+    // The flags that made Path A delete by project are gone, and so is Path B.
+    expect(result.dockerCalls.some((c) => c.includes('--volumes') || c.includes('--rmi'))).toBe(
+      false
+    )
+    expect(result.dockerCalls.some(deletes)).toBe(false)
   })
 
-  it('compose down failing does not block the name-based fallback', () => {
-    const tempRoot = makeTempDir('rmwt-compose-fail')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-fail')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    const exitCodesPath = join(tempRoot, 'exit-codes')
-    // SMI-6401: 6 real calls now precede the network-ls/system-df/orphan-prune
-    // tail (profile discovery + config-json derivation inserted between the
-    // stop call and Path B, both `|| true`-tolerant no-ops with the dumb shim):
-    //   [0] stop_worktree_containers `compose --profile dev down`      → 0
-    //   [1] Path A profile discovery `compose config --profiles`       → 0
-    //   [2] Path A `compose down --volumes --rmi local`                → 1 (the simulated failure)
-    //   [3] Path B `compose config --format json` (volume derivation)  → 0
-    //   [4] Path B `rmi`                                               → 0
-    //   [5] Path B `volume rm`                                         → 0
-    writeFileSync(exitCodesPath, '0\n0\n1\n0\n0\n0\n')
-    writeDockerShim(binDir, logPath, exitCodesPath)
+  it('--keep-docker removes the containers but never deletes or prunes anything', () => {
+    const fx = mk('rmwt-keep')
+    const wt = addWt(fx, 'wt-keep')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force', '--keep-docker'])
 
     expect(result.status).toBe(0)
-    // Pin exactly which call received the simulated failure, so a future
-    // insertion ahead of Path A's `down` can't silently mistarget it onto a
-    // `|| true`-tolerant discovery call instead (plan-review SMI-6401 finding).
-    expect(result.dockerCalls[2]).toBe('compose down --volumes --rmi local')
-    expect(result.dockerCalls).toContain('rmi wt-fail-dev')
-    expect(result.dockerCalls).toContain('volume rm wt-fail_node_modules')
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls.some(deletes)).toBe(false)
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
   })
 
-  it('rmi failing does not block the volume rm step', () => {
-    const tempRoot = makeTempDir('rmwt-rmi-fail')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-rmifail')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    const exitCodesPath = join(tempRoot, 'exit-codes')
-    // SMI-6401: [0] stop=0, [1] profile discovery=0, [2] compose down=0,
-    // [3] config-json derivation=0, [4] rmi=1 (the simulated failure), [5] volume rm=0
-    writeFileSync(exitCodesPath, '0\n0\n0\n0\n1\n0\n')
-    writeDockerShim(binDir, logPath, exitCodesPath)
+  it('a network Docker refuses to drop does not abort before Step 2, but ends the run incomplete (exit 1)', () => {
+    const fx = mk('rmwt-netrm-refused')
+    const wt = addWt(fx, 'wt-netrm')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
+    setProjectNetworks(fx, ['n1', 'n2'])
+    setExit(fx, 'network_rm', 1)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
-    expect(result.status).toBe(0)
-    expect(result.dockerCalls).toContain('rmi wt-rmifail-dev')
-    expect(result.dockerCalls).toContain('volume rm wt-rmifail_node_modules')
+    // Presence: both networks were attempted (one refusal does not hide the next),
+    // never forced.
+    expect(result.dockerCalls).toContain('network rm n1')
+    expect(result.dockerCalls).toContain('network rm n2')
+    expect(result.dockerCalls.some((c) => c.startsWith('network rm') && c.includes('-f'))).toBe(
+      false
+    )
+    expect(result.stderr + result.stdout).toContain('Network n1 was not removed')
+    // The worktree IS removed (a refused network may belong to someone else), then the
+    // run reports the cleanup as incomplete, naming each network and the reason.
+    expect(existsSync(wt)).toBe(false)
+    expect(result.stderr + result.stdout).toContain('n1: docker network rm was refused')
+    expect(result.stderr + result.stdout).toContain('n2: docker network rm was refused')
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
   })
 
-  it('refuses to clean Docker resources for the main repo', () => {
-    const tempRoot = makeTempDir('rmwt-main-guard')
-    tempDirs.push(tempRoot)
-    const { repoDir } = setupRepoWithWorktree(tempRoot, 'wt-main')
-    // create-worktree-style override at the main repo too — script needs to
-    // refuse before touching it.
-    writeFileSync(join(repoDir, 'docker-compose.override.yml'), 'services: {}\n')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+  it('refuses to operate on the main repo before any docker call', () => {
+    const fx = mk('rmwt-main-guard')
+    addWt(fx, 'wt-main')
+    primeAttribution(fx, fx.repoDir)
 
-    const result = runScriptWithDockerShim(`"${repoDir}"`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [fx.repoDir])
 
     expect(result.status).not.toBe(0)
     expect(result.stderr + result.stdout).toMatch(/Refusing to remove the main repo as a worktree/)
-    // No docker side-effects of any kind should have run — guard fires before
-    // stop_worktree_containers, the symlink rm, or the cleanup function.
     expect(result.dockerCalls.length).toBe(0)
   })
 
-  it('sanitizes uppercase/special-char dir names to match Docker Compose project name', () => {
-    const tempRoot = makeTempDir('rmwt-sanitize')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'SMI-4700_Test')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+  it('sanitizes uppercase/special-char dir names to match the Docker Compose project name', () => {
+    const fx = mk('rmwt-sanitize')
+    const wt = addWt(fx, 'SMI-4700_Test')
+    primeAttribution(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Sanitization: SMI-4700_Test → smi-4700_test
-    expect(result.dockerCalls).toContain('rmi smi-4700_test-dev')
-    expect(result.dockerCalls).toContain('volume rm smi-4700_test_node_modules')
-  })
-
-  it('idempotent re-run does not error after resources are gone', () => {
-    const tempRoot = makeTempDir('rmwt-idempotent')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-idem')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    const exitCodesPath = join(tempRoot, 'exit-codes')
-    // SMI-6401: cleanup now spans 6 real calls (stop, profile discovery,
-    // compose down, config-json derivation, rmi, volume rm), all → 1
-    // (resources already gone / discovery unavailable -- every one of these
-    // is `|| true`-tolerant). network ls (7th call, check_docker_networks) →
-    // 0 so the pipefail-protected pipeline doesn't blow up. The SMI-5145
-    // `docker system df` (check_docker_reclaimable) and the SMI-5750
-    // orphan-prune's own docker calls all fall after the queue is exhausted
-    // and default to 0 — `docker system df`'s bare invocation is
-    // `|| warn`-guarded so a non-zero would not abort regardless. Script
-    // should still succeed end-to-end.
-    writeFileSync(exitCodesPath, '1\n1\n1\n1\n1\n1\n0\n')
-    writeDockerShim(binDir, logPath, exitCodesPath)
-
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
-
-    expect(result.status).toBe(0)
+    // SMI-4700_Test -> smi-4700_test: the pruner announces the scope it was handed.
+    expect(result.stdout).toContain('Orphan prune scope: smi-4700_test')
   })
 })
 
-describe('SMI-6401: profile-aware Path A + Compose-config-derived Path B volume list', () => {
-  it('discovers profiles, passes them to `down`, and removes every non-external declared volume', () => {
-    const tempRoot = makeTempDir('rmwt-6401-derive')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-derive')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeSmartDockerShim(binDir, logPath)
+describe('SMI-6401 (superseded by SMI-7089): no profile discovery, no project-scoped call', () => {
+  it('never asks Compose for profiles or runs a project-scoped call: the approved ids are the whole scope', () => {
+    const fx = mk('rmwt-6401-profiles')
+    const wt = addWt(fx, 'wt-derive')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Path A: the discovered profiles ("dev", "test") are applied to `down`.
-    expect(result.dockerCalls).toContain(
-      'compose --profile dev --profile test down --volumes --rmi local'
-    )
-    // Path A also applies the same profiles to the `config --format json`
-    // derivation call.
-    expect(result.dockerCalls).toContain(
-      'compose --profile dev --profile test config --format json'
-    )
-    // Path B: BOTH non-external declared volumes are attempted, not just
-    // the single historical "node_modules" name.
-    expect(result.dockerCalls).toContain('volume rm wt-derive_node_modules')
-    expect(result.dockerCalls).toContain('volume rm wt-derive_website-vercel-output')
-    // The volume marked `external: true` in the canned config is never
-    // touched -- an externally-managed volume must not be deleted by this
-    // script.
-    expect(result.dockerCalls.some((c) => c.includes('an-external-vol'))).toBe(false)
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls.some((c) => c.includes('--profiles'))).toBe(false)
   })
 
-  it('does not crash when no docker-compose.override.yml exists (plan-review Critical regression check)', () => {
-    // SMI-6401 plan-review Critical finding: compose_profile_args/
-    // declared_volume_keys must be declared OUTSIDE the
-    // `if [[ -f docker-compose.override.yml ]]` block, or this exact
-    // no-override-file path (Path A skipped entirely) crashes with
-    // "unbound variable" under `set -euo pipefail` before `git worktree
-    // remove` ever runs. This worktree has no override file, so Path A
-    // never executes -- only the node_modules-only Path B fallback should
-    // run, and the script must still exit 0.
-    const tempRoot = makeTempDir('rmwt-6401-no-override')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noover', false)
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+  it('does not crash and makes no Compose call when the worktree has no Compose files', () => {
+    const fx = mk('rmwt-6401-no-override')
+    const wt = addWt(fx, 'wt-noover', { override: false })
+    primeAttribution(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Path A's `compose down`/`config` calls never fire without an override
-    // file present.
-    expect(result.dockerCalls.some((c) => c.startsWith('compose down'))).toBe(false)
-    expect(result.dockerCalls.some((c) => c.startsWith('compose config'))).toBe(false)
-    // Path B still runs its single-name fallback.
-    expect(result.dockerCalls).toContain('rmi wt-noover-dev')
-    expect(result.dockerCalls).toContain('volume rm wt-noover_node_modules')
+    // Presence: Docker was reachable (R0) and the pruner ran after the removal.
+    expect(result.dockerCalls).toContain('info')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
+    expect(result.dockerCalls.some((c) => c.startsWith('compose'))).toBe(false)
+    expect(existsSync(wt)).toBe(false)
   })
 })
 
 describe('SMI-5145: reclaimable Docker report + safe --prune', () => {
   it('reports reclaimable resources (docker system df) on a default run, without pruning', () => {
-    const tempRoot = makeTempDir('rmwt-reclaim-check')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-reclaim')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+    const fx = mk('rmwt-reclaim-check')
+    const wt = addWt(fx, 'wt-reclaim')
+    primeAttribution(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Step 3 reclaimable report runs `docker system df` unconditionally.
     expect(result.dockerCalls).toContain('system df')
-    // Without --prune, no safe prune of images / build cache / networks runs.
     expect(result.dockerCalls.some((c) => c.startsWith('image prune'))).toBe(false)
     expect(result.dockerCalls.some((c) => c.startsWith('builder prune'))).toBe(false)
     expect(result.dockerCalls.some((c) => c.startsWith('network prune'))).toBe(false)
   })
 
   it('--prune runs network + dangling-image + build-cache prune (safe categories only)', () => {
-    const tempRoot = makeTempDir('rmwt-prune-safe')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-prunesafe')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+    const fx = mk('rmwt-prune-safe')
+    const wt = addWt(fx, 'wt-prunesafe')
+    primeAttribution(fx, wt)
 
-    const result = runScriptWithDockerShim(
-      `"${worktreeDir}" --force --prune`,
-      binDir,
-      logPath,
-      repoDir
-    )
+    const result = runRemove(fx, [wt, '--force', '--prune'])
 
     expect(result.status).toBe(0)
     expect(result.dockerCalls).toContain('network prune -f')
     expect(result.dockerCalls).toContain('image prune -f')
     expect(result.dockerCalls).toContain('builder prune -f')
-    // Still reports reclaimable.
     expect(result.dockerCalls).toContain('system df')
-    // SAFETY GUARD (non-optional): aggressive reclaim is NEVER auto-run — it can
-    // force native-module rebuilds in other active worktrees, so it stays manual.
+    // SAFETY GUARD (non-optional): aggressive reclaim is NEVER auto-run.
     expect(result.dockerCalls.some((c) => c.includes('volume prune'))).toBe(false)
     expect(result.dockerCalls.some((c) => c.includes('image prune -a'))).toBe(false)
   })
 
   it('never auto-runs aggressive reclaim on a default (no --prune) run either', () => {
-    const tempRoot = makeTempDir('rmwt-no-aggressive')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noaggr')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+    const fx = mk('rmwt-no-aggressive')
+    const wt = addWt(fx, 'wt-noaggr')
+    primeAttribution(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
     expect(result.dockerCalls.some((c) => c.includes('volume prune'))).toBe(false)
@@ -483,42 +220,319 @@ describe('SMI-5145: reclaimable Docker report + safe --prune', () => {
 })
 
 describe('SMI-5750: remove-worktree.sh targeted orphan-prune wiring (Step 3.5)', () => {
-  it('a default --force run invokes the targeted orphan prune (docker volume ls)', () => {
-    const tempRoot = makeTempDir('rmwt-orphan-prune')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-orphanprune')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+  it('a default run reaches the pruner: it lists volumes after the worktree is gone', () => {
+    const fx = mk('rmwt-orphan-prune')
+    const wt = addWt(fx, 'wt-orphanprune')
+    primeAttribution(fx, wt)
 
-    const result = runScriptWithDockerShim(`"${worktreeDir}" --force`, binDir, logPath, repoDir)
+    const result = runRemove(fx, [wt, '--force'])
 
     expect(result.status).toBe(0)
-    // Step 3.5 shells out to prune-orphaned-docker-volumes.sh, which sources
-    // the same docker shim on PATH -- its `docker volume ls --format
-    // '{{.Name}}'` call (scripts/prune-orphaned-docker-volumes.sh:174) shows
-    // up positionally-appended in the same recorded dockerCalls array.
-    expect(result.dockerCalls).toContain('volume ls --format {{.Name}}')
+    // `volume ls` is the pruner's own enumeration. Inside this fixture the pruner
+    // resolves its main checkout to the throwaway repo, so it really runs (run
+    // from the real tree in a container it refuses before listing anything).
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
   })
 
-  it('--no-orphan-prune suppresses the targeted orphan prune (no volume ls call)', () => {
-    const tempRoot = makeTempDir('rmwt-no-orphan-prune')
-    tempDirs.push(tempRoot)
-    const { repoDir, worktreeDir } = setupRepoWithWorktree(tempRoot, 'wt-noorphanprune')
-    const binDir = join(tempRoot, 'bin')
-    sh(`mkdir -p "${binDir}"`)
-    const logPath = join(tempRoot, 'docker.log')
-    writeDockerShim(binDir, logPath)
+  it('--no-orphan-prune suppresses the targeted orphan prune (pruner never runs)', () => {
+    const fx = mk('rmwt-no-orphan-prune')
+    const wt = addWt(fx, 'wt-noorphanprune')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
 
-    const result = runScriptWithDockerShim(
-      `"${worktreeDir}" --force --no-orphan-prune`,
-      binDir,
-      logPath,
-      repoDir
-    )
+    const result = runRemove(fx, [wt, '--force', '--no-orphan-prune'])
 
     expect(result.status).toBe(0)
-    expect(result.dockerCalls.some((c) => c.includes('volume ls'))).toBe(false)
+    // Presence: Docker was reached (R0 + the stop), so the absence below is not
+    // "docker never ran".
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
+    // The removed worktree's own resources are KEPT, and the output says so.
+    expect(result.stdout).toContain('image and volumes are kept')
+  })
+
+  it.each([
+    ['wt-scoped', 'wt-scoped'],
+    ['_Lead.Wt', 'leadwt'],
+    ['-Dash_Wt', 'dash_wt'],
+  ])("passes the removed worktree's Compose project to the pruner (%s -> %s)", (dir, project) => {
+    const fx = mk('rmwt-scope')
+    const wt = addWt(fx, dir)
+    primeAttribution(fx, wt)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.status).toBe(0)
+    // Whole-line match (optional ANSI colour around it): a prefix match would let
+    // `leadwt-extra` satisfy `leadwt`.
+    const ansi = '(?:\\x1b\\[[0-9;]*m)*'
+    expect(result.stdout).toMatch(new RegExp(`^${ansi}Orphan prune scope: ${project}${ansi}$`, 'm'))
+  })
+
+  it('--keep-docker never reaches the orphan prune: the kept volumes are unattached once the containers are gone (D-A)', () => {
+    const fx = mk('rmwt-keep-noprune')
+    const wt = addWt(fx, 'wt-keepnoprune')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
+
+    const result = runRemove(fx, [wt, '--force', '--keep-docker'])
+
+    expect(result.status).toBe(0)
+    // Presence: the stop path DID reach docker.
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
+  })
+
+  it("deletes the removed worktree's own owned volume, and only after it is deregistered", () => {
+    const fx = mk('rmwt-own-volume')
+    const wt = addWt(fx, 'foo')
+    primeAttribution(fx, wt)
+    const vol = 'foo_website-vercel-output'
+    volumeListResponse(fx, [vol])
+    volumeLabels(fx, vol, { volume: 'website-vercel-output', project: 'foo', owned: 'true' })
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.status).toBe(0)
+    expect(result.dockerCalls).toContain(`volume rm ${vol}`)
+    const rm = readRegLog(fx).filter((l) => l.startsWith('volume rm'))
+    expect(rm.length).toBeGreaterThan(0)
+    expect(rm.every((l) => l.endsWith('registered=no'))).toBe(true)
+  })
+})
+
+describe('SMI-7089: global --prune steps and an unusable Docker never abort a removal half-way', () => {
+  const pruneCalls = (calls: string[]): string[] =>
+    calls.filter((c) => /^(network prune|image prune|builder prune)/.test(c))
+
+  it('(a) daemon unreachable + --prune: worktree gone, no global prune attempted, run ends incomplete (exit 1)', () => {
+    const fx = mk('rmwt-prune-unreachable')
+    const wt = addWt(fx, 'wt-unreach')
+    primeAttribution(fx, wt)
+    setExit(fx, 'info', 1)
+    setExit(fx, 'network_ls', 1)
+    setExit(fx, 'network_prune', 1)
+
+    const result = runRemove(fx, [wt, '--force', '--prune'])
+
+    // Presence: R0 ran, so the absences below are not "docker never ran".
+    expect(result.dockerCalls).toContain('info')
+    expect(existsSync(wt)).toBe(false)
+    expect(pruneCalls(result.dockerCalls)).toEqual([])
+    // The Step 3 report is gated the same way.
+    expect(result.dockerCalls).not.toContain('network ls --format {{.Name}}')
+    expect(result.dockerCalls).not.toContain('system df')
+    expect(result.stdout).toContain('global prune was skipped because Docker is unreachable')
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stderr + result.stdout).toContain(
+      'prune-orphaned-docker-volumes.sh --only-project wt-unreach'
+    )
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('(b) a failing `network prune` warns and the run continues to the targeted prune', () => {
+    const fx = mk('rmwt-netprune-fails')
+    const wt = addWt(fx, 'wt-netfail')
+    primeAttribution(fx, wt)
+    setExit(fx, 'network_prune', 1)
+
+    const result = runRemove(fx, [wt, '--force', '--prune'])
+
+    // Presence: the failing call really was made, and the later steps still ran.
+    expect(result.dockerCalls).toContain('network prune -f')
+    expect(result.dockerCalls).toContain('image prune -f')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
+    expect(result.stdout).toContain('Orphan prune scope: wt-netfail')
+    expect(result.stderr + result.stdout).toContain('network prune failed')
+    expect(result.stdout).toContain('Worktree removal complete!')
+    expect(result.status).toBe(0)
+  })
+
+  it('(b2) a failing `network ls` in the Step 3 report does not abort either', () => {
+    const fx = mk('rmwt-netls-fails')
+    const wt = addWt(fx, 'wt-netls')
+    primeAttribution(fx, wt)
+    setExit(fx, 'network_ls', 1)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain('network ls --format {{.Name}}')
+    expect(result.stderr + result.stdout).toContain('Could not list Docker networks')
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(true)
+    expect(result.stdout).toContain('Worktree removal complete!')
+    expect(result.status).toBe(0)
+  })
+
+  it('(b3) stderr from a SUCCESSFUL `network ls` is not counted as networks', () => {
+    const fx = mk('rmwt-netls-stderr')
+    const wt = addWt(fx, 'wt-netstderr')
+    primeAttribution(fx, wt)
+    writeFileSync(join(fx.responsesDir, 'network_ls_out'), 'bridge\nhost\n')
+    writeFileSync(
+      join(fx.responsesDir, 'network_ls_err'),
+      Array.from({ length: 10 }, (_, i) => `daemon warning ${i}`).join('\n') + '\n'
+    )
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain('network ls --format {{.Name}}')
+    expect(result.stdout).toContain('Docker network count OK (2 networks)')
+    expect(result.stdout).not.toContain('Docker has')
+    expect(result.status).toBe(0)
+  })
+
+  it('(c) Docker reachable at Step 0 but unusable for the pruner: exit 1 with the re-run hint', () => {
+    const fx = mk('rmwt-pruner-docker-gone')
+    const wt = addWt(fx, 'wt-prunergone')
+    primeAttribution(fx, wt)
+    // 1st `docker info` is Step 0 (R0); the 2nd is the pruner's own check.
+    setExitSequence(fx, 'info', [0, 1])
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: both info calls happened, the worktree is gone, no volume was listed.
+    expect(result.dockerCalls.filter((c) => c === 'info')).toHaveLength(2)
+    expect(existsSync(wt)).toBe(false)
+    expect(result.dockerCalls.some((c) => c.startsWith('volume ls'))).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+})
+
+describe('SMI-7089: a resource still attached after Step 1 fails the removal', () => {
+  it('a container attached to the project volume after the stop: exit 1, "Docker cleanup incomplete"', () => {
+    const fx = mk('rmwt-attached-vol')
+    const wt = addWt(fx, 'foo')
+    primeAttribution(fx, wt)
+    const vol = 'foo_website-vercel-output'
+    volumeListResponse(fx, [vol])
+    volumeLabels(fx, vol, { volume: 'website-vercel-output', project: 'foo', owned: 'true' })
+    // A container another actor started after Step 1 holds the volume.
+    volumePsResponse(fx, vol, 'cLate')
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: the worktree is gone and the pruner reached the volume.
+    expect(existsSync(wt)).toBe(false)
+    expect(result.dockerCalls.some((c) => c.includes(`volume=${vol}`))).toBe(true)
+    expect(result.dockerCalls).not.toContain(`volume rm ${vol}`)
+    expect(result.stderr + result.stdout).toContain('SKIPPED (attached)')
+    expect(result.stderr + result.stdout).toContain('Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+})
+
+describe('SMI-7089: what remove-worktree removes, and which networks it leaves', () => {
+  it('removes ALL of a worktree\u2019s approved containers, whatever their service (its project is never main\u2019s)', () => {
+    const fx = mk('rmwt-all-services')
+    const wt = addWt(fx, 'wt-allsvc')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt, ['c1', 'c2'], { c2: 'test' })
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.status).toBe(0)
+    expect(result.dockerCalls).toContain('rm -f c1 c2')
+    // No dev-profile services read: that filter belongs to `worktree-docker.sh stop`.
+    expect(result.dockerCalls.some((c) => c.includes('config --services'))).toBe(false)
+  })
+
+  it('a network with an EXITED container attached is left in place; one nobody uses is removed', () => {
+    const fx = mk('rmwt-net-users')
+    const wt = addWt(fx, 'wt-netusers')
+    primeAttribution(fx, wt)
+    setProjectNetworks(fx, ['nUsed', 'nFree'])
+    setNetworkUsers(fx, 'nUsed', ['cExited'])
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: the free network went, so the other being kept is a decision.
+    expect(result.dockerCalls).toContain('network rm nFree')
+    expect(result.dockerCalls).toContain('ps -aq --no-trunc --filter network=nUsed')
+    expect(result.dockerCalls).not.toContain('network rm nUsed')
+    expect(result.stderr + result.stdout).toContain('Network nUsed left in place')
+    expect(result.stderr + result.stdout).toContain('nUsed: still used by cExited')
+    expect(result.stderr + result.stdout).not.toContain('nFree: ')
+    expect(existsSync(wt)).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('a failing "who uses this network" query skips that network and ends the run incomplete (exit 1)', () => {
+    const fx = mk('rmwt-net-query-fails')
+    const wt = addWt(fx, 'wt-netq')
+    primeAttribution(fx, wt)
+    setProjectNetworks(fx, ['n1'])
+    setExit(fx, 'ps_network', 1)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain('ps -aq --no-trunc --filter network=n1')
+    expect(result.dockerCalls.some((c) => c.startsWith('network rm'))).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Network n1 skipped')
+    expect(result.stderr + result.stdout).toContain('n1: could not check which containers use it')
+    expect(existsSync(wt)).toBe(false)
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('a failing project-network LISTING ends the run incomplete too (exit 1)', () => {
+    const fx = mk('rmwt-net-list-fails')
+    const wt = addWt(fx, 'wt-netlist')
+    primeAttribution(fx, wt)
+    ourContainers(fx, wt)
+    setExit(fx, 'network_ls_filter', 1)
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    // Presence: the containers went and the listing was attempted.
+    expect(result.dockerCalls).toContain('rm -f c1')
+    expect(result.dockerCalls).toContain(
+      'network ls --filter label=com.docker.compose.project=wt-netlist --format {{.ID}}'
+    )
+    expect(existsSync(wt)).toBe(false)
+    expect(result.stderr + result.stdout).toContain(
+      'project wt-netlist: could not list its networks'
+    )
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('--keep-docker does not excuse a network the stop could not drop (Step 1 runs under it)', () => {
+    const fx = mk('rmwt-net-keepdocker')
+    const wt = addWt(fx, 'wt-netkeep')
+    primeAttribution(fx, wt)
+    setProjectNetworks(fx, ['nUsed'])
+    setNetworkUsers(fx, 'nUsed', ['cOther'])
+
+    const result = runRemove(fx, [wt, '--force', '--keep-docker'])
+
+    expect(result.dockerCalls).not.toContain('network rm nUsed')
+    expect(result.stderr + result.stdout).toContain('nUsed: still used by cOther')
+    expect(result.stderr + result.stdout).toContain('Worktree removed; Docker cleanup incomplete')
+    expect(result.stdout).not.toContain('Worktree removal complete!')
+    expect(result.status).toBe(1)
+  })
+
+  it('container ids are listed and removed in FULL (--no-trunc), never as 12-char short ids', () => {
+    const fx = mk('rmwt-full-ids')
+    const wt = addWt(fx, 'wt-fullids')
+    primeAttribution(fx, wt)
+    const full = 'a'.repeat(64)
+    ourContainers(fx, wt, [full])
+
+    const result = runRemove(fx, [wt, '--force'])
+
+    expect(result.dockerCalls).toContain(
+      'ps -aq --no-trunc --filter label=com.docker.compose.project=wt-fullids'
+    )
+    expect(result.dockerCalls).toContain(`rm -f ${full}`)
+    expect(result.status).toBe(0)
   })
 })

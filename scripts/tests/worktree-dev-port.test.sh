@@ -132,11 +132,23 @@ add_worktree() {
 # DEV_PORT env to DOCKER_SHIM_LOG, then exits 0 without touching a real
 # daemon. Bash analogue of repair-worktrees-docker-guard.test.ts's
 # writeDockerShim.
+#
+# SMI-7089: `start` first attributes the Compose project to the worktree
+# (lib/worktree-project-attribution.sh), which reads `docker compose config
+# --format json`. The shim answers that read with the project name Compose
+# would derive (the lowercased directory name, run from inside the worktree) and
+# reports no containers, so the attribution passes and these tests still observe
+# the `up -d` call they are about.
 write_docker_shim() {
   local bin_dir="$1"
   cat > "$bin_dir/docker" << 'SHIM'
 #!/bin/sh
 echo "DEV_PORT=${DEV_PORT:-} ARGS=$*" >> "$DOCKER_SHIM_LOG"
+case "$*" in
+  *"config --format json"*)
+    printf '{"name":"%s"}\n' "$(basename "$PWD" | tr '[:upper:]' '[:lower:]')"
+    ;;
+esac
 exit 0
 SHIM
   chmod +x "$bin_dir/docker"

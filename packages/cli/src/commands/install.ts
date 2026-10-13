@@ -32,6 +32,10 @@ export function createInstallCommand(): Command {
     .argument('<skillId>', 'Skill ID (author/name) or GitHub URL')
     .option('-f, --force', 'Force reinstall if already installed')
     .option('--skip-scan', 'Skip security scan (not recommended)')
+    .option(
+      '-y, --yes',
+      'Confirm installing a skill whose trust tier has not been reviewed (does not skip the security scan or --skip-scan limits)'
+    )
     .option('--skip-optimize', 'Skip Skillsmith optimization')
     .option('-q, --quiet', 'Suppress advisory output')
     .option('--json', 'Output structured JSON result')

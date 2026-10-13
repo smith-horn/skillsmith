@@ -8,7 +8,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v0815)
+- [What's New](#whats-new-in-v0816)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,9 +16,15 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.15
+## What's New in v0.8.16
 
-- **Clearer message for a mistyped frontmatter line**: when a SKILL.md's frontmatter contains a line such as `--- # note` or `...`, `skillsmith import-local` now says that line starts a second YAML document and gives both fixes: change it to exactly `---` if it was meant to end the frontmatter, or remove it. Before, you got a YAML library message telling you to call `YAML.parseAllDocuments()`.
+- **`--yes` to confirm a skill outside the allowlisted tiers:** the registry now asks you to confirm installing a skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). `skillsmith install` and `skillsmith update` accept `--yes` (`-y`) to confirm. Without it, a terminal asks y/N (default No), and a script or `--json` run exits non-zero with a message naming `--yes`. `--yes` never skips the security scan, and `--skip-scan` is still refused for these tiers. `update --yes` also answers the "Update <skill>?" prompt, so it works from a script.
+- **`errorCode` in `--json`:** a failed `install --json` or `registry install --json` now includes `errorCode` (for example `CONFIRMATION_REQUIRED`) when the failure has one.
+- **Executable frontmatter is refused at install:** the security scan rejects a skill whose SKILL.md opens with `---js` or `---javascript`, unless you skip the scan with `--skip-scan` (allowed only for the official, verified, curated, community or local tiers).
+
+**From 0.8.15:**
+
+- **Clearer message for a mistyped frontmatter line**: when a SKILL.md's frontmatter contains a line such as `--- # note` or `...`, `skillsmith import-local` now says that line starts a second YAML document and gives both fixes.
 
 **From 0.8.14 and earlier:**
 
@@ -124,7 +130,16 @@ Install a skill (alias for MCP server's install_skill).
 
 ```bash
 skillsmith install author/skill-name
+
+# Confirm a skill outside the allowlisted trust tiers (for example, unverified)
+skillsmith install author/skill-name --yes
 ```
+
+**Common options** (`skillsmith install --help` lists them all):
+- `-y, --yes` - Confirm installing a skill whose trust tier is not official, verified, curated, community or local. It never skips the security scan, and `--skip-scan` is still refused for these tiers. Without it, a terminal asks y/N (default No); a script or `--json` run exits non-zero with a message naming `--yes`.
+- `-f, --force` - Reinstall if already installed
+- `--skip-scan` - Skip the security scan (not recommended; refused for any tier other than official, verified, curated, community or local)
+- `--json` - Output a structured JSON result. When the install fails with a known error code, the result includes `errorCode` (for example `CONFIRMATION_REQUIRED` when it needs `--yes`, or `SCAN_REJECTED`). An unexpected error reports only `error`.
 
 ### remove
 
@@ -163,6 +178,7 @@ skillsmith update skill-name --dry-run
 **Options:**
 - `-a, --all` - Update all installed skills
 - `-n, --dry-run` - Show what would update without installing
+- `-y, --yes` - Answer the "Update <skill>?" prompt and confirm a trust tier outside the allowlist, so update can run from a script. It never skips the security scan.
 - `-d, --db <path>` - Database file path
 
 ### inventory

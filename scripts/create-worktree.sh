@@ -24,6 +24,10 @@ source "$SCRIPT_DIR/_lib.sh"
 # (step_stash, force_resmudge's non-scan callers).
 # shellcheck source=_rebase-git-crypt.sh
 source "$SCRIPT_DIR/_rebase-git-crypt.sh"
+# SMI-6981: the worktree lifecycle lock + the pruner's liveness predicate, so the
+# registration below is serialised against the orphan pruner's per-project delete.
+# shellcheck source=lib/worktree-lifecycle.sh
+source "$SCRIPT_DIR/lib/worktree-lifecycle.sh"
 
 # Get the repository root (where this script is run from should be repo root)
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
@@ -314,23 +318,55 @@ patch_mcp_json() {
 }
 
 #######################################
+# Take the worktree lifecycle lock or stop (SMI-6981). There is no opt-out: a
+# creator that registers unlocked would let a concurrent prune delete the new
+# worktree's project. When the lock is genuinely unobtainable the only way
+# forward is a manual `git worktree add`, which is outside the lock's guarantee.
+#######################################
+lifecycle_lock_or_die() {
+    local main_repo="$1" rc wait_s msg
+    wait_s="$(_wtl_uint_env SKILLSMITH_WORKTREE_LIFECYCLE_LOCK_WAIT 120)"
+    if worktree_lifecycle_lock_acquire "$main_repo" "$wait_s" create-worktree; then rc=0; else rc=$?; fi
+    [[ "$rc" -eq 0 ]] && return 0
+    msg="$(worktree_lifecycle_lock_message "$rc")"
+    case "$rc" in
+        75|72|2)
+            error "$msg Nothing was created."
+            ;;
+        *)
+            error "$msg Nothing was created. Fix the environment, or create the worktree by hand with \`git worktree add\` -- that bypasses the lock, so a concurrent orphan prune is not excluded."
+            ;;
+    esac
+}
+
+#######################################
 # Create the worktree's Git entry
 #
 # New branches based on main must start from the freshly fetched remote ref.
 # Existing branches bypass base selection entirely.
+#
+# The `git worktree add` runs under the worktree lifecycle lock (SMI-6981), taken
+# AFTER the fetch so the lock is never held across the network. Under it: refuse
+# an empty sanitized name and (D-1) a project already live; add with git hooks
+# disabled (no hook may run under the lock); then confirm the pruner's own
+# predicate can see the new worktree. The lock is released before any later step.
 #######################################
 add_worktree_git_entry() {
     local worktree_path="$1"
     local branch_name="$2"
     local base_branch="$3"
+    local main_repo project fresh
 
-    if [[ "$USE_EXISTING_BRANCH" == true ]]; then
-        git worktree add --no-checkout "$worktree_path" "$branch_name"
-        return
+    # Resolved the way the pruner resolves it; unresolvable fails closed.
+    local main_gitdir="$MAIN_GIT_DIR"
+    if [[ -z "$main_gitdir" ]]; then
+        main_gitdir="$(get_main_git_dir "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || true)"
     fi
-
+    [[ -n "$main_gitdir" && -d "$main_gitdir" ]] \
+        || error "could not locate the main git directory for the worktree lifecycle lock. Nothing was created."
+    main_repo="$(dirname "$main_gitdir")"
     local resolved_base="$base_branch"
-    if [[ "$base_branch" == "main" ]]; then
+    if [[ "$USE_EXISTING_BRANCH" != true && "$base_branch" == "main" ]]; then
         info "  Fetching origin/main for a fresh default-branch base..."
         if ! git fetch --no-recurse-submodules origin main; then
             error "Could not fetch origin/main. Worktree creation stopped before creating '$branch_name'.
@@ -340,7 +376,37 @@ Check your network and repository access, then retry."
         resolved_base="origin/main"
     fi
 
-    git worktree add --no-checkout "$worktree_path" -b "$branch_name" "$resolved_base"
+    lifecycle_lock_or_die "$main_repo"
+
+    project="$(sanitize_project_name "$(basename "$worktree_path")")"
+    if [[ -z "$project" ]]; then
+        error "Worktree name '$(basename "$worktree_path")' sanitizes to an empty Docker project name -- refusing to create it. Nothing was created."
+    fi
+    fresh="$(derive_protected_or_die "$main_repo")" \
+        || error "could not read the live worktree set under the lifecycle lock -- refusing to create. Nothing was created."
+    if is_protected "$project" "$fresh"; then
+        error "Docker project '$project' (from '$(basename "$worktree_path")') is already used by a live worktree -- refusing to create a second one. A leftover .worktrees/<name>/ directory counts as live. Nothing was created."
+    fi
+
+    if [[ "$USE_EXISTING_BRANCH" == true ]]; then
+        git -c core.hooksPath=/dev/null worktree add --no-checkout "$worktree_path" "$branch_name" 7<&-
+    else
+        git -c core.hooksPath=/dev/null worktree add --no-checkout "$worktree_path" -b "$branch_name" "$resolved_base" 7<&-
+    fi
+
+    # Positive control: the pruner's own predicate must now see the worktree.
+    fresh="$(derive_protected_or_die "$main_repo")" \
+        || error "worktree was added at '$worktree_path' but the live set could not be re-read under the lifecycle lock; it is left in place."
+    if ! is_protected "$project" "$fresh"; then
+        error "worktree was added at '$worktree_path' but the orphan pruner cannot see project '$project' as live -- it is left in place; do not start its container until this is resolved."
+    fi
+
+    local rc
+    if worktree_lifecycle_lock_assert_held; then rc=0; else rc=$?; fi
+    if [[ "$rc" -ne 0 ]]; then
+        warn "LIFECYCLE LOCK IDENTITY CHANGED during registration (code $rc; GIT_COMMON_DIR replaced?). A concurrent orphan prune may not have been excluded. This worktree has no Docker resources yet, so nothing of it was at risk; before starting its container, check that no other worktree shares project '$project'."
+    fi
+    worktree_lifecycle_lock_release
 }
 
 #######################################

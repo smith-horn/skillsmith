@@ -28,6 +28,11 @@ set -euo pipefail
 WORKTREE_DOCKER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_lib.sh
 source "$WORKTREE_DOCKER_LIB_DIR/_lib.sh"
+# SMI-7089: the Compose-project attribution check gating `start` and `stop`.
+# shellcheck source=lib/worktree-lifecycle.sh
+source "$WORKTREE_DOCKER_LIB_DIR/lib/worktree-lifecycle.sh"
+# shellcheck source=lib/worktree-project-attribution.sh
+source "$WORKTREE_DOCKER_LIB_DIR/lib/worktree-project-attribution.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,7 +52,11 @@ Docker helper for git worktrees with isolated containers.
 
 Commands:
   start     Start Docker containers in worktree (docker compose up -d)
-  stop      Stop Docker containers in worktree (docker compose down)
+  stop      Stop Docker containers in worktree (docker rm -f the approved IDs)
+            start and stop REFUSE, changing nothing, when another checkout
+            (a registered worktree, the main checkout, a .worktrees directory)
+            or a container created elsewhere shares this worktree's Compose
+            project, or when that cannot be established (SMI-7089)
   status    Show status of worktree containers
   generate  Generate docker-compose.override.yml for worktree
   ports     Show port mappings for worktree
@@ -201,12 +210,22 @@ cmd_start() {
         error "No docker-compose.yml found in $worktree_path"
     fi
 
+    # SMI-7089: `up` replaces every container of this Compose project, whichever
+    # directory created it, and the project name is computed from the basename,
+    # so a second directory resolving to it would lose its container. Attribute
+    # the project to this checkout alone, or refuse -- BEFORE the auto-generate
+    # block below, so a refused start leaves no override file behind.
+    worktree_project_gate_for_path "$worktree_path" docker-required
+
     # Generate override if missing
     if [[ ! -f "$worktree_path/docker-compose.override.yml" ]]; then
         warn "No docker-compose.override.yml found. Generating..."
         cmd_generate "$worktree_path"
         echo ""
     fi
+
+    # CA-3: the first check is stale by now (override generation, DEV_PORT read).
+    worktree_project_recheck_for_path "$worktree_path"
 
     info "Starting Docker containers..."
     # SMI-4298: export DEV_PORT to the SAME host port this worktree's own
@@ -238,9 +257,15 @@ cmd_stop() {
         error "No docker-compose.yml found in $worktree_path"
     fi
 
-    info "Stopping Docker containers..."
-    (cd "$worktree_path" && docker compose --profile dev down)
+    # SMI-7089: attribute the project to this checkout alone, or refuse; then remove
+    # EXACTLY the approved containers of the dev profile (no project-scoped call).
+    # Stopping the main checkout's own container is legitimate: it has no peer.
+    worktree_project_gate_for_path "$worktree_path" docker-required
 
+    info "Stopping Docker containers..."
+    worktree_project_remove_approved "$(sanitize_project_name "$(basename "$worktree_path")")" "$worktree_path"
+
+    [[ -z "${WPA_NETWORK_INCOMPLETE:-}" ]] || error "Containers removed, but the project's network cleanup is incomplete: ${WPA_NETWORK_INCOMPLETE//$'\n'/; }"
     success "Docker containers stopped."
 }
 
@@ -425,7 +450,7 @@ main() {
         fi
         shift
         if [[ ! "$exec_worktree_path" = /* ]]; then
-            exec_worktree_path="$(cd "$exec_worktree_path" 2>/dev/null && pwd)" || error "Invalid path: $exec_worktree_path"
+            exec_worktree_path="$(CDPATH='' cd -L -- "$exec_worktree_path" 2>/dev/null && builtin pwd -L)" || error "Invalid path: $exec_worktree_path"
         fi
         cmd_exec "$exec_worktree_path" "$@"
         return
@@ -435,7 +460,7 @@ main() {
 
     # Convert to absolute path
     if [[ ! "$worktree_path" = /* ]]; then
-        worktree_path="$(cd "$worktree_path" 2>/dev/null && pwd)" || error "Invalid path: $worktree_path"
+        worktree_path="$(CDPATH='' cd -L -- "$worktree_path" 2>/dev/null && builtin pwd -L)" || error "Invalid path: $worktree_path"
     fi
 
     case "$command" in
