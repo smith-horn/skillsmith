@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
-    "tsx": "4.21.0",
+    "tsx": "4.23.15",
     "vitest": "4.1.11"
   },
   "license": "Elastic-2.0",
