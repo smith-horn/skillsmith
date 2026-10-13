@@ -11,10 +11,10 @@ Not attack cells, so not counted above: measurement files `c4-guard-window.jsonl
 | FAIL | 283 |
 | NEVER-RAN (control) | 56 |
 | NEVER-RAN (underpowered) | 1 |
-| NEVER-RAN | 37 |
+| NEVER-RAN | 36 |
 | PASS (control unverified) | 90 |
 | PASS (held) | 39 |
-| PASS | 302 |
+| PASS | 303 |
 
 The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `never-ran == 0`, `failed == 0` **and** a same-filesystem control cell with `failed >= 1`. `NEVER-RAN (control)` means the candidate itself was clean but the plan's named control never demonstrated the loss on that filesystem, so the fixture proves nothing. `PASS (control unverified)` means the control the plan names is real but lives outside this JSONL (a feasibility script, or a cited earlier experiment) and this harness can neither confirm nor refute it.
 
@@ -196,8 +196,8 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A12 | ebusy-rmdir | V2 | virtiofsroot | 10 | 10 | 0 | 0 | ok | PASS |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 300 | 0 | 128 | 172 | is-control | FAIL |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 300 | 0 | 0 | 190 | ok | PASS (110 held) |
-| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 156 | 144 | is-control | FAIL |
-| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 0 | 0 | 182 | ok | PASS (118 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 171 | 129 | is-control | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 0 | 0 | 135 | ok | PASS (165 held) |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 300 | 0 | 300 | 0 | is-control | FAIL |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 300 | 0 | 0 | 3 | ok | PASS (297 held) |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 300 | 0 | 150 | 150 | is-control | FAIL |
@@ -206,8 +206,8 @@ The verdict applies the WHOLE plan §9 rule: `PASS` requires `ran == target`, `n
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 [dirs=1630] | C4 | tmpfsroot | 300 | 0 | 0 | 293 | ok | NEVER-RAN (underpowered) |
 | A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | darwin-apfs | 300 | 0 | 290 | 10 | is-control | FAIL |
 | A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | darwin-apfs | 300 | 293 | 0 | 7 | ok | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 287 | 13 | is-control | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 285 | 0 | 15 | ok | NEVER-RAN |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | ext4vol | 300 | 0 | 293 | 7 | is-control | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | ext4vol | 300 | 293 | 0 | 7 | ok | PASS |
 | A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | hostshare-fuseblk | 300 | 0 | 225 | 75 | is-control | FAIL |
 | A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4 | hostshare-fuseblk | 300 | 222 | 0 | 78 | ok | PASS |
 | A13-C4 | racer/by-timestamp/dirs=1630 [dirs=1630] | C4-naive | overlayfs | 300 | 0 | 279 | 21 | is-control | FAIL |
@@ -852,8 +852,8 @@ A C4 run flagged `vacuous-check` (its only check was vacuous, e.g. a partial rac
 |---|---|---|---|---|---|---|---|
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | darwin-apfs | 300 | 74 | 0 | FAIL |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | darwin-apfs | 300 | 73 | 0 | PASS (110 held) |
-| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | ext4vol | 300 | 95 | 0 | FAIL |
-| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | ext4vol | 300 | 79 | 0 | PASS (118 held) |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | ext4vol | 300 | 106 | 0 | FAIL |
+| A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | ext4vol | 300 | 77 | 0 | PASS (165 held) |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | hostshare-fuseblk | 300 | 1 | 0 | PASS (297 held) |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4-naive | overlayfs | 300 | 102 | 0 | FAIL |
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | overlayfs | 300 | 73 | 0 | PASS (132 held) |
@@ -861,8 +861,8 @@ A C4 run flagged `vacuous-check` (its only check was vacuous, e.g. a partial rac
 | A13-C4-POSTHASH | racer/post-hash/dirs=1630 | C4 | tmpfsroot | 300 | 15 | 0 | NEVER-RAN (underpowered) |
 | A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | darwin-apfs | 300 | 0 | 6 | FAIL |
 | A13-C4 | racer/by-timestamp/dirs=1630 | C4 | darwin-apfs | 300 | 0 | 6 | PASS |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | ext4vol | 300 | 0 | 9 | FAIL |
-| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | ext4vol | 300 | 0 | 12 | NEVER-RAN |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | ext4vol | 300 | 0 | 5 | FAIL |
+| A13-C4 | racer/by-timestamp/dirs=1630 | C4 | ext4vol | 300 | 0 | 6 | PASS |
 | A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | hostshare-fuseblk | 300 | 0 | 8 | FAIL |
 | A13-C4 | racer/by-timestamp/dirs=1630 | C4 | hostshare-fuseblk | 300 | 0 | 4 | PASS |
 | A13-C4 | racer/by-timestamp/dirs=1630 | C4-naive | overlayfs | 300 | 0 | 16 | FAIL |
