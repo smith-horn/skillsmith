@@ -171,6 +171,7 @@ describe('refresh-observer.sh', () => {
       expect(r.calls).toContain('alert')
       expect(r.alert?.message).toMatch(/failures/)
       expect(r.alert?.message).toMatch(/transport_error/)
+      expect(r.alert?.message).toMatch(/may still have run/)
       expect(r.heartbeat?.metadata.arms).toEqual(['failures'])
     })
 

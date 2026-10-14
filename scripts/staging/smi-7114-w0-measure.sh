@@ -93,12 +93,14 @@ SUMMARY_LINES=()
 add_summary() { SUMMARY_LINES+=("$1"); }
 KEY_FMT=""
 
-# Sets KEY_FMT to eyJ | sb_secret_ | other | missing (a label, never the value).
+# Sets KEY_FMT to eyJ | sb-secret | other | missing (a label, never the value).
+# The label is 'sb-secret', not 'sb_secret_': the latter matches redact()'s pattern and would be
+# printed (and compared) as [redacted-sb-secret], so the W0-3 format check could never match.
 key_format() {
   run_sql -v "keyname=$1" <<'SQL' || return 1
 SELECT '@@fmt=' || coalesce(
   (SELECT CASE WHEN left(decrypted_secret, 3) = 'eyJ' THEN 'eyJ'
-               WHEN left(decrypted_secret, 10) = 'sb_secret_' THEN 'sb_secret_'
+               WHEN left(decrypted_secret, 10) = 'sb_secret_' THEN 'sb-secret'
                WHEN length(trim(decrypted_secret)) = 0 THEN 'missing'
                ELSE 'other' END
      FROM vault.decrypted_secrets WHERE name = :'keyname' LIMIT 1),
@@ -155,8 +157,11 @@ run_probe() {
 
 describe_outcome() {
   if [ "$OUTCOME_FOUND" = 1 ]; then
-    printf 'status_code=%s timed_out=%s error_msg=[%s] response_after=%ss' \
-      "$OUTCOME_STATUS" "$OUTCOME_TIMED_OUT" "${OUTCOME_ERR:--}" "${OUTCOME_LAT:-?}"
+    # No latency is printed: _http_response.created is set in the pg_net worker's transaction, so it
+    # sits ~0.1s after the request even when the callee ran 71s (measured on staging 2026-10-14,
+    # request 31892 vs its refresh:run). Use the callee's own elapsed_ms for duration.
+    printf 'status_code=%s timed_out=%s error_msg=[%s]' \
+      "$OUTCOME_STATUS" "$OUTCOME_TIMED_OUT" "${OUTCOME_ERR:--}"
   else
     printf 'NO RESPONSE ROW for request id %s within the wait (not the same as a failure: re-check later)' "$OUTCOME_RID"
   fi
@@ -222,7 +227,7 @@ w0_3() {
     die "W0-3 needs --eyj-secret NAME and --sb-secret NAME (the staging vault secrets holding each key format; not derivable from the repo)"
   fi
   local pair label name expect
-  for pair in "eyJ|$EYJ_SECRET" "sb_secret_|$SB_SECRET"; do
+  for pair in "eyJ|$EYJ_SECRET" "sb-secret|$SB_SECRET"; do
     expect="${pair%%|*}"
     name="${pair#*|}"
     run_probe "W0-3[$expect]" "$name" 300000 "$PROBE_BODY" 360

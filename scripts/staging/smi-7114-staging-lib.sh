@@ -220,7 +220,7 @@ record() {
 
 # Prints the ledger and returns: 0 all PASS/RED-OK, 1 any FAIL, 3 no FAIL but something unproven.
 summary_exit() {
-  local i n=${#R_NAMES[@]} fails=0 unproven=0
+  local i n=${#R_NAMES[@]} fails=0 unproven=0 na=0
   echo
   echo "================ SUMMARY ================"
   for ((i = 0; i < n; i++)); do
@@ -228,11 +228,14 @@ summary_exit() {
     case "${R_STATUS[$i]}" in
       FAIL) fails=$((fails + 1)) ;;
       PASS | RED-OK) ;;
+      # NOT-APPLICABLE: the check cannot discriminate on this environment AND the same property is
+      # red-tested elsewhere (the record's detail must name where). Never use it for "did not run".
+      NOT-APPLICABLE) na=$((na + 1)) ;;
       *) unproven=$((unproven + 1)) ;;
     esac
   done
   echo "-----------------------------------------"
-  echo "results: $n recorded, $fails FAIL, $unproven unproven (INCONCLUSIVE / RED-UNVERIFIED)"
+  echo "results: $n recorded, $fails FAIL, $unproven unproven (INCONCLUSIVE / RED-UNVERIFIED), $na not applicable here (proven elsewhere)"
   if [ "$fails" -gt 0 ]; then
     return 1
   fi

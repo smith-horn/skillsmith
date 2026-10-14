@@ -60,6 +60,8 @@
 #   --only f1,f2,f3,f4,f5,deadman,overlap   run a subset (default: all; f5 needs f1)
 #   --skip-red                           skip the mutation (RED) checks
 #   --skip-overlap-control               skip the dryRun control leg of the overlap test
+#   --overlap-restale N                  before each overlap leg, backdate indexed_at on N staging skills
+#                                        by 3 days so the leg has real work (each refresh resets them)
 #   --keep-rows                          do not delete the harness audit_logs rows at exit
 #   --yes                                skip the interactive confirmation
 #   --self-test                          run the staging-ref guard case table and exit
@@ -80,6 +82,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ONLY="f1,f2,f3,f4,f5,deadman,overlap"
 SKIP_RED=0
 SKIP_CONTROL=0
+OVERLAP_RESTALE=0
 KEEP_ROWS=0
 SELF_TEST=0
 VAULT_DIRTY=0
@@ -103,6 +106,7 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${2:?--only needs a value}"; shift 2 ;;
     --skip-red) SKIP_RED=1; shift ;;
     --skip-overlap-control) SKIP_CONTROL=1; shift ;;
+    --overlap-restale) OVERLAP_RESTALE="${2:?--overlap-restale needs a count}"; shift 2 ;;
     --keep-rows) KEEP_ROWS=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     --self-test) SELF_TEST=1; shift ;;
@@ -314,7 +318,13 @@ SQL
   else
     record "F2" "FAIL" "response was the timeout shape (status NULL, timed_out=$RESP_TIMED_OUT) but the RPC listed no transport_error"
   fi
-  if [ "$SKIP_RED" = 0 ]; then
+  if [ "$SKIP_RED" = 0 ] && [ "$RESP_TIMED_OUT" = "true" ]; then
+    # The mutation keys the arm on timed_out. It can only discriminate where a timeout leaves
+    # timed_out NULL (prod pg_net 0.19.5, plan fact 11). Staging's pg_net 0.20.0 sets it true
+    # (measured 2026-10-14), so the mutated arm still fires here and the check proves nothing.
+    # The prod shape is red-tested in the live-Postgres suite instead (pg-health.ts transport_error case).
+    record "F2-red" "NOT-APPLICABLE" "this pg_net sets timed_out=true on timeout, so a timed_out-keyed arm cannot be told apart here; red-tested against the prod shape (timed_out NULL) in the live-Postgres suite"
+  elif [ "$SKIP_RED" = 0 ]; then
     red_eval "$HEALTH_FN" "$MUT_F2_RE" "$MUT_F2_TO" "$HEALTH_ENTRIES_SQL" -v "t0=$t0" -v "kind=transport_error" \
       || { red_unverified "F2-red (arm keyed on timed_out)"; return 0; }
     red_verdict "F2-red (arm keyed on timed_out)" n "$n"

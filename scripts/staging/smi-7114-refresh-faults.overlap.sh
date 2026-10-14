@@ -86,11 +86,27 @@ ov_leg() {
   if [ $((10#$hh % 4)) -eq 2 ] && [ "$((10#$mm))" -ge 27 ] && [ "$((10#$mm))" -le 50 ]; then
     record "$name" "INCONCLUSIVE" "UTC $hh:$mm is inside the :32 pg_cron window (hours 2,6,10,...); wait until it passes so a scheduled tick cannot add a run"; return 0
   fi
-  run_sql <<'SQL' || { record "$name" "INCONCLUSIVE" "idle check failed"; return 0; }
+  # Wait for idle (up to 6 min): the previous leg's own refresh:run would otherwise make every leg
+  # after the first INCONCLUSIVE (measured on staging 2026-10-14).
+  while :; do
+    run_sql <<'SQL' || { record "$name" "INCONCLUSIVE" "idle check failed"; return 0; }
 SELECT '@@recent=' || count(*)::text FROM audit_logs WHERE event_type = 'refresh:run' AND created_at > now() - interval '4 minutes';
 SQL
-  if [ "$(kv recent)" != 0 ]; then
-    record "$name" "INCONCLUSIVE" "a refresh:run landed in the last 4 minutes on staging; wait for idle"; return 0
+    [ "$(kv recent)" = 0 ] && break
+    if [ "$waited" -ge 360 ]; then
+      record "$name" "INCONCLUSIVE" "a refresh:run landed in the last 4 minutes on staging and it did not go idle within 6 min"; return 0
+    fi
+    sleep 15; waited=$((waited + 15))
+  done
+  if [ "${OVERLAP_RESTALE:-0}" -gt 0 ]; then
+    run_sql -v "n=$OVERLAP_RESTALE" <<'SQL' || { record "$name" "INCONCLUSIVE" "restale failed"; return 0; }
+WITH u AS (
+  UPDATE skills SET indexed_at = indexed_at - interval '3 days'
+   WHERE id IN (SELECT id FROM skills WHERE indexed_at > now() - interval '1 day' ORDER BY id LIMIT :n)
+  RETURNING 1)
+SELECT '@@restaled=' || count(*)::text FROM u;
+SQL
+    echo "$name: backdated indexed_at on $(kv restaled) staging skills (the refresh resets them)" >&2
   fi
   ov_snapshot_to "$WORK_DIR/pre.txt" || { record "$name" "INCONCLUSIVE" "pre-snapshot failed"; return 0; }
   t0=$(db_clock) || return 1
@@ -126,11 +142,15 @@ SQL
   ov_stars_to "$WORK_DIR/stars.a" "$t0" || return 1
   sleep 45
   ov_stars_to "$WORK_DIR/stars.b" "$t0" || return 1
-  { printf 'CREATE TEMP TABLE pre (id text, trust text, quar boolean, flen int);\n'
+  # One transaction, temp table dropped at COMMIT: under the transaction-mode pooler a temp table
+  # outlives the client and sits on a reused backend ("relation pre already exists", staging 2026-10-14).
+  { printf 'BEGIN;\nDROP TABLE IF EXISTS pg_temp.pre;\n'
+    printf 'CREATE TEMP TABLE pre (id text, trust text, quar boolean, flen int) ON COMMIT DROP;\n'
     printf "COPY pre FROM STDIN WITH (DELIMITER '|');\n"
     cat "$WORK_DIR/pre.txt"
     printf '\\.\n'
-    printf '%s\n' "$OV_ASSERT_SQL"; } >"$WORK_DIR/post.sql"
+    printf '%s\n' "$OV_ASSERT_SQL"
+    printf 'COMMIT;\n'; } >"$WORK_DIR/post.sql"
   run_sql -v "t0=$t0" <"$WORK_DIR/post.sql" || { record "$name" "INCONCLUSIVE" "post-assertion query failed"; return 0; }
   ov_judge "$name" "$mode" "$want_runs" "$want_real"
 }
@@ -150,9 +170,10 @@ ov_judge() {
   fi
   local facts="runs=$(kv runs) real_runs=$(kv real_runs) processed_sum=$(kv processed_sum) updated_sum=$(kv updated_sum) touched_skills=$touched"
   if [ "$mode" = "control" ]; then
-    # The 2-real-runs assertion must be FALSE here: one leg was dryRun, so only 1 run is real.
+    # The overlap leg's 2-real-runs assertion must be FALSE here: the dry leg answered 2xx (checked
+    # above) yet wrote no refresh:run, so exactly one run (the real one) is counted.
     if [ "$(kv runs)" = "$want_runs" ] && [ "$(kv real_runs)" = "$want_real" ]; then
-      record "$name" "PASS" "dryRun leg is counted as non-real ($facts): the harness distinguishes the two legs"
+      record "$name" "PASS" "dryRun leg answered 2xx but wrote no refresh:run, so only the real run is counted ($facts): the harness distinguishes the two legs"
     else
       record "$name" "FAIL" "control did not separate the legs: $facts (want runs=$want_runs real_runs=$want_real)"
     fi
@@ -173,6 +194,9 @@ test_overlap() {
   ov_leg "overlap-baseline" baseline 1 1
   ov_leg "overlap" overlap 2 2
   if [ "$SKIP_CONTROL" = 0 ]; then
-    ov_leg "overlap-control" control 2 1
+    # 1 run, 1 real: skills-refresh-metadata writes no refresh:run on dryRun (index.ts guards the
+    # audit insert with `if (!dryRun)`; measured on staging 2026-10-14). The dry leg's execution is
+    # proven by its HTTP 2xx, checked above in ov_leg.
+    ov_leg "overlap-control" control 1 1
   fi
 }

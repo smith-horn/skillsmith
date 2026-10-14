@@ -106,7 +106,12 @@ if (disp.missing || disp.ms > windowMs) { arms.push("dispatch_stale"); parts.pus
 if (h.failures.length > 0) {
   arms.push("failures")
   const kinds = h.failures.slice(0, 10).map((f) => String((f && f.kind) ?? "unknown") + (f && f.status_code != null ? " " + f.status_code : "") + " at " + String((f && f.dispatched_at) ?? "unknown")).join("; ")
-  parts.push("failures (" + h.failures.length + " failed dispatch(es): " + kinds + ")")
+  // transport_error = pg_net stopped waiting (status NULL), not proof the refresh failed: staging
+  // 2026-10-14 measured a 5000ms timeout while the callee finished 157 skills in 72.7s.
+  const tNote = h.failures.some((f) => f && f.kind === "transport_error")
+    ? " transport_error means pg_net stopped waiting; the refresh may still have run, so check the matching refresh:run row."
+    : ""
+  parts.push("failures (" + h.failures.length + " failure(s): " + kinds + ")" + tNote)
 }
 const unknown = typeof h.unknown_count === "number" ? " Unknown (response expired) dispatches: " + h.unknown_count + "." : ""
 const message = arms.length === 0 ? "healthy" : "The metadata refresh is unhealthy. Arms: " + parts.join("; ") + "." + unknown + (runUrl ? " Observer run: " + runUrl : "")
