@@ -1,0 +1,474 @@
+#!/usr/bin/env bash
+# smi-7114-refresh-faults.sh -- OWNER-RUN staging fault harness for the SMI-7114 metadata-refresh
+# pg_cron trigger + observer RPC + harvester + dead-man (plan: docs/internal/implementation/
+# smi-7112-indexer-ops-reliability-sparc.md, Wave 3a "RED TESTS"). The SQL logic is covered by the
+# live-Postgres suite scripts/tests/supabase/skills-refresh-metadata-pg-cron.pg*.ts, which stubs
+# pg_net, vault and pg_cron. THIS harness proves only what stubs cannot: the real pg_net, vault,
+# pg_cron, gateway and alert-notify, on staging, after the migration
+# supabase/migrations/20261013000000_skills_refresh_metadata_pg_cron.sql is applied there.
+#
+#   F1       base-URL secret bent to a nonexistent path => RPC lists an http_error entry
+#   F2       1ms pg_net timeout => RPC lists a transport_error (status NULL, timed_out NULL; fact 11)
+#   F3       dispatch row older than 6h with no response => counted `unknown`, NOT a failure
+#   F4       p_window := '1 minute' while the last refresh:run is older => staleness is visible
+#   F5       the TTL gap: harvest_refresh_dispatch_results() copies a real response into ONE durable
+#            refresh:dispatch_result row (a second call adds none) and the RPC prefers it
+#   deadman  dead-man test 5: 17h-old heartbeat => one real alert-notify request (status 200 AND
+#            data.sent true) + one refresh:observer_dead_alert row; an immediate second call => no
+#            request (dedup on the delivered alert); a 2h-old heartbeat => none
+#   overlap  R3-7: the pg_cron path and a manual POST at once => no corruption (+ a control leg)
+#
+# Not repeated here (cited): the durable-wins-after-purge case, a non-2xx earlier alert re-alerting,
+# the pending-alert suppression and the vault kill switch live in the pg suite
+# (skills-refresh-metadata-pg-health.ts / -pg-deadman.ts) because they need rows pg_net would purge
+# or that staging must not fake.
+#
+# Every assertion test is paired with its plan mutation (the RED check): the mutation is applied
+# inside BEGIN ... ROLLBACK with CREATE OR REPLACE FUNCTION (built from pg_get_functiondef plus a
+# regexp edit), the SAME assertion is re-evaluated, and the test is only RED-OK if the assertion
+# would FAIL under the mutation. A mutation whose regexp does not match the function text EXACTLY
+# ONCE, or whose mutated function errors in SQL, is RED-UNVERIFIED (never silently green): adjust
+# the MUT_* values. An erroring mutation is a red for the wrong reason and proves nothing.
+#
+# STAGING ONLY: hard-refuses unless STAGING_SUPABASE_PROJECT_REF is exactly the staging ref
+# (ovhcifugwqnzoebwfuku); the prod ref (vrcnzpmndtroqxxoqkzy) is refused. `--self-test` runs the
+# guard's case table with no database and no env.
+#
+# What it changes on staging (printed again at exit, names only):
+#   - vault secret refresh_metadata_functions_base_url: briefly suffixed by F1, RESTORED by a trap
+#     (the original value never leaves the database; restore strips the suffix deterministically)
+#   - audit_logs rows, ALL deleted at exit unless --keep-rows, and the delete is VERIFIED (a delete
+#     that fails or leaves rows behind makes the harness exit 1 with a loud message). These rows are
+#     visible to the REAL health RPC and dead-man, so a leftover is not harmless:
+#       refresh:dispatch  actor pg_cron: the F1 dispatcher row, and the F2/F3 rows (marked
+#                         metadata.harness) => counted by refresh_metadata_health (last_dispatch,
+#                         failures, unknown_count)
+#       refresh:dispatch_result  harvested copies of F1/F2 responses => change RPC classification
+#       refresh:observer  a backdated heartbeat (marked) => the real dead-man alerts hourly
+#       refresh:observer_dead_alert  written by the real dead-man in the committed leg => alters
+#                         its dedup
+#   - pg_net requests: F1 and F2 call the real skills-refresh-metadata; the deadman committed leg
+#     sends exactly ONE real alert-notify request and is the ONLY leg that may send an email;
+#     overlap runs REAL refreshes (writes skills metadata)
+#   - no DDL is left behind: every mutation is inside BEGIN ... ROLLBACK
+#
+# Usage:
+#   varlock run -- ./scripts/staging/smi-7114-refresh-faults.sh [options]
+#   ./scripts/staging/smi-7114-refresh-faults.sh --self-test
+#
+# Options:
+#   --only f1,f2,f3,f4,f5,deadman,overlap   run a subset (default: all; f5 needs f1)
+#   --skip-red                           skip the mutation (RED) checks
+#   --skip-overlap-control               skip the dryRun control leg of the overlap test
+#   --overlap-restale N                  before each overlap leg, backdate indexed_at on N staging skills
+#                                        by 3 days so the leg has real work (each refresh resets them)
+#   --keep-rows                          do not delete the harness audit_logs rows at exit
+#   --yes                                skip the interactive confirmation
+#   --self-test                          run the staging-ref guard case table and exit
+#   -h, --help
+#
+# Exit: 0 all PASS / RED-OK; 1 any FAIL or any cleanup failure; 3 no FAIL but something INCONCLUSIVE
+# / RED-UNVERIFIED.
+#
+# Prerequisites: the 20261013000000 migration applied to STAGING; staging vault secrets
+# refresh_metadata_functions_base_url (== https://<staging-ref>.supabase.co) and
+# refresh_metadata_service_role_key provisioned; skillsmith-dev-1 running.
+set -euo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=smi-7114-staging-lib.sh
+. "$SCRIPT_DIR/smi-7114-staging-lib.sh"
+
+ONLY="f1,f2,f3,f4,f5,deadman,overlap"
+SKIP_RED=0
+SKIP_CONTROL=0
+OVERLAP_RESTALE=0
+KEEP_ROWS=0
+SELF_TEST=0
+VAULT_DIRTY=0
+TOUCHED=0
+DELETED_TOTAL=0
+CHANGED_ROWS=""
+ROW_RIDS=""
+DM_T0="infinity"
+DM_RID=""
+F1_RID=""
+F1_STATUS=""
+
+# Mutation definitions (MUT_*) and the red_eval / red_verdict helpers live in smi-7114-staging-lib.sh.
+
+usage() {
+  sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --only) ONLY="${2:?--only needs a value}"; shift 2 ;;
+    --skip-red) SKIP_RED=1; shift ;;
+    --skip-overlap-control) SKIP_CONTROL=1; shift ;;
+    --overlap-restale) OVERLAP_RESTALE="${2:?--overlap-restale needs a count}"; shift 2 ;;
+    --keep-rows) KEEP_ROWS=1; shift ;;
+    --yes) ASSUME_YES=1; shift ;;
+    --self-test) SELF_TEST=1; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "Unknown option: $1 (see --help)" ;;
+  esac
+done
+
+if [ "$SELF_TEST" = 1 ]; then
+  guard_self_test
+  exit $?
+fi
+
+want() {
+  case ",$ONLY," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
+# --------------------------------------------------------------------------------------------
+# Cleanup trap: restore the vault secret FIRST, then (unless --keep-rows) delete harness rows and
+# VERIFY none remain. Every harness row class is in the predicate, because each can be counted by
+# the real health RPC or dead-man (see the header).
+# --------------------------------------------------------------------------------------------
+restore_vault() {
+  run_sql <<'SQL' || return 1
+SELECT '@@restored=' || count(vault.update_secret(id, regexp_replace(decrypted_secret, '/does-not-exist$', '')))::text
+  FROM vault.decrypted_secrets
+ WHERE name = 'refresh_metadata_functions_base_url' AND decrypted_secret ~ '/does-not-exist$';
+SQL
+  VAULT_DIRTY=0
+}
+
+IFS= read -r -d '' HARNESS_PRED <<'SQL' || true
+(event_type = 'refresh:dispatch'
+   AND (metadata->>'harness' LIKE 'smi-7114-%'
+        OR metadata->>'net_request_id' = ANY (string_to_array(:'rids', ','))))
+OR (event_type = 'refresh:dispatch_result'
+    AND metadata->>'net_request_id' = ANY (string_to_array(:'rids', ',')))
+OR (event_type = 'refresh:observer' AND metadata->>'harness' LIKE 'smi-7114-%')
+OR (event_type IN ('refresh:observer_dead_alert', 'refresh:observer_dead_alert_result')
+    AND :'dm_rid' <> '' AND metadata->>'net_request_id' = :'dm_rid')
+SQL
+
+# Deletes the harness rows, then counts what the same predicate still matches. Returns non-zero when
+# the delete errored OR any row remains (a BEFORE DELETE trigger can skip rows without an error).
+delete_rows() {
+  run_sql -v "rids=$ROW_RIDS" -v "dm_rid=$DM_RID" <<<"WITH d AS (DELETE FROM audit_logs WHERE $HARNESS_PRED RETURNING 1)
+SELECT '@@deleted=' || count(*)::text FROM d;
+SELECT '@@remaining=' || count(*)::text FROM audit_logs WHERE $HARNESS_PRED;" || return 1
+  DELETED_TOTAL=$((DELETED_TOTAL + $(kv deleted)))
+  [ "$(kv remaining)" = "0" ]
+}
+
+cleanup() {
+  local rc=$?
+  trap - EXIT INT TERM
+  if [ -n "$STAGING_REF" ]; then
+    echo >&2
+    echo "---- cleanup (changed state, names only) ----" >&2
+    if [ "$VAULT_DIRTY" = 1 ]; then
+      if restore_vault; then
+        echo "vault secret refresh_metadata_functions_base_url: RESTORED (rows updated: $(kv restored))" >&2
+      else
+        echo "vault secret refresh_metadata_functions_base_url: RESTORE FAILED -- it still ends in /does-not-exist; strip it by hand" >&2
+        rc=1
+      fi
+    else
+      echo "vault secret refresh_metadata_functions_base_url: unchanged (or already restored)" >&2
+    fi
+    if [ "$KEEP_ROWS" = 0 ] && [ "$TOUCHED" = 1 ]; then
+      if declare -F dm_warn_foreign >/dev/null; then dm_warn_foreign || true; fi
+      if delete_rows; then
+        echo "audit_logs harness rows: deleted $DELETED_TOTAL in total, 0 remain (touched: $CHANGED_ROWS)" >&2
+      else
+        echo "audit_logs harness rows: CLEANUP FAILED (append-only table, a trigger, or a DB error; remaining=$(kv remaining))." >&2
+        echo "  LEFTOVER ROWS ARE COUNTED BY THE REAL RPC / DEAD-MAN on staging: refresh:dispatch (actor pg_cron) shows in last_dispatch /" >&2
+        echo "  failures / unknown_count; refresh:observer (backdated heartbeat) makes the dead-man alert hourly; refresh:dispatch_result and" >&2
+        echo "  refresh:observer_dead_alert change classification and dedup. Delete by hand: metadata.harness LIKE 'smi-7114-%'," >&2
+        echo "  net_request_id in ($ROW_RIDS), and refresh:observer_dead_alert[_result] rows with net_request_id $DM_RID (ONLY that id; others are not ours)." >&2
+        rc=1
+      fi
+    elif [ "$TOUCHED" = 1 ]; then
+      echo "audit_logs harness rows KEPT (--keep-rows) and the real RPC / dead-man on staging WILL count them: refresh:dispatch (rids $ROW_RIDS), refresh:dispatch_result, refresh:observer (harness-marked), refresh:observer_dead_alert[_result] for net_request_id $DM_RID" >&2
+    fi
+    echo "pg_net requests sent: skills-refresh-metadata (F1, F2, overlap), alert-notify (deadman committed leg only: the one email)" >&2
+  fi
+  [ -z "$WORK_DIR" ] || rm -rf "$WORK_DIR"
+  exit "$rc"
+}
+
+# --------------------------------------------------------------------------------------------
+# SQL building blocks (static text; parameters arrive as psql variables)
+# --------------------------------------------------------------------------------------------
+IFS= read -r -d '' HEALTH_ENTRIES_SQL <<'SQL' || true
+SELECT '@@n=' || count(*)::text
+  FROM jsonb_array_elements(public.refresh_metadata_health('9 hours')->'failures') f
+ WHERE (f->>'dispatched_at')::timestamptz >= :'t0'::timestamptz AND f->>'kind' = :'kind';
+SELECT '@@codes=' || coalesce(string_agg(DISTINCT coalesce(f->>'status_code', 'NULL'), ','), '')
+  FROM jsonb_array_elements(public.refresh_metadata_health('9 hours')->'failures') f
+ WHERE (f->>'dispatched_at')::timestamptz >= :'t0'::timestamptz AND f->>'kind' = :'kind';
+SQL
+
+get_dispatch_rid() {
+  run_sql -v "t0=$1" <<'SQL' || return 1
+SELECT '@@rid=' || (metadata->>'net_request_id')
+  FROM audit_logs
+ WHERE event_type = 'refresh:dispatch' AND created_at >= :'t0'::timestamptz AND actor = 'pg_cron'
+ ORDER BY created_at DESC LIMIT 1;
+SQL
+  kv rid
+}
+
+db_clock() {
+  run_sql <<'SQL' || return 1
+SELECT '@@t0=' || clock_timestamp()::text;
+SQL
+  kv t0
+}
+
+# --------------------------------------------------------------------------------------------
+# F1
+# --------------------------------------------------------------------------------------------
+test_f1() {
+  echo "--- F1: bent base URL => http_error ---"
+  local t0 rid n codes hh mm cnt
+  # Guard 1: the real pg_cron tick ('32 2-22/4 * * *') would be bent too and could be mistaken for
+  # the harness's own dispatch row. Skip near it (UTC minutes 25-40 of hours 02,06,10,14,18,22).
+  hh=$(date -u +%H); mm=$(date -u +%M)
+  if [ $((10#$hh % 4)) -eq 2 ] && [ "$((10#$mm))" -ge 25 ] && [ "$((10#$mm))" -le 40 ]; then
+    record "F1" "INCONCLUSIVE" "UTC $hh:$mm is near the real :32 pg_cron tick (hours 02,06,10,14,18,22, minutes 25-40); F1 was NOT run. Re-run after :40"; return 0
+  fi
+  t0=$(db_clock) || return 1
+  VAULT_DIRTY=1
+  run_sql <<'SQL' || { record "F1" "INCONCLUSIVE" "could not bend the vault base URL / run the dispatcher"; return 0; }
+SELECT '@@bent=' || count(vault.update_secret(id, decrypted_secret || '/does-not-exist'))::text
+  FROM vault.decrypted_secrets WHERE name = 'refresh_metadata_functions_base_url';
+DO $$ BEGIN PERFORM public.invoke_skills_refresh_metadata(); END $$;
+SQL
+  restore_vault || echo "WARNING: restore failed; the exit trap will retry" >&2
+  # Guard 2: exactly ONE pg_cron dispatch row since t0, else the row is not provably ours.
+  run_sql -v "t0=$t0" <<'SQL' || return 1
+SELECT '@@cnt=' || count(*)::text FROM audit_logs
+ WHERE event_type = 'refresh:dispatch' AND actor = 'pg_cron' AND created_at >= :'t0'::timestamptz;
+SQL
+  cnt=$(kv cnt)
+  if [ "$cnt" != "1" ]; then
+    echo "WARNING: F1 saw $cnt pg_cron refresh:dispatch rows since t0 (expected exactly 1): a real scheduled tick overlapped. F1 is INCONCLUSIVE and NO dispatch rows will be deleted by this harness, because none is provably its own; inspect and clean them by hand." >&2
+    record "F1" "INCONCLUSIVE" "$cnt pg_cron dispatch rows since t0 (want exactly 1); F1 rows NOT registered for cleanup (left in place, loudly)"; return 0
+  fi
+  rid=$(get_dispatch_rid "$t0") || return 1
+  if [ -z "$rid" ]; then record "F1" "INCONCLUSIVE" "no refresh:dispatch row after the dispatcher ran"; return 0; fi
+  ROW_RIDS="${ROW_RIDS:+$ROW_RIDS,}$rid"; CHANGED_ROWS="${CHANGED_ROWS:+$CHANGED_ROWS }F1"
+  F1_RID="$rid"
+  if ! poll_response "$rid" 90 "$t0"; then
+    record "F1" "INCONCLUSIVE" "no pg_net response for request $rid within 90s"; return 0
+  fi
+  F1_STATUS="$RESP_STATUS"  # later poll_response calls overwrite RESP_*; F5 reuses this one
+  run_sql -v "t0=$t0" -v "kind=http_error" <<<"$HEALTH_ENTRIES_SQL" || return 1
+  n=$(kv n); codes=$(kv codes)
+  if [ "${n:-0}" -ge 1 ]; then
+    record "F1" "PASS" "RPC lists $n http_error (status $codes; response status_code=$RESP_STATUS); plan expected 404"
+  else
+    record "F1" "FAIL" "RPC listed no http_error although the response was status_code=$RESP_STATUS error_msg=[$RESP_ERR]"
+  fi
+  if [ "$SKIP_RED" = 0 ]; then
+    red_eval "$HEALTH_FN" "$MUT_F1_RE" "$MUT_F1_TO" "$HEALTH_ENTRIES_SQL" -v "t0=$t0" -v "kind=http_error" \
+      || { red_unverified "F1-red (no non-2xx arm)"; return 0; }
+    red_verdict "F1-red (no non-2xx arm)" n "$n"
+  fi
+}
+
+# --------------------------------------------------------------------------------------------
+# F2
+# --------------------------------------------------------------------------------------------
+test_f2() {
+  echo "--- F2: 1ms pg_net timeout => transport_error (status NULL, timed_out NULL) ---"
+  local t0 rid n
+  t0=$(db_clock) || return 1
+  # Synthetic dispatch: the real dispatcher hard-codes T, so F2 sends its own 1ms request to the
+  # SAME function with the SAME vault credentials and writes the refresh:dispatch row the
+  # dispatcher would. The RPC only reads actor 'pg_cron' rows, so the row carries that actor and a
+  # metadata.harness marker; it is therefore COUNTED by the real RPC until cleanup deletes it.
+  run_sql <<'SQL' || { record "F2" "INCONCLUSIVE" "could not send the 1ms request"; return 0; }
+WITH r AS (
+  SELECT net.http_post(
+    url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'refresh_metadata_functions_base_url')
+           || '/functions/v1/skills-refresh-metadata',
+    body := '{"batchSize":1,"staleDays":1,"dryRun":true}'::jsonb,
+    headers := jsonb_build_object('Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'refresh_metadata_service_role_key')),
+    timeout_milliseconds := 1) AS rid),
+ins AS (
+  INSERT INTO audit_logs (event_type, actor, action, result, metadata)
+  SELECT 'refresh:dispatch', 'pg_cron', 'dispatch', 'queued',
+         jsonb_build_object('net_request_id', rid, 'harness', 'smi-7114-f2')
+    FROM r RETURNING metadata->>'net_request_id' AS rid)
+SELECT '@@rid=' || rid FROM ins;
+SQL
+  rid=$(kv rid); CHANGED_ROWS="${CHANGED_ROWS:+$CHANGED_ROWS }F2"
+  [ -z "$rid" ] || ROW_RIDS="${ROW_RIDS:+$ROW_RIDS,}$rid"
+  if ! poll_response "$rid" 90 "$t0"; then
+    record "F2" "INCONCLUSIVE" "no pg_net response for request $rid within 90s"; return 0
+  fi
+  run_sql -v "t0=$t0" -v "kind=transport_error" <<<"$HEALTH_ENTRIES_SQL" || return 1
+  n=$(kv n)
+  if [ "$RESP_STATUS" = "NULL" ] && [ "${n:-0}" -ge 1 ]; then
+    record "F2" "PASS" "status_code=NULL timed_out=$RESP_TIMED_OUT error_msg=[$RESP_ERR] => RPC lists $n transport_error (fact 11 expects timed_out NULL)"
+  elif [ "$RESP_STATUS" != "NULL" ]; then
+    record "F2" "INCONCLUSIVE" "the 1ms request got status_code=$RESP_STATUS, not the timeout shape; fact 11 may have changed"
+  else
+    record "F2" "FAIL" "response was the timeout shape (status NULL, timed_out=$RESP_TIMED_OUT) but the RPC listed no transport_error"
+  fi
+  if [ "$SKIP_RED" = 0 ] && [ "$RESP_TIMED_OUT" = "true" ]; then
+    # The mutation keys the arm on timed_out. It can only discriminate where a timeout leaves
+    # timed_out NULL (prod pg_net 0.19.5, plan fact 11). Staging's pg_net 0.20.0 sets it true
+    # (measured 2026-10-14), so the mutated arm still fires here and the check proves nothing.
+    # The prod shape is red-tested in the live-Postgres suite instead (pg-health.ts transport_error case).
+    record "F2-red" "NOT-APPLICABLE" "this pg_net sets timed_out=true on timeout, so a timed_out-keyed arm cannot be told apart here; red-tested against the prod shape (timed_out NULL) in the live-Postgres suite"
+  elif [ "$SKIP_RED" = 0 ]; then
+    red_eval "$HEALTH_FN" "$MUT_F2_RE" "$MUT_F2_TO" "$HEALTH_ENTRIES_SQL" -v "t0=$t0" -v "kind=transport_error" \
+      || { red_unverified "F2-red (arm keyed on timed_out)"; return 0; }
+    red_verdict "F2-red (arm keyed on timed_out)" n "$n"
+  fi
+}
+
+# --------------------------------------------------------------------------------------------
+# F3
+# --------------------------------------------------------------------------------------------
+IFS= read -r -d '' F3_ASSERT_SQL <<'SQL' || true
+SELECT '@@u_after=' || (public.refresh_metadata_health('9 hours')->>'unknown_count');
+SELECT '@@n=' || count(*)::text
+  FROM jsonb_array_elements(public.refresh_metadata_health('9 hours')->'failures') f
+ WHERE abs(extract(epoch FROM ((f->>'dispatched_at')::timestamptz - :'ts'::timestamptz))) < 0.001;
+SQL
+
+test_f3() {
+  echo "--- F3: dispatch older than 6h, no response => unknown, not a failure ---"
+  local u_before ts n u_after
+  # actor 'pg_cron': the RPC ignores any other actor, so a differently-attributed row would pass
+  # this test vacuously. The row is deleted at exit like every harness row.
+  run_sql <<'SQL' || { record "F3" "INCONCLUSIVE" "could not seed the old dispatch row"; return 0; }
+SELECT '@@u_before=' || (public.refresh_metadata_health('9 hours')->>'unknown_count');
+WITH ins AS (
+  INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
+  VALUES ('refresh:dispatch', 'pg_cron', 'dispatch', 'queued',
+          jsonb_build_object('net_request_id', 1999999999999, 'harness', 'smi-7114-f3'),
+          now() - interval '7 hours')
+  RETURNING created_at)
+SELECT '@@ts=' || created_at::text FROM ins;
+SQL
+  u_before=$(kv u_before); ts=$(kv ts); CHANGED_ROWS="${CHANGED_ROWS:+$CHANGED_ROWS }F3"
+  run_sql -v "ts=$ts" <<<"$F3_ASSERT_SQL" || return 1
+  n=$(kv n); u_after=$(kv u_after)
+  if [ "${n:-1}" -eq 0 ] && [ "${u_after:-0}" -ge $((u_before + 1)) ]; then
+    record "F3" "PASS" "7h-old dispatch with no response: not in failures; unknown_count $u_before -> $u_after"
+  else
+    record "F3" "FAIL" "failures entries for the 7h-old row=$n (want 0); unknown_count $u_before -> $u_after (want +1)"
+  fi
+  if [ "$SKIP_RED" = 0 ]; then
+    red_eval "$HEALTH_FN" "$MUT_F3_RE" "$MUT_F3_TO" "$F3_ASSERT_SQL" -v "ts=$ts" \
+      || { red_unverified "F3-red (unknown collapsed)"; return 0; }
+    red_verdict "F3-red (unknown collapsed)" n 0
+  fi
+}
+
+# --------------------------------------------------------------------------------------------
+# F4. last_run no longer depends on p_window (it is the latest NON-failed refresh:run overall), so
+# staleness is the observer comparing last_run to its own threshold; the window only bounds
+# `failures`. The RPC shape is asserted too.
+# --------------------------------------------------------------------------------------------
+test_f4() {
+  echo "--- F4: p_window := '1 minute' with an older last refresh:run => staleness visible ---"
+  local recent last stale shape ordered
+  run_sql <<'SQL' || { record "F4" "INCONCLUSIVE" "RPC call failed"; return 0; }
+SELECT '@@recent=' || count(*)::text FROM audit_logs WHERE event_type = 'refresh:run' AND created_at > now() - interval '1 minute';
+SELECT '@@last=' || coalesce(public.refresh_metadata_health('1 minute')->>'last_run', 'NULL');
+SELECT '@@stale=' || ((public.refresh_metadata_health('1 minute')->>'last_run') IS NULL
+  OR now() - (public.refresh_metadata_health('1 minute')->>'last_run')::timestamptz > interval '1 minute')::text;
+SELECT '@@shape=' || (public.refresh_metadata_health('1 minute') ?& ARRAY['last_run', 'last_attempt', 'last_dispatch', 'failures', 'unknown_count'])::text;
+SELECT '@@ordered=' || coalesce(((public.refresh_metadata_health('1 minute')->>'last_attempt')::timestamptz
+  >= (public.refresh_metadata_health('1 minute')->>'last_run')::timestamptz)::text, 'null-ok');
+SQL
+  recent=$(kv recent); last=$(kv last); stale=$(kv stale); shape=$(kv shape); ordered=$(kv ordered)
+  if [ "$shape" != "true" ]; then
+    record "F4" "FAIL" "RPC lacks one of last_run / last_attempt / last_dispatch / failures / unknown_count"; return 0
+  fi
+  if [ "$ordered" = "false" ]; then
+    record "F4" "FAIL" "last_attempt is older than last_run (last_run is the non-failed subset of last_attempt)"; return 0
+  fi
+  if [ "${recent:-0}" -ne 0 ]; then
+    record "F4" "INCONCLUSIVE" "a refresh:run landed in the last minute on staging; wait and re-run"; return 0
+  fi
+  if [ "$stale" = "true" ]; then
+    record "F4" "PASS" "RPC shape ok; last_run=$last is older than 1 minute, so an observer comparing it to its threshold sees staleness (observer-script arm logic is vitest-covered; the script is not run here because it POSTs alerts)"
+  else
+    record "F4" "FAIL" "RPC('1 minute') last_run=$last is within a minute although no refresh:run landed in the last minute"
+  fi
+}
+
+# --------------------------------------------------------------------------------------------
+# Preconditions
+# --------------------------------------------------------------------------------------------
+preconditions() {
+  run_sql -v "base_url=$BASE_URL" <<'SQL' || die "precondition query failed"
+SELECT '@@fn_inv=' || (to_regprocedure('public.invoke_skills_refresh_metadata()') IS NOT NULL)::text;
+SELECT '@@fn_health=' || (to_regprocedure('public.refresh_metadata_health(interval)') IS NOT NULL)::text;
+SELECT '@@fn_dm=' || (to_regprocedure('public.check_refresh_observer_heartbeat(interval)') IS NOT NULL)::text;
+SELECT '@@fn_harvest=' || (to_regprocedure('public.harvest_refresh_dispatch_results()') IS NOT NULL)::text;
+SELECT '@@base=' || coalesce((SELECT CASE WHEN rtrim(decrypted_secret, '/') = :'base_url' THEN 'match' ELSE 'mismatch' END
+  FROM vault.decrypted_secrets WHERE name = 'refresh_metadata_functions_base_url'), 'missing');
+SELECT '@@key=' || CASE WHEN EXISTS (SELECT 1 FROM vault.decrypted_secrets
+  WHERE name = 'refresh_metadata_service_role_key' AND length(trim(decrypted_secret)) > 0) THEN 'present' ELSE 'missing' END;
+SELECT '@@dm_flag=' || coalesce((SELECT CASE WHEN lower(trim(decrypted_secret)) IN ('1', 'true') THEN 'on' ELSE 'off' END
+  FROM vault.decrypted_secrets WHERE name = 'SKILLSMITH_REFRESH_OBSERVER_DEADMAN_DISABLE'), 'unset');
+SELECT '@@seq=' || coalesce(pg_get_serial_sequence('net.http_request_queue', 'id'), 'none');
+SELECT '@@obs_recent=' || count(*)::text FROM audit_logs WHERE event_type = 'refresh:observer' AND created_at > now() - interval '18 hours';
+SELECT '@@alert_recent=' || count(*)::text FROM audit_logs WHERE event_type = 'refresh:observer_dead_alert' AND created_at > now() - interval '24 hours';
+SQL
+  [ "$(kv fn_inv)" = true ] && [ "$(kv fn_health)" = true ] && [ "$(kv fn_dm)" = true ] && [ "$(kv fn_harvest)" = true ] \
+    || die "REFUSING: the SMI-7114 migration is not applied on staging (a function is missing)."
+  [ "$(kv base)" = match ] \
+    || die "REFUSING: vault refresh_metadata_functions_base_url is '$(kv base)' (must equal $BASE_URL): the dispatcher would not target staging."
+  [ "$(kv key)" = present ] || die "REFUSING: vault refresh_metadata_service_role_key is missing on staging."
+  if want deadman; then
+    [ "$(kv seq)" = "net.http_request_queue_id_seq" ] || die "REFUSING: pg_net request sequence is '$(kv seq)', not net.http_request_queue_id_seq; the deadman counting method needs adapting."
+    [ "$(kv dm_flag)" != on ] || die "REFUSING: SKILLSMITH_REFRESH_OBSERVER_DEADMAN_DISABLE is on in staging vault; the dead-man is silenced."
+    if [ "$(kv obs_recent)" != 0 ]; then
+      echo "NOTE: $(kv obs_recent) refresh:observer heartbeat(s) newer than 18h exist on staging; the deadman test is skipped (they would mask the backdated row)." >&2
+      ONLY=$(printf '%s' "$ONLY" | sed 's/deadman//')
+      record "deadman" "INCONCLUSIVE" "a recent refresh:observer heartbeat exists on staging; remove it or wait 18h"
+    elif [ "$(kv alert_recent)" != 0 ]; then
+      echo "NOTE: $(kv alert_recent) refresh:observer_dead_alert row(s) from the last 24h exist on staging; the deadman test is skipped (a delivered alert would suppress the call under test)." >&2
+      ONLY=$(printf '%s' "$ONLY" | sed 's/deadman//')
+      record "deadman" "INCONCLUSIVE" "a refresh:observer_dead_alert row newer than 24h exists on staging; remove it or wait 24h"
+    fi
+  fi
+}
+
+# shellcheck source=smi-7114-refresh-faults.harvest.sh
+. "$SCRIPT_DIR/smi-7114-refresh-faults.harvest.sh"
+# shellcheck source=smi-7114-refresh-faults.deadman.sh
+. "$SCRIPT_DIR/smi-7114-refresh-faults.deadman.sh"
+# shellcheck source=smi-7114-refresh-faults.overlap.sh
+. "$SCRIPT_DIR/smi-7114-refresh-faults.overlap.sh"
+
+staging_init
+trap cleanup EXIT INT TERM
+confirm_or_exit "About to run the SMI-7114 fault harness on STAGING ($STAGING_REF), tests: $ONLY.
+  Temporarily edits vault refresh_metadata_functions_base_url (F1; restored by a trap), inserts audit_logs rows
+  that the REAL health RPC and dead-man would count (deleted at exit, delete verified), triggers REAL
+  skills-refresh-metadata runs (F1, F2, overlap), and sends exactly ONE real alert-notify request: the deadman
+  committed leg is the only leg that may send an email. Every function mutation is inside BEGIN..ROLLBACK."
+preconditions
+TOUCHED=1
+
+want f1 && test_f1
+want f2 && test_f2
+want f3 && test_f3
+want f4 && test_f4
+want f5 && test_f5
+want deadman && test_deadman
+want overlap && test_overlap
+
+rc=0
+summary_exit || rc=$?
+exit "$rc"
