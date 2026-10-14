@@ -97,6 +97,8 @@ export function registerDeadmanTests(ctx: Ctx): void {
     })
 
     // [label, response to the earlier alert (null = none), alert age, expected NEW posts]
+    // Alerts older than the 16.5h heartbeat predate it and cannot suppress, so the 24h-window arms
+    // use their own, older heartbeat (below); every other arm uses DEAD.
     const outcomes: Array<[string, [number | null, string | null] | null, string, number]> = [
       ['delivered 2xx and sent true', [200, SENT], '30 minutes', 0],
       ['delivered 23h ago, still inside the 24h dedup', [200, SENT], '23 hours', 0],
@@ -115,9 +117,11 @@ export function registerDeadmanTests(ctx: Ctx): void {
       outcomes.map((o) => [`earlier alert ${o[0]} -> ${o[3]} new POST`, ...o.slice(1)] as typeof o)
     )('%s', async (_label, resp, alertAge, expected) => {
       const RID = 7001
+      // The 24h-window arms need the heartbeat older than the alert (an alert only counts after it).
+      const heartbeatAge = /^(23|25) hours$/.test(alertAge) ? '30 hours' : DEAD
       const r = await inTxn(ctx.ctl(), [
         standardSecrets(),
-        heartbeatRow(DEAD),
+        heartbeatRow(heartbeatAge),
         alertRow(alertAge, RID),
         ...(resp ? [responseRow(RID, resp[0], { content: resp[1] })] : []),
         CALL,
@@ -199,6 +203,35 @@ export function registerDeadmanTests(ctx: Ctx): void {
           posts,
         ])
         expect(r.lines).toEqual(['posts=1'])
+      })
+    })
+
+    describe('dedup only counts alerts written after the latest heartbeat', () => {
+      it('a delivered alert that PREDATES a newer (now stale) heartbeat does not suppress: one new POST', async () => {
+        // outage 1: delivered alert 20h ago; observer recovered (heartbeat 17h ago); dead again now.
+        const r = await inTxn(ctx.ctl(), [
+          standardSecrets(),
+          heartbeatRow('17 hours'),
+          alertRow('20 hours', 7201),
+          responseRow(7201, 200, { content: SENT }),
+          CALL,
+          posts,
+          alerts,
+        ])
+        expect(r.lines).toEqual(['posts=1', 'alerts=2'])
+      })
+
+      it('a delivered alert written AFTER the latest heartbeat suppresses: no POST', async () => {
+        const r = await inTxn(ctx.ctl(), [
+          standardSecrets(),
+          heartbeatRow('20 hours'),
+          alertRow('1 hour 30 minutes', 7202),
+          responseRow(7202, 200, { content: SENT }),
+          CALL,
+          posts,
+          alerts,
+        ])
+        expect(r.lines).toEqual(['posts=0', 'alerts=1'])
       })
     })
 

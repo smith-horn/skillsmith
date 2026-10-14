@@ -335,6 +335,15 @@ describe.skipIf(locked)('SMI-7114 -- skills-refresh-metadata pg_cron migration (
     )
   })
 
+  it('dedup: only alerts written after the latest heartbeat can suppress', () => {
+    const m = body(sql, FNS.deadman)
+    // the predicate sits in the dedup loop's own query, on the alert rows
+    expect(m).toMatch(
+      /WHERE a\.event_type = 'refresh:observer_dead_alert'\s+AND a\.created_at >= now\(\) - v_dedup\s+AND a\.created_at > v_hb\s+ORDER BY/
+    )
+    expect(mutate(m, /\s+AND a\.created_at > v_hb/, '')).not.toMatch(/a\.created_at > v_hb/)
+  })
+
   it('R2-2: the dead-man takes its own advisory xact lock right after the SLA check, before any dedup read', () => {
     const m = body(sql, FNS.deadman)
     const hv = body(sql, FNS.harvest)
