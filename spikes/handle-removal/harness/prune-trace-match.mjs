@@ -57,9 +57,14 @@ export function matchPruneTrace(t, { root, S, copyPath, originPath, opDir }) {
   const trace = t?.trace ?? []
   const C = canonicalizer(root)
   const realS = S ? C(S) : null
-  const allowAbs = new Set(
-    realS ? [path.join(realS, 'deleting'), path.join(realS, 'intent.json'), realS, C(opDir)] : []
-  )
+  // Per function: only single-entry unlink of the two metadata files, and only a
+  // non-recursive rmdir of S or the (empty) op dir. Nothing else, ever.
+  const allowAbs = {
+    unlinkSync: new Set(
+      realS ? [path.join(realS, 'deleting'), path.join(realS, 'intent.json')] : []
+    ),
+    rmdirSync: new Set(realS ? [realS, C(opDir)] : []),
+  }
   const forbidden = [copyPath, originPath].filter(Boolean).map(C)
   let destructive = 0
   for (let i = 0; i < trace.length; i += 1) {
@@ -69,13 +74,22 @@ export function matchPruneTrace(t, { root, S, copyPath, originPath, opDir }) {
     }
     if (!DESTRUCTIVE.has(e.fn) || e.err) continue
     destructive += 1
+    // FIRST, unconditionally (Sol c1 finding 3): a recursive or forced delete is a
+    // violation whatever it names. It used to be checked last, after the
+    // absolute-path allowlist had already `continue`d past it.
+    if (e.fn === 'rmSync' || e.recursive === true || e.force === true) {
+      violations.push(
+        `#${i} ${e.fn}(${e.a0}) is a recursive or forced delete: the walker never deletes recursively`
+      )
+      continue
+    }
     const target = single(e.a0) ? path.join(e.cwd ?? '/', e.a0) : C(e.a0)
     if (forbidden.some((f) => inside(target, f) || target === f)) {
       violations.push(`#${i} ${e.fn} targets the trash path or origin: ${target}`)
       continue
     }
     if (!single(e.a0)) {
-      if (!allowAbs.has(target))
+      if (!allowAbs[e.fn]?.has(target))
         violations.push(`#${i} ${e.fn} by absolute path outside the allowlist: ${target}`)
       continue
     }
@@ -100,8 +114,6 @@ export function matchPruneTrace(t, { root, S, copyPath, originPath, opDir }) {
           `#${i} unlinkSync(${e.a0}) not preceded by lstat(n), rename(n, r), lstat(r)`
         )
     }
-    if (e.fn === 'rmSync')
-      violations.push(`#${i} rmSync(${e.a0}): the walker never deletes recursively`)
   }
   return { ok: violations.length === 0, destructive, violations }
 }

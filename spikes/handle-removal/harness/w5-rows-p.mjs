@@ -19,7 +19,7 @@ import {
   esc,
   exists,
 } from './w5-rows-common.mjs'
-import { p7, p8, p9, bindImpls } from './w5-rows-p2.mjs'
+import { p7, p8, p9, pswap, bindImpls } from './w5-rows-p2.mjs'
 
 const impls = {}
 const impl = async (name) => (impls[name] ??= await loadImpl(name === 'candidate' ? null : name))
@@ -338,6 +338,8 @@ export const P_ROWS = {
     arms: { candidate: () => p2('candidate', false), 'prune-naive': () => p2('control', false) },
   },
   P2r: { variants: [null], arms: { candidate: () => p2('candidate', true) } },
+  // Sol c1 finding 1: record-only, the out-of-model residual R-swap.
+  Pswap: { variants: [null], arms: { candidate: () => pswap() } },
   P3: {
     variants: [null],
     arms: { candidate: () => p3('candidate'), 'prune-in-place': () => p3('control') },

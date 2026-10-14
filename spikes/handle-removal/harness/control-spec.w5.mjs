@@ -47,6 +47,14 @@ export const W5_ROWS = {
     recordOnly: true,
     expected: both('RECORD-ONLY (n lost) -- residual R-open (b)(i)'),
   },
+  // Sol c1 finding 1 (owner 2026-10-14): out of model under ADR-166 D-0, documented
+  // as residual R-swap; recorded, never scored.
+  Pswap: {
+    target: 30,
+    controls: [],
+    recordOnly: true,
+    expected: both('RECORD-ONLY (n lost) -- out-of-model residual R-swap'),
+  },
   P3: { target: 30, controls: ['prune-in-place'], expected: both('PASS') },
   P4: { target: 30, controls: ['prune-naive'], expected: both('PASS') },
   P5: { target: 10, controls: ['prune-resume-blind'], expected: both('PASS') },

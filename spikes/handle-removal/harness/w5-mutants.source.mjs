@@ -62,9 +62,9 @@ export const WALKER_MUTANTS = {
     file: W,
     edits: [
       {
-        find: "      try {\n        fs.unlinkSync(path.join(S, 'intent.json'))\n        fs.rmdirSync(S)",
+        find: '      // Our own intent only, by inode and exact bytes (Sol c1 finding 2).\n',
         replace:
-          "      fs.rmSync(job.copyPath, { recursive: true, force: true })\n      try {\n        fs.unlinkSync(path.join(S, 'intent.json'))\n        fs.rmdirSync(S)",
+          '      fs.rmSync(job.copyPath, { recursive: true, force: true })\n      // Our own intent only, by inode and exact bytes (Sol c1 finding 2).\n',
       },
     ],
   },
@@ -109,6 +109,18 @@ export const WALKER_MUTANTS = {
     ],
   },
   'misplace-revert': { name: 'misplace-revert', file: W, edits: [MISPLACE_REVERT] },
+  // Sol c1 finding 3: P4g's empty-op-dir rmdir becomes a recursive, forced delete,
+  // which erases anything else in the op dir. The trace check must FAIL it.
+  'opdir-rmsync': {
+    name: 'opdir-rmsync',
+    file: W,
+    edits: [
+      {
+        find: '    fs.rmdirSync(job.opDir)',
+        replace: '    fs.rmSync(job.opDir, { recursive: true, force: true })',
+      },
+    ],
+  },
 }
 
 /** M1-M8 (design §7): mutations for behaviour that cannot be red first. */

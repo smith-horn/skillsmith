@@ -122,4 +122,75 @@ if (against === null || against === 'warn-apparent-bytes') {
   }
 }
 
+// --- Sol c1 finding 4: an unreadable subtree must not silently shrink the total -------
+// DECLARED FAILURE ON THE PRE-FIX CODE: over:false and no incompleteness reported,
+// because a failed readdirSync was treated as an empty directory.
+if (against === null) {
+  const f = makeParent('w5-w1u-')
+  try {
+    const c = park(f.parent, 'lk', 'Q', { extraFiles: 40 })
+    const locked = path.join(c.copyPath, 'locked')
+    fs.mkdirSync(locked)
+    for (let i = 0; i < 120; i += 1) fs.writeFileSync(path.join(locked, `h${i}.txt`), 'h')
+    const allocOf = (p) => {
+      let n = 0
+      const v = (q) => {
+        const s = fs.lstatSync(q)
+        n += s.blocks * 512
+        if (s.isDirectory()) for (const x of fs.readdirSync(q)) v(path.join(q, x))
+      }
+      v(p)
+      return n
+    }
+    const whole = allocOf(c.copyPath)
+    const hiddenContents = allocOf(locked) - fs.lstatSync(locked).blocks * 512
+    const visible = whole - hiddenContents
+    const cap = Math.floor(visible * 1.5)
+    fs.chmodSync(locked, 0o000)
+    let traversable = true
+    try {
+      fs.readdirSync(locked)
+    } catch {
+      traversable = false
+    }
+    if (traversable) {
+      console.log(
+        `${TAG} unreadable-subtree case NEVER-RAN: uid ${process.getuid?.()} can still traverse a 000 directory (root)`
+      )
+    } else {
+      check(
+        `W1u premise: measured ${visible} < cap ${cap} < whole ${whole}, measured > cap/2`,
+        visible < cap && cap < whole && visible > cap / 2,
+        true
+      )
+      const statfs = () => ({ bavail: 1e12 / 4096, bsize: 4096, blocks: 2e12 / 4096 })
+      const u = trashUsage({ roots: [f.parent], statfs })
+      const w = trashWarning(u, { capBytes: cap })
+      check(
+        'W1u the result says the measurement is incomplete',
+        u.volumes[0].incomplete === true && u.volumes[0].unmeasuredEntries > 0,
+        true
+      )
+      check(
+        'W1u the warning fires (measured part > half the threshold, part unmeasured)',
+        w.over,
+        true
+      )
+      check('W1u the message says "at least"', /at least/.test(w.message ?? ''), true)
+      check(
+        'W1u the message counts the entries it could not measure',
+        /\d+ entr(y|ies) could not be measured/.test(w.message ?? ''),
+        true
+      )
+      check(
+        'W1u control: the measured total is the visible part',
+        u.volumes[0].copies[0].bytes,
+        visible
+      )
+    }
+  } finally {
+    rmFixture(f.root)
+  }
+}
+
 done()

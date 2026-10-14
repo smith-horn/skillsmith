@@ -199,4 +199,55 @@ function p9(arm, variant) {
   }
 }
 
-export { p7, p8, p9 }
+// --- Pswap (Sol c1 finding 1): RECORD-ONLY, out-of-model residual R-swap ------------
+// After the walker's post-rename lstat(r) of target/orig-f1 (its last check) and
+// before unlinkSync(r), a racer moves the approved file at the hidden name r aside
+// and puts an unapproved victim at r. Owner decision 2026-10-14: an adversary
+// targeting the random names in the 0700 staging dir is out of model (ADR-166
+// D-0); this row records what happens and asserts nothing.
+function pswap() {
+  const f = makeParent('w5-pswap-')
+  try {
+    park(f.parent, 't', 'Q')
+    const rec = path.join(f.root, 'swap.json')
+    // .d-* regular files after their post-rename lstat: #1 the sidecar, #2 target/orig-f1.
+    const hook = {
+      when: 'after',
+      fn: 'lstatSync',
+      a0Re: '^\\.d-',
+      a0IsFile: true,
+      nth: 2,
+      action: { kind: 'swap', awayDir: f.root, data: 'victim-bytes', recordFile: rec },
+    }
+    const { item, t } = prunePass(I('candidate'), f, { hooks: [hook] })
+    const sw = readJson(rec)
+    if (sw === null || !fired(t, 'swap'))
+      return raw({
+        hookFired: false,
+        extra: { neverRan: 'the swap did not land after the post-check' },
+      })
+    const victimSurvived = read(sw.replacement) === 'victim-bytes'
+    const approvedAway = read(sw.away)
+    const extra = {
+      status: `${item.status}/${item.reason}`,
+      victimSurvived,
+      approvedBytesIntactAside: approvedAway === 'original-content-f1',
+      approvedAt: sw.away,
+      reported: Array.isArray(item.misplaced) ? item.misplaced : null,
+      detail: item.detail ?? null,
+    }
+    return raw({
+      item,
+      checked: 1,
+      lost: victimSurvived ? 0 : 1,
+      failures: victimSurvived
+        ? []
+        : ['the unapproved victim at the hidden name was unlinked (R-swap)'],
+      extra,
+    })
+  } finally {
+    finishFixture(f)
+  }
+}
+
+export { p7, p8, p9, pswap }

@@ -6,6 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { readStable } from './prune.sidecar.mjs'
+import { parseIntentStrict, parseDeletingStrict } from './prune.metadata.mjs'
 
 const SELF_UID = typeof process.getuid === 'function' ? BigInt(process.getuid()) : null
 const META = new Set(['intent.json', 'deleting', 'sidecar.json', 'misplaced.json'])
@@ -57,23 +58,45 @@ export function inspectLeftover({ S, trashRoot }) {
       r.misplaced = { unreadable: true, path: mp }
     }
   }
+  // Sol c1 finding 2: a NAME is not proof. Each metadata file is stable-read and
+  // checked against the strict schema here, and its (inode, bytes) recorded in
+  // `meta`; cleanup later removes only a file still identical to that record.
+  // A file that is not Skillsmith's exact schema makes the leftover `unknown`.
+  const meta = {}
   let intent = null
   if (names.includes('intent.json')) {
     const rs = readStable(path.join(S, 'intent.json'))
-    try {
-      intent = rs.ok ? JSON.parse(rs.bytes.toString('utf8')) : null
-    } catch {
-      intent = null
-    }
+    intent = rs.ok ? parseIntentStrict(rs.bytes) : null
     if (intent === null)
-      return { ...r, state: 'unknown', detail: 'intent.json unreadable; never touched' }
+      return {
+        ...r,
+        state: 'unknown',
+        detail: "intent.json is unreadable or not Skillsmith's intent schema; never touched",
+      }
+    meta['intent.json'] = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
   }
+  if (names.includes('deleting')) {
+    const rs = readStable(path.join(S, 'deleting'))
+    if (!rs.ok || parseDeletingStrict(rs.bytes) === null)
+      return {
+        ...r,
+        state: 'unknown',
+        detail: "deleting is unreadable or not Skillsmith's marker; never touched",
+      }
+    meta.deleting = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
+  }
+  r.meta = meta
   const trees = names.filter((n) => !META.has(n))
   const deleting = names.includes('deleting')
   if (names.length === 0) return { ...r, state: 'empty', cleanup: [] }
   if (intent === null) {
     if (trees.length === 1) {
-      return { ...r, state: 'staged-orphan', leaf: trees[0], item: stagedItem(S, trees[0], null) }
+      return {
+        ...r,
+        state: 'staged-orphan',
+        leaf: trees[0],
+        item: stagedItem(S, trees[0], null, false, meta),
+      }
     }
     return {
       ...r,
@@ -108,9 +131,10 @@ export function inspectLeftover({ S, trashRoot }) {
       state: 'interrupted-delete',
       intent,
       leaf,
-      item: stagedItem(S, leaf, intent, true),
+      item: stagedItem(S, leaf, intent, true, meta),
     }
-  if (hasLeaf) return { ...r, state: 'staged', intent, leaf, item: stagedItem(S, leaf, intent) }
+  if (hasLeaf)
+    return { ...r, state: 'staged', intent, leaf, item: stagedItem(S, leaf, intent, false, meta) }
   return {
     ...r,
     state: 'unknown',
@@ -119,7 +143,7 @@ export function inspectLeftover({ S, trashRoot }) {
   }
 }
 
-function stagedItem(S, leaf, intent, interruptedDelete = false) {
+function stagedItem(S, leaf, intent, interruptedDelete = false, meta = {}) {
   const stagedSidecar = path.join(S, 'sidecar.json')
   const oldSidecar = intent?.sidecarPath ?? null
   const sidecarPath = exists(stagedSidecar)
@@ -140,6 +164,9 @@ function stagedItem(S, leaf, intent, interruptedDelete = false) {
     staged: true,
     S,
     interruptedDelete,
+    // Metadata inspected (stable read + strict schema) for this staged copy: the
+    // walker may remove it after a confirmed run only if still identical.
+    inheritedMeta: meta,
     ...(origCopy ? { schemaCopyPath: origCopy, schemaOpDir: path.dirname(origCopy) } : {}),
   }
 }

@@ -103,6 +103,15 @@ function act(a, a0, a1) {
       record(a.recordFile, { path: p, bytes: buf.toString('utf8') })
       return null
     }
+    case 'replaceSibling': {
+      // Replace `name` beside the call's own path (new inode, different bytes),
+      // moving the original aside: a file swapped between inspection and cleanup.
+      const p = path.join(path.dirname(abs(a0)), a.name)
+      O('renameSync', p, path.join(a.awayDir, `replaced-${a.name}`))
+      O('writeFileSync', p, a.data)
+      record(a.recordFile, { replaced: p, away: path.join(a.awayDir, `replaced-${a.name}`) })
+      return null
+    }
     case 'swap': {
       // after the walker's pre-check of a0, move a0 away and put a replacement there
       const n = abs(a0)
@@ -184,6 +193,13 @@ for (const n of SYNC) {
     const a1 = TWO.has(n) ? str(args[1]) : null
     runHooks('before', n, a0, a1)
     const e = { fn: n, a0, a1, cwd: realCwd() }
+    // A recursive or forced delete is recorded as such (SMI-7123 Sol c1 finding 3):
+    // the matcher must be able to reject it whatever path it names.
+    const o = args[1]
+    if ((n === 'rmSync' || n === 'rmdirSync') && o && typeof o === 'object') {
+      e.recursive = o.recursive === true
+      e.force = o.force === true
+    }
     trace.push(e)
     try {
       const out = ORIG.get(n).apply(this, args)

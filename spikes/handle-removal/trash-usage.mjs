@@ -23,14 +23,22 @@ function readOrigin(sidecarPath) {
   }
 }
 
-/** Allocated bytes of the tree at `abs`, never following a symlink; `seen` de-duplicates hard links. */
+/**
+ * Allocated bytes of the tree at `abs`, never following a symlink; `seen`
+ * de-duplicates hard links. An entry that cannot be measured -- lstat fails
+ * (vanished, unreadable) or a directory cannot be listed -- is COUNTED in
+ * `unmeasured`, never silently treated as empty (Sol c1 finding 4).
+ * @returns {{bytes:number, unmeasured:number}}
+ */
 function allocated(abs, seen) {
   let total = 0
+  let unmeasured = 0
   const visit = (p) => {
     let st
     try {
       st = fs.lstatSync(p, { bigint: true })
     } catch {
+      unmeasured += 1
       return
     }
     const key = `${st.dev}:${st.ino}`
@@ -43,13 +51,14 @@ function allocated(abs, seen) {
       try {
         names = fs.readdirSync(p)
       } catch {
+        unmeasured += 1
         return
       }
       for (const n of names) visit(path.join(p, n))
     }
   }
   visit(abs)
-  return total
+  return { bytes: total, unmeasured }
 }
 
 /**
@@ -75,36 +84,53 @@ export function trashUsage({ roots, statfs = fs.statfsSync }) {
       byDev.set(dev, v)
     }
     for (const c of r.copies) {
+      const a = allocated(c.copyPath, v.seen)
       v.copies.push({
         path: c.copyPath,
-        bytes: allocated(c.copyPath, v.seen),
+        bytes: a.bytes,
+        unmeasured: a.unmeasured,
         originPath: readOrigin(c.sidecarPath),
         opId: c.opId,
       })
     }
     for (const l of r.leftovers) {
+      const a = allocated(l.S, v.seen)
       v.copies.push({
         path: l.S,
-        bytes: allocated(l.S, v.seen),
+        bytes: a.bytes,
+        unmeasured: a.unmeasured,
         originPath: null,
         opId: path.basename(l.S),
       })
     }
   }
-  return { volumes: [...byDev.values()].map(({ seen, ...v }) => (void seen, v)) }
+  return {
+    volumes: [...byDev.values()].map(({ seen, ...v }) => {
+      void seen
+      const unmeasuredEntries = v.copies.reduce((n, c) => n + (c.unmeasured ?? 0), 0)
+      return { ...v, unmeasuredEntries, incomplete: unmeasuredEntries > 0 }
+    }),
+  }
 }
 
 /**
- * Per volume: over when the total exceeds min(capBytes, freeFraction x free).
- * The message (stderr in the product) names the total, the threshold and the
- * largest copies with their paths, and says nothing is deleted automatically.
+ * Per volume: over when the total exceeds min(capBytes, freeFraction x free),
+ * OR when part of the trash could not be measured and the measured part alone
+ * is over half the threshold (Sol c1 finding 4: an unmeasured subtree must not
+ * suppress the warning). The message (stderr in the product) names the total --
+ * "at least" when incomplete, with the count of unmeasured entries -- the
+ * threshold and the largest copies, and says nothing is deleted automatically.
  */
 export function trashWarning(usage, { capBytes = 1e9, freeFraction = 0.05, top = 3 } = {}) {
   const perVolume = usage.volumes.map((v) => {
     const thresholdBytes = Math.min(capBytes, freeFraction * v.freeBytes)
     const totalBytes = v.copies.reduce((n, c) => n + c.bytes, 0)
+    const unmeasuredEntries =
+      v.unmeasuredEntries ?? v.copies.reduce((n, c) => n + (c.unmeasured ?? 0), 0)
     const largest = [...v.copies].sort((a, b) => b.bytes - a.bytes).slice(0, top)
-    return { dev: v.dev, thresholdBytes, totalBytes, over: totalBytes > thresholdBytes, largest }
+    const over =
+      totalBytes > thresholdBytes || (unmeasuredEntries > 0 && totalBytes > thresholdBytes / 2)
+    return { dev: v.dev, thresholdBytes, totalBytes, unmeasuredEntries, over, largest }
   })
   const over = perVolume.filter((p) => p.over)
   if (over.length === 0) return { over: false, perVolume, message: null }
@@ -115,8 +141,12 @@ export function trashWarning(usage, { capBytes = 1e9, freeFraction = 0.05, top =
           `${c.originPath ? path.basename(c.originPath) : c.opId} ${human(c.bytes)} (${c.path})`
       )
       .join(', ')
+    const held =
+      p.unmeasuredEntries > 0
+        ? `at least ${human(p.totalBytes)}; ${p.unmeasuredEntries} ${p.unmeasuredEntries === 1 ? 'entry' : 'entries'} could not be measured`
+        : `${human(p.totalBytes)}, over the ${human(p.thresholdBytes)} warning level`
     return (
-      `Skillsmith's trash on this disk holds ${human(p.totalBytes)}, over the ${human(p.thresholdBytes)} warning level. ` +
+      `Skillsmith's trash on this disk holds ${held}${p.unmeasuredEntries > 0 ? ` (warning level ${human(p.thresholdBytes)})` : ''}. ` +
       `Largest: ${big}. Nothing is deleted automatically. Review and delete with \`skillsmith doctor backups --prune\`.`
     )
   })

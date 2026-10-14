@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { readStable } from './prune.sidecar.mjs'
 import { shapeResult } from './result-shape.mjs'
 import { decodeJob } from './prune.job.mjs'
+import { recordOf, removeIfIdentical } from './prune.metadata.mjs'
 import { Stop, META, SIDECAR_KEY, mountFinding } from './prune.walk.shared.mjs'
 import { verifyAtStaging } from './prune.walk.verify.mjs'
 import { deleteVerified } from './prune.walk.delete.mjs'
@@ -84,6 +85,10 @@ export function stageVerifyDelete(job) {
   if (!alive())
     return out({ status: 'kept', reason: 'stage-failed', detail: 'the parent process is gone' })
 
+  // Metadata this child may remove at P4g: what it writes itself (recorded below),
+  // or, for a staged leftover, what the parent inspected and the user confirmed.
+  const own = { ...(job.inheritedMeta ?? {}) }
+  const wrote = {}
   let S = job.S ?? null
   let sIdentity
   const leaf = job.leaf
@@ -133,16 +138,19 @@ export function stageVerifyDelete(job) {
       host: process.env.HOSTNAME ?? null,
       version: 'smi-7123-spike',
     }
-    fs.writeFileSync(path.join(S, 'intent.json'), JSON.stringify(intent, null, 2), { flag: 'wx' })
+    const intentBytes = JSON.stringify(intent, null, 2)
+    fs.writeFileSync(path.join(S, 'intent.json'), intentBytes, { flag: 'wx' })
+    own['intent.json'] = recordOf(path.join(S, 'intent.json'), intentBytes)
     // P4d
     try {
       fs.renameSync(job.copyPath, path.join(S, leaf))
     } catch (err) {
+      // Our own intent only, by inode and exact bytes (Sol c1 finding 2).
+      removeIfIdentical(path.join(S, 'intent.json'), own['intent.json'])
       try {
-        fs.unlinkSync(path.join(S, 'intent.json'))
         fs.rmdirSync(S)
       } catch {
-        /* our own metadata; reported by the next listing */
+        /* not empty: reported by the next listing */
       }
       return out({
         status: 'kept',
@@ -185,6 +193,7 @@ export function stageVerifyDelete(job) {
       pruneId,
       alive,
       resume: job.resume === true,
+      wrote,
     })
   } catch (err) {
     if (!(err instanceof Stop)) throw err
@@ -204,13 +213,14 @@ export function stageVerifyDelete(job) {
       /* the child exits next */
     }
   }
-  // P4g
+  // P4g. Sol c1 finding 2: a metadata file is removed only if it is exactly what
+  // this run wrote (or what the parent inspected for this confirmed staged copy),
+  // by inode and bytes, re-checked immediately before unlink. Otherwise it is
+  // kept and reported in `metadataKept`.
+  const metadataKept = []
   for (const m of ['deleting', 'intent.json']) {
-    try {
-      fs.unlinkSync(path.join(S, m))
-    } catch {
-      /* absent is fine */
-    }
+    const r = removeIfIdentical(path.join(S, m), wrote[m] ?? own[m])
+    if (!r.removed && r.kept !== null) metadataKept.push(r.kept)
   }
   let sKept = null
   if (exists(path.join(S, 'misplaced.json'))) sKept = 'misplaced.json kept for the next listing'
@@ -226,7 +236,12 @@ export function stageVerifyDelete(job) {
   } catch {
     /* ENOTEMPTY / ENOENT are fine */
   }
-  return out({ status: 'removed', deleted: del.deleted, ...(sKept ? { detail: sKept } : {}) })
+  return out({
+    status: 'removed',
+    deleted: del.deleted,
+    ...(sKept ? { detail: sKept } : {}),
+    ...(metadataKept.length ? { metadataKept } : {}),
+  })
 }
 
 export { META, SIDECAR_KEY, verifyAtStaging, deleteVerified }

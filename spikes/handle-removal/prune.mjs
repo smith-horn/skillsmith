@@ -15,6 +15,10 @@ import { listTrash, classifyCopy, human } from './prune.classify.mjs'
 import { inspectLeftover } from './prune.leftovers.mjs'
 import { encodeJob } from './prune.job.mjs'
 import { shapeResult } from './result-shape.mjs'
+import { removeIfIdentical } from './prune.metadata.mjs'
+
+/** Leftover states holding only Skillsmith's metadata (§4); cleaned only after a batch yes. */
+const CLEANABLE = new Set(['empty', 'intent-only', 'finished'])
 
 /** §7.1, verbatim. Shown after the count and size. */
 export const CONFIRMATION_TEXT =
@@ -191,8 +195,10 @@ function pruneLocked({
   plan.summary = `${entries.length} copies, ${human(plan.bytes)}`
   if (!apply) return { plan, items: [], exitCode: 0 }
 
-  // §4: Skillsmith's own metadata is cleaned without asking.
-  for (const l of leftovers) cleanLeftover(l)
+  // §4 + Sol c1 finding 2: nothing is deleted without confirmation, anywhere. Pure
+  // metadata leftovers are listed in the clean-tier batch prompt below and cleaned
+  // only after a yes, and only files still identical to what was inspected.
+  const metaLeftovers = leftovers.filter((l) => CLEANABLE.has(l.state))
 
   // P3
   const items = []
@@ -226,17 +232,24 @@ function pruneLocked({
       else items.push(kept(copy, 'not-confirmed'))
     }
   }
-  if (clean.length > 0) {
-    const views = clean.map((e) => ({
-      path: e.copy.copyPath,
-      klass: 'clean',
-      recordedHash: e.cls.recordedHash,
-    }))
+  const cleanups = []
+  if (clean.length > 0 || metaLeftovers.length > 0) {
+    const views = [
+      ...clean.map((e) => ({
+        path: e.copy.copyPath,
+        klass: 'clean',
+        recordedHash: e.cls.recordedHash,
+      })),
+      ...metaLeftovers.map((l) => ({ path: l.S, klass: 'metadata', state: l.state })),
+    ]
     const yes =
       typeof confirmBatch === 'function' && confirmBatch(views, CONFIRMATION_TEXT) === true
     for (const e of clean) {
       if (yes) approved.push({ ...e, approvedHash: e.cls.recordedHash, authorization: 'batch' })
       else items.push(kept(e.copy, 'not-confirmed'))
+    }
+    for (const l of metaLeftovers) {
+      cleanups.push(yes ? cleanLeftover(l) : { S: l.S, state: l.state, result: 'not-confirmed' })
     }
   }
 
@@ -256,7 +269,9 @@ function pruneLocked({
       opDir: c.opDir,
       klass: a.cls.klass,
       authorization: a.authorization,
-      ...(c.staged ? { S: c.S, resume: c.interruptedDelete === true } : {}),
+      ...(c.staged
+        ? { S: c.S, resume: c.interruptedDelete === true, inheritedMeta: c.inheritedMeta ?? {} }
+        : {}),
     }
     const res = runWalker(job, walker)
     walked.push(res)
@@ -264,32 +279,27 @@ function pruneLocked({
   }
   // P5: 0 only if every approved item is `removed` (vacuously 0 when none was approved).
   const exitCode = walked.every((r) => r.status === 'removed') ? 0 : 4
-  return { plan, items, exitCode }
+  return { plan, items, exitCode, cleanups }
 }
 
 /** §4: remove only our own metadata, only in the states where it is all there is. */
+// Called only after the batch yes. Each metadata file is removed only if it is still
+// the inode and bytes recorded at inspection (prune.metadata.mjs); anything else is
+// kept and reported. The staging dir is removed with rmdir(2), so only if empty.
 function cleanLeftover(l) {
-  if (l.state === 'empty') {
-    try {
-      fs.rmdirSync(l.S)
-    } catch {
-      /* not empty any more: left for the next run */
-    }
-    return
-  }
-  if (l.state !== 'intent-only' && l.state !== 'finished') return
+  const kept = []
   for (const m of l.cleanup ?? []) {
-    try {
-      fs.unlinkSync(path.join(l.S, m))
-    } catch {
-      /* already gone */
-    }
+    const r = removeIfIdentical(path.join(l.S, m), l.meta?.[m])
+    if (!r.removed && r.kept !== null) kept.push(r.kept)
   }
+  let dir = 'kept'
   if (!l.misplaced) {
     try {
       fs.rmdirSync(l.S)
-    } catch {
-      /* reported by the next listing */
+      dir = 'removed'
+    } catch (err) {
+      dir = `kept (${err.code})`
     }
   }
+  return { S: l.S, state: l.state, result: kept.length ? 'metadata-kept' : 'cleaned', dir, kept }
 }

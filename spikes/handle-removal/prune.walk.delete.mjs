@@ -4,6 +4,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { recordOf } from './prune.metadata.mjs'
 import {
   Stop,
   SIDECAR_KEY,
@@ -146,12 +147,12 @@ export function deleteVerified(S, leaf, inventory, sIdentity, ctx = {}) {
   try {
     process.chdir(S)
     cwdIs(sIdentity, 'S')
-    if (!ctx.resume)
-      fs.writeFileSync(
-        'deleting',
-        JSON.stringify({ pruneId: ctx.pruneId ?? null, pid: process.pid }),
-        { flag: 'wx' }
-      )
+    if (!ctx.resume) {
+      const marker = JSON.stringify({ pruneId: ctx.pruneId ?? null, pid: process.pid })
+      fs.writeFileSync('deleting', marker, { flag: 'wx' })
+      // Sol c1 finding 2: P4g removes this marker only if it is still these bytes at this inode.
+      if (ctx.wrote) ctx.wrote.deleting = recordOf('deleting', marker)
+    }
     const sc = inventory.get(SIDECAR_KEY)
     if (sc) deleteLeaf('sidecar.json', SIDECAR_KEY, sc, sIdentity)
     const s = fs.lstatSync(leaf, { bigint: true })
