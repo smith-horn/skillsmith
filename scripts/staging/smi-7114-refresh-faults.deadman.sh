@@ -125,21 +125,23 @@ test_deadman() {
 dm_committed_leg() {
   local cnt alerts arid
   DM_T0=$(db_clock) || return 1
-  # OWNERSHIP (SMI-7114 R2-3). The insert, the real call and currval run in ONE psql session and ONE
-  # transaction, so currval returns the pg_net request id this very call enqueued (currval is
-  # session-local: a concurrent cron or operator call cannot move it). Measured on prod by the queen:
-  # pg_get_serial_sequence('net.http_request_queue','id') = net.http_request_queue_id_seq and
-  # net.http_post(url, body, params, headers, timeout_milliseconds) inserts into net.http_request_queue.
-  # The precondition in the main script still checks the sequence name on staging. If no POST happened,
-  # currval raises, ON_ERROR_STOP aborts, and the whole transaction (heartbeat, alert row, queued
-  # request) rolls back: nothing is owned and nothing is left behind.
+  # OWNERSHIP (SMI-7114 R2-3, R3). The insert and the real call run in ONE psql session and ONE
+  # transaction. The owned request id is read from the dead_alert row whose created_at equals this
+  # transaction's now(): the function inserts that row with the column default, so only a row written
+  # by THIS transaction matches. Not currval: under a transaction-mode pooler a reused backend can
+  # still hold another client's currval, so a call that made no POST would "own" someone else's id
+  # (round-3 cross-family finding). If no row matches, \gset fails, ON_ERROR_STOP aborts, and the whole
+  # transaction (heartbeat, queued request) rolls back: nothing is owned and nothing is left behind.
+  # The sequence counts below are diagnostic only (sequence name measured on prod by the queen:
+  # pg_get_serial_sequence('net.http_request_queue','id') = net.http_request_queue_id_seq).
   run_sql <<'SQL' || { record "deadman-200" "INCONCLUSIVE" "committed leg failed or made no pg_net request (rolled back; nothing owned)"; return 0; }
 SELECT last_value - CASE WHEN is_called THEN 0 ELSE 1 END AS s0 FROM net.http_request_queue_id_seq \gset
 BEGIN;
 INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
 VALUES ('refresh:observer', 'staging-harness', 'heartbeat', 'ok', '{"harness":"smi-7114-dm"}'::jsonb, now() - interval '17 hours');
 DO $$ BEGIN PERFORM public.check_refresh_observer_heartbeat('16 hours'); END $$;
-SELECT currval('net.http_request_queue_id_seq') AS rid \gset
+SELECT metadata->>'net_request_id' AS rid FROM audit_logs
+ WHERE event_type = 'refresh:observer_dead_alert' AND created_at = now() \gset
 SELECT last_value - CASE WHEN is_called THEN 0 ELSE 1 END AS s1 FROM net.http_request_queue_id_seq \gset
 COMMIT;
 SELECT '@@count=' || (:s1 - :s0)::text;
