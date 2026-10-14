@@ -59,11 +59,22 @@ export function matchPruneTrace(t, { root, S, copyPath, originPath, opDir }) {
   const realS = S ? C(S) : null
   // Per function: only single-entry unlink of the two metadata files, and only a
   // non-recursive rmdir of S or the (empty) op dir. Nothing else, ever.
+  const metaNames = realS ? [path.join(realS, 'deleting'), path.join(realS, 'intent.json')] : []
   const allowAbs = {
-    unlinkSync: new Set(
-      realS ? [path.join(realS, 'deleting'), path.join(realS, 'intent.json')] : []
-    ),
+    unlinkSync: new Set(metaNames),
     rmdirSync: new Set(realS ? [realS, C(opDir)] : []),
+  }
+  // Sol c2 finding 2: metadata is removed by renaming it to a random `.m-<16 hex>`
+  // name in S, re-checking, and unlinking THAT name. Such an unlink is admitted
+  // only after a renameSync moved one of the two metadata files to that exact
+  // path; any other `.m-*` unlink is a violation.
+  const RANDOM_META = /\/\.m-[0-9a-f]{16}$/
+  for (const e of trace) {
+    if (e.fn !== 'renameSync' || e.err || single(e.a0) || single(e.a1)) continue
+    const to = C(e.a1)
+    if (metaNames.includes(C(e.a0)) && path.dirname(to) === realS && RANDOM_META.test(to)) {
+      allowAbs.unlinkSync.add(to)
+    }
   }
   const forbidden = [copyPath, originPath].filter(Boolean).map(C)
   let destructive = 0

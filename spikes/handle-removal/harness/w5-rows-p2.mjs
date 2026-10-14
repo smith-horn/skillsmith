@@ -250,4 +250,49 @@ function pswap() {
   }
 }
 
-export { p7, p8, p9, pswap }
+// --- Pmswap (Sol c2 finding 2): RECORD-ONLY, the R-swap class for metadata -----------
+// Post-walk metadata removal now renames `deleting` / `intent.json` to a random
+// `.m-<16 hex>` name, re-checks, and unlinks THAT name. A racer that learns the
+// random name between the final lstat and the unlink can still swap a victim
+// in: the same out-of-model one-syscall window as R-swap. Recorded, not scored.
+function pmswap() {
+  const f = makeParent('w5-pmswap-')
+  try {
+    park(f.parent, 't', 'Q')
+    const rec = path.join(f.root, 'mswap.json')
+    const hook = {
+      when: 'before',
+      fn: 'unlinkSync',
+      a0Re: '/\\.m-[0-9a-f]{16}$',
+      nth: 1,
+      action: { kind: 'swap', awayDir: f.root, data: 'victim-bytes', recordFile: rec },
+    }
+    const { item, t } = prunePass(I('candidate'), f, { hooks: [hook] })
+    const sw = readJson(rec)
+    if (sw === null || !fired(t, 'swap'))
+      return raw({
+        hookFired: false,
+        extra: { neverRan: 'the swap did not land at the random name' },
+      })
+    const victimSurvived = read(sw.replacement) === 'victim-bytes'
+    const extra = {
+      status: `${item.status}/${item.reason}`,
+      victimSurvived,
+      metadataAside: sw.away,
+      reported: item.metadataKept ?? null,
+    }
+    return raw({
+      item,
+      checked: 1,
+      lost: victimSurvived ? 0 : 1,
+      failures: victimSurvived
+        ? []
+        : ['the victim at the random metadata name was unlinked (R-swap class)'],
+      extra,
+    })
+  } finally {
+    finishFixture(f)
+  }
+}
+
+export { p7, p8, p9, pswap, pmswap }

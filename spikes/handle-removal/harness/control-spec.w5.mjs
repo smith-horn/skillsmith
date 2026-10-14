@@ -55,6 +55,14 @@ export const W5_ROWS = {
     recordOnly: true,
     expected: both('RECORD-ONLY (n lost) -- out-of-model residual R-swap'),
   },
+  // Sol c2 finding 2: metadata now removed by rename-to-random, re-check, unlink;
+  // a swap at the random name is the same out-of-model R-swap class. Recorded only.
+  Pmswap: {
+    target: 30,
+    controls: [],
+    recordOnly: true,
+    expected: both('RECORD-ONLY (n lost) -- R-swap class at the random metadata name'),
+  },
   P3: { target: 30, controls: ['prune-in-place'], expected: both('PASS') },
   P4: { target: 30, controls: ['prune-naive'], expected: both('PASS') },
   P5: { target: 10, controls: ['prune-resume-blind'], expected: both('PASS') },

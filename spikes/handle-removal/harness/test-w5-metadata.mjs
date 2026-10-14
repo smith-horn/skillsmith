@@ -126,17 +126,24 @@ function crashAfterIntent(f) {
 for (const [label, mkHook, name, data] of [
   [
     'd intent.json replaced before P4g',
-    (c, f) => ({
-      when: 'before',
-      fn: 'unlinkSync',
-      a0Re: '/deleting$',
-      action: {
-        kind: 'replaceSibling',
-        name: 'intent.json',
-        data: 'user-bytes-at-intent',
-        awayDir: f.root,
-      },
-    }),
+    // Fires at the FIRST destructive call on S/deleting, whichever it is: the
+    // unlink on code that deletes by name, the rename-to-random on code that does
+    // not (c2). Pointing it at the unlink alone stopped it firing after the c2
+    // fix, and the case then failed with nothing replaced -- measured.
+    (c, f) =>
+      ['unlinkSync', 'renameSync'].map((fn) => ({
+        when: 'before',
+        fn,
+        a0Re: '/deleting$',
+        nth: 1,
+        action: {
+          kind: 'replaceSibling',
+          name: 'intent.json',
+          data: 'user-bytes-at-intent',
+          awayDir: f.root,
+          recordFile: path.join(f.root, 'replaced.json'),
+        },
+      })),
     'intent.json',
     'user-bytes-at-intent',
   ],
@@ -159,15 +166,110 @@ for (const [label, mkHook, name, data] of [
       roots: [f.parent],
       apply: true,
       confirmBatch: () => true,
-      walker: walkerOpts({ hooks: [mkHook(c, f)] }),
+      walker: walkerOpts({ hooks: [mkHook(c, f)].flat() }),
     })
     const item = r.items[0] ?? {}
     const S = stagings(c.trashRoot)[0] ?? '/nonexistent'
+    if (label.startsWith('d'))
+      check(
+        `${label}: premise, the replacement landed`,
+        fs.existsSync(path.join(f.root, 'replaced.json')),
+        true
+      )
     check(`${label}: the copy was still removed`, item.status, 'removed')
     check(`${label}: the replaced ${name} survives`, read(path.join(S, name)), data)
     check(
       `${label}: and is reported`,
       JSON.stringify(item.metadataKept ?? null).includes(name),
+      true
+    )
+  } finally {
+    rmFixture(f.root)
+  }
+}
+
+// --- f / g (Sol c2 finding 2): a KNOWN-NAME swap after the final check ---------------
+// The swap lands at the first destructive call on the known metadata path -- the
+// unlink on code that deletes by name, the rename-to-random on code that does not
+// -- so the trigger fires under either implementation.
+// DECLARED FAILURE ON THE PRE-FIX CODE: the victim placed at the known name is unlinked.
+const VICTIM = 'victim-bytes-placed-at-the-known-name'
+const findBytes = (dir, bytes) => {
+  for (const n of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+    const p = path.join(dir, n)
+    if (fs.lstatSync(p).isFile() && read(p) === bytes) return p
+  }
+  return null
+}
+{
+  const f = makeParent('w5-md-f-')
+  try {
+    const { S, intent } = crashAfterIntent(f)
+    let fired = false
+    const orig = { unlinkSync: fs.unlinkSync, renameSync: fs.renameSync }
+    const swapFirst = (fn) =>
+      function swapped(...a) {
+        if (!fired && path.resolve(String(a[0])) === intent) {
+          fired = true
+          orig.renameSync(intent, path.join(f.root, 'genuine-moved-aside.json'))
+          fs.writeFileSync(intent, VICTIM)
+        }
+        return orig[fn].apply(this, a)
+      }
+    fs.unlinkSync = swapFirst('unlinkSync')
+    fs.renameSync = swapFirst('renameSync')
+    let r
+    try {
+      r = prune({ roots: [f.parent], apply: true, confirmBatch: () => true })
+    } finally {
+      fs.unlinkSync = orig.unlinkSync
+      fs.renameSync = orig.renameSync
+    }
+    check('f premise: the swap landed after the final check', fired, true)
+    const at = findBytes(S, VICTIM)
+    check('f leftover cleanup: the victim at the known name is not deleted', at !== null, true)
+    const kept = (r.cleanups ?? []).flatMap((c) => c.kept ?? [])
+    check(
+      'f and is reported with its exact path',
+      at !== null && JSON.stringify(kept).includes(at),
+      true
+    )
+  } finally {
+    rmFixture(f.root)
+  }
+}
+{
+  const f = makeParent('w5-md-g-')
+  try {
+    const c = park(f.parent, 'g', 'Q')
+    const action = {
+      kind: 'swap',
+      awayDir: f.root,
+      data: VICTIM,
+      recordFile: path.join(f.root, 'g.json'),
+    }
+    const r = prune({
+      roots: [f.parent],
+      apply: true,
+      confirmBatch: () => true,
+      walker: walkerOpts({
+        hooks: [
+          { when: 'before', fn: 'unlinkSync', a0Re: '/intent\\.json$', nth: 1, action },
+          { when: 'before', fn: 'renameSync', a0Re: '/intent\\.json$', nth: 1, action },
+        ],
+      }),
+    })
+    const S = stagings(c.trashRoot)[0] ?? '/nonexistent'
+    check(
+      'g premise: the swap landed after the final check',
+      fs.existsSync(path.join(f.root, 'g.json')),
+      true
+    )
+    const at = findBytes(S, VICTIM)
+    check('g post-walk cleanup: the victim at the known name is not deleted', at !== null, true)
+    check(
+      'g and is reported with its exact path',
+      at !== null && JSON.stringify(r.items[0]?.metadataKept ?? []).includes(at),
       true
     )
   } finally {

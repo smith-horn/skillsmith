@@ -60,7 +60,8 @@ function children(node) {
  * Checks one module's source. Returns the violations, the local names bound to
  * the fs default export, and the relative imports (for the transitive walk).
  */
-export function checkFsBoundarySource(source) {
+export function checkFsBoundarySource(source, { forbidMembers = [] } = {}) {
+  const forbidden = new Set(forbidMembers)
   const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module' })
   const violations = []
   const fsLocals = new Set()
@@ -143,6 +144,10 @@ export function checkFsBoundarySource(source) {
       // is plain data and stays allowed.)
       else if (node.property.name === 'promises') {
         violations.push(`${node.object.name}.promises access`)
+      } else if (forbidden.has(node.property.name)) {
+        // SMI-7123 W5 (Sol c2 finding 1): a member the caller forbids outright in
+        // this graph -- rmSync in prune code, which never deletes recursively.
+        violations.push(`${node.object.name}.${node.property.name} is forbidden here`)
       } else if (FS_DATA_MEMBERS.has(node.property.name)) {
         // plain data, allowed
       } else if (
@@ -184,7 +189,7 @@ export function checkFsBoundarySource(source) {
  * transitively, and checks each. Returns the files checked (the denominator)
  * and every violation with its file.
  */
-export function checkFsBoundary(entryFile) {
+export function checkFsBoundary(entryFile, options = {}) {
   const seen = new Map()
   const unresolved = []
   // A relative specifier must name a readable regular file EXACTLY: ESM does not
@@ -207,7 +212,7 @@ export function checkFsBoundary(entryFile) {
       unresolved.push({ file: from, violation: `unresolvable relative import '${spec}'` })
       continue
     }
-    const r = checkFsBoundarySource(src)
+    const r = checkFsBoundarySource(src, options)
     seen.set(file, r)
     for (const s of r.localImports) {
       queue.push({ file: path.resolve(path.dirname(file), s), from: file, spec: s })
@@ -220,3 +225,21 @@ export function checkFsBoundary(entryFile) {
   const fsLocalsByFile = Object.fromEntries([...seen].map(([f, r]) => [f, r.fsLocals]))
   return { files, violations, fsLocalsByFile }
 }
+
+/**
+ * Every graph the boundary must hold for, relative to the spike root. SMI-7123
+ * W5 (Sol c2 finding 1): the prune trace matcher sees only calls made through
+ * the fs default object, so an aliased or async delete is invisible to it. The
+ * prune graphs are therefore checked statically here, and rmSync -- which prune
+ * never uses, since it never deletes recursively -- is forbidden in them.
+ * prune.walk.mjs is its own entry: prune.mjs reaches it by URL (the child
+ * process), not by import, so no import walk from prune.mjs would find it.
+ */
+const PRUNE = { forbidMembers: ['rmSync'] }
+export const FS_BOUNDARY_ENTRIES = [
+  { entry: 'quarantine.mjs', options: {} },
+  { entry: 'prune.mjs', options: PRUNE },
+  { entry: 'prune.walk.mjs', options: PRUNE },
+  { entry: 'trash-usage.mjs', options: PRUNE },
+  { entry: 'trash-index.mjs', options: PRUNE },
+]

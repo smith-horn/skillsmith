@@ -65,7 +65,9 @@ function allocated(abs, seen) {
  * @returns {{volumes:{dev:string, freeBytes:number, totalBytes:number,
  *            copies:{path:string, bytes:number, originPath:string|null, opId:string}[]}[]}}
  */
-export function trashUsage({ roots, statfs = fs.statfsSync }) {
+// The default looks fs.statfsSync up AT CALL TIME: capturing the method as a
+// default value would bypass the interposed fs object (c4-fs-boundary check).
+export function trashUsage({ roots, statfs = (p) => fs.statfsSync(p) }) {
   const listing = listTrash({ roots })
   const byDev = new Map()
   for (const r of listing.roots) {

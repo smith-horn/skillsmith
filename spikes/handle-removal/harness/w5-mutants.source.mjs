@@ -109,6 +109,23 @@ export const WALKER_MUTANTS = {
     ],
   },
   'misplace-revert': { name: 'misplace-revert', file: W, edits: [MISPLACE_REVERT] },
+  // Sol c2 finding 1: a NAMED-import alias of rmSync never goes through the fs
+  // default object, so the interposer never records it and the trace check
+  // cannot see it. Only the static fs boundary check can reject it.
+  'alias-rmsync': {
+    name: 'alias-rmsync',
+    file: W,
+    edits: [
+      {
+        find: "import fs from 'node:fs'\n",
+        replace: "import fs from 'node:fs'\nimport { rmSync as erase } from 'node:fs'\n",
+      },
+      {
+        find: '    fs.rmdirSync(job.opDir)',
+        replace: '    erase(job.opDir, { recursive: true, force: true })',
+      },
+    ],
+  },
   // Sol c1 finding 3: P4g's empty-op-dir rmdir becomes a recursive, forced delete,
   // which erases anything else in the op dir. The trace check must FAIL it.
   'opdir-rmsync': {

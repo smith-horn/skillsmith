@@ -134,10 +134,21 @@ if (want('T9')) {
     ])
     check('T9 kept/stage-failed', `${item.status}/${item.reason}`, 'kept/stage-failed')
     check('T9 errno reported', item.errno, 'EXDEV')
-    const userDestructive = (t?.trace ?? []).filter(
+    // Our own metadata: rmdir of S, and (c2) the unlink of the random name that
+    // S/intent.json was renamed to -- only if a rename moved it to that exact name.
+    const tr = t?.trace ?? []
+    const metaRandom = new Set(
+      tr
+        .filter(
+          (e) => e.fn === 'renameSync' && /\.prune-[0-9a-f]{16}\/intent\.json$/.test(e.a0 ?? '')
+        )
+        .map((e) => e.a1)
+    )
+    const userDestructive = tr.filter(
       (e) =>
         ['unlinkSync', 'rmdirSync', 'rmSync'].includes(e.fn) &&
-        !/\.prune-[0-9a-f]{16}(\/intent\.json)?$/.test(e.a0 ?? '')
+        !/\.prune-[0-9a-f]{16}$/.test(e.a0 ?? '') &&
+        !(e.fn === 'unlinkSync' && metaRandom.has(e.a0))
     )
     check('T9 0 destructive calls on user entries', userDestructive.length, 0)
     check('T9 the copy is untouched', exists(c.copyPath) && snapshotTree(c.copyPath), snap)
