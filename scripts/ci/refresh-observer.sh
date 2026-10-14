@@ -11,16 +11,21 @@
 #
 # Dead-man contract: the `refresh:observer` heartbeat row is the LAST thing written, and
 # only after the secrets were present, the RPC answered 2xx with a well-formed body, and
-# any alert was delivered with 200. Every other outcome exits 1 without a heartbeat, so
-# the pg_cron check_refresh_observer_heartbeat() sees the heartbeat age and pages.
+# any alert was delivered (HTTP 200 AND body data.sent === true). Every other outcome exits
+# 1 without a heartbeat, so the pg_cron check_refresh_observer_heartbeat() sees the
+# heartbeat age and pages. An unhealthy run with alerting disabled also writes NO heartbeat
+# (exit 0): the kill switch must not be able to silence the pg_cron dead-man indefinitely.
 #
-# Exit 0: healthy, or unhealthy and the alert was delivered (or alerting is disabled).
-# Exit 1: missing secret, RPC failure, malformed body, alert not delivered (non-200),
-#         or the heartbeat insert failed.
+# Exit 0: healthy, or unhealthy and the alert was delivered, or unhealthy with alerting
+#         disabled (no heartbeat in that case).
+# Exit 1: missing secret, RPC failure, malformed body (including a timestamp more than 5
+#         minutes in the future), alert not delivered (non-200, unparseable body, or
+#         data.sent !== true), or the heartbeat insert failed.
 #
 # Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (required), GITHUB_RUN_ID, GITHUB_SERVER_URL,
 #      GITHUB_REPOSITORY, GITHUB_STEP_SUMMARY, SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE
-#      (=1 reports to the step summary only), REFRESH_OBSERVER_NOW (test seam: ISO-8601
+#      (=1 reports to the step summary only and withholds the heartbeat while unhealthy),
+#      REFRESH_OBSERVER_NOW (test seam: ISO-8601
 #      instant standing in for the current time).
 set -euo pipefail
 
@@ -42,14 +47,15 @@ WORK="$(mktemp -d)" || { echo "::error::refresh-observer: mktemp failed"; exit 1
 trap 'rm -rf "$WORK"' EXIT
 
 # Prints the HTTP status on stdout; the response body lands in $2. A curl that did not
-# complete yields "000" so every caller treats it as a non-2xx.
+# complete yields "000" so every caller treats it as a non-2xx. The service-role key travels
+# in a curl config on stdin (-K -), written by the printf builtin, so it never appears in
+# curl's argv (visible to every process on the runner via ps).
 post_json() {
   local url="$1" out="$2" body="$3" code
-  if code=$(curl -sS --max-time 60 -o "$out" -w '%{http_code}' -X POST \
-    -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
-    -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "$body" "$url" 2>"$WORK/curl.err"); then
+  if code=$(printf 'header = "apikey: %s"\nheader = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' \
+    "$SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_SERVICE_ROLE_KEY" |
+    curl -sS --max-time 60 -K - -o "$out" -w '%{http_code}' -X POST \
+      -d "$body" "$url" 2>"$WORK/curl.err"); then
     echo "$code"
   else
     echo "000"
@@ -80,12 +86,17 @@ if (!Array.isArray(h.failures)) out("INVALID", [], "failures is not an array")
 const now = nowIso ? Date.parse(nowIso) : Date.now()
 if (Number.isNaN(now)) out("INVALID", [], "the observer clock is not a valid instant")
 const windowMs = Number(hoursStr) * 3600 * 1000
+const FUTURE_SKEW_MS = 5 * 60 * 1000
 const age = (key) => {
   const v = h[key]
   if (v === null) return { missing: true }
   if (typeof v !== "string" || Number.isNaN(Date.parse(v))) out("INVALID", [], key + " is not a timestamp")
-  return { missing: false, ms: now - Date.parse(v), at: v }
+  const ms = now - Date.parse(v)
+  if (ms < -FUTURE_SKEW_MS) out("INVALID", [], key + " is more than 5 minutes in the future")
+  return { missing: false, ms, at: v }
 }
+// last_attempt is optional (older RPC versions omit it): validate it only when present.
+if (h.last_attempt !== undefined) age("last_attempt")
 const hrs = (ms) => (ms / 3600000).toFixed(1)
 const describe = (label, a) => (a.missing ? label + ": none recorded" : label + ": " + a.at + " (" + hrs(a.ms) + "h ago)")
 const run = age("last_run"), disp = age("last_dispatch")
@@ -115,7 +126,11 @@ fi
 # --- 3. Alert when any arm tripped --------------------------------------------
 if [ "$ARMS" != "[]" ]; then
   if [ "${SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE:-}" = "1" ]; then
+    # No heartbeat: with alerting off, the pg_cron dead-man is the only remaining pager and
+    # it must see the heartbeat age while the refresh stays unhealthy.
     summary "UNHEALTHY, alert POST disabled (SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE=1). Arms: ${ARMS}. ${MESSAGE}"
+    echo "::warning::refresh-observer: the refresh is unhealthy and alerting is disabled -- no heartbeat written, so the pg_cron dead-man will page once the last heartbeat is stale."
+    exit 0
   else
     ALERT_BODY="$(node -e '
       const [message, runId, runUrl] = process.argv.slice(1)
@@ -125,6 +140,16 @@ if [ "$ARMS" != "[]" ]; then
     summary "UNHEALTHY. Arms: ${ARMS}. alert-notify HTTP ${ALERT_CODE}. ${MESSAGE}"
     if [ "$ALERT_CODE" != "200" ]; then
       echo "::error::refresh-observer: alert-notify returned ${ALERT_CODE} -- the alert was NOT delivered (no heartbeat)."
+      exit 1
+    fi
+    # alert-notify answers 200 even when the email send failed: delivery is data.sent === true.
+    if ! node -e '
+      try {
+        const b = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
+        process.exit(b !== null && typeof b === "object" && b.data != null && b.data.sent === true ? 0 : 1)
+      } catch { process.exit(1) }
+    ' "$WORK/alert.out"; then
+      echo "::error::refresh-observer: alert-notify answered 200 but the body does not report data.sent === true -- the alert was NOT delivered (no heartbeat)."
       exit 1
     fi
   fi

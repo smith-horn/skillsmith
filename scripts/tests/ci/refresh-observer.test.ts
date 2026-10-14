@@ -21,7 +21,8 @@ const SCRIPT = join(REPO_ROOT, 'scripts', 'ci', 'refresh-observer.sh')
 const NOW = '2026-10-13T12:00:00Z'
 const hoursAgo = (h: number) => new Date(Date.parse(NOW) - h * 3600_000).toISOString()
 
-// Records "<kind>" per call in order, keeps each request body, and answers per kind.
+// Records "<kind>" per call in order, keeps each request body, argv and any curl config
+// read from stdin (-K -), and answers per kind.
 const CURL_STUB = `#!/usr/bin/env bash
 out=""; body=""; prev=""; url=""
 for a in "$@"; do
@@ -34,12 +35,13 @@ for a in "$@"; do
 done
 case "$url" in
   *rpc/refresh_metadata_health) kind=rpc; code="$STUB_RPC_CODE"; resp="$STUB_RPC_BODY" ;;
-  *functions/v1/alert-notify) kind=alert; code="$STUB_ALERT_CODE"; resp='{}' ;;
+  *functions/v1/alert-notify) kind=alert; code="$STUB_ALERT_CODE"; resp="$STUB_ALERT_BODY" ;;
   *rest/v1/audit_logs) kind=heartbeat; code="$STUB_HB_CODE"; resp='' ;;
   *) kind=other; code=599; resp='' ;;
 esac
 echo "$kind" >> "$STUB_DIR/calls.log"
 printf '%s' "$*" > "$STUB_DIR/$kind.args"
+case " $* " in *" -K - "*) cat > "$STUB_DIR/$kind.config" ;; esac
 printf '%s' "$body" > "$STUB_DIR/$kind.body"
 [ -n "$out" ] && printf '%s' "$resp" > "$out"
 [ "$code" = "000" ] && exit 7
@@ -49,6 +51,7 @@ printf '%s' "$code"
 interface Health {
   last_run: string | null
   last_dispatch: string | null
+  last_attempt?: string | null
   failures: unknown[]
   unknown_count: number
 }
@@ -70,6 +73,7 @@ interface Opts {
   rpcBody?: string
   rpcCode?: string
   alertCode?: string
+  alertResponse?: string
   hbCode?: string
   env?: Record<string, string | undefined>
 }
@@ -77,6 +81,7 @@ function run({
   rpcBody = JSON.stringify(healthy()),
   rpcCode = '200',
   alertCode = '200',
+  alertResponse = '{"data":{"sent":true},"meta":{}}',
   hbCode = '201',
   env = {},
 }: Opts = {}) {
@@ -90,6 +95,7 @@ function run({
     STUB_RPC_CODE: rpcCode,
     STUB_RPC_BODY: rpcBody,
     STUB_ALERT_CODE: alertCode,
+    STUB_ALERT_BODY: alertResponse,
     STUB_HB_CODE: hbCode,
     SUPABASE_URL: 'https://example.invalid',
     SUPABASE_SERVICE_ROLE_KEY: 'service-key-for-test',
@@ -118,6 +124,12 @@ function run({
     alert: alertBody ? (JSON.parse(alertBody) as Record<string, string>) : null,
     heartbeat: read('heartbeat.body') ? JSON.parse(read('heartbeat.body')) : null,
     summary: read('summary.md'),
+    args: Object.fromEntries(
+      ['rpc', 'alert', 'heartbeat'].map((k) => [k, read(`${k}.args`)])
+    ) as Record<string, string>,
+    config: Object.fromEntries(
+      ['rpc', 'alert', 'heartbeat'].map((k) => [k, read(`${k}.config`)])
+    ) as Record<string, string>,
     secretLeaked: (r.stdout + r.stderr + read('summary.md')).includes('service-key-for-test'),
   }
 }
@@ -187,6 +199,31 @@ describe('refresh-observer.sh', () => {
       expect(r.alert?.message).toMatch(/10\.0h ago/)
       expect(r.heartbeat?.metadata.arms).toEqual(['stale', 'dispatch_stale', 'failures'])
     })
+
+    it('fresh last_run, one run_failed failure => POST naming it, last_attempt accepted', () => {
+      const runFailed = {
+        dispatched_at: hoursAgo(1),
+        kind: 'run_failed',
+        status_code: null,
+        error_msg: 'upstream 500',
+      }
+      const r = run({
+        rpcBody: JSON.stringify(healthy({ last_attempt: hoursAgo(1), failures: [runFailed] })),
+      })
+      expect(r.status, r.out).toBe(0)
+      expect(r.calls).toContain('alert')
+      expect(r.alert?.message).toMatch(/failures/)
+      expect(r.alert?.message).toMatch(/run_failed/)
+      expect(r.heartbeat?.metadata.arms).toEqual(['failures'])
+    })
+
+    it('last_attempt null or absent is accepted (healthy control)', () => {
+      for (const over of [{ last_attempt: null }, {}]) {
+        const r = run({ rpcBody: JSON.stringify(healthy(over)) })
+        expect(r.status, r.out).toBe(0)
+        expect(r.calls).not.toContain('alert')
+      }
+    })
   })
 
   describe('dead-man: no heartbeat unless the whole run succeeded', () => {
@@ -222,6 +259,15 @@ describe('refresh-observer.sh', () => {
         JSON.stringify({ last_run: hoursAgo(1), last_dispatch: hoursAgo(1) }),
       ],
       ['a non-timestamp last_run', JSON.stringify(healthy({ last_run: 'yesterday-ish' }))],
+      ['a last_run 6 minutes in the future', JSON.stringify(healthy({ last_run: hoursAgo(-0.1) }))],
+      [
+        'a last_attempt 6 minutes in the future',
+        JSON.stringify(healthy({ last_attempt: hoursAgo(-0.1) })),
+      ],
+      [
+        'a last_dispatch 6 minutes in the future',
+        JSON.stringify(healthy({ last_dispatch: hoursAgo(-0.1) })),
+      ],
     ])('RPC returns %s with 200 => exit 1, no heartbeat', (_l, body) => {
       const r = run({ rpcBody: body })
       expect(r.status, r.out).toBe(1)
@@ -242,6 +288,29 @@ describe('refresh-observer.sh', () => {
       }
     )
 
+    it.each([
+      ['sent:false', '{"data":{"sent":false}}'],
+      ['an unparseable body', 'upstream connect error'],
+      ['an empty body', ''],
+      ['a body without data', '{}'],
+      ['sent as the string "true"', '{"data":{"sent":"true"}}'],
+    ])('stale fixture, alert-notify 200 with %s => exit 1, no heartbeat', (_l, alertResponse) => {
+      const r = run({ rpcBody: JSON.stringify(healthy({ last_run: hoursAgo(10) })), alertResponse })
+      expect(r.status, r.out).toBe(1)
+      expect(r.calls).toContain('alert')
+      expect(r.calls).not.toContain('heartbeat')
+      expect(r.out).toMatch(/::error::/)
+    })
+
+    it('stale fixture, alert-notify 200 with sent:true => exit 0 with heartbeat (control)', () => {
+      const r = run({
+        rpcBody: JSON.stringify(healthy({ last_run: hoursAgo(10) })),
+        alertResponse: '{"data":{"sent":true}}',
+      })
+      expect(r.status, r.out).toBe(0)
+      expect(r.calls[r.calls.length - 1]).toBe('heartbeat')
+    })
+
     it('healthy fixture but the heartbeat insert is refused => exit 1', () => {
       const r = run({ hbCode: '401' })
       expect(r.status, r.out).toBe(1)
@@ -250,16 +319,23 @@ describe('refresh-observer.sh', () => {
   })
 
   describe('SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE=1', () => {
-    it('stale fixture => no alert POST, heartbeat still written, summary names the arm', () => {
+    it('stale fixture => no alert POST, NO heartbeat, warning, exit 0, summary names the arm', () => {
       const r = run({
         rpcBody: JSON.stringify(healthy({ last_run: hoursAgo(10) })),
         env: { SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE: '1' },
       })
       expect(r.status, r.out).toBe(0)
       expect(r.calls).not.toContain('alert')
-      expect(r.calls[r.calls.length - 1]).toBe('heartbeat')
+      expect(r.calls).not.toContain('heartbeat')
+      expect(r.out).toMatch(/::warning::/)
       expect(r.summary).toMatch(/stale/)
-      expect(r.heartbeat?.metadata.arms).toEqual(['stale'])
+    })
+
+    it('healthy fixture => heartbeat still written (the switch only gates alerting)', () => {
+      const r = run({ env: { SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE: '1' } })
+      expect(r.status, r.out).toBe(0)
+      expect(r.calls[r.calls.length - 1]).toBe('heartbeat')
+      expect(r.out).not.toMatch(/::warning::/)
     })
 
     it('only the exact value "1" disables the alert', () => {
@@ -268,6 +344,22 @@ describe('refresh-observer.sh', () => {
         env: { SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE: 'true' },
       })
       expect(r.calls).toContain('alert')
+    })
+  })
+
+  describe('service-role key handling', () => {
+    it('the key is in no curl argv, but every request still carries it via the stdin config', () => {
+      const r = run({ rpcBody: JSON.stringify(healthy({ last_run: hoursAgo(10) })) })
+      expect(r.calls).toEqual(['rpc', 'alert', 'heartbeat'])
+      for (const k of ['rpc', 'alert', 'heartbeat']) {
+        expect(r.args[k], `${k} argv`).not.toContain('service-key-for-test')
+        // Presence: the stub saw the key where curl would read it, so the absence above
+        // is not vacuous.
+        expect(r.config[k], `${k} stdin config`).toContain('apikey: service-key-for-test')
+        expect(r.config[k], `${k} stdin config`).toContain(
+          'Authorization: Bearer service-key-for-test'
+        )
+      }
     })
   })
 

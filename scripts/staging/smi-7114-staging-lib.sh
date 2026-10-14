@@ -241,3 +241,86 @@ summary_exit() {
   fi
   return 0
 }
+
+# ---------------------------------------------------------------------------------------------
+# Mutation (RED) checks for smi-7114-refresh-faults.sh. Kept here so the harness files stay under
+# the 500-line limit. Each mutation is (regexp over pg_get_functiondef text, replacement) and must
+# match its function EXACTLY ONCE (checked at run time).
+# ---------------------------------------------------------------------------------------------
+# Mutations (plan RED TESTS column). Each is (regexp over pg_get_functiondef text, replacement) and
+# MUST match its function EXACTLY ONCE (checked at run time). Matched against
+# supabase/migrations/20261013000000_skills_refresh_metadata_pg_cron.sql.
+HEALTH_FN="public.refresh_metadata_health(interval)"
+DEADMAN_FN="public.check_refresh_observer_heartbeat(interval)"
+HARVEST_FN="public.harvest_refresh_dispatch_results()"
+# F1: remove the non-2xx arm (the 404 then falls to ELSE 'ok').
+MUT_F1_RE="WHEN j\\.status_code NOT BETWEEN 200 AND 299\\s+THEN 'http_error'"
+MUT_F1_TO=""
+# F2: key the transport arm on timed_out (NULL on the measured shape) instead of status_code IS NULL.
+MUT_F2_RE="WHEN j\\.status_code IS NULL(\\s+)THEN 'transport_error'"
+MUT_F2_TO="WHEN EXISTS (SELECT 1 FROM net._http_response h WHERE h.timed_out IS TRUE AND h.error_msg IS NOT DISTINCT FROM j.error_msg)\\1THEN 'transport_error'"
+# F3: collapse `unknown` into `no_response` (delete the unknown arm; the next arm catches the row).
+MUT_F3_RE="WHEN j\\.created_at < now\\(\\) - v_ttl\\s+THEN 'unknown'"
+MUT_F3_TO=""
+# DM (i): remove the SLA comparison.
+MUT_DM1_RE="IF v_age <= p_sla THEN"
+MUT_DM1_TO="IF false THEN"
+# DM (ii): drop the dedup lookup (it then finds no alert rows, so it never suppresses).
+MUT_DM2_RE="a\\.event_type = 'refresh:observer_dead_alert'"
+MUT_DM2_TO="a.event_type = 'refresh:observer_dead_alert_ZZ'"
+# F5 (i): drop the NOT EXISTS idempotence guard of the harvester (a second call then duplicates).
+MUT_F5A_RE="AND NOT EXISTS \\(\\s*SELECT 1 FROM audit_logs x\\s+WHERE x\\.event_type = 'refresh:dispatch_result'\\s+AND x\\.metadata->>'net_request_id' = d\\.rid::text\\s*\\)"
+MUT_F5A_TO=""
+# F5 (ii): the RPC ignores the durable row for status_code (live response wins).
+MUT_F5B_RE="CASE WHEN dr\\.created_at IS NOT NULL(\\s+)THEN CASE WHEN dr\\.metadata->>'status_code'"
+MUT_F5B_TO="CASE WHEN false\\1THEN CASE WHEN dr.metadata->>'status_code'"
+NO_MUT_RE="ZZ_NO_MATCH_ZZ"
+
+IFS= read -r -d '' MUT_PRELUDE <<'SQL' || true
+SELECT pg_get_functiondef(:'mut_func'::regprocedure) AS def \gset
+SELECT regexp_replace(:'def', :'mut_from', :'mut_to', 'g') AS mdef \gset
+SELECT '@@mutation_matches=' || (SELECT count(*) FROM regexp_matches(:'def', :'mut_from', 'g'))::text;
+SELECT '@@mutation_applied=' || (:'def' <> :'mdef')::text;
+SQL
+
+# mut_status: sets MUT_APPLIED=true only when the regexp CHANGED the function AND matched exactly once.
+mut_status() {
+  MUT_MATCHES=$(kv mutation_matches)
+  if [ "$(kv mutation_applied)" = "true" ] && [ "$MUT_MATCHES" = "1" ]; then
+    MUT_APPLIED=true
+  else
+    MUT_APPLIED=false
+  fi
+}
+
+# red_eval FUNC RE TO BODY [extra -v args...]: runs BODY inside BEGIN; <mutated function>; BODY; ROLLBACK.
+# Sets MUT_APPLIED/MUT_MATCHES; BODY's @@ lines are left in LAST_OUT. Returns non-zero when the SQL
+# errored (the caller records RED-UNVERIFIED: an erroring mutation is a red for the wrong reason).
+red_eval() {
+  local func="$1" re="$2" to="$3" body="$4"
+  shift 4
+  run_sql -v "mut_func=$func" -v "mut_from=$re" -v "mut_to=$to" "$@" <<<"$MUT_PRELUDE
+BEGIN;
+SELECT :'mdef' \\gexec
+$body
+ROLLBACK;" || return 1
+  mut_status
+}
+
+red_unverified() {
+  record "$1" "RED-UNVERIFIED" "the mutated function or its assertion errored in SQL (stderr above): an erroring mutation proves nothing; fix the MUT_* text"
+}
+
+# red_verdict NAME EXPECT_FIELD HEALTHY_VALUE: RED-OK iff the mutation applied once AND the field changed.
+red_verdict() {
+  local name="$1" field="$2" healthy="$3" observed
+  observed=$(kv "$field")
+  if [ "$MUT_APPLIED" != "true" ]; then
+    record "$name" "RED-UNVERIFIED" "mutation regexp matched $MUT_MATCHES time(s) (need exactly 1) / did not change the function -- update MUT_* to match the migration; nothing was proven"
+  elif [ "$observed" != "$healthy" ]; then
+    record "$name" "RED-OK" "under the mutation $field=$observed (healthy value $healthy): the assertion would FAIL"
+  else
+    record "$name" "FAIL" "mutation applied but $field stayed $healthy: the assertion does not constrain the mutated arm (decorative test)"
+  fi
+}
+

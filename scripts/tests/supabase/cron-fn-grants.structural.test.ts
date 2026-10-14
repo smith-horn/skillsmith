@@ -24,10 +24,15 @@ import {
 } from './cron-fn-grants.test-helpers.ts'
 
 const NEW_MIGRATION = '20261011000000_lockdown_cron_fn_grants.sql'
-// SMI-7114: its two cron-called functions are picked up by the extractor; the third (the observer's
-// read RPC) is not cron-called, so its revoke is asserted by name, as check_scan_coverage's is.
+// SMI-7114: its three cron-called functions (dispatcher, dead-man, response harvester) are picked up
+// by the extractor; the fourth (the observer's read RPC) is not cron-called, so its revoke is
+// asserted by name, as check_scan_coverage's is.
 const REFRESH_MIGRATION = '20261013000000_skills_refresh_metadata_pg_cron.sql'
-const REFRESH_CRON_FNS = ['invoke_skills_refresh_metadata', 'check_refresh_observer_heartbeat']
+const REFRESH_CRON_FNS = [
+  'invoke_skills_refresh_metadata',
+  'check_refresh_observer_heartbeat',
+  'harvest_refresh_dispatch_results',
+]
 const REFRESH_RPC = 'refresh_metadata_health'
 
 // Measured live from staging cron.job on 2026-10-11.
@@ -127,14 +132,14 @@ describe.skipIf(locked)('SMI-7114 -- the refresh functions are covered by the gr
   const mine = () => corpus.filter((f) => f.name === REFRESH_MIGRATION)
   const without7114 = () => corpus.filter((f) => f.name !== REFRESH_MIGRATION)
 
-  it('presence: the extractor finds both new cron-called functions, and neither is a violation', () => {
+  it('presence: the extractor finds all three new cron-called functions, and none is a violation', () => {
     expect(mine(), 'refresh migration present').toHaveLength(1)
     const found = cronCalledFunctions(orderedStatements(corpus))
     for (const fn of REFRESH_CRON_FNS) expect(found.has(fn), `${fn} extracted`).toBe(true)
     expect(fnNames(corpus).filter((f) => REFRESH_CRON_FNS.includes(f))).toEqual([])
   })
 
-  it('known-negative: with the migration present but its revokes removed, both are flagged', () => {
+  it('known-negative: with the migration present but its revokes removed, all three are flagged', () => {
     const stripped = mine().map((f) => ({
       ...f,
       sql: f.sql.replace(/REVOKE EXECUTE ON FUNCTION public\.[^;]*;/g, ''),
