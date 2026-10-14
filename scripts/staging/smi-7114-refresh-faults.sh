@@ -88,6 +88,7 @@ DELETED_TOTAL=0
 CHANGED_ROWS=""
 ROW_RIDS=""
 DM_T0="infinity"
+DM_RID=""
 F1_RID=""
 F1_STATUS=""
 
@@ -140,13 +141,14 @@ IFS= read -r -d '' HARNESS_PRED <<'SQL' || true
 OR (event_type = 'refresh:dispatch_result'
     AND metadata->>'net_request_id' = ANY (string_to_array(:'rids', ',')))
 OR (event_type = 'refresh:observer' AND metadata->>'harness' LIKE 'smi-7114-%')
-OR (event_type = 'refresh:observer_dead_alert' AND created_at >= :'dm_t0'::timestamptz)
+OR (event_type IN ('refresh:observer_dead_alert', 'refresh:observer_dead_alert_result')
+    AND :'dm_rid' <> '' AND metadata->>'net_request_id' = :'dm_rid')
 SQL
 
 # Deletes the harness rows, then counts what the same predicate still matches. Returns non-zero when
 # the delete errored OR any row remains (a BEFORE DELETE trigger can skip rows without an error).
 delete_rows() {
-  run_sql -v "rids=$ROW_RIDS" -v "dm_t0=$DM_T0" <<<"WITH d AS (DELETE FROM audit_logs WHERE $HARNESS_PRED RETURNING 1)
+  run_sql -v "rids=$ROW_RIDS" -v "dm_rid=$DM_RID" <<<"WITH d AS (DELETE FROM audit_logs WHERE $HARNESS_PRED RETURNING 1)
 SELECT '@@deleted=' || count(*)::text FROM d;
 SELECT '@@remaining=' || count(*)::text FROM audit_logs WHERE $HARNESS_PRED;" || return 1
   DELETED_TOTAL=$((DELETED_TOTAL + $(kv deleted)))
@@ -170,6 +172,7 @@ cleanup() {
       echo "vault secret refresh_metadata_functions_base_url: unchanged (or already restored)" >&2
     fi
     if [ "$KEEP_ROWS" = 0 ] && [ "$TOUCHED" = 1 ]; then
+      if declare -F dm_warn_foreign >/dev/null; then dm_warn_foreign || true; fi
       if delete_rows; then
         echo "audit_logs harness rows: deleted $DELETED_TOTAL in total, 0 remain (touched: $CHANGED_ROWS)" >&2
       else
@@ -177,11 +180,11 @@ cleanup() {
         echo "  LEFTOVER ROWS ARE COUNTED BY THE REAL RPC / DEAD-MAN on staging: refresh:dispatch (actor pg_cron) shows in last_dispatch /" >&2
         echo "  failures / unknown_count; refresh:observer (backdated heartbeat) makes the dead-man alert hourly; refresh:dispatch_result and" >&2
         echo "  refresh:observer_dead_alert change classification and dedup. Delete by hand: metadata.harness LIKE 'smi-7114-%'," >&2
-        echo "  net_request_id in ($ROW_RIDS), and refresh:observer_dead_alert created at or after $DM_T0." >&2
+        echo "  net_request_id in ($ROW_RIDS), and refresh:observer_dead_alert[_result] rows with net_request_id $DM_RID (ONLY that id; others are not ours)." >&2
         rc=1
       fi
     elif [ "$TOUCHED" = 1 ]; then
-      echo "audit_logs harness rows KEPT (--keep-rows) and the real RPC / dead-man on staging WILL count them: refresh:dispatch (rids $ROW_RIDS), refresh:dispatch_result, refresh:observer (harness-marked), refresh:observer_dead_alert from $DM_T0" >&2
+      echo "audit_logs harness rows KEPT (--keep-rows) and the real RPC / dead-man on staging WILL count them: refresh:dispatch (rids $ROW_RIDS), refresh:dispatch_result, refresh:observer (harness-marked), refresh:observer_dead_alert[_result] for net_request_id $DM_RID" >&2
     fi
     echo "pg_net requests sent: skills-refresh-metadata (F1, F2, overlap), alert-notify (deadman committed leg only: the one email)" >&2
   fi

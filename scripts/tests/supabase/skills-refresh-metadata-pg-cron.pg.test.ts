@@ -25,6 +25,7 @@ import {
   SERVICE_KEY,
   buildSql,
   count,
+  alertRow,
   dispatchRow,
   fixtureSql,
   inTxn,
@@ -41,6 +42,7 @@ import {
 } from './skills-refresh-metadata-pg-cron.test-helpers.ts'
 import { registerHealthTests } from './skills-refresh-metadata-pg-cron.pg-health.ts'
 import { registerDeadmanTests } from './skills-refresh-metadata-pg-cron.pg-deadman.ts'
+import { registerConcurrencyTests } from './skills-refresh-metadata-pg-cron.pg-concurrency.ts'
 
 const CALLS: Record<(typeof ALL_FNS)[number], string> = {
   [FNS.invoke]: 'SELECT public.invoke_skills_refresh_metadata();',
@@ -50,6 +52,7 @@ const CALLS: Record<(typeof ALL_FNS)[number], string> = {
 }
 const DISPATCHED = "audit_logs WHERE event_type = 'refresh:dispatch'"
 const HARVESTED = "audit_logs WHERE event_type = 'refresh:dispatch_result'"
+const HARVESTED_ALERT = "audit_logs WHERE event_type = 'refresh:observer_dead_alert_result'"
 
 describe.skipIf(noLiveTestPg)(
   'SMI-7114 -- skills-refresh-metadata pg_cron trigger, health RPC, harvester and dead-man',
@@ -310,8 +313,80 @@ describe.skipIf(noLiveTestPg)(
       })
     })
 
+    describe('case 5b: harvest_refresh_dispatch_results() -- dead-man alert responses (R2-1)', () => {
+      const HARVEST = CALLS[FNS.harvest]
+
+      it('copies one alert response into one durable row once, with the right metadata', async () => {
+        const r = await inTxn(ctl, [
+          alertRow('30 minutes', 7201),
+          responseRow(7201, 200, { content: '{"data":{"sent":true}}' }),
+          HARVEST,
+          count('after_first', HARVESTED_ALERT),
+          HARVEST,
+          count('after_second', HARVESTED_ALERT),
+          `SELECT 'rid=' || (metadata->>'net_request_id') FROM ${HARVESTED_ALERT};`,
+          `SELECT 'status=' || (metadata->>'status_code') FROM ${HARVESTED_ALERT};`,
+          `SELECT 'sent=' || (metadata->>'sent') FROM ${HARVESTED_ALERT};`,
+          `SELECT 'actor=' || actor || ',result=' || result FROM ${HARVESTED_ALERT};`,
+        ])
+        expect(r.lines).toEqual([
+          'after_first=1',
+          'after_second=1',
+          'rid=7201',
+          'status=200',
+          'sent=true',
+          'actor=pg_cron,result=ok',
+        ])
+      })
+
+      it('parses sent per row: true, false, and non-JSON / missing / NULL bodies as null, without aborting the rest', async () => {
+        const bodies: Array<[number, number, string | null]> = [
+          [7210, 200, 'not json <html>'],
+          [7211, 200, '{"data":{"sent":true}}'],
+          [7212, 200, '{"data":{"sent":false}}'],
+          [7213, 200, '{"ok":true}'],
+          [7214, 500, null],
+        ]
+        const r = await inTxn(ctl, [
+          ...bodies.flatMap(([rid, status, content]) => [
+            alertRow('30 minutes', rid),
+            responseRow(rid, status, { content }),
+          ]),
+          HARVEST,
+          count('rows', HARVESTED_ALERT),
+          `SELECT (metadata->>'net_request_id') || ':' || coalesce(metadata->>'sent', 'NULL') || ':' || result ` +
+            `FROM ${HARVESTED_ALERT} ORDER BY 1;`,
+        ])
+        expect(r.lines).toEqual([
+          'rows=5',
+          '7210:NULL:error',
+          '7211:true:ok',
+          '7212:false:error',
+          '7213:NULL:error',
+          '7214:NULL:error',
+        ])
+      })
+
+      it('ignores an alert older than 6h and an alert without a response; a control beside them is harvested', async () => {
+        const r = await inTxn(ctl, [
+          alertRow('6 hours 1 minute', 7220),
+          responseRow(7220, 200, { content: '{"data":{"sent":true}}' }),
+          alertRow('30 minutes', 7221),
+          HARVEST,
+          count('rows', HARVESTED_ALERT),
+          alertRow('30 minutes', 7222),
+          responseRow(7222, 200, { content: '{"data":{"sent":true}}' }),
+          HARVEST,
+          count('rows_after_control', HARVESTED_ALERT),
+          `SELECT 'rid=' || (metadata->>'net_request_id') FROM ${HARVESTED_ALERT};`,
+        ])
+        expect(r.lines).toEqual(['rows=0', 'rows_after_control=1', 'rid=7222'])
+      })
+    })
+
     registerHealthTests(ctx)
     registerDeadmanTests(ctx)
+    registerConcurrencyTests(ctx)
 
     // ------------------------------------------------------------------------
     // Case 1 (continued): rollback. Last in the file because it drops the objects the arms above

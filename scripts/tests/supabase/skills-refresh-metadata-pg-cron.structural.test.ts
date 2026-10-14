@@ -223,8 +223,8 @@ describe.skipIf(locked)('SMI-7114 -- skills-refresh-metadata pg_cron migration (
       /NOT EXISTS \(\s*SELECT 1 FROM audit_logs x\s+WHERE x\.event_type = 'refresh:dispatch_result'/
     )
     expect(hv).toMatch(/a\.actor = 'pg_cron'/)
-    // known-negative: without the NOT EXISTS the same predicate fails
-    expect(mutate(hv, /NOT EXISTS/, 'EXISTS')).not.toMatch(
+    // known-negative: without the NOT EXISTS (both jobs) the same predicate fails
+    expect(mutate(hv, /NOT EXISTS/g, 'EXISTS')).not.toMatch(
       /NOT EXISTS \(\s*SELECT 1 FROM audit_logs x/
     )
   })
@@ -308,6 +308,48 @@ describe.skipIf(locked)('SMI-7114 -- skills-refresh-metadata pg_cron migration (
     // known-negatives: delivery judged on the status alone is not the predicate
     expect(mutate(m, "IF v_sent = 'true' THEN", 'IF true THEN')).not.toMatch(/IF v_sent = 'true'/)
     expect(mutate(m, /\s+EXCEPTION WHEN OTHERS THEN/, '')).not.toMatch(/EXCEPTION WHEN OTHERS/)
+  })
+
+  it('R2-1: the harvester also records each dead-alert response durably, parsed defensively, idempotently', () => {
+    const hv = body(sql, FNS.harvest)
+    expect(hv).toMatch(/event_type = 'refresh:observer_dead_alert'/)
+    expect(hv).toMatch(/INSERT INTO audit_logs[\s\S]*?'refresh:observer_dead_alert_result'/)
+    for (const k of ['net_request_id', 'status_code', 'sent'])
+      expect(hv, `records ${k}`).toContain(`'${k}'`)
+    expect(hv).toMatch(
+      /NOT EXISTS \(\s*SELECT 1 FROM audit_logs x\s+WHERE x\.event_type = 'refresh:observer_dead_alert_result'/
+    )
+    expect(hv).toMatch(
+      /BEGIN\s+v_sent := \(v_alert\.content::jsonb\)[^;]*;\s+EXCEPTION WHEN OTHERS THEN/
+    )
+    // the lock is taken once, before either job
+    expect(hv.indexOf('pg_try_advisory_xact_lock')).toBeLessThan(
+      hv.indexOf("'refresh:dispatch_result'")
+    )
+    expect(mutate(hv, /\s+EXCEPTION WHEN OTHERS THEN/, '')).not.toMatch(/EXCEPTION WHEN OTHERS/)
+    // the dead-man reads the durable row before the live response
+    const m = body(sql, FNS.deadman)
+    expect(m).toMatch(/event_type = 'refresh:observer_dead_alert_result'/)
+    expect(m.indexOf("'refresh:observer_dead_alert_result'")).toBeLessThan(
+      m.indexOf('FROM net._http_response r')
+    )
+  })
+
+  it('R2-2: the dead-man takes its own advisory xact lock right after the SLA check, before any dedup read', () => {
+    const m = body(sql, FNS.deadman)
+    const hv = body(sql, FNS.harvest)
+    const lock =
+      /pg_try_advisory_xact_lock\(hashtextextended\('check_refresh_observer_heartbeat', 0\)\)/
+    expect(m).toMatch(lock)
+    expect(m).toMatch(/IF NOT pg_try_advisory_xact_lock\([^;]*THEN\s+RETURN;/)
+    expect(m.search(lock)).toBeGreaterThan(m.search(/IF v_age <= p_sla THEN/))
+    expect(m.search(lock)).toBeLessThan(m.indexOf("event_type = 'refresh:observer_dead_alert'"))
+    expect(m.search(lock)).toBeLessThan(m.indexOf('vault.decrypted_secrets'))
+    // the two keys are different literals (hashes are compared on a live server in the pg suite)
+    expect(hv).not.toMatch(/check_refresh_observer_heartbeat/)
+    expect(mutate(m, "hashtextextended('check_refresh_observer_heartbeat', 0)", '1')).not.toMatch(
+      lock
+    )
   })
 
   it('M-E: the migration smoke runs the dead-man with a 1000-year SLA and the harvester', () => {

@@ -128,6 +128,80 @@ export function registerDeadmanTests(ctx: Ctx): void {
       expect(r.lines).toEqual([`posts=${expected}`, `alerts=${1 + expected}`, 'errors=0'])
     })
 
+    describe('R2-1: a delivered alert keeps suppressing after pg_net purges its response', () => {
+      const HARVEST = 'SELECT public.harvest_refresh_dispatch_results();'
+      const PURGE = 'DELETE FROM net._http_response;' // pg_net's 6h TTL purge
+
+      it('delivered, response purged WITHOUT a harvest: the next call re-alerts (residual when the harvester is dead)', async () => {
+        const r = await inTxn(ctx.ctl(), [
+          standardSecrets(),
+          heartbeatRow(DEAD),
+          alertRow('2 hours', 7101),
+          responseRow(7101, 200, { content: SENT }),
+          CALL,
+          posts,
+          PURGE,
+          CALL,
+          posts,
+        ])
+        expect(r.lines).toEqual(['posts=0', 'posts=1'])
+      })
+
+      it('delivered, harvested, THEN purged: the next call does not re-alert', async () => {
+        const r = await inTxn(ctx.ctl(), [
+          standardSecrets(),
+          heartbeatRow(DEAD),
+          alertRow('2 hours', 7102),
+          responseRow(7102, 200, { content: SENT }),
+          HARVEST,
+          count('durable', "audit_logs WHERE event_type = 'refresh:observer_dead_alert_result'"),
+          PURGE,
+          CALL,
+          posts,
+          alerts,
+        ])
+        expect(r.lines).toEqual(['durable=1', 'posts=0', 'alerts=1'])
+      })
+
+      it.each([
+        ['non-2xx', 500, SENT],
+        ['2xx with sent false', 200, '{"data":{"sent":false}}'],
+        ['2xx with a non-JSON body', 200, 'not json <html>'],
+      ] as Array<[string, number, string]>)(
+        'harvested as %s, then purged: the next call re-alerts',
+        async (_label, status, content) => {
+          const r = await inTxn(ctx.ctl(), [
+            standardSecrets(),
+            heartbeatRow(DEAD),
+            alertRow('2 hours', 7103),
+            responseRow(7103, status, { content }),
+            HARVEST,
+            PURGE,
+            CALL,
+            posts,
+          ])
+          expect(r.lines).toEqual(['posts=1'])
+        }
+      )
+
+      it('a durable "not delivered" row is authoritative over a live "delivered" response', async () => {
+        const r = await inTxn(ctx.ctl(), [
+          standardSecrets(),
+          heartbeatRow(DEAD),
+          alertRow('2 hours', 7104),
+          responseRow(7104, 500),
+          HARVEST,
+          // The same request id now has a live delivered-looking response (contrived; it fixes the
+          // precedence: the durable record decides, not whichever source says "delivered").
+          'DELETE FROM net._http_response;',
+          responseRow(7104, 200, { content: SENT }),
+          CALL,
+          posts,
+        ])
+        expect(r.lines).toEqual(['posts=1'])
+      })
+    })
+
     it('an unparseable request id on the earlier alert neither raises nor stops the pending window', async () => {
       const r = await inTxn(ctx.ctl(), [
         standardSecrets(),

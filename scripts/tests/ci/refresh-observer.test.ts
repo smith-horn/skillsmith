@@ -348,17 +348,46 @@ describe('refresh-observer.sh', () => {
   })
 
   describe('service-role key handling', () => {
-    it('the key is in no curl argv, but every request still carries it via the stdin config', () => {
+    // Built from short pieces so no single 44+ character run of word characters sits in the source.
+    const b62 = 'aB3dE5fG7hJ9kL1mN3pQ'
+    const keys: Array<[string, string]> = [
+      ['plain', 'service-key-for-test'],
+      [
+        'JWT-like',
+        ['eyJhbGciOiJIUzI1NiJ9', 'eyJyb2xlIjoic2VydmljZV9yb2xlIn0', 'abc_DEF-123'].join('.'),
+      ],
+      ['sb_secret_', 'sb_secret_' + b62 + b62],
+    ]
+    it.each(keys)(
+      'the key (%s) is in no curl argv, but every request still carries it via the stdin config',
+      (_shape, key) => {
+        const r = run({
+          rpcBody: JSON.stringify(healthy({ last_run: hoursAgo(10) })),
+          env: { SUPABASE_SERVICE_ROLE_KEY: key },
+        })
+        expect(r.calls).toEqual(['rpc', 'alert', 'heartbeat'])
+        for (const k of ['rpc', 'alert', 'heartbeat']) {
+          expect(r.args[k], `${k} argv`).not.toContain(key)
+          // Presence: the stub saw the key where curl would read it, so the absence above
+          // is not vacuous.
+          expect(r.config[k], `${k} stdin config`).toContain(`apikey: ${key}`)
+          expect(r.config[k], `${k} stdin config`).toContain(`Authorization: Bearer ${key}`)
+        }
+        expect(r.out + r.summary).not.toContain(key)
+      }
+    )
+  })
+
+  describe('operational timeout', () => {
+    it('every curl call carries --max-time between 30 and 120 seconds', () => {
       const r = run({ rpcBody: JSON.stringify(healthy({ last_run: hoursAgo(10) })) })
       expect(r.calls).toEqual(['rpc', 'alert', 'heartbeat'])
       for (const k of ['rpc', 'alert', 'heartbeat']) {
-        expect(r.args[k], `${k} argv`).not.toContain('service-key-for-test')
-        // Presence: the stub saw the key where curl would read it, so the absence above
-        // is not vacuous.
-        expect(r.config[k], `${k} stdin config`).toContain('apikey: service-key-for-test')
-        expect(r.config[k], `${k} stdin config`).toContain(
-          'Authorization: Bearer service-key-for-test'
-        )
+        const m = /(?:^|\s)--max-time\s+(\d+)(?:\s|$)/.exec(r.args[k])
+        expect(m, `${k} has --max-time in argv: ${r.args[k]}`).not.toBeNull()
+        const secs = Number(m?.[1])
+        expect(secs, `${k} --max-time`).toBeGreaterThanOrEqual(30)
+        expect(secs, `${k} --max-time`).toBeLessThanOrEqual(120)
       }
     })
   })

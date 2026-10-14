@@ -125,29 +125,43 @@ test_deadman() {
 dm_committed_leg() {
   local cnt alerts arid
   DM_T0=$(db_clock) || return 1
-  run_sql <<'SQL' || { record "deadman-200" "INCONCLUSIVE" "committed leg failed"; return 0; }
+  # OWNERSHIP (SMI-7114 R2-3). The insert, the real call and currval run in ONE psql session and ONE
+  # transaction, so currval returns the pg_net request id this very call enqueued (currval is
+  # session-local: a concurrent cron or operator call cannot move it). Measured on prod by the queen:
+  # pg_get_serial_sequence('net.http_request_queue','id') = net.http_request_queue_id_seq and
+  # net.http_post(url, body, params, headers, timeout_milliseconds) inserts into net.http_request_queue.
+  # The precondition in the main script still checks the sequence name on staging. If no POST happened,
+  # currval raises, ON_ERROR_STOP aborts, and the whole transaction (heartbeat, alert row, queued
+  # request) rolls back: nothing is owned and nothing is left behind.
+  run_sql <<'SQL' || { record "deadman-200" "INCONCLUSIVE" "committed leg failed or made no pg_net request (rolled back; nothing owned)"; return 0; }
 SELECT last_value - CASE WHEN is_called THEN 0 ELSE 1 END AS s0 FROM net.http_request_queue_id_seq \gset
+BEGIN;
 INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
 VALUES ('refresh:observer', 'staging-harness', 'heartbeat', 'ok', '{"harness":"smi-7114-dm"}'::jsonb, now() - interval '17 hours');
 DO $$ BEGIN PERFORM public.check_refresh_observer_heartbeat('16 hours'); END $$;
+SELECT currval('net.http_request_queue_id_seq') AS rid \gset
 SELECT last_value - CASE WHEN is_called THEN 0 ELSE 1 END AS s1 FROM net.http_request_queue_id_seq \gset
+COMMIT;
 SELECT '@@count=' || (:s1 - :s0)::text;
+SELECT '@@rid=' || :rid::text;
 SQL
+  DM_RID=$(kv rid)
   CHANGED_ROWS="${CHANGED_ROWS:+$CHANGED_ROWS }deadman"
   cnt=$(kv count)
-  if [ "$cnt" != 1 ]; then
-    record "deadman-200" "INCONCLUSIVE" "expected exactly 1 pg_net request, saw $cnt (another pg_net user on staging? re-run when quiet)"; return 0
+  if [ -z "$DM_RID" ]; then
+    record "deadman-200" "INCONCLUSIVE" "no owned pg_net request id was captured"; return 0
   fi
-  run_sql -v "t0=$DM_T0" <<'SQL' || { record "deadman-200" "INCONCLUSIVE" "alert-row query failed"; return 0; }
+  if [ "$cnt" != 1 ]; then
+    record "deadman-200" "INCONCLUSIVE" "expected exactly 1 pg_net request, saw $cnt (another pg_net user on staging? re-run when quiet); owned request id $DM_RID"; return 0
+  fi
+  run_sql -v "rid=$DM_RID" <<'SQL' || { record "deadman-200" "INCONCLUSIVE" "alert-row query failed"; return 0; }
 SELECT '@@alerts=' || count(*)::text FROM audit_logs
- WHERE event_type = 'refresh:observer_dead_alert' AND created_at >= :'t0'::timestamptz;
-SELECT '@@arid=' || coalesce(metadata->>'net_request_id', '') FROM audit_logs
- WHERE event_type = 'refresh:observer_dead_alert' AND created_at >= :'t0'::timestamptz
- ORDER BY created_at DESC LIMIT 1;
+ WHERE event_type = 'refresh:observer_dead_alert' AND metadata->>'net_request_id' = :'rid';
 SQL
-  alerts=$(kv alerts); arid=$(kv arid)
+  alerts=$(kv alerts); arid=$DM_RID
+  dm_warn_foreign
   if [ "$alerts" != 1 ]; then
-    record "deadman-200" "FAIL" "expected exactly one refresh:observer_dead_alert row for the call, saw $alerts"; return 0
+    record "deadman-200" "FAIL" "expected exactly one refresh:observer_dead_alert row for owned request $DM_RID, saw $alerts"; return 0
   fi
   if ! poll_response "$arid" 90 "$DM_T0"; then
     record "deadman-200" "INCONCLUSIVE" "no _http_response row for alert request $arid within 90s"; return 0
@@ -160,5 +174,22 @@ SQL
     record "deadman-200" "FAIL" "alert-notify answered 200 but data.sent=$DM_SENT: no email was delivered, so the dead-man would re-alert (id $arid)"
   else
     record "deadman-200" "FAIL" "alert-notify answered status_code=$RESP_STATUS error_msg=[$RESP_ERR] (id $arid)"
+  fi
+}
+
+# Loudly names any refresh:observer_dead_alert row since DM_T0 that this harness does NOT own (a real
+# cron or operator alert). Cleanup never deletes those; this only reports them.
+dm_warn_foreign() {
+  [ "$DM_T0" != "infinity" ] || return 0
+  run_sql -v "t0=$DM_T0" -v "rid=${DM_RID:-}" <<'SQL' || return 0
+SELECT '@@foreign=' || coalesce(string_agg(event_type || ' id=' || id::text || ' created_at=' || created_at::text
+  || ' net_request_id=' || coalesce(metadata->>'net_request_id', 'NULL'), '; '), '')
+  FROM audit_logs
+ WHERE event_type IN ('refresh:observer_dead_alert', 'refresh:observer_dead_alert_result')
+   AND created_at >= :'t0'::timestamptz
+   AND metadata->>'net_request_id' IS DISTINCT FROM NULLIF(:'rid', '');
+SQL
+  if [ -n "$(kv foreign)" ]; then
+    echo "WARNING: dead-alert row(s) NOT owned by this harness appeared since $DM_T0 and were LEFT IN PLACE: $(kv foreign)" >&2
   fi
 }
