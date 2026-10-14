@@ -31,22 +31,47 @@ export function applyEdits(src, edits, label) {
   return out
 }
 
+/**
+ * The walker child is four modules (prune.walk.mjs imports the other three). A
+ * mutant touching any of them is materialized as the WHOLE family in one temp
+ * dir, family imports kept relative, so the mutated module is the one the
+ * entry actually loads. Every other relative import points at the spike.
+ */
+export const WALKER_FAMILY = [
+  'prune.walk.mjs',
+  'prune.walk.shared.mjs',
+  'prune.walk.verify.mjs',
+  'prune.walk.delete.mjs',
+]
+
 export function materialize(mutant) {
-  const src = fs.readFileSync(path.join(SPIKE, mutant.file), 'utf8')
-  let out = applyEdits(src, mutant.edits, mutant.name)
-  out = out.replace(
-    /from '\.\/([^']+)'/g,
-    (_, f) => `from '${pathToFileURL(path.join(SPIKE, f)).href}'`
-  )
-  out = out.replace(
-    /new URL\('\.\/([^']+)', import\.meta\.url\)/g,
-    (_, f) => `new URL('${pathToFileURL(path.join(SPIKE, f)).href}')`
-  )
+  const byFile = new Map()
+  for (const e of mutant.edits) {
+    const f = e.file ?? mutant.file
+    if (!byFile.has(f)) byFile.set(f, [])
+    byFile.get(f).push(e)
+  }
+  const family = [...byFile.keys()].some((f) => WALKER_FAMILY.includes(f))
+    ? WALKER_FAMILY
+    : [mutant.file]
+  for (const f of byFile.keys()) {
+    if (!family.includes(f))
+      throw new Error(`mutant ${mutant.name}: ${f} is outside its module family`)
+  }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `w5-variant-${mutant.name}-`))
   made.push(dir)
-  const p = path.join(dir, mutant.file)
-  fs.writeFileSync(p, out)
-  return p
+  for (const f of family) {
+    const src = fs.readFileSync(path.join(SPIKE, f), 'utf8')
+    let out = applyEdits(src, byFile.get(f) ?? [], `${mutant.name}:${f}`)
+    out = out.replace(/from '\.\/([^']+)'/g, (m, g) =>
+      family.includes(g) ? m : `from '${pathToFileURL(path.join(SPIKE, g)).href}'`
+    )
+    out = out.replace(/new URL\('\.\/([^']+)', import\.meta\.url\)/g, (m, g) =>
+      family.includes(g) ? m : `new URL('${pathToFileURL(path.join(SPIKE, g)).href}')`
+    )
+    fs.writeFileSync(path.join(dir, f), out)
+  }
+  return path.join(dir, family === WALKER_FAMILY ? 'prune.walk.mjs' : mutant.file)
 }
 
 /**

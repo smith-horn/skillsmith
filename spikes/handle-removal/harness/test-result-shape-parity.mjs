@@ -67,8 +67,7 @@ const CONTRACT_FIELDS = [
   'sidecarPath',
   'detail',
   'fallbackTrigger',
-  // SMI-6715 Step 1b (C4 repair, D-8): a `held` result names where the tree was
-  // and where it is now. Declared, not passed through, per the F13 lesson.
+  // SMI-6715 Step 1b (D-8): a `held` result names where the tree was and is now (F13: declared).
   'originPath',
   'heldPath',
   'misplaced', // misplaced: SMI-7123 W5 prune's entry-misplaced report (§3.3)
