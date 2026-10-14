@@ -125,10 +125,13 @@ test_deadman() {
 dm_committed_leg() {
   local cnt alerts arid
   DM_T0=$(db_clock) || return 1
-  # OWNERSHIP (SMI-7114 R2-3, R3). The insert and the real call run in ONE psql session and ONE
-  # transaction. The owned request id is read from the dead_alert row whose created_at equals this
-  # transaction's now(): the function inserts that row with the column default, so only a row written
-  # by THIS transaction matches. Not currval: under a transaction-mode pooler a reused backend can
+  # OWNERSHIP (SMI-7114 R2-3, R3, gate). The insert and the real call run in ONE psql session and ONE
+  # transaction. The owned request id is read from the dead_alert row that (a) has created_at equal to
+  # this transaction's now() (the function inserts it with the column default), (b) is pg_cron/alert,
+  # and (c) was NOT already visible before the call (snapshot `pre`; audit_logs.id is a text uuid, so
+  # there is no max-id ordering to snapshot instead). Timestamp equality alone is not unique ownership;
+  # with the snapshot, any ambiguity shows up as zero or 2+ rows, which \gset rejects (psql exits 3,
+  # measured), so the transaction rolls back and nothing is owned. Not currval: under a transaction-mode pooler a reused backend can
   # still hold another client's currval, so a call that made no POST would "own" someone else's id
   # (round-3 cross-family finding). If no row matches, \gset fails, ON_ERROR_STOP aborts, and the whole
   # transaction (heartbeat, queued request) rolls back: nothing is owned and nothing is left behind.
@@ -137,11 +140,15 @@ dm_committed_leg() {
   run_sql <<'SQL' || { record "deadman-200" "INCONCLUSIVE" "committed leg failed or made no pg_net request (rolled back; nothing owned)"; return 0; }
 SELECT last_value - CASE WHEN is_called THEN 0 ELSE 1 END AS s0 FROM net.http_request_queue_id_seq \gset
 BEGIN;
+SELECT coalesce(string_agg(id::text, ','), '') AS pre FROM audit_logs
+ WHERE event_type = 'refresh:observer_dead_alert' AND created_at = now() \gset
 INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
 VALUES ('refresh:observer', 'staging-harness', 'heartbeat', 'ok', '{"harness":"smi-7114-dm"}'::jsonb, now() - interval '17 hours');
 DO $$ BEGIN PERFORM public.check_refresh_observer_heartbeat('16 hours'); END $$;
 SELECT metadata->>'net_request_id' AS rid FROM audit_logs
- WHERE event_type = 'refresh:observer_dead_alert' AND created_at = now() \gset
+ WHERE event_type = 'refresh:observer_dead_alert' AND created_at = now()
+   AND actor = 'pg_cron' AND action = 'alert'
+   AND NOT (id::text = ANY (string_to_array(:'pre', ','))) \gset
 SELECT last_value - CASE WHEN is_called THEN 0 ELSE 1 END AS s1 FROM net.http_request_queue_id_seq \gset
 COMMIT;
 SELECT '@@count=' || (:s1 - :s0)::text;
