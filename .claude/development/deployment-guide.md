@@ -406,7 +406,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 
 | Job | Schedule | Function |
 |-----|----------|----------|
-| Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
+| Skill Indexer | Maintenance 00:00 UTC, recheck 03:00 UTC (SMI-5166), discovery in three hourly phase slots per 6h cycle at 06/07/08, 12/13/14 and 18/19/20 UTC (SMI-4870); `.github/workflows/indexer.yml` `schedule:` is the source of truth | `indexer` |
 | Metadata Refresh | GitHub `refresh-metadata.yml` every 4h :30 (SMI-4121), plus Supabase pg_cron `32 2-22/4 * * *` (`invoke_skills_refresh_metadata()`, explicit 300000 ms pg_net timeout, one `refresh:dispatch` audit row per successful dispatcher run; a run that raises, for example on a missing vault secret, writes none and shows as `failed` in `cron.job_run_details`) once migration `20261013000000` is applied (SMI-7114). SMI-7114 W3b turns the GitHub schedule into the observer below | `skills-refresh-metadata` |
 | Refresh Observer (SMI-7114) | GitHub `refresh-metadata.yml` schedule, from W3b | `scripts/ci/refresh-observer.sh` reads `refresh_metadata_health()` and alerts `refresh_unhealthy` on `stale` / `dispatch_stale` (9h) or `failures`; writes a `refresh:observer` heartbeat only after a fully successful run |
 | Refresh Response Harvester (SMI-7114) | Hourly at :43 (`43 * * * *`) | Supabase pg_cron (`harvest_refresh_dispatch_results()`): copies pg_net responses for refresh dispatches and dead-man alerts into durable `refresh:dispatch_result` / `refresh:observer_dead_alert_result` rows inside pg_net's 6h TTL |
