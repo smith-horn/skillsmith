@@ -95,7 +95,7 @@ export function runOnce({ harnessRoot, candidate, subcase, window, dirs, traceDi
           throw new Error('hard-link fixture invalid: tree link is not the outside file inode')
         }
         const rel = path.relative(treeRoot, hardlinkAbs)
-        if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+        if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
           throw new Error('hard-link fixture invalid: link is not under the tree')
         }
         if (outside.nlink < 2n) {

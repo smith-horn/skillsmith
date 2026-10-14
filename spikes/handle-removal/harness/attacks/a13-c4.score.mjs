@@ -32,7 +32,7 @@ import path from 'node:path'
 /** Normalises a racer path to a tree-relative POSIX path, or throws. */
 function rel(treeRoot, p) {
   const r = path.relative(treeRoot, p)
-  if (r === '' || r.startsWith('..') || path.isAbsolute(r)) {
+  if (r === '' || r === '..' || r.startsWith('..' + path.sep) || path.isAbsolute(r)) {
     throw new Error(`a13-c4.score: racer path ${p} is not inside the tree ${treeRoot}`)
   }
   return r.split(path.sep).join('/')

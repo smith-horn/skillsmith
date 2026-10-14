@@ -72,7 +72,7 @@ export function scoringDir(fxRoot, r, absPath) {
   const res = r.result
   if (res?.status !== 'held') return absPath
   const rel = path.relative(path.join(fxRoot, 'tree'), absPath)
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
     throw new TypeError(`scoringDir: ${absPath} is not inside ${path.join(fxRoot, 'tree')}`)
   }
   if (typeof res.path !== 'string') throw new TypeError('scoringDir: held result has no path')
@@ -205,7 +205,7 @@ export function c4Extra(r, label, window, more, traceDir) {
 
 const isInsideDir = (child, parent) => {
   const rel = path.relative(parent, child)
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+  return rel !== '' && !(rel === '..' || rel.startsWith('..' + path.sep)) && !path.isAbsolute(rel)
 }
 
 /**
@@ -234,7 +234,8 @@ export function trashHasSymlink(fxRoot, originalAbs, linkTarget, where) {
     throw new TypeError(`trashHasSymlink: destination ${destination} is not inside ${trashRoot}`)
   }
   const rel = path.relative(path.resolve(originRoot), path.resolve(originalAbs))
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return false
+  if (rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel))
+    return false
   let cur = path.resolve(destination)
   for (const part of rel.split(path.sep)) {
     let st

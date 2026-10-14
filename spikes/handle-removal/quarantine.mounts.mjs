@@ -41,7 +41,7 @@ export function parseMountInfo(text) {
 const atOrUnder = (mp, dir) => {
   if (mp === dir) return true
   const rel = path.relative(dir, mp)
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+  return rel !== '' && !(rel === '..' || rel.startsWith('..' + path.sep)) && !path.isAbsolute(rel)
 }
 
 /** Mount points in `text` equal to `dir` or below it (never a name-prefix sibling). */

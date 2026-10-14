@@ -30,6 +30,15 @@ const TEXT = [
   '',
 ].join('\n')
 
+// SMI-7123 (Wave 5 design review): a child whose NAME starts with '..' is inside the tree.
+// `path.relative` returns '..foo' for it, which a bare startsWith('..') test reads as an escape.
+const DOTDOT_TEXT = [
+  '110 22 0:21 /work/src /work/tree/..foo rw - overlay overlay rw',
+  '111 22 0:21 /work/src /work/tree/... rw - overlay overlay rw',
+  '112 22 0:21 /work/src /work/..escape rw - overlay overlay rw',
+  '',
+].join('\n')
+
 check('M1 every mount point is parsed (field 5)', parseMountInfo(TEXT).length, 7)
 check('M2 \\040 unescapes to a space', parseMountInfo(TEXT).includes('/work/tree/with space'), true)
 check(
@@ -51,6 +60,11 @@ check(
 check('M5 an unrelated directory has none', mountPointsAtOrUnder('/elsewhere', TEXT), [])
 check('M6 / matches every mount', mountPointsAtOrUnder('/', TEXT).length, 7)
 check('M7 a malformed line is skipped, not thrown on', parseMountInfo('garbage\n\n'), [])
+check(
+  'M8 a child named ..foo or ... is under the tree; a sibling named ..escape is not',
+  mountPointsAtOrUnder('/work/tree', DOTDOT_TEXT).sort(),
+  ['/work/tree/...', '/work/tree/..foo'].sort()
+)
 
 if (!allOk) {
   console.log(`${TAG} SOME CASES FAILED`)

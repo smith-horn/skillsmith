@@ -19,7 +19,7 @@ const LOCATE_MAX_PATHS = 8
 
 const isInside = (child, parent) => {
   const rel = path.relative(parent, child)
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+  return rel !== '' && !(rel === '..' || rel.startsWith('..' + path.sep)) && !path.isAbsolute(rel)
 }
 
 /** lstat that returns null on ENOENT/ENOTDIR and rethrows anything else. */
