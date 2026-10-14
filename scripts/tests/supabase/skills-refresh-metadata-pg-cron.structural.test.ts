@@ -148,7 +148,7 @@ describe.skipIf(locked)('SMI-7114 -- skills-refresh-metadata pg_cron migration (
     expect(d, 'rid comes from http_post').toMatch(/v_rid\s*:=\s*net\.http_post\(/)
   })
 
-  it('PROVISIONAL T: the no_response threshold is exactly T + 5 minutes', () => {
+  it('T (confirmed by W0-1): the no_response threshold is exactly T + 5 minutes', () => {
     // The two literals live in different functions; this ties them so editing one fails here.
     const ms = timeoutMs(body(sql, FNS.dispatch))
     const mins = noResponseMinutes(body(sql, FNS.health))

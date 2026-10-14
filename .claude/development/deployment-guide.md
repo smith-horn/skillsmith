@@ -407,7 +407,10 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Job | Schedule | Function |
 |-----|----------|----------|
 | Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
-| Metadata Refresh | Every 4h :30 (SMI-4121) | `skills-refresh-metadata` |
+| Metadata Refresh | GitHub `refresh-metadata.yml` every 4h :30 (SMI-4121), plus Supabase pg_cron `32 2-22/4 * * *` (`invoke_skills_refresh_metadata()`, explicit 300000 ms pg_net timeout, one `refresh:dispatch` audit row per successful dispatcher run; a run that raises, for example on a missing vault secret, writes none and shows as `failed` in `cron.job_run_details`) once migration `20261013000000` is applied (SMI-7114). SMI-7114 W3b turns the GitHub schedule into the observer below | `skills-refresh-metadata` |
+| Refresh Observer (SMI-7114) | GitHub `refresh-metadata.yml` schedule, from W3b | `scripts/ci/refresh-observer.sh` reads `refresh_metadata_health()` and alerts `refresh_unhealthy` on `stale` / `dispatch_stale` (9h) or `failures`; writes a `refresh:observer` heartbeat only after a fully successful run |
+| Refresh Response Harvester (SMI-7114) | Hourly at :43 (`43 * * * *`) | Supabase pg_cron (`harvest_refresh_dispatch_results()`): copies pg_net responses for refresh dispatches and dead-man alerts into durable `refresh:dispatch_result` / `refresh:observer_dead_alert_result` rows inside pg_net's 6h TTL |
+| Refresh Observer Dead-man (SMI-7114) | Hourly at :17 (`17 * * * *`) | Supabase pg_cron (`check_refresh_observer_heartbeat()`): alerts `refresh_observer_dead` via vault credentials when the latest `refresh:observer` heartbeat is older than 16h; silent until the first heartbeat exists (owner step M7) |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
 | Weekly Coverage Report (SMI-4963) | Monday 10 AM UTC (`coverage-report.yml`; `schedule:` enabled via follow-up commit). Deploy: `npx supabase functions deploy coverage-report` (no `--no-verify-jwt`) | `coverage-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
@@ -435,6 +438,8 @@ Alerts sent to `support@smithhorn.ca` via Resend when:
 
 - Indexer workflow fails
 - Metadata refresh workflow fails (scheduled runs only)
+- The refresh observer finds refresh stale, its pg_cron dispatch stale, or a failed dispatch or run (`refresh_unhealthy`, SMI-7114)
+- The refresh observer's heartbeat is older than 16h (`refresh_observer_dead`, SMI-7114)
 - Weekly ops report detects anomalies (static thresholds + week-over-week trends)
 - 404/archived repos quarantined immediately during metadata refresh (SMI-2560)
 
@@ -558,5 +563,7 @@ All scheduled jobs log to the `audit_logs` table:
 
 - `indexer:run` - Skill indexing results
 - `refresh:run` - Metadata refresh results
+- `refresh:dispatch`, `refresh:dispatch_result` - pg_cron refresh dispatches and their harvested pg_net responses (SMI-7114)
+- `refresh:observer` - Refresh observer heartbeat; `refresh:observer_dead_alert[_result]`, `refresh:observer_deadman_error` - dead-man alerts, their delivery, and missing-secret errors (SMI-7114)
 - `ops-report:sent` - Weekly report sent
 - `alert:sent` - Alert notification sent
