@@ -27,6 +27,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
 import { MOUNTINFO_APPLIES, readMountPointsAtOrUnder } from './quarantine.mounts.mjs'
+import { appendParkedIndex } from './trash-index.mjs'
 
 /**
  * Builds a §3.4 tree-hash record from a PATH walk, in the same shape
@@ -295,17 +296,40 @@ export function preMoveGuard({ originPath, parentAbs, name, guardHash }) {
 export function finishAfterRename(a) {
   const { destPath, originPath, name, opId, options, guardHash, observedTreeHash } = a
   const sidecarPath = `${destPath}.json`
-  const baseSidecar = () => ({
-    opId,
-    kind: options.kind ?? 'unspecified',
-    client: options.client ?? 'spike',
-    rootKey: options.rootKey ?? null,
-    originPath,
-    treeHash: observedTreeHash,
-    bytes: treeBytes(destPath),
-    createdAt: new Date().toISOString(),
-    skillsmithVersion: a.skillsmithVersion,
-  })
+  let built = null
+  const baseSidecar = () => {
+    built = {
+      opId,
+      kind: options.kind ?? 'unspecified',
+      client: options.client ?? 'spike',
+      rootKey: options.rootKey ?? null,
+      originPath,
+      treeHash: observedTreeHash,
+      bytes: treeBytes(destPath),
+      createdAt: new Date().toISOString(),
+      skillsmithVersion: a.skillsmithVersion,
+    }
+    return built
+  }
+  // SMI-7123 W5 (design §5): after the sidecar, one line in the parked index.
+  // A failure is reported as `indexError` and never changes the status.
+  const indexed = () => {
+    if (typeof options.indexPath !== 'string') return {}
+    try {
+      appendParkedIndex(options.indexPath, {
+        opId,
+        path: destPath,
+        client: built?.client ?? options.client ?? 'spike',
+        rootKey: built?.rootKey ?? options.rootKey ?? null,
+        kind: built?.kind ?? options.kind ?? 'unspecified',
+        bytes: built?.bytes ?? null,
+        createdAt: built?.createdAt ?? new Date().toISOString(),
+      })
+      return {}
+    } catch (err) {
+      return { indexError: err.code ?? err.message }
+    }
+  }
   const guarded = guardHash !== undefined && guardHash !== null
   const verified = guarded
     ? verifyAtDestination({
@@ -339,6 +363,7 @@ export function finishAfterRename(a) {
       errno: null,
       detail: heldDetail({ diagnosis: verified.diagnosis, destPath, originPath, opId }),
       ...(sidecarError === null ? {} : { sidecarError }),
+      ...indexed(),
     }
   }
 
@@ -355,5 +380,6 @@ export function finishAfterRename(a) {
     sidecarPath,
     opId,
     ...(sidecarError === null ? {} : { sidecarError }),
+    ...indexed(),
   }
 }

@@ -57,6 +57,10 @@ export const RESULT_FIELDS = [
   // on every other outcome; `originPath` is set only on a held result.
   'originPath',
   'heldPath',
+  // SMI-7123 W5 (design §1, §3.3): a prune item `stopped/entry-misplaced`
+  // names the entry it renamed to a hidden name and never deleted:
+  // [{path, originalRel, cause}]. null on every other outcome (F13 rule).
+  'misplaced',
 ]
 
 /**
@@ -136,9 +140,19 @@ export function isSuccess(result) {
 /**
  * A single path segment, never a path. Shared so both removal paths enforce it.
  */
-export function assertPathSegment(label, value) {
+export function assertPathSegment(label, value, { reserveLeadingDot = false } = {}) {
   if (typeof value !== 'string' || value.length === 0) {
     throw new TypeError(`${label} must be a non-empty string, got ${String(value)}`)
+  }
+  // SMI-7123 W5 (design §8b): a leading `.` is reserved for Skillsmith's own
+  // names inside `.skillsmith-trash` (`.prune-<16 hex>` staging directories).
+  // Only the opId call sets the flag, so skill names are unaffected; generated
+  // opIds are hex and never start with `.`.
+  if (reserveLeadingDot && value.startsWith('.')) {
+    throw new TypeError(
+      `${label} must not start with "." (reserved for Skillsmith's staging names). ` +
+        `Got ${JSON.stringify(value)}.`
+    )
   }
   if (value.includes('/') || value.includes('\\') || value === '.' || value === '..') {
     throw new TypeError(
@@ -195,6 +209,8 @@ export const REMOVAL_OPTION_KEYS = [
   'client',
   'rootKey',
   'maxHeldFds',
+  // SMI-7123 W5: the parked index a quarantine appends to (trash-index.mjs).
+  'indexPath',
 ]
 
 export function resolveRemovalOptions(options = {}) {
@@ -236,7 +252,7 @@ export function resolveRemovalOptions(options = {}) {
 
   snap.guardHash = resolveGuardHash({ guardHash: snap.guardHash, treeHash: snap.treeHash })
   snap.treeHash = undefined
-  if (snap.opId !== undefined) assertPathSegment('opId', snap.opId)
+  if (snap.opId !== undefined) assertPathSegment('opId', snap.opId, { reserveLeadingDot: true })
   return snap
 }
 

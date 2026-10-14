@@ -71,6 +71,7 @@ const CONTRACT_FIELDS = [
   // and where it is now. Declared, not passed through, per the F13 lesson.
   'originPath',
   'heldPath',
+  'misplaced', // misplaced: SMI-7123 W5 prune's entry-misplaced report (§3.3)
 ]
 check(
   '1a every declared field is present after shaping',
