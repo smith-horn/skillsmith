@@ -4,22 +4,30 @@
 //
 // fs is the DEFAULT export, looked up at call time (the harness interposes it).
 
-// The verify step (prune.walk.verify.mjs), the deletion walk (prune.walk.delete.mjs)
-// and the helpers they share (prune.walk.shared.mjs) were split out for the
-// file-length limit; this module keeps P4a-g, the guard and the child entry.
+// The verify step (prune.walk.verify.mjs) and the helpers shared with it
+// (prune.walk.shared.mjs) were split out for the file-length limit. The deletion
+// walk (deleteVerified) lives HERE, module-private: no module exports a function
+// that can delete, and the guard below is the only way to reach it (PR-17).
 
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { isMainThread } from 'node:worker_threads'
-import { fileURLToPath } from 'node:url'
 import { readStable } from './prune.sidecar.mjs'
 import { shapeResult } from './result-shape.mjs'
 import { decodeJob } from './prune.job.mjs'
 import { recordOf, removeIfIdentical } from './prune.metadata.mjs'
-import { Stop, mountFinding } from './prune.walk.shared.mjs'
+import {
+  Stop,
+  SIDECAR_KEY,
+  mountFinding,
+  rand,
+  typeOf,
+  sameDirId,
+  sameLeafPost,
+  sameLeafPre,
+} from './prune.walk.shared.mjs'
 import { verifyAtStaging } from './prune.walk.verify.mjs'
-import { deleteVerified } from './prune.walk.delete.mjs'
 
 const SELF_UID = typeof process.getuid === 'function' ? BigInt(process.getuid()) : null
 
@@ -57,17 +65,17 @@ function exists(p) {
 }
 
 // Sol PR #3091 finding PR-17: true only when this module is the process's entry,
-// i.e. the walker child prune.mjs spawns. Computed once at load.
-const IS_ENTRY =
-  isMainThread &&
-  typeof process.argv[1] === 'string' &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+// i.e. the walker child prune.mjs spawns. import.meta.main is set by the loader
+// and cannot be changed by in-process code, unlike process.argv[1], which an
+// importer can point at this file. Computed once at load.
+const IS_ENTRY = isMainThread && import.meta.main === true
 
 /**
  * P4a-g for one approved item. MODULE-PRIVATE (Sol PR #3091 finding PR-17): not
  * exported, so the only caller is the child entry at the bottom of this file; an
- * in-process importer has nothing to call, whatever it sets in the environment.
- * The env check stays as a second guard. Returns one shaped ItemResult.
+ * in-process importer has nothing to call, whatever it sets in the environment or
+ * argv. The env check stays as a second guard, and the deletion walk below is
+ * reachable only from here. Returns one shaped ItemResult.
  */
 function stageVerifyDelete(job) {
   if (!IS_ENTRY || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {
@@ -251,6 +259,174 @@ function stageVerifyDelete(job) {
     ...(sKept ? { detail: sKept } : {}),
     ...(metadataKept.length ? { metadataKept } : {}),
   })
+}
+
+/**
+ * §3.2: the deletion walk. Unlinks only an inode whose row matched one syscall
+ * earlier, by a random name in a directory it has entered and re-identified.
+ * Module-private and called only from stageVerifyDelete, which holds the guard.
+ * @returns {{status:'removed', deleted:number}} or throws Stop
+ */
+function deleteVerified(S, leaf, inventory, sIdentity, ctx = {}) {
+  let deleted = 0
+  const segs = []
+  const alive = ctx.alive ?? (() => true)
+  const stop = (reason, detail) => new Stop('stopped', reason, detail, { deleted })
+  const cwdIs = (want, at) => {
+    const s = fs.statSync('.', { bigint: true })
+    if (!sameDirId(want, s))
+      throw stop(
+        'mount-appeared-during-delete',
+        `the current directory is no longer ${at || 'the staged root'}`
+      )
+  }
+  const errnoStop = (err, at) => {
+    if (err instanceof Stop) return err
+    if (err.code === 'EBUSY') return stop('mount-appeared-during-delete', `${at}: EBUSY`)
+    if (err.code === 'ENOTEMPTY' || err.code === 'EEXIST')
+      return stop('entry-added-during-delete', `${at}: ${err.code}`)
+    return Object.assign(stop('delete-failed', `${at}: ${err.code ?? err.message}`), {
+      errno: err.code ?? null,
+    })
+  }
+  const misplaced = (r, originalRel, curWant) => {
+    let cause = 'cwd-covered'
+    try {
+      if (sameDirId(curWant, fs.statSync('.', { bigint: true }))) cause = 'swapped'
+    } catch {
+      /* unreadable cwd: covered */
+    }
+    const abs = originalRel === SIDECAR_KEY ? path.join(S, r) : path.join(S, leaf, ...segs, r)
+    let lst = null
+    try {
+      const s = fs.lstatSync(r, { bigint: true })
+      lst = { dev: String(s.dev), ino: String(s.ino), type: typeOf(s), size: String(s.size) }
+    } catch {
+      /* gone */
+    }
+    const rec = {
+      pruneId: ctx.pruneId ?? null,
+      path: abs,
+      originalRel,
+      cause,
+      at: new Date().toISOString(),
+      lstat: lst,
+    }
+    let misplacedRecordError = null
+    try {
+      fs.writeFileSync(path.join(S, 'misplaced.json'), JSON.stringify(rec, null, 2), { flag: 'wx' })
+    } catch (err) {
+      misplacedRecordError = err.code ?? err.message
+    }
+    return new Stop(
+      'stopped',
+      'entry-misplaced',
+      `${originalRel === SIDECAR_KEY ? 'the sidecar' : originalRel} was renamed to ${abs} and left there`,
+      {
+        deleted,
+        misplaced: [{ path: abs, originalRel, cause }],
+        ...(misplacedRecordError === null ? {} : { misplacedRecordError }),
+      }
+    )
+  }
+  const deleteLeaf = (n, crel, want, curWant) => {
+    const s = fs.lstatSync(n, { bigint: true })
+    if (!sameLeafPre(want, s))
+      throw stop('changed-during-delete', `${crel} changed after it was verified`)
+    const r = rand()
+    try {
+      fs.renameSync(n, r)
+    } catch (err) {
+      throw errnoStop(err, crel)
+    }
+    if (!sameLeafPost(want, fs.lstatSync(r, { bigint: true }))) throw misplaced(r, crel, curWant)
+    try {
+      fs.unlinkSync(r)
+    } catch (err) {
+      throw errnoStop(err, crel)
+    }
+    deleted += 1
+  }
+  const walkDir = (rel) => {
+    const curWant = inventory.get(rel)
+    for (const n of fs.readdirSync('.').sort()) {
+      if (!alive()) throw stop('delete-failed', 'the parent process is gone')
+      const crel = rel ? `${rel}/${n}` : n
+      const want = inventory.get(crel)
+      if (!want)
+        throw stop('entry-added-during-delete', `${crel} was not in the verified inventory`)
+      cwdIs(curWant, rel)
+      const s = fs.lstatSync(n, { bigint: true })
+      if (want.type !== 'dir') {
+        deleteLeaf(n, crel, want, curWant)
+        continue
+      }
+      if (!s.isDirectory()) throw stop('changed-during-delete', `${crel} is no longer a directory`)
+      if (!sameDirId(want, s))
+        throw stop(
+          'mount-appeared-during-delete',
+          `${crel}: directory identity changed (a mount root or a replaced directory)`
+        )
+      const r = rand()
+      try {
+        fs.renameSync(n, r)
+      } catch (err) {
+        throw errnoStop(err, crel)
+      }
+      if (!sameDirId(want, fs.lstatSync(r, { bigint: true }))) throw misplaced(r, crel, curWant)
+      process.chdir(r)
+      segs.push(r)
+      cwdIs(want, crel)
+      walkDir(crel)
+      if (fs.readdirSync('.').length !== 0)
+        throw stop('entry-added-during-delete', `${crel} gained an entry`)
+      process.chdir('..')
+      segs.pop()
+      cwdIs(curWant, rel)
+      try {
+        fs.rmdirSync(r)
+      } catch (err) {
+        throw errnoStop(err, crel)
+      }
+      deleted += 1
+    }
+  }
+  try {
+    process.chdir(S)
+    cwdIs(sIdentity, 'S')
+    if (!ctx.resume) {
+      const marker = JSON.stringify({ pruneId: ctx.pruneId ?? null, pid: process.pid })
+      fs.writeFileSync('deleting', marker, { flag: 'wx' })
+      // Sol c1 finding 2: P4g removes this marker only if it is still these bytes at this inode.
+      if (ctx.wrote) ctx.wrote.deleting = recordOf('deleting', marker)
+    }
+    const sc = inventory.get(SIDECAR_KEY)
+    if (sc) deleteLeaf('sidecar.json', SIDECAR_KEY, sc, sIdentity)
+    const s = fs.lstatSync(leaf, { bigint: true })
+    if (!sameDirId(inventory.get(''), s)) {
+      if (inventory.get('').type !== 'dir') {
+        deleteLeaf(leaf, '', inventory.get(''), sIdentity)
+        return { status: 'removed', deleted }
+      }
+      throw stop('mount-appeared-during-delete', 'the staged root changed identity')
+    }
+    process.chdir(leaf)
+    cwdIs(inventory.get(''), '')
+    walkDir('')
+    if (fs.readdirSync('.').length !== 0)
+      throw stop('entry-added-during-delete', 'the staged root gained an entry')
+    process.chdir('..')
+    cwdIs(sIdentity, 'S')
+    try {
+      fs.rmdirSync(leaf)
+    } catch (err) {
+      throw errnoStop(err, '.')
+    }
+    deleted += 1
+    return { status: 'removed', deleted }
+  } catch (err) {
+    throw errnoStop(err, 'walk')
+  }
 }
 
 // Child entry: one job as JSON on stdin, one ItemResult as JSON on stdout. This

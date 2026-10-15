@@ -1,5 +1,5 @@
 // SMI-7123 Wave 5: helpers shared by the prune walker modules (prune.walk.mjs,
-// prune.walk.verify.mjs, prune.walk.delete.mjs). Split out of prune.walk.mjs for the
+// prune.walk.verify.mjs). Split out of prune.walk.mjs for the
 // file-length limit; moved verbatim. fs is the DEFAULT export, looked up at call time.
 
 import fs from 'node:fs'

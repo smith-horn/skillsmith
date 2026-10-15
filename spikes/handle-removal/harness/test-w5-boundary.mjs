@@ -32,7 +32,6 @@ const PRUNE_MODULES = [
   'prune.walk.mjs',
   'prune.walk.shared.mjs',
   'prune.walk.verify.mjs',
-  'prune.walk.delete.mjs',
   'prune.leftovers.mjs',
   'prune.metadata.mjs',
   'prune.classify.mjs',

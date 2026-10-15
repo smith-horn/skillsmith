@@ -32,17 +32,12 @@ export function applyEdits(src, edits, label) {
 }
 
 /**
- * The walker child is four modules (prune.walk.mjs imports the other three). A
+ * The walker child is three modules (prune.walk.mjs imports the other two). A
  * mutant touching any of them is materialized as the WHOLE family in one temp
  * dir, family imports kept relative, so the mutated module is the one the
  * entry actually loads. Every other relative import points at the spike.
  */
-export const WALKER_FAMILY = [
-  'prune.walk.mjs',
-  'prune.walk.shared.mjs',
-  'prune.walk.verify.mjs',
-  'prune.walk.delete.mjs',
-]
+export const WALKER_FAMILY = ['prune.walk.mjs', 'prune.walk.shared.mjs', 'prune.walk.verify.mjs']
 
 export function materialize(mutant) {
   const byFile = new Map()

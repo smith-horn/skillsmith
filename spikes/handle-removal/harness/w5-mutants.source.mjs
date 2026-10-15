@@ -11,7 +11,6 @@
 const W = 'prune.walk.mjs'
 const SHARED = 'prune.walk.shared.mjs'
 const VERIFY = 'prune.walk.verify.mjs'
-const DELETE = 'prune.walk.delete.mjs'
 const SIDECAR_BYTES_CMP = {
   file: VERIFY,
   find: 'if (rs.ino !== sidecar.ino || !rs.bytes.equals(sidecar.bytes)) {',
@@ -19,7 +18,7 @@ const SIDECAR_BYTES_CMP = {
     'if (rs.ino !== sidecar.ino || BigInt(rs.bytes.length) !== BigInt(sidecar.bytes.length)) {',
 }
 const SIDECAR_UNLINK_BY_INO = {
-  file: DELETE,
+  file: W,
   find: "    if (sc) deleteLeaf('sidecar.json', SIDECAR_KEY, sc, sIdentity)",
   replace:
     "    if (sc) { const s0 = fs.lstatSync('sidecar.json', { bigint: true }); " +
@@ -27,12 +26,12 @@ const SIDECAR_UNLINK_BY_INO = {
     "fs.unlinkSync('sidecar.json'); deleted += 1 }",
 }
 const MISPLACE_RESULT = {
-  file: DELETE,
+  file: W,
   find: '      misplaced: [{ path: abs, originalRel, cause }],',
   replace: '      misplaced: null,',
 }
 const MISPLACE_REVERT = {
-  file: DELETE,
+  file: W,
   find: "  const misplaced = (r, originalRel, curWant) => {\n    let cause = 'cwd-covered'",
   replace:
     "  const misplaced = (r, originalRel, curWant) => {\n    if (originalRel !== SIDECAR_KEY) { try { fs.renameSync(r, originalRel.split('/').pop()) } catch { /* */ } }\n    let cause = 'cwd-covered'",
@@ -90,7 +89,7 @@ export const WALKER_MUTANTS = {
     file: W,
     edits: [
       {
-        file: DELETE,
+        file: W,
         find: "      if (!want)\n        throw stop('entry-added-during-delete', `${crel} was not in the verified inventory`)",
         replace: '      if (!want) { fs.rmSync(n, { recursive: true, force: true }); continue }',
       },
@@ -101,7 +100,7 @@ export const WALKER_MUTANTS = {
     file: W,
     edits: [
       {
-        file: DELETE,
+        file: W,
         find: 'throw misplaced(r, crel, curWant)',
         replace: "throw stop('changed-during-delete', crel)",
         all: true,
@@ -148,7 +147,7 @@ export const MUTATIONS = {
     test: 'T14',
     edits: [
       {
-        file: DELETE,
+        file: W,
         find: '      process.chdir(r)\n      segs.push(r)\n      cwdIs(want, crel)\n',
         replace: '      process.chdir(r)\n      segs.push(r)\n',
       },
@@ -160,7 +159,7 @@ export const MUTATIONS = {
     test: 'T13-by-name',
     edits: [
       {
-        file: DELETE,
+        file: W,
         find: '    try {\n      fs.unlinkSync(r)\n    } catch (err) {',
         replace: '    try {\n      fs.unlinkSync(n)\n    } catch (err) {',
       },
@@ -172,7 +171,7 @@ export const MUTATIONS = {
     test: 'clean-run',
     edits: [
       {
-        file: DELETE,
+        file: W,
         find: 'if (!sameLeafPost(want, fs.lstatSync(r, { bigint: true }))) throw misplaced',
         replace: 'if (!sameLeafPre(want, fs.lstatSync(r, { bigint: true }))) throw misplaced',
       },
@@ -182,10 +181,10 @@ export const MUTATIONS = {
     name: 'M4',
     file: 'prune.mjs',
     test: 'guard',
-    // The walk in the parent process. Since PR-17 the walk is module-private and
-    // the deletion walk checks it runs under the walker entry, so the mutant must
-    // re-export the walk and drop both entry checks, as an in-process regression
-    // would have to.
+    // The walk in the parent process. Since PR-17 the walk (and the deletion walk
+    // it calls) is module-private to prune.walk.mjs and guarded by import.meta.main
+    // plus the env flag, so the mutant must re-export the walk and drop the entry
+    // check, leaving the env flag only, as an in-process regression would have to.
     edits: [
       {
         file: W,
@@ -195,11 +194,6 @@ export const MUTATIONS = {
       {
         file: W,
         find: "  if (!IS_ENTRY || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
-        replace: "  if (process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
-      },
-      {
-        file: DELETE,
-        find: "  if (!IN_WALKER_CHILD || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
         replace: "  if (process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
       },
       {
