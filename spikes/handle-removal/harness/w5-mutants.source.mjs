@@ -182,7 +182,26 @@ export const MUTATIONS = {
     name: 'M4',
     file: 'prune.mjs',
     test: 'guard',
+    // The walk in the parent process. Since PR-17 the walk is module-private and
+    // the deletion walk checks it runs under the walker entry, so the mutant must
+    // re-export the walk and drop both entry checks, as an in-process regression
+    // would have to.
     edits: [
+      {
+        file: W,
+        find: 'function stageVerifyDelete(job) {',
+        replace: 'export function stageVerifyDelete(job) {',
+      },
+      {
+        file: W,
+        find: "  if (!IS_ENTRY || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
+        replace: "  if (process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
+      },
+      {
+        file: DELETE,
+        find: "  if (!IN_WALKER_CHILD || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
+        replace: "  if (process.env.SKILLSMITH_PRUNE_WALKER !== '1') {",
+      },
       {
         find: "import { encodeJob } from './prune.job.mjs'",
         replace:

@@ -4,6 +4,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { isMainThread } from 'node:worker_threads'
+import { fileURLToPath } from 'node:url'
 import { recordOf } from './prune.metadata.mjs'
 import {
   Stop,
@@ -15,12 +17,24 @@ import {
   sameLeafPre,
 } from './prune.walk.shared.mjs'
 
+// Sol PR #3091 finding PR-17: the deletion walk runs only when the process's entry
+// is the sibling walker module, i.e. inside the child prune.mjs spawns. Computed
+// once at load; an in-process importer that sets SKILLSMITH_PRUNE_WALKER=1 is
+// still refused.
+const IN_WALKER_CHILD =
+  isMainThread &&
+  typeof process.argv[1] === 'string' &&
+  path.resolve(process.argv[1]) === fileURLToPath(new URL('./prune.walk.mjs', import.meta.url))
+
 /**
  * §3.2: the deletion walk. Unlinks only an inode whose row matched one syscall
  * earlier, by a random name in a directory it has entered and re-identified.
  * @returns {{status:'removed', deleted:number}} or throws Stop
  */
 export function deleteVerified(S, leaf, inventory, sIdentity, ctx = {}) {
+  if (!IN_WALKER_CHILD || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {
+    throw new Error('deleteVerified runs only in the dedicated prune walker child (prune.walk.mjs)')
+  }
   let deleted = 0
   const segs = []
   const alive = ctx.alive ?? (() => true)

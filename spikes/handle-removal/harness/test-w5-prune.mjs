@@ -252,17 +252,10 @@ if (want('guard')) {
     )
     check('guard: the parent cwd did not move', process.cwd(), cwd)
     if (against === null) {
-      const { stageVerifyDelete } = await import('../prune.walk.mjs')
-      let threw = false
-      const saved = process.env.SKILLSMITH_PRUNE_WALKER
-      delete process.env.SKILLSMITH_PRUNE_WALKER
-      try {
-        stageVerifyDelete({})
-      } catch (err) {
-        threw = /dedicated prune walker child/.test(err.message)
-      }
-      if (saved !== undefined) process.env.SKILLSMITH_PRUNE_WALKER = saved
-      check('guard: stageVerifyDelete refuses to run in-process', threw, true)
+      // PR-17: the walk is module-private; test-w5-walker-private.mjs proves an
+      // in-process caller cannot reach it even with SKILLSMITH_PRUNE_WALKER=1.
+      const walk = await import('../prune.walk.mjs')
+      check('guard: prune.walk.mjs exports nothing', Object.keys(walk).join(','), '')
     }
   } finally {
     rmFixture(f.root)

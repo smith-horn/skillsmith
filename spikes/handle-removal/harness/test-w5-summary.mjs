@@ -6,59 +6,61 @@
 // It runs the real generator (which writes results/SUMMARY.md) and ALWAYS restores
 // the committed SUMMARY.md afterwards with `git show HEAD:...`, a read of the repo.
 //
-// DECLARED FAILURES ON THE PRE-FIX GENERATOR:
-//  - no W5 section: none of the 95 (row, fs) verdicts match the runner's lines;
-//  - W5 records land in the generic Cells table (316 extra cells, most reading
-//    `NEVER-RAN (control unspecified)`), so the pre-W5 part is no longer
-//    byte-identical to the committed SUMMARY.
+// The runner's verdict lines come from the committed fixture
+// results/w5-runner-verdicts.tsv (made by results/extract-w5-verdicts.mjs from the
+// owner-approved run logs; Sol PR #3091 finding PR-12). If results/raw is absent
+// the generator has nothing to score: this suite prints NOT RUN and exits 2.
+//
+//   node test-w5-summary.mjs [--committed <file>]
+//
+// --committed replaces the committed SUMMARY text in the COMPARISONS only (the
+// restore always uses HEAD). It exists to show the W5-section case go red.
+//
+// DECLARED FAILURES:
+//  - pre-fix generator: no W5 section (none of the 95 verdicts match the fixture),
+//    and W5 records land in the generic Cells table, so the pre-W5 part is no
+//    longer byte-identical to the committed SUMMARY;
+//  - --committed with one W5 verdict altered: "the committed W5 section equals the
+//    regenerated one" fails (Sol PR #3091 finding PR-16).
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { makeCheck } from './w5-test-util.mjs'
 
-const { check, done } = makeCheck('[w5-summary]')
+const TAG = '[w5-summary]'
+const { check, done } = makeCheck(TAG)
 const SPIKE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WT = path.resolve(SPIKE, '..', '..')
 const SUMMARY = path.join(SPIKE, 'results', 'SUMMARY.md')
+const RAW = path.join(SPIKE, 'results', 'raw')
+const FIXTURE = path.join(SPIKE, 'results', 'w5-runner-verdicts.tsv')
 const REL = 'spikes/handle-removal/results/SUMMARY.md'
-const RUN =
-  '/private/tmp/claude-501/-Users-williamsmith-Documents-GitHub-Smith-Horn-skillsmith/a40f91eb-a376-4707-9bd4-1f9f17abb39a/scratchpad/w5run'
-const LOGS = {
-  apfs: path.join(RUN, 'w5-apfs-full.log'),
-  overlayfs: path.join(RUN, 'out-overlayfs', 'w5-rows-overlayfs.txt'),
-  tmpfs: path.join(RUN, 'out-tmpfs', 'w5-rows-tmpfs.txt'),
-  ext4: path.join(RUN, 'out-ext4', 'w5-rows-ext4.txt'),
-  virtiofs: path.join(RUN, 'out-virtiofs', 'w5-rows-virtiofs.txt'),
-}
-const LINE =
-  /^(.+)\t(W5-\S+)\tran=(\d+) passed=(\d+)(?: held=\d+)? failed=(\d+) never-ran=(\d+)\tcontrol=(.*)$/
+const W5_HEADING = '\n## W5 rows (scored by control-spec.w5.mjs)'
 
-// The runner's printed verdict lines: (row, fs) -> fields.
+if (!fs.existsSync(RAW)) {
+  console.log(`${TAG} NOT RUN: results/raw unavailable`)
+  process.exit(2)
+}
+const at = process.argv.indexOf('--committed')
+const override = at === -1 ? null : process.argv[at + 1]
+
+// The runner's verdict lines: (row, fs) -> fields, from the committed fixture.
+const FIELDS = ['verdict', 'ran', 'passed', 'failed', 'neverRan', 'control']
 const expected = new Map()
-for (const [fsLabel, file] of Object.entries(LOGS)) {
-  if (!fs.existsSync(file)) {
-    console.log(
-      `[w5-summary] ${file} is absent: this suite checks the owner-approved W5 run and cannot run without its logs`
-    )
-    process.exit(1)
-  }
-  for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
-    const m = LINE.exec(l)
-    if (m)
-      expected.set(`${m[2]}\0${fsLabel}`, {
-        verdict: m[1],
-        ran: m[3],
-        passed: m[4],
-        failed: m[5],
-        neverRan: m[6],
-        control: m[7],
-      })
+check('premise: the runner-verdict fixture is present', fs.existsSync(FIXTURE), true)
+if (fs.existsSync(FIXTURE)) {
+  for (const l of fs.readFileSync(FIXTURE, 'utf8').split('\n')) {
+    if (l === '' || l.startsWith('#')) continue
+    const c = l.split('\t')
+    if (c.length !== 8) continue
+    expected.set(`${c[0]}\0${c[1]}`, Object.fromEntries(FIELDS.map((k, i) => [k, c[i + 2]])))
   }
 }
-check('the runner logs hold 19 rows x 5 filesystems', expected.size, 95)
+check('the fixture holds 19 rows x 5 filesystems', expected.size, 95)
 
-const committed = execFileSync('git', ['-C', WT, 'show', `HEAD:${REL}`]).toString()
+const head = execFileSync('git', ['-C', WT, 'show', `HEAD:${REL}`]).toString()
+const committed = override === null ? head : fs.readFileSync(override, 'utf8')
 let generated = null
 let genOut = ''
 try {
@@ -67,31 +69,25 @@ try {
   })
   generated = fs.readFileSync(SUMMARY, 'utf8')
 } finally {
-  fs.writeFileSync(SUMMARY, committed)
+  fs.writeFileSync(SUMMARY, head)
 }
 check(
-  'premise: SUMMARY.md restored to the committed copy',
-  fs.readFileSync(SUMMARY, 'utf8') === committed,
+  'premise: SUMMARY.md restored to the HEAD copy',
+  fs.readFileSync(SUMMARY, 'utf8') === head,
   true
 )
 
 // --- the W5 section: one row per (row, fs), equal to the runner's line ---------------
 const lines = generated.split('\n')
-const start = lines.indexOf('## W5 rows (scored by control-spec.w5.mjs)')
+const start = lines.indexOf(W5_HEADING.slice(1))
 const w5 = new Map()
 if (start !== -1) {
   for (const l of lines.slice(start + 1)) {
     if (l.startsWith('## ')) break
     const c = l.split(' | ')
     if (c.length === 8 && c[0].startsWith('| W5-')) {
-      w5.set(`${c[0].slice(2)}\0${c[1]}`, {
-        verdict: c[2],
-        ran: c[3],
-        passed: c[4],
-        failed: c[5],
-        neverRan: c[6],
-        control: c[7].replace(/ \|$/, ''),
-      })
+      const vals = [c[2], c[3], c[4], c[5], c[6], c[7].replace(/ \|$/, '')]
+      w5.set(`${c[0].slice(2)}\0${c[1]}`, Object.fromEntries(FIELDS.map((k, i) => [k, vals[i]])))
     }
   }
 }
@@ -108,11 +104,34 @@ for (const [k, want] of expected) {
 }
 check(`every W5 verdict equals the runner's line${diffs.length ? ` (${diffs[0]})` : ''}`, equal, 95)
 
+// --- the committed W5 section is exactly the regenerated one (PR-16) -----------------
+// From the W5 heading to the next `## ` heading or the end of the file.
+const sectionOf = (text) => {
+  const s = text.indexOf(W5_HEADING)
+  if (s === -1) return null
+  const e = text.indexOf('\n## ', s + W5_HEADING.length)
+  return e === -1 ? text.slice(s) : text.slice(s, e)
+}
+const firstDiff = (a, b) => {
+  const x = (a ?? '').split('\n')
+  const y = (b ?? '').split('\n')
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1)
+    if (x[i] !== y[i]) return ` (line ${i}: committed ${JSON.stringify(x[i] ?? null)})`
+  return ''
+}
+const cw5 = sectionOf(committed)
+const gw5 = sectionOf(generated)
+check('premise: the committed SUMMARY has a W5 section', cw5 !== null, true)
+check(
+  `the committed W5 section equals the regenerated one${cw5 === gw5 ? '' : firstDiff(cw5, gw5)}`,
+  cw5 !== null && cw5 === gw5,
+  true
+)
+
 // --- nothing else moves: everything BEFORE the W5 section equals the committed file,
-// byte for byte, except the header's totals line (file and record counts). The W5
-// section is appended last, so the committed text is exactly that prefix. (An
+// byte for byte, except the header's totals line (file and record counts). An
 // earlier version stripped the section line by line and also dropped the file's
-// final blank line, so it compared one newline short -- measured with a diff.)
+// final blank line, so it compared one newline short -- measured with a diff.
 const dropHeader = (text) =>
   text
     .split('\n')
@@ -121,10 +140,9 @@ const dropHeader = (text) =>
 // Both sides are cut at the W5 heading. Comparing the generated prefix with the WHOLE
 // committed file held only while the committed copy had no W5 section; once the W5
 // results were committed it could never match (found on the C4 merge branch).
-const W5_HEADING = '\n## W5 rows (scored by control-spec.w5.mjs)'
 const prefixOf = (text) => {
-  const at = text.indexOf(W5_HEADING)
-  return at === -1 ? text : text.slice(0, at) + '\n'
+  const s = text.indexOf(W5_HEADING)
+  return s === -1 ? text : text.slice(0, s) + '\n'
 }
 check(
   'everything before the W5 section is byte-identical to the committed SUMMARY (header totals aside)',
@@ -141,5 +159,5 @@ check(
   /154600 total records/.test(generated),
   true
 )
-console.log(`[w5-summary] generator said: ${genOut.trim().split('\n')[0]}`)
+console.log(`${TAG} generator said: ${genOut.trim().split('\n')[0]}`)
 done()

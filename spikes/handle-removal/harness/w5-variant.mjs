@@ -51,9 +51,15 @@ export function materialize(mutant) {
     if (!byFile.has(f)) byFile.set(f, [])
     byFile.get(f).push(e)
   }
-  const family = [...byFile.keys()].some((f) => WALKER_FAMILY.includes(f))
-    ? WALKER_FAMILY
-    : [mutant.file]
+  // A prune.mjs mutant that also edits the walker (M4, since PR-17 made the walk
+  // module-private) gets prune.mjs AND the walker family in one dir, so its
+  // relative import of ./prune.walk.mjs loads the mutated copy.
+  const touchesWalker = [...byFile.keys()].some((f) => WALKER_FAMILY.includes(f))
+  const family = !touchesWalker
+    ? [mutant.file]
+    : WALKER_FAMILY.includes(mutant.file)
+      ? WALKER_FAMILY
+      : [mutant.file, ...WALKER_FAMILY]
   for (const f of byFile.keys()) {
     if (!family.includes(f))
       throw new Error(`mutant ${mutant.name}: ${f} is outside its module family`)

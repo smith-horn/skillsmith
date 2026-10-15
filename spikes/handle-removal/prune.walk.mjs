@@ -17,7 +17,7 @@ import { readStable } from './prune.sidecar.mjs'
 import { shapeResult } from './result-shape.mjs'
 import { decodeJob } from './prune.job.mjs'
 import { recordOf, removeIfIdentical } from './prune.metadata.mjs'
-import { Stop, META, SIDECAR_KEY, mountFinding } from './prune.walk.shared.mjs'
+import { Stop, mountFinding } from './prune.walk.shared.mjs'
 import { verifyAtStaging } from './prune.walk.verify.mjs'
 import { deleteVerified } from './prune.walk.delete.mjs'
 
@@ -56,12 +56,21 @@ function exists(p) {
   }
 }
 
+// Sol PR #3091 finding PR-17: true only when this module is the process's entry,
+// i.e. the walker child prune.mjs spawns. Computed once at load.
+const IS_ENTRY =
+  isMainThread &&
+  typeof process.argv[1] === 'string' &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
 /**
- * P4a-g for one approved item. Throws unless running as the dedicated walker
- * child (§3.4). Returns one shaped ItemResult.
+ * P4a-g for one approved item. MODULE-PRIVATE (Sol PR #3091 finding PR-17): not
+ * exported, so the only caller is the child entry at the bottom of this file; an
+ * in-process importer has nothing to call, whatever it sets in the environment.
+ * The env check stays as a second guard. Returns one shaped ItemResult.
  */
-export function stageVerifyDelete(job) {
-  if (!isMainThread || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {
+function stageVerifyDelete(job) {
+  if (!IS_ENTRY || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {
     throw new Error(
       'stageVerifyDelete runs only in the dedicated prune walker child (SKILLSMITH_PRUNE_WALKER=1)'
     )
@@ -244,10 +253,9 @@ export function stageVerifyDelete(job) {
   })
 }
 
-export { META, SIDECAR_KEY, verifyAtStaging, deleteVerified }
-
-// Child entry: one job as JSON on stdin, one ItemResult as JSON on stdout.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Child entry: one job as JSON on stdin, one ItemResult as JSON on stdout. This
+// module exports nothing (PR-17).
+if (IS_ENTRY) {
   const job = decodeJob(JSON.parse(fs.readFileSync(0, 'utf8')))
   const r = stageVerifyDelete(job)
   process.stdout.write(JSON.stringify(r, (k, v) => (typeof v === 'bigint' ? String(v) : v)) + '\n')
