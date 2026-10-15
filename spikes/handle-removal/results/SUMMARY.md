@@ -1,6 +1,6 @@
 # SMI-6676 spike results summary
 
-Regenerated from 69 `results/raw/*.jsonl` files, 147060 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
+Regenerated from 74 `results/raw/*.jsonl` files, 154600 total records. Do not hand-edit -- run `node results/generate-summary.mjs` after any new attack run.
 
 Not attack cells, so not counted above: measurement files `c4-guard-window.jsonl` (210); malformed lines skipped: 0.
 
@@ -951,4 +951,111 @@ A C4 run flagged `vacuous-check` (its only check was vacuous, e.g. a partial rac
 | A6 | root | ud25 | tmpfsroot | DID-NOT-FAIL | plan §5.1 A6: 'C0 with the gate at walk start' -- A6/ud24Only on tmpfsroot recorded 0 failures |
 | A6 | inner | ud25 | virtiofsroot | DID-NOT-FAIL | plan §5.1 A6: 'C0 with the gate at walk start' -- A6/ud24Only on virtiofsroot recorded 0 failures |
 | A6 | root | ud25 | virtiofsroot | DID-NOT-FAIL | plan §5.1 A6: 'C0 with the gate at walk start' -- A6/ud24Only on virtiofsroot recorded 0 failures |
+
+## W5 rows (scored by control-spec.w5.mjs)
+
+One line per (row, filesystem), scored by the same verdict function `harness/run-w5-rows.mjs` prints (`w5Verdict`), with the control evidence from that run. `RECORD-ONLY` rows record an out-of-model residual and are never counted as PASS or FAIL. These records are not in the Cells table or its tallies above. 7540 records, 95 rows.
+
+| W5 verdict | Rows |
+|---|---|
+| PASS | 80 |
+| RECORD-ONLY | 15 |
+
+| Row | FS | Verdict | Ran | Passed | Failed | Never-ran | Control |
+|---|---|---|---|---|---|---|---|
+| W5-Q6 | apfs | PASS | 10 | 10 | 0 | 0 | satisfied (C4-stateroot failed 10/10) |
+| W5-Q6 | overlayfs | PASS | 10 | 10 | 0 | 0 | satisfied (C4-stateroot failed 10/10) |
+| W5-Q6 | tmpfs | PASS | 10 | 10 | 0 | 0 | satisfied (C4-stateroot failed 10/10) |
+| W5-Q6 | ext4 | PASS | 10 | 10 | 0 | 0 | satisfied (C4-stateroot failed 10/10) |
+| W5-Q6 | virtiofs | PASS | 10 | 10 | 0 | 0 | satisfied (C4-stateroot failed 10/10) |
+| W5-Q7 | apfs | PASS | 30 | 30 | 0 | 0 | satisfied (C4-consolation failed 30/30) |
+| W5-Q7 | overlayfs | PASS | 50 | 50 | 0 | 0 | satisfied (C4-consolation failed 40/50) |
+| W5-Q7 | tmpfs | PASS | 50 | 50 | 0 | 0 | satisfied (C4-consolation failed 40/50) |
+| W5-Q7 | ext4 | PASS | 50 | 50 | 0 | 0 | satisfied (C4-consolation failed 40/50) |
+| W5-Q7 | virtiofs | PASS | 50 | 50 | 0 | 0 | satisfied (C4-consolation failed 40/50) |
+| W5-Q8 | apfs | PASS | 15 | 15 | 0 | 0 | satisfied (list-index-only failed 5/15; list-throwing failed 10/15; list-scan-path failed 10/15) |
+| W5-Q8 | overlayfs | PASS | 15 | 15 | 0 | 0 | satisfied (list-index-only failed 5/15; list-throwing failed 10/15; list-scan-path failed 10/15) |
+| W5-Q8 | tmpfs | PASS | 15 | 15 | 0 | 0 | satisfied (list-index-only failed 5/15; list-throwing failed 10/15; list-scan-path failed 10/15) |
+| W5-Q8 | ext4 | PASS | 15 | 15 | 0 | 0 | satisfied (list-index-only failed 5/15; list-throwing failed 10/15; list-scan-path failed 10/15) |
+| W5-Q8 | virtiofs | PASS | 15 | 15 | 0 | 0 | satisfied (list-index-only failed 5/15; list-throwing failed 10/15; list-scan-path failed 10/15) |
+| W5-Q9 | apfs | PASS | 5 | 5 | 0 | 0 | satisfied (report-drop-origin failed 5/5) |
+| W5-Q9 | overlayfs | PASS | 5 | 5 | 0 | 0 | satisfied (report-drop-origin failed 5/5) |
+| W5-Q9 | tmpfs | PASS | 5 | 5 | 0 | 0 | satisfied (report-drop-origin failed 5/5) |
+| W5-Q9 | ext4 | PASS | 5 | 5 | 0 | 0 | satisfied (report-drop-origin failed 5/5) |
+| W5-Q9 | virtiofs | PASS | 5 | 5 | 0 | 0 | satisfied (report-drop-origin failed 5/5) |
+| W5-Q10 | apfs | PASS | 5 | 5 | 0 | 0 | satisfied (gitignore-editor failed 5/5) |
+| W5-Q10 | overlayfs | PASS | 5 | 5 | 0 | 0 | satisfied (gitignore-editor failed 5/5) |
+| W5-Q10 | tmpfs | PASS | 5 | 5 | 0 | 0 | satisfied (gitignore-editor failed 5/5) |
+| W5-Q10 | ext4 | PASS | 5 | 5 | 0 | 0 | satisfied (gitignore-editor failed 5/5) |
+| W5-Q10 | virtiofs | PASS | 5 | 5 | 0 | 0 | satisfied (gitignore-editor failed 5/5) |
+| W5-R1 | apfs | PASS | 20 | 20 | 0 | 0 | satisfied (prune-naive failed 20/20) |
+| W5-R1 | overlayfs | PASS | 20 | 20 | 0 | 0 | satisfied (prune-naive failed 20/20) |
+| W5-R1 | tmpfs | PASS | 20 | 20 | 0 | 0 | satisfied (prune-naive failed 20/20) |
+| W5-R1 | ext4 | PASS | 20 | 20 | 0 | 0 | satisfied (prune-naive failed 20/20) |
+| W5-R1 | virtiofs | PASS | 20 | 20 | 0 | 0 | satisfied (prune-naive failed 20/20) |
+| W5-P1 | apfs | PASS | 90 | 90 | 0 | 0 | satisfied (prune-naive failed 90/90) |
+| W5-P1 | overlayfs | PASS | 180 | 180 | 0 | 0 | satisfied (prune-naive failed 180/180; prune-c0 failed 90/180) |
+| W5-P1 | tmpfs | PASS | 180 | 180 | 0 | 0 | satisfied (prune-naive failed 180/180; prune-c0 failed 90/180) |
+| W5-P1 | ext4 | PASS | 180 | 180 | 0 | 0 | satisfied (prune-naive failed 180/180; prune-c0 failed 90/180) |
+| W5-P1 | virtiofs | PASS | 180 | 180 | 0 | 0 | satisfied (prune-naive failed 180/180; prune-c0 failed 90/180) |
+| W5-P2 | apfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P2 | overlayfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P2 | tmpfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P2 | ext4 | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P2 | virtiofs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P2r | apfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-P2r | overlayfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-P2r | tmpfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-P2r | ext4 | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-P2r | virtiofs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pswap | apfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pswap | overlayfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pswap | tmpfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pswap | ext4 | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pswap | virtiofs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pmswap | apfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pmswap | overlayfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pmswap | tmpfs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pmswap | ext4 | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-Pmswap | virtiofs | RECORD-ONLY (30 lost) | 30 | 0 | 30 | 0 | none (no loss to demonstrate (record-only)) |
+| W5-P3 | apfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-in-place failed 30/30) |
+| W5-P3 | overlayfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-in-place failed 30/30) |
+| W5-P3 | tmpfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-in-place failed 30/30) |
+| W5-P3 | ext4 | PASS | 30 | 30 | 0 | 0 | satisfied (prune-in-place failed 30/30) |
+| W5-P3 | virtiofs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-in-place failed 30/30) |
+| W5-P4 | apfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P4 | overlayfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P4 | tmpfs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P4 | ext4 | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P4 | virtiofs | PASS | 30 | 30 | 0 | 0 | satisfied (prune-naive failed 30/30) |
+| W5-P5 | apfs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-resume-blind failed 60/60) |
+| W5-P5 | overlayfs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-resume-blind failed 60/60) |
+| W5-P5 | tmpfs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-resume-blind failed 60/60) |
+| W5-P5 | ext4 | PASS | 60 | 60 | 0 | 0 | satisfied (prune-resume-blind failed 60/60) |
+| W5-P5 | virtiofs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-resume-blind failed 60/60) |
+| W5-P6 | apfs | PASS | 10 | 10 | 0 | 0 | satisfied (prune-warn-only failed 10/10) |
+| W5-P6 | overlayfs | PASS | 10 | 10 | 0 | 0 | satisfied (prune-warn-only failed 10/10) |
+| W5-P6 | tmpfs | PASS | 10 | 10 | 0 | 0 | satisfied (prune-warn-only failed 10/10) |
+| W5-P6 | ext4 | PASS | 10 | 10 | 0 | 0 | satisfied (prune-warn-only failed 10/10) |
+| W5-P6 | virtiofs | PASS | 10 | 10 | 0 | 0 | satisfied (prune-warn-only failed 10/10) |
+| W5-P7 | apfs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-follow failed 30/60) |
+| W5-P7 | overlayfs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-follow failed 30/60) |
+| W5-P7 | tmpfs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-follow failed 30/60) |
+| W5-P7 | ext4 | PASS | 60 | 60 | 0 | 0 | satisfied (prune-follow failed 30/60) |
+| W5-P7 | virtiofs | PASS | 60 | 60 | 0 | 0 | satisfied (prune-follow failed 30/60) |
+| W5-P8 | apfs | PASS | 60 | 60 | 0 | 0 | satisfied (sidecar-same-inode-rewrite failed 60/60) |
+| W5-P8 | overlayfs | PASS | 60 | 60 | 0 | 0 | satisfied (sidecar-same-inode-rewrite failed 60/60) |
+| W5-P8 | tmpfs | PASS | 60 | 60 | 0 | 0 | satisfied (sidecar-same-inode-rewrite failed 60/60) |
+| W5-P8 | ext4 | PASS | 60 | 60 | 0 | 0 | satisfied (sidecar-same-inode-rewrite failed 60/60) |
+| W5-P8 | virtiofs | PASS | 60 | 60 | 0 | 0 | satisfied (sidecar-same-inode-rewrite failed 60/60) |
+| W5-P9 | apfs | PASS | 60 | 60 | 0 | 0 | satisfied (misplace-silent failed 60/60; misplace-revert failed 60/60) |
+| W5-P9 | overlayfs | PASS | 30 | 30 | 0 | 0 | satisfied (misplace-silent failed 30/30; misplace-revert failed 30/30) |
+| W5-P9 | tmpfs | PASS | 30 | 30 | 0 | 0 | satisfied (misplace-silent failed 30/30; misplace-revert failed 30/30) |
+| W5-P9 | ext4 | PASS | 30 | 30 | 0 | 0 | satisfied (misplace-silent failed 30/30; misplace-revert failed 30/30) |
+| W5-P9 | virtiofs | PASS | 30 | 30 | 0 | 0 | satisfied (misplace-silent failed 30/30; misplace-revert failed 30/30) |
+| W5-W1 | apfs | PASS | 25 | 25 | 0 | 0 | satisfied (warn-max-not-min failed 15/25) |
+| W5-W1 | overlayfs | PASS | 25 | 25 | 0 | 0 | satisfied (warn-max-not-min failed 15/25) |
+| W5-W1 | tmpfs | PASS | 25 | 25 | 0 | 0 | satisfied (warn-max-not-min failed 15/25) |
+| W5-W1 | ext4 | PASS | 25 | 25 | 0 | 0 | satisfied (warn-max-not-min failed 15/25) |
+| W5-W1 | virtiofs | PASS | 25 | 25 | 0 | 0 | satisfied (warn-max-not-min failed 15/25) |
 
