@@ -35,6 +35,8 @@ import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
 import { pathTreeRecord, preMoveGuard, finishAfterRename } from './quarantine.postmove.mjs'
 
+const S_IFMT = 0o170000n // file-type bits of a bigint lstat mode
+
 /**
  * Whether POSIX ownership/permission semantics apply to a directory mode here:
  * every platform except win32, decided from `process.platform` (always defined).
@@ -178,7 +180,7 @@ function ensureTrashRoot(parentAbs, nativeShim) {
   let trashIdentity = null
   try {
     const ts = fs.lstatSync(trashRoot, { bigint: true })
-    trashIdentity = { dev: ts.dev, ino: ts.ino, birthtimeNs: ts.birthtimeNs }
+    trashIdentity = { dev: ts.dev, ino: ts.ino, birthtimeNs: ts.birthtimeNs, fmt: ts.mode & S_IFMT }
   } catch {
     return { ok: false, reason: 'quarantine-failed', detail: 'trash-unusable', errno: null }
   }
@@ -259,13 +261,28 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   const bindIdentity = (p) => {
     try {
       const st = fs.lstatSync(p, { bigint: true })
-      return { ok: true, dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs }
+      return {
+        ok: true,
+        dev: st.dev,
+        ino: st.ino,
+        birthtimeNs: st.birthtimeNs,
+        fmt: st.mode & S_IFMT,
+      }
     } catch (err) {
       return { ok: false, errno: err.code ?? null }
     }
   }
+  // The file TYPE is part of identity (SMI-7130). overlayfs reuses an inode number
+  // and, within one clock tick, the birthtime, for a symlink created where a
+  // directory was just deleted, so (dev, ino, birthtimeNs) alone accepted a
+  // symlink as the directory it replaced. Fail closed: an identity with no
+  // `fmt` (e.g. a caller's hand-built `expectIdentity`) never compares equal.
   const sameIdentity = (a, b) =>
-    a.dev === b.dev && a.ino === b.ino && a.birthtimeNs === b.birthtimeNs
+    typeof a.fmt === 'bigint' &&
+    a.fmt === b.fmt &&
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.birthtimeNs === b.birthtimeNs
 
   let boundIdentity = options.expectIdentity ?? null
 
@@ -491,7 +508,13 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     // F11: BIND IT. Validating once and trusting it across randSuffix() and two
     // further lstats is precisely the mistake the source rebind below exists to
     // correct, and a real concurrent race won it 6 times in 65,211 trials.
-    opIdentity = { ok: true, dev: od.dev, ino: od.ino, birthtimeNs: od.birthtimeNs }
+    opIdentity = {
+      ok: true,
+      dev: od.dev,
+      ino: od.ino,
+      birthtimeNs: od.birthtimeNs,
+      fmt: od.mode & S_IFMT,
+    }
   } catch (err) {
     return {
       status: 'stopped',
@@ -576,6 +599,11 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   //
   // It is kept because a diagnosable refusal beats an opaque ENOENT and it costs
   // one lstat, NOT because it makes the operation safe against a live attacker.
+  //
+  // SMI-7130: the comparison includes the file type. On Linux overlayfs a symlink
+  // created where the op directory was deleted took the same inode and, within a
+  // tick, the same birthtime (33 of 40 trials), so dev/ino/birthtime alone
+  // accepted it and rename(2) moved the tree through it into attacker storage.
   if (opIdentity) {
     const opNow = bindIdentity(opDir)
     if (!opNow.ok || !sameIdentity(opIdentity, opNow)) {
@@ -697,6 +725,7 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     boundIdentity,
     bindIdentity,
     sameIdentity,
+    trashRoot: trash.trashRoot,
     skillsmithVersion: SPIKE_VERSION,
   })
 }

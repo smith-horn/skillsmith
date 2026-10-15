@@ -34,7 +34,7 @@ function check(label, actual, expected) {
 
 const ident = (p) => {
   const st = fs.lstatSync(p, { bigint: true })
-  return { dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs }
+  return { dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs, fmt: st.mode & 0o170000n }
 }
 
 /** A parent holding `tree/` with fixed content, plus an identical spare. */

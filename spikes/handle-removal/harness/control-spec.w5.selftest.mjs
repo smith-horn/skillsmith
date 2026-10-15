@@ -213,8 +213,19 @@ check(
     const m = modules[file]
     return (m.Q_ROWS ?? {})[r] ?? (m.R_ROWS ?? {})[r] ?? (m.P_ROWS ?? {})[r]
   }
+  // P1's Linux count is the root run's (two mount kinds x three timings). Without root the
+  // module defines one 'no-mounts' variant, so the comparison is meaningless there: it is
+  // NOT RUN, not a pass or a failure. A non-root run itself scores INCOMPLETE against the
+  // design count, which is the intended reading of a run that could not mount.
+  const nonRootLinux = process.platform === 'linux' && process.getuid?.() !== 0
   let compared = 0
+  let notRun = 0
   for (const row of Object.keys(W5_ROWS)) {
+    if (row === 'P1' && nonRootLinux) {
+      console.log('[control-spec-w5] variants: P1 NOT RUN (linux without root defines no mounts)')
+      notRun += 1
+      continue
+    }
     const def = await rowDef(row)
     check(
       `variants: ${row} matches its module (${process.platform})`,
@@ -223,6 +234,10 @@ check(
     )
     compared += 1
   }
-  check('variants: every row was compared', compared, Object.keys(W5_ROWS).length)
+  check(
+    'variants: every row was compared or reported NOT RUN',
+    compared + notRun,
+    Object.keys(W5_ROWS).length
+  )
 }
 done()

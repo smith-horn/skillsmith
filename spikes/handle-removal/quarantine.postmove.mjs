@@ -117,9 +117,28 @@ export function mountinfoFinding(dirReal) {
 }
 
 /**
+ * Null when `destPath` resolves strictly inside `trashRoot` (path-segment
+ * containment of the realpaths, not a string prefix), else a diagnosis. A
+ * missing trashRoot or an unresolvable path is a diagnosis: fail closed.
+ */
+function destinationOutside(destPath, trashRoot) {
+  try {
+    const rel = path.relative(fs.realpathSync(trashRoot), fs.realpathSync(destPath))
+    const inside =
+      rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)
+    return inside ? null : 'destination resolves outside the trash root'
+  } catch (err) {
+    return `destination containment unverifiable (${err.code ?? err.message})`
+  }
+}
+
+/**
  * S9: post-move verification at `destPath`. Reads only; never writes anywhere,
  * and never touches the origin. Order per design §1: identity (a), walk with
- * the st_dev check (b), mountinfo (c), re-hash (d).
+ * the st_dev check (b), mountinfo (c), re-hash (d). Between (a) and (b) the
+ * destination must resolve INSIDE `trashRoot` (SMI-7130): rename(2) keeps the
+ * inode and the tree, so an op directory swapped for a symlink after the rename
+ * passes identity and the hash while the tree sits in attacker storage.
  *
  * @returns {{ok:true, treeHash:string}
  *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
@@ -131,6 +150,7 @@ export function verifyAtDestination({
   guardHash,
   bindIdentity,
   sameIdentity,
+  trashRoot,
 }) {
   const held = (reason, diagnosis, treeHash = null) => ({ ok: false, reason, diagnosis, treeHash })
   const at = bindIdentity(destPath)
@@ -141,6 +161,8 @@ export function verifyAtDestination({
       'identity at destination does not match the tree C4 verified'
     )
   }
+  const outside = destinationOutside(destPath, trashRoot)
+  if (outside !== null) return held('changed-during-move', outside)
   const rec = pathTreeRecord(destPath, { mountCheck: true })
   if (!rec.ok) {
     if (rec.reason === 'mount-inside-tree') {
@@ -338,6 +360,7 @@ export function finishAfterRename(a) {
         guardHash,
         bindIdentity: a.bindIdentity,
         sameIdentity: a.sameIdentity,
+        trashRoot: a.trashRoot,
       })
     : null
 
