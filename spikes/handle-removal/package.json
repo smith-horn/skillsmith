@@ -1,0 +1,11 @@
+{
+  "name": "@skillsmith-spike/handle-removal",
+  "private": true,
+  "version": "0.0.0",
+  "description": "SMI-6676 spike: handle-relative tree removal prototypes. Never shipped -- see README.md and harness/assert-unshipped.mjs.",
+  "type": "module",
+  "scripts": {
+    "assert-unshipped": "node harness/assert-unshipped.mjs",
+    "c0:control": "node harness/run-c0-control.mjs"
+  }
+}
