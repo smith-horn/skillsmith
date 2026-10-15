@@ -123,7 +123,12 @@ const P5_POINTS = {
     nth: 4,
     expect: 'interrupted-delete',
   },
-  'after-P4f': { when: 'before', fn: 'unlinkSync', a0Re: '/deleting$', expect: 'finished' },
+  // After the walk's LAST user-entry delete -- rmdir of the staged leaf, by its exact
+  // name -- and before any P4g metadata removal. It used to key on "before unlinkSync
+  // of S/deleting", which P4g stopped making when metadata removal became
+  // rename-to-random (c2): measured, the hook never fired and the point read NEVER-RAN
+  // in the 9073ceffa APFS run. `leafRe` is resolved per run to ^<leaf name>$.
+  'after-P4f': { when: 'after', fn: 'rmdirSync', leafRe: true, expect: 'finished' },
 }
 function p5(arm, point) {
   const f = makeParent('w5-p5-')
@@ -131,7 +136,8 @@ function p5(arm, point) {
   try {
     const c = park(f.parent, 'k', 'Q', { extraDirs: 2 })
     const spec = P5_POINTS[point]
-    const { when, fn, a0Re, a1Re, nth } = spec
+    const { when, fn, a1Re, nth } = spec
+    const a0Re = spec.leafRe ? `^${esc(c.name)}$` : spec.a0Re
     const crash = realImpl.prune({
       roots: [f.parent],
       apply: true,
@@ -156,6 +162,10 @@ function p5(arm, point) {
           ? c.copyPath
           : null
     const snap = tree ? snapshotTree(tree) : null
+    // c1's rule covers Skillsmith's own metadata too: the staging leftover (even an
+    // empty or metadata-only one, as after P4f) must be unchanged by a listing and a
+    // batch no. Without this, a control deleting it unasked recorded no failure.
+    const sSnap = S && exists(S) ? snapshotTree(S) : null
     const impl = arm === 'candidate' ? realImpl : { prune: M.pruneResumeBlind }
     const listing = impl.prune({ roots: [f.parent], apply: false })
     if (arm === 'candidate') {
@@ -169,6 +179,9 @@ function p5(arm, point) {
       confirmItem: () => false,
       allowChanged: false,
     })
+    if (sSnap !== null && (!exists(S) || snapshotTree(S) !== sSnap)) {
+      fails.push('the staging leftover changed without a confirmation')
+    }
     let lost = 0
     if (tree && (!exists(tree) || snapshotTree(tree) !== snap)) {
       lost = 1
