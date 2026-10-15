@@ -19,7 +19,8 @@ import {
 import { rmFixture } from './w5-test-util.mjs'
 import { walkerOpts, readTrace } from './w5-variant.mjs'
 
-export const W5_CONTRADICTS = (rec) => rec.fsCheck?.ok === false
+// One definition, beside the verdict it feeds (results/generate-summary.mjs uses it too).
+export { W5_CONTRADICTS } from './control-spec.w5.mjs'
 
 export function raw({
   hookFired = true,

@@ -93,10 +93,20 @@ export function controlsFor(rowId, platform = process.platform) {
   return Array.isArray(c) ? c : (c[platform] ?? [])
 }
 
-export function resolveW5Control(rowId, controlRecords, contradicts) {
+/**
+ * A W5 run fails when its row recorded a failure (fsCheck.ok false). Defined here,
+ * beside the verdict, so the runner and results/generate-summary.mjs score with
+ * one definition (w5-rows-common.mjs re-exports it).
+ */
+export const W5_CONTRADICTS = (rec) => rec.fsCheck?.ok === false
+
+// `platform`: the platform the RECORDS were made on (cell.platform), so the
+// summary scores a Linux file with Linux's control set even when generated on
+// darwin. Defaults to this process's platform, which is the runner's case.
+export function resolveW5Control(rowId, controlRecords, contradicts, platform = process.platform) {
   const row = W5_ROWS[rowId]
   if (!row) return { state: 'unspecified', detail: `no W5 row ${rowId}`, perControl: {} }
-  const controls = controlsFor(rowId)
+  const controls = controlsFor(rowId, platform)
   if (controls.length === 0)
     return { state: 'none', detail: 'no loss to demonstrate (record-only)', perControl: {} }
   const perControl = {}
@@ -127,9 +137,16 @@ export function resolveW5Control(rowId, controlRecords, contradicts) {
 }
 
 /** The candidate arm's verdict line for a row. */
-export function w5Verdict(rowId, candidateRecords, controlRecords, contradicts, target) {
+export function w5Verdict(
+  rowId,
+  candidateRecords,
+  controlRecords,
+  contradicts,
+  target,
+  platform = process.platform
+) {
   const row = W5_ROWS[rowId]
-  const ctl = resolveW5Control(rowId, controlRecords, contradicts)
+  const ctl = resolveW5Control(rowId, controlRecords, contradicts, platform)
   const controlFailed = ctl.state === 'satisfied' ? true : ctl.state === 'none' ? undefined : false
   const agg = aggregateCell(candidateRecords, contradicts, { target, controlFailed })
   if (row.recordOnly)

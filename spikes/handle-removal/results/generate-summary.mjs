@@ -28,6 +28,7 @@ import {
   controlTag,
   verdictTallyKey,
 } from '../harness/control-spec.mjs'
+import { isW5, w5SummarySection } from '../harness/w5-summary.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const RAW_DIR = path.join(HERE, 'raw')
@@ -52,7 +53,9 @@ function loadAllRecords() {
   const attackFiles = new Set()
   let malformed = 0
   for (const file of fs.readdirSync(RAW_DIR).sort()) {
-    if (!file.endsWith('.jsonl')) continue
+    // TOP-LEVEL REGULAR FILES ONLY: superseded runs kept in subdirectories
+    // (w5-superseded/, step1b-superseded/, ...) are never read.
+    if (!file.endsWith('.jsonl') || !fs.statSync(path.join(RAW_DIR, file)).isFile()) continue
     const lines = fs.readFileSync(path.join(RAW_DIR, file), 'utf8').split('\n').filter(Boolean)
     for (const line of lines) {
       let r
@@ -120,7 +123,12 @@ function verdict(row, controlState) {
 
 function main() {
   const { records, attackFiles, measurementFiles, malformed } = loadAllRecords()
-  const rows = aggregate(records).sort((a, b) =>
+  // SMI-7123 W5: W5 rows are scored by their own verdict function (control-spec.w5.mjs,
+  // via harness/w5-summary.mjs) in their own section. As generic cells they had no
+  // control spec and read `NEVER-RAN (control unspecified)`, with controls as FAIL.
+  const w5Records = records.filter(isW5)
+  const generic = records.filter((r) => !isW5(r))
+  const rows = aggregate(generic).sort((a, b) =>
     (a.attack + a.fs + a.candidate + a.variant).localeCompare(
       b.attack + b.fs + b.candidate + b.variant
     )
@@ -198,7 +206,7 @@ function main() {
     )
   }
   lines.push('')
-  lines.push(`Total: ${rows.length} cells, ${records.length} runs.`)
+  lines.push(`Total: ${rows.length} cells, ${generic.length} runs.`)
   lines.push('')
   if (rows.some((r) => r.excluded > 0 || r.callerIntentExcluded > 0)) {
     lines.push('## Cells with excluded runs')
@@ -235,8 +243,31 @@ function main() {
   }
   lines.push('')
 
+  if (w5Records.length > 0) {
+    const w5 = w5SummarySection(w5Records)
+    lines.push('## W5 rows (scored by control-spec.w5.mjs)')
+    lines.push('')
+    lines.push(
+      'One line per (row, filesystem), scored by the same verdict function `harness/run-w5-rows.mjs` ' +
+        'prints (`w5Verdict`), with the control evidence from that run. `RECORD-ONLY` rows record an ' +
+        'out-of-model residual and are never counted as PASS or FAIL. These records are not in the ' +
+        `Cells table or its tallies above. ${w5Records.length} records, ${w5.rows} rows.`
+    )
+    lines.push('')
+    lines.push('| W5 verdict | Rows |')
+    lines.push('|---|---|')
+    for (const [k, v] of Object.entries(w5.tally).sort()) lines.push(`| ${k} | ${v} |`)
+    lines.push('')
+    lines.push('| Row | FS | Verdict | Ran | Passed | Failed | Never-ran | Control |')
+    lines.push('|---|---|---|---|---|---|---|---|')
+    for (const l of w5.lines) lines.push(l)
+    lines.push('')
+  }
+
   fs.writeFileSync(OUT_PATH, lines.join('\n') + '\n')
-  console.log(`Wrote ${OUT_PATH} (${rows.length} cells from ${records.length} records)`)
+  console.log(
+    `Wrote ${OUT_PATH} (${rows.length} cells from ${generic.length} records; W5: ${w5Records.length} records; ${records.length} records in all)`
+  )
   console.log('verdicts:', JSON.stringify(tally))
   console.log('control  :', JSON.stringify(controlTally))
 }
