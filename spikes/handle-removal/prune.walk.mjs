@@ -296,7 +296,11 @@ function deleteVerified(S, leaf, inventory, sIdentity, ctx = {}) {
     } catch {
       /* unreadable cwd: covered */
     }
-    const abs = originalRel === SIDECAR_KEY ? path.join(S, r) : path.join(S, leaf, ...segs, r)
+    // The rename ran in the walker's cwd. That is S for the sidecar and for a staged root
+    // that is not a directory (originalRel ''), and S/<leaf>/<segs> for anything below a
+    // directory root, so the entry's real location follows the cwd, not the name.
+    const inS = originalRel === SIDECAR_KEY || originalRel === ''
+    const abs = inS ? path.join(S, r) : path.join(S, leaf, ...segs, r)
     let lst = null
     try {
       const s = fs.lstatSync(r, { bigint: true })
@@ -321,7 +325,7 @@ function deleteVerified(S, leaf, inventory, sIdentity, ctx = {}) {
     return new Stop(
       'stopped',
       'entry-misplaced',
-      `${originalRel === SIDECAR_KEY ? 'the sidecar' : originalRel} was renamed to ${abs} and left there`,
+      `${inS ? (originalRel === '' ? 'the staged root' : 'the sidecar') : originalRel} was renamed to ${abs} and left there`,
       {
         deleted,
         misplaced: [{ path: abs, originalRel, cause }],

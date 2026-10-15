@@ -17,32 +17,48 @@ import { recordOnlyVerdict } from './control-spec.c4.mjs'
 
 const both = (v) => ({ darwin: v, linux: v })
 
-/** design §6, one entry per row. controls: [] means "no loss to demonstrate". */
+/**
+ * design §6, one entry per row. controls: [] means "no loss to demonstrate".
+ * `variants` is how many variants the row's attack module defines (a number, or per
+ * platform where the module's list depends on it: Q7, P9, and P1 on a root Linux
+ * run). The runner scores a row with target * variants; w5-summary.mjs needs the same
+ * product because real records do not carry a target. control-spec.w5.selftest.mjs
+ * loads every module the way run-w5-rows.mjs does and fails if a value drifts.
+ */
 export const W5_ROWS = {
-  Q6: { target: 10, controls: ['C4-stateroot'], expected: both('PASS') },
-  Q7: { target: 10, controls: ['C4-consolation'], expected: both('PASS') },
+  Q6: { target: 10, variants: 1, controls: ['C4-stateroot'], expected: both('PASS') },
+  Q7: {
+    target: 10,
+    variants: { darwin: 3, linux: 5 },
+    controls: ['C4-consolation'],
+    expected: both('PASS'),
+  },
   Q8: {
     target: 5,
+    variants: 3,
     controls: ['list-index-only', 'list-throwing', 'list-scan-path'],
     expected: both('PASS'),
   },
-  Q9: { target: 5, controls: ['report-drop-origin'], expected: both('PASS') },
+  Q9: { target: 5, variants: 1, controls: ['report-drop-origin'], expected: both('PASS') },
   Q10: {
     target: 5,
+    variants: 1,
     controls: ['gitignore-editor'],
     expected: { darwin: 'PASS', linux: 'PASS (needs git in the container; else NEVER-RAN)' },
   },
-  R1: { target: 10, controls: ['prune-naive'], expected: both('PASS') },
+  R1: { target: 10, variants: 2, controls: ['prune-naive'], expected: both('PASS') },
   // prune-c0 is the control for the Linux same-dev bind only (design §6); darwin
   // has no same-dev bind, so its st_dev guard would skip an hdiutil volume.
   P1: {
     target: 30,
+    variants: { darwin: 3, linux: 6 },
     controls: { darwin: ['prune-naive'], linux: ['prune-naive', 'prune-c0'] },
     expected: both('PASS'),
   },
-  P2: { target: 30, controls: ['prune-naive'], expected: both('PASS') },
+  P2: { target: 30, variants: 1, controls: ['prune-naive'], expected: both('PASS') },
   P2r: {
     target: 30,
+    variants: 1,
     controls: [],
     recordOnly: true,
     expected: both('RECORD-ONLY (n lost) -- residual R-open (b)(i)'),
@@ -51,6 +67,7 @@ export const W5_ROWS = {
   // as residual R-swap; recorded, never scored.
   Pswap: {
     target: 30,
+    variants: 1,
     controls: [],
     recordOnly: true,
     expected: both('RECORD-ONLY (n lost) -- out-of-model residual R-swap'),
@@ -59,25 +76,39 @@ export const W5_ROWS = {
   // a swap at the random name is the same out-of-model R-swap class. Recorded only.
   Pmswap: {
     target: 30,
+    variants: 1,
     controls: [],
     recordOnly: true,
     expected: both('RECORD-ONLY (n lost) -- R-swap class at the random metadata name'),
   },
-  P3: { target: 30, controls: ['prune-in-place'], expected: both('PASS') },
-  P4: { target: 30, controls: ['prune-naive'], expected: both('PASS') },
-  P5: { target: 10, controls: ['prune-resume-blind'], expected: both('PASS') },
-  P6: { target: 10, controls: ['prune-warn-only'], expected: both('PASS') },
-  P7: { target: 30, controls: ['prune-follow'], expected: both('PASS') },
-  P8: { target: 30, controls: ['sidecar-same-inode-rewrite'], expected: both('PASS') },
+  P3: { target: 30, variants: 1, controls: ['prune-in-place'], expected: both('PASS') },
+  P4: { target: 30, variants: 1, controls: ['prune-naive'], expected: both('PASS') },
+  P5: { target: 10, variants: 6, controls: ['prune-resume-blind'], expected: both('PASS') },
+  P6: { target: 10, variants: 1, controls: ['prune-warn-only'], expected: both('PASS') },
+  P7: { target: 30, variants: 2, controls: ['prune-follow'], expected: both('PASS') },
+  P8: { target: 30, variants: 2, controls: ['sidecar-same-inode-rewrite'], expected: both('PASS') },
   P9: {
     target: 30,
+    variants: { darwin: 2, linux: 1 },
     controls: ['misplace-silent', 'misplace-revert'],
     expected: {
       darwin: 'PASS',
       linux: 'PASS ((i) only; (ii) is darwin-only and records NEVER-RAN)',
     },
   },
-  W1: { target: 5, controls: ['warn-max-not-min'], expected: both('PASS') },
+  W1: { target: 5, variants: 5, controls: ['warn-max-not-min'], expected: both('PASS') },
+}
+
+/** The number of variants a row defines on `platform`. */
+export function w5VariantCount(rowId, platform = process.platform) {
+  const v = W5_ROWS[rowId]?.variants
+  return typeof v === 'number' ? v : (v?.[platform] ?? null)
+}
+
+/** The design run count for one candidate arm on `platform` (target x variants), or null if unknown. */
+export function w5DesignRuns(rowId, platform = process.platform) {
+  const n = w5VariantCount(rowId, platform)
+  return n === null ? null : W5_ROWS[rowId].target * n
 }
 
 /**
@@ -136,6 +167,25 @@ export function resolveW5Control(rowId, controlRecords, contradicts, platform = 
   }
 }
 
+/**
+ * What a (row, fs) group must agree on before ONE verdict may stand for it: the
+ * candidate records share one `cell.target`, and every record (candidate and
+ * control) shares one platform and one run identity (runner, arch, node, os).
+ * The verdict is scored with a single target and platform, so a group that mixes
+ * them would be scored against the first record's values and read as one run
+ * (cf. C4's `targetState` 'inconsistent', cell-tally.mjs).
+ * @returns {string[]} the names that disagree, empty when the group is consistent
+ */
+export function w5GroupMixed(candidateRecords, controlRecords = {}) {
+  const all = [...candidateRecords, ...Object.values(controlRecords).flat()]
+  const distinct = (rs, pick) => new Set(rs.map((r) => JSON.stringify(pick(r.cell ?? {}) ?? null)))
+  const mixed = []
+  if (distinct(candidateRecords, (c) => c.target).size > 1) mixed.push('target')
+  if (distinct(all, (c) => c.platform).size > 1) mixed.push('platform')
+  if (distinct(all, (c) => [c.runner, c.arch, c.node, c.os]).size > 1) mixed.push('run')
+  return mixed
+}
+
 /** The candidate arm's verdict line for a row. */
 export function w5Verdict(
   rowId,
@@ -149,7 +199,14 @@ export function w5Verdict(
   const ctl = resolveW5Control(rowId, controlRecords, contradicts, platform)
   const controlFailed = ctl.state === 'satisfied' ? true : ctl.state === 'none' ? undefined : false
   const agg = aggregateCell(candidateRecords, contradicts, { target, controlFailed })
-  if (row.recordOnly)
+  // A mixed group is INCOMPLETE, never a clean verdict -- but failures still beat it,
+  // as in cellVerdict(): a measured loss is evidence whatever the group looks like.
+  const mixed = w5GroupMixed(candidateRecords, controlRecords)
+  if (mixed.length > 0 && agg.failed === 0)
+    agg.verdict = `INCOMPLETE (inconsistent ${mixed.join(', ')} in one group)`
+  // RECORD-ONLY names the loss and never-ran counts, but it must not replace a verdict
+  // that says the run is short or did not run: INCOMPLETE / NEVER-RAN stay visible.
+  if (row.recordOnly && !/^(INCOMPLETE|NEVER-RAN)/.test(agg.verdict))
     agg.verdict = recordOnlyVerdict({ failed: agg.failed, neverRan: agg.neverRan })
   return { agg, ctl, line: formatVerdict(`W5-${rowId}`, agg) }
 }

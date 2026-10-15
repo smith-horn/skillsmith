@@ -29,16 +29,18 @@ Nothing here ships: see `harness/assert-unshipped.mjs` and the plan's §7.
     pass; omit it for the plan's full run counts.
 - `c0-walk.mjs` -- C0, the control candidate ("the A1 design as of UD25"), a
   direct structural port of `reference-experiments/e53.mjs`/`e54.mjs`'s
-  walk()/gate() logic. See its own top-of-file comment for what the gate
+  walk()/gate() logic (those scripts live on the branch
+  `feature/smi-6676-handle-relative-removal-spike`, not on `main`). See its own top-of-file comment for what the gate
   actually is (a two-probe threshold using the filesystem's own clock, not a
   per-entry birthtime comparison and never `Date.now()`) and for the
   `gateTiming` options ('before-bind' is the plan's actual candidate,
   measured 0/300 on A5/A6; 'walk-start' reproduces the plan's own attack-
   table control, which measures *worse* than no gate at all).
 - `reference-experiments/` -- the A1 design's round 9-11 experiment scripts
-  (e42*, e44, e45, e47, e48, e51-e55), including e53.mjs/e54.mjs. **Use these
-  directly for anything gate-shaped rather than rebuilding from prose** --
-  see its own README for why.
+  (e42*, e44, e45, e47, e48, e51-e55), including e53.mjs/e54.mjs. They live on
+  the branch `feature/smi-6676-handle-relative-removal-spike`, not on `main`.
+  **Use these directly for anything gate-shaped rather than rebuilding from
+  prose** -- see its own README there for why.
 - `hash.mjs` -- VR's guard pass: hash through held handles (§3.4, §4.1).
 - `walk.mjs` -- VR (`removeVR`), the V0/V1/V2 candidate. V0/V1/V2 share one
   bind + guard-pass + post-order removal skeleton; only the removal pass's
@@ -48,7 +50,7 @@ Nothing here ships: see `harness/assert-unshipped.mjs` and the plan's §7.
   real install would use, reads `prebuilds/<platform>-<arch>/shim.node` --
   see its own top comment for why this is a separate file and what it
   proves about the fallback). `prebuilds/` is gitignored (compiled
-  binaries, same policy as `feasibility/`) -- regenerate per platform:
+  binaries, same policy as `feasibility/` on the branch noted below) -- regenerate per platform:
   `cd native-c && rm -rf build && npx --yes node-gyp@13.0.2 rebuild && cp
   build/Release/shim.node prebuilds/$(node -p process.platform)-$(node -p
   process.arch)/shim.node` (host), or the same rebuild inside a
@@ -61,13 +63,15 @@ Nothing here ships: see `harness/assert-unshipped.mjs` and the plan's §7.
   shared.mjs` (real Linux mount/umount helpers for A1/A2, privileged-
   container only), and two more runners: `run-vr-attacks.mjs`,
   `run-mount-attacks.mjs` (Linux-only, refuses to run elsewhere).
-- `results/` -- `raw/` (gitignored JSONL) plus, eventually, `SUMMARY.md`
-  regenerated from it (plan §8 step 14 -- not yet built).
-- `feasibility/` -- the pre-build feasibility scripts (F1-F5), already
-  committed; see its own README.
+- `results/` -- `raw/` (gitignored JSONL) plus `SUMMARY.md`, regenerated from
+  it by `results/generate-summary.mjs` (plan §8 step 14) and committed.
+- `feasibility/` -- the pre-build feasibility scripts (F1-F5). They are
+  committed on the branch `feature/smi-6676-handle-relative-removal-spike`,
+  not on `main`; see that branch's own README for them.
 - `reference-experiments/` -- the real A1-design experiment scripts
-  (e42-e55, including e53/e54, the gate's actual source). Use these
-  directly for anything gate-shaped; see its own README.
+  (e42-e55, including e53/e54, the gate's actual source). Also only on the
+  branch `feature/smi-6676-handle-relative-removal-spike`, not on `main`. Use
+  these directly for anything gate-shaped; see their own README there.
 
 ## C4 harness selftests
 

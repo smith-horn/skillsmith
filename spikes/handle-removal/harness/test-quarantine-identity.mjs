@@ -21,6 +21,7 @@ import { quarantineTree, computePathTreeHash } from '../quarantine.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 let allOk = true
 function check(label, actual, expected) {
@@ -622,6 +623,71 @@ function fixture() {
   )
   check('7z3 the origin survives', fs.existsSync(path.join(parent, 'tree')), true)
   fs.rmSync(root, { recursive: true, force: true })
+}
+
+// --- 7L. SMI-7128: no process.getuid AT LOAD on a POSIX platform is a refusal ---
+//
+// 7g covers removal AFTER load (the uid is already captured). This covers the
+// other side: the module is loaded with `process.getuid` already absent, so
+// there is no uid to compare. The old code treated that as "POSIX checks off"
+// and quarantined into any directory; it must refuse instead. Run in a child
+// so the module is imported fresh with getuid deleted (a dynamic import after
+// the delete), and against a control child that keeps getuid and must succeed.
+{
+  const qUrl = new URL('../quarantine.mjs', import.meta.url).href
+  const code = [
+    "if (process.env.Q_STUB === '1') delete process.getuid",
+    'const { quarantineTree } = await import(process.env.Q_URL)',
+    "const r = quarantineTree(process.env.Q_PARENT, 'tree', { opId: 'op-noguid-load' })",
+    "process.stdout.write(JSON.stringify({ had: typeof process.getuid, r }, (k, v) => (typeof v === 'bigint' ? String(v) : v)))",
+  ].join('\n')
+  const runChild = (stub) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 's6676-noguid-load-'))
+    const parent = path.join(root, 'parent')
+    fs.mkdirSync(path.join(parent, 'tree', 'sub'), { recursive: true })
+    fs.writeFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'USERBYTES')
+    const c = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
+      env: { ...process.env, Q_URL: qUrl, Q_PARENT: parent, Q_STUB: stub ? '1' : '0' },
+      encoding: 'utf8',
+    })
+    let out = null
+    try {
+      out = JSON.parse(c.stdout)
+    } catch {
+      /* reported by the checks below */
+    }
+    const intact = (() => {
+      try {
+        return fs.readFileSync(path.join(parent, 'tree', 'sub', 'f.txt'), 'utf8') === 'USERBYTES'
+      } catch {
+        return false
+      }
+    })()
+    const trash = path.join(parent, '.skillsmith-trash')
+    const parked = fs.existsSync(trash)
+      ? fs.readdirSync(trash).flatMap((op) => fs.readdirSync(path.join(trash, op)))
+      : []
+    fs.rmSync(root, { recursive: true, force: true })
+    return { out, intact, parked, stderr: c.stderr }
+  }
+  if (process.platform === 'win32') {
+    console.log('[quarantine-identity] 7L skipped: win32 keeps the permission checks off by design')
+  } else {
+    const ctl = runChild(false)
+    check('7L0 control: the child had process.getuid', ctl.out?.had, 'function')
+    check('7L1 control: with getuid the tree is quarantined', ctl.out?.r.status, 'quarantined')
+    const s = runChild(true)
+    check('7L2 premise: the child really had no process.getuid at load', s.out?.had, 'undefined')
+    check('7L3 without getuid at load the call is refused', s.out?.r.status, 'kept')
+    check('7L4 for the destination', s.out?.r.reason, 'quarantine-destination-changed')
+    check(
+      '7L5 and the detail names the missing getuid',
+      s.out?.r.detail,
+      'cannot verify op directory ownership: process.getuid is unavailable'
+    )
+    check('7L6 the origin bytes survive', s.intact, true)
+    check('7L7 nothing was parked', s.parked.length, 0)
+  }
 }
 
 if (!allOk) {

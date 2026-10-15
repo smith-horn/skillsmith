@@ -302,13 +302,20 @@ function exists(p) {
   }
 }
 
-function sizeOf(abs) {
+/**
+ * Total apparent bytes under abs, or null when any part could not be read (a
+ * subtree that cannot be listed has an unknown size, not a smaller one). Never
+ * throws: classifyCopy is what labels an unreadable tree, this only measures.
+ */
+export function sizeOf(abs) {
   let total = 0
+  let complete = true
   const visit = (p) => {
     let st
     try {
       st = fs.lstatSync(p)
     } catch {
+      complete = false
       return
     }
     total += st.size
@@ -317,23 +324,26 @@ function sizeOf(abs) {
       try {
         names = fs.readdirSync(p)
       } catch {
+        complete = false
         return
       }
       for (const n of names) visit(path.join(p, n))
     }
   }
   visit(abs)
-  return total
+  return complete ? total : null
 }
 
 export const human = (n) =>
-  n >= 1e9
-    ? `${(n / 1e9).toFixed(2)} GB`
-    : n >= 1e6
-      ? `${(n / 1e6).toFixed(1)} MB`
-      : n >= 1e3
-        ? `${(n / 1e3).toFixed(1)} KB`
-        : `${n} B`
+  n === null
+    ? 'unknown size'
+    : n >= 1e9
+      ? `${(n / 1e9).toFixed(2)} GB`
+      : n >= 1e6
+        ? `${(n / 1e6).toFixed(1)} MB`
+        : n >= 1e3
+          ? `${(n / 1e3).toFixed(1)} KB`
+          : `${n} B`
 
 /** Q9: one block per root -- path, size, age, origin, class -- and where the trash sits. */
 export function formatTrashReport(listing, now = Date.now()) {
@@ -345,8 +355,13 @@ export function formatTrashReport(listing, now = Date.now()) {
       continue
     }
     const rows = r.copies.map((c) => ({ c, k: c.cls ?? classifyCopy(c) }))
-    const bytes = rows.reduce((n, { c }) => n + sizeOf(c.copyPath), 0)
-    lines.push(`Trash next to your skill folders: ${rows.length} copies, ${human(bytes)}`)
+    const sizes = rows.map(({ c }) => sizeOf(c.copyPath))
+    const bytes = sizes.reduce((n, s) => n + (s ?? 0), 0)
+    const unknown = sizes.filter((s) => s === null).length
+    lines.push(
+      `Trash next to your skill folders: ${rows.length} copies, ${human(bytes)}` +
+        (unknown > 0 ? ` plus ${unknown} of unknown size` : '')
+    )
     lines.push(
       `Skillsmith parked these copies in ${r.trashRoot}, next to your own directory ${r.root}. ` +
         'Nothing here is deleted automatically.'
@@ -354,8 +369,16 @@ export function formatTrashReport(listing, now = Date.now()) {
     for (const { c, k } of rows) {
       const origin = k.sidecar?.originPath ?? readOrigin(c.sidecarPath) ?? 'unknown'
       const created = Date.parse(k.sidecar?.createdAt ?? '')
-      const ageMs = Number.isNaN(created) ? now - fs.lstatSync(c.copyPath).mtimeMs : now - created
-      const age = `${Math.max(0, Math.floor(ageMs / 86400000))}d`
+      let ageMs = null
+      if (!Number.isNaN(created)) ageMs = now - created
+      else {
+        try {
+          ageMs = now - fs.lstatSync(c.copyPath).mtimeMs
+        } catch {
+          /* unreadable: the age is unknown, and the row still lists */
+        }
+      }
+      const age = ageMs === null ? 'age unknown' : `${Math.max(0, Math.floor(ageMs / 86400000))}d`
       const why = k.reason ? ` (${k.reason})` : ''
       lines.push(
         `  ${k.klass}${why}  ${human(sizeOf(c.copyPath))}  ${age}  ${c.copyPath}  origin: ${origin}`

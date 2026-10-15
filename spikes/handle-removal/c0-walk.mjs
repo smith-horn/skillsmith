@@ -8,7 +8,8 @@
 // experiments/` (c27b4abc3). This module is a direct, structural port of
 // their walk()/gate() logic -- not a from-spec reconstruction, and not just
 // their formulas grafted onto a different shape. See
-// `reference-experiments/e53.mjs` and `e54.mjs`, and their README.
+// `reference-experiments/e53.mjs` and `e54.mjs`, and their README (those live
+// on the branch `feature/smi-6676-handle-relative-removal-spike`, not on main).
 //
 // Two structural corrections versus checkpoint 1's own rebuild:
 //

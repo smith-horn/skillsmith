@@ -125,7 +125,7 @@ export const CONTROL_SPEC = {
   A8: {
     control: {
       kind: 'external',
-      cite: "plan §5.1 A8: 'macOS /bin/rm -r (F2 B: 3/3 deleted)' -- feasibility/c3/check2-mac.sh, macOS-only, and it has no case matching subcase (b) at all",
+      cite: "plan §5.1 A8: 'macOS /bin/rm -r (F2 B: 3/3 deleted)' -- feasibility/c3/check2-mac.sh (on branch feature/smi-6676-handle-relative-removal-spike, not main), macOS-only, and it has no case matching subcase (b) at all",
     },
   },
   'A9-C0': {

@@ -19,7 +19,8 @@
 // openAt is openat(O_NOFOLLOW) + an fstat st_dev compare against the parent,
 // always. renameAtNoReplace is renameat2(RENAME_NOREPLACE) vs
 // renameatx_np(RENAME_EXCL) -- confirmed working in
-// spikes/handle-removal/feasibility/c1/{mountprobe.c,macprobe/mp.c}, whose
+// spikes/handle-removal/feasibility/c1/{mountprobe.c,macprobe/mp.c} (on the
+// branch feature/smi-6676-handle-relative-removal-spike, not on main), whose
 // exact header set and syscall usage this file reuses rather than
 // re-deriving from memory.
 
@@ -49,7 +50,7 @@ extern int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char
 #endif
 
 #ifdef __APPLE__
-#include <stdio.h> // renameatx_np, RENAME_EXCL -- see feasibility/c1/macprobe/mp.c
+#include <stdio.h> // renameatx_np, RENAME_EXCL -- see feasibility/c1/macprobe/mp.c (branch feature/smi-6676-handle-relative-removal-spike)
 #include <sys/mount.h>
 #endif
 

@@ -13,40 +13,30 @@
 // and exits non-zero when anything is left behind, so "clean" and "did not
 // look" can no longer read the same.
 
-import { execFileSync, execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { realpathSync } from 'node:fs'
 
 /**
- * Runs a shell pipeline via execSync but returns {stdout, status} instead of
- * throwing, and never lets a `| head`/`| tail` in the caller hide the
- * producer's own exit status: we run the whole pipeline and read
- * PIPESTATUS-equivalent behavior by construction -- callers here use `grep
- * -c`, whose own exit status (0 = matches found, 1 = none) is what we
- * actually want, with no downstream truncation.
- */
-function runCounted(cmd) {
-  try {
-    const stdout = execSync(cmd, { encoding: 'utf8' })
-    return { stdout: stdout.trim(), status: 0 }
-  } catch (err) {
-    // `grep -c` exits 1 with "0" on stdout when there are no matches -- that
-    // is the expected clean state, not a harness error.
-    return { stdout: (err.stdout ?? '').toString().trim(), status: err.status ?? 1 }
-  }
-}
-
-/**
  * Asserts no mount whose target/source contains `tag` (the run's s6676-<id>
- * marker) remains mounted.
+ * marker) remains mounted. `mount` is run on its own, with its exit status
+ * checked, and filtered here -- never `mount | grep -c ... || true`, where a
+ * failing `mount` produced an empty count and read as clean.
+ *
+ * count === -1 means `mount` itself failed: "could not look", never clean.
  *
  * @param {string} tag - e.g. "s6676" for a sweep, or "s6676-<runId>" for one run
  * @returns {{clean: boolean, count: number, raw: string}}
  */
 export function assertNoLeftoverMounts(tag) {
-  const { stdout } = runCounted(`mount | grep -c ${JSON.stringify(tag)} || true`)
-  const count = Number.parseInt(stdout, 10) || 0
-  return { clean: count === 0, count, raw: stdout }
+  let out = ''
+  try {
+    out = execFileSync('mount', [], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (err) {
+    return { clean: false, count: -1, raw: `mount failed: ${err.message}` }
+  }
+  const matches = out.split('\n').filter((line) => line.includes(tag))
+  return { clean: matches.length === 0, count: matches.length, raw: matches.join('\n') }
 }
 
 /**
@@ -131,13 +121,17 @@ function main(argv) {
 
   const r = assertCleanupComplete(tag, volume)
   console.log(`[cleanup] tag=${JSON.stringify(tag)} platform=${process.platform}`)
-  console.log(
-    `  mounts      : ${r.mounts.clean ? 'clean' : 'LEFTOVER'} (matched ${r.mounts.count})`
-  )
-  // count === -1 is assertNoLeftoverDiskImages' signal that `hdiutil info`
+  // count === -1 is the signal that `mount` (here) or `hdiutil info` (below)
   // itself failed. That is "could not look", not "found leftovers" -- reporting
   // it as LEFTOVER would be wrong in the other direction, and reporting it as
   // clean would be the failure this file exists to prevent.
+  if (r.mounts.count === -1) {
+    console.log(`  mounts      : COULD NOT CHECK -- ${r.mounts.raw}`)
+  } else {
+    console.log(
+      `  mounts      : ${r.mounts.clean ? 'clean' : 'LEFTOVER'} (matched ${r.mounts.count})`
+    )
+  }
   if (r.images.count === -1) {
     console.log(`  disk images : COULD NOT CHECK -- ${r.images.raw}`)
   } else {

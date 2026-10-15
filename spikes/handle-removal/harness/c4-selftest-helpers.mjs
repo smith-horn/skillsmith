@@ -3,19 +3,26 @@
 // Every file calls finish() last; a FAIL in any one exits non-zero.
 
 let allOk = true
+let ran = 0
 export function check(label, actual, expected) {
   const ok = actual === expected
+  ran += 1
   allOk = allOk && ok
   console.log(
     `[result-schema c4 self-test] ${label}: expected ${expected}, got ${actual} -- ${ok ? 'PASS' : 'FAIL'}`
   )
 }
 export function finish() {
+  // A self-test that ran no check proves nothing: it must not read as a pass.
+  if (ran === 0) {
+    console.error('[result-schema c4 self-test] FAIL: NO CASES RAN')
+    process.exit(1)
+  }
   if (!allOk) {
     console.error('[result-schema c4 self-test] FAIL')
     process.exit(1)
   }
-  console.log('[result-schema c4 self-test] all cases passed')
+  console.log(`[result-schema c4 self-test] all ${ran} cases passed`)
   process.exit(0)
 }
 
