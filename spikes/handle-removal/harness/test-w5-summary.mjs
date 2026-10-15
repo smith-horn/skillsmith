@@ -118,11 +118,17 @@ const dropHeader = (text) =>
     .split('\n')
     .filter((l) => !l.startsWith('Regenerated from '))
     .join('\n')
-const at = generated.indexOf('\n## W5 rows (scored by control-spec.w5.mjs)')
-const pre = at === -1 ? generated : generated.slice(0, at) + '\n'
+// Both sides are cut at the W5 heading. Comparing the generated prefix with the WHOLE
+// committed file held only while the committed copy had no W5 section; once the W5
+// results were committed it could never match (found on the C4 merge branch).
+const W5_HEADING = '\n## W5 rows (scored by control-spec.w5.mjs)'
+const prefixOf = (text) => {
+  const at = text.indexOf(W5_HEADING)
+  return at === -1 ? text : text.slice(0, at) + '\n'
+}
 check(
   'everything before the W5 section is byte-identical to the committed SUMMARY (header totals aside)',
-  dropHeader(pre) === dropHeader(committed),
+  dropHeader(prefixOf(generated)) === dropHeader(prefixOf(committed)),
   true
 )
 check(
