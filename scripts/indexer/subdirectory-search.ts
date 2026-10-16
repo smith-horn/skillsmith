@@ -382,6 +382,28 @@ export function buildDisabledSubdirectorySearchMarker(
   }
 }
 
+/**
+ * Map Phase 3b's result onto the persisted `subdirectory_search` stats. Exported because
+ * SMI-7121's backfill halts read three of these fields off the checkpoint, so a wrong
+ * mapping here would silently pass or stop the autochain.
+ */
+export function toSubdirectorySearchStats(
+  r: Awaited<ReturnType<typeof runSubdirectorySearch>>
+): NonNullable<IndexerResult['subdirectory_search']> {
+  return {
+    repos_found: r.repos.length,
+    total_found: r.totalFound,
+    retries: r.retries,
+    license_filtered: r.licenseFiltered,
+    license_fetch_failed: r.licenseFetchFailed,
+    admitted: r.admitted,
+    license_null: r.licenseNull,
+    no_default_branch: r.noDefaultBranch,
+    incomplete_results: r.incompleteResults,
+    search_mode: r.searchMode,
+  }
+}
+
 export async function runSubdirectorySearchPhase(args: {
   seenUrls: Set<string>
   validationCache: Map<string, SkillMdValidation>
@@ -405,18 +427,7 @@ export async function runSubdirectorySearchPhase(args: {
       args.repositories.push(repo)
     }
     args.result.errors.push(...subdirResult.errors)
-    args.result.subdirectory_search = {
-      repos_found: subdirResult.repos.length,
-      total_found: subdirResult.totalFound,
-      retries: subdirResult.retries,
-      license_filtered: subdirResult.licenseFiltered,
-      license_fetch_failed: subdirResult.licenseFetchFailed,
-      admitted: subdirResult.admitted,
-      license_null: subdirResult.licenseNull,
-      no_default_branch: subdirResult.noDefaultBranch,
-      incomplete_results: subdirResult.incompleteResults,
-      search_mode: subdirResult.searchMode,
-    }
+    args.result.subdirectory_search = toSubdirectorySearchStats(subdirResult)
     if (subdirResult.backfill) {
       args.result.backfill_crawl = subdirResult.backfill
     }

@@ -26,6 +26,7 @@ import { type SizeFacet, buildSizeFacets, facetId, bisectFacet } from './code-se
 // SMI-6246: campaign-defining inputs echoed onto the checkpoint so the
 // indexer-backfill-autochain.yml watcher can recover them without guessing.
 import type { BackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
+import type { CheckpointHaltFields } from './backfill-checkpoint.counters.ts' // SMI-7121
 
 /** `event_type` discriminator for backfill checkpoint rows in `audit_logs`. */
 export const BACKFILL_CHECKPOINT_EVENT_TYPE = 'indexer_backfill_checkpoint'
@@ -240,7 +241,7 @@ export interface BackfillCrawlOutcome {
  * dry-run checkpoints during pre-flight before the first tagged live run
  * (SMI-5319 plan).
  */
-export interface BackfillCheckpointPayload {
+export interface BackfillCheckpointPayload extends CheckpointHaltFields {
   run_id: string
   cursor: BackfillCursor
   facets_completed: number
@@ -321,6 +322,8 @@ export async function writeCheckpoint(
         incomplete_results_ranges: payload.incomplete_results_ranges,
         dry_run: payload.dry_run,
         dispatch_inputs: payload.dispatch_inputs,
+        dispatch_counters: payload.dispatch_counters,
+        resumed_from: payload.resumed_from,
       },
     })
     // pr-reviewer round-1 finding: clear the timer on both outcomes -- an
