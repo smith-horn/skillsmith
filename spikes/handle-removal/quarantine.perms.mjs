@@ -1,6 +1,6 @@
 // SMI-7134: the F12 op-directory trust check (owner and mode), shared by the pre-move
 // validation in quarantine.mjs and the post-move verification in
-// quarantine.postmove.mjs so the two sites cannot drift. Split out for file length.
+// quarantine.verify.mjs so the two sites cannot drift. Split out for file length.
 // POSIX_PERM_CHECKS and SELF_UID are captured ONCE at module load (M-1, SMI-7128).
 
 export const S_IFMT = 0o170000n // file-type bits of a bigint lstat mode

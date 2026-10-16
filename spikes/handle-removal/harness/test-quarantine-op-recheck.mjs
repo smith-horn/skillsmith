@@ -13,7 +13,8 @@
 //   H  (SMI-7134) status 'quarantined' where 'held' is expected: the SAME op directory is
 //      chmod'ed 0777 after the rename; only the owner/mode re-check can tell.
 //   I7 (SMI-7134 round 2) content AND location both fail: detail says "safe at" if
-//      checkLocation() is skipped on content-failure branches.
+//      checkLocation() is skipped on content-failure branches; I7f: the content diagnosis is
+//      dropped when the location also fails.
 //   J  (SMI-7134 gate) status 'quarantined' where 'held' is expected: a byte-identical copy is
 //      swapped in at destPath during the walk (identity was checked before the walk).
 //   J2 same: the op directory is chmod'ed 0777 during the walk (mode was checked before it).
@@ -232,6 +233,13 @@ for (const [id, mode, label] of [
   check(
     'I7e and names the location failure, not the hash',
     /op directory identity check failed/.test(r.detail ?? ''),
+    true
+  )
+  check(
+    'I7f and also names the content failure instead of dropping it',
+    /content check also failed: changed-during-move: tree hash at the destination differs/.test(
+      r.detail ?? ''
+    ),
     true
   )
   fs.rmSync(f.root, { recursive: true, force: true })
