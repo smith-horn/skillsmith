@@ -117,28 +117,18 @@ export function mountinfoFinding(dirReal) {
 }
 
 /**
- * Null when `destPath` resolves strictly inside `trashRoot` (path-segment
- * containment of the realpaths, not a string prefix), else a diagnosis. A
- * missing trashRoot or an unresolvable path is a diagnosis: fail closed.
- */
-function destinationOutside(destPath, trashRoot) {
-  try {
-    const rel = path.relative(fs.realpathSync(trashRoot), fs.realpathSync(destPath))
-    const inside =
-      rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)
-    return inside ? null : 'destination resolves outside the trash root'
-  } catch (err) {
-    return `destination containment unverifiable (${err.code ?? err.message})`
-  }
-}
-
-/**
  * S9: post-move verification at `destPath`. Reads only; never writes anywhere,
- * and never touches the origin. Order per design §1: identity (a), walk with
- * the st_dev check (b), mountinfo (c), re-hash (d). Between (a) and (b) the
- * destination must resolve INSIDE `trashRoot` (SMI-7130): rename(2) keeps the
- * inode and the tree, so an op directory swapped for a symlink after the rename
- * passes identity and the hash while the tree sits in attacker storage.
+ * and never touches the origin. Order per design §1: identity (a), containment
+ * (SMI-7132), walk with the st_dev check (b), mountinfo (c), re-hash (d).
+ *
+ * CONTAINMENT (SMI-7132) asks whether the entry is in the op directory C4
+ * validated, not where the entry's own realpath leads: rename(2) keeps the inode
+ * and the tree, so a swapped op directory or trash root passes identity and the
+ * hash while the tree sits in attacker storage. (1) realpath of the entry's
+ * PARENT must equal `opReal`, captured before the rename. (2) The trash root,
+ * lstat'ed by path now, must still match the identity C4 validated. The entry
+ * itself is never realpath'ed: a symlink skill root resolves to its target, which
+ * is outside the trash by design. Nothing is moved back on a mismatch.
  *
  * @returns {{ok:true, treeHash:string}
  *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
@@ -151,6 +141,8 @@ export function verifyAtDestination({
   bindIdentity,
   sameIdentity,
   trashRoot,
+  trashIdentity,
+  opReal,
 }) {
   const held = (reason, diagnosis, treeHash = null) => ({ ok: false, reason, diagnosis, treeHash })
   const at = bindIdentity(destPath)
@@ -161,8 +153,22 @@ export function verifyAtDestination({
       'identity at destination does not match the tree C4 verified'
     )
   }
-  const outside = destinationOutside(destPath, trashRoot)
-  if (outside !== null) return held('changed-during-move', outside)
+  let parentReal = null
+  try {
+    parentReal = fs.realpathSync(path.dirname(destPath))
+  } catch (err) {
+    return held(
+      'changed-during-move',
+      `op directory unresolvable after the move (${err.code ?? err.message})`
+    )
+  }
+  if (typeof opReal !== 'string' || parentReal !== opReal) {
+    return held('changed-during-move', 'op directory resolves elsewhere than where C4 validated it')
+  }
+  const trashNow = bindIdentity(trashRoot)
+  if (trashIdentity == null || !trashNow.ok || !sameIdentity(trashIdentity, trashNow)) {
+    return held('changed-during-move', 'trash root is no longer the one C4 validated')
+  }
   const rec = pathTreeRecord(destPath, { mountCheck: true })
   if (!rec.ok) {
     if (rec.reason === 'mount-inside-tree') {
@@ -176,13 +182,9 @@ export function verifyAtDestination({
       `${rec.reason} at ${rec.path}${rec.errno ? ` (${rec.errno})` : ''}`
     )
   }
-  let destReal
-  try {
-    destReal = fs.realpathSync(destPath)
-  } catch (err) {
-    return held('changed-during-move', `destination realpath failed (${err.code ?? err.message})`)
-  }
-  const mi = mountinfoFinding(destReal)
+  // Resolved parent + entry name, never realpath(entry): a symlink root would
+  // otherwise be checked at its target (SMI-7132).
+  const mi = mountinfoFinding(path.join(parentReal, path.basename(destPath)))
   if (mi !== null) return held('mount-appeared-during-move', mi)
   const treeHash = computeTreeHash(rec.record)
   if (treeHash !== guardHash) {
@@ -361,6 +363,8 @@ export function finishAfterRename(a) {
         bindIdentity: a.bindIdentity,
         sameIdentity: a.sameIdentity,
         trashRoot: a.trashRoot,
+        trashIdentity: a.trashIdentity,
+        opReal: a.opReal,
       })
     : null
 

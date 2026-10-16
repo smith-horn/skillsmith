@@ -4,10 +4,11 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import path from 'node:path'
 
-/** A check() that logs PASS/FAIL per case and a done() that exits non-zero on any FAIL. */
+/** A check() that logs PASS/FAIL per case, a notRun() for skipped blocks, and a done() that exits non-zero on any FAIL. */
 export function makeCheck(tag) {
   let allOk = true
   let n = 0
+  let skipped = 0
   const show = (v) => {
     const s = JSON.stringify(v) ?? String(v)
     return s.length <= 160
@@ -23,6 +24,12 @@ export function makeCheck(tag) {
     )
     return ok
   }
+  // A block that could not run (false premise). Not a pass and not a failure, but counted so
+  // done() cannot report full coverage for a run that skipped blocks (SMI-7132 F6).
+  const notRun = (label, why) => {
+    skipped += 1
+    console.log(`${tag} ${label}: NOT RUN (${why})`)
+  }
   const done = () => {
     if (n === 0) {
       console.log(`${tag} NO CASES RAN -- a suite that checks nothing must not read as a pass`)
@@ -32,10 +39,10 @@ export function makeCheck(tag) {
       console.log(`${tag} SOME CASES FAILED`)
       process.exit(1)
     }
-    console.log(`${tag} all ${n} cases passed`)
+    console.log(`${tag} all ${n} cases passed${skipped > 0 ? `, ${skipped} blocks NOT RUN` : ''}`)
     process.exit(0)
   }
-  return { check, done }
+  return { check, done, notRun }
 }
 
 /**

@@ -54,10 +54,15 @@ export function w5SummarySection(records) {
     const platform = cand[0].cell.platform
     // Real W5 records carry no cell.target (makeRecord drops it for non-C4 cells), so the
     // expected run count is the design count the runner scored with: target x variants.
-    // A platform with no known variant count leaves target undefined (records.length).
+    // A platform with no known design count has no expected run count to score against:
+    // that group is INCOMPLETE, never a PASS against its own record count (SMI-7132 F5).
+    // A measured failure still outranks it, as in w5Verdict.
     const target = cand[0].cell.target ?? w5DesignRuns(rowId, platform) ?? undefined
     const v = w5Verdict(rowId, cand, ctl, W5_CONTRADICTS, target, platform)
     const a = v.agg
+    if (target === undefined && a.failed === 0) {
+      a.verdict = `INCOMPLETE (no design count for platform ${platform})`
+    }
     lines.push(
       `| ${g.attack} | ${g.fs} | ${a.verdict} | ${a.ran} | ${a.passed} | ${a.failed} | ${a.neverRan} | ${v.ctl.state} (${v.ctl.detail}) |`
     )

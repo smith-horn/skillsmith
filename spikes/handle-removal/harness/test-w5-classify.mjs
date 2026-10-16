@@ -22,7 +22,7 @@ import { canMount, mountAt, detachUnder, noImageAttachedUnder, MOUNT_KINDS } fro
 import * as mutants from './w5-mutants.mjs'
 
 const TAG = '[w5-classify]'
-const { check, done } = makeCheck(TAG)
+const { check, done, notRun } = makeCheck(TAG)
 const against = againstArg()
 if (against !== null && against !== 'classify-default-clean') {
   console.error(`${TAG} no case targets ${against}`)
@@ -138,9 +138,7 @@ if (against === null) {
     }
     if (listable) {
       // A false premise is neither a pass nor a fail: the block did not run.
-      console.log(
-        `${TAG} unreadable: NOT RUN (mode-000 directory is listable here, e.g. running as root)`
-      )
+      notRun('unreadable', 'mode-000 directory is listable here, e.g. running as root')
       break unreadable
     }
     check('unreadable: premise: the mode-000 subdirectory cannot be listed here', !listable, true)
