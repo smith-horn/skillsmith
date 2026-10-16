@@ -21,8 +21,8 @@
  * itself), so it stays cheaply unit-testable. Wiring a *live* caller that
  * sources real `HIGH_TRUST_OWNERS`-published skill names and real
  * install-count data, refreshed on the existing metadata-refresh cadence
- * (`.claude/development/deployment-guide.md`'s "Metadata Refresh (every 4h
- * :30)" job — no new cron), is a follow-up integration point, not built out
+ * (`.claude/development/deployment-guide.md`'s "Metadata Refresh" job, pg_cron
+ * every 4h — no new cron), is a follow-up integration point, not built out
  * this wave.
  */
 

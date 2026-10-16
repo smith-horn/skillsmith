@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-7114 -- a comment in `security/scanner/typosquat-reference-list.ts` now names the
+  pg_cron-triggered "Metadata Refresh" job instead of the retired GitHub "every 4h :30" schedule. No behaviour change.
+
 ## v0.14.0
 
 - **Changed** (behaviour change for every caller): SMI-7056 -- `SkillInstallationService.install()` gated `skipScan` and the
