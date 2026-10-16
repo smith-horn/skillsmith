@@ -34,6 +34,11 @@ const REFRESH_CRON_FNS = [
   'harvest_refresh_dispatch_results',
 ]
 const REFRESH_RPC = 'refresh_metadata_health'
+// SMI-7121: the marker watcher is cron-called and picked up by the extractor; the transition
+// function is called by the autochain over PostgREST, not by cron, so its revoke is asserted by name.
+const MARKERS_MIGRATION = '20261016000000_backfill_autochain_markers.sql'
+const MARKERS_CRON_FN = 'check_backfill_autochain_markers'
+const MARKERS_RPC = 'backfill_autochain_marker_transition'
 
 // Measured live from staging cron.job on 2026-10-11.
 const MEASURED_CRON_FNS = [
@@ -157,6 +162,38 @@ describe.skipIf(locked)('SMI-7114 -- the refresh functions are covered by the gr
       files.flatMap((f) => splitStatements(stripComments(f.sql))).filter((s) => re.test(s))
     expect(revokes(mine())).toHaveLength(1)
     expect(revokes(without7114()), 'known-negative: no other migration does').toHaveLength(0)
+  })
+})
+
+describe.skipIf(locked)('SMI-7121 -- the marker functions are covered by the grants guard', () => {
+  const mine = () => corpus.filter((f) => f.name === MARKERS_MIGRATION)
+  const without7121 = () => corpus.filter((f) => f.name !== MARKERS_MIGRATION)
+
+  it('presence: the extractor finds the watcher, and it is not a violation', () => {
+    expect(mine(), 'marker migration present').toHaveLength(1)
+    expect(cronCalledFunctions(orderedStatements(corpus)).has(MARKERS_CRON_FN)).toBe(true)
+    expect(fnNames(corpus)).not.toContain(MARKERS_CRON_FN)
+  })
+
+  it('known-negative: with the migration present but its revokes removed, the watcher is flagged', () => {
+    const stripped = mine().map((f) => ({
+      ...f,
+      sql: f.sql.replace(/REVOKE EXECUTE ON FUNCTION public\.[^;]*;/g, ''),
+    }))
+    expect(fnNames([...without7121(), ...stripped])).toContain(MARKERS_CRON_FN)
+  })
+
+  it('backfill_autochain_marker_transition (not cron-called) is revoked from all three roles exactly once', () => {
+    const re = new RegExp(
+      `REVOKE\\s+EXECUTE\\s+ON\\s+FUNCTION\\s+public\\.${MARKERS_RPC}\\s*\\(\\s*text\\s*,\\s*text\\s*,\\s*text\\s*,\\s*jsonb\\s*\\)\\s+FROM\\s+PUBLIC\\s*,\\s*anon\\s*,\\s*authenticated\\b`,
+      'i'
+    )
+    const revokes = (files: MigrationFile[]) =>
+      files.flatMap((f) => splitStatements(stripComments(f.sql))).filter((s) => re.test(s))
+    expect(revokes(mine())).toHaveLength(1)
+    expect(revokes(without7121()), 'known-negative: no other migration does').toHaveLength(0)
+    // the transition function is not cron-called, so the extractor alone would never see it
+    expect(cronCalledFunctions(orderedStatements(corpus)).has(MARKERS_RPC)).toBe(false)
   })
 })
 
