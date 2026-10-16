@@ -4,7 +4,9 @@
 // per (row, fs), and keep W5 out of the generic attack-cell table and tallies.
 //
 // It runs the real generator (which writes results/SUMMARY.md) and ALWAYS restores
-// the committed SUMMARY.md afterwards with `git show HEAD:...`, a read of the repo.
+// the working copy's own bytes afterwards (saved before the run), so a regenerated,
+// uncommitted SUMMARY.md is never lost. Comparisons are against HEAD's copy, read with
+// `git show HEAD:...`.
 //
 // The runner's verdict lines come from the committed fixture
 // results/w5-runner-verdicts.tsv (made by results/extract-w5-verdicts.mjs from the
@@ -61,6 +63,9 @@ check('the fixture holds 19 rows x 5 filesystems', expected.size, 95)
 
 const head = execFileSync('git', ['-C', WT, 'show', `HEAD:${REL}`]).toString()
 const committed = override === null ? head : fs.readFileSync(override, 'utf8')
+// The working copy's own bytes (null when the file is absent), saved BEFORE the generator
+// overwrites it, so a developer's regenerated, uncommitted SUMMARY.md survives this suite.
+const saved = fs.existsSync(SUMMARY) ? fs.readFileSync(SUMMARY) : null
 let generated = null
 let genOut = ''
 try {
@@ -69,11 +74,12 @@ try {
   })
   generated = fs.readFileSync(SUMMARY, 'utf8')
 } finally {
-  fs.writeFileSync(SUMMARY, head)
+  if (saved === null) fs.rmSync(SUMMARY, { force: true })
+  else fs.writeFileSync(SUMMARY, saved)
 }
 check(
-  'premise: SUMMARY.md restored to the HEAD copy',
-  fs.readFileSync(SUMMARY, 'utf8') === head,
+  'premise: SUMMARY.md restored to the working copy it had before the run',
+  saved === null ? !fs.existsSync(SUMMARY) : fs.readFileSync(SUMMARY).equals(saved),
   true
 )
 

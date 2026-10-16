@@ -7,6 +7,8 @@
 //
 // DECLARED FAILURES:
 //   T15 misplace-silent / M7   `misplaced` null
+//   T15b misplace-silent / M7  `misplaced` null; on the real code before the SMI-7128 fix, the
+//                              reported path S/<leaf>/.d-xxxx does not exist ("misplaced[0].path exists")
 //   T16 misplace-silent        a renamed source path not in misplaced[]
 //   T18 prune-c0 (linux)       the bind-source bytes lost
 //   P9-trace misplace-revert / M8   the trace invariant fails (a hidden name renamed back)
@@ -31,6 +33,7 @@ const { check, done } = makeCheck(TAG)
 const against = againstArg()
 const TARGETS = {
   T15: ['misplace-silent', 'M7'],
+  T15b: ['misplace-silent', 'M7'],
   T16: ['misplace-silent'],
   T18: ['prune-c0'],
   P9trace: ['misplace-revert', 'M8'],
@@ -57,10 +60,10 @@ const readJson = (p) => {
   }
 }
 
-function run(f, hooks) {
+function run(f, hooks, extra = {}) {
   const traceFile = path.join(f.root, `trace-${Math.random().toString(16).slice(2)}.json`)
   const walker = walkerOpts({ stub: impl.stub, walkerPath: impl.walkerPath, hooks, traceFile })
-  const r = impl.prune({ roots: [f.parent], apply: true, confirmBatch: yes, walker })
+  const r = impl.prune({ roots: [f.parent], apply: true, confirmBatch: yes, walker, ...extra })
   return { item: r.items[0] ?? {}, t: readTrace(traceFile) }
 }
 
@@ -125,6 +128,76 @@ if (want('T15')) {
       'top-bytes'
     )
   })
+}
+
+/**
+ * T15b: the staged root is not a directory (a parked symlink or a single file), so
+ * the walker deletes it with its cwd at S, not S/<leaf>. A swap between the pre-check
+ * and the rename must be reported at the entry's REAL location, S/.d-xxxx, and
+ * recorded there in misplaced.json.
+ */
+function nonDirRootCase(kind) {
+  const label = `T15b [${kind} root]`
+  const f = makeParent('w5-t15b-')
+  const rec = path.join(f.root, 'swap.json')
+  try {
+    const c = park(f.parent, 't', 'Q')
+    fs.rmSync(c.copyPath, { recursive: true })
+    if (kind === 'file') fs.writeFileSync(c.copyPath, 'root-file-bytes')
+    else {
+      fs.writeFileSync(path.join(f.root, 'link-target'), 'link-target-bytes')
+      fs.symlinkSync(path.join(f.root, 'link-target'), c.copyPath)
+    }
+    // The root was replaced after parking, so the copy classifies as `changed`.
+    const { item } = run(
+      f,
+      [
+        {
+          when: 'before',
+          fn: 'renameSync',
+          a0Re: `^${c.name}$`,
+          a1Re: '^\\.d-',
+          action: { kind: 'swap', awayDir: f.root, data: 'replacement-bytes', recordFile: rec },
+        },
+      ],
+      { allowChanged: true, isTTY: true, confirmItem: yes }
+    )
+    const sw = readJson(rec)
+    check(`${label} premise: the swap landed`, sw !== null, true)
+    check(
+      `${label} stopped/entry-misplaced`,
+      `${item.status}/${item.reason}`,
+      'stopped/entry-misplaced'
+    )
+    const m = Array.isArray(item.misplaced) ? item.misplaced[0] : null
+    check(`${label} misplaced[0] is reported`, m !== null, true)
+    if (m === null) return
+    check(`${label} originalRel is the root`, m.originalRel, '')
+    let st = null
+    try {
+      st = fs.lstatSync(m.path, { bigint: true })
+    } catch {
+      /* gone */
+    }
+    check(`${label} misplaced[0].path exists`, st !== null, true)
+    check(
+      `${label} it is the replacement (dev, ino)`,
+      st ? `${st.dev}/${st.ino}` : null,
+      sw ? `${sw.dev}/${sw.ino}` : 'no-record'
+    )
+    check(`${label} with the replacement bytes`, read(m.path), 'replacement-bytes')
+    // The rename ran in S, so the entry sits directly in the staging directory.
+    check(`${label} it sits directly in S`, path.dirname(m.path), item.stagingPath)
+    const mj = readJson(path.join(item.stagingPath ?? '/nonexistent', 'misplaced.json'))
+    check(`${label} S/misplaced.json records the same path`, mj ? mj.path : null, m.path)
+  } finally {
+    rmFixture(f.root)
+  }
+}
+
+if (want('T15b')) {
+  nonDirRootCase('file')
+  nonDirRootCase('symlink')
 }
 
 if (want('P9trace')) {

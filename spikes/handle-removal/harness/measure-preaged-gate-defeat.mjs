@@ -7,7 +7,8 @@
 // simply creates the substitute BEFORE the removal call runs hands the gate
 // a real, unforged old birthtime, needing no special capability and no
 // timing precision at all. Not a re-implementation of anything cited --
-// checked against reference-experiments/ and feasibility/ first (including
+// checked against reference-experiments/ and feasibility/ first (both live on
+// the branch feature/smi-6676-handle-relative-removal-spike, not on main; including
 // e45-birthtime.mjs, which measures inode-reuse birthtime collision, a
 // different property) and found nothing covering this question.
 //

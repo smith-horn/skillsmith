@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { listTrash, classifyCopy, human } from './prune.classify.mjs'
+import { listTrash, classifyCopy, human, sizeOf } from './prune.classify.mjs'
 import { inspectLeftover } from './prune.leftovers.mjs'
 import { encodeJob } from './prune.job.mjs'
 import { shapeResult } from './result-shape.mjs'
@@ -46,22 +46,6 @@ export function inProcessLock(root) {
 
 const kept = (copy, reason, detail = null) =>
   shapeResult({ status: 'kept', reason, path: copy.copyPath, entry: copy.name, detail })
-
-function sizeOf(abs) {
-  let n = 0
-  const visit = (p) => {
-    let st
-    try {
-      st = fs.lstatSync(p)
-    } catch {
-      return
-    }
-    n += st.size
-    if (st.isDirectory()) for (const c of fs.readdirSync(p)) visit(path.join(p, c))
-  }
-  visit(abs)
-  return n
-}
 
 /**
  * Runs one approved item in the walker child and returns its ItemResult.
@@ -170,10 +154,14 @@ function pruneLocked({
   }
   // P2 summary
   const totals = {}
+  let unknownSize = 0
   for (const e of entries) {
     const t = (totals[e.cls.klass] ??= { count: 0, bytes: 0 })
     t.count += 1
-    t.bytes += sizeOf(e.copy.copyPath)
+    // A copy with an unreadable subtree has an unknown size: it counts as listed, adds no bytes.
+    const sz = sizeOf(e.copy.copyPath)
+    if (sz === null) unknownSize += 1
+    else t.bytes += sz
   }
   const plan = {
     totals,
@@ -192,7 +180,9 @@ function pruneLocked({
     index: listing.index,
     confirmationText: CONFIRMATION_TEXT,
   }
-  plan.summary = `${entries.length} copies, ${human(plan.bytes)}`
+  plan.summary =
+    `${entries.length} copies, ${human(plan.bytes)}` +
+    (unknownSize > 0 ? ` plus ${unknownSize} of unknown size` : '')
   if (!apply) return { plan, items: [], exitCode: 0 }
 
   // §4 + Sol c1 finding 2: nothing is deleted without confirmation, anywhere. Pure

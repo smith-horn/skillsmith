@@ -5,7 +5,7 @@
 // Each (row, fs) group is scored with the platform its records were made on
 // (cell.platform) and the target the runner recorded (cell.target), so a Linux
 // file is scored with Linux's control set even when the summary is built on darwin.
-import { W5_ROWS, W5_CONTRADICTS, w5Verdict } from './control-spec.w5.mjs'
+import { W5_ROWS, W5_CONTRADICTS, w5Verdict, w5DesignRuns } from './control-spec.w5.mjs'
 import { verdictTallyKey } from './control-spec.mjs'
 
 const isW5 = (r) => typeof r?.cell?.attack === 'string' && r.cell.attack.startsWith('W5-')
@@ -49,8 +49,13 @@ export function w5SummarySection(records) {
       )
       continue
     }
+    // w5Verdict scores with ONE target and platform (the first candidate's), and itself
+    // reports the group INCOMPLETE when its records do not all share them (w5GroupMixed).
     const platform = cand[0].cell.platform
-    const target = cand[0].cell.target
+    // Real W5 records carry no cell.target (makeRecord drops it for non-C4 cells), so the
+    // expected run count is the design count the runner scored with: target x variants.
+    // A platform with no known variant count leaves target undefined (records.length).
+    const target = cand[0].cell.target ?? w5DesignRuns(rowId, platform) ?? undefined
     const v = w5Verdict(rowId, cand, ctl, W5_CONTRADICTS, target, platform)
     const a = v.agg
     lines.push(

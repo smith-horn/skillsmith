@@ -8,6 +8,11 @@
 //
 // DECLARED FAILURE (T4 against classify-default-clean): the orphan copy (no
 // sidecar) is classified `clean`; likewise the U, schema-invalid and unreadable copies.
+//
+// DECLARED FAILURE (SMI-7128 unreadable-subtree cases, real code only): with prune.mjs's old
+// unguarded sizeOf, "unreadable: a dry-run does not throw" fails with an EACCES readdir error;
+// with formatTrashReport's old unguarded lstat, "an unreadable copy root still lists" fails
+// with an ENOENT exception.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -75,7 +80,7 @@ if (canMount()) {
 
 // --- listing structure (real code only) -------------------------------------------
 if (against === null) {
-  const { listTrash } = real
+  const { listTrash, formatTrashReport } = real
   const f = makeParent('w5-list-')
   const indexPath = path.join(f.root, 'parked-index.jsonl')
   try {
@@ -112,6 +117,122 @@ if (against === null) {
     )
   } finally {
     rmFixture(f.root)
+  }
+  // SMI-7128: a copy holding a mode-000 subdirectory must not make prune (dry-run or
+  // apply) or the report throw for every copy; it is listed as unverified, size unknown.
+  const { prune } = await import('../prune.mjs')
+  const u = makeParent('w5-unreadable-')
+  let locked = null
+  unreadable: try {
+    const good = park(u.parent, 'good', 'Q')
+    const bad = park(u.parent, 'bad', 'Q')
+    locked = path.join(bad.copyPath, 'locked')
+    fs.mkdirSync(locked)
+    fs.writeFileSync(path.join(locked, 'f.txt'), 'locked-bytes')
+    fs.chmodSync(locked, 0o000)
+    let listable = true
+    try {
+      fs.readdirSync(locked)
+    } catch {
+      listable = false
+    }
+    if (listable) {
+      // A false premise is neither a pass nor a fail: the block did not run.
+      console.log(
+        `${TAG} unreadable: NOT RUN (mode-000 directory is listable here, e.g. running as root)`
+      )
+      break unreadable
+    }
+    check('unreadable: premise: the mode-000 subdirectory cannot be listed here', !listable, true)
+    let dry = null
+    let dryErr = null
+    try {
+      dry = prune({ roots: [u.parent] })
+    } catch (err) {
+      dryErr = `${err.code ?? ''} ${err.message}`
+    }
+    check('unreadable: a dry-run does not throw', dryErr, null)
+    const rowFor = (p) => dry?.plan.rows.find((x) => x.path === p) ?? null
+    check('unreadable: the dry-run lists both copies', dry?.plan.rows.length, 2)
+    check('unreadable: the good copy is clean', rowFor(good.copyPath)?.klass, 'clean')
+    check('unreadable: the bad copy is unverified', rowFor(bad.copyPath)?.klass, 'unverified')
+    check(
+      'unreadable: with reason tree-unreadable',
+      rowFor(bad.copyPath)?.reason,
+      'tree-unreadable'
+    )
+    check(
+      'unreadable: the summary says one copy is of unknown size',
+      /plus 1 of unknown size/.test(dry?.plan.summary ?? ''),
+      true
+    )
+    const listing = listTrash({ roots: [u.parent] })
+    let text = null
+    try {
+      text = formatTrashReport(listing)
+    } catch (err) {
+      text = `THREW ${err.code ?? ''} ${err.message}`
+    }
+    const badLine =
+      String(text)
+        .split('\n')
+        .find((l) => l.includes(bad.copyPath)) ?? ''
+    check(
+      'unreadable: the report lists the bad copy as unknown size',
+      /unknown size/.test(badLine),
+      true
+    )
+    check('unreadable: the report is not an exception', String(text).startsWith('THREW'), false)
+    // formatTrashReport's age fallback: no createdAt in the classification, and the
+    // copy cannot be lstat'd -> the row still lists, age unknown.
+    const gr = listing.roots[0].copies.find((c) => c.copyPath === good.copyPath)
+    gr.cls = { ...real.classifyCopy(gr), sidecar: null }
+    const realLstat = fs.lstatSync
+    fs.lstatSync = (p, ...a) => {
+      if (p === good.copyPath) throw Object.assign(new Error('injected'), { code: 'ENOENT' })
+      return realLstat(p, ...a)
+    }
+    let aged
+    try {
+      aged = formatTrashReport(listing)
+    } catch (err) {
+      aged = `THREW ${err.code ?? ''} ${err.message}`
+    } finally {
+      fs.lstatSync = realLstat
+    }
+    check(
+      'unreadable: the report with an unreadable copy root does not throw',
+      String(aged).startsWith('THREW') ? aged : null,
+      null
+    )
+    const goodLine =
+      String(aged)
+        .split('\n')
+        .find((l) => l.includes(good.copyPath)) ?? ''
+    check(
+      'unreadable: an unreadable copy root still lists, age unknown',
+      /age unknown/.test(goodLine),
+      true
+    )
+    // apply: the bad copy is kept as unreadable, the good copy is removed.
+    const ap = prune({ roots: [u.parent], apply: true, confirmBatch: () => true })
+    const st = (p) => ap.items.find((i) => i.path === p) ?? {}
+    check(
+      'unreadable: apply keeps the bad copy',
+      `${st(bad.copyPath).status}/${st(bad.copyPath).reason}`,
+      'kept/unreadable'
+    )
+    check('unreadable: apply removes the good copy', st(good.copyPath).status, 'removed')
+    check('unreadable: the bad copy is still there', fs.existsSync(bad.copyPath), true)
+  } finally {
+    if (locked !== null) {
+      try {
+        fs.chmodSync(locked, 0o700)
+      } catch {
+        /* already gone */
+      }
+    }
+    rmFixture(u.root)
   }
   // trash root that is a symlink -> refused whole, nothing listed
   const g = makeParent('w5-list-sym-')
