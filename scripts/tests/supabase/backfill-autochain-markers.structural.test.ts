@@ -199,22 +199,28 @@ describe.skipIf(locked)('SMI-7121 -- backfill autochain marker migration (PG-fre
     expect(readFileSync(p, 'utf8')).toMatch(/pg_net[^\n]*shared prerequisite/)
   })
 
-  it('watcher: lock first, then the kill switch, then the harvest, then evaluation', () => {
+  it('watcher: lock first, then the harvest, then the kill switch, then evaluation (the switch never gates the harvest)', () => {
     const w = body(sql, FNS.watcher)
     const lock =
       /IF NOT pg_try_advisory_xact_lock\(hashtextextended\('check_backfill_autochain_markers', 0\)\) THEN\s+RETURN;/
     expect(w).toMatch(lock)
-    const iLock = w.search(lock)
-    const iKill = w.indexOf("'SKILLSMITH_BACKFILL_AUTOCHAIN_WATCH_DISABLE'")
-    const iHarvest = w.indexOf('JOIN net._http_response r ON r.id = d.rid')
-    const iEval = w.indexOf("a.event_type = 'indexer_backfill_autochain_deferred'")
-    expect(iLock).toBeGreaterThanOrEqual(0)
-    expect(iLock).toBeLessThan(iKill)
-    expect(iKill).toBeLessThan(iHarvest)
-    expect(iHarvest).toBeLessThan(iEval)
+    const order = (t: string) => {
+      const iLock = t.search(lock)
+      const iHarvest = t.indexOf('JOIN net._http_response r ON r.id = d.rid')
+      const iKill = t.indexOf("'SKILLSMITH_BACKFILL_AUTOCHAIN_WATCH_DISABLE'")
+      const iEval = t.indexOf("a.event_type = 'indexer_backfill_autochain_deferred'")
+      return iLock >= 0 && iLock < iHarvest && iHarvest < iKill && iKill < iEval
+    }
+    expect(order(w)).toBe(true)
     expect(w).toMatch(
       /IF lower\(trim\(coalesce\(v_disable, ''\)\)\) IN \('1', 'true'\) THEN\s+RETURN;/
     )
+    // known-negative: the kill switch moved back above the harvest
+    const killBlock =
+      /\s+SELECT decrypted_secret INTO v_disable[\s\S]*?IN \('1', 'true'\) THEN\s+RETURN;\s+END IF;/
+    const kill = killBlock.exec(w)![0]
+    const moved = mutate(w.replace(kill, ''), /(THEN\s+RETURN;\s+END IF;)/, `$1${kill}`)
+    expect(order(moved)).toBe(false)
     expect(mutate(w, "hashtextextended('check_backfill_autochain_markers', 0)", '1')).not.toMatch(
       lock
     )
@@ -235,29 +241,63 @@ describe.skipIf(locked)('SMI-7121 -- backfill autochain marker migration (PG-fre
       false
     )
     expect(w).toMatch(/v_ref := coalesce\(v_ref, v_m\.created_at\);/)
+    // a consumed_at in the future falls back too, ahead of the coalesce
+    expect(w).toMatch(
+      /IF v_ref > now\(\) THEN\s+v_ref := NULL;\s+END IF;\s+v_ref := coalesce\(v_ref, v_m\.created_at\);/
+    )
     expect(w).toMatch(/'indexer_backfill_autochain_' \|\| v_kind/)
-    expect(w).toMatch(/v_kind := 'stalled';/)
-    expect(w).toMatch(/v_kind := 'unreconciled';/)
+    expect(w).toMatch(
+      /CASE WHEN a\.metadata->>'state' = 'open' THEN 'stalled' ELSE 'unreconciled' END AS kind/
+    )
+    expect(w).toMatch(/v_kind := v_c\.kind;/)
   })
 
-  it('watcher: dedup on delivery -- harvested result authoritative, else live 2xx + sent true, else pending', () => {
+  it('watcher: dedup reads only the alert rows -- harvested 2xx + sent true suppresses, unharvested under 1h is pending', () => {
     const w = body(sql, FNS.watcher)
-    expect(w).toMatch(/AND a\.metadata->>'marker_id' = v_m\.id\s+AND a\.metadata->>'kind' = v_kind/)
-    // harvested branch decides and CONTINUEs: a "not delivered" harvest is never overridden
+    const loop = (t: string) => {
+      const start = t.indexOf('FOR v_alert IN')
+      return t.slice(start, t.indexOf('END LOOP;', start))
+    }
+    const dedup = loop(w)
+    expect(dedup).toMatch(
+      /AND a\.metadata->>'marker_id' = v_m\.id\s+AND a\.metadata->>'kind' = v_kind/
+    )
+    expect(dedup).toMatch(
+      /IF v_alert\.metadata \? 'status_code' THEN[\s\S]*?IF v_status BETWEEN 200 AND 299 AND v_alert\.metadata->>'sent' = 'true' THEN\s+v_suppress := true;\s+EXIT;\s+END IF;\s+CONTINUE;\s+END IF;\s+IF v_alert\.created_at > now\(\) - v_pending THEN\s+v_suppress := true;\s+EXIT;\s+END IF;/
+    )
+    // only the harvest reads net._http_response; the dedup loop never does
+    expect(dedup, 'the dedup loop does not read net._http_response').not.toMatch(/_http_response/)
+    expect(w.match(/net\._http_response/g), 'exactly one reader: the harvest').toHaveLength(1)
+    expect(w.indexOf('net._http_response')).toBeLessThan(
+      w.indexOf("'SKILLSMITH_BACKFILL_AUTOCHAIN_WATCH_DISABLE'")
+    )
+    // known-negative: a live lookup re-added inside the loop is caught
+    const withLive = mutate(
+      w,
+      'IF v_alert.created_at > now() - v_pending THEN',
+      'PERFORM 1 FROM net._http_response r;\n      IF v_alert.created_at > now() - v_pending THEN'
+    )
+    expect(loop(withLive)).toMatch(/_http_response/)
+  })
+
+  it('watcher: each candidate is re-read FOR UPDATE SKIP LOCKED and re-checked before dedup and send', () => {
+    const w = body(sql, FNS.watcher)
+    const reread =
+      /SELECT a\.id, a\.created_at, a\.metadata INTO v_m\s+FROM public\.audit_logs a\s+WHERE a\.id = v_c\.id\s+AND a\.event_type = 'indexer_backfill_autochain_deferred'\s+FOR UPDATE SKIP LOCKED;\s+IF NOT FOUND THEN\s+CONTINUE;/
+    expect(w).toMatch(reread)
+    const iReread = w.search(reread)
+    expect(iReread).toBeGreaterThan(w.indexOf('FOR v_c IN'))
+    expect(iReread).toBeLessThan(w.indexOf('FOR v_alert IN'))
+    expect(iReread).toBeLessThan(w.indexOf('net.http_post'))
+    // eligibility is re-checked on the locked row, for the kind the cursor selected
+    expect(w).toMatch(/IF v_m\.metadata->>'state' IS DISTINCT FROM 'open' THEN\s+CONTINUE;/)
     expect(w).toMatch(
-      /IF v_alert\.metadata \? 'status_code' THEN[\s\S]*?IF v_status BETWEEN 200 AND 299 AND v_alert\.metadata->>'sent' = 'true' THEN\s+v_suppress := true;\s+EXIT;\s+END IF;\s+CONTINUE;/
+      /IF v_m\.metadata->>'state' IS DISTINCT FROM 'consumed'\s+OR coalesce\(trim\(v_m\.metadata->>'dispatched_run_id'\), ''\) <> '' THEN\s+CONTINUE;/
     )
-    expect(w).toMatch(
-      /IF NOT v_found THEN\s+IF v_alert\.created_at > now\(\) - v_pending THEN\s+v_suppress := true;/
-    )
-    expect(w).toMatch(
-      /BEGIN\s+v_sent := \(v_content::jsonb\)->'data'->>'sent';\s+EXCEPTION WHEN OTHERS THEN/
-    )
-    expect(w).toMatch(/IF v_sent = 'true' THEN\s+v_suppress := true;/)
-    // known-negative: dropping the harvested CONTINUE lets a live row override it
-    expect(mutate(w, /END IF;\s+CONTINUE;/, 'END IF;')).not.toMatch(
-      /IF v_alert\.metadata \? 'status_code' THEN[\s\S]*?END IF;\s+CONTINUE;/
-    )
+    // the cursor itself carries no metadata to decide from
+    const cursor = w.slice(w.indexOf('FOR v_c IN'), w.indexOf('LOOP', w.indexOf('FOR v_c IN')))
+    expect(cursor).not.toMatch(/a\.metadata\s+FROM|a\.created_at,\s+a\.metadata/)
+    expect(mutate(w, 'FOR UPDATE SKIP LOCKED', 'FOR UPDATE')).not.toMatch(reread)
   })
 
   it('watcher: harvest copies status_code and sent once per alert, parsing sent defensively', () => {
@@ -307,6 +347,9 @@ describe.skipIf(locked)('SMI-7121 -- backfill autochain marker migration (PG-fre
     expect(smoke).toMatch(/has_function_privilege\('anon', v_fn, 'EXECUTE'\)/)
     expect(smoke).toMatch(/has_function_privilege\('authenticated', v_fn, 'EXECUTE'\)/)
     expect(smoke).toMatch(/IF v_schedule IS DISTINCT FROM '29 \* \* \* \*' THEN/)
+    expect(smoke).toMatch(
+      /IF NOT has_table_privilege\('service_role', 'public\.audit_logs', 'UPDATE'\)\s+OR NOT has_table_privilege\('service_role', 'public\.audit_logs', 'SELECT'\) THEN\s+RAISE EXCEPTION 'SMOKE FAIL \(audit_logs grant\)/
+    )
     expect(smoke).toMatch(/'dispatched', 'open'/)
     expect(smoke, 'the watcher is not executed at apply').not.toMatch(
       /PERFORM public\.check_backfill_autochain_markers\(\)/

@@ -136,6 +136,8 @@ export function registerWatcherTests(ctx: Ctx): void {
       ['missing', {}],
       ['unparseable', { consumed_at: 'not a time' }],
       ['JSON null', { consumed_at: null }],
+      ['in the future (9999-01-01)', { consumed_at: '9999-01-01' }],
+      ['infinity', { consumed_at: 'infinity' }],
     ] as Array<[string, Record<string, unknown>]>)(
       'consumed_at %s falls back to created_at (fail toward alerting) and does not raise',
       async (_label, meta) => {
@@ -204,9 +206,8 @@ export function registerWatcherTests(ctx: Ctx): void {
 
     // [label, prior alert response (null = none), prior harvested result (undefined = not harvested),
     //  prior alert age, expected NEW posts]. A "response" row is harvested by the same tick before
-    // dedup runs, so these arms drive the harvested-result branch end to end; the live-response
-    // branch is reached only when a response lands between the harvest and the dedup read, which a
-    // single session cannot stage (it is pinned structurally instead).
+    // dedup runs, so those arms drive the harvested-result branch end to end; dedup itself reads only
+    // the alert rows (pinned structurally).
     type Outcome = [
       string,
       [number | null, string | null] | null,
@@ -338,7 +339,7 @@ export function registerWatcherTests(ctx: Ctx): void {
         expect(r.lines).toEqual(['a:200:NULL:true', 'b:200:true:true', 'c:NULL:NULL:true'])
       })
 
-      it('a harvested "not delivered" result is authoritative over a later live "delivered" response', async () => {
+      it('a harvested "not delivered" result is not overridden by a "delivered" response row appearing later', async () => {
         const r = await inTxn(ctx.ctl(), [
           standardSecrets(),
           markerRow('m1', '30 hours'),
@@ -361,6 +362,21 @@ export function registerWatcherTests(ctx: Ctx): void {
         ])
         expect(r.lines).toEqual(['harvested=0'])
       })
+    })
+
+    it('with the kill switch set, a pending response is still harvested and nothing is sent', async () => {
+      const r = await inTxn(ctx.ctl(), [
+        standardSecrets(),
+        vault([KILL_SWITCH, '1']),
+        markerRow('m1', STALLED),
+        alertRow('m1', 'stalled', '2 hours', 9240),
+        responseRow(9240, 200, { content: SENT }),
+        WATCH,
+        `SELECT 'harvested=' || coalesce(metadata->>'status_code', 'NULL') || ',' || coalesce(metadata->>'sent', 'NULL') ` +
+          `FROM audit_logs WHERE event_type = '${ALERT}';`,
+        ...SUMMARY,
+      ])
+      expect(r.lines).toEqual(['harvested=200,true', 'posts=0', 'alerts=1', 'errors=0'])
     })
 
     it('the vault kill switch silences the watcher; any other value leaves it enabled', async () => {

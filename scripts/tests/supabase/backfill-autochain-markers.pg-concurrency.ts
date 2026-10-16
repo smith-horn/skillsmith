@@ -152,6 +152,67 @@ export function registerConcurrencyTests(ctx: Ctx): void {
       expect(JSON.parse((await ctx.ctl().send(meta('m1'))).stdout).by).toBe('B')
     })
 
+    describe('watcher revalidates each candidate under a row lock (gate fix 6)', () => {
+      it('(a) a transition that commits after the watcher selected the marker, before it revalidates: no stalled alert for it', async () => {
+        // Staging the interleaving without a test hook: two stale open markers, m0 older so the
+        // watcher processes it first. B holds an ACCESS EXCLUSIVE lock on net.calls (the pg_net
+        // stub's table), so the watcher's cursor has already selected BOTH markers when it blocks on
+        // m0's send. While it waits, B moves m1 to consumed (m1 is not yet locked by the watcher)
+        // and commits, which releases net.calls. The watcher then sends m0 and revalidates m1 on a
+        // fresh snapshot: m1 is no longer open, so no stalled alert is sent for it.
+        const seed = await ctx
+          .ctl()
+          .send(
+            [standardSecrets(), markerRow('m0', '14 hours'), markerRow('m1', '13 hours')].join('\n')
+          )
+        expect(seed.stderr, 'seed committed').not.toMatch(/ERROR/)
+
+        await b.send('BEGIN;\nLOCK TABLE net.calls IN ACCESS EXCLUSIVE MODE;')
+        const aPending = a.fire(WATCH)
+        await waitForLockWaiter(ctx.ctl(), 'check_backfill_autochain_markers')
+        const bMove = await b.send(
+          transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}')
+        )
+        expect(lines(bMove)).toEqual(['b=true'])
+        await b.send('COMMIT;')
+        const aRun = await aPending
+        expect(aRun.stderr, 'the watcher ran without error').not.toMatch(/ERROR/)
+
+        const after = await ctx
+          .ctl()
+          .send(
+            `${posts}\n${alerts}\n` +
+              `SELECT string_agg(metadata->>'marker_id', ',' ORDER BY metadata->>'marker_id') FROM audit_logs WHERE event_type = '${ALERT}';`
+          )
+        expect(lines(after), 'only m0 was alerted; m1 was revalidated and skipped').toEqual([
+          'posts=1',
+          'alerts=1',
+          'm0',
+        ])
+      })
+
+      it('(b) a marker held by an uncommitted transition is skipped, without blocking or error, and the transition then commits', async () => {
+        await ctx.ctl().send([standardSecrets(), markerRow('m1', '13 hours')].join('\n'))
+        const bMove = await b.send(
+          `BEGIN;\n${transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}')}`
+        )
+        expect(lines(bMove)).toEqual(['b=true'])
+        let aRun: { stdout: string; stderr: string }
+        try {
+          // A short timeout: a watcher that waited on B's row lock would hang here.
+          aRun = await a.send(`${WATCH}\n${posts}\n${alerts}`, 5_000)
+        } finally {
+          await b.send('COMMIT;')
+        }
+        expect(aRun.stderr, 'no error').not.toMatch(/ERROR/)
+        expect(lines(aRun), 'the held marker was skipped').toEqual(['posts=0', 'alerts=0'])
+        const state = await ctx
+          .ctl()
+          .send("SELECT metadata->>'state' FROM audit_logs WHERE id = 'm1';")
+        expect(lines(state), "B's transition committed normally").toEqual(['consumed'])
+      })
+    })
+
     describe('watcher advisory lock', () => {
       const seedStale = async () => {
         const s = await ctx.ctl().send([standardSecrets(), markerRow('m1', '13 hours')].join('\n'))
