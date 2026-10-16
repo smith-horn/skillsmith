@@ -64,6 +64,7 @@ import {
 import { buildBackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
 // SMI-7112: resume-checkpoint read that aborts (never cold-starts) on error.
 import { loadResumeCheckpoint } from './backfill-resume.ts'
+import { buildDispatchCounters, buildResumedFrom } from './backfill-checkpoint.counters.ts'
 
 interface RunSummary {
   data: unknown
@@ -166,11 +167,14 @@ async function runDiscoveryBranch(
   // checkpoint (dry-run or live) to verify the resume loop end-to-end.
   let checkpointId: string | null = null
   let backfillFacetPlan: BackfillFacetPlan | undefined
+  // SMI-7121: the checkpoint this dispatch actually loaded, recorded on its own checkpoint.
+  let loadedCheckpoint: Parameters<typeof buildResumedFrom>[0] = null
   const backfillRunId = process.env.GITHUB_RUN_ID ?? requestId
   if (env.BACKFILL_MODE) {
     const resumeFrom = process.env.RESUME_FROM
     // SMI-7112: throws on a failed read (never cold-starts); null only on `none`.
     const checkpoint = await loadResumeCheckpoint(supabase, resumeFrom, env.DRY_RUN)
+    loadedCheckpoint = checkpoint
     if (checkpoint) {
       const { path, facet, last_page } = checkpoint.cursor
       console.log(
@@ -256,6 +260,9 @@ async function runDiscoveryBranch(
       // SMI-6246: echoed so indexer-backfill-autochain.yml can replay this
       // exact campaign on auto-chain instead of defaulting every input.
       dispatch_inputs: buildBackfillDispatchInputs(env),
+      // SMI-7121: what the autochain's halts read (fail-closed: absent unless complete).
+      dispatch_counters: buildDispatchCounters(result.subdirectory_search, bc),
+      resumed_from: buildResumedFrom(loadedCheckpoint),
     })
     if (wrote) checkpointId = backfillRunId
     console.log(
