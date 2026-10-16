@@ -101,9 +101,7 @@ export function mountinfoFinding(dirReal) {
  * S9: post-move verification at `destPath`. Reads only; never writes anywhere,
  * and never touches the origin. Order (SMI-7134 gate): the CONTENT checks run first
  * -- walk with the st_dev check, mountinfo, re-hash -- and every LOCATION check runs
- * afterwards as one final block. Content is observed first; the location block then
- * confirms where the tree is at that moment. A swap that is still in place at the
- * location block is seen; a swap undone before it, or any write after the hash, is not.
+ * afterwards as one final block.
  *
  * The final block (checkLocation) asks whether the entry is the tree C4 bound and
  * sits in the directory C4 validated, not where its own realpath leads: rename(2)
@@ -117,15 +115,9 @@ export function mountinfoFinding(dirReal) {
  * never realpath'ed: a symlink skill root resolves to its target, outside the trash
  * by design. Nothing is moved back on a mismatch.
  *
- * WHAT THIS GUARANTEES, HONESTLY: a final snapshot taken AFTER the hash. Two
- * kinds of change go undetected, both accepted under ADR-166 D-0:
- *   - content staleness: bytes changed after the hash, or a swap undone before
- *     the location block;
- *   - path races: the gap between the last check and the return, and the
- *     rename(2) race before verification, either of which can misplace the tree
- *     without changing its content.
- * An absolute guarantee needs a held-directory / fd-relative design that Node 22
- * does not expose.
+ * What this detects, and what it does not, is stated in one place: ADR-166, the
+ * D-0 amendment ("What the post-move check detects, and what it doesn't"). Not
+ * restated here.
  *
  * @returns {{ok:true, treeHash:string}
  *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
