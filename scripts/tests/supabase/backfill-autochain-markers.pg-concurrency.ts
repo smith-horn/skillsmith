@@ -213,6 +213,80 @@ export function registerConcurrencyTests(ctx: Ctx): void {
       })
     })
 
+    describe('watcher falls back to the unlocked read past a 12h wider bound when a row is held (gate round 2)', () => {
+      const alertSummary =
+        `SELECT 'alert=' || (metadata->>'kind') || ',' || (metadata->>'marker_id') || ',row_locked=' || ` +
+        `coalesce(metadata->>'row_locked', 'NULL') FROM audit_logs WHERE event_type = '${ALERT}' ORDER BY created_at;`
+      const lockedMsg =
+        "SELECT 'msg_locked=' || (body->>'message' LIKE '%locked by another session for this tick%') FROM net.calls;"
+
+      /** B holds m1's row with an uncommitted transition; A runs `aSql` (5s cap); B then commits. */
+      async function whileHeld(bTransition: string, aSql: string) {
+        const bMove = await b.send(`BEGIN;\n${bTransition}`)
+        expect(lines(bMove), 'B moved the marker (uncommitted)').toEqual(['b=true'])
+        let aRun: { stdout: string; stderr: string }
+        try {
+          aRun = await a.send(aSql, 5_000)
+        } finally {
+          const commit = await b.send('COMMIT;')
+          expect(commit.stderr, "B's transition committed normally").not.toMatch(/ERROR/)
+        }
+        expect(aRun.stderr, 'the watcher did not error').not.toMatch(/ERROR/)
+        return lines(aRun)
+      }
+
+      /** A consumed marker whose consumed_at is `ago` old, created 20h ago. */
+      const consumedSeed = (ago: string) =>
+        "INSERT INTO audit_logs (id, event_type, metadata, created_at) VALUES ('m1', " +
+        "'indexer_backfill_autochain_deferred', jsonb_build_object('state', 'consumed', " +
+        `'completed_run_id', 'r1', 'consumed_at', (now() - interval '${ago}')::text), ` +
+        "now() - interval '20 hours');"
+
+      it('(c) stalled 25h, row held: the watcher does not block and sends one stalled alert marked row_locked; B commits', async () => {
+        await ctx.ctl().send([standardSecrets(), markerRow('m1', '25 hours')].join('\n'))
+        const out = await whileHeld(
+          transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}'),
+          `${WATCH}\n${posts}\n${alertSummary}\n${lockedMsg}`
+        )
+        expect(out).toEqual(['posts=1', 'alert=stalled,m1,row_locked=true', 'msg_locked=true'])
+        expect(JSON.parse((await ctx.ctl().send(meta('m1'))).stdout).state).toBe('consumed')
+      })
+
+      it('(d) stalled 13h (stale, but under the 24h bound), row held: no POST, no error', async () => {
+        await ctx.ctl().send([standardSecrets(), markerRow('m1', '13 hours')].join('\n'))
+        const out = await whileHeld(
+          transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}'),
+          `${WATCH}\n${posts}\n${alerts}`
+        )
+        expect(out).toEqual(['posts=0', 'alerts=0'])
+      })
+
+      it.each([
+        ['14 hours', ['posts=1', 'alert=unreconciled,m1,row_locked=true']],
+        ['2 hours', ['posts=0']],
+      ] as Array<[string, string[]]>)(
+        '(e) unreconciled, consumed_at %s ago, row held -> %j',
+        async (ago, expected) => {
+          await ctx.ctl().send([standardSecrets(), consumedSeed(ago)].join('\n'))
+          const out = await whileHeld(
+            transition('b', 'm1', 'consumed', 'dispatched', '{"dispatched_run_id":"r9"}'),
+            `${WATCH}\n${posts}\n${alertSummary}`
+          )
+          expect(out).toEqual(expected)
+          expect(JSON.parse((await ctx.ctl().send(meta('m1'))).stdout).state).toBe('dispatched')
+        }
+      )
+
+      it('(f) repeated ticks while B stays open: the second call does not re-send (the first alert is pending)', async () => {
+        await ctx.ctl().send([standardSecrets(), markerRow('m1', '25 hours')].join('\n'))
+        const out = await whileHeld(
+          transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}'),
+          `${WATCH}\n${WATCH}\n${posts}\n${alerts}`
+        )
+        expect(out).toEqual(['posts=1', 'alerts=1'])
+      })
+    })
+
     describe('watcher advisory lock', () => {
       const seedStale = async () => {
         const s = await ctx.ctl().send([standardSecrets(), markerRow('m1', '13 hours')].join('\n'))

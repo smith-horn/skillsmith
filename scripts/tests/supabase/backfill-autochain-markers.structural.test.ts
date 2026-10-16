@@ -283,7 +283,7 @@ describe.skipIf(locked)('SMI-7121 -- backfill autochain marker migration (PG-fre
   it('watcher: each candidate is re-read FOR UPDATE SKIP LOCKED and re-checked before dedup and send', () => {
     const w = body(sql, FNS.watcher)
     const reread =
-      /SELECT a\.id, a\.created_at, a\.metadata INTO v_m\s+FROM public\.audit_logs a\s+WHERE a\.id = v_c\.id\s+AND a\.event_type = 'indexer_backfill_autochain_deferred'\s+FOR UPDATE SKIP LOCKED;\s+IF NOT FOUND THEN\s+CONTINUE;/
+      /SELECT a\.id, a\.created_at, a\.metadata INTO v_m\s+FROM public\.audit_logs a\s+WHERE a\.id = v_c\.id\s+AND a\.event_type = 'indexer_backfill_autochain_deferred'\s+FOR UPDATE SKIP LOCKED;\s+IF NOT FOUND THEN\s+v_row_locked := true;\s+v_m := v_c;\s+END IF;/
     expect(w).toMatch(reread)
     const iReread = w.search(reread)
     expect(iReread).toBeGreaterThan(w.indexOf('FOR v_c IN'))
@@ -294,10 +294,33 @@ describe.skipIf(locked)('SMI-7121 -- backfill autochain marker migration (PG-fre
     expect(w).toMatch(
       /IF v_m\.metadata->>'state' IS DISTINCT FROM 'consumed'\s+OR coalesce\(trim\(v_m\.metadata->>'dispatched_run_id'\), ''\) <> '' THEN\s+CONTINUE;/
     )
-    // the cursor itself carries no metadata to decide from
-    const cursor = w.slice(w.indexOf('FOR v_c IN'), w.indexOf('LOOP', w.indexOf('FOR v_c IN')))
-    expect(cursor).not.toMatch(/a\.metadata\s+FROM|a\.created_at,\s+a\.metadata/)
     expect(mutate(w, 'FOR UPDATE SKIP LOCKED', 'FOR UPDATE')).not.toMatch(reread)
+  })
+
+  it('watcher: a row held by another session falls back to the unlocked read, but only past a 12h wider bound', () => {
+    const w = body(sql, FNS.watcher)
+    expect(w).toMatch(/v_locked_margin\s+CONSTANT interval := interval '12 hours';/)
+    expect(w).toMatch(
+      /v_margin := CASE WHEN v_row_locked THEN v_locked_margin ELSE interval '0' END;/
+    )
+    // the margin widens BOTH thresholds
+    const bounds = (t: string) =>
+      /IF v_ref >= now\(\) - \(v_stall_after \+ v_margin\) THEN\s+CONTINUE;/.test(t) &&
+      /IF v_ref >= now\(\) - \(v_reconcile_after \+ v_margin\) THEN\s+CONTINUE;/.test(t)
+    expect(bounds(w)).toBe(true)
+    expect(bounds(mutate(w, '(v_stall_after + v_margin)', 'v_stall_after'))).toBe(false)
+    // the snapshot carries what eligibility needs
+    const cursor = w.slice(w.indexOf('FOR v_c IN'), w.indexOf('LOOP', w.indexOf('FOR v_c IN')))
+    expect(cursor).toMatch(/SELECT a\.id, a\.created_at, a\.metadata,/)
+    // the fallback takes no lock of its own: the only FOR UPDATE is the SKIP LOCKED re-read
+    expect(w.match(/FOR UPDATE/g)).toHaveLength(1)
+    // the alert row and the message say so
+    expect(w).toMatch(/'row_locked', v_row_locked/)
+    expect(w).toMatch(
+      /CASE WHEN v_row_locked\s+THEN ' The marker row was locked by another session for this tick, so the watcher alerted from an unlocked read\.'/
+    )
+    // the fallback is not exempt from dedup: the suppress check names no row_locked condition
+    expect(w).toMatch(/IF v_suppress THEN\s+CONTINUE;/)
   })
 
   it('watcher: harvest copies status_code and sent once per alert, parsing sent defensively', () => {
