@@ -42,8 +42,8 @@ function randSuffix() {
   return crypto.randomBytes(4).toString('hex')
 }
 
-// `pathTreeRecord` (the §3.4 path walk) moved to quarantine.postmove.mjs in
-// SMI-6715 Step 1b, where it gained the per-entry st_dev `mountCheck`. It is
+// `pathTreeRecord` (the §3.4 path walk) lives in quarantine.verify.mjs (re-exported by
+// quarantine.postmove.mjs); SMI-6715 Step 1b gave it the per-entry st_dev `mountCheck`. It is
 // path-based and inherently TOCTOU-prone: it closes the pre-aged-substitute
 // class, not the concurrent-race class VR's held-fd guard pass closes.
 
@@ -447,7 +447,7 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
       }
     }
     // F12 (owner and mode; one definition shared with post-move verification,
-    // opDirOwnerModeProblem in quarantine.postmove.mjs, SMI-7134).
+    // opDirOwnerModeProblem in quarantine.perms.mjs, SMI-7134).
     const permProblem = opDirOwnerModeProblem(od)
     if (permProblem !== null) {
       return {
