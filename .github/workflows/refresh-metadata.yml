@@ -86,8 +86,10 @@ jobs:
           BATCH_SIZE: ${{ github.event.inputs.batch_size || '200' }}
           STALE_DAYS: ${{ github.event.inputs.stale_days || '1' }}
         run: |
-          case "$BATCH_SIZE" in ''|*[!0-9]*|0*) echo "::error::batch_size must be a positive integer"; exit 1;; esac
-          case "$STALE_DAYS" in ''|*[!0-9]*|0[0-9]*) echo "::error::stale_days must be a non-negative integer"; exit 1;; esac
+          # Allow-lists, so every accepted value is a valid JSON number or boolean and the
+          # retry's arithmetic cannot overflow. The structure test runs these three lines.
+          case "$BATCH_SIZE" in [1-9]|[1-9][0-9]|[1-4][0-9][0-9]|500) ;; *) echo "::error::batch_size must be 1-500"; exit 1;; esac
+          case "$STALE_DAYS" in [0-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) echo "::error::stale_days must be 0-999"; exit 1;; esac
           case "$DRY_RUN" in true|false) ;; *) echo "::error::dry_run must be true or false"; exit 1;; esac
 
           call_refresh() {
@@ -115,7 +117,7 @@ jobs:
 
           # Retry with half batch on transient errors (502 Bad Gateway, 503 Temporarily Unavailable, 546 Worker Limit)
           if [ "$FINAL_HTTP_CODE" = "502" ] || [ "$FINAL_HTTP_CODE" = "503" ] || [ "$FINAL_HTTP_CODE" = "546" ]; then
-            RETRY_BATCH=$(( BATCH_SIZE / 2 ))
+            RETRY_BATCH=$(( (BATCH_SIZE + 1) / 2 ))
             echo "::warning::Transient error (HTTP $FINAL_HTTP_CODE). Retrying with batch=$RETRY_BATCH in 30s..."
             sleep 30
             call_refresh "$RETRY_BATCH"

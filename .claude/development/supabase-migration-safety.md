@@ -45,9 +45,9 @@ For simple additions (new table, new index with `CONCURRENTLY`, function definit
 
 ### R-Timing — cron edges + continuous writers
 
-**What**: cron-scheduled edge functions fire at `00/06/12/18 UTC` (indexer), `:30 past each hour` (metadata refresh), `03:00 daily` (expire-complimentary), `09:00 Mondays` (ops-report + billing monitor + analytics + A/B results). `events` is continuously hot from CLI/VS Code telemetry. `stripe-webhook` is low-volume but retry-sensitive.
+**What**: cron-scheduled edge functions fire at `00/06/12/18 UTC` (indexer), `:32` at 02/06/10/14/18/22 UTC (metadata refresh, pg_cron since SMI-7114), `03:00 daily` (expire-complimentary), `09:00 Mondays` (ops-report + billing monitor + analytics + A/B results). `events` is continuously hot from CLI/VS Code telemetry. `stripe-webhook` is low-volume but retry-sensitive.
 
-**Fix**: apply during the quietest window — **Sunday 03:00–05:00 UTC** is ideal (after Saturday indexer run at 00, before Monday morning crons). If urgency forces a weekday apply, hit the gap between hourly `:30` metadata refreshes.
+**Fix**: apply during the quietest window — **Sunday 03:00–05:00 UTC** is ideal (after Saturday indexer run at 00, before Monday morning crons). If urgency forces a weekday apply, avoid the `:32` metadata refreshes at 02/06/10/14/18/22 UTC.
 
 ### R-Filename — CLI filename-pattern silent-skip (SMI-4353 attempt-1)
 

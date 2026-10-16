@@ -10,6 +10,7 @@
  * Each predicate is paired with a known-negative: the same predicate on a deliberately
  * broken copy of the workflow must fail.
  */
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -71,6 +72,9 @@ const jobsOn = (w: Workflow, event: string): string[] =>
 const jobText = (j: Job): string => JSON.stringify([j.env ?? {}, j.steps])
 
 const postsFunction = (j: Job): boolean => jobText(j).includes(FUNCTION_PATH)
+
+const step0 = (w: Workflow): string =>
+  w.jobs.refresh.steps.find((s) => s.name === 'Trigger Metadata Refresh')?.run ?? ''
 
 const runsObserver = (j: Job): boolean =>
   j.steps.some((s) => (s.run ?? '').split('\n').some((l) => l.trim() === `bash ${OBSERVER}`))
@@ -171,15 +175,113 @@ describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
     }
   })
 
-  it('the observer script is self-contained and never POSTs the function (known-negative: each added)', () => {
+  it('the observer script makes only its three known calls and needs no other file (known-negative: each added)', () => {
     // The sparse checkout fetches only this one file, and the schedule must only observe.
-    const ok = (text: string): boolean =>
-      !text.includes(FUNCTION_PATH) && !text.split('\n').some((l) => /^\s*(source|\.)\s+\S/.test(l))
+    // Every request goes through post_json's single curl, so pinning its URLs pins them all.
+    const ALLOWED = new Set([
+      '${SUPABASE_URL}/rest/v1/rpc/refresh_metadata_health',
+      '${SUPABASE_URL}/functions/v1/alert-notify',
+      '${SUPABASE_URL}/rest/v1/audit_logs',
+    ])
+    const ok = (text: string): boolean => {
+      const code = text.split('\n').filter((l) => !/^\s*#/.test(l))
+      const urls = code.flatMap((l) => [...l.matchAll(/post_json "([^"]+)"/g)].map((m) => m[1]))
+      const fetchers = code.filter((l) => /(^|[\s;&|(])(curl|wget|nc)\s/.test(l))
+      const sourced = code.some((l) => /(^|;|&&|\|\||\|)\s*(source|\.)\s+\S/.test(l))
+      const otherScripts = code.some((l) => /scripts\//.test(l))
+      return (
+        urls.length === ALLOWED.size &&
+        urls.every((u) => ALLOWED.has(u)) &&
+        fetchers.length === 1 &&
+        !sourced &&
+        !otherScripts
+      )
+    }
     const script = readFileSync(join(REPO_ROOT, OBSERVER), 'utf8')
     expect(ok(script)).toBe(true)
-    expect(ok(script + `\ncurl -X POST "$SUPABASE_URL${FUNCTION_PATH}"\n`)).toBe(false)
-    expect(ok(script + '\nsource scripts/ci/lib.sh\n')).toBe(false)
-    expect(ok(script + '\n. ./scripts/ci/lib.sh\n')).toBe(false)
+    for (const extra of [
+      'X="$(post_json "${SUPABASE_URL}/functions/v1/skills-refresh-metadata" "$WORK/x" "{}")"',
+      'curl -sS -X POST "$SUPABASE_URL$FN"',
+      'source scripts/ci/lib.sh',
+      'true && . ./lib.sh',
+      'bash scripts/ci/other.sh',
+      'node scripts/ci/other.mjs',
+    ]) {
+      expect(ok(`${script}\n${extra}\n`)).toBe(false)
+    }
+  })
+
+  it('dispatch inputs reach the shell only via env and are allow-listed (known-negative: inlined, guard dropped)', () => {
+    const step = (w: Workflow) =>
+      w.jobs.refresh.steps.find((s) => s.name === 'Trigger Metadata Refresh')
+    const viaEnv = (w: Workflow): boolean => {
+      const st = step(w)
+      const inputsInRun = w.jobs.refresh.steps.some((s) =>
+        /\$\{\{\s*github\.event\.inputs/.test(s.run ?? '')
+      )
+      return (
+        !inputsInRun &&
+        /github\.event\.inputs\.dry_run/.test(st?.env?.DRY_RUN ?? '') &&
+        /github\.event\.inputs\.batch_size/.test(st?.env?.BATCH_SIZE ?? '') &&
+        /github\.event\.inputs\.stale_days/.test(st?.env?.STALE_DAYS ?? '')
+      )
+    }
+    expect(viaEnv(wf)).toBe(true)
+    const inlined = clone(wf)
+    const st = step(inlined)
+    if (st) st.run = `BATCH_SIZE="\${{ github.event.inputs.batch_size }}"\n${st.run ?? ''}`
+    expect(viaEnv(inlined)).toBe(false)
+
+    // Execute the step's own guard lines in bash against a case table.
+    const guards = (w: Workflow): string =>
+      (step(w)?.run ?? '')
+        .split('\n')
+        .filter((l) => /^\s*case "\$(BATCH_SIZE|STALE_DAYS|DRY_RUN)"/.test(l))
+        .join('\n')
+    const accepts = (g: string, batch: string, stale: string, dry: string): boolean =>
+      spawnSync('bash', ['-c', `${g}\nexit 0`], {
+        env: { PATH: process.env.PATH ?? '', BATCH_SIZE: batch, STALE_DAYS: stale, DRY_RUN: dry },
+      }).status === 0
+    const g = guards(wf)
+    expect(g.split('\n')).toHaveLength(3)
+    for (const b of ['1', '9', '10', '200', '499', '500'])
+      expect(accepts(g, b, '1', 'false')).toBe(true)
+    for (const b of [
+      '0',
+      '00',
+      '007',
+      '501',
+      '999',
+      '1000',
+      '99999999999999999999',
+      '',
+      '12a',
+      '$(id)',
+      '1;id',
+      ' 5',
+      '-3',
+    ])
+      expect(accepts(g, b, '1', 'false')).toBe(false)
+    for (const d of ['0', '1', '30', '999']) expect(accepts(g, '200', d, 'true')).toBe(true)
+    for (const d of ['00', '01', '1000', '', 'x', '1 2'])
+      expect(accepts(g, '200', d, 'true')).toBe(false)
+    for (const r of ['TRUE', '1', '', 'yes']) expect(accepts(g, '200', '1', r)).toBe(false)
+
+    // Known-negative: with the batch guard dropped, an unbounded batch is accepted.
+    const dropped = g
+      .split('\n')
+      .filter((l) => !l.includes('BATCH_SIZE'))
+      .join('\n')
+    expect(accepts(dropped, '99999999999999999999', '1', 'false')).toBe(true)
+  })
+
+  it('the transient-error retry never sends a zero batch (known-negative: floor division)', () => {
+    const run = step0(wf)
+    expect(run).toContain('RETRY_BATCH=$(( (BATCH_SIZE + 1) / 2 ))')
+    const half = (expr: string, n: number): number =>
+      Number(spawnSync('bash', ['-c', `BATCH_SIZE=${n}; echo $(( ${expr} ))`]).stdout.toString())
+    for (const n of [1, 2, 3, 200, 500]) expect(half('(BATCH_SIZE + 1) / 2', n)).toBeGreaterThan(0)
+    expect(half('BATCH_SIZE / 2', 1)).toBe(0)
   })
 
   it('workflow_dispatch still POSTs the function with dry_run and batch_size (known-negative: job guarded to schedule)', () => {
