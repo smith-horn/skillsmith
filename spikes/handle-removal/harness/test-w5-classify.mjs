@@ -73,9 +73,7 @@ if (canMount()) {
     }
   }
 } else {
-  console.log(
-    `${TAG} mounted case skipped: no mounts on ${process.platform} as uid ${process.getuid?.()}`
-  )
+  notRun('T4 mounted', `no mounts on ${process.platform} as uid ${process.getuid?.()}`)
 }
 
 // --- listing structure (real code only) -------------------------------------------

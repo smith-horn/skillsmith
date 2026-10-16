@@ -24,178 +24,13 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
-import { MOUNTINFO_APPLIES, readMountPointsAtOrUnder } from './quarantine.mounts.mjs'
 import { appendParkedIndex } from './trash-index.mjs'
+import { pathTreeRecord, mountinfoFinding, verifyAtDestination } from './quarantine.verify.mjs'
 
-/**
- * Builds a §3.4 tree-hash record from a PATH walk, in the same shape
- * `guardPass()` builds from held handles, so `computeTreeHash()` yields the
- * identical digest for the identical tree (harness/test-guard-hash-parity.mjs).
- * Moved here verbatim from quarantine.mjs, plus `mountCheck`.
- *
- * `mountCheck: true` (S2/S9b) compares each entry's bigint `dev` with the
- * root's -- no extra fs calls -- and stops at the first difference with reason
- * `mount-inside-tree` and `rel`, the entry's path relative to the root. The
- * default stays mount-TOLERANT, because the harness's caller hash
- * (`computePathTreeHash`) must walk through a mount (design §1, R13).
- *
- * @returns {{ok:true, record:Map}|{ok:false, reason:string, path:string, rel?:string, errno:string|null}}
- */
-export function pathTreeRecord(absRoot, { mountCheck = false } = {}) {
-  const record = new Map()
-  let rootDev = null
-  function visit(rel, abs) {
-    let st
-    try {
-      st = fs.lstatSync(abs, { bigint: true })
-    } catch (err) {
-      return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
-    }
-    if (rootDev === null) rootDev = st.dev
-    else if (mountCheck && st.dev !== rootDev) {
-      return { ok: false, reason: 'mount-inside-tree', path: abs, rel, errno: null }
-    }
-    const mode = Number(st.mode)
-    const size = st.size
-    if (st.isDirectory()) {
-      record.set(rel, { type: 'dir', mode, size })
-      let names
-      try {
-        names = fs.readdirSync(abs).sort()
-      } catch (err) {
-        return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
-      }
-      for (const name of names) {
-        const r = visit(rel ? `${rel}/${name}` : name, path.join(abs, name))
-        if (r && r.ok === false) return r
-      }
-      return null
-    }
-    if (st.isSymbolicLink()) {
-      try {
-        record.set(rel, { type: 'symlink', mode, size, linkText: fs.readlinkSync(abs) })
-      } catch (err) {
-        return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
-      }
-      return null
-    }
-    if (st.isFile()) {
-      let buf
-      try {
-        buf = fs.readFileSync(abs)
-      } catch (err) {
-        return { ok: false, reason: 'guard-unreadable', path: abs, errno: err.code ?? null }
-      }
-      record.set(rel, {
-        type: 'file',
-        mode,
-        size,
-        contentHash: crypto.createHash('sha256').update(buf).digest('hex'),
-      })
-      return null
-    }
-    return { ok: false, reason: 'guard-unsupported-type', path: abs, errno: null }
-  }
-  const failure = visit('', absRoot)
-  if (failure) return failure
-  return { ok: true, record }
-}
-
-/**
- * S2b / S9c: on Linux, a mountinfo mount point at or under `dirReal`.
- * Returns null when there is none, else a detail string. An unreadable table
- * FAILS CLOSED -- it is reported as a possible mount, never as "none" -- since
- * a same-filesystem bind mount is otherwise undetectable (design §6).
- */
-export function mountinfoFinding(dirReal) {
-  if (!MOUNTINFO_APPLIES) return null
-  const m = readMountPointsAtOrUnder(dirReal)
-  if (!m.ok) return `mountinfo unreadable (${m.errno}); a bind mount cannot be ruled out`
-  return m.points.length > 0 ? `mount point ${m.points[0]}` : null
-}
-
-/**
- * S9: post-move verification at `destPath`. Reads only; never writes anywhere,
- * and never touches the origin. Order per design §1: identity (a), containment
- * (SMI-7132), walk with the st_dev check (b), mountinfo (c), re-hash (d).
- *
- * CONTAINMENT (SMI-7132) asks whether the entry is in the op directory C4
- * validated, not where the entry's own realpath leads: rename(2) keeps the inode
- * and the tree, so a swapped op directory or trash root passes identity and the
- * hash while the tree sits in attacker storage. (1) realpath of the entry's
- * PARENT must equal `opReal`, captured before the rename. (2) The trash root,
- * lstat'ed by path now, must still match the identity C4 validated. The entry
- * itself is never realpath'ed: a symlink skill root resolves to its target, which
- * is outside the trash by design. Nothing is moved back on a mismatch.
- *
- * @returns {{ok:true, treeHash:string}
- *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
- *            diagnosis:string, treeHash:string|null}}
- */
-export function verifyAtDestination({
-  destPath,
-  boundIdentity,
-  guardHash,
-  bindIdentity,
-  sameIdentity,
-  trashRoot,
-  trashIdentity,
-  opReal,
-}) {
-  const held = (reason, diagnosis, treeHash = null) => ({ ok: false, reason, diagnosis, treeHash })
-  const at = bindIdentity(destPath)
-  if (!at.ok) return held('changed-during-move', `identity at destination unreadable (${at.errno})`)
-  if (!sameIdentity(boundIdentity, at)) {
-    return held(
-      'changed-during-move',
-      'identity at destination does not match the tree C4 verified'
-    )
-  }
-  let parentReal = null
-  try {
-    parentReal = fs.realpathSync(path.dirname(destPath))
-  } catch (err) {
-    return held(
-      'changed-during-move',
-      `op directory unresolvable after the move (${err.code ?? err.message})`
-    )
-  }
-  if (typeof opReal !== 'string' || parentReal !== opReal) {
-    return held('changed-during-move', 'op directory resolves elsewhere than where C4 validated it')
-  }
-  const trashNow = bindIdentity(trashRoot)
-  if (trashIdentity == null || !trashNow.ok || !sameIdentity(trashIdentity, trashNow)) {
-    return held('changed-during-move', 'trash root is no longer the one C4 validated')
-  }
-  const rec = pathTreeRecord(destPath, { mountCheck: true })
-  if (!rec.ok) {
-    if (rec.reason === 'mount-inside-tree') {
-      return held(
-        'mount-appeared-during-move',
-        `mount at ${rec.rel} (st_dev differs from the root)`
-      )
-    }
-    return held(
-      'changed-during-move',
-      `${rec.reason} at ${rec.path}${rec.errno ? ` (${rec.errno})` : ''}`
-    )
-  }
-  // Resolved parent + entry name, never realpath(entry): a symlink root would
-  // otherwise be checked at its target (SMI-7132).
-  const mi = mountinfoFinding(path.join(parentReal, path.basename(destPath)))
-  if (mi !== null) return held('mount-appeared-during-move', mi)
-  const treeHash = computeTreeHash(rec.record)
-  if (treeHash !== guardHash) {
-    return held(
-      'changed-during-move',
-      'tree hash at the destination differs from guardHash',
-      treeHash
-    )
-  }
-  return { ok: true, treeHash }
-}
+// The walk, mountinfo probe and S9 verification live in quarantine.verify.mjs
+// (file length); re-exported so existing importers keep working.
+export { pathTreeRecord, mountinfoFinding, verifyAtDestination }
 
 /** POSIX single-quote escaping, for the reference restore line in `detail` only. */
 const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
@@ -205,9 +40,24 @@ const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
  * origin, and the product restore command (owner decision 2026-10-12:
  * `skillsmith restore <id>`, built in SMI-6531).
  */
-export function heldDetail({ diagnosis, destPath, originPath, opId }) {
+export function heldDetail({
+  diagnosis,
+  destPath,
+  originPath,
+  opId,
+  located = false,
+  safe = false,
+}) {
+  // Three truthful wordings (SMI-7134): safe only when the final location block
+  // passed; located-but-not-private when only the owner/mode check failed; else the
+  // reported path may lead through a swapped link or directory.
+  const where = safe
+    ? `your tree is safe at ${shq(destPath)}`
+    : located
+      ? `the tree was observed at ${shq(destPath)}, but its directory is not private (${diagnosis})`
+      : `the location of your tree could not be confirmed (reported path ${shq(destPath)}; reason: ${diagnosis})`
   return (
-    `${diagnosis}. Changed during removal; your tree is safe at ${shq(destPath)}. ` +
+    `${diagnosis}. Changed during removal; ${where}. ` +
     `If something now exists at ${shq(originPath)}, move it aside first, then run ` +
     `\`skillsmith restore ${opId}\`.`
   )
@@ -305,7 +155,9 @@ export function preMoveGuard({ originPath, parentAbs, name, guardHash }) {
  * Everything after a successful root rename: S9 (guarded only), then S11
  * (held) or S12 (quarantined), each with a 'wx' sidecar.
  *
- * The tree is safely in the trash at this point whatever happens next. A
+ * The rename has completed at this point. Guarded calls still verify after the
+ * move, and that result is a final snapshot subject to the races ADR-166 D-0
+ * accepts (last check to return, and the rename itself), not a guarantee. A
  * failure computing bytes or writing the sidecar (e.g. ENOSPC: a tmpfs with
  * room for the rename but not the sidecar) never escapes and never triggers
  * anything destructive; it is reported as `sidecarError` on the result, whose
@@ -365,6 +217,7 @@ export function finishAfterRename(a) {
         trashRoot: a.trashRoot,
         trashIdentity: a.trashIdentity,
         opReal: a.opReal,
+        opIdentity: a.opIdentity,
       })
     : null
 
@@ -388,7 +241,14 @@ export function finishAfterRename(a) {
       sidecarPath,
       opId,
       errno: null,
-      detail: heldDetail({ diagnosis: verified.diagnosis, destPath, originPath, opId }),
+      detail: heldDetail({
+        diagnosis: verified.diagnosis,
+        destPath,
+        originPath,
+        opId,
+        located: verified.located,
+        safe: verified.safe,
+      }),
       ...(sidecarError === null ? {} : { sidecarError }),
       ...indexed(),
     }
