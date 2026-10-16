@@ -27,7 +27,7 @@ import {
 } from './control-spec.w5.mjs'
 import { w5SummarySection } from './w5-summary.mjs'
 
-const { check, done } = makeCheck('[control-spec-w5]')
+const { check, done, notRun } = makeCheck('[control-spec-w5]')
 
 /** One W5 record. `cell` overrides are applied AFTER makeRecord, which drops cell.target. */
 function rec(attack, candidate, { lost = 0, status = 'quarantined', cell = {}, run = 0 } = {}) {
@@ -187,6 +187,15 @@ const q7 = (n, platform) => [
   ...noTarget(many(n, 'W5-Q7', 'candidate', { cell: { platform } })),
   ...noTarget(many(3, 'W5-Q7', 'C4-consolation', { lost: 1, cell: { platform } })),
 ]
+// SMI-7132 F5: win32 has no Q7 design count. DECLARED FAILURE (pre-fix w5-summary.mjs): the group
+// is scored against its own record count and renders PASS.
+check(
+  'summary: no design count for the platform renders INCOMPLETE, never PASS',
+  /\| W5-Q7 \| apfs \| INCOMPLETE \(no design count for platform win32\) \|/.test(
+    sec(q7(30, 'win32'))
+  ),
+  true
+)
 check(
   'summary: Q7 on linux wants 50 (10 x 5): 30 is INCOMPLETE (ran 30/50)',
   /INCOMPLETE \(ran 30\/50\)/.test(sec(q7(30, 'linux'))),
@@ -219,11 +228,11 @@ check(
   // design count, which is the intended reading of a run that could not mount.
   const nonRootLinux = process.platform === 'linux' && process.getuid?.() !== 0
   let compared = 0
-  let notRun = 0
+  let skippedRows = 0
   for (const row of Object.keys(W5_ROWS)) {
     if (row === 'P1' && nonRootLinux) {
-      console.log('[control-spec-w5] variants: P1 NOT RUN (linux without root defines no mounts)')
-      notRun += 1
+      notRun('variants: P1', 'linux without root defines no mounts')
+      skippedRows += 1
       continue
     }
     const def = await rowDef(row)
@@ -236,7 +245,7 @@ check(
   }
   check(
     'variants: every row was compared or reported NOT RUN',
-    compared + notRun,
+    compared + skippedRows,
     Object.keys(W5_ROWS).length
   )
 }
