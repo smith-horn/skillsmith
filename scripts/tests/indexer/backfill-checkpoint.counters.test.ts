@@ -3,14 +3,17 @@
  * @module scripts/tests/indexer/backfill-checkpoint.counters
  *
  * Covers:
- *  - buildDispatchCounters: all four counters copied; ANY missing or malformed
- *    counter yields undefined (fail-closed), never a zero
- *  - buildResumedFrom: loaded checkpoint -> {run_id, path}; cold start -> null
- *  - writeCheckpoint: both fields reach metadata, and the persisted JSON keeps
- *    null (cold start) distinct from absent (pre-SMI-7121 row)
- *  - run.ts wiring: the single writeCheckpoint call passes both builders, fed by
- *    the checkpoint loadResumeCheckpoint returned (run.ts calls main() at import,
- *    so the wiring is asserted on its source)
+ *  - toSubdirectorySearchStats -> buildDispatchCounters: each counter travels from
+ *    Phase 3b's camelCase result to its own snake_case checkpoint field
+ *  - buildDispatchCounters: ANY missing, malformed or errored counter yields
+ *    undefined (fail-closed), never a zero
+ *  - buildResumedFrom: loaded checkpoint -> {run_id, path}; cold start -> null;
+ *    a loaded row without a string path -> undefined (field omitted)
+ *  - buildCheckpointPayload: the whole payload run.ts writes, including the
+ *    pre-existing fields, and null (cold start) kept distinct from absent
+ *  - writeCheckpoint: both fields reach the persisted JSON
+ *  - run.ts: writes exactly the helper's payload, fed by the checkpoint it loaded
+ *    (run.ts calls main() at import, so this one link is asserted on its source)
  */
 
 import { readFileSync } from 'node:fs'
@@ -18,16 +21,37 @@ import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
+  buildCheckpointPayload,
   buildDispatchCounters,
   buildResumedFrom,
 } from '../../indexer/backfill-checkpoint.counters.ts'
-import {
-  writeCheckpoint,
-  type BackfillCheckpointPayload,
-} from '../../indexer/backfill-checkpoint.ts'
+import { writeCheckpoint, type BackfillCrawlOutcome } from '../../indexer/backfill-checkpoint.ts'
+import { toSubdirectorySearchStats } from '../../indexer/subdirectory-search.ts'
+import type { BackfillDispatchInputs } from '../../indexer/backfill-dispatch-inputs.ts'
 
 const SUB = { admitted: 221, no_default_branch: 3, license_filtered: 1 }
 const CRAWL = { ranges_crawled: 7 }
+
+describe('Phase 3b result -> dispatch_counters', () => {
+  it('carries each counter to its own field (distinct values, so a swap fails)', () => {
+    const phase3b = {
+      repos: [],
+      totalFound: 0,
+      retries: 0,
+      licenseFiltered: 11,
+      licenseFetchFailed: 0,
+      admitted: 13,
+      licenseNull: 0,
+      noDefaultBranch: 17,
+      incompleteResults: 0,
+      searchMode: 'broad' as const,
+      errors: [],
+    } as unknown as Parameters<typeof toSubdirectorySearchStats>[0]
+    expect(
+      buildDispatchCounters(toSubdirectorySearchStats(phase3b), { ranges_crawled: 19 })
+    ).toEqual({ admitted: 13, no_default_branch: 17, license_filtered: 11, ranges_crawled: 19 })
+  })
+})
 
 describe('buildDispatchCounters', () => {
   it('copies all four counters from their sources', () => {
@@ -43,14 +67,12 @@ describe('buildDispatchCounters', () => {
     expect(
       buildDispatchCounters(
         { admitted: 0, no_default_branch: 0, license_filtered: 0 },
-        {
-          ranges_crawled: 0,
-        }
+        { ranges_crawled: 0 }
       )
     ).toEqual({ admitted: 0, no_default_branch: 0, license_filtered: 0, ranges_crawled: 0 })
   })
 
-  // Each row removes or corrupts exactly one counter; the result must be undefined,
+  // Each row removes or corrupts exactly one input; the result must be undefined,
   // because a halt reading a defaulted 0 would pass a run it should stop.
   const failClosed: Array<[string, Parameters<typeof buildDispatchCounters>]> = [
     ['no subdirectory_search', [undefined, CRAWL]],
@@ -63,6 +85,8 @@ describe('buildDispatchCounters', () => {
     ['fractional counter', [{ ...SUB, no_default_branch: 2.5 }, CRAWL]],
     ['NaN counter', [{ ...SUB, admitted: Number.NaN }, CRAWL]],
     ['string counter', [{ ...SUB, admitted: '221' as unknown as number }, CRAWL]],
+    // A disabled/failed Phase 3b marker carries zeroed counters plus an error.
+    ['Phase 3b recorded an error', [{ ...SUB, error: 'phase_failed' }, CRAWL]],
   ]
   for (const [name, args] of failClosed) {
     it(`returns undefined when ${name}`, () => {
@@ -88,84 +112,113 @@ describe('buildResumedFrom', () => {
   it('returns null on a cold start', () => {
     expect(buildResumedFrom(null)).toBeNull()
   })
+
+  it('omits the field when the loaded row has no string path', () => {
+    expect(buildResumedFrom({ run_id: 'r1', cursor: {} })).toBeUndefined()
+    expect(buildResumedFrom({ run_id: 'r1', cursor: { path: 7 } })).toBeUndefined()
+  })
 })
 
-function captureInsert(): { supabase: SupabaseClient; rows: Record<string, unknown>[] } {
-  const rows: Record<string, unknown>[] = []
-  const supabase = {
-    from: () => ({
-      insert: (row: Record<string, unknown>) => {
-        rows.push(row)
-        return Promise.resolve({ data: null, error: null })
-      },
-    }),
-  } as unknown as SupabaseClient
-  return { supabase, rows }
+const CRAWL_OUTCOME = {
+  cursor: { path: '.agents/skills', facet: '3584-4095', last_page: 2 },
+  facets_completed: 4,
+  facets_total: 9,
+  cap_saturated: true,
+  truncated_repo_count: 5,
+  incomplete_results_ranges: 6,
+  ranges_crawled: 7,
+  done: false,
+} as unknown as BackfillCrawlOutcome
+const INPUTS = { pathPrefix: '.agents/skills' } as unknown as BackfillDispatchInputs
+
+function build(overrides: Partial<Parameters<typeof buildCheckpointPayload>[0]> = {}) {
+  return buildCheckpointPayload({
+    runId: 'run-7121',
+    crawl: CRAWL_OUTCOME,
+    subdirectorySearch: SUB,
+    dryRun: false,
+    dispatchInputs: INPUTS,
+    loaded: { run_id: 'prev-1', cursor: { path: '.agents/skills' } },
+    ...overrides,
+  })
 }
 
-function payload(extra: Partial<BackfillCheckpointPayload>): BackfillCheckpointPayload {
-  return {
-    run_id: 'run-7121',
-    cursor: { path: '.agents/skills', facet: '3584-4095', last_page: 2 },
-    facets_completed: 1,
-    facets_total: 9,
-    cap_saturated: false,
-    truncated_repo_count: 0,
-    incomplete_results_ranges: 0,
-    dry_run: false,
-    ...extra,
-  }
-}
+describe('buildCheckpointPayload', () => {
+  it('maps every field run.ts persists', () => {
+    expect(build()).toEqual({
+      run_id: 'run-7121',
+      cursor: CRAWL_OUTCOME.cursor,
+      facets_completed: 4,
+      facets_total: 9,
+      cap_saturated: true,
+      truncated_repo_count: 5,
+      incomplete_results_ranges: 6,
+      dry_run: false,
+      dispatch_inputs: INPUTS,
+      dispatch_counters: {
+        admitted: 221,
+        no_default_branch: 3,
+        license_filtered: 1,
+        ranges_crawled: 7,
+      },
+      resumed_from: { run_id: 'prev-1', path: '.agents/skills' },
+    })
+  })
+
+  it('keeps a cold start as resumed_from: null, and omits fields it could not build', () => {
+    const cold = build({ loaded: null })
+    expect('resumed_from' in cold).toBe(true)
+    expect(cold.resumed_from).toBeNull()
+
+    const incomplete = build({ subdirectorySearch: undefined, loaded: { run_id: 'x', cursor: {} } })
+    expect('dispatch_counters' in incomplete).toBe(false)
+    expect('resumed_from' in incomplete).toBe(false)
+  })
+})
 
 describe('writeCheckpoint persists the SMI-7121 fields', () => {
-  it('writes dispatch_counters and resumed_from under metadata', async () => {
-    const { supabase, rows } = captureInsert()
-    const counters = buildDispatchCounters(SUB, CRAWL)
-    const resumed = buildResumedFrom({ run_id: 'prev-1', cursor: { path: '.agents/skills' } })
-    expect(
-      await writeCheckpoint(
-        supabase,
-        payload({ dispatch_counters: counters, resumed_from: resumed })
-      )
-    ).toBe(true)
-    const metadata = rows[0].metadata as Record<string, unknown>
-    expect(metadata.dispatch_counters).toEqual(counters)
-    expect(metadata.resumed_from).toEqual({ run_id: 'prev-1', path: '.agents/skills' })
-  })
+  function captureInsert(): { supabase: SupabaseClient; rows: Record<string, unknown>[] } {
+    const rows: Record<string, unknown>[] = []
+    const supabase = {
+      from: () => ({
+        insert: (row: Record<string, unknown>) => {
+          rows.push(row)
+          return Promise.resolve({ data: null, error: null })
+        },
+      }),
+    } as unknown as SupabaseClient
+    return { supabase, rows }
+  }
 
-  it('serializes a cold start as resumed_from: null, distinct from a pre-SMI-7121 row', async () => {
+  it('sends both fields in the JSON body, with null kept and absent dropped', async () => {
+    const full = captureInsert()
+    expect(await writeCheckpoint(full.supabase, build())).toBe(true)
     const cold = captureInsert()
-    await writeCheckpoint(cold.supabase, payload({ resumed_from: null }))
-    const old = captureInsert()
-    await writeCheckpoint(old.supabase, payload({}))
+    await writeCheckpoint(cold.supabase, build({ loaded: null, subdirectorySearch: undefined }))
 
     // What PostgREST sends is the JSON body, so compare the serialized metadata.
+    const fullJson = JSON.parse(JSON.stringify(full.rows[0].metadata)) as Record<string, unknown>
     const coldJson = JSON.parse(JSON.stringify(cold.rows[0].metadata)) as Record<string, unknown>
-    const oldJson = JSON.parse(JSON.stringify(old.rows[0].metadata)) as Record<string, unknown>
-    expect('resumed_from' in coldJson).toBe(true)
+    expect(fullJson.dispatch_counters).toEqual(build().dispatch_counters)
+    expect(fullJson.resumed_from).toEqual({ run_id: 'prev-1', path: '.agents/skills' })
     expect(coldJson.resumed_from).toBeNull()
-    expect('resumed_from' in oldJson).toBe(false)
-    expect('dispatch_counters' in oldJson).toBe(false)
+    expect('dispatch_counters' in coldJson).toBe(false)
   })
 })
 
-describe('run.ts wiring (source)', () => {
+describe('run.ts writes the helper payload fed by the loaded checkpoint (source)', () => {
   const src = readFileSync(join(__dirname, '../../indexer/run.ts'), 'utf8')
 
-  it('has exactly one writeCheckpoint call, and it passes both builders', () => {
-    const calls = src.match(/writeCheckpoint\(supabase, \{[\s\S]*?\n {4}\}\)/g) ?? []
-    expect(calls).toHaveLength(1)
-    expect(calls[0]).toContain(
-      'dispatch_counters: buildDispatchCounters(result.subdirectory_search, bc)'
-    )
-    expect(calls[0]).toContain('resumed_from: buildResumedFrom(loadedCheckpoint)')
+  it('passes buildCheckpointPayload to its only writeCheckpoint call', () => {
+    expect(src.match(/writeCheckpoint\(/g)).toHaveLength(1)
+    expect(src).toMatch(/writeCheckpoint\(\s*supabase,\s*buildCheckpointPayload\(\{/)
+    expect(src).toMatch(/buildCheckpointPayload\(\{[^}]*loaded: loadedCheckpoint,/)
   })
 
-  it('feeds resumed_from from the checkpoint loadResumeCheckpoint returned', () => {
+  it('records exactly what loadResumeCheckpoint returned', () => {
     expect(src).toMatch(
-      /const checkpoint = await loadResumeCheckpoint\([^)]*\)\n\s*loadedCheckpoint = checkpoint\n/
+      /const checkpoint = await loadResumeCheckpoint\([^)]*\)\s*loadedCheckpoint = checkpoint\b/
     )
-    // Exactly one assignment, so nothing later overwrites what was actually loaded.
     expect(src.match(/loadedCheckpoint = /g)).toHaveLength(1)
   })
 })

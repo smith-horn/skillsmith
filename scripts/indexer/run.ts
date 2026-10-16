@@ -64,7 +64,7 @@ import {
 import { buildBackfillDispatchInputs } from './backfill-dispatch-inputs.ts'
 // SMI-7112: resume-checkpoint read that aborts (never cold-starts) on error.
 import { loadResumeCheckpoint } from './backfill-resume.ts'
-import { buildDispatchCounters, buildResumedFrom } from './backfill-checkpoint.counters.ts'
+import { buildCheckpointPayload } from './backfill-checkpoint.counters.ts'
 
 interface RunSummary {
   data: unknown
@@ -168,7 +168,7 @@ async function runDiscoveryBranch(
   let checkpointId: string | null = null
   let backfillFacetPlan: BackfillFacetPlan | undefined
   // SMI-7121: the checkpoint this dispatch actually loaded, recorded on its own checkpoint.
-  let loadedCheckpoint: Parameters<typeof buildResumedFrom>[0] = null
+  let loadedCheckpoint: Parameters<typeof buildCheckpointPayload>[0]['loaded'] = null
   const backfillRunId = process.env.GITHUB_RUN_ID ?? requestId
   if (env.BACKFILL_MODE) {
     const resumeFrom = process.env.RESUME_FROM
@@ -248,22 +248,19 @@ async function runDiscoveryBranch(
   // skip these via loadResumeCheckpoint's excludeDryRun option.
   if (env.BACKFILL_MODE && result.backfill_crawl) {
     const bc = result.backfill_crawl
-    const wrote = await writeCheckpoint(supabase, {
-      run_id: backfillRunId,
-      cursor: bc.cursor,
-      facets_completed: bc.facets_completed,
-      facets_total: bc.facets_total,
-      cap_saturated: bc.cap_saturated,
-      truncated_repo_count: bc.truncated_repo_count,
-      incomplete_results_ranges: bc.incomplete_results_ranges, // SMI-6073
-      dry_run: env.DRY_RUN,
-      // SMI-6246: echoed so indexer-backfill-autochain.yml can replay this
-      // exact campaign on auto-chain instead of defaulting every input.
-      dispatch_inputs: buildBackfillDispatchInputs(env),
-      // SMI-7121: what the autochain's halts read (fail-closed: absent unless complete).
-      dispatch_counters: buildDispatchCounters(result.subdirectory_search, bc),
-      resumed_from: buildResumedFrom(loadedCheckpoint),
-    })
+    // SMI-7121: the payload (incl. the autochain's halt inputs) is assembled in one
+    // tested helper; run.ts only supplies this dispatch's facts.
+    const wrote = await writeCheckpoint(
+      supabase,
+      buildCheckpointPayload({
+        runId: backfillRunId,
+        crawl: bc,
+        subdirectorySearch: result.subdirectory_search,
+        dryRun: env.DRY_RUN,
+        dispatchInputs: buildBackfillDispatchInputs(env),
+        loaded: loadedCheckpoint,
+      })
+    )
     if (wrote) checkpointId = backfillRunId
     console.log(
       `[Backfill] SMI-5286: checkpoint ${wrote ? 'written' : 'FAILED'} (run_id=${backfillRunId}) ` +
