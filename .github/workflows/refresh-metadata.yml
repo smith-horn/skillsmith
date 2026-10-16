@@ -1,16 +1,22 @@
-# SMI-1617: GitHub Actions workflow for scheduled skill metadata refresh
-# Refreshes metadata (stars, quality_score) for existing skills in the database
+# SMI-1617: GitHub Actions workflow for skill metadata refresh (stars, quality_score).
 #
-# Runs every 4h to keep ~14k skills fresh (200/run, ~6 effective runs/day = full refresh every ~12 days)
-# Cadence reduced from hourly to 4-hourly via SMI-4121 (Wave 3 D close-out of SMI-4118)
-# to cut ~540 metadata-refresh invocations/mo against the Supabase Pro Fair Use budget.
-# The indexer adds new skills; this job keeps existing skills up-to-date.
+# SMI-7114 W3b: the schedule no longer triggers the refresh. Supabase pg_cron does
+# (`skills-refresh-metadata`, `32 2-22/4 * * *`), because GitHub delivered only 22-28 of
+# 42 scheduled runs a week. The schedule now runs the independent OBSERVER
+# (scripts/ci/refresh-observer.sh), which reads refresh_metadata_health() and alerts
+# `refresh_unhealthy` when refresh is stale, pg_cron stopped dispatching, or a dispatch
+# failed. It is never retired: it runs on a different scheduler from the thing it watches.
+# Its `refresh:observer` heartbeat arms a pg_cron dead-man that pages if it stops running.
+#
+# workflow_dispatch still POSTs the function directly, for manual or dry runs.
+# Rollback: revert the W3b commit to restore schedule-triggered refresh.
 
 name: Skill Metadata Refresh
 
 on:
   schedule:
-    # Run every 4h at minute 30 (offset from indexer which runs at :00)
+    # Observer cadence. The dead-man SLA (16h) was sized from this schedule's measured gaps;
+    # change both together.
     - cron: '30 */4 * * *'
   workflow_dispatch:
     inputs:
@@ -35,8 +41,30 @@ env:
   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
 jobs:
+  observe:
+    name: Observe Metadata Refresh
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci/refresh-observer.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Run refresh observer
+        env:
+          SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE: ${{ vars.SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE }}
+        run: bash scripts/ci/refresh-observer.sh
+
   refresh:
     name: Refresh Skill Metadata
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions: {}
@@ -104,53 +132,40 @@ jobs:
 
       - name: Parse Results
         if: success()
+        env:
+          # Via env, not inline ${{ }}: a quote in the response body must not break the shell.
+          RESPONSE: ${{ steps.refresh.outputs.response }}
         run: |
-          RESPONSE='${{ steps.refresh.outputs.response }}'
-
-          # Extract metrics using jq
           PROCESSED=$(echo "$RESPONSE" | jq -r '.data.processed // 0')
           UPDATED=$(echo "$RESPONSE" | jq -r '.data.updated // 0')
           FAILED=$(echo "$RESPONSE" | jq -r '.data.failed // 0')
           SKIPPED=$(echo "$RESPONSE" | jq -r '.data.skipped // 0')
           DRY_RUN=$(echo "$RESPONSE" | jq -r '.meta.dry_run // false')
-
-          echo "### Metadata Refresh Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Processed | $PROCESSED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Updated | $UPDATED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Dry Run | $DRY_RUN |" >> $GITHUB_STEP_SUMMARY
-
-          # Warn if there were failures
-          if [ "$FAILED" -gt 0 ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ Some skills failed to refresh. Check the errors in the response." >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "### Metadata Refresh Results"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Processed | $PROCESSED |"
+            echo "| Updated | $UPDATED |"
+            echo "| Skipped | $SKIPPED |"
+            echo "| Failed | $FAILED |"
+            echo "| Dry Run | $DRY_RUN |"
+            if [ "$FAILED" -gt 0 ]; then
+              echo ""
+              echo "Some skills failed to refresh. Check the errors in the response."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report Failure
         if: failure()
+        env:
+          HTTP_CODE: ${{ steps.refresh.outputs.http_code }}
         run: |
-          echo "### Metadata Refresh Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "HTTP Code: ${{ steps.refresh.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Response body logged in the Trigger Metadata Refresh step above." >> $GITHUB_STEP_SUMMARY
-
-      # Only alert on scheduled runs to avoid noise during manual testing
-      - name: Send Alert on Failure
-        if: failure() && github.event_name == 'schedule'
-        run: |
-          curl -s -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "type": "refresh_failed",
-              "message": "The 4-hourly metadata refresh workflow failed. HTTP Code: ${{ steps.refresh.outputs.http_code }}",
-              "workflow": "Skill Metadata Refresh",
-              "runId": "${{ github.run_id }}",
-              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }' \
-            "$SUPABASE_URL/functions/v1/alert-notify" || true
+          {
+            echo "### Metadata Refresh Failed"
+            echo ""
+            echo "HTTP Code: $HTTP_CODE"
+            echo ""
+            echo "Response body logged in the Trigger Metadata Refresh step above."
+          } >> "$GITHUB_STEP_SUMMARY"
