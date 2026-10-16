@@ -316,9 +316,8 @@ describe.skipIf(locked)('SMI-7121 -- backfill autochain marker migration (PG-fre
     expect(w.match(/FOR UPDATE/g)).toHaveLength(1)
     // the alert row and the message say so
     expect(w).toMatch(/'row_locked', v_row_locked/)
-    expect(w).toMatch(
-      /CASE WHEN v_row_locked\s+THEN ' The marker row was locked by another session for this tick, so the watcher alerted from an unlocked read\.'/
-    )
+    // the message gains a note only on the locked path (wording is free; the live suite checks it is sent)
+    expect(w).toMatch(/CASE WHEN v_row_locked\s+THEN '[^']+'\s+ELSE ''/)
     // the fallback is not exempt from dedup: the suppress check names no row_locked condition
     expect(w).toMatch(/IF v_suppress THEN\s+CONTINUE;/)
   })

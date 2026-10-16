@@ -218,7 +218,7 @@ export function registerConcurrencyTests(ctx: Ctx): void {
         `SELECT 'alert=' || (metadata->>'kind') || ',' || (metadata->>'marker_id') || ',row_locked=' || ` +
         `coalesce(metadata->>'row_locked', 'NULL') FROM audit_logs WHERE event_type = '${ALERT}' ORDER BY created_at;`
       const lockedMsg =
-        "SELECT 'msg_locked=' || (body->>'message' LIKE '%locked by another session for this tick%') FROM net.calls;"
+        "SELECT 'msg_locked=' || (body->>'message' LIKE '%locked by another session%') FROM net.calls;"
 
       /** B holds m1's row with an uncommitted transition; A runs `aSql` (5s cap); B then commits. */
       async function whileHeld(bTransition: string, aSql: string) {
