@@ -12,6 +12,11 @@
 //      path with the entry moved in; the path resolves identically, so only identity can tell.
 //   H  (SMI-7134) status 'quarantined' where 'held' is expected: the SAME op directory is
 //      chmod'ed 0777 after the rename; only the owner/mode re-check can tell.
+//   J  (SMI-7134 gate) status 'quarantined' where 'held' is expected: a byte-identical copy is
+//      swapped in at destPath during the walk (identity was checked before the walk).
+//   J2 same: the op directory is chmod'ed 0777 during the walk (mode was checked before it).
+//   H6/H7 (diagnostic) the owner/mode failure keeps a confirmed location: detail says
+//      "observed at ... not private" instead of "could not be confirmed".
 //   I  (SMI-7134) detail contains "safe at" after a containment failure (it must not claim
 //      safety); I5-I6 are a paired control: after a hash mismatch the location IS confirmed, so the
 //      detail keeps the "safe at" wording (passes on both).
@@ -118,6 +123,16 @@ for (const [id, mode, label] of [
   )
   check('H4 and the mode it saw', /mode 777/.test(r.detail ?? ''), true)
   check('H5 nothing was moved back to the origin', fs.existsSync(f.origin), false)
+  check(
+    'H6 the location was confirmed, so the detail says where it was observed',
+    /observed at '/.test(r.detail ?? ''),
+    true
+  )
+  check(
+    'H7 and says the directory is not private, with no safety claim',
+    /not private/.test(r.detail ?? '') && !/safe/i.test(r.detail ?? ''),
+    true
+  )
   fs.chmodSync(opDir, 0o700)
   fs.rmSync(f.root, { recursive: true, force: true })
 }
@@ -172,6 +187,75 @@ for (const [id, mode, label] of [
     /your tree is safe at /.test(r.detail ?? ''),
     true
   )
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- J / J2. location is checked AFTER the walk and the hash (SMI-7134 gate) -------
+// onCall fires before each scoped fs call (unrecorded). J: before the SECOND lstat of
+// destPath (the walk's root lstat is the first on fixed code) the bound tree is moved
+// aside and a byte-identical copy put at destPath. Pre-fix, the destination identity was
+// checked before the walk, so the copy was walked, hashed equal, and reported quarantined.
+function runInjected(kind) {
+  const f = fixture('s7134-inj-' + kind + '-')
+  const guardHash = computePathTreeHash(f.origin).treeHash
+  const opId = 'op-inj-' + kind
+  const opDir = path.join(f.parent, '.skillsmith-trash', opId)
+  let destLstats = 0
+  let injected = false
+  const run = runWithHooks({
+    quarantine: quarantineTree,
+    parentAbs: f.parent,
+    name: 'tree',
+    options: { opId, guardHash },
+    onCall: ({ fn, p0, renameReturned, destPath }) => {
+      if (!renameReturned || injected) return
+      if (kind === 'j' && fn === 'lstatSync' && p0 === destPath && ++destLstats === 2) {
+        injected = true
+        fs.renameSync(destPath, destPath + '.moved')
+        fs.mkdirSync(path.join(destPath, 'sub'), { recursive: true })
+        fs.writeFileSync(path.join(destPath, 'sub', 'f.txt'), 'USERBYTES')
+      }
+      if (kind === 'j2' && fn === 'lstatSync' && p0.startsWith(destPath + path.sep)) {
+        injected = true
+        fs.chmodSync(opDir, 0o777)
+      }
+    },
+  })
+  return { f, opDir, run, injected }
+}
+{
+  const { f, run, injected } = runInjected('j')
+  const r = run.result
+  check(
+    'J1 the replacement was injected without error',
+    injected && run.hookErrors.length === 0,
+    true
+  )
+  check('J2 a byte-identical copy swapped in during the walk is held', r.status, 'held')
+  check(
+    'J3 and the diagnosis names the destination identity check',
+    /identity at destination does not match/.test(r.detail ?? ''),
+    true
+  )
+  check('J4 and the detail makes no safety claim', /safe/i.test(r.detail ?? ''), false)
+  check('J5 nothing was moved back to the origin', fs.existsSync(f.origin), false)
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+{
+  const { f, opDir, run, injected } = runInjected('j2')
+  const r = run.result
+  check(
+    'J2-1 the chmod was injected during the walk',
+    injected && run.hookErrors.length === 0,
+    true
+  )
+  check('J2-2 an op directory made 0777 during the walk is held', r.status, 'held')
+  check(
+    'J2-3 and the diagnosis names the owner/mode check',
+    /op directory owner\/mode check failed/.test(r.detail ?? ''),
+    true
+  )
+  fs.chmodSync(opDir, 0o700)
   fs.rmSync(f.root, { recursive: true, force: true })
 }
 
