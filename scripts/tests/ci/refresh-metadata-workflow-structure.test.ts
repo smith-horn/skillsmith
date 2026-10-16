@@ -28,10 +28,14 @@ interface Step {
   run?: string
   uses?: string
   with?: Record<string, unknown>
+  'continue-on-error'?: unknown
 }
 interface Job {
   if?: string
   env?: Record<string, string>
+  permissions?: unknown
+  'continue-on-error'?: unknown
+  'timeout-minutes'?: number
   steps: Step[]
 }
 interface Workflow {
@@ -132,6 +136,50 @@ describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
     for (const s of noScript.jobs.observe.steps)
       if (s.with) s.with['sparse-checkout'] = 'scripts/ci'
     expect(ok(noScript)).toBe(false)
+  })
+
+  it('the observer can fail the job, holds no write token and is bounded (known-negative: each loosened)', () => {
+    // A green-but-skipped observer writes no heartbeat, so the dead-man still pages; a run
+    // that never fails the job would hide its own errors from GitHub's failed-run email.
+    const ok = (w: Workflow): boolean => {
+      const job = w.jobs.observe
+      const checkout = job.steps.find((s) => (s.uses ?? '').startsWith('actions/checkout@'))
+      return (
+        JSON.stringify(job.permissions) === JSON.stringify({ contents: 'read' }) &&
+        job['continue-on-error'] === undefined &&
+        job.steps.every((s) => s['continue-on-error'] === undefined && s.if === undefined) &&
+        checkout?.with?.['persist-credentials'] === false &&
+        typeof job['timeout-minutes'] === 'number'
+      )
+    }
+    expect(ok(wf)).toBe(true)
+
+    const mutations: Array<(j: Job) => void> = [
+      (j) => (j.permissions = { contents: 'write' }),
+      (j) => (j['continue-on-error'] = true),
+      (j) => (j.steps[j.steps.length - 1]['continue-on-error'] = true),
+      (j) => (j.steps[j.steps.length - 1].if = 'false'),
+      (j) => {
+        for (const s of j.steps) if (s.with) delete s.with['persist-credentials']
+      },
+      (j) => delete j['timeout-minutes'],
+    ]
+    for (const mutate of mutations) {
+      const bad = clone(wf)
+      mutate(bad.jobs.observe)
+      expect(ok(bad)).toBe(false)
+    }
+  })
+
+  it('the observer script is self-contained and never POSTs the function (known-negative: each added)', () => {
+    // The sparse checkout fetches only this one file, and the schedule must only observe.
+    const ok = (text: string): boolean =>
+      !text.includes(FUNCTION_PATH) && !text.split('\n').some((l) => /^\s*(source|\.)\s+\S/.test(l))
+    const script = readFileSync(join(REPO_ROOT, OBSERVER), 'utf8')
+    expect(ok(script)).toBe(true)
+    expect(ok(script + `\ncurl -X POST "$SUPABASE_URL${FUNCTION_PATH}"\n`)).toBe(false)
+    expect(ok(script + '\nsource scripts/ci/lib.sh\n')).toBe(false)
+    expect(ok(script + '\n. ./scripts/ci/lib.sh\n')).toBe(false)
   })
 
   it('workflow_dispatch still POSTs the function with dry_run and batch_size (known-negative: job guarded to schedule)', () => {

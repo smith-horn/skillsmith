@@ -80,10 +80,15 @@ jobs:
 
       - name: Trigger Metadata Refresh
         id: refresh
+        env:
+          # Via env, not inline ${{ }}: free-text inputs must not become shell code.
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '200' }}
+          STALE_DAYS: ${{ github.event.inputs.stale_days || '1' }}
         run: |
-          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-          BATCH_SIZE="${{ github.event.inputs.batch_size || '200' }}"
-          STALE_DAYS="${{ github.event.inputs.stale_days || '1' }}"
+          case "$BATCH_SIZE" in ''|*[!0-9]*|0*) echo "::error::batch_size must be a positive integer"; exit 1;; esac
+          case "$STALE_DAYS" in ''|*[!0-9]*|0[0-9]*) echo "::error::stale_days must be a non-negative integer"; exit 1;; esac
+          case "$DRY_RUN" in true|false) ;; *) echo "::error::dry_run must be true or false"; exit 1;; esac
 
           call_refresh() {
             local batch=$1
