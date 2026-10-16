@@ -14,6 +14,13 @@
 // DECLARED FAILURE ON THE PRE-FIX CODE (a scratch copy), per case:
 //   A  status 'quarantined' where 'kept' is expected (the rebind accepts it).
 //   B  status 'quarantined' where 'held' is expected (no containment check).
+//   D  (SMI-7132) status 'held'/changed-during-move where 'quarantined' is expected: the
+//      containment check realpath'ed the moved entry, which for a symlink skill root is
+//      its target, outside the trash.
+//   E1 (SMI-7132) status 'quarantined' where 'held' is expected: the trash root swapped for
+//      a symlink makes both realpaths resolve into attacker storage, so containment held.
+//   E2 same: a different directory renamed into place as the trash root, so the path text
+//      is unchanged and only the trash-root identity can tell.
 //   C1 status 'quarantined' where 'kept' is expected (a type-less identity
 //      compared equal); C2 is a control and passes on both.
 
@@ -90,7 +97,7 @@ const countEntries = (d) => (fs.existsSync(d) ? fs.readdirSync(d).length : -1)
   fs.rmSync(f.root, { recursive: true, force: true })
 }
 
-// --- B. the destination must resolve inside the trash root -----------------
+// --- B. the entry must sit in the op directory C4 validated --------------------
 {
   // B0 control: an honest guarded call is verified and quarantined.
   const f0 = fixture('s7128-b0-')
@@ -125,8 +132,8 @@ const countEntries = (d) => (fs.existsSync(d) ? fs.readdirSync(d).length : -1)
   check('B2 a destination outside the trash root is held', r.status, 'held')
   check('B3 with the changed-during-move reason', r.reason, 'changed-during-move')
   check(
-    'B4 and the diagnosis names the containment',
-    /outside the trash root/.test(r.detail ?? ''),
+    'B4 and the diagnosis names the op-directory check',
+    /op directory resolves elsewhere/.test(r.detail ?? ''),
     true
   )
   const moved = fs.existsSync(outside)
@@ -157,6 +164,107 @@ const countEntries = (d) => (fs.existsSync(d) ? fs.readdirSync(d).length : -1)
   const r2 = quarantineTree(g.parent, 'tree', { opId: 'op-c2', expectIdentity: typed })
   check('C2 control: an identity with its file type is accepted', r2.status, 'quarantined')
   fs.rmSync(g.root, { recursive: true, force: true })
+}
+
+// --- D. a symlink skill root is a legitimate guarded input (SMI-7132) -------
+{
+  const f = fixture('s7132-d-')
+  const target = path.join(f.root, 'devcheckout')
+  fs.mkdirSync(target)
+  fs.writeFileSync(path.join(target, 'SKILL.md'), 'TARGETBYTES')
+  const link = path.join(f.parent, 'linked')
+  fs.symlinkSync(target, link)
+  const g = computePathTreeHash(link).treeHash
+  const r = quarantineTree(f.parent, 'linked', { opId: 'op-d', guardHash: g })
+  check('D1 a guarded symlink skill root is quarantined', r.status, 'quarantined')
+  let parked = null
+  try {
+    parked = fs.readlinkSync(r.path)
+  } catch {
+    /* leave null */
+  }
+  check('D2 the link itself is parked in the op directory', parked, target)
+  check(
+    "D3 and it sits under this call's op directory",
+    path.dirname(r.path) === path.join(f.parent, '.skillsmith-trash', 'op-d'),
+    true
+  )
+  check('D4 the link target is untouched', readBytes(path.join(target, 'SKILL.md')), 'TARGETBYTES')
+  check(
+    'D5 the origin name is gone',
+    fs.lstatSync(link, { throwIfNoEntry: false }) === undefined,
+    true
+  )
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- E1. the trash root swapped for a symlink to attacker storage ------------
+{
+  const f = fixture('s7132-e1-')
+  const guardHash = computePathTreeHash(f.origin).treeHash
+  const trash = path.join(f.parent, '.skillsmith-trash')
+  const outside = path.join(f.root, 'attacker-storage')
+  const run = runWithHooks({
+    quarantine: quarantineTree,
+    parentAbs: f.parent,
+    name: 'tree',
+    options: { opId: 'op-e1', guardHash },
+    onAfterRename: () => {
+      fs.renameSync(trash, outside)
+      fs.symlinkSync(outside, trash)
+    },
+  })
+  const r = run.result
+  check(
+    'E1a the trash-root swap fired without error',
+    run.fired.afterRename && run.hookErrors.length === 0,
+    true
+  )
+  check('E1b a swapped trash root is held', r.status, 'held')
+  check('E1c with the changed-during-move reason', r.reason, 'changed-during-move')
+  check(
+    'E1d and the diagnosis names the op-directory check',
+    /op directory resolves elsewhere/.test(r.detail ?? ''),
+    true
+  )
+  check('E1e nothing was moved back to the origin', fs.existsSync(f.origin), false)
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
+// --- E2. a different directory renamed into place as the trash root ----------
+{
+  const f = fixture('s7132-e2-')
+  const guardHash = computePathTreeHash(f.origin).treeHash
+  const trash = path.join(f.parent, '.skillsmith-trash')
+  const aside = path.join(f.root, 'aside')
+  const run = runWithHooks({
+    quarantine: quarantineTree,
+    parentAbs: f.parent,
+    name: 'tree',
+    options: { opId: 'op-e2', guardHash },
+    onAfterRename: () => {
+      // The op directory (holding the tree) moves into a NEW directory at the same
+      // path text, so realpath(dirname(dest)) is unchanged: only identity differs.
+      fs.renameSync(trash, aside)
+      fs.mkdirSync(trash, { mode: 0o700 })
+      fs.renameSync(path.join(aside, 'op-e2'), path.join(trash, 'op-e2'))
+    },
+  })
+  const r = run.result
+  check(
+    'E2a the trash-root replacement fired without error',
+    run.fired.afterRename && run.hookErrors.length === 0,
+    true
+  )
+  check('E2b a replaced trash root is held', r.status, 'held')
+  check('E2c with the changed-during-move reason', r.reason, 'changed-during-move')
+  check(
+    'E2d and the diagnosis names the trash-root check',
+    /trash root is no longer the one C4 validated/.test(r.detail ?? ''),
+    true
+  )
+  check('E2e nothing was moved back to the origin', fs.existsSync(f.origin), false)
+  fs.rmSync(f.root, { recursive: true, force: true })
 }
 
 done()

@@ -437,6 +437,7 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
   // `originPath` and `treeHash` -- sitting in a directory any local user can
   // read or rename away. Ownership and mode are now required.
   let opIdentity = null
+  let opReal = null
   try {
     const od = fs.lstatSync(opDir, { bigint: true })
     if (od.isSymbolicLink() || !od.isDirectory()) {
@@ -514,6 +515,24 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
       ino: od.ino,
       birthtimeNs: od.birthtimeNs,
       fmt: od.mode & S_IFMT,
+    }
+    // SMI-7132: with a guard hash, also capture where the op directory resolves
+    // NOW, so post-move verification can require the entry to sit in this very
+    // directory. Lstat-validated just above, so realpath resolves only ancestors.
+    if (guardHash !== undefined && guardHash !== null) {
+      try {
+        opReal = fs.realpathSync(opDir)
+      } catch (rerr) {
+        return {
+          status: 'kept',
+          reason: 'quarantine-destination-changed',
+          path: originPath,
+          entry: name,
+          treeHash: observedTreeHash,
+          errno: rerr.code ?? null,
+          detail: 'op directory could not be resolved before the move',
+        }
+      }
     }
   } catch (err) {
     return {
@@ -726,6 +745,8 @@ function quarantineTreeInner(parentAbs, name, options = {}) {
     bindIdentity,
     sameIdentity,
     trashRoot: trash.trashRoot,
+    trashIdentity: trash.trashIdentity,
+    opReal,
     skillsmithVersion: SPIKE_VERSION,
   })
 }
