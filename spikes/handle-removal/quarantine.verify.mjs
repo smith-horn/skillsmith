@@ -116,7 +116,8 @@ export function mountinfoFinding(dirReal) {
  * by design. Nothing is moved back on a mismatch.
  *
  * What this detects, and what it does not, is stated in one place: ADR-166, the
- * D-0 amendment ("What the post-move check guarantees"). Not restated here.
+ * D-0 amendment ("What the post-move check detects, and what it doesn't"). Not
+ * restated here.
  *
  * @returns {{ok:true, treeHash:string}
  *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
