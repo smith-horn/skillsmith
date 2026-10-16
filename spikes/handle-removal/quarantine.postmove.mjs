@@ -28,6 +28,7 @@ import crypto from 'node:crypto'
 import { computeTreeHash } from './hash.mjs'
 import { MOUNTINFO_APPLIES, readMountPointsAtOrUnder } from './quarantine.mounts.mjs'
 import { appendParkedIndex } from './trash-index.mjs'
+import { S_IFMT, opDirOwnerModeProblem } from './quarantine.perms.mjs'
 
 /**
  * Builds a §3.4 tree-hash record from a PATH walk, in the same shape
@@ -130,9 +131,18 @@ export function mountinfoFinding(dirReal) {
  * itself is never realpath'ed: a symlink skill root resolves to its target, which
  * is outside the trash by design. Nothing is moved back on a mismatch.
  *
+ * OP-DIRECTORY RE-CHECK (SMI-7134): the path comparison above cannot tell the
+ * validated op directory from a NEW directory created at the same path after the
+ * rename, with the entry moved into it. So the op directory is also lstat'ed now
+ * and must still be the one C4 bound (`opIdentity`, type included) and still pass
+ * the F12 owner/mode check (`opDirOwnerModeProblem`, shared with the pre-move site).
+ *
  * @returns {{ok:true, treeHash:string}
  *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
- *            diagnosis:string, treeHash:string|null}}
+ *            diagnosis:string, treeHash:string|null, located:boolean}}
+ *   `located` is true only once containment passed, i.e. the tree is confirmed to
+ *   be inside the op directory C4 validated; a held result before that point has
+ *   located=false and its message must not claim the tree is safe where reported.
  */
 export function verifyAtDestination({
   destPath,
@@ -143,8 +153,15 @@ export function verifyAtDestination({
   trashRoot,
   trashIdentity,
   opReal,
+  opIdentity,
 }) {
-  const held = (reason, diagnosis, treeHash = null) => ({ ok: false, reason, diagnosis, treeHash })
+  const held = (reason, diagnosis, treeHash = null, located = false) => ({
+    ok: false,
+    reason,
+    diagnosis,
+    treeHash,
+    located,
+  })
   const at = bindIdentity(destPath)
   if (!at.ok) return held('changed-during-move', `identity at destination unreadable (${at.errno})`)
   if (!sameIdentity(boundIdentity, at)) {
@@ -169,29 +186,64 @@ export function verifyAtDestination({
   if (trashIdentity == null || !trashNow.ok || !sameIdentity(trashIdentity, trashNow)) {
     return held('changed-during-move', 'trash root is no longer the one C4 validated')
   }
+  // SMI-7134: the op directory itself, not just where its path resolves.
+  let opNow = null
+  try {
+    opNow = fs.lstatSync(path.dirname(destPath), { bigint: true })
+  } catch (err) {
+    return held(
+      'changed-during-move',
+      `op directory identity unreadable after the move (${err.code ?? err.message})`
+    )
+  }
+  const opNowIdentity = {
+    ok: true,
+    dev: opNow.dev,
+    ino: opNow.ino,
+    birthtimeNs: opNow.birthtimeNs,
+    fmt: opNow.mode & S_IFMT,
+  }
+  if (opIdentity == null || !sameIdentity(opIdentity, opNowIdentity)) {
+    return held(
+      'changed-during-move',
+      'op directory identity check failed: it is no longer the directory C4 validated'
+    )
+  }
+  const permProblem = opDirOwnerModeProblem(opNow)
+  if (permProblem !== null) {
+    return held(
+      'changed-during-move',
+      `op directory owner/mode check failed after the move: ${permProblem}`
+    )
+  }
   const rec = pathTreeRecord(destPath, { mountCheck: true })
   if (!rec.ok) {
     if (rec.reason === 'mount-inside-tree') {
       return held(
         'mount-appeared-during-move',
-        `mount at ${rec.rel} (st_dev differs from the root)`
+        `mount at ${rec.rel} (st_dev differs from the root)`,
+        null,
+        true
       )
     }
     return held(
       'changed-during-move',
-      `${rec.reason} at ${rec.path}${rec.errno ? ` (${rec.errno})` : ''}`
+      `${rec.reason} at ${rec.path}${rec.errno ? ` (${rec.errno})` : ''}`,
+      null,
+      true
     )
   }
   // Resolved parent + entry name, never realpath(entry): a symlink root would
   // otherwise be checked at its target (SMI-7132).
   const mi = mountinfoFinding(path.join(parentReal, path.basename(destPath)))
-  if (mi !== null) return held('mount-appeared-during-move', mi)
+  if (mi !== null) return held('mount-appeared-during-move', mi, null, true)
   const treeHash = computeTreeHash(rec.record)
   if (treeHash !== guardHash) {
     return held(
       'changed-during-move',
       'tree hash at the destination differs from guardHash',
-      treeHash
+      treeHash,
+      true
     )
   }
   return { ok: true, treeHash }
@@ -205,9 +257,14 @@ const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
  * origin, and the product restore command (owner decision 2026-10-12:
  * `skillsmith restore <id>`, built in SMI-6531).
  */
-export function heldDetail({ diagnosis, destPath, originPath, opId }) {
+export function heldDetail({ diagnosis, destPath, originPath, opId, located = false }) {
+  // Only a confirmed location may be called safe. When containment failed, the
+  // reported path may lead through a swapped link or directory (SMI-7134).
+  const where = located
+    ? `your tree is safe at ${shq(destPath)}`
+    : `the location of your tree could not be confirmed (reported path ${shq(destPath)}; reason: ${diagnosis})`
   return (
-    `${diagnosis}. Changed during removal; your tree is safe at ${shq(destPath)}. ` +
+    `${diagnosis}. Changed during removal; ${where}. ` +
     `If something now exists at ${shq(originPath)}, move it aside first, then run ` +
     `\`skillsmith restore ${opId}\`.`
   )
@@ -365,6 +422,7 @@ export function finishAfterRename(a) {
         trashRoot: a.trashRoot,
         trashIdentity: a.trashIdentity,
         opReal: a.opReal,
+        opIdentity: a.opIdentity,
       })
     : null
 
@@ -388,7 +446,13 @@ export function finishAfterRename(a) {
       sidecarPath,
       opId,
       errno: null,
-      detail: heldDetail({ diagnosis: verified.diagnosis, destPath, originPath, opId }),
+      detail: heldDetail({
+        diagnosis: verified.diagnosis,
+        destPath,
+        originPath,
+        opId,
+        located: verified.located,
+      }),
       ...(sidecarError === null ? {} : { sidecarError }),
       ...indexed(),
     }

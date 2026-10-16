@@ -1,6 +1,8 @@
 // SMI-7123 Wave 5: the W5 section of results/SUMMARY.md, scored by THE SAME
 // verdict function run-w5-rows.mjs uses (control-spec.w5.mjs w5Verdict), at the
-// runner's granularity: one line per (row, fs). Nothing here re-derives a verdict.
+// runner's granularity: one line per (row, fs). The verdict is w5Verdict's; the single
+// adjustment made here is the no-design-count override below, which downgrades a
+// PASS-family verdict to INCOMPLETE and leaves every other verdict as scored.
 //
 // Each (row, fs) group is scored with the platform its records were made on
 // (cell.platform) and the target the runner recorded (cell.target), so a Linux
@@ -60,7 +62,7 @@ export function w5SummarySection(records) {
     const target = cand[0].cell.target ?? w5DesignRuns(rowId, platform) ?? undefined
     const v = w5Verdict(rowId, cand, ctl, W5_CONTRADICTS, target, platform)
     const a = v.agg
-    if (target === undefined && a.failed === 0) {
+    if (target === undefined && a.failed === 0 && /^PASS/.test(a.verdict)) {
       a.verdict = `INCOMPLETE (no design count for platform ${platform})`
     }
     lines.push(

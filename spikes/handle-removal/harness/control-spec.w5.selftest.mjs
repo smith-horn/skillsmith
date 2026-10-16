@@ -196,6 +196,33 @@ check(
   ),
   true
 )
+// The no-design-count override applies ONLY to a PASS-family verdict (SMI-7134). DECLARED
+// FAILURE (pre-fix w5-summary.mjs): the never-ran group below is rewritten to INCOMPLETE (no
+// design count ...), hiding that nothing ran. The full PASS-shaped group above is the paired
+// case that must still become INCOMPLETE.
+const q7NeverRan = [
+  ...noTarget(
+    many(30, 'W5-Q7', 'candidate', { status: 'harness-error', cell: { platform: 'win32' } })
+  ),
+  ...noTarget(many(3, 'W5-Q7', 'C4-consolation', { lost: 1, cell: { platform: 'win32' } })),
+]
+check(
+  'summary: no design count + zero runs stays NEVER-RAN',
+  /\| W5-Q7 \| apfs \| NEVER-RAN/.test(sec(q7NeverRan)),
+  true
+)
+check(
+  'summary: no design count + zero runs is not rewritten to INCOMPLETE',
+  /INCOMPLETE \(no design count/.test(sec(q7NeverRan)),
+  false
+)
+check(
+  'summary: no design count + full PASS-shaped group becomes INCOMPLETE (paired with the above)',
+  /\| W5-Q7 \| apfs \| INCOMPLETE \(no design count for platform win32\) \|/.test(
+    sec(q7(30, 'win32'))
+  ),
+  true
+)
 check(
   'summary: Q7 on linux wants 50 (10 x 5): 30 is INCOMPLETE (ran 30/50)',
   /INCOMPLETE \(ran 30\/50\)/.test(sec(q7(30, 'linux'))),
