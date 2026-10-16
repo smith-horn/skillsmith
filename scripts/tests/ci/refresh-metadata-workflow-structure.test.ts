@@ -33,6 +33,7 @@ interface Step {
 }
 interface Job {
   if?: string
+  needs?: string | string[]
   env?: Record<string, string>
   permissions?: unknown
   'continue-on-error'?: unknown
@@ -51,22 +52,54 @@ interface Workflow {
 const load = (): Workflow => parseYaml(readFileSync(WORKFLOW, 'utf8')) as Workflow
 const clone = (w: Workflow): Workflow => JSON.parse(JSON.stringify(w)) as Workflow
 
+const ALL_EVENTS = ['schedule', 'workflow_dispatch']
+
 /**
- * Events a job runs on. Only the two exact guards this workflow uses are understood; any
- * other `if:` (or none) is treated as "runs on every event", so an unfamiliar guard fails
- * the schedule check rather than passing it.
+ * Events a job runs on. Only the two exact guards this workflow uses (or no guard) are
+ * understood, and for those a job runs only where every job it `needs` also runs: GitHub
+ * skips a job whose dependency was skipped. Any other `if:` (`always()`, `failure()`, ...)
+ * can run past a skipped dependency, so it counts as "runs on every event" and `needs` is
+ * ignored -- an unfamiliar guard fails the schedule checks rather than passing them.
  */
-function eventsFor(job: Job): Set<string> {
+function eventsFor(w: Workflow, name: string, seen: Set<string> = new Set()): Set<string> {
+  const job = w.jobs[name]
+  if (!job || seen.has(name)) return new Set()
   const guard = (job.if ?? '').trim()
-  if (guard === "github.event_name == 'schedule'") return new Set(['schedule'])
-  if (guard === "github.event_name == 'workflow_dispatch'") return new Set(['workflow_dispatch'])
-  return new Set(['schedule', 'workflow_dispatch'])
+  let own: string[]
+  if (guard === "github.event_name == 'schedule'") own = ['schedule']
+  else if (guard === "github.event_name == 'workflow_dispatch'") own = ['workflow_dispatch']
+  else if (guard === '') own = ALL_EVENTS
+  else return new Set(ALL_EVENTS)
+  const needs = job.needs === undefined ? [] : [job.needs].flat()
+  const next = new Set([...seen, name])
+  return new Set(own.filter((e) => needs.every((n) => eventsFor(w, n, next).has(e))))
 }
 
 const jobsOn = (w: Workflow, event: string): string[] =>
-  Object.entries(w.jobs)
-    .filter(([, j]) => eventsFor(j).has(event))
-    .map(([name]) => name)
+  Object.keys(w.jobs).filter((name) => eventsFor(w, name).has(event))
+
+/** Keys a schedule-reachable job may carry; services, container or a reusable `uses` could run anything. */
+const OBSERVE_KEYS = new Set(['name', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'steps'])
+
+/**
+ * The exact shape of everything that may run on a schedule: one job, `observe`, whose steps
+ * are a checkout (no `run`) followed by exactly `bash scripts/ci/refresh-observer.sh`. An
+ * allow-list rather than a search for the function URL, which a constructed URL evades.
+ */
+function scheduleRunsOnlyObserver(w: Workflow): boolean {
+  const names = jobsOn(w, 'schedule')
+  if (names.length !== 1 || names[0] !== 'observe') return false
+  const job = w.jobs.observe
+  if (!Object.keys(job).every((k) => OBSERVE_KEYS.has(k))) return false
+  if (job.steps.length !== 2) return false
+  const [checkout, run] = job.steps
+  return (
+    (checkout.uses ?? '').startsWith('actions/checkout@') &&
+    checkout.run === undefined &&
+    run.uses === undefined &&
+    (run.run ?? '').trim() === `bash ${OBSERVER}`
+  )
+}
 
 /** Every string a job can execute or pass on: step runs, uses, with, env, and job env. */
 const jobText = (j: Job): string => JSON.stringify([j.env ?? {}, j.steps])
@@ -75,9 +108,6 @@ const postsFunction = (j: Job): boolean => jobText(j).includes(FUNCTION_PATH)
 
 const step0 = (w: Workflow): string =>
   w.jobs.refresh.steps.find((s) => s.name === 'Trigger Metadata Refresh')?.run ?? ''
-
-const runsObserver = (j: Job): boolean =>
-  j.steps.some((s) => (s.run ?? '').split('\n').some((l) => l.trim() === `bash ${OBSERVER}`))
 
 describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
   const wf = load()
@@ -90,22 +120,34 @@ describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
     expect(crons(bad)).not.toEqual(['30 */4 * * *'])
   })
 
-  it('on schedule, exactly one job runs and it is the observer (known-negative: unguarded refresh job)', () => {
+  it('on schedule, only the observer job runs, and only checkout plus the observer script (known-negative: each escape)', () => {
+    expect(scheduleRunsOnlyObserver(wf)).toBe(true)
     expect(jobsOn(wf, 'schedule')).toEqual(['observe'])
-    expect(runsObserver(wf.jobs.observe)).toBe(true)
 
-    const bad = clone(wf)
-    delete bad.jobs.refresh.if
-    expect(jobsOn(bad, 'schedule')).not.toEqual(['observe'])
-  })
-
-  it('nothing reachable on schedule POSTs the refresh function (known-negative: observer job calls it)', () => {
-    const scheduled = (w: Workflow) => jobsOn(w, 'schedule').map((n) => w.jobs[n])
-    expect(scheduled(wf).some(postsFunction)).toBe(false)
-
-    const bad = clone(wf)
-    bad.jobs.observe.steps.push({ run: `curl -X POST "$SUPABASE_URL${FUNCTION_PATH}"` })
-    expect(scheduled(bad).some(postsFunction)).toBe(true)
+    const mutations: Array<(w: Workflow) => void> = [
+      // the refresh job loses its guard and runs on schedule too
+      (w) => delete w.jobs.refresh.if,
+      // a scheduled step builds the function URL from pieces
+      (w) =>
+        w.jobs.observe.steps.push({
+          run: 'SUFFIX=metadata\ncurl -X POST "$SUPABASE_URL/functions/v1/skills-refresh-$SUFFIX"',
+        }),
+      // the observer depends on the manual-only job, so GitHub skips it on schedule
+      (w) => (w.jobs.observe.needs = 'refresh'),
+      // the refresh job runs past its skipped dependency
+      (w) => {
+        w.jobs.refresh.needs = 'observe'
+        w.jobs.refresh.if = 'always()'
+      },
+      // extra work smuggled into the observer job or its run step
+      (w) => ((w.jobs.observe as unknown as Record<string, unknown>).services = { db: {} }),
+      (w) => (w.jobs.observe.steps[1].run = `bash ${OBSERVER}\ncurl -X POST "$X"`),
+    ]
+    for (const mutate of mutations) {
+      const bad = clone(wf)
+      mutate(bad)
+      expect(scheduleRunsOnlyObserver(bad)).toBe(false)
+    }
   })
 
   it('the observer step gets its credentials, kill switch and script (known-negative: each removed)', () => {
