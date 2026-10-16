@@ -1,0 +1,208 @@
+/**
+ * SMI-7121 plan Verification 5 (races) and 6b (two concurrent watcher calls), proven with TWO real
+ * sessions. Registered from ./backfill-autochain-markers.pg.test.ts.
+ *
+ * WHY NOT THE SINGLE-TRANSACTION PATTERN. The other arms seed and call inside one rolled-back
+ * transaction, which cannot express "session B runs while session A's transaction is open". Here the
+ * seed is COMMITTED (autocommit on the control session) and `fixtureSql()` (which the suite's
+ * beforeEach also runs) clears it afterwards.
+ *
+ * THE TRANSITION RACE. Session A runs a transition inside an open transaction, so it holds the
+ * marker's row lock and its write is uncommitted. Session B's UPDATE matches the old row version
+ * (state still 'open' in its snapshot) and BLOCKS on that row lock. When A commits, READ COMMITTED
+ * re-evaluates B's WHERE against the new version: if A changed the state, B matches zero rows and
+ * returns false. Each race arm first PROVES B is blocked (a lock waiter in pg_stat_activity) before
+ * A commits; without that, B could simply run after A and the arm would prove nothing about a race.
+ *
+ * @module scripts/tests/supabase/backfill-autochain-markers.pg-concurrency
+ */
+
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest'
+import {
+  ALERT,
+  PsqlSession,
+  WATCH,
+  count,
+  fixtureSql,
+  lines,
+  markerRow,
+  requireTestConn,
+  standardSecrets,
+  transition,
+  type Ctx,
+} from './backfill-autochain-markers.test-helpers.ts'
+
+const posts = count('posts', 'net.calls')
+const alerts = count('alerts', `audit_logs WHERE event_type = '${ALERT}'`)
+const meta = (id: string) => `SELECT metadata::text FROM audit_logs WHERE id = '${id}';`
+
+/** Poll until some other backend waits on a lock while running `needle`; throw if none appears. */
+async function waitForLockWaiter(ctl: PsqlSession, needle: string, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const r = await ctl.send(
+      `SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' ` +
+        `AND pid <> pg_backend_pid() AND query LIKE '%${needle}%';`
+    )
+    if (Number(r.stdout.trim()) >= 1) return
+    if (Date.now() > deadline) throw new Error(`no session blocked on a lock running ${needle}`)
+    await new Promise((res) => setTimeout(res, 50))
+  }
+}
+
+export function registerConcurrencyTests(ctx: Ctx): void {
+  describe('races: two real sessions', () => {
+    let a: PsqlSession
+    let b: PsqlSession
+
+    beforeAll(() => {
+      a = new PsqlSession(requireTestConn(), 'A')
+      b = new PsqlSession(requireTestConn(), 'B')
+    })
+
+    afterEach(async () => {
+      // Never leave A's or B's transaction (and its locks) open for the next test.
+      await a.send('ROLLBACK;')
+      await b.send('ROLLBACK;')
+      await ctx.ctl().send(fixtureSql())
+    })
+
+    afterAll(async () => {
+      await a?.close()
+      await b?.close()
+    })
+
+    const seedMarker = async (id: string, when = '1 hour') => {
+      const s = await ctx.ctl().send(markerRow(id, when))
+      expect(s.stderr, 'seed committed').not.toMatch(/ERROR/)
+    }
+
+    /** A runs `aStmt` in an open transaction; B fires `bStmt`, which must block; A then commits. */
+    async function race(aStmt: string, bStmt: string) {
+      const aRun = await a.send(`BEGIN;\n${aStmt}`)
+      expect(aRun.stderr, 'A ran').not.toMatch(/ERROR/)
+      const bPending = b.fire(bStmt)
+      await waitForLockWaiter(ctx.ctl(), 'backfill_autochain_marker_transition')
+      await a.send('COMMIT;')
+      const bRun = await bPending
+      expect(bRun.stderr, 'B ran').not.toMatch(/ERROR/)
+      return { a: lines(aRun), b: lines(bRun) }
+    }
+
+    it('two concurrent claims on one marker: exactly one returns true; the winner owns the marker', async () => {
+      await seedMarker('m1')
+      const r = await race(
+        transition('a', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"A"}'),
+        transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}')
+      )
+      expect([...r.a, ...r.b]).toEqual(['a=true', 'b=false'])
+      const m = JSON.parse((await ctx.ctl().send(meta('m1'))).stdout)
+      expect(m.state).toBe('consumed')
+      expect(m.consumed_by_autochain_run).toBe('A')
+    })
+
+    it.each([
+      ['a claim held, needs_intervention racing it', 'consumed', 'needs_intervention', 'consumed'],
+      [
+        'needs_intervention held, a claim racing it',
+        'needs_intervention',
+        'consumed',
+        'needs_intervention',
+      ],
+    ] as Array<[string, string, string, string]>)(
+      '%s: exactly one winner, and the loser changes nothing',
+      async (_label, aTo, bTo, finalState) => {
+        await seedMarker('m1')
+        const r = await race(
+          transition('a', 'm1', 'open', aTo, '{"by":"A"}'),
+          transition('b', 'm1', 'open', bTo, '{"by":"B"}')
+        )
+        expect([...r.a, ...r.b]).toEqual(['a=true', 'b=false'])
+        const m = JSON.parse((await ctx.ctl().send(meta('m1'))).stdout)
+        expect(m.state).toBe(finalState)
+        expect(m.by).toBe('A')
+      }
+    )
+
+    it('a concurrent writer that left the state alone: the blocked claim merges onto the NEW row and keeps both fields', async () => {
+      // A is any other writer that adds a field without changing state. B's claim matched the old
+      // version, blocks, and after A commits re-evaluates against the new one: state is still open,
+      // so it applies, and because the merge is server-side it merges onto A's version. A client
+      // that read the row before A and wrote back a full object would erase A's field (R2-7).
+      await seedMarker('m1')
+      const r = await race(
+        'UPDATE audit_logs SET metadata = metadata || \'{"note":"from-A"}\' WHERE id = \'m1\';',
+        transition('b', 'm1', 'open', 'consumed', '{"consumed_by_autochain_run":"B"}')
+      )
+      expect(r.b).toEqual(['b=true'])
+      const m = JSON.parse((await ctx.ctl().send(meta('m1'))).stdout)
+      expect(m.note, "A's field survived").toBe('from-A')
+      expect(m.consumed_by_autochain_run, "B's field landed").toBe('B')
+      expect(m.state).toBe('consumed')
+      expect(m.completed_run_id, 'the original fields survived').toBe('run-m1')
+    })
+
+    it('A rolling back releases the row: the blocked claim then wins (a lost claim never strands the marker)', async () => {
+      await seedMarker('m1')
+      await a.send(`BEGIN;\n${transition('a', 'm1', 'open', 'consumed', '{"by":"A"}')}`)
+      const bPending = b.fire(transition('b', 'm1', 'open', 'consumed', '{"by":"B"}'))
+      await waitForLockWaiter(ctx.ctl(), 'backfill_autochain_marker_transition')
+      await a.send('ROLLBACK;')
+      expect(lines(await bPending)).toEqual(['b=true'])
+      expect(JSON.parse((await ctx.ctl().send(meta('m1'))).stdout).by).toBe('B')
+    })
+
+    describe('watcher advisory lock', () => {
+      const seedStale = async () => {
+        const s = await ctx.ctl().send([standardSecrets(), markerRow('m1', '13 hours')].join('\n'))
+        expect(s.stderr, 'seed committed').not.toMatch(/ERROR/)
+      }
+
+      it('B called while A holds the lock sends nothing; after A commits there is exactly one POST and one alert row', async () => {
+        await seedStale()
+        const aRun = await a.send(`BEGIN;\n${WATCH}`)
+        expect(aRun.stderr, 'A ran').not.toMatch(/ERROR/)
+
+        // B, with A's transaction still open: its own view must show zero POSTs and zero alerts.
+        const bRun = await b.send(`BEGIN;\n${WATCH}\n${posts}\n${alerts}\nCOMMIT;`)
+        expect(bRun.stderr).not.toMatch(/ERROR/)
+        expect(lines(bRun), 'B did no work while A held the lock').toEqual(['posts=0', 'alerts=0'])
+
+        await a.send('COMMIT;')
+        expect(lines(await ctx.ctl().send(`${posts}\n${alerts}`)), 'one alert in total').toEqual([
+          'posts=1',
+          'alerts=1',
+        ])
+      })
+
+      it('once A has committed its alert, a later call is deduplicated (the pending alert is visible)', async () => {
+        await seedStale()
+        await a.send(`BEGIN;\n${WATCH}\nCOMMIT;`)
+        expect(lines(await b.send(`${WATCH}\n${posts}\n${alerts}`))).toEqual([
+          'posts=1',
+          'alerts=1',
+        ])
+      })
+
+      it('A rolling back releases the lock; B then alerts (the lock does not strand the alert)', async () => {
+        await seedStale()
+        await a.send(`BEGIN;\n${WATCH}`)
+        await a.send('ROLLBACK;')
+        expect(lines(await b.send(`${WATCH}\n${posts}\n${alerts}`))).toEqual([
+          'posts=1',
+          'alerts=1',
+        ])
+      })
+
+      it("the watcher's key is its own: with A holding the SMI-7114 dead-man key, B still alerts", async () => {
+        await seedStale()
+        await a.send(
+          "BEGIN;\nSELECT pg_advisory_xact_lock(hashtextextended('check_refresh_observer_heartbeat', 0));"
+        )
+        const bRun = await b.send(`BEGIN;\n${WATCH}\n${posts}\n${alerts}\nCOMMIT;`)
+        expect(bRun.stderr).not.toMatch(/ERROR/)
+        expect(lines(bRun)).toEqual(['posts=1', 'alerts=1'])
+      })
+    })
+  })
+}
