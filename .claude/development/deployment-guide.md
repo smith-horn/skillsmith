@@ -437,7 +437,6 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 Alerts sent to `support@smithhorn.ca` via Resend when:
 
 - Indexer workflow fails
-- Metadata refresh workflow fails (scheduled runs only)
 - The refresh observer finds refresh stale, its pg_cron dispatch stale, or a failed dispatch or run (`refresh_unhealthy`, SMI-7114)
 - The refresh observer's heartbeat is older than 16h (`refresh_observer_dead`, SMI-7114)
 - Weekly ops report detects anomalies (static thresholds + week-over-week trends)
