@@ -209,10 +209,33 @@ describe('writeCheckpoint persists the SMI-7121 fields', () => {
 describe('run.ts writes the helper payload fed by the loaded checkpoint (source)', () => {
   const src = readFileSync(join(__dirname, '../../indexer/run.ts'), 'utf8')
 
-  it('passes buildCheckpointPayload to its only writeCheckpoint call', () => {
+  it('passes buildCheckpointPayload, fed by this dispatch, to its only writeCheckpoint call', () => {
     expect(src.match(/writeCheckpoint\(/g)).toHaveLength(1)
     expect(src).toMatch(/writeCheckpoint\(\s*supabase,\s*buildCheckpointPayload\(\{/)
-    expect(src).toMatch(/buildCheckpointPayload\(\{[^}]*loaded: loadedCheckpoint,/)
+    // Pre-merge gate PR-16 (round 2): every argument is pinned, because the helper is
+    // tested in isolation and this call is the only link to the real run. A dropped
+    // or redirected argument (e.g. `subdirectorySearch: undefined`) fails here.
+    const call = src.match(/buildCheckpointPayload\(\{([^}]*)\}\)/)
+    expect(call).not.toBeNull()
+    const args = (call?.[1] ?? '')
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean)
+      .sort()
+    expect(args).toEqual(
+      [
+        'crawl: bc',
+        'dispatchInputs: buildBackfillDispatchInputs(env)',
+        'dryRun: env.DRY_RUN',
+        'loaded: loadedCheckpoint',
+        'runId: backfillRunId',
+        'subdirectorySearch: result.subdirectory_search',
+      ].sort()
+    )
+    // `bc` is this run's own crawl outcome, the same object the write is gated on.
+    expect(src).toMatch(
+      /if \(env\.BACKFILL_MODE && result\.backfill_crawl\) \{\s*const bc = result\.backfill_crawl\n/
+    )
   })
 
   it('records exactly what loadResumeCheckpoint returned', () => {
