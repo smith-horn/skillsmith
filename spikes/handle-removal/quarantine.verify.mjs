@@ -117,11 +117,15 @@ export function mountinfoFinding(dirReal) {
  * never realpath'ed: a symlink skill root resolves to its target, outside the trash
  * by design. Nothing is moved back on a mismatch.
  *
- * WHAT THIS GUARANTEES, HONESTLY: a final snapshot taken AFTER the hash. Content
- * changes after the hash (and a swap undone before the location block) are not
- * detected, nor is the gap between the last check and the return, nor the rename(2)
- * race before it; all are the accepted ADR-166 D-0 content-staleness residual. An absolute guarantee needs a
- * held-directory / fd-relative design that Node 22 does not expose.
+ * WHAT THIS GUARANTEES, HONESTLY: a final snapshot taken AFTER the hash. Two
+ * kinds of change go undetected, both accepted under ADR-166 D-0:
+ *   - content staleness: bytes changed after the hash, or a swap undone before
+ *     the location block;
+ *   - path races: the gap between the last check and the return, and the
+ *     rename(2) race before verification, either of which can misplace the tree
+ *     without changing its content.
+ * An absolute guarantee needs a held-directory / fd-relative design that Node 22
+ * does not expose.
  *
  * @returns {{ok:true, treeHash:string}
  *          |{ok:false, reason:'changed-during-move'|'mount-appeared-during-move',
