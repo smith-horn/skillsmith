@@ -82,10 +82,14 @@ jobs:
         id: refresh
         env:
           # Via env, not inline ${{ }}: free-text inputs must not become shell code.
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-          BATCH_SIZE: ${{ github.event.inputs.batch_size || '200' }}
-          STALE_DAYS: ${{ github.event.inputs.stale_days || '1' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size }}
+          STALE_DAYS: ${{ github.event.inputs.stale_days }}
         run: |
+          # Defaults in the shell, not with `||` in the expression, so an explicit 0 is kept.
+          DRY_RUN="${DRY_RUN:-false}"
+          BATCH_SIZE="${BATCH_SIZE:-200}"
+          STALE_DAYS="${STALE_DAYS:-1}"
           # Allow-lists, so every accepted value is a valid JSON number or boolean and the
           # retry's arithmetic cannot overflow. The structure test runs these three lines.
           case "$BATCH_SIZE" in [1-9]|[1-9][0-9]|[1-4][0-9][0-9]|500) ;; *) echo "::error::batch_size must be 1-500"; exit 1;; esac

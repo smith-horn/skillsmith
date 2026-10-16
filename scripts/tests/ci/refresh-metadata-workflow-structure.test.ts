@@ -186,11 +186,18 @@ describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
     const ok = (text: string): boolean => {
       const code = text.split('\n').filter((l) => !/^\s*#/.test(l))
       const urls = code.flatMap((l) => [...l.matchAll(/post_json "([^"]+)"/g)].map((m) => m[1]))
+      // Every call site, quoted or not, minus the definition: an unquoted fourth call fails.
+      const calls = code.filter((l) => /\bpost_json\b/.test(l) && !/post_json\s*\(\)/.test(l))
       const fetchers = code.filter((l) => /(^|[\s;&|(])(curl|wget|nc)\s/.test(l))
+      const otherNet = code.some((l) =>
+        /\/dev\/(tcp|udp)\/|openssl\s+s_client|\bfetch\(|\bpython3?\b|https?:\/\//.test(l)
+      )
       const sourced = code.some((l) => /(^|;|&&|\|\||\|)\s*(source|\.)\s+\S/.test(l))
       const otherScripts = code.some((l) => /scripts\//.test(l))
       return (
         urls.length === ALLOWED.size &&
+        calls.length === ALLOWED.size &&
+        !otherNet &&
         urls.every((u) => ALLOWED.has(u)) &&
         fetchers.length === 1 &&
         !sourced &&
@@ -206,6 +213,10 @@ describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
       'true && . ./lib.sh',
       'bash scripts/ci/other.sh',
       'node scripts/ci/other.mjs',
+      'X="$(post_json $FN_URL "$WORK/x" "{}")"',
+      "node -e 'fetch(process.env.SUPABASE_URL)'",
+      'exec 3<>/dev/tcp/example.com/443',
+      'python3 -c "import urllib.request"',
     ]) {
       expect(ok(`${script}\n${extra}\n`)).toBe(false)
     }
