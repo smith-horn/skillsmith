@@ -12,6 +12,8 @@
 //      path with the entry moved in; the path resolves identically, so only identity can tell.
 //   H  (SMI-7134) status 'quarantined' where 'held' is expected: the SAME op directory is
 //      chmod'ed 0777 after the rename; only the owner/mode re-check can tell.
+//   I7 (SMI-7134 round 2) content AND location both fail: detail says "safe at" if
+//      checkLocation() is skipped on content-failure branches.
 //   J  (SMI-7134 gate) status 'quarantined' where 'held' is expected: a byte-identical copy is
 //      swapped in at destPath during the walk (identity was checked before the walk).
 //   J2 same: the op directory is chmod'ed 0777 during the walk (mode was checked before it).
@@ -185,6 +187,51 @@ for (const [id, mode, label] of [
   check(
     'I6 control: a confirmed location keeps the "safe at" wording',
     /your tree is safe at /.test(r.detail ?? ''),
+    true
+  )
+  fs.rmSync(f.root, { recursive: true, force: true })
+}
+
+// I7: CONTENT fails (a byte is appended, so the hash differs) AND the LOCATION fails (the op
+// directory is replaced by a fresh one with the entry moved in). The location verdict must
+// win: located=false wording, no "safe at", and the diagnosis names the op-directory check.
+// A regression that skips checkLocation() on the content-failure branches fails here only.
+{
+  const f = fixture('s7134-i7-')
+  const guardHash = computePathTreeHash(f.origin).treeHash
+  const trash = path.join(f.parent, '.skillsmith-trash')
+  const opDir = path.join(trash, 'op-i7')
+  const run = runWithHooks({
+    quarantine: quarantineTree,
+    parentAbs: f.parent,
+    name: 'tree',
+    options: { opId: 'op-i7', guardHash },
+    onAfterRename: () => {
+      const aside = path.join(trash, 'op-i7-aside')
+      fs.renameSync(opDir, aside)
+      fs.mkdirSync(opDir)
+      fs.chmodSync(opDir, 0o700)
+      const entry = fs.readdirSync(aside).find((n) => n.startsWith('tree-'))
+      fs.renameSync(path.join(aside, entry), path.join(opDir, entry))
+      fs.appendFileSync(path.join(opDir, entry, 'sub', 'f.txt'), 'X')
+    },
+  })
+  const r = run.result
+  check(
+    'I7a both failures were injected',
+    run.fired.afterRename && run.hookErrors.length === 0,
+    true
+  )
+  check('I7b the result is held', r.status, 'held')
+  check('I7c the detail does not say "safe at"', /safe at/.test(r.detail ?? ''), false)
+  check(
+    'I7d the detail says the location could not be confirmed',
+    /could not be confirmed/.test(r.detail ?? ''),
+    true
+  )
+  check(
+    'I7e and names the location failure, not the hash',
+    /op directory identity check failed/.test(r.detail ?? ''),
     true
   )
   fs.rmSync(f.root, { recursive: true, force: true })

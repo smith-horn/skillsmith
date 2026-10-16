@@ -155,7 +155,9 @@ export function preMoveGuard({ originPath, parentAbs, name, guardHash }) {
  * Everything after a successful root rename: S9 (guarded only), then S11
  * (held) or S12 (quarantined), each with a 'wx' sidecar.
  *
- * The tree is safely in the trash at this point whatever happens next. A
+ * The rename has completed at this point. Guarded calls still verify after the
+ * move, and that result is a final snapshot subject to the races ADR-166 D-0
+ * accepts (last check to return, and the rename itself), not a guarantee. A
  * failure computing bytes or writing the sidecar (e.g. ENOSPC: a tmpfs with
  * room for the rename but not the sidecar) never escapes and never triggers
  * anything destructive; it is reported as `sidecarError` on the result, whose
