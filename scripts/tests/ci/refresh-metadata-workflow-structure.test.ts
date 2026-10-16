@@ -78,27 +78,70 @@ function eventsFor(w: Workflow, name: string, seen: Set<string> = new Set()): Se
 const jobsOn = (w: Workflow, event: string): string[] =>
   Object.keys(w.jobs).filter((name) => eventsFor(w, name).has(event))
 
-/** Keys a schedule-reachable job may carry; services, container or a reusable `uses` could run anything. */
-const OBSERVE_KEYS = new Set(['name', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'steps'])
+/**
+ * The ENTIRE observe job, key for key and value for value. Anything a scheduled run can be
+ * steered by -- a step `shell:` or `working-directory:`, checkout `repository:`/`ref:`, a
+ * different action SHA, extra env, `services`, `container`, a reusable `uses`, or a guard that
+ * never fires -- differs from this object, so an allow-list this exact cannot be evaded by a
+ * key the predicate forgot to inspect. Changing the observer job means changing this too.
+ */
+const EXPECTED_OBSERVE = {
+  name: 'Observe Metadata Refresh',
+  if: "github.event_name == 'schedule'",
+  'runs-on': 'ubuntu-latest',
+  'timeout-minutes': 10,
+  permissions: { contents: 'read' },
+  steps: [
+    {
+      name: 'Checkout',
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: {
+        'sparse-checkout': OBSERVER,
+        'sparse-checkout-cone-mode': false,
+        'persist-credentials': false,
+      },
+    },
+    {
+      name: 'Run refresh observer',
+      env: {
+        SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE:
+          '${{ vars.SKILLSMITH_REFRESH_OBSERVER_ALERT_DISABLE }}',
+      },
+      run: `bash ${OBSERVER}`,
+    },
+  ],
+}
+
+/** Workflow-level keys and env: `defaults` (e.g. a run shell) or env such as BASH_ENV would reach every step. */
+const EXPECTED_TOP_KEYS = ['name', 'on', 'env', 'jobs']
+const EXPECTED_ENV = {
+  SUPABASE_URL: '${{ secrets.SUPABASE_URL }}',
+  SUPABASE_SERVICE_ROLE_KEY: '${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}',
+}
+
+/** Deep equality with key order ignored. */
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const ka = Object.keys(a)
+  const kb = Object.keys(b)
+  if (ka.length !== kb.length) return false
+  return ka.every((k) => same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+}
 
 /**
- * The exact shape of everything that may run on a schedule: one job, `observe`, whose steps
- * are a checkout (no `run`) followed by exactly `bash scripts/ci/refresh-observer.sh`. An
+ * Everything that may run on a schedule: the workflow carries only the expected top-level keys
+ * and env, the observe job is exactly EXPECTED_OBSERVE (so its guard is the exact schedule
+ * guard and the observer really runs), and no other job is reachable on schedule. An
  * allow-list rather than a search for the function URL, which a constructed URL evades.
  */
 function scheduleRunsOnlyObserver(w: Workflow): boolean {
-  const names = jobsOn(w, 'schedule')
-  if (names.length !== 1 || names[0] !== 'observe') return false
-  const job = w.jobs.observe
-  if (!Object.keys(job).every((k) => OBSERVE_KEYS.has(k))) return false
-  if (job.steps.length !== 2) return false
-  const [checkout, run] = job.steps
-  return (
-    (checkout.uses ?? '').startsWith('actions/checkout@') &&
-    checkout.run === undefined &&
-    run.uses === undefined &&
-    (run.run ?? '').trim() === `bash ${OBSERVER}`
-  )
+  const top = Object.keys(w).sort()
+  if (!same(top, [...EXPECTED_TOP_KEYS].sort())) return false
+  if (!same(w.env, EXPECTED_ENV)) return false
+  if (!same(w.jobs.observe, EXPECTED_OBSERVE)) return false
+  return same(jobsOn(w, 'schedule'), ['observe'])
 }
 
 /** Every string a job can execute or pass on: step runs, uses, with, env, and job env. */
@@ -142,6 +185,17 @@ describe('refresh-metadata.yml (SMI-7114 W3b)', () => {
       // extra work smuggled into the observer job or its run step
       (w) => ((w.jobs.observe as unknown as Record<string, unknown>).services = { db: {} }),
       (w) => (w.jobs.observe.steps[1].run = `bash ${OBSERVER}\ncurl -X POST "$X"`),
+      // round-2 gate survivors: a shell override, another repo's script, a guard that never fires
+      (w) =>
+        ((w.jobs.observe.steps[1] as Record<string, unknown>).shell =
+          'bash -c "curl $X; bash $1" -- {0}'),
+      (w) => ((w.jobs.observe.steps[0].with ??= {}).repository = 'someone/else'),
+      (w) => (w.jobs.observe.if = '${{ false }}'),
+      (w) => (w.jobs.observe.if = "${{ github.event_name == 'workflow_dispatch' }}"),
+      // workflow-wide reach: run defaults, or env that bash sources before every script
+      (w) => ((w as unknown as Record<string, unknown>).defaults = { run: { shell: 'sh' } }),
+      (w) => ((w.env ??= {}).BASH_ENV = '/tmp/x'),
+      (w) => ((w.jobs.observe.steps[1] as Record<string, unknown>)['working-directory'] = '/tmp'),
     ]
     for (const mutate of mutations) {
       const bad = clone(wf)
