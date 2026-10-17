@@ -92,6 +92,39 @@ describe('(c) pagination', () => {
     expect(r.out).toMatch(/page 2\): 200:in_progress/)
   })
 
+  it('the list is bounded by creation time: a history that would exceed the old 50-page cap is never paged', () => {
+    // SMI-7121: the resume schedule adds ~24 autochain runs a day. With the last completion
+    // (DONE_AT) more than 35 days old, (c) lists only from now - 35 days. The unbounded
+    // listing is seeded with 51 full pages, so code that pages the whole history reads 50
+    // of them and goes NO-GO on the page cap.
+    const seam = allClear()
+    writeFileSync(join(seam.dir, 'clock'), '1798761600') // 2027-01-01T00:00:00Z
+    const since = '2026-11-27T00:00:00Z' // clock - 35 days
+    const unbounded = (n: number) =>
+      `repos/smith-horn/skillsmith/actions/workflows/indexer-backfill-autochain.yml/runs?per_page=100&page=${n}`
+    for (let n = 1; n <= 51; n++) seam.fixture(unbounded(n), { workflow_runs: full })
+    seam.fixture(listPage(1, since), {
+      workflow_runs: [{ id: 7000, status: 'completed', created_at: '2026-12-31T23:00:00Z' }],
+    })
+    const r = runScript(HELPER, [], seam)
+    expect(verdict(r), r.out).toBe('GO')
+    expect(r.out).toContain(`listed from ${since} (lookback 35d)`)
+    expect(r.out).toMatch(/none open \(1 page\(s\) read\)/)
+    const listCalls = seam
+      .calls()
+      .split('\n')
+      .filter((l) => l.includes('indexer-backfill-autochain.yml/runs?per_page=100'))
+    expect(listCalls).toHaveLength(1)
+    expect(listCalls[0]).toContain(`created=>=${since}`)
+  })
+
+  it('CONTROL: a recent last completion is itself the bound (nothing (c) must see is dropped)', () => {
+    const seam = allClear() // seam clock predates DONE_AT, so the bound is DONE_AT
+    const r = runScript(HELPER, [], seam)
+    expect(verdict(r), r.out).toBe('GO')
+    expect(r.out).toContain('listed from 2026-10-12T10:00:00Z (lookback 35d)')
+  })
+
   it('a full page 1 whose page 2 cannot be read is NO-GO', () => {
     const seam = allClear()
     seam.fixture(listPage(1), { workflow_runs: full })
@@ -195,6 +228,10 @@ describe('--first-link: the variable flips LAST', () => {
     // second run's checks pass, and the next link (a new run) is visible and live.
     seam.env.STUB_RUN_ID = '112'
     seam.fixture(runPath(112), { status: 'in_progress' })
+    // its last completion is now run 111's, so check (c) lists from there
+    seam.fixture(listPage(1, '2026-10-12T12:00:00Z'), {
+      workflow_runs: [{ id: 9, status: 'completed', created_at: '2026-10-12T13:00:00Z' }],
+    })
     const second = runScript(HELPER, ['--first-link'], seam)
     expect(verdict(second), second.out).toBe('GO')
     expect(seam.count('WORKFLOW_RUN')).toBe(2)
@@ -258,6 +295,9 @@ describe('--first-link: the variable flips LAST', () => {
     writeFileSync(join(seam.dir, 'on-varset.sh'), 'exit 0\n')
     seam.env.STUB_RUN_ID = '112'
     seam.fixture(runPath(112), { status: 'in_progress' })
+    seam.fixture(listPage(1, '2026-10-12T12:00:00Z'), {
+      workflow_runs: [{ id: 9, status: 'completed', created_at: '2026-10-12T13:00:00Z' }],
+    })
     const second = runScript(HELPER, ['--first-link'], seam)
     expect(verdict(second), second.out).toBe('GO')
     expect(seam.count('WORKFLOW_RUN')).toBe(2)

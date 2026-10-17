@@ -7,10 +7,12 @@
  * starts at least {@link MIN_MINUTES_TO_BUSY} minutes away. Parity with the bash is
  * asserted by `scripts/tests/indexer/backfill-busy-window.test.ts`.
  *
- * Parsing is deliberately stricter than the driver: the driver's bash matches only
- * space-padded hours (` 0 3 `), whereas this accepts any whitespace-separated list
- * (`0 3` is normalised to [0, 3]) and rejects leading zeros (`03`) so the accepted
- * language is unambiguous. The predicate itself is identical to the driver's.
+ * Parsing follows the plan's "space-separated": hours are separated by one or more
+ * SPACES only, the separator the driver's bash matches (` 0 3 `). A tab, newline or any
+ * other whitespace is rejected rather than treated as a separator. Unlike the driver, the
+ * list need not be space-padded (`0 3` is normalised to [0, 3]), and leading zeros (`03`)
+ * are rejected so the accepted language is unambiguous. The predicate itself is identical
+ * to the driver's.
  *
  * CLI: reads BACKFILL_BUSY_HOURS and optional NOW_UTC (ISO, for tests); writes
  * `window_open` and `next_window_utc` to GITHUB_OUTPUT when set, else stdout.
@@ -23,10 +25,11 @@ export const MIN_MINUTES_TO_BUSY = 80
 const LOOKAHEAD_HOURS = 8
 const NEXT_OPEN_SEARCH_MINUTES = 48 * 60
 
-/** Strict parse: whitespace-separated integers 0-23, no duplicates, at least one. */
+/** Strict parse: space-separated (spaces only) integers 0-23, no duplicates, at least one. */
 export function parseBusyHours(raw: string | undefined): number[] {
   const text = raw === undefined || raw === '' ? DEFAULT_BUSY_HOURS : raw
-  const tokens = text.split(/\s+/).filter((t) => t !== '')
+  // Spaces only: a tab or newline stays inside a token and fails the integer check below.
+  const tokens = text.split(/ +/).filter((t) => t !== '')
   if (tokens.length === 0) {
     throw new Error(`BACKFILL_BUSY_HOURS has no hours: ${JSON.stringify(raw)}`)
   }

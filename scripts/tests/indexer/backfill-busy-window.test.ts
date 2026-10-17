@@ -76,16 +76,27 @@ describe('parseBusyHours', () => {
     [' 1 2 ', [1, 2]],
     ['5', [5]],
     ['0 3', [0, 3]],
-    ['23   0\t7', [23, 0, 7]],
+    ['23   0  7', [23, 0, 7]],
   ])('%j -> %j', (raw, expected) => {
     expect(parseBusyHours(raw as string | undefined)).toEqual(expected)
   })
-  it.each(['03', '1 007', '1 1', '24', '-1', '7a', '   ', '1.5', '1,2', '+3'])(
-    '%j throws',
-    (raw) => {
-      expect(() => parseBusyHours(raw)).toThrow(/BACKFILL_BUSY_HOURS/)
-    }
-  )
+  it.each([
+    '03',
+    '1 007',
+    '1 1',
+    '24',
+    '-1',
+    '7a',
+    '   ',
+    '1.5',
+    '1,2',
+    '+3',
+    '1\t2',
+    '1\n2',
+    '\t',
+  ])('%j throws', (raw) => {
+    expect(() => parseBusyHours(raw)).toThrow(/BACKFILL_BUSY_HOURS/)
+  })
 })
 
 describe('windowState.nextOpenUtc', () => {

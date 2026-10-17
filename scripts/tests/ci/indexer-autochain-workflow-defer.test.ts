@@ -130,13 +130,20 @@ describe('side effects and untrusted values', () => {
     expect(bad, `steps inlining untrusted expressions: ${bad.join(', ')}`).toEqual([])
   })
 
-  it('ACKNOWLEDGE_HALTS reaches recovery only on workflow_dispatch, and nowhere else', () => {
+  it('ACKNOWLEDGE_HALTS comes from the dispatch input only on workflow_dispatch, else from the marker', () => {
     const recover = byId('recover')
+    const defer = byId('defer')
     expect(recover.env!.ACKNOWLEDGE_HALTS).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || steps.target.outputs.acknowledged_halts || '' }}"
+    )
+    // the deferring link records the manual acknowledgement on the marker
+    expect(defer.env!.ACKNOWLEDGE_HALTS).toBe(
       "${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || '' }}"
     )
-    const reads = /inputs\.acknowledge_halts|ACKNOWLEDGE_HALTS/
-    const others = steps.filter((s) => s !== recover && reads.test(JSON.stringify(s)))
+    const reads = /inputs\.acknowledge_halts|ACKNOWLEDGE_HALTS|acknowledged_halts/
+    const others = steps.filter(
+      (s) => s !== recover && s !== defer && reads.test(JSON.stringify(s))
+    )
     expect(others.map((s) => s.name)).toEqual([])
     expect(JSON.stringify(job.env)).not.toMatch(reads)
   })

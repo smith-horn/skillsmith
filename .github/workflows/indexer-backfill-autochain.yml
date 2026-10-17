@@ -44,7 +44,9 @@
 #     dispatches: it writes the halt names to the step summary, sends ONE
 #     `indexer_backfill_autochain_halted` alert (Send Alert on Failure is not also
 #     sent) and fails the job. Only `workflow_dispatch` input acknowledge_halts
-#     skips named halts; it is empty on every other event.
+#     skips named halts. A manual link that DEFERS records that acknowledgement on
+#     its marker (metadata.acknowledged_halts), and the resume tick passes it back
+#     to recovery, so an acknowledgement survives the pause; it is empty otherwise.
 #   - BUSY WINDOW (D5): after the fence, the link dispatches only inside the
 #     window (BACKFILL_BUSY_HOURS). Outside it, a `workflow_run`/manual link
 #     DEFERS: if no live marker exists in either project it inserts one
@@ -313,19 +315,21 @@ jobs:
           # Schedule: the marker's run and env. Link paths: empty / the job env.
           RECOVERY_ENV: ${{ steps.target.outputs.supabase_env }}
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
-          # Only a manual dispatch may acknowledge halts (SMI-7121 D4).
-          ACKNOWLEDGE_HALTS: ${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || '' }}
+          # Only a manual dispatch may acknowledge halts (SMI-7121 D4); a schedule tick
+          # re-applies the acknowledgement its marker carried from that dispatch.
+          ACKNOWLEDGE_HALTS: ${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || steps.target.outputs.acknowledged_halts || '' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
         # Writes GITHUB_OUTPUT directly (scripts/indexer/backfill-autochain-inputs.ts's
-        # own emitOutputs()). Exits non-zero (red job) on an indeterminate env,
-        # missing credentials for the selected project, a read error, a
-        # malformed row or an incomplete intent. Exit 3 is a HALT: the outputs
-        # carry halted=true and skip=true, and the halt steps below report it,
-        # alert once and turn the job red. Every later dispatch step requires
-        # skip == 'false', which only a clean recovery emits.
+        # own emitOutputs()). The script exits 1 on an indeterminate env, missing
+        # credentials for the selected project, a read error, a malformed row, an
+        # incomplete intent or a bad BACKFILL_NDB_MAX / ACKNOWLEDGE_HALTS, and this
+        # step is red. It exits 3 on a HALT, which this step maps to green: the
+        # outputs carry halted=true and skip=true, and the halt steps below report
+        # it, alert once and turn the job red ("Fail on halt"). Every later
+        # dispatch step requires skip == 'false', which only a clean recovery emits.
         run: |
           rc=0
           npx tsx scripts/indexer/backfill-autochain-inputs.ts || rc=$?
@@ -577,6 +581,8 @@ jobs:
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name != 'schedule' && steps.window.outputs.window_open == 'false' && steps.live.outputs.live_count == '0'
         env:
           COMPLETED_RUN_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.completed_run_attempt || github.event.workflow_run.run_attempt }}
+          # A manual link's acknowledgement rides on the marker to the resume (SMI-7121).
+          ACKNOWLEDGE_HALTS: ${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || '' }}
           SUPABASE_ENV: ${{ steps.recover.outputs.supabase_env }}
           PATH_PREFIX: ${{ steps.recover.outputs.path_prefix }}
           DRY_RUN: ${{ steps.recover.outputs.dry_run }}
@@ -670,6 +676,8 @@ jobs:
       - name: Send Alert on Failure
         # Any red step above (indeterminate env, missing creds, a read error, a
         # failed enable read, a failed marker write, a failed dispatch) lands here.
+        # A halt is red through "Fail on halt", not the recovery step, and its own
+        # alert step suppresses this one once delivered.
         # Gated by DISPATCH_ALLOWED like every other side effect: a verify-only run
         # is visibly red in the Actions UI without sending email. Not sent when a
         # specific alert for this failure was delivered (one email, not two).

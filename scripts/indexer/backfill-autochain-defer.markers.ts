@@ -39,6 +39,11 @@ export interface DeferredMarkerInput {
   deferred_at: string
   next_window_utc: string
   deferred_by_autochain_run: string
+  /**
+   * Halts the operator acknowledged on the deferred manual dispatch, as the canonical comma
+   * list (canonicalAcknowledgedHalts); absent when none, so a resume re-applies them.
+   */
+  acknowledged_halts?: string
 }
 
 export class MissingCredentials extends Error {

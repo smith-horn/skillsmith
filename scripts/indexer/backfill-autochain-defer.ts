@@ -22,6 +22,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { appendFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { canonicalAcknowledgedHalts } from './backfill-autochain-halts.ts'
 import {
   listBackfillRunsCreatedSince,
   type BackfillRunRef,
@@ -55,6 +56,8 @@ export type ScheduleTarget =
       completedRunId: string
       completedRunAttempt: string
       supabaseEnv: SupabaseEnv
+      /** Canonical acknowledgement carried on the marker; '' when none. */
+      acknowledgedHalts: string
     }
 
 /** The single open marker to resume, or a no-op reason. More than one open marker throws. */
@@ -76,12 +79,19 @@ export async function scheduleTarget(clientsByEnv: ClientsByEnv): Promise<Schedu
       `Open marker ${m.id} lives in env=${m.env} but records supabase_env=${JSON.stringify(m.metadata.supabase_env)}`
     )
   }
+  // Absent, null or '' means none. Anything else is re-validated (an unknown or
+  // unacknowledgeable name throws): a stored value is never trusted blindly.
+  const rawAck = m.metadata.acknowledged_halts
+  if (rawAck !== undefined && rawAck !== null && typeof rawAck !== 'string') {
+    throw new Error(`Open marker ${m.env}:${m.id} has a non-string acknowledged_halts`)
+  }
   return {
     resume: true,
     markerId: m.id,
     completedRunId: runId,
     completedRunAttempt: attempt,
     supabaseEnv: m.env,
+    acknowledgedHalts: canonicalAcknowledgedHalts(rawAck ?? ''),
   }
 }
 
@@ -281,6 +291,7 @@ export async function runCommand(
       const next = required(penv, 'NEXT_WINDOW_UTC')
       if (Number.isNaN(Date.parse(next)))
         throw new Error(`NEXT_WINDOW_UTC is not a date: ${JSON.stringify(next)}`)
+      const acked = canonicalAcknowledgedHalts(penv.ACKNOWLEDGE_HALTS)
       const id = await insertDeferred(clientFor(env, penv, deps.makeClient), {
         completed_run_id: digits(penv, 'COMPLETED_RUN_ID'),
         completed_run_attempt: Number(digits(penv, 'COMPLETED_RUN_ATTEMPT')),
@@ -290,6 +301,8 @@ export async function runCommand(
         deferred_at: now.toISOString(),
         next_window_utc: next,
         deferred_by_autochain_run: runId(),
+        // Only a manual dispatch carries an acknowledgement (the workflow passes '' otherwise).
+        ...(acked ? { acknowledged_halts: acked } : {}),
       })
       return { marker_id: id, marker_env: env }
     }
@@ -324,6 +337,7 @@ export async function runCommand(
         completed_run_id: t.completedRunId,
         completed_run_attempt: t.completedRunAttempt,
         supabase_env: t.supabaseEnv,
+        acknowledged_halts: t.acknowledgedHalts,
       }
     }
     case 'claim': {

@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { HELPER, runScript, type Seam } from './backfill-driver.test-helpers.ts'
 import {
   AUTOCHAIN_LIST,
+  listPage,
   DONE_AT,
   STATUSES,
   WORKFLOWS,
@@ -56,6 +57,7 @@ describe('NO-GO: exactly one broken condition per case', () => {
         { event: 'reconciled_absent', token: 'drv-2-bbbbbbbb', reason: 'dispatch never landed' },
       ])
     )
+    seam.fixture(listPage(1, '2026-10-12T09:30:00Z'), { workflow_runs: [] })
     const r = runScript(HELPER, [], seam)
     expect(verdict(r), r.out).toBe('GO')
   })
