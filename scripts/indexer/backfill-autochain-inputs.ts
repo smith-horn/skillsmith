@@ -352,6 +352,8 @@ export async function recover(opts: {
   if (resolved.cursorDone) {
     return {
       skip: 'true',
+      // SMI-7121 V2: a resume tick closes its marker as campaign_complete (info), not as a halt.
+      campaign_complete: 'true',
       skip_reason: 'The underlying campaign already reached cursor.facet === "done".',
     }
   }
@@ -401,7 +403,8 @@ async function main(): Promise<void> {
   const outputs = await recover({ completedRunId, supabaseEnv })
   emitOutputs(outputs)
   if (outputs.halted === 'true') {
-    // Red job until the dedicated halt steps replace the failure alert (SMI-7121 Wave 2b-ii).
+    // Exit 3 = halted. The autochain's recover step maps it to a green step and its halt
+    // steps report, alert once and fail the job (SMI-7121 Wave 2b-ii); any other caller sees red.
     console.error(
       JSON.stringify({
         event: 'autochain_halted',

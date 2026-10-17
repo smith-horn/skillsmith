@@ -12,8 +12,9 @@ export const DONE_AT = '2026-10-12T10:00:00Z'
 
 export const statusPath = (wf: string, s: string) =>
   `repos/${REPO}/actions/workflows/${wf}/runs?status=${s}&per_page=1`
-export const listPage = (n: number) =>
-  `repos/${REPO}/actions/workflows/indexer-backfill-autochain.yml/runs?per_page=100&page=${n}`
+/** The bound check (c) lists from: max(last completion, now - 35 days); the seam clock predates DONE_AT. */
+export const listPage = (n: number, since: string = DONE_AT) =>
+  `repos/${REPO}/actions/workflows/indexer-backfill-autochain.yml/runs?per_page=100&page=${n}&created=>=${since}`
 export const AUTOCHAIN_LIST = listPage(1)
 export const runPath = (id: number) => `repos/${REPO}/actions/runs/${id}`
 

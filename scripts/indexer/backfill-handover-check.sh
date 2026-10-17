@@ -14,7 +14,8 @@
 #       waiting, pending and requested (10 calls);
 #   (c) every autochain run created at or after the last intent's completion (the
 #       moment a `workflow_run` would have fired) is `completed`. The run list is
-#       PAGINATED to the end (every entry needs a valid id, status and created_at).
+#       PAGINATED to the end (every entry needs a valid id, status and created_at) and
+#       bounded server-side by creation time (see AUTOCHAIN_LOOKBACK_DAYS).
 #
 # Usage:
 #   scripts/indexer/backfill-handover-check.sh               # checks only
@@ -74,6 +75,19 @@ else
   INTENTS="${BACKFILL_DRIVER_INTENTS:-$HOME/.skillsmith/logs/backfill-driver-intents.jsonl}"
 fi
 LIST_PAGES_MAX=50
+# Check (c) lists autochain runs created at or after SINCE = max(last completion, now -
+# AUTOCHAIN_LOOKBACK_DAYS), never the whole history (SMI-7121: the resume schedule adds ~24
+# runs a day, so an unbounded page-through would pass LIST_PAGES_MAX in months and turn
+# every check NO-GO). The bound loses nothing (c) must see:
+#   - (c) only judges runs created at or after the last completion (older ones are filtered
+#     out client-side anyway), so the server-side `created>=` filter changes nothing when the
+#     last completion is within the lookback;
+#   - a run created before now - 35 days cannot still be open: GitHub caps a workflow run at
+#     35 days (this job's own timeout is 10 minutes, a queued job is cancelled after 24h), so
+#     every run the lookback drops is necessarily completed;
+#   - any run that IS open, however old, is also counted by check (b)'s status totals.
+# At ~50 autochain runs a day (links plus ticks), 35 days is about 18 pages, under the cap.
+AUTOCHAIN_LOOKBACK_DAYS=35
 say(){ echo "[$(date -u '+%F %H:%M:%SZ')] $*"; }
 # shellcheck source=scripts/indexer/backfill-intents.lib.sh
 . "$ROOT/scripts/indexer/backfill-intents.lib.sh"
@@ -83,7 +97,7 @@ nogo(){ say "  NO-GO: $*"; NOGO=1; }
 # One small JSON helper (node) so no jq is needed. Subcommands read stdin or a file.
 # Every body is validated field by field: syntactically valid but incomplete is ERR.
 js(){ node -e '
-const fs=require("fs"),[cmd,a1]=process.argv.slice(1);
+const fs=require("fs"),[cmd,a1,a2,a3]=process.argv.slice(1);
 const read=()=>{try{return JSON.parse(fs.readFileSync(0,"utf8"))}catch(e){return null}};
 const iso=(s)=>typeof s==="string"&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(s)&&!Number.isNaN(Date.parse(s));
 if(cmd==="log"){ // path -> "token state run_id issued_at params" per intent, in log order
@@ -105,6 +119,9 @@ else if(cmd==="after"){ // one page of the autochain list -> "VERDICT COUNT [ope
       const since=a1==="0"?0:Date.parse(a1);
       const bad=rs.filter(r=>Date.parse(r.created_at)>=since&&r.status!=="completed");
       console.log((bad.length?"OPEN":"CLEAR")+" "+rs.length+(bad.length?" "+bad.map(r=>r.id+":"+r.status).join(","):""))}}}
+else if(cmd==="since"){ // a1 = last completion ISO or "", a2 = now (epoch s), a3 = lookback days -> ISO (whole seconds) or ERR
+  const lo=Number(a2)*1000-Number(a3)*86400000;const t=a1?Math.max(iso(a1)?Date.parse(a1):NaN,lo):lo;
+  console.log(Number.isFinite(t)?new Date(Math.floor(t/1000)*1000).toISOString().replace(/\.000Z$/,"Z"):"ERR")}
 else if(cmd==="params"){ // last intent params -> "ERR msg" or k<TAB>v lines
   let p;try{p=JSON.parse(a1)}catch(e){p=null}
   const bad=(m)=>{console.log("ERR "+m);process.exit(0)};
@@ -154,10 +171,12 @@ run_checks() {
     done
   done
 
-  say "(c) autochain runs created at/after the last completion (${LAST_DONE:-none}), all pages"
-  local page=1 aj ar verdict cnt ids
+  local since page=1 aj ar verdict cnt ids
+  since=$(js since "${LAST_DONE:-}" "$(now_epoch)" "$AUTOCHAIN_LOOKBACK_DAYS")
+  if [ "$since" = "ERR" ] || [ -z "$since" ]; then nogo "cannot compute the autochain list bound from '${LAST_DONE:-}'"; return 1; fi
+  say "(c) autochain runs created at/after the last completion (${LAST_DONE:-none}), listed from $since (lookback ${AUTOCHAIN_LOOKBACK_DAYS}d), all pages"
   while :; do
-    if ! aj=$(gh api "repos/$REPO/actions/workflows/indexer-backfill-autochain.yml/runs?per_page=100&page=$page" 2>/dev/null); then
+    if ! aj=$(gh api "repos/$REPO/actions/workflows/indexer-backfill-autochain.yml/runs?per_page=100&page=$page&created=>=$since" 2>/dev/null); then
       nogo "API error listing autochain runs (page $page)"; break
     fi
     ar=$(printf '%s' "$aj" | js after "${LAST_DONE:-0}")
@@ -185,7 +204,7 @@ flag_reads(){ # $1 = wanted exact value
 # Dispatch the first link with the last intent's inputs replayed exactly, resolve it
 # by token, and wait until it is queued/in_progress. Does NOT touch the variable.
 first_link() {
-  local pv k v tok issued_epoch issued_at out wrc url_id st tries
+  local pv k v tok issued_epoch issued_at out wrc url_id st
   local PATH_PREFIX="" RESUME_FROM="" MODE="" REF="" DRY_RUN="" MAX_RANGES="" MIN_SIZE="" CAP="" PER_REPO="" ELAPSED=""
   pv=$(js params "$LAST_PARAMS")
   case "$pv" in ERR*) say "NO-GO: ${pv#ERR }; refusing to guess a default."; return 1 ;; esac
@@ -220,7 +239,7 @@ first_link() {
   append_resolved "$tok" "$RESOLVED_ID" || { say "HALT: cannot record the resolution in $INTENTS."; return 1; }
   # Wait until the first link is visibly live; completed/unreadable means the flip would be unsafe.
   st=""
-  for tries in 1 2 3 4 5 6 7 8; do
+  for _ in 1 2 3 4 5 6 7 8; do
     st=$(gh api "repos/$REPO/actions/runs/$RESOLVED_ID" 2>/dev/null | js status)
     case "$st" in queued|in_progress) break ;; completed) break ;; esac
     do_sleep 15

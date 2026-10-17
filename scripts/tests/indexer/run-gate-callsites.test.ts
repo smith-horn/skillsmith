@@ -135,6 +135,10 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   // SMI-7121: a pure predicate with a CLI wrapper the autochain workflow runs; it only
   // prints window_open/next_window_utc and never writes through an indexer writer.
   'backfill-busy-window.ts',
+  // SMI-7121 Wave 2b-ii: the autochain's deferral-marker CLI. It reads and writes only its
+  // own indexer_backfill_autochain_deferred audit_logs rows (through the marker transition
+  // RPC) and never touches `skills`; same category as backfill-autochain-inputs.ts.
+  'backfill-autochain-defer.ts',
   'smi5207-blast-radius-weekly.ts',
   'smi5207-blast-radius-transitions.ts',
   // SMI-6441 Wave 2: same shape and same reason as the two SMI-5207

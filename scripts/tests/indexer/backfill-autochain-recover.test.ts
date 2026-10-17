@@ -403,6 +403,7 @@ describe('recover -- SMI-7121 halts', () => {
     expect(out.skip).toBe('true')
     expect(out.halt_names).toBe('license_filtered')
     expect(out.skip_reason).not.toMatch(/already reached/)
+    expect(out.campaign_complete).toBeUndefined()
   })
 
   it('CONTROL: a done checkpoint with no halt still returns the done skip', async () => {
@@ -412,6 +413,8 @@ describe('recover -- SMI-7121 halts', () => {
     expect(out.skip).toBe('true')
     expect(out.halted).toBeUndefined()
     expect(out.skip_reason).toMatch(/already reached/)
+    // SMI-7121 V2: the resume tick closes its marker as campaign_complete on this flag
+    expect(out.campaign_complete).toBe('true')
   })
 
   it('a foreign resumed_from path halts as b1_foreign_cursor', async () => {

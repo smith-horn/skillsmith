@@ -149,6 +149,16 @@ export function parseAcknowledgedHalts(raw: string | undefined): Set<HaltName> {
   return acked
 }
 
+/**
+ * The canonical comma list for an acknowledgement (SMI-7121: carried on a deferral marker so
+ * it survives the pause): parsed exactly as {@link parseAcknowledgedHalts} (so unknown names
+ * and `no_progress_record` throw), deduplicated, in HALT_NAMES order. `''` means none.
+ */
+export function canonicalAcknowledgedHalts(raw: string | undefined): string {
+  const acked = parseAcknowledgedHalts(raw)
+  return HALT_NAMES.filter((n) => acked.has(n)).join(',')
+}
+
 /** Only the halts the operator has not acknowledged. */
 export function applyAcknowledgements(halts: Halt[], acked: Set<HaltName>): Halt[] {
   return halts.filter((h) => !acked.has(h.name))

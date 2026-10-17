@@ -17,11 +17,17 @@ import { describe, it, expect } from 'vitest'
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const SCRIPT = join(REPO_ROOT, 'scripts', 'ci', 'autochain-read-enable.sh')
 
+// Per variable: BACKFILL_KILL_SWITCH plays KS_MODE/KS_VALUE (default: readable "0");
+// every other read plays STUB_MODE/STUB_VALUE.
 const GH_STUB = `#!/usr/bin/env bash
 echo "$*" >> "$STUB_DIR/args.log"
-case "$STUB_MODE" in
-  value) printf '%s\\n' "$STUB_VALUE"; exit 0 ;;
-  raw) printf '%s' "$STUB_VALUE"; exit 0 ;;
+case "$*" in
+  *BACKFILL_KILL_SWITCH*) MODE="\${KS_MODE:-value}"; VAL="\${KS_VALUE-0}" ;;
+  *) MODE="$STUB_MODE"; VAL="$STUB_VALUE" ;;
+esac
+case "$MODE" in
+  value) printf '%s\\n' "$VAL"; exit 0 ;;
+  raw) printf '%s' "$VAL"; exit 0 ;;
   401) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
   404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   403) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1 ;;
@@ -68,6 +74,59 @@ describe('autochain-read-enable.sh', () => {
     expect(r.args).toContain(
       'repos/smith-horn/skillsmith/actions/variables/BACKFILL_AUTOCHAIN_DISABLE'
     )
+  })
+
+  describe('the BACKFILL_KILL_SWITCH re-read (SMI-7121 G2)', () => {
+    it('reads it AFTER the enable variable, in the same command', () => {
+      const r = run('value', '0')
+      const lines = r.args.trim().split('\n')
+      expect(lines).toHaveLength(2)
+      expect(lines[0]).toContain('actions/variables/BACKFILL_AUTOCHAIN_DISABLE')
+      expect(lines[1]).toContain(
+        'repos/smith-horn/skillsmith/actions/variables/BACKFILL_KILL_SWITCH'
+      )
+    })
+
+    it('"1" (engaged) => exit 1, never a dispatch', () => {
+      const r = run('value', '0', { KS_VALUE: '1' })
+      expect(r.status, r.out).toBe(1)
+      expect(r.out).toMatch(/::error::.*BACKFILL_KILL_SWITCH is "1" \(engaged\)/)
+    })
+
+    it.each([
+      ['403', '403', /403/],
+      ['401', '401', /expired or revoked/],
+      ['5xx', '500', /BACKFILL_KILL_SWITCH failed/],
+      ['network error', 'net', /BACKFILL_KILL_SWITCH failed/],
+    ])('a failed read (%s) => exit 1 (an unread kill switch is never "off")', (_l, mode, msg) => {
+      const r = run('value', '0', { KS_MODE: mode })
+      expect(r.status, r.out).toBe(1)
+      expect(r.out).toMatch(msg)
+    })
+
+    it.each([
+      ['404 (unset)', { KS_MODE: '404' }, /BACKFILL_KILL_SWITCH is unset/],
+      ['"0"', { KS_VALUE: '0' }, /not engaged/],
+      ['empty', { KS_VALUE: '' }, /not engaged/],
+    ])('%s => not engaged, exit 0', (_l, over, msg) => {
+      const r = run('value', '0', over)
+      expect(r.status, r.out).toBe(0)
+      expect(r.out).toMatch(msg)
+    })
+
+    it('a failed enable read stops before the kill-switch read', () => {
+      const r = run('403', '', { KS_VALUE: '0' })
+      expect(r.status).toBe(1)
+      expect(r.args).not.toContain('BACKFILL_KILL_SWITCH')
+    })
+
+    it('--verify-read reports an engaged switch without failing, and fails on an unreadable one', () => {
+      const ok = run('value', '0', { KS_VALUE: '1' }, ['--verify-read'])
+      expect(ok.status, ok.out).toBe(0)
+      expect(ok.out).toMatch(/BACKFILL_KILL_SWITCH is engaged \(no dispatch authorised\)/)
+      const bad = run('value', '0', { KS_MODE: '403' }, ['--verify-read'])
+      expect(bad.status).toBe(1)
+    })
   })
 
   it.each([

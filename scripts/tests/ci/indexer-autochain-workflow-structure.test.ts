@@ -4,51 +4,17 @@
  * These pin the properties that make the autochain safe, as YAML facts a refactor
  * cannot silently drop: manual-dispatch support, the DISPATCH_ALLOWED gate on
  * every side effect, and -- the one that matters most -- the authoritative
- * enable read being the command IMMEDIATELY before the dispatch.
+ * enable read being the command IMMEDIATELY before the dispatch. SMI-7121 moved the
+ * newest-run fence into its own step (with the busy-window check between it and the
+ * dispatch); the SMI-7121 additions are pinned in indexer-autochain-workflow-defer.test.ts.
  */
-import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { parse as parseYaml } from 'yaml'
 import { describe, it, expect } from 'vitest'
+import { commands, loadWorkflow, runStepScript } from './indexer-autochain-workflow.helpers.ts'
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'indexer-backfill-autochain.yml')
-
-interface Step {
-  name?: string
-  id?: string
-  if?: string
-  env?: Record<string, string>
-  run?: string
-  uses?: string
-}
-const doc = parseYaml(readFileSync(WORKFLOW, 'utf8')) as {
-  on: Record<string, unknown>
-  jobs: { autochain: { if: string; env: Record<string, string>; steps: Step[] } }
-}
+const doc = loadWorkflow()
 const job = doc.jobs.autochain
 const steps = job.steps
 
-/** Executable commands of a `run:` block: comments/blanks dropped, `\` continuations joined. */
-function commands(run: string): string[] {
-  const out: string[] = []
-  let acc = ''
-  for (const raw of run.split('\n')) {
-    const line = raw.trim()
-    if (acc === '' && (line === '' || line.startsWith('#'))) continue
-    if (line.endsWith('\\')) {
-      acc += line.slice(0, -1).trim() + ' '
-      continue
-    }
-    out.push((acc + line).trim())
-    acc = ''
-  }
-  if (acc) out.push(acc.trim())
-  return out
-}
 const dispatchStep = steps.find((s) => (s.run ?? '').includes('gh workflow run'))
 
 describe('autochain workflow structure', () => {
@@ -76,10 +42,17 @@ describe('autochain workflow structure', () => {
 
   it('every step that dispatches, alerts or waits is gated on DISPATCH_ALLOWED', () => {
     const risky = steps.filter((s) =>
-      /gh workflow run|alert-notify|\bsleep\b/.test(commands(s.run ?? '').join('\n'))
+      /gh workflow run|alert-notify|autochain-alert\.sh|\bsleep\b|backfill-autochain-defer\.ts (insert|claim|needs-intervention|reconcile)/.test(
+        commands(s.run ?? '').join('\n')
+      )
     )
-    expect(risky.length).toBeGreaterThanOrEqual(4) // cooldown, retry-cap alert, dispatch, failure alert
+    // cooldown, halt / retry-cap / reconcile / multiple-deferral (x2) / needs-intervention / failure
+    // alerts, reconcile, marker close, insert, claim, dispatch
+    expect(risky.length).toBeGreaterThanOrEqual(13)
+    // The one exemption: the kill-switch stop alert fires exactly when DISPATCH_ALLOWED is
+    // false, under its own condition (pinned in indexer-autochain-workflow-defer.test.ts).
     const ungated = risky
+      .filter((s) => s.name !== 'Alert on kill-switch stop (link)')
       .filter((s) => !(s.if ?? '').includes("env.DISPATCH_ALLOWED == 'true'"))
       .map((s) => s.name)
     expect(
@@ -108,11 +81,10 @@ describe('autochain workflow structure', () => {
       )
     })
 
-    it('SEQUENCE: before the dispatch there are EXACTLY two commands, the fence then the read, each a single simple command', () => {
+    it('SEQUENCE: before the dispatch there is EXACTLY one command, the read, a single simple command', () => {
       const cmds = commands(dispatchStep!.run!)
       const at = cmds.findIndex((c) => c.startsWith('timeout 60 gh workflow run'))
       expect(cmds.slice(0, at), `commands: ${JSON.stringify(cmds)}`).toEqual([
-        'bash scripts/ci/autochain-newest-run-fence.sh || exit $?',
         'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh || exit 1',
       ])
       // nothing alters the shell's error handling or the step's execution, and nothing runs in the background
@@ -120,28 +92,35 @@ describe('autochain workflow structure', () => {
       expect(whole).not.toMatch(/\bset\s+[+-]|\btrap\b|\bsleep\b|\bwait\b|(^|[^&])&\s*$/m)
       expect(dispatchStep).not.toHaveProperty('continue-on-error')
       expect(dispatchStep).not.toHaveProperty('shell')
+      // the dispatch step runs the read WITHOUT --verify-read (which authorises nothing)
+      expect(cmds[0]).not.toContain('--verify-read')
     })
 
-    it('the newest-run fence is the command directly above the read (so read stays adjacent to the dispatch)', () => {
-      const cmds = commands(dispatchStep!.run!)
-      const read = cmds.findIndex((c) => c.includes('autochain-read-enable.sh'))
-      expect(read, `commands: ${JSON.stringify(cmds)}`).toBeGreaterThan(0)
+    it('the newest-run fence is its own step, BEFORE the dispatch step, preserving its exit status', () => {
+      const fence = steps.find((x) => x.id === 'fence')
+      expect(fence, 'no fence step').toBeDefined()
+      expect(steps.indexOf(fence!)).toBeLessThan(steps.indexOf(dispatchStep!))
+      const cmds = commands(fence!.run!)
       // The fence's own exit status must be the step's: a lossy wrapper (`|| exit 1`) collapses
       // its documented 3 (skipped loudly) into 1 (could not evaluate).
-      expect(cmds[read - 1]).toMatch(
-        /^bash scripts\/ci\/autochain-newest-run-fence\.sh \|\| exit \$\?$/
-      )
-      expect(cmds[read - 1]).not.toMatch(/exit [0-9]/)
-      // the dispatch step runs the read WITHOUT --verify-read (which authorises nothing)
-      expect(cmds[read]).not.toContain('--verify-read')
+      expect(cmds).toEqual([
+        'rc=0',
+        'bash scripts/ci/autochain-newest-run-fence.sh || rc=$?',
+        'echo "exit_code=$rc" >> "$GITHUB_OUTPUT"',
+        'exit "$rc"',
+      ])
+      expect(fence).not.toHaveProperty('continue-on-error')
+      // the dispatch only runs after a passing fence
+      expect(dispatchStep!.if).toContain("steps.fence.outcome == 'success'")
     })
 
     it('the fence is told the triggering ATTEMPT and event (a re-run keeps its run id)', () => {
-      expect(dispatchStep!.env!.TRIGGER_EVENT).toContain('github.event_name')
-      expect(dispatchStep!.env!.TRIGGER_RUN_ATTEMPT).toContain(
-        'github.event.workflow_run.run_attempt'
-      )
-      expect(dispatchStep!.env!.TRIGGER_RUN_ATTEMPT).toContain('inputs.completed_run_attempt')
+      const fence = steps.find((x) => x.id === 'fence')!
+      expect(fence.env!.TRIGGER_EVENT).toContain('github.event_name')
+      expect(fence.env!.TRIGGER_RUN_ATTEMPT).toContain('github.event.workflow_run.run_attempt')
+      expect(fence.env!.TRIGGER_RUN_ATTEMPT).toContain('inputs.completed_run_attempt')
+      // a schedule tick names the attempt its deferral marker recorded
+      expect(fence.env!.TRIGGER_RUN_ATTEMPT).toContain('steps.target.outputs.completed_run_attempt')
     })
 
     it('a verify-only manual run ALSO executes the read, in --verify-read mode, and never dispatches', () => {
@@ -176,68 +155,56 @@ describe('autochain workflow structure', () => {
   })
 })
 
-describe('the dispatch step executed with stubbed scripts (exit-status propagation)', () => {
-  /** Run the dispatch step's real `run:` text the way Actions does, with the three scripts stubbed. */
-  function runStep(fenceRc: number, readRc: number, shellFlags: string[]) {
-    const dir = mkdtempSync(join(tmpdir(), 'smi7112-wf-'))
-    mkdirSync(join(dir, 'scripts', 'ci'), { recursive: true })
-    mkdirSync(join(dir, 'bin'))
-    const stub = (p: string, body: string) => {
-      writeFileSync(p, body)
-      chmodSync(p, 0o755)
-    }
-    stub(
-      join(dir, 'scripts/ci/autochain-newest-run-fence.sh'),
-      `echo fence >> "$MARK"; exit ${fenceRc}\n`
-    )
-    stub(join(dir, 'scripts/ci/autochain-read-enable.sh'), `echo read >> "$MARK"; exit ${readRc}\n`)
-    stub(join(dir, 'bin/timeout'), 'shift; echo dispatch >> "$MARK"; exit 0\n')
-    const script = join(dir, 'step.sh')
-    writeFileSync(script, dispatchStep!.run!.replace(/\$\{\{[^}]*\}\}/g, 'x'))
-    const r = spawnSync('bash', [...shellFlags, script], {
-      cwd: dir,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`,
-        MARK: join(dir, 'marks'),
-        GITHUB_REPOSITORY: 'o/r',
-        GITHUB_RUN_ID: '1',
-        VARIABLE_READ_PAT: 'pat',
+describe('the fence and dispatch steps executed with stubbed scripts (exit-status propagation)', () => {
+  const fenceStep = steps.find((x) => x.id === 'fence')!
+  const fence = (rc: number, flags: string[]) =>
+    runStepScript(fenceStep.run!, {
+      shellFlags: flags,
+      stubs: { 'scripts/ci/autochain-newest-run-fence.sh': `echo fence >> "$MARK"; exit ${rc}\n` },
+    })
+  const dispatch = (readRc: number, flags: string[]) =>
+    runStepScript(dispatchStep!.run!, {
+      shellFlags: flags,
+      env: { VARIABLE_READ_PAT: 'pat' },
+      stubs: {
+        'scripts/ci/autochain-read-enable.sh': `echo read >> "$MARK"; exit ${readRc}\n`,
+        'bin/timeout': 'shift; echo dispatch >> "$MARK"; exit 0\n',
       },
     })
-    const marks = existsSync(join(dir, 'marks'))
-      ? readFileSync(join(dir, 'marks'), 'utf8').trim()
-      : ''
-    return { status: r.status, marks: marks === '' ? [] : marks.split('\n'), err: r.stderr }
-  }
 
   describe.each([
     ['bash -e (the Actions default)', ['-e']],
     ['bash -eo pipefail', ['-eo', 'pipefail']],
   ] as [string, string[]][])('under %s', (_n, flags) => {
-    it('CONTROL: fence 0 and read 0 reach the dispatch', () => {
-      const r = runStep(0, 0, flags)
-      expect(r.marks, r.err).toEqual(['fence', 'read', 'dispatch'])
+    it('CONTROL: fence 0 is step exit 0, exit_code=0', () => {
+      const r = fence(0, flags)
+      expect(r.status, r.err).toBe(0)
+      expect(r.marks).toEqual(['fence'])
+      expect(r.output).toBe('exit_code=0\n')
+    })
+
+    it('fence exit 3 (skipped loudly) is the step exit status 3, exit_code=3', () => {
+      const r = fence(3, flags)
+      expect(r.status, r.err).toBe(3)
+      expect(r.output).toBe('exit_code=3\n')
+    })
+
+    it('fence exit 1 (could not evaluate) is the step exit status 1, exit_code=1', () => {
+      const r = fence(1, flags)
+      expect(r.status, r.err).toBe(1)
+      expect(r.output).toBe('exit_code=1\n')
+    })
+
+    it('CONTROL: read 0 reaches the dispatch', () => {
+      const r = dispatch(0, flags)
+      expect(r.marks, r.err).toEqual(['read', 'dispatch'])
       expect(r.status).toBe(0)
     })
 
-    it('fence exit 3 (skipped loudly) is the step exit status: 3, no read, no dispatch', () => {
-      const r = runStep(3, 0, flags)
-      expect(r.status).toBe(3)
-      expect(r.marks).toEqual(['fence'])
-    })
-
-    it('fence exit 1 (could not evaluate) is the step exit status: 1, no read, no dispatch', () => {
-      const r = runStep(1, 0, flags)
-      expect(r.status).toBe(1)
-      expect(r.marks).toEqual(['fence'])
-    })
-
     it('a failing enable read stops the step before the dispatch', () => {
-      const r = runStep(0, 4, flags)
+      const r = dispatch(4, flags)
       expect(r.status).toBe(1)
-      expect(r.marks).toEqual(['fence', 'read'])
+      expect(r.marks).toEqual(['read'])
     })
   })
 })
