@@ -67,11 +67,14 @@ describe('triggers and gates', () => {
       ['schedule', 'BACKFILL_KILL_SWITCH'],
       ['workflow_run', 'AUTOCHAIN_DISABLE'],
       ['workflow_run', 'BACKFILL_KILL_SWITCH'],
-    ])('%s with %s=1 stops quietly (skip=true, exit 0)', (event, sw) => {
-      const r = run({ EVENT_NAME: event, [sw]: '1' })
-      expect(r.status, r.err).toBe(0)
-      expect(r.githubEnv).toBe('skip=true\n')
-    })
+    ])(
+      '%s with %s=1: the gate step sets skip=true and exits 0 (a workflow_run link under BACKFILL_KILL_SWITCH is then made red by the separate kill-switch alert step)',
+      (event, sw) => {
+        const r = run({ EVENT_NAME: event, [sw]: '1' })
+        expect(r.status, r.err).toBe(0)
+        expect(r.githubEnv).toBe('skip=true\n')
+      }
+    )
 
     it.each(['schedule', 'workflow_run', 'workflow_dispatch'])(
       'CONTROL: %s with no switch set does not stop',
