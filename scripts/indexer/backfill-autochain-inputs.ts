@@ -18,8 +18,9 @@
  * RECOVERY_ENV for an operator running this by hand). A title with no env
  * marker is `indeterminate` and fails the job red -- it is never defaulted to
  * prod. Missing credentials for the selected project, a read error, a
- * malformed row and an incomplete intent all THROW; only "no checkpoint and no
- * audit row" is a legitimate skip.
+ * malformed row and an incomplete intent all THROW. `resolveForProject` returns
+ * null only for "no checkpoint and no audit row"; `recover` turns that into the
+ * `no_progress_record` halt (SMI-7121), never a skip.
  *
  * Emits GITHUB_OUTPUT keys for the calling workflow step to consume:
  *   skip=true|false, skip_reason=<string>, and (only when skip=false) every
@@ -37,6 +38,16 @@ import {
   MalformedDispatchInputs,
   validateDispatchInputs,
 } from './backfill-dispatch-inputs.validate.ts'
+import {
+  applyAcknowledgements,
+  evaluateHalts,
+  haltOutputs,
+  noProgressRecordHalt,
+  parseAcknowledgedHalts,
+  parseNdbMax,
+  type Halt,
+  type HaltCheckpoint,
+} from './backfill-autochain-halts.ts'
 
 export { MalformedDispatchInputs }
 
@@ -97,6 +108,11 @@ interface ResolvedDispatch {
    * new "last real progress" the count is measured from.
    */
   isRetry: boolean
+  /**
+   * SMI-7121: the checkpoint payload the halts read. Present only on the checkpoint
+   * path; the retry path crawled nothing and is exempt from the halts.
+   */
+  haltCheckpoint?: HaltCheckpoint
 }
 
 /**
@@ -104,7 +120,7 @@ interface ResolvedDispatch {
  * checkpoint first, then the completed run's own skip-branch audit row
  * (never a global "latest" lookup -- round-3 fix).
  *
- * Returns `null` ONLY when the project has neither (legitimate "no row").
+ * Returns `null` ONLY when the project has neither (the only no-row result; `recover()` turns it into the `no_progress_record` halt).
  * Throws on a read error, a malformed row, or a row lacking dispatch_inputs.
  */
 export async function resolveForProject(
@@ -133,6 +149,7 @@ export async function resolveForProject(
       dispatchInputs: validateDispatchInputs(checkpoint.dispatch_inputs),
       cursorDone: checkpoint.cursor.facet === 'done',
       isRetry: false,
+      haltCheckpoint: checkpoint as HaltCheckpoint,
     }
   }
 
@@ -152,7 +169,7 @@ export async function resolveForProject(
     throw new Error(`Audit-row fallback read failed for run ${completedRunId}: ${error.message}`)
   }
   if (!data) {
-    return null // zero rows: the only legitimate "no row"
+    return null // zero rows: the only no-row result; recover() turns it into the no_progress_record halt
   }
 
   // `dry_run` is a top-level metadata field (sibling to `.meta`) reflecting
@@ -312,12 +329,25 @@ export async function recover(opts: {
       createClient(u, k, { auth: { autoRefreshToken: false, persistSession: false } }))
   const client = makeClient(url, key)
 
+  // SMI-7121: parse the halt knobs before any database read so a bad value is red on
+  // every path, including an attempt to acknowledge no_progress_record.
+  const ndbMax = parseNdbMax(penv.BACKFILL_NDB_MAX)
+  const acked = parseAcknowledgedHalts(penv.ACKNOWLEDGE_HALTS)
+
   const resolved = await resolveForProject(client, completedRunId, supabaseEnv)
-  if (!resolved) {
-    return {
-      skip: 'true',
-      skip_reason: `No checkpoint or skip-branch audit row found for this run in the ${supabaseEnv} project -- failing closed rather than guessing from a global "latest" lookup.`,
-    }
+
+  // SMI-7121 D1: a finished run with neither a checkpoint nor a skip-branch row is a
+  // halt (red, alerted), never a green skip.
+  if (!resolved) return haltOutputs([noProgressRecordHalt(supabaseEnv)])
+
+  // SMI-7121: evaluate the halts BEFORE the cursorDone return -- a foreign-cursor
+  // `done` is exactly the case that must not read as success. Retry path is exempt.
+  if (!resolved.isRetry && resolved.haltCheckpoint) {
+    const remaining: Halt[] = applyAcknowledgements(
+      evaluateHalts(resolved.haltCheckpoint, { ndbMax }),
+      acked
+    )
+    if (remaining.length > 0) return haltOutputs(remaining)
   }
   if (resolved.cursorDone) {
     return {
@@ -352,6 +382,9 @@ export async function recover(opts: {
   }
 }
 
+/** Exit code for a halted link; 1 stays reserved for errors. */
+export const HALTED_EXIT_CODE = 3
+
 async function main(): Promise<void> {
   const completedRunId = process.env.COMPLETED_RUN_ID
   if (!completedRunId) {
@@ -365,7 +398,19 @@ async function main(): Promise<void> {
   if (supabaseEnv === 'indeterminate') {
     throw new IndeterminateEnv(process.env.RUN_DISPLAY_TITLE)
   }
-  emitOutputs(await recover({ completedRunId, supabaseEnv }))
+  const outputs = await recover({ completedRunId, supabaseEnv })
+  emitOutputs(outputs)
+  if (outputs.halted === 'true') {
+    // Red job until the dedicated halt steps replace the failure alert (SMI-7121 Wave 2b-ii).
+    console.error(
+      JSON.stringify({
+        event: 'autochain_halted',
+        halt_names: outputs.halt_names,
+        halt_message: outputs.halt_message,
+      })
+    )
+    process.exit(HALTED_EXIT_CODE)
+  }
 }
 
 // Only run when invoked directly (npx tsx), not when imported for its

@@ -104,7 +104,27 @@ describe('SMI-6246: resolveForProject — exact-match checkpoint path', () => {
       dispatchInputs,
       cursorDone: false,
       isRetry: false,
+      // SMI-7121: the checkpoint payload the halts read rides along on the checkpoint path.
+      haltCheckpoint: expect.objectContaining({
+        run_id: 'run-42',
+        dispatch_inputs: dispatchInputs,
+      }),
     })
+  })
+
+  it('SMI-7121: the retry path carries no haltCheckpoint (it is exempt from the halts)', async () => {
+    const { supabase } = makeSupabase({
+      checkpointRow: null,
+      auditRow: {
+        metadata: {
+          dry_run: false,
+          meta: { status: 'skipped_lock', resumed_from: 'latest', dispatch_inputs: dispatchInputs },
+        },
+      },
+    })
+    const result = await resolveForProject(supabase as never, 'run-42', 'prod')
+    expect(result?.isRetry).toBe(true)
+    expect(result?.haltCheckpoint).toBeUndefined()
   })
 
   it('treats cursor.facet === "done" as campaign complete', async () => {
