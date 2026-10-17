@@ -11,7 +11,9 @@
 # id and created_at but advances run_attempt and run_started_at. So:
 #   (d) a workflow_run whose attempt is > 1 never chains (a re-run must not continue the
 #       chain automatically). TRIGGER_EVENT=workflow_run only; a manual dispatch names
-#       the attempt it resumes and is not refused on attempt alone.
+#       the attempt it resumes and is not refused on attempt alone. A scheduled resume
+#       (TRIGGER_EVENT=schedule, SMI-7121) names the attempt its deferral marker recorded
+#       and has exactly the workflow_dispatch semantics: (b) and (c) still apply.
 #   (b) the triggering run's CURRENT run_attempt, re-read from the API now and again
 #       after the scans, must still equal TRIGGER_RUN_ATTEMPT; greater means it was re-run.
 #   (c) any OTHER run (id differs) whose created_at >= the triggering run's created_at OR
@@ -30,7 +32,7 @@
 #      bad input, too many pages): an unread state is never "clear"
 #
 # Env: GH_TOKEN, GITHUB_REPOSITORY, COMPLETED_RUN_ID, TRIGGER_RUN_ATTEMPT,
-#      TRIGGER_EVENT (workflow_run | workflow_dispatch); GITHUB_STEP_SUMMARY (optional).
+#      TRIGGER_EVENT (workflow_run | workflow_dispatch | schedule); GITHUB_STEP_SUMMARY (optional).
 # Requires gh and node.
 set -uo pipefail
 
@@ -51,7 +53,7 @@ EVT="${TRIGGER_EVENT:-}"
 [ -n "${GH_TOKEN:-}" ] || fail "GH_TOKEN is not set"
 case "$RID" in ''|*[!0-9]*) fail "COMPLETED_RUN_ID '$RID' is not a run id" ;; esac
 case "$ATT" in ''|*[!0-9]*|0*) fail "TRIGGER_RUN_ATTEMPT '$ATT' is not a run attempt (a positive integer)" ;; esac
-case "$EVT" in workflow_run|workflow_dispatch) ;; *) fail "TRIGGER_EVENT '$EVT' is not workflow_run or workflow_dispatch" ;; esac
+case "$EVT" in workflow_run|workflow_dispatch|schedule) ;; *) fail "TRIGGER_EVENT '$EVT' is not workflow_run, workflow_dispatch or schedule" ;; esac
 
 # Pure JSON helper (node); one body in on stdin, one verdict line out.
 js(){ node -e '

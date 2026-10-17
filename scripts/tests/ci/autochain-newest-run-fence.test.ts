@@ -329,4 +329,51 @@ describe('autochain-newest-run-fence.sh', () => {
       expect(r.status, r.out).toBe(3)
     })
   })
+
+  describe('TRIGGER_EVENT=schedule (SMI-7121 resume) has exactly the workflow_dispatch semantics', () => {
+    const LATER = '2026-10-12T10:30:00Z'
+
+    it('CONTROL: a schedule resume of the newest run => exit 0', () => {
+      const r = drive({ 1: [SELF] }, { env: { TRIGGER_EVENT: 'schedule' } })
+      expect(r.status, r.out).toBe(0)
+      expect(r.out).toContain('Fence passed')
+    })
+
+    it('is not refused on attempt alone: the marker names attempt 2 of a run at attempt 2 => exit 0', () => {
+      const r = drive(
+        { 1: [SELF] },
+        {
+          runBody: trigger({ run_attempt: 2, run_started_at: LATER }),
+          env: { TRIGGER_RUN_ATTEMPT: '2', TRIGGER_EVENT: 'schedule' },
+        }
+      )
+      expect(r.status, r.out).toBe(0)
+    })
+
+    it('check (b) applies: the marker names attempt 1 but the run is now at attempt 2 => exit 3', () => {
+      const r = drive(
+        { 1: [SELF] },
+        {
+          runBody: trigger({ run_attempt: 2, run_started_at: LATER }),
+          env: { TRIGGER_EVENT: 'schedule' },
+        }
+      )
+      expect(r.status, r.out).toBe(3)
+      expect(r.out).toMatch(/now attempt 2 .* re-run/)
+    })
+
+    it('check (c) applies: a later run exists => exit 3', () => {
+      const r = drive(
+        { 1: [SELF, run(5001, 'completed', '2026-10-12T10:05:00Z')] },
+        { env: { TRIGGER_EVENT: 'schedule' } }
+      )
+      expect(r.status, r.out).toBe(3)
+      expect(r.out).toMatch(/5001:completed/)
+    })
+
+    it('an unreadable run list => exit 1 (never a pass)', () => {
+      const r = drive(null, { env: { TRIGGER_EVENT: 'schedule' } })
+      expect(r.status, r.out).toBe(1)
+    })
+  })
 })

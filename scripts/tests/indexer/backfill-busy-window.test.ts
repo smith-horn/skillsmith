@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { parse as parseYaml } from 'yaml'
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -137,17 +138,39 @@ describe('windowState.nextOpenUtc', () => {
   })
 })
 
-/** Minutes of the day (UTC) on which the cron `3,23,43 <hours> * * *` fires. */
-function resumeTicks(): number[] {
-  const hours = [1, 4, 9, 10, 15, 16, 21, 22]
-  return hours.flatMap((h) => [3, 23, 43].map((m) => h * 60 + m))
+/**
+ * The resume cron, read from the SHIPPED workflow's own `on.schedule` entry (SMI-7121
+ * Wave 2b-ii), never a copied literal: a change to that line is what this test constrains.
+ */
+function workflowResumeCron(): string {
+  const wf = parseYaml(
+    readFileSync(join(here, '../../../.github/workflows/indexer-backfill-autochain.yml'), 'utf8')
+  ) as { on: { schedule?: Array<{ cron?: unknown }> } }
+  const schedule = wf.on.schedule
+  expect(Array.isArray(schedule) && schedule.length === 1, 'exactly one schedule entry').toBe(true)
+  const cron = schedule![0].cron
+  expect(typeof cron).toBe('string')
+  return cron as string
 }
 
-// DESIGN-TIME CHECK of the PLANNED resume cron, not of the shipped workflow: the literal in
-// resumeTicks() is a copy. Wave 2b-ii must replace it with a read of the workflow's own
-// `schedule` entry so this test constrains what actually runs.
-describe('planned resume cron places ticks inside every open window (design-time check)', () => {
-  it('3,23,43 1,4,9,10,15,16,21,22 * * * lands >=2 ticks in each maximal open window (default hours)', () => {
+/** Minutes of the day (UTC) on which a `<minutes> <hours> * * *` cron fires (lists of integers only). */
+function cronTicks(cron: string): number[] {
+  const fields = cron.trim().split(/\s+/)
+  expect(fields.slice(2), `cron ${cron} must be daily: <m> <h> * * *`).toEqual(['*', '*', '*'])
+  const list = (f: string, max: number) =>
+    f.split(',').map((t) => {
+      expect(t, `cron field ${f} must be a list of integers`).toMatch(/^(0|[1-9][0-9]?)$/)
+      const n = Number(t)
+      expect(n).toBeLessThanOrEqual(max)
+      return n
+    })
+  const minutes = list(fields[0], 59)
+  const hours = list(fields[1], 23)
+  return hours.flatMap((h) => minutes.map((m) => h * 60 + m))
+}
+
+describe('the shipped resume cron places ticks inside every open window', () => {
+  it('the workflow schedule lands >=2 ticks in each maximal open window (default hours)', () => {
     const hours = parseBusyHours(undefined)
     const open = Array.from(
       { length: 1440 },
@@ -167,7 +190,7 @@ describe('planned resume cron places ticks inside every open window (design-time
       }
     }
     expect(windows.length).toBeGreaterThan(0)
-    const ticks = resumeTicks()
+    const ticks = cronTicks(workflowResumeCron())
     for (const [a, b] of windows) {
       const inside = ticks.filter((t) => {
         const k = (t - start + 1440) % 1440
