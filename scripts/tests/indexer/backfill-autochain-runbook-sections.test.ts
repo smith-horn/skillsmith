@@ -37,6 +37,12 @@ const skipReason = !runbookPresent
     : ''
 if (skipReason) console.warn(`[backfill-autochain-runbook-sections] SKIPPED: ${skipReason}`)
 
+// The workflow check needs only the runbook: an encrypted migration is irrelevant to it, and the
+// workflow is tracked in this repo, so its absence is a failure (asserted below), never a skip.
+const workflowSkipReason = runbookPresent
+  ? ''
+  : `runbook ${RUNBOOK} is absent (docs/internal submodule not checked out, as in CI)`
+
 /** Every literal the watcher assigns to v_section. */
 function sectionNames(sql: string): string[] {
   return [...sql.matchAll(/v_section\s*:=\s*'((?:[^']|'')*)'/g)].map((m) =>
@@ -107,9 +113,10 @@ describe('watcher runbook sections exist', () => {
     expect(missingFrom(['Alpha one'], headings(renamed))).toEqual(['Alpha one'])
   })
 
-  it.skipIf(skipReason !== '' || !existsSync(WORKFLOW))(
+  it.skipIf(workflowSkipReason !== '')(
     'each section the autochain workflow cites exists in backfill-autochain-handover.md',
     () => {
+      expect(existsSync(WORKFLOW), `workflow ${WORKFLOW} is missing`).toBe(true)
       const yml = readFileSync(WORKFLOW, 'utf8')
       const quoted = workflowQuotedSections(yml)
       const numbered = workflowNumberedSections(yml)
