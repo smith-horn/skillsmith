@@ -37,6 +37,16 @@ import {
   MalformedDispatchInputs,
   validateDispatchInputs,
 } from './backfill-dispatch-inputs.validate.ts'
+import {
+  applyAcknowledgements,
+  evaluateHalts,
+  haltOutputs,
+  noProgressRecordHalt,
+  parseAcknowledgedHalts,
+  parseNdbMax,
+  type Halt,
+  type HaltCheckpoint,
+} from './backfill-autochain-halts.ts'
 
 export { MalformedDispatchInputs }
 
@@ -97,6 +107,11 @@ interface ResolvedDispatch {
    * new "last real progress" the count is measured from.
    */
   isRetry: boolean
+  /**
+   * SMI-7121: the checkpoint payload the halts read. Present only on the checkpoint
+   * path; the retry path crawled nothing and is exempt from the halts.
+   */
+  haltCheckpoint?: HaltCheckpoint
 }
 
 /**
@@ -133,6 +148,7 @@ export async function resolveForProject(
       dispatchInputs: validateDispatchInputs(checkpoint.dispatch_inputs),
       cursorDone: checkpoint.cursor.facet === 'done',
       isRetry: false,
+      haltCheckpoint: checkpoint as HaltCheckpoint,
     }
   }
 
@@ -313,11 +329,23 @@ export async function recover(opts: {
   const client = makeClient(url, key)
 
   const resolved = await resolveForProject(client, completedRunId, supabaseEnv)
-  if (!resolved) {
-    return {
-      skip: 'true',
-      skip_reason: `No checkpoint or skip-branch audit row found for this run in the ${supabaseEnv} project -- failing closed rather than guessing from a global "latest" lookup.`,
-    }
+  // SMI-7121: parse the halt knobs first so a bad value is red on every path, including
+  // an attempt to acknowledge no_progress_record (not acknowledgeable).
+  const ndbMax = parseNdbMax(penv.BACKFILL_NDB_MAX)
+  const acked = parseAcknowledgedHalts(penv.ACKNOWLEDGE_HALTS)
+
+  // SMI-7121 D1: a finished run with neither a checkpoint nor a skip-branch row is a
+  // halt (red, alerted), never a green skip.
+  if (!resolved) return haltOutputs([noProgressRecordHalt(supabaseEnv)])
+
+  // SMI-7121: evaluate the halts BEFORE the cursorDone return -- a foreign-cursor
+  // `done` is exactly the case that must not read as success. Retry path is exempt.
+  if (!resolved.isRetry && resolved.haltCheckpoint) {
+    const remaining: Halt[] = applyAcknowledgements(
+      evaluateHalts(resolved.haltCheckpoint, { ndbMax }),
+      acked
+    )
+    if (remaining.length > 0) return haltOutputs(remaining)
   }
   if (resolved.cursorDone) {
     return {
@@ -352,6 +380,9 @@ export async function recover(opts: {
   }
 }
 
+/** Exit code for a halted link; 1 stays reserved for errors. */
+export const HALTED_EXIT_CODE = 3
+
 async function main(): Promise<void> {
   const completedRunId = process.env.COMPLETED_RUN_ID
   if (!completedRunId) {
@@ -365,7 +396,19 @@ async function main(): Promise<void> {
   if (supabaseEnv === 'indeterminate') {
     throw new IndeterminateEnv(process.env.RUN_DISPLAY_TITLE)
   }
-  emitOutputs(await recover({ completedRunId, supabaseEnv }))
+  const outputs = await recover({ completedRunId, supabaseEnv })
+  emitOutputs(outputs)
+  if (outputs.halted === 'true') {
+    // Red job until the dedicated halt steps replace the failure alert (SMI-7121 Wave 2b-ii).
+    console.error(
+      JSON.stringify({
+        event: 'autochain_halted',
+        halt_names: outputs.halt_names,
+        halt_message: outputs.halt_message,
+      })
+    )
+    process.exit(HALTED_EXIT_CODE)
+  }
 }
 
 // Only run when invoked directly (npx tsx), not when imported for its

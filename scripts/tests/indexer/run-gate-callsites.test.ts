@@ -132,6 +132,9 @@ const PINNED_SHAPE4_UNGATED_GUARD = [
   'smi5879-corroboration-generate.ts',
   'smi5879-merge-shards.ts',
   'backfill-autochain-inputs.ts',
+  // SMI-7121: a pure predicate with a CLI wrapper the autochain workflow runs; it only
+  // prints window_open/next_window_utc and never writes through an indexer writer.
+  'backfill-busy-window.ts',
   'smi5207-blast-radius-weekly.ts',
   'smi5207-blast-radius-transitions.ts',
   // SMI-6441 Wave 2: same shape and same reason as the two SMI-5207

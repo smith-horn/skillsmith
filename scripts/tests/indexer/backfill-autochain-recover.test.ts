@@ -37,6 +37,9 @@ const prodCheckpoint = {
   incomplete_results_ranges: 0,
   dry_run: false,
   dispatch_inputs: dispatchInputs,
+  // SMI-7121: the fields Wave 1 writes; a checkpoint without them halts as counters_missing.
+  dispatch_counters: { admitted: 4, no_default_branch: 0, license_filtered: 0, ranges_crawled: 3 },
+  resumed_from: { run_id: '38013586000', path: '.agents/skills' },
 }
 
 interface MockOpts {
@@ -106,7 +109,7 @@ describe('recover -- controls (distinct outcomes)', () => {
     expect(out.resume_from).toBe('38013586443')
   })
 
-  it('none: zero rows (e.g. a coldstart-<prefix> id) is a legal skip with reason "No checkpoint"', async () => {
+  it('none: zero rows (e.g. a coldstart-<prefix> id) is the no_progress_record halt, not a green skip (SMI-7121 D1)', async () => {
     const { factory } = makeClient({})
     const out = await recover({
       completedRunId: 'coldstart-x',
@@ -115,7 +118,11 @@ describe('recover -- controls (distinct outcomes)', () => {
       makeClient: factory,
     })
     expect(out.skip).toBe('true')
-    expect(out.skip_reason).toMatch(/No checkpoint or skip-branch audit row/)
+    expect(out.halted).toBe('true')
+    expect(out.halt_names).toBe('no_progress_record')
+    expect(out.halt_message).toMatch(/backfill_aborted_lock_lost/)
+    expect(out.halt_message).toMatch(/phase_failed/)
+    expect(out.halt_message).toMatch(/checkpoint FAILED/)
   })
 
   it('error: a checkpoint read error THROWS -- it is not a skip', async () => {
@@ -359,5 +366,117 @@ describe('parseSupabaseEnvFromTitle', () => {
     ['empty', ''],
   ])('%s -> indeterminate (never defaulted to prod)', (_label, title) => {
     expect(parseSupabaseEnvFromTitle(title as string | undefined)).toBe('indeterminate')
+  })
+})
+
+describe('recover -- SMI-7121 halts', () => {
+  const ckpt = (over: Record<string, unknown>) => ({
+    checkpointRow: { metadata: { ...prodCheckpoint, ...over } },
+  })
+  const recoverEnv = (opts: MockOpts, extra: Record<string, string> = {}) =>
+    recover({
+      completedRunId: 'r1',
+      supabaseEnv: 'prod',
+      processEnv: { ...PROD_ONLY, ...extra },
+      makeClient: makeClient(opts).factory,
+    })
+
+  it('CONTROL: a clean checkpoint is not halted and re-dispatches', async () => {
+    const out = await recoverEnv(ckpt({}))
+    expect(out.skip).toBe('false')
+    expect(out.halted).toBeUndefined()
+  })
+
+  it('halts are evaluated BEFORE cursorDone: a done checkpoint with a halt returns halted, not the done skip', async () => {
+    const out = await recoverEnv(
+      ckpt({
+        cursor: { path: '.agents/skills', facet: 'done', last_page: 1 },
+        dispatch_counters: {
+          admitted: 0,
+          no_default_branch: 0,
+          license_filtered: 2,
+          ranges_crawled: 3,
+        },
+      })
+    )
+    expect(out.halted).toBe('true')
+    expect(out.skip).toBe('true')
+    expect(out.halt_names).toBe('license_filtered')
+    expect(out.skip_reason).not.toMatch(/already reached/)
+  })
+
+  it('CONTROL: a done checkpoint with no halt still returns the done skip', async () => {
+    const out = await recoverEnv(
+      ckpt({ cursor: { path: '.agents/skills', facet: 'done', last_page: 1 } })
+    )
+    expect(out.skip).toBe('true')
+    expect(out.halted).toBeUndefined()
+    expect(out.skip_reason).toMatch(/already reached/)
+  })
+
+  it('a foreign resumed_from path halts as b1_foreign_cursor', async () => {
+    const out = await recoverEnv(ckpt({ resumed_from: { run_id: 'x', path: '' } }))
+    expect(out.halt_names).toBe('b1_foreign_cursor')
+    expect(out.skip).toBe('true')
+  })
+
+  it('the retry path is exempt from halts (it crawled nothing)', async () => {
+    const out = await recoverEnv({
+      auditRow: retryAudit(dispatchInputs),
+      count: { data: [], error: null },
+    })
+    expect(out.skip).toBe('false')
+    expect(out.halted).toBeUndefined()
+  })
+
+  it('a legacy checkpoint (no counters) halts as counters_missing', async () => {
+    const legacy: Record<string, unknown> = { ...prodCheckpoint }
+    delete legacy.dispatch_counters
+    delete legacy.resumed_from
+    const out = await recoverEnv({ checkpointRow: { metadata: legacy } })
+    expect(out.halt_names).toBe('counters_missing')
+  })
+
+  it('ACKNOWLEDGE_HALTS lets the named halt pass; an unnamed halt still fires', async () => {
+    const two = ckpt({
+      dispatch_counters: {
+        admitted: 1,
+        no_default_branch: 99,
+        license_filtered: 1,
+        ranges_crawled: 1,
+      },
+    })
+    const acked = await recoverEnv(two, { ACKNOWLEDGE_HALTS: 'license_filtered' })
+    expect(acked.halt_names).toBe('no_default_branch')
+    const both = await recoverEnv(two, { ACKNOWLEDGE_HALTS: 'license_filtered, no_default_branch' })
+    expect(both.skip).toBe('false')
+  })
+
+  it('BACKFILL_NDB_MAX raises the threshold', async () => {
+    const c = ckpt({
+      dispatch_counters: {
+        admitted: 1,
+        no_default_branch: 99,
+        license_filtered: 0,
+        ranges_crawled: 1,
+      },
+    })
+    expect((await recoverEnv(c)).halt_names).toBe('no_default_branch')
+    expect((await recoverEnv(c, { BACKFILL_NDB_MAX: '99' })).skip).toBe('false')
+  })
+
+  it('an unknown acknowledgement THROWS (red), as does a bad BACKFILL_NDB_MAX', async () => {
+    await expect(recoverEnv(ckpt({}), { ACKNOWLEDGE_HALTS: 'nope' })).rejects.toThrow(
+      /unknown halt/
+    )
+    await expect(recoverEnv(ckpt({}), { BACKFILL_NDB_MAX: '-1' })).rejects.toThrow(
+      /BACKFILL_NDB_MAX/
+    )
+  })
+
+  it('no_progress_record cannot be acknowledged', async () => {
+    await expect(recoverEnv({}, { ACKNOWLEDGE_HALTS: 'no_progress_record' })).rejects.toThrow(
+      /cannot be acknowledged/
+    )
   })
 })
