@@ -147,5 +147,6 @@ describe('main() exit codes', () => {
     checkpoint = { ...baseCheckpoint }
     const r = await runMain({ COMPLETED_RUN_ID: 'r1', ACKNOWLEDGE_HALTS: 'bogus' })
     expect(r.code).toBe(1)
+    expect(r.stderr).toMatch(/names an unknown halt .*bogus/)
   })
 })

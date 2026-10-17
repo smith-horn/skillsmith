@@ -112,6 +112,23 @@ describe('evaluateHalts', () => {
       })
       expect(names(evaluateHalts(cp, { ndbMax: 50 }))).toEqual([])
     })
+    it('fails closed when dispatch_inputs is missing and resumed_from is non-null', () => {
+      const cp = clean()
+      delete cp.dispatch_inputs
+      const halts = evaluateHalts(cp, { ndbMax: 50 })
+      expect(names(halts)).toEqual(['b1_foreign_cursor'])
+      expect(halts[0].detail).toMatch(/missing or unusable/)
+    })
+    it('fails closed when pathPrefix is not a string (numeric) and resumed_from is non-null', () => {
+      const cp = clean({ dispatch_inputs: { pathPrefix: 7 } })
+      const halts = evaluateHalts(cp, { ndbMax: 50 })
+      expect(names(halts)).toEqual(['b1_foreign_cursor'])
+      expect(halts[0].detail).toMatch(/missing or unusable/)
+    })
+    it('an unusable pathPrefix with resumed_from null (cold start) does not halt', () => {
+      const cp = clean({ resumed_from: null, dispatch_inputs: { pathPrefix: 7 } })
+      expect(evaluateHalts(cp, { ndbMax: 50 })).toEqual([])
+    })
     it('a non-string resumed_from.path halts', () => {
       const cp = clean({ resumed_from: { run_id: 'x' } })
       expect(names(evaluateHalts(cp, { ndbMax: 50 }))).toEqual(['b1_foreign_cursor'])

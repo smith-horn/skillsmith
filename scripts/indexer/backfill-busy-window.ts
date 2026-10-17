@@ -7,6 +7,11 @@
  * starts at least {@link MIN_MINUTES_TO_BUSY} minutes away. Parity with the bash is
  * asserted by `scripts/tests/indexer/backfill-busy-window.test.ts`.
  *
+ * Parsing is deliberately stricter than the driver: the driver's bash matches only
+ * space-padded hours (` 0 3 `), whereas this accepts any whitespace-separated list
+ * (`0 3` is normalised to [0, 3]) and rejects leading zeros (`03`) so the accepted
+ * language is unambiguous. The predicate itself is identical to the driver's.
+ *
  * CLI: reads BACKFILL_BUSY_HOURS and optional NOW_UTC (ISO, for tests); writes
  * `window_open` and `next_window_utc` to GITHUB_OUTPUT when set, else stdout.
  */
@@ -27,8 +32,10 @@ export function parseBusyHours(raw: string | undefined): number[] {
   }
   const hours: number[] = []
   for (const t of tokens) {
-    if (!/^[0-9]+$/.test(t) || Number(t) > 23) {
-      throw new Error(`BACKFILL_BUSY_HOURS entry ${JSON.stringify(t)} is not an integer 0-23`)
+    if (!/^(0|[1-9][0-9]*)$/.test(t) || Number(t) > 23) {
+      throw new Error(
+        `BACKFILL_BUSY_HOURS entry ${JSON.stringify(t)} is not an unpadded integer 0-23`
+      )
     }
     const h = Number(t)
     if (hours.includes(h)) {

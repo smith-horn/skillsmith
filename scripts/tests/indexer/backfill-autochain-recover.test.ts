@@ -474,6 +474,29 @@ describe('recover -- SMI-7121 halts', () => {
     )
   })
 
+  it('an invalid knob is red BEFORE any database read', async () => {
+    const { factory } = makeClient({})
+    const fromSpy = vi.fn()
+    const spyFactory = (url: string, key: string) => {
+      const c = factory(url, key) as unknown as { from: (t: string) => unknown }
+      const orig = c.from
+      c.from = (t: string) => {
+        fromSpy(t)
+        return orig(t)
+      }
+      return c as never
+    }
+    await expect(
+      recover({
+        completedRunId: 'r1',
+        supabaseEnv: 'prod',
+        processEnv: { ...PROD_ONLY, ACKNOWLEDGE_HALTS: 'bogus' },
+        makeClient: spyFactory,
+      })
+    ).rejects.toThrow(/unknown halt/)
+    expect(fromSpy).not.toHaveBeenCalled()
+  })
+
   it('no_progress_record cannot be acknowledged', async () => {
     await expect(recoverEnv({}, { ACKNOWLEDGE_HALTS: 'no_progress_record' })).rejects.toThrow(
       /cannot be acknowledged/

@@ -74,13 +74,17 @@ describe('parseBusyHours', () => {
     ['', [0, 3, 6, 7, 8, 12, 13, 14, 18, 19, 20]],
     [' 1 2 ', [1, 2]],
     ['5', [5]],
+    ['0 3', [0, 3]],
     ['23   0\t7', [23, 0, 7]],
   ])('%j -> %j', (raw, expected) => {
     expect(parseBusyHours(raw as string | undefined)).toEqual(expected)
   })
-  it.each(['1 1', '24', '-1', '7a', '   ', '1.5', '1,2', '+3'])('%j throws', (raw) => {
-    expect(() => parseBusyHours(raw)).toThrow(/BACKFILL_BUSY_HOURS/)
-  })
+  it.each(['03', '1 007', '1 1', '24', '-1', '7a', '   ', '1.5', '1,2', '+3'])(
+    '%j throws',
+    (raw) => {
+      expect(() => parseBusyHours(raw)).toThrow(/BACKFILL_BUSY_HOURS/)
+    }
+  )
 })
 
 describe('windowState.nextOpenUtc', () => {
@@ -94,6 +98,25 @@ describe('windowState.nextOpenUtc', () => {
   it('inside a busy hour: next open is the first open minute after it', () => {
     // 12,13,14 busy; 15:00 is open (next busy 18 is 180m away).
     const s = at('2026-10-16T12:30:00Z')
+    expect(s.open).toBe(false)
+    expect(s.nextOpenUtc.toISOString()).toBe('2026-10-16T15:00:00.000Z')
+  })
+  // Pre-merge gate (PR-16): the search must advance absolute minutes, so a closed time late in the
+  // day finds the NEXT day's window, never an earlier window on the same date.
+  it('late evening, closed, nonzero seconds: next open is 01:00 the next day', () => {
+    // 23 is within 60m of busy hour 0; 0 is busy; 01:00 opens (next busy 3 is 120m away).
+    const s = at('2026-10-16T23:15:30Z')
+    expect(s.open).toBe(false)
+    expect(s.nextOpenUtc.toISOString()).toBe('2026-10-17T01:00:00.000Z')
+  })
+  it('just after the last window closes: next open is 01:00 the next day', () => {
+    // 22:41 onward is under 80m from busy hour 0.
+    const s = at('2026-10-16T22:45:00Z')
+    expect(s.open).toBe(false)
+    expect(s.nextOpenUtc.toISOString()).toBe('2026-10-17T01:00:00.000Z')
+  })
+  it('hour boundary with nonzero seconds: next open is the next whole open minute', () => {
+    const s = at('2026-10-16T14:59:30Z')
     expect(s.open).toBe(false)
     expect(s.nextOpenUtc.toISOString()).toBe('2026-10-16T15:00:00.000Z')
   })
@@ -120,7 +143,10 @@ function resumeTicks(): number[] {
   return hours.flatMap((h) => [3, 23, 43].map((m) => h * 60 + m))
 }
 
-describe('planned resume cron places ticks inside every open window', () => {
+// DESIGN-TIME CHECK of the PLANNED resume cron, not of the shipped workflow: the literal in
+// resumeTicks() is a copy. Wave 2b-ii must replace it with a read of the workflow's own
+// `schedule` entry so this test constrains what actually runs.
+describe('planned resume cron places ticks inside every open window (design-time check)', () => {
   it('3,23,43 1,4,9,10,15,16,21,22 * * * lands >=2 ticks in each maximal open window (default hours)', () => {
     const hours = parseBusyHours(undefined)
     const open = Array.from(

@@ -29,7 +29,9 @@
 #     its credentials: its project comes from the run's display_title
 #     (`run-name` carries env=<prod|staging>). No env marker = indeterminate =
 #     red, never defaulted. Missing creds / read error / malformed row /
-#     incomplete intent all fail the job red; only "no row" is a skip.
+#     incomplete intent all fail the job red. "No row" (no checkpoint and no
+#     skip-branch row for a successful run) is the no_progress_record halt
+#     (SMI-7121): red, never a skip.
 #   - Every dispatch carries `dispatch_token=ac-<run_id>`, which appears in the
 #     dispatched run's `run-name` so the run can be resolved by token.
 #   - `workflow_dispatch` (completed_run_id + verify_only) re-runs the recovery

@@ -82,7 +82,13 @@ export function evaluateHalts(checkpoint: HaltCheckpoint, opts: { ndbMax: number
   const prefix = checkpoint.dispatch_inputs?.pathPrefix
   if (hasResumedFrom && resumedFrom !== null && resumedFrom !== undefined) {
     const loadedPath = isRecord(resumedFrom) ? resumedFrom.path : undefined
-    if (typeof prefix === 'string' && loadedPath !== prefix) {
+    if (typeof prefix !== 'string') {
+      // Fail closed: without a usable dispatch prefix the property cannot be checked.
+      halts.push({
+        name: 'b1_foreign_cursor',
+        detail: `The run resumed from a checkpoint (path=${JSON.stringify(loadedPath ?? null)}) but its dispatch path_prefix is missing or unusable (${JSON.stringify(prefix ?? null)}), so a foreign cursor cannot be ruled out.`,
+      })
+    } else if (loadedPath !== prefix) {
       halts.push({
         name: 'b1_foreign_cursor',
         detail: `The run resumed from a checkpoint with path=${JSON.stringify(loadedPath ?? null)} but its dispatch path_prefix is ${JSON.stringify(prefix)}: a foreign cursor was inherited.`,

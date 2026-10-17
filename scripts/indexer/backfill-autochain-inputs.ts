@@ -18,8 +18,9 @@
  * RECOVERY_ENV for an operator running this by hand). A title with no env
  * marker is `indeterminate` and fails the job red -- it is never defaulted to
  * prod. Missing credentials for the selected project, a read error, a
- * malformed row and an incomplete intent all THROW; only "no checkpoint and no
- * audit row" is a legitimate skip.
+ * malformed row and an incomplete intent all THROW. `resolveForProject` returns
+ * null only for "no checkpoint and no audit row"; `recover` turns that into the
+ * `no_progress_record` halt (SMI-7121), never a skip.
  *
  * Emits GITHUB_OUTPUT keys for the calling workflow step to consume:
  *   skip=true|false, skip_reason=<string>, and (only when skip=false) every
@@ -119,7 +120,7 @@ interface ResolvedDispatch {
  * checkpoint first, then the completed run's own skip-branch audit row
  * (never a global "latest" lookup -- round-3 fix).
  *
- * Returns `null` ONLY when the project has neither (legitimate "no row").
+ * Returns `null` ONLY when the project has neither (the only no-row result; `recover()` turns it into the `no_progress_record` halt).
  * Throws on a read error, a malformed row, or a row lacking dispatch_inputs.
  */
 export async function resolveForProject(
@@ -168,7 +169,7 @@ export async function resolveForProject(
     throw new Error(`Audit-row fallback read failed for run ${completedRunId}: ${error.message}`)
   }
   if (!data) {
-    return null // zero rows: the only legitimate "no row"
+    return null // zero rows: the only no-row result; recover() turns it into the no_progress_record halt
   }
 
   // `dry_run` is a top-level metadata field (sibling to `.meta`) reflecting
@@ -328,11 +329,12 @@ export async function recover(opts: {
       createClient(u, k, { auth: { autoRefreshToken: false, persistSession: false } }))
   const client = makeClient(url, key)
 
-  const resolved = await resolveForProject(client, completedRunId, supabaseEnv)
-  // SMI-7121: parse the halt knobs first so a bad value is red on every path, including
-  // an attempt to acknowledge no_progress_record (not acknowledgeable).
+  // SMI-7121: parse the halt knobs before any database read so a bad value is red on
+  // every path, including an attempt to acknowledge no_progress_record.
   const ndbMax = parseNdbMax(penv.BACKFILL_NDB_MAX)
   const acked = parseAcknowledgedHalts(penv.ACKNOWLEDGE_HALTS)
+
+  const resolved = await resolveForProject(client, completedRunId, supabaseEnv)
 
   // SMI-7121 D1: a finished run with neither a checkpoint nor a skip-branch row is a
   // halt (red, alerted), never a green skip.
