@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   MARKER_EVENT,
+  MARKER_READ_LIMIT,
   MissingCredentials,
   MultipleOpenMarkers,
   RECONCILE_GRACE_MS,
@@ -102,6 +103,34 @@ describe('listLiveMarkers and live-check', () => {
     }
   })
 
+  describe('the read limit and its truncation guard are coupled (G3)', () => {
+    const open = (n: number) =>
+      Array.from({ length: n }, (_, i) => marker(`m${i}`, { state: 'open' }))
+
+    it('the query asks for exactly MARKER_READ_LIMIT rows', async () => {
+      const { clients, p } = projects([])
+      await listLiveMarkers(clients)
+      expect(p.calls.filters[0]).toContainEqual(['limit', MARKER_READ_LIMIT])
+    })
+
+    it('exactly MARKER_READ_LIMIT rows throws (the set may have been cut off)', async () => {
+      await expect(listLiveMarkers(projects(open(MARKER_READ_LIMIT)).clients)).rejects.toThrow(
+        /hit its \d+-row limit/
+      )
+    })
+
+    it('more rows than the limit throws (the database returns only the limit)', async () => {
+      await expect(listLiveMarkers(projects(open(MARKER_READ_LIMIT + 5)).clients)).rejects.toThrow(
+        /hit its \d+-row limit/
+      )
+    })
+
+    it('CONTROL: one row fewer than the limit is read in full', async () => {
+      const live = await listLiveMarkers(projects(open(MARKER_READ_LIMIT - 1)).clients)
+      expect(live).toHaveLength(MARKER_READ_LIMIT - 1)
+    })
+  })
+
   it('a read error in either project throws (never a zero count)', async () => {
     const ok = fakeProject([marker('a', { state: 'open' })])
     const bad = fakeProject([], { read: 'timeout' })
@@ -179,6 +208,33 @@ describe('scheduleTarget', () => {
       supabaseEnv: 'staging',
       acknowledgedHalts: '',
     })
+  })
+
+  it.each([
+    ['an undispatched consumed marker', { state: 'consumed' }],
+    [
+      'a consumed marker with an empty dispatched_run_id',
+      { state: 'consumed', dispatched_run_id: '' },
+    ],
+  ])('%s next to an open one: throws (V4, matching live-check)', async (_l, meta) => {
+    const { clients } = projects(
+      [marker('a', { state: 'open' })],
+      [marker('c', { ...meta, supabase_env: 'staging' })]
+    )
+    const err = await scheduleTarget(clients).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(MultipleOpenMarkers)
+    expect((err as MultipleOpenMarkers).markers.map((m) => `${m.id}:${m.state}`)).toEqual([
+      'a:open',
+      'c:consumed',
+    ])
+  })
+
+  it('CONTROL: a DISPATCHED consumed marker next to an open one does not refuse', async () => {
+    const { clients } = projects([
+      marker('a', { state: 'open' }),
+      marker('d', { state: 'consumed', dispatched_run_id: '9' }),
+    ])
+    expect(await scheduleTarget(clients)).toMatchObject({ resume: true, markerId: 'a' })
   })
 
   it('more than one open marker (even across projects): throws, never picks one', async () => {

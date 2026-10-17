@@ -14,7 +14,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 export const MARKER_EVENT = 'indexer_backfill_autochain_deferred'
 export const TRANSITION_RPC = 'backfill_autochain_marker_transition'
 /** More markers than this in one project is not a state this design can produce. */
-const MARKER_READ_LIMIT = 100
+export const MARKER_READ_LIMIT = 100
 
 export type SupabaseEnv = 'prod' | 'staging'
 export const ENVS: readonly SupabaseEnv[] = ['prod', 'staging']
@@ -56,7 +56,7 @@ export class MissingCredentials extends Error {
 export class MultipleOpenMarkers extends Error {
   constructor(public readonly markers: LiveMarker[]) {
     super(
-      `${markers.length} open deferral markers exist (${markers.map((m) => `${m.env}:${m.id}`).join(', ')}); the one-dispatcher invariant allows at most one live chain, so none is resumed`
+      `${markers.length} live deferral markers exist (open, or consumed without a dispatched run: ${markers.map((m) => `${m.env}:${m.id}:${m.state}`).join(', ')}); the one-dispatcher invariant allows at most one live chain, so none is resumed`
     )
     this.name = 'MultipleOpenMarkers'
   }
@@ -141,6 +141,8 @@ async function listLiveIn(client: SupabaseClient, env: SupabaseEnv): Promise<Liv
     .limit(MARKER_READ_LIMIT)
   if (error) throw new Error(`Marker read failed for env=${env}: ${error.message}`)
   if (!Array.isArray(data)) throw new Error(`Marker read for env=${env} returned no rows array`)
+  // The truncation guard and the .limit() above are the SAME constant: a result as long as the
+  // limit may have been cut off, so it is red. backfill-autochain-defer.test.ts pins both.
   if (data.length >= MARKER_READ_LIMIT) {
     throw new Error(
       `Marker read for env=${env} hit its ${MARKER_READ_LIMIT}-row limit; cannot prove the set is complete`

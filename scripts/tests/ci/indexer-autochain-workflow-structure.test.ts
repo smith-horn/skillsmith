@@ -49,7 +49,10 @@ describe('autochain workflow structure', () => {
     // cooldown, halt / retry-cap / reconcile / multiple-deferral (x2) / needs-intervention / failure
     // alerts, reconcile, marker close, insert, claim, dispatch
     expect(risky.length).toBeGreaterThanOrEqual(13)
+    // The one exemption: the kill-switch stop alert fires exactly when DISPATCH_ALLOWED is
+    // false, under its own condition (pinned in indexer-autochain-workflow-defer.test.ts).
     const ungated = risky
+      .filter((s) => s.name !== 'Alert on kill-switch stop (link)')
       .filter((s) => !(s.if ?? '').includes("env.DISPATCH_ALLOWED == 'true'"))
       .map((s) => s.name)
     expect(

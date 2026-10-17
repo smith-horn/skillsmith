@@ -51,6 +51,8 @@ export function fakeProject(
               r.event_type === eventType && (!states || states.includes(String(r.metadata.state)))
           )
           .map((r) => ({ id: r.id, created_at: r.created_at, metadata: { ...r.metadata } }))
+          // honour .limit(n) like PostgREST, so a truncated read is observable
+          .slice(0, (filters.find((f) => f[0] === 'limit')?.[1] as number | undefined) ?? Infinity)
         resolve({ data, error: null })
       },
     }

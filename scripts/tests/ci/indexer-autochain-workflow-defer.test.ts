@@ -110,11 +110,18 @@ describe('side effects and untrusted values', () => {
       'Refuse a second deferral',
       'Defer to the next window',
       'Claim the deferral marker (schedule)',
+      'Close the deferral marker, campaign complete (schedule)',
+      'Alert on kill-switch stop (link)',
       'Dispatch next chunk',
     ]) {
       expect(names, `side-effect step not detected: ${want}`).toContain(want)
     }
-    const ungated = risky.filter((s) => !(s.if ?? '').includes(DA)).map((s) => s.name)
+    // The one exemption: the kill-switch stop alert runs exactly when DISPATCH_ALLOWED is
+    // false, so it carries its own condition (pinned in the G1 test below).
+    const ungated = risky
+      .filter((s) => s.id !== 'kill_alert')
+      .filter((s) => !(s.if ?? '').includes(DA))
+      .map((s) => s.name)
     expect(
       ungated,
       `side-effect steps missing the DISPATCH_ALLOWED gate: ${ungated.join(', ')}`
@@ -158,12 +165,106 @@ describe('side effects and untrusted values', () => {
       ),
     ].sort()
     expect(types).toEqual([
+      'indexer_backfill_autochain_campaign_complete',
       'indexer_backfill_autochain_failed',
       'indexer_backfill_autochain_halted',
+      'indexer_backfill_autochain_kill_switch_stop',
       'indexer_backfill_autochain_multiple_deferrals',
       'indexer_backfill_autochain_needs_intervention',
       'indexer_backfill_autochain_retry_cap',
     ])
+  })
+})
+
+describe('kill switches (G1)', () => {
+  const alert = byId('kill_alert')
+
+  it('BACKFILL_KILL_SWITCH=1 on a workflow_run link alerts under its OWN condition (not DISPATCH_ALLOWED)', () => {
+    expect(alert.if).toBe(
+      "github.event_name == 'workflow_run' && env.BACKFILL_KILL_SWITCH == '1' && env.AUTOCHAIN_DISABLE != '1'"
+    )
+    expect(idx(alert)).toBe(idx(byName('Kill-switch gate')) + 1)
+  })
+
+  it('the alert names the completed run, says re-enabling does not resume, points to 8.1, and is red', () => {
+    const text = alert.run!
+    expect(text).toContain('type:"indexer_backfill_autochain_kill_switch_stop"')
+    expect(text).toContain('$COMPLETED_RUN_ID')
+    expect(text).toContain('Re-enabling does NOT resume')
+    expect(text).toContain('section 8.1')
+    expect(text).toContain('echo "delivered=true" >> "$GITHUB_OUTPUT"')
+    expect(commands(text).at(-1)).toBe('exit 1')
+    // inline: it runs before Checkout, so it must not need a checked-out file
+    expect(text).not.toMatch(/scripts\//)
+  })
+
+  it('BACKFILL_AUTOCHAIN_DISABLE=1 (driver mode) and schedule ticks stay quiet', () => {
+    expect(alert.if).toContain("env.AUTOCHAIN_DISABLE != '1'")
+    expect(alert.if).not.toContain('schedule')
+  })
+})
+
+describe('authoritative and pre-claim reads (G2, V1)', () => {
+  const READ_CMD = 'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh'
+
+  it("the dispatch step's only command before `gh workflow run` is the read of BOTH switches", () => {
+    const cmds = commands(byName('Dispatch next chunk').run!)
+    const at = cmds.findIndex((c) => c.startsWith('timeout 60 gh workflow run'))
+    expect(cmds.slice(0, at)).toEqual([`${READ_CMD} || exit 1`])
+  })
+
+  it("a schedule tick runs the same read BEFORE the claim, under the claim's exact condition", () => {
+    const pre = byId('preclaim')
+    const claim = byId('claim')
+    expect(pre.if).toBe(claim.if)
+    expect(commands(pre.run!)).toEqual([READ_CMD])
+    expect(pre.env!.VARIABLE_READ_PAT).toContain('secrets.BACKFILL_VARIABLE_READ_PAT')
+    expect(idx(byId('window'))).toBeLessThan(idx(pre))
+    expect(idx(pre)).toBe(idx(claim) - 1)
+    expect(pre).not.toHaveProperty('continue-on-error')
+  })
+})
+
+describe('campaign complete on a resume (V2)', () => {
+  const done = byId('campaign_complete')
+  const other = byName('Close the deferral marker, not resumable (schedule)')
+
+  it('closes the marker with reason campaign_complete and an info alert, and stays green', () => {
+    expect(done.if).toContain("steps.recover.outputs.campaign_complete == 'true'")
+    expect(done.if).toContain("github.event_name == 'schedule'")
+    const cmds = commands(done.run!)
+    expect(cmds[0]).toBe(
+      'REASON=campaign_complete npx tsx scripts/indexer/backfill-autochain-defer.ts needs-intervention'
+    )
+    expect(cmds.join('\n')).toContain('ALERT_TYPE=indexer_backfill_autochain_campaign_complete')
+    expect(cmds.join('\n')).not.toMatch(/\bexit 1\b/)
+  })
+
+  it('halts and the retry cap keep the needs-intervention close (not the campaign one)', () => {
+    expect(other.if).toContain("steps.recover.outputs.campaign_complete != 'true'")
+    expect(cmdText(other)).toMatch(
+      /REASON="resume recovery did not yield a dispatch: \$SKIP_REASON"/
+    )
+  })
+})
+
+describe('concurrency (V3)', () => {
+  it('schedule ticks have their own group; links keep theirs; nothing cancels in progress', () => {
+    const c = (doc as unknown as { concurrency: { group: string; 'cancel-in-progress': boolean } })
+      .concurrency
+    expect(c.group).toBe(
+      "${{ github.event_name == 'schedule' && 'skill-indexer-backfill-autochain-tick' || 'skill-indexer-backfill-autochain' }}"
+    )
+    expect(c['cancel-in-progress']).toBe(false)
+  })
+
+  it('a tick yields to a live link at its start: before reconcile, schedule only', () => {
+    const y = byName('Yield to a live link (schedule)')
+    expect(cmdText(y)).toBe('bash scripts/ci/autochain-tick-yield.sh')
+    expect(y.if).toContain("github.event_name == 'schedule'")
+    expect(y.env!.GH_TOKEN).toContain('secrets.GITHUB_TOKEN')
+    expect(idx(byName('Install dependencies'))).toBeLessThan(idx(y))
+    expect(idx(y)).toBeLessThan(idx(byId('reconcile')))
   })
 })
 
@@ -241,14 +342,14 @@ describe('window, fence and dispatch order', () => {
     expect(dispatch.if).toContain("steps.window.outputs.window_open == 'true'")
   })
 
-  it('exactly one step dispatches and exactly one runs the authoritative read, the same step', () => {
+  it('exactly one step dispatches; the read runs there and (non-authoritatively) before the claim', () => {
     const dispatchers = steps.filter((s) => cmdText(s).includes('gh workflow run'))
     expect(dispatchers).toEqual([dispatch])
     const readers = steps.filter(
       (s) =>
         cmdText(s).includes('autochain-read-enable.sh') && !cmdText(s).includes('--verify-read')
     )
-    expect(readers).toEqual([dispatch])
+    expect(readers).toEqual([byId('preclaim'), dispatch])
   })
 
   it('on either path NOTHING runs between the enable read and `gh workflow run`', () => {

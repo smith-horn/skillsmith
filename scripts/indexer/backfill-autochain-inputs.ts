@@ -352,6 +352,8 @@ export async function recover(opts: {
   if (resolved.cursorDone) {
     return {
       skip: 'true',
+      // SMI-7121 V2: a resume tick closes its marker as campaign_complete (info), not as a halt.
+      campaign_complete: 'true',
       skip_reason: 'The underlying campaign already reached cursor.facet === "done".',
     }
   }

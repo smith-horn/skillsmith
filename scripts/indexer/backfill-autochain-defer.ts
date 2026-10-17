@@ -62,10 +62,13 @@ export type ScheduleTarget =
 
 /** The single open marker to resume, or a no-op reason. More than one open marker throws. */
 export async function scheduleTarget(clientsByEnv: ClientsByEnv): Promise<ScheduleTarget> {
-  const open = (await listLiveMarkers(clientsByEnv)).filter((m) => m.state === 'open')
+  const live = await listLiveMarkers(clientsByEnv)
+  const open = live.filter((m) => m.state === 'open')
   if (open.length === 0)
     return { resume: false, reason: 'No open deferral marker in either project.' }
-  if (open.length > 1) throw new MultipleOpenMarkers(open)
+  // Any second LIVE marker refuses, as live-check does: an undispatched consumed marker next
+  // to an open one means two chains (SMI-7121 V4), so none is resumed.
+  if (live.length > 1) throw new MultipleOpenMarkers(live)
   const m = open[0]
   const runId = runIdOf(m.metadata.completed_run_id)
   const attempt = runIdOf(m.metadata.completed_run_attempt)
