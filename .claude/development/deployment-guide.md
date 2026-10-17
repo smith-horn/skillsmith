@@ -411,6 +411,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Refresh Observer (SMI-7114) | GitHub `refresh-metadata.yml` schedule, every 4h :30 (never retired: a different scheduler from the pg_cron trigger it watches) | `scripts/ci/refresh-observer.sh` reads `refresh_metadata_health()` and alerts `refresh_unhealthy` on `stale` / `dispatch_stale` (9h) or `failures`; writes a `refresh:observer` heartbeat only after a fully successful run |
 | Refresh Response Harvester (SMI-7114) | Hourly at :43 (`43 * * * *`) | Supabase pg_cron (`harvest_refresh_dispatch_results()`): copies pg_net responses for refresh dispatches and dead-man alerts into durable `refresh:dispatch_result` / `refresh:observer_dead_alert_result` rows inside pg_net's 6h TTL |
 | Refresh Observer Dead-man (SMI-7114) | Hourly at :17 (`17 * * * *`) | Supabase pg_cron (`check_refresh_observer_heartbeat()`): alerts `refresh_observer_dead` via vault credentials when the latest `refresh:observer` heartbeat is older than 16h; silent until the first heartbeat exists (owner step M7) |
+| Backfill Autochain Marker Watcher (SMI-7121) | Hourly at :29 (`29 * * * *`) | Supabase pg_cron (`check_backfill_autochain_markers()`): alerts `indexer_backfill_autochain_stalled` for an open deferral marker older than 12h, and `indexer_backfill_autochain_unreconciled` for a consumed, undispatched marker older than 1h. Deduped per marker and kind on delivery; a marker row held by another session alerts only past threshold + 12h (`row_locked`). Inert until the autochain writes markers (SMI-7121 Wave 2b). Vault kill switch `SKILLSMITH_BACKFILL_AUTOCHAIN_WATCH_DISABLE` (registered in [guards-and-opt-outs.md](../../docs/internal/process/guards-and-opt-outs.md)) |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
 | Weekly Coverage Report (SMI-4963) | Monday 10 AM UTC (`coverage-report.yml`; `schedule:` enabled via follow-up commit). Deploy: `npx supabase functions deploy coverage-report` (no `--no-verify-jwt`) | `coverage-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
@@ -564,5 +565,6 @@ All scheduled jobs log to the `audit_logs` table:
 - `refresh:run` - Metadata refresh results
 - `refresh:dispatch`, `refresh:dispatch_result` - pg_cron refresh dispatches and their harvested pg_net responses (SMI-7114)
 - `refresh:observer` - Refresh observer heartbeat; `refresh:observer_dead_alert[_result]`, `refresh:observer_deadman_error` - dead-man alerts, their delivery, and missing-secret errors (SMI-7114)
+- `indexer_backfill_autochain_deferred` - Backfill autochain deferral markers (state `open` / `consumed` / `dispatched` / `needs_intervention`); `indexer_backfill_autochain_marker_alert` - marker-watcher alerts and their harvested delivery result; `indexer_backfill_autochain_watch_error` - watcher could not alert (missing vault secret) (SMI-7121)
 - `ops-report:sent` - Weekly report sent
 - `alert:sent` - Alert notification sent
