@@ -68,6 +68,16 @@ const paths = (indexPath: string): string[] => {
   return r.entries.map((e) => e.path)
 }
 
+/** True when `<indexPath>.lock` holds a claim naming this process. */
+const heldByUs = (indexPath: string): boolean => {
+  try {
+    const claim = JSON.parse(fs.readFileSync(`${indexPath}.lock`, 'utf8')) as { pid?: unknown }
+    return claim.pid === process.pid
+  } catch {
+    return false
+  }
+}
+
 describe('indexPath is accepted only by parkTreeIndexed', () => {
   it('parkTree refuses indexPath with a TypeError before any filesystem work', () => {
     const f = fixture()
@@ -138,19 +148,11 @@ describe('the index append takes lock 4', () => {
   /** True at an open when `<indexPath>.lock` holds a claim naming this process. */
   async function lockSeenAtOpen(indexPath: string, body: () => Promise<unknown>) {
     const seen: boolean[] = []
-    const heldByUs = (): boolean => {
-      try {
-        const claim = JSON.parse(fs.readFileSync(`${indexPath}.lock`, 'utf8')) as { pid?: unknown }
-        return claim.pid === process.pid
-      } catch {
-        return false
-      }
-    }
     await withAsyncFsStub(
       'openSync',
       (orig) =>
         (...args: unknown[]) => {
-          if (args[0] === indexPath) seen.push(heldByUs())
+          if (args[0] === indexPath) seen.push(heldByUs(indexPath))
           return orig(...args)
         },
       body
@@ -316,9 +318,23 @@ describe('T-PI1: compaction loses no append (UD31)', () => {
     const indexPath = seed(f.root)
     const late = entry('/abs/late')
     let compacted: unknown
-    const outcome = await compactWithLateWriter(indexPath, late, async () => {
-      compacted = await compactParkedIndexLocked(indexPath)
-    })
+    // The lock must cover the whole window, from compaction's read of the index
+    // to its rename, not only the rename (pre-merge gate PR-16).
+    const heldAtRead: boolean[] = []
+    const outcome = await compactWithLateWriter(indexPath, late, () =>
+      withAsyncFsStub(
+        'readFileSync',
+        (orig) =>
+          (...args: unknown[]) => {
+            if (args[0] === indexPath) heldAtRead.push(heldByUs(indexPath))
+            return orig(...args)
+          },
+        async () => {
+          compacted = await compactParkedIndexLocked(indexPath)
+        }
+      )
+    )
+    expect(heldAtRead).toEqual([true])
     expect(outcome).toBe('refused:held')
     expect(compacted).toEqual({ ok: true, kept: 1, dropped: 1, keptMalformed: 0 })
     // The refused writer waits and retries, as withFileLock does.

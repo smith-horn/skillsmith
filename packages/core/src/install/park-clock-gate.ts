@@ -79,9 +79,12 @@ function probe(p: string, parentDev: bigint): { ok: true; birthtimeNs: bigint } 
   } catch (err) {
     statErr = errCode(err)
   }
-  // Try the rmdir for a directory, or for an entry the lstat could not read;
-  // rmdir itself refuses anything not empty. An entry read as a non-directory
-  // (a symlink or a file) is not this call's probe any more and is left.
+  // Try the rmdir for a directory, or for an entry the lstat could not read.
+  // This checks the entry's type, not its identity: an empty directory another
+  // process put at this path after the mkdir would be removed too, which
+  // ADR-166 D-0 puts out of model for a Skillsmith-owned directory. rmdir
+  // itself refuses anything not empty, so no bytes can go. An entry read as a
+  // non-directory (a symlink or a file) is left alone.
   if (st === null || st.isDirectory()) {
     try {
       fs.rmdirSync(p)
