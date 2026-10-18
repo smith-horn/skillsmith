@@ -16,7 +16,9 @@
  *
  * An internal-origin sentence never asserts where the tree is unless the
  * post-move check confirmed it (`safe`, SMI-7134): the detail's own location
- * clause already says when it could not be confirmed.
+ * clause already says when it could not be confirmed. Nor does it assert a
+ * cause: a tree is held for changed content, a mount, or an unconfirmed
+ * location, and the diagnosis that opens the detail says which.
  *
  * @module @skillsmith/core/install/park-callers
  */
@@ -41,15 +43,15 @@ const CALLERS = {
     rows: '1',
     kind: 'abort-new',
     internalOrigin: () =>
-      'The staged copy changed while it was set aside. Its origin is a staging directory, so ' +
-      'there is nothing to restore.',
+      'The staged copy may have changed while it was set aside. Its origin is a staging ' +
+      'directory, so there is nothing to restore.',
   },
   'move-source': {
     rows: '2',
     kind: 'move-source',
     internalOrigin: ({ destPath, backupPath, safe }) =>
-      `A write landed in the old folder while it was being backed up. The backup at ` +
-      `${shq(String(backupPath))} doesn't have it; the extra copy ` +
+      `A write may have landed in the old folder while it was being backed up. The backup at ` +
+      `${shq(String(backupPath))} may not have it; the extra copy ` +
       `${safe ? 'is' : 'was reported'} at ${shq(destPath)}.`,
   },
   uninstall: { rows: '3', kind: 'uninstall', internalOrigin: null },

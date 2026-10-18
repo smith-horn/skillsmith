@@ -52,9 +52,9 @@ const BACKUP = '/abs/backups/old'
 /** The closing sentence of each internal-origin caller's held detail. */
 const INTERNAL: Record<string, string> = {
   'abort-cleanup':
-    'The staged copy changed while it was set aside. Its origin is a staging directory, so ' +
-    'there is nothing to restore.',
-  'move-source': `doesn't have it; the extra copy is at`,
+    'The staged copy may have changed while it was set aside. Its origin is a staging ' +
+    'directory, so there is nothing to restore.',
+  'move-source': `may not have it; the extra copy is at`,
   'fan-out-staging': 'Its origin is a temporary staging folder, so there is nothing to restore.',
   'fan-out-backup': 'Its origin is a backup folder, so there is nothing to restore.',
   'doctor-park':
@@ -109,8 +109,8 @@ describe('each caller parks with its own kind and gets its own held detail', () 
   it('move-source names the backup and the extra copy, as the plan words it', () => {
     const { r } = heldPark('move-source', 'move-source')
     expect(String(r.detail)).toContain(
-      `A write landed in the old folder while it was being backed up. The backup at '${BACKUP}' ` +
-        `doesn't have it; the extra copy is at '${String(r.heldPath)}'.`
+      `A write may have landed in the old folder while it was being backed up. The backup at ` +
+        `'${BACKUP}' may not have it; the extra copy is at '${String(r.heldPath)}'.`
     )
   })
 
@@ -154,6 +154,27 @@ describe('each caller parks with its own kind and gets its own held detail', () 
       expect(detail).not.toContain('kept there')
     })
   }
+
+  it('move-source, located but in a directory that is not private: "was reported at", not "is at"', () => {
+    const f = fixture()
+    const opDir = path.join(f.parent, PARKED, 'op-p')
+    const run = runWithHooks({
+      parentAbs: f.parent,
+      name: 'tree',
+      options: {
+        ...(optsFor('move-source', 'move-source') as object),
+        opId: 'op-p',
+        guardHash: guardOf(f.origin),
+      } as never,
+      onAfterRename: () => fs.chmodSync(opDir, 0o777),
+    })
+    const detail = String(run.result.detail)
+    expect(run.result.status).toBe('held')
+    expect(detail).toMatch(/is not private/)
+    expect(detail).toContain(`the extra copy was reported at '${String(run.result.path)}'.`)
+    expect(detail).not.toContain('the extra copy is at')
+    fs.chmodSync(opDir, 0o700)
+  })
 
   it('a parked (not held) result is unaffected by the caller', () => {
     const f = fixture()
