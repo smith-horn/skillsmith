@@ -29,8 +29,9 @@ export type ParkedRootResult =
 
 /**
  * Validates, creating it if absent, `<parentAbs>/.skillsmith-parked` (ADR-166
- * D-3). It is created with the parent's mode, EEXIST accepted, and then must be
- * a real directory (never a symlink) on the parent's device. Every failure is
+ * D-3). Its mkdir requests the parent's permission bits (the process umask
+ * still applies), EEXIST accepted, and then it must be a real directory (never
+ * a symlink) on the parent's device. Every failure is
  * `park-failed`; `detail` names which (`trash-unusable`, `trash-other-mount`,
  * the spellings A1 plan row Q7 uses).
  */

@@ -231,3 +231,26 @@ describe.skipIf(!CAN_MOUNT)('real errnos from mounts (Linux root with CAP_SYS_AD
     untouched(f)
   })
 })
+
+describe('the parked area is requested with the parent mode (ADR-166 D-3)', () => {
+  for (const parentMode of [0o755, 0o700, 0o1777]) {
+    it(`mkdir of .skillsmith-parked asks for the parent's permission bits (${parentMode.toString(8)})`, () => {
+      const f = fixture()
+      fs.chmodSync(f.parent, parentMode)
+      const requested: unknown[] = []
+      const r = withFsStub(
+        'mkdirSync',
+        (orig) =>
+          (...args: unknown[]) => {
+            if (args[0] === path.join(f.parent, PARKED)) requested.push(args[1])
+            return orig(...args)
+          },
+        () => park(f.parent, 'tree')
+      )
+      expect(r.status).toBe('parked')
+      // The process umask still applies to the created directory; what the
+      // park controls, and this pins, is the mode it requests.
+      expect(requested).toEqual([{ mode: parentMode & 0o777 }])
+    })
+  }
+})
