@@ -307,6 +307,27 @@ describe('the parent must be absolute (retro of PR #3110)', () => {
     })
   }
 
+  // The parent check runs first: with a bad name and bad options too, the
+  // parent's own TypeError is the one thrown (pre-merge gate PR-16).
+  for (const [label, name, options] of [
+    ['an invalid name', '../escape', {}],
+    ['an unknown option key', 'tree', { notAnOption: true }],
+  ] as const) {
+    it(`a relative parent is reported before ${label}`, () => {
+      const f = fixture()
+      const rel = path.relative(process.cwd(), f.parent)
+      let msg = 'returned'
+      try {
+        park(rel, name, options as never)
+      } catch (e) {
+        msg = `${(e as Error).constructor.name}: ${(e as Error).message}`
+      }
+      expect(msg).toBe(
+        `TypeError: parkTree: parentAbs must be an absolute path, got ${JSON.stringify(rel)}`
+      )
+    })
+  }
+
   it('control: the same tree with its absolute parent parks', () => {
     const f = fixture()
     expect(park(f.parent, 'tree').status).toBe('parked')
