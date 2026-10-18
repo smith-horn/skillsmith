@@ -24,6 +24,7 @@ import {
   park,
   readText,
   simpleFixture,
+  withAllFsTrapped,
   withFsStub,
 } from './park-tree.helpers.js'
 import type { Fixture } from './park-tree.helpers.js'
@@ -253,4 +254,82 @@ describe('the parked area is requested with the parent mode (ADR-166 D-3)', () =
       expect(requested).toEqual([{ mode: parentMode & 0o777 }])
     })
   }
+})
+
+describe('the parent must be absolute (retro of PR #3110)', () => {
+  it('a relative parent throws TypeError before any filesystem work, with nothing moved', () => {
+    const f = fixture()
+    const rel = path.relative(process.cwd(), f.parent)
+    expect(path.isAbsolute(rel)).toBe(false)
+    const { value, touched, deletes } = withAllFsTrapped(() => {
+      try {
+        park(rel, 'tree')
+        return 'returned'
+      } catch (e) {
+        return `${(e as Error).constructor.name}: ${(e as Error).message}`
+      }
+    })
+    expect(value).toBe(
+      `TypeError: parkTree: parentAbs must be an absolute path, got ${JSON.stringify(rel)}`
+    )
+    expect(touched).toEqual([])
+    expect(deletes).toEqual([])
+    untouched(f)
+    expect(exists(path.join(f.parent, PARKED))).toBe(false)
+  })
+
+  for (const [label, value, rendered] of [
+    ['a number', 5, 'number'],
+    ['a null-prototype object', Object.create(null) as unknown, 'object'],
+    [
+      'an object whose toString throws',
+      {
+        toString: () => {
+          throw new RangeError('boom')
+        },
+      },
+      'object',
+    ],
+  ] as const) {
+    it(`a non-string parent (${label}) throws this TypeError, rendered without calling into it`, () => {
+      const f = fixture()
+      const { value: out, touched } = withAllFsTrapped(() => {
+        try {
+          park(value as unknown as string, 'tree')
+          return 'returned'
+        } catch (e) {
+          return `${(e as Error).constructor.name}: ${(e as Error).message}`
+        }
+      })
+      expect(out).toBe(`TypeError: parkTree: parentAbs must be an absolute path, got ${rendered}`)
+      expect(touched).toEqual([])
+      untouched(f)
+    })
+  }
+
+  // The parent check runs first: with a bad name and bad options too, the
+  // parent's own TypeError is the one thrown (pre-merge gate PR-16).
+  for (const [label, name, options] of [
+    ['an invalid name', '../escape', {}],
+    ['an unknown option key', 'tree', { notAnOption: true }],
+  ] as const) {
+    it(`a relative parent is reported before ${label}`, () => {
+      const f = fixture()
+      const rel = path.relative(process.cwd(), f.parent)
+      let msg = 'returned'
+      try {
+        park(rel, name, options as never)
+      } catch (e) {
+        msg = `${(e as Error).constructor.name}: ${(e as Error).message}`
+      }
+      expect(msg).toBe(
+        `TypeError: parkTree: parentAbs must be an absolute path, got ${JSON.stringify(rel)}`
+      )
+    })
+  }
+
+  it('control: the same tree with its absolute parent parks', () => {
+    const f = fixture()
+    expect(park(f.parent, 'tree').status).toBe('parked')
+  })
 })
