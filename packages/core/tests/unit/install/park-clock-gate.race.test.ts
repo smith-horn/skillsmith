@@ -44,6 +44,19 @@ afterAll(() => {
   for (const r of roots.splice(0)) cleanup(r)
 })
 
+// The table itself: each test takes its directory and its expected type from
+// one row, so two rows naming the same filesystem would pass both tests while
+// covering one family only (pre-merge gate PR-16).
+describe('the T-X18 (d) targets', () => {
+  it('are two distinct directories, one overlayfs and one tmpfs', () => {
+    expect(TARGETS.map(([label, , magic]) => [label, magic])).toEqual([
+      ['overlayfs', OVERLAYFS_MAGIC],
+      ['tmpfs', TMPFS_MAGIC],
+    ])
+    expect(new Set(TARGETS.map(([, dir]) => dir)).size).toBe(2)
+  })
+})
+
 describe.runIf(!available && process.platform === 'linux')('T-X18 (d) on Linux', () => {
   it('needs overlayfs at the temp dir and tmpfs at /dev/shm', () => {
     const seen = TARGETS.map(
