@@ -232,6 +232,28 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(fs.readFileSync(indexPath, 'utf8')).toBe(`${bad}\n`)
   })
 
+  for (const [label, bytesJson] of [
+    ['a string', '"12"'],
+    ['a non-finite number', '1e999'],
+  ] as const) {
+    it(`a line whose bytes is ${label} is invalid and kept verbatim`, () => {
+      const f = fixture()
+      const indexPath = path.join(f.root, 'parked-index.jsonl')
+      const line = `{"path":${JSON.stringify(f.origin)},"bytes":${bytesJson}}`
+      fs.writeFileSync(indexPath, `${line}\n`)
+      const idx = readOk(indexPath)
+      expect(idx.entries).toEqual([])
+      expect(idx.errors).toEqual([{ line: 1, error: 'bytes is not a finite number or null' }])
+      expect(compactParkedIndex(indexPath)).toEqual({
+        ok: true,
+        kept: 0,
+        dropped: 0,
+        keptMalformed: 1,
+      })
+      expect(fs.readFileSync(indexPath, 'utf8')).toBe(`${line}\n`)
+    })
+  }
+
   it('an entry under a regular file (lstat ENOTDIR) is dropped as gone', () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
@@ -268,6 +290,24 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(r.ok).toBe(false)
     expect(r.ok ? null : r.errno).toBe('ENOSPC')
     expect(r.ok ? null : r.tmpPath?.startsWith(`${indexPath}.tmp-`)).toBe(true)
+    expect(fs.readFileSync(indexPath).equals(before)).toBe(true)
+  })
+
+  it('a temp name already taken (EEXIST) returns the error with no temp path: nothing of ours is there', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    park(f.parent, 'tree', { indexPath })
+    const before = fs.readFileSync(indexPath)
+    const r = withFsStub(
+      'writeFileSync',
+      (orig) =>
+        (...args: unknown[]) => {
+          if (String(args[0]).startsWith(`${indexPath}.tmp-`)) throw errnoError('EEXIST')
+          return orig(...args)
+        },
+      () => compactParkedIndex(indexPath)
+    )
+    expect(r).toEqual({ ok: false, errno: 'EEXIST' })
     expect(fs.readFileSync(indexPath).equals(before)).toBe(true)
   })
 

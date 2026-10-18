@@ -62,7 +62,10 @@ export function appendParkedIndex(
 /** One line of the index as read: its exact text, and its entry when valid. */
 export interface ParkedIndexLine {
   raw: string
-  /** Null when the line is not JSON or not an object with an absolute `path`. */
+  /**
+   * Null when the line is not JSON, not an object with an absolute `path`, or
+   * has another field whose type differs from ParkedIndexEntry's.
+   */
   entry: ParkedIndexEntry | null
 }
 
