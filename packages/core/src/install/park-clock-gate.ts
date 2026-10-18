@@ -15,9 +15,10 @@
  * the identity. A late-bound caller parks right after it; an early-bound one
  * keeps its result and passes it at park time.
  *
- * Each probe exists only from its mkdir to its rmdir, a non-recursive removal
- * of an empty directory this call made; a kill in between leaves an empty
- * probe for doctor (§3.9). That rmdir is why this module is outside the
+ * Each probe is removed right after it is read, by a non-recursive rmdir of
+ * the directory this call made. A kill in between, or a stop that cannot or
+ * will not remove it, leaves the probe path for doctor (§3.9), and the stop
+ * names it as `leftProbe`. That rmdir is why this module is outside the
  * delete-free park graph; the boundary test pins that it is the only removal
  * here and takes one argument.
  *
@@ -43,7 +44,11 @@ export type ClockGateStop = {
   reason: 'identity-unverifiable'
   detail: string
   errno: string | null
-  /** A probe this call made and could not remove; doctor removes it (§3.9). */
+  /**
+   * A probe path this call made that is still present: its rmdir failed, or
+   * the entry there was not a directory when read, so it was left alone.
+   * Doctor removes leftover probes (§3.9).
+   */
   leftProbe: string | null
 }
 
@@ -74,8 +79,10 @@ function probe(p: string, parentDev: bigint): { ok: true; birthtimeNs: bigint } 
   } catch (err) {
     statErr = errCode(err)
   }
-  // Remove only an empty directory: a probe replaced by something else stays.
-  if (st === null || (st.isDirectory() && !st.isSymbolicLink())) {
+  // Try the rmdir for a directory, or for an entry the lstat could not read;
+  // rmdir itself refuses anything not empty. An entry read as a non-directory
+  // (a symlink or a file) is not this call's probe any more and is left.
+  if (st === null || st.isDirectory()) {
     try {
       fs.rmdirSync(p)
     } catch (err) {

@@ -25,10 +25,10 @@ import {
   park,
   simpleFixture,
   withAllFsTrapped,
+  withAsyncFsStub,
 } from './park-tree.helpers.js'
 
 type AnyFn = (...args: unknown[]) => unknown
-const fsTable = fs as unknown as Record<string, unknown>
 
 const roots: string[] = []
 afterEach(() => {
@@ -44,21 +44,6 @@ const fixture = () => {
 }
 const probes = (dir: string) => fs.readdirSync(dir).filter((n) => n.startsWith(PROBE_PREFIX))
 
-/** Replaces `fs[name]` until `body`'s promise settles. */
-async function withAsyncFsStub<T>(
-  name: string,
-  impl: (orig: AnyFn) => AnyFn,
-  body: () => Promise<T>
-): Promise<T> {
-  const orig = fsTable[name] as AnyFn
-  fsTable[name] = impl(orig.bind(fs) as AnyFn)
-  try {
-    return await body()
-  } finally {
-    fsTable[name] = orig
-  }
-}
-
 /** An lstat stub that rewrites one bigint field of every probe's stats. */
 const probeStat =
   (field: 'birthtimeNs' | 'dev', value: (st: BigIntStats) => bigint) =>
@@ -71,6 +56,13 @@ const probeStat =
     return out
   }
 
+describe('the names and the cap are the plan literals (A1 plan §3.8, UD25)', () => {
+  it('probes are .skillsmith-probe-<opId>-1 and -2, and the cap is 100 ms', () => {
+    expect(PROBE_PREFIX).toBe('.skillsmith-probe-')
+    expect(CLOCK_GATE_CAP_MS).toBe(100)
+  })
+})
+
 describe('the gate on a real filesystem', () => {
   it('passes, leaves no probe, and a tree made before it parks under its threshold', async () => {
     const f = fixture()
@@ -82,7 +74,9 @@ describe('the gate on a real filesystem', () => {
     expect(r.status).toBe('parked')
   })
 
-  it('a tree removed and re-made after the gate is refused, even in the same clock tick', async () => {
+  // Newer than probe 2 is what this shows on any filesystem; the same-tick case
+  // is the stubbed shared-tick test below.
+  it('a tree removed and re-made after the gate is refused', async () => {
     const f = fixture()
     const g = await runClockGate({ probeDir: f.probeDir, parentAbs: f.parent, opId: 'op2' })
     if (!g.ok) throw new Error(JSON.stringify(g))
@@ -172,7 +166,7 @@ describe('the gate stops, with nothing moved, when the clock cannot be trusted',
     expect(g).toMatchObject({ ok: false, reason: 'identity-unverifiable' })
     expect(g.ok ? '' : g.detail).toContain(`within ${CLOCK_GATE_CAP_MS} ms`)
     expect(elapsed).toBeGreaterThanOrEqual(CLOCK_GATE_CAP_MS)
-    expect(elapsed).toBeLessThan(CLOCK_GATE_CAP_MS * 10)
+    expect(elapsed).toBeLessThan(2000)
     expect(probes(f.probeDir)).toEqual([])
   })
 

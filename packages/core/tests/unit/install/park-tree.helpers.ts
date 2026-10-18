@@ -274,6 +274,21 @@ export function runWithHooks(a: {
   return { result, trace, renameIdx, fired, hookErrors }
 }
 
+/** `withFsStub` for an async body: the stub stays until the promise settles. */
+export async function withAsyncFsStub<T>(
+  name: string,
+  impl: (orig: AnyFn) => AnyFn,
+  body: () => Promise<T>
+): Promise<T> {
+  const orig = fsTable[name] as AnyFn
+  fsTable[name] = impl(orig.bind(fs) as AnyFn)
+  try {
+    return await body()
+  } finally {
+    fsTable[name] = orig
+  }
+}
+
 /** Replaces `fs[name]` for the duration of `body`, restoring it after. */
 export function withFsStub<T>(name: string, impl: (orig: AnyFn) => AnyFn, body: () => T): T {
   const orig = fsTable[name] as AnyFn

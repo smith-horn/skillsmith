@@ -40,10 +40,8 @@ import {
   withAllFsTrapped,
   withFsStub,
   writeAfterRename,
+  withAsyncFsStub,
 } from './park-tree.helpers.js'
-
-type AnyFn = (...args: unknown[]) => unknown
-const fsTable = fs as unknown as Record<string, unknown>
 
 const roots: string[] = []
 afterEach(() => {
@@ -67,21 +65,6 @@ const paths = (indexPath: string): string[] => {
   const r = readParkedIndex(indexPath)
   if (!r.ok) throw new Error(`index read failed: ${r.errno}`)
   return r.entries.map((e) => e.path)
-}
-
-/** Replaces `fs[name]` until `body`'s promise settles, so the stub spans awaits. */
-async function withAsyncFsStub<T>(
-  name: string,
-  impl: (orig: AnyFn) => AnyFn,
-  body: () => Promise<T>
-): Promise<T> {
-  const orig = fsTable[name] as AnyFn
-  fsTable[name] = impl(orig.bind(fs) as AnyFn)
-  try {
-    return await body()
-  } finally {
-    fsTable[name] = orig
-  }
 }
 
 describe('indexPath is accepted only by parkTreeIndexed', () => {

@@ -7,7 +7,8 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Internal**: SMI-6531 -- `install/park-clock-gate.ts` adds UD25's clock gate as a caller-side
   helper: `runClockGate` makes two empty probe directories and returns probe 2's birthtime, once it
   is strictly later than probe 1's, as the park's `maxBirthtimeNs`, or stops with
-  `identity-unverifiable` (a 0n birthtime, a probe on another device, or the 100 ms cap).
+  `identity-unverifiable` (a 0n birthtime, a probe on another device, the 100 ms cap, an unreadable
+  parent, or a probe that cannot be made, read or removed).
   `gateAndBind` runs the gate, then the guard hash, then the identity bind. No caller yet, so no
   behaviour change.
 - **Internal**: SMI-6531 -- the parked-area helper (`ensureParkedRoot`) now reports `created`, true
