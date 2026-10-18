@@ -43,7 +43,7 @@ const addTree = (parent: string, name: string) => {
 }
 
 describe('the park appends one index line', () => {
-  it('one park, one line, naming the parked path, the opId, the caller and the kind', async () => {
+  it('one park, one line, naming the parked path, the opId, the client and the kind', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
     const r = await parkIndexed(f.parent, 'tree', {
