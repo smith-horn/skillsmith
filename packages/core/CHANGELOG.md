@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- `install/park-tree.ts` adds `parkTree`, which removes a folder or file by
+  moving it to `<parent>/.skillsmith-parked/<opId>/<name>-<rnd>/` with a sidecar, and never deletes
+  (ADR-166). Ported from the SMI-6676 spike, with its parked index (`parked-index.ts`) and tree hash
+  (`tree-hash.ts`). Not exported from the package's entry points and not called yet, so no behaviour
+  change; later A1 steps route automatic removals through it.
 - **Internal**: SMI-7114 -- a comment in `security/scanner/typosquat-reference-list.ts` now names the
   pg_cron-triggered "Metadata Refresh" job instead of the retired GitHub "every 4h :30" schedule. No behaviour change.
 
