@@ -60,7 +60,14 @@ describe('triggers and gates', () => {
   describe('the kill-switch gate (executed)', () => {
     const gate = byName('Kill-switch gate')
     const run = (env: Record<string, string>) =>
-      runStepScript(gate.run!, { env: { AUTOCHAIN_DISABLE: '', BACKFILL_KILL_SWITCH: '', ...env } })
+      runStepScript(gate.run!, {
+        env: {
+          AUTOCHAIN_DISABLE: '',
+          BACKFILL_KILL_SWITCH: '',
+          IS_RESUME: env.EVENT_NAME === 'schedule' ? 'true' : 'false',
+          ...env,
+        },
+      })
 
     it.each([
       ['schedule', 'AUTOCHAIN_DISABLE'],
@@ -144,7 +151,7 @@ describe('side effects and untrusted values', () => {
     const recover = byId('recover')
     const defer = byId('defer')
     expect(recover.env!.ACKNOWLEDGE_HALTS).toBe(
-      "${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || steps.target.outputs.acknowledged_halts || '' }}"
+      "${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'resume' && inputs.acknowledge_halts || steps.target.outputs.acknowledged_halts || '' }}"
     )
     // the deferring link records the manual acknowledgement on the marker
     expect(defer.env!.ACKNOWLEDGE_HALTS).toBe(
@@ -152,7 +159,12 @@ describe('side effects and untrusted values', () => {
     )
     const reads = /inputs\.acknowledge_halts|ACKNOWLEDGE_HALTS|acknowledged_halts/
     const others = steps.filter(
-      (s) => s !== recover && s !== defer && reads.test(JSON.stringify(s))
+      // SMI-7142: the validation step reads it only to refuse it on mode=resume.
+      (s) =>
+        s !== recover &&
+        s !== defer &&
+        s.name !== 'Validate dispatch inputs' &&
+        reads.test(JSON.stringify(s))
     )
     expect(others.map((s) => s.name)).toEqual([])
     expect(JSON.stringify(job.env)).not.toMatch(reads)
@@ -234,7 +246,7 @@ describe('campaign complete on a resume (V2)', () => {
 
   it('closes the marker with reason campaign_complete and an info alert, and stays green', () => {
     expect(done.if).toContain("steps.recover.outputs.campaign_complete == 'true'")
-    expect(done.if).toContain("github.event_name == 'schedule'")
+    expect(done.if).toContain("env.IS_RESUME == 'true'")
     const cmds = commands(done.run!)
     expect(cmds[0]).toBe(
       'REASON=campaign_complete npx tsx scripts/indexer/backfill-autochain-defer.ts needs-intervention'
@@ -256,7 +268,7 @@ describe('concurrency (V3)', () => {
     const c = (doc as unknown as { concurrency: { group: string; 'cancel-in-progress': boolean } })
       .concurrency
     expect(c.group).toBe(
-      "${{ github.event_name == 'schedule' && 'skill-indexer-backfill-autochain-tick' || 'skill-indexer-backfill-autochain' }}"
+      "${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'resume')) && 'skill-indexer-backfill-autochain-tick' || 'skill-indexer-backfill-autochain' }}"
     )
     expect(c['cancel-in-progress']).toBe(false)
   })
@@ -264,7 +276,7 @@ describe('concurrency (V3)', () => {
   it('a tick yields to a live link at its start: before reconcile, schedule only', () => {
     const y = byName('Yield to a live link (schedule)')
     expect(cmdText(y)).toBe('bash scripts/ci/autochain-tick-yield.sh')
-    expect(y.if).toContain("github.event_name == 'schedule'")
+    expect(y.if).toContain("env.IS_RESUME == 'true'")
     expect(y.env!.GH_TOKEN).toContain('secrets.GITHUB_TOKEN')
     expect(idx(byName('Install dependencies'))).toBeLessThan(idx(y))
     expect(idx(y)).toBeLessThan(idx(byId('reconcile')))
@@ -362,7 +374,7 @@ describe('window, fence and dispatch order', () => {
     expect(cmds[0]).toBe(READ)
     // the one dispatch step serves both paths: link paths, and schedule after a claim
     expect(dispatch.if).toContain(
-      "(github.event_name != 'schedule' || steps.claim.outputs.claimed == 'true')"
+      "(env.IS_RESUME != 'true' || steps.claim.outputs.claimed == 'true')"
     )
     expect(dispatch.run).toContain('-f dispatch_token="ac-$GITHUB_RUN_ID"')
   })
@@ -376,7 +388,7 @@ describe('link path: deferral', () => {
   it('a closed window checks for live markers, refuses a second deferral, otherwise inserts', () => {
     for (const s of [live, liveAlert, defer]) {
       expect(s.if).toContain("steps.window.outputs.window_open == 'false'")
-      expect(s.if).toContain("github.event_name != 'schedule'")
+      expect(s.if).toContain("env.IS_RESUME != 'true'")
     }
     expect(cmdText(live)).toBe('npx tsx scripts/indexer/backfill-autochain-defer.ts live-check')
     expect(liveAlert.if).toContain("steps.live.outputs.live_count != '0'")
@@ -452,7 +464,7 @@ describe('schedule path: reconcile, target, fence, claim', () => {
   it('fence exit 3 on a schedule tick closes the marker as needs_intervention and alerts', () => {
     const s = byId('ni_alert')
     expect(s.if).toContain('failure()')
-    expect(s.if).toContain("github.event_name == 'schedule'")
+    expect(s.if).toContain("env.IS_RESUME == 'true'")
     expect(s.if).toContain("steps.fence.outputs.exit_code == '3'")
     const cmds = commands(s.run!)
     expect(cmds[0]).toMatch(
@@ -477,7 +489,7 @@ describe('schedule path: reconcile, target, fence, claim', () => {
 
   it('a tick whose recovery cannot resume closes the marker', () => {
     const s = byName('Close the deferral marker, not resumable (schedule)')
-    expect(s.if).toContain("github.event_name == 'schedule'")
+    expect(s.if).toContain("env.IS_RESUME == 'true'")
     expect(s.if).toContain("steps.recover.outputs.skip == 'true'")
     expect(cmdText(s)).toMatch(/backfill-autochain-defer\.ts needs-intervention$/)
   })

@@ -4,11 +4,16 @@
 # Ticks run in their own concurrency group, so a pending link can never be cancelled by a
 # newer queued tick. The price is that a tick and a link can now run at the same time; this
 # check makes the tick step aside at its start: if any indexer-backfill-autochain.yml run
-# whose event is NOT `schedule` (a workflow_run link or a manual dispatch) is queued,
+# that is NOT a resume (a workflow_run link or a manual mode=link dispatch) is queued,
 # in_progress, waiting, pending or requested, the link owns the turn and the tick stops
 # quietly (skip=true appended to GITHUB_ENV, exit 0). The marker stays open; a later tick
 # resumes it. Interleavings after this check are covered by the fence, the claim and the
 # live-marker check (see the workflow's concurrency comment).
+#
+# SMI-7142: a resume is a run whose event is `schedule` OR whose display_title contains
+# `[resume]` (a mode=resume workflow_dispatch; the workflow's run-name adds the tag, and the
+# runs API returns the title but not the inputs). A resume is never a link, so it never
+# makes a tick yield. A missing display_title counts as "not tagged" (a link): the safe side.
 #
 # Exit 0: decided (yield or proceed). Exit 1: the run list could not be read, or a status
 # has more runs than one page shows -- an unread state is never "no link", so the tick is
@@ -36,7 +41,7 @@ const self=process.argv[1];let j=null;try{j=JSON.parse(require("fs").readFileSyn
 const rs=j&&j.workflow_runs;
 if(!j||!Number.isInteger(j.total_count)||!Array.isArray(rs)||!rs.every(r=>r&&Number.isInteger(r.id)&&typeof r.event==="string"&&r.event!=="")){console.log("ERR")}
 else if(j.total_count>rs.length){console.log("MORE")}
-else{console.log("OK "+rs.filter(r=>r.event!=="schedule"&&String(r.id)!==self).map(r=>r.id+":"+r.event).join(","))}
+else{console.log("OK "+rs.filter(r=>r.event!=="schedule"&&!(typeof r.display_title==="string"&&r.display_title.includes("[resume]"))&&String(r.id)!==self).map(r=>r.id+":"+r.event).join(","))}
 ' "$SELF")
   case "$v" in
     ERR) fail "the status=$s run list was unreadable or had an incomplete entry" ;;

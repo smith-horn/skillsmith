@@ -27,7 +27,12 @@ st=$(printf '%s' "$2" | sed -n 's/.*[?&]status=\\([a-z_]*\\).*/\\1/p')
 echo '{"total_count":0,"workflow_runs":[]}'
 `
 
-const run = (id: number, event: string) => ({ id, event, status: 'x' })
+const run = (id: number, event: string, display_title?: string) => ({
+  id,
+  event,
+  status: 'x',
+  ...(display_title === undefined ? {} : { display_title }),
+})
 const list = (runs: unknown[], total = runs.length) => ({ total_count: total, workflow_runs: runs })
 
 function drive(
@@ -91,6 +96,41 @@ describe('autochain-tick-yield.sh', () => {
     const r = drive({ in_progress: list([run(900, 'workflow_run'), run(901, 'schedule')]) })
     expect(r.status, r.out).toBe(0)
     expect(r.githubEnv).toBe('')
+  })
+
+  // SMI-7142: a mode=resume workflow_dispatch is a resume, not a link. Its event is
+  // workflow_dispatch, so only the run-name tag tells it apart.
+  it('a queued mode=resume dispatch (title tagged [resume]) never makes the tick yield', () => {
+    const r = drive({
+      queued: list([
+        run(77, 'workflow_dispatch', 'Skill Indexer Backfill Autochain [resume] (pg_cron-prod)'),
+      ]),
+    })
+    expect(r.status, r.out).toBe(0)
+    expect(r.githubEnv).toBe('')
+  })
+
+  it('a manual link dispatch (untagged title) still makes the tick yield, and only it is reported', () => {
+    const r = drive({
+      in_progress: list([
+        run(77, 'workflow_dispatch', 'Skill Indexer Backfill Autochain'),
+        run(78, 'workflow_dispatch', 'Skill Indexer Backfill Autochain [resume]'),
+      ]),
+    })
+    expect(r.status, r.out).toBe(0)
+    expect(r.githubEnv).toBe('skip=true\n')
+    expect(r.out).toMatch(/\b77:workflow_dispatch\b/)
+    expect(r.out).not.toContain('78:')
+  })
+
+  it('an entry with no display_title is treated as a link (the safe side), not as a resume', () => {
+    const r = drive({ queued: list([run(77, 'workflow_dispatch')]) })
+    expect(r.githubEnv).toBe('skip=true\n')
+  })
+
+  it('a workflow_run link is never excluded by a title', () => {
+    const r = drive({ queued: list([run(77, 'workflow_run', 'Skill Indexer Backfill Autochain')]) })
+    expect(r.githubEnv).toBe('skip=true\n')
   })
 
   it.each([

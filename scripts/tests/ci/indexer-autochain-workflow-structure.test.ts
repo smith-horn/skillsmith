@@ -23,7 +23,8 @@ describe('autochain workflow structure', () => {
     const wd = doc.on.workflow_dispatch as {
       inputs: Record<string, { required?: boolean; default?: unknown; type: string }>
     }
-    expect(wd.inputs.completed_run_id.required).toBe(true)
+    // SMI-7142: optional at the UI; the "Validate dispatch inputs" step requires it for mode=link
+    expect(wd.inputs.completed_run_id.required).toBe(false)
     expect(wd.inputs.verify_only.type).toBe('boolean')
     expect(wd.inputs.verify_only.default).toBe(true)
   })
