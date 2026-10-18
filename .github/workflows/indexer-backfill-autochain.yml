@@ -21,11 +21,12 @@
 #     must not be "1" (SMI-7121 G2). (GITHUB_TOKEN gets 403 on this read
 #     (measured, W0-7); GitHub App access is unmeasured (its token failed to mint).)
 #   - Kill switches at job start (SMI-7121 G1): BACKFILL_AUTOCHAIN_DISABLE=1 stops a
-#     workflow_run link and a schedule tick QUIETLY (driver mode: every driver
-#     dispatch triggers a link). BACKFILL_KILL_SWITCH=1 (with the autochain enabled)
-#     stops a workflow_run link RED with one indexer_backfill_autochain_kill_switch_stop
-#     alert, because that chain will not resume on re-enable; a schedule tick under
-#     either switch stays quiet (its marker stays open for the pg_cron watcher).
+#     workflow_run link and a resume (schedule tick or mode=resume dispatch) QUIETLY
+#     (driver mode: every driver dispatch triggers a link). BACKFILL_KILL_SWITCH=1 (with
+#     the autochain enabled) stops a workflow_run link RED with one
+#     indexer_backfill_autochain_kill_switch_stop alert, because that chain will not
+#     resume on re-enable; a resume under either switch stays quiet (its marker stays
+#     open for the pg_cron watcher).
 #   - Before the dispatch step sit the newest-run fence (its own step,
 #     scripts/ci/autochain-newest-run-fence.sh) and then the busy-window check: if
 #     any indexer-backfill.yml run began at or after the triggering attempt, or the
@@ -59,14 +60,18 @@
 #     DEFERS: if no live marker exists in either project it inserts one
 #     `indexer_backfill_autochain_deferred` audit_logs row (state open) and exits
 #     green; any live marker is red plus `indexer_backfill_autochain_multiple_deferrals`.
-#   - RESUME (D6): the `schedule` trigger resumes the single open marker. A tick
-#     reconciles consumed markers first (`indexer_backfill_autochain_needs_intervention`
+#   - RESUME (D6, SMI-7142): a resume is a `workflow_dispatch` with mode=resume (sent by
+#     the pg_cron job `backfill-autochain-resume`, or by an operator) or, as the
+#     independent fallback (ADR-181), a `schedule` tick. Both are one predicate,
+#     IS_RESUME. It resumes the single open marker. A resume reconciles consumed markers first (`indexer_backfill_autochain_needs_intervention`
 #     for each one it closes), resumes only inside the window, runs the fence with
 #     the marker's run and attempt (fence exit 3 closes the marker as
 #     needs_intervention and alerts), CLAIMS the marker (open -> consumed) and
 #     only then dispatches. A claim never returns to open. A tick whose recovery
 #     cannot resume (a halt, a finished campaign, the retry cap) closes the marker
-#     as needs_intervention so later ticks do not repeat it.
+#     as needs_intervention so later ticks do not repeat it. After a successful dispatch a
+#     resume reconciles its own claim (consumed -> dispatched) so the link that follows the
+#     resumed crawl does not see an undispatched `consumed` marker as a second live deferral.
 #   - Untrusted values (titles, reasons, run ids, step outputs) reach shell only
 #     through `env:`, never inlined into a `run:` script.
 #   - Stuck-marker detection is NOT here: the pg_cron watcher
@@ -82,12 +87,23 @@
 
 name: Skill Indexer Backfill Autochain
 
+# SMI-7142: a resume (a schedule tick or a `mode=resume` dispatch) is tagged `[resume]`
+# in its title so scripts/ci/autochain-tick-yield.sh can tell it from a link: the runs
+# API returns display_title but not inputs. The title holds NO free-text input: run-name is
+# computed before validation runs, so any user text in it could spoof the tag while the run
+# is queued. `resume_source` is logged by a step and the step summary instead.
+run-name: Skill Indexer Backfill Autochain${{ (github.event_name == 'schedule' || inputs.mode == 'resume') && ' [resume]' || '' }}
+
 on:
   workflow_run:
     workflows: ['Skill Indexer Backfill'] # must match indexer-backfill.yml's `name:` exactly
     types: [completed]
     branches: [main]
   schedule:
+    # SMI-7142: FALLBACK resumer only (ADR-181 decision 3: keep a scheduler independent of
+    # pg_cron). GitHub drops and delays schedule events (measured: 0 of 24 slots usable), so
+    # the primary resumer is the pg_cron job `backfill-autochain-resume`, which dispatches
+    # this workflow with mode=resume. Both share the tick concurrency group and the claim.
     # SMI-7121 D6 resume ticks: three in every UTC hour that contains open-window
     # minutes for the default BACKFILL_BUSY_HOURS. Derived from the window predicate;
     # scripts/tests/indexer/backfill-busy-window.test.ts reads THIS line and asserts
@@ -95,9 +111,23 @@ on:
     - cron: '3,23,43 1,4,9,10,15,16,21,22 * * *'
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'link (default) = recover a completed run; resume = resume the single open deferral marker now (pg_cron and operators; takes everything from the marker)'
+        required: false
+        default: 'link'
+        type: choice
+        options:
+          - link
+          - resume
+      resume_source:
+        description: 'Display only: who asked for this resume (for example pg_cron-prod); logged in the run, not in its title'
+        required: false
+        default: ''
+        type: string
       completed_run_id:
-        description: 'Run id of a completed Skill Indexer Backfill run to recover inputs from'
-        required: true
+        description: 'mode=link: run id of a completed Skill Indexer Backfill run to recover inputs from. Must be empty for mode=resume'
+        required: false
+        default: ''
         type: string
       completed_run_attempt:
         description: 'Attempt number of that run being resumed (default 1; pass 2 or more only to resume a run that was re-run)'
@@ -105,7 +135,7 @@ on:
         default: '1'
         type: string
       verify_only:
-        description: 'true = recover and report only; no cooldown, alert or dispatch'
+        description: 'true = recover and report only; no cooldown, alert or dispatch. mode=resume requires false'
         required: false
         default: true
         type: boolean
@@ -119,6 +149,9 @@ on:
 # indexer.yml's `skill-indexer` group -- this workflow's own execution must
 # never contend with the crawl dispatches it observes and creates.
 #
+# SMI-7142: a resume is a schedule tick OR a workflow_dispatch with mode=resume (the pg_cron
+# dispatcher, or an operator). Everything below that says "tick" covers both; one pending
+# resume replacing another in the tick group is harmless (the claim decides the winner).
 # SMI-7121 V3: links (workflow_run, workflow_dispatch) and resume ticks (schedule) use
 # SEPARATE groups. GitHub keeps one pending run per group and cancels the older pending
 # one, so in a shared group a queued tick could cancel a pending link and silently end the
@@ -136,11 +169,11 @@ on:
 #     both pass their fences in the seconds before either dispatch lands; the second crawl
 #     then waits in indexer-backfill.yml's own concurrency group and its DB lock, so two
 #     crawls never run at once.
-#   - tick vs manual dispatch: a manual run is in the link group and is a non-schedule run,
-#     so the same yield, fences and live-marker check apply, with the same residual.
+#   - tick vs manual dispatch: a manual mode=link run is in the link group and is a non-resume
+#     run, so the same yield, fences and live-marker check apply, with the same residual.
 #   - link vs link: unchanged from SMI-7112 (one link group, cancel-in-progress false).
 concurrency:
-  group: ${{ github.event_name == 'schedule' && 'skill-indexer-backfill-autochain-tick' || 'skill-indexer-backfill-autochain' }}
+  group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'resume')) && 'skill-indexer-backfill-autochain-tick' || 'skill-indexer-backfill-autochain' }}
   cancel-in-progress: false
 
 jobs:
@@ -159,11 +192,20 @@ jobs:
       # The run whose inputs are recovered: the dispatched id on a manual
       # verify run, else the run that just completed. Empty on a schedule
       # tick: those steps take the marker's run from steps.target instead.
-      COMPLETED_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.completed_run_id || github.event.workflow_run.id }}
+      COMPLETED_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'resume' && inputs.completed_run_id || github.event.workflow_run.id }}
+      # SMI-7142: the ONE predicate for "this run is a resume" (a schedule tick or a
+      # mode=resume dispatch). Every behavioural check below reads it; none tests
+      # github.event_name == 'schedule' directly. The concurrency group and the job `if`
+      # cannot read `env`, so they inline the same expression.
+      IS_RESUME: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'resume') }}
       # Gates EVERY side-effect step (cooldown, alerts, marker writes, dispatch).
-      # A workflow_run is a real chain link and a schedule tick a real resume; a
-      # manual run dispatches only when verify_only is explicitly false. Either
-      # way a kill switch wins.
+      # A workflow_run is a real chain link and a schedule tick a real resume. Any manual
+      # dispatch (mode=link or mode=resume) is allowed only with verify_only explicitly
+      # false, so a verify-only run sends no email. It does NOT keep an operator input
+      # mistake from emailing: validation refuses mode=resume with verify_only=true, but
+      # a mistake under verify_only=false (for example a bad resume_source) fails the
+      # validation step, and the generic failure alert skips it via steps.validate.outcome.
+      # Either way a kill switch wins.
       DISPATCH_ALLOWED: ${{ (github.event_name == 'workflow_run' || github.event_name == 'schedule' || inputs.verify_only == false) && vars.BACKFILL_AUTOCHAIN_DISABLE != '1' && vars.BACKFILL_KILL_SWITCH != '1' }}
       # Job-start fast path only; the authoritative read happens in the
       # dispatch step (scripts/ci/autochain-read-enable.sh). Registered in
@@ -178,11 +220,48 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
+      - name: Validate dispatch inputs
+        id: validate
+        # SMI-7142. First step, inline (no Checkout has run). Red on a malformed
+        # workflow_dispatch; other events carry no inputs. A resume takes its run,
+        # attempt and acknowledgement from the marker, so any of those given is an
+        # operator mistake, not something to ignore.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MODE: ${{ inputs.mode }}
+          IN_COMPLETED_RUN_ID: ${{ inputs.completed_run_id }}
+          IN_COMPLETED_RUN_ATTEMPT: ${{ inputs.completed_run_attempt }}
+          IN_ACKNOWLEDGE_HALTS: ${{ inputs.acknowledge_halts }}
+          IN_VERIFY_ONLY: ${{ inputs.verify_only }}
+          IN_RESUME_SOURCE: ${{ inputs.resume_source }}
+        run: |
+          bad() { echo "::error::Invalid dispatch inputs: $*"; exit 1; }
+          case "$IN_RESUME_SOURCE" in
+            *[!A-Za-z0-9._-]*) bad "resume_source may contain only letters, digits, dot, underscore and hyphen" ;;
+          esac
+          if [ "${#IN_RESUME_SOURCE}" -gt 64 ]; then bad "resume_source is longer than 64 characters"; fi
+          case "$MODE" in
+            link)
+              [ -n "$IN_COMPLETED_RUN_ID" ] || bad "mode=link requires completed_run_id"
+              ;;
+            resume)
+              [ -z "$IN_COMPLETED_RUN_ID" ] || bad "mode=resume takes the run from the deferral marker; completed_run_id must be empty"
+              { [ -z "$IN_COMPLETED_RUN_ATTEMPT" ] || [ "$IN_COMPLETED_RUN_ATTEMPT" = "1" ]; } || bad "mode=resume takes the attempt from the deferral marker; completed_run_attempt must be left at 1"
+              [ -z "$IN_ACKNOWLEDGE_HALTS" ] || bad "mode=resume takes any acknowledgement from the deferral marker; acknowledge_halts must be empty"
+              [ "$IN_VERIFY_ONLY" = "false" ] || bad "mode=resume dispatches, so verify_only must be false"
+              ;;
+            *) bad "mode must be link or resume" ;;
+          esac
+          if [ -n "$IN_RESUME_SOURCE" ]; then
+            echo "resume_source: $IN_RESUME_SOURCE"
+            printf 'resume_source: %s\n' "$IN_RESUME_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Kill-switch gate
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          # A chain link (workflow_run) or a resume tick (schedule) with a kill
+          # A chain link (workflow_run) or a resume (schedule tick or mode=resume dispatch) with a kill
           # switch engaged stops: there is nothing to dispatch, and runs dispatched
           # before their run-name carried env= would otherwise go red as
           # indeterminate. Deferral markers stay open and resume after re-enable.
@@ -190,7 +269,7 @@ jobs:
           # a workflow_run link with the autochain enabled) is the next step's alert.
           # A manual verify run still recovers (its side effects are already off via
           # DISPATCH_ALLOWED).
-          if { [ "$EVENT_NAME" = "workflow_run" ] || [ "$EVENT_NAME" = "schedule" ]; } && { [ "$AUTOCHAIN_DISABLE" = "1" ] || [ "$BACKFILL_KILL_SWITCH" = "1" ]; }; then
+          if { [ "$EVENT_NAME" = "workflow_run" ] || [ "$IS_RESUME" = "true" ]; } && { [ "$AUTOCHAIN_DISABLE" = "1" ] || [ "$BACKFILL_KILL_SWITCH" = "1" ]; }; then
             echo "Auto-chain disabled (BACKFILL_AUTOCHAIN_DISABLE or BACKFILL_KILL_SWITCH engaged) -- stopping without dispatching."
             echo "skip=true" >> "$GITHUB_ENV"
           fi
@@ -230,7 +309,7 @@ jobs:
       - name: No other backfill run queued or in-progress
         # Link paths only. A schedule tick must still reconcile its markers while
         # a backfill runs; its post-cooldown re-check and the fence stop a resume.
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name != 'schedule'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -266,7 +345,7 @@ jobs:
       - name: Yield to a live link (schedule)
         # SMI-7121 V3: a tick stops quietly at its start while any non-schedule
         # autochain run is queued or running (see the concurrency comment above).
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/ci/autochain-tick-yield.sh
@@ -275,7 +354,7 @@ jobs:
 
       - name: Reconcile consumed deferral markers (schedule)
         id: reconcile
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -289,7 +368,7 @@ jobs:
 
       - name: Alert on markers needing intervention (reconcile)
         id: reconcile_alert
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.reconcile.outputs.moved_count != '0'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.reconcile.outputs.moved_count != '0'
         env:
           MOVED: ${{ steps.reconcile.outputs.moved }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -309,7 +388,7 @@ jobs:
 
       - name: Select the deferred marker to resume (schedule)
         id: target
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -321,7 +400,7 @@ jobs:
 
       - name: Alert on multiple deferrals (schedule)
         id: target_alert
-        if: failure() && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.target.outputs.multiple == 'true'
+        if: failure() && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.target.outputs.multiple == 'true'
         env:
           TARGET_MESSAGE: ${{ steps.target.outputs.message }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -333,7 +412,7 @@ jobs:
           echo "delivered=true" >> "$GITHUB_OUTPUT"
 
       - name: Stop, no deferral to resume (schedule)
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.target.outputs.resume != 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.target.outputs.resume != 'true'
         env:
           TARGET_REASON: ${{ steps.target.outputs.reason }}
         run: |
@@ -342,11 +421,11 @@ jobs:
 
       - name: Busy-window check before recovery (schedule)
         id: window_pre
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true'
         run: npx tsx scripts/indexer/backfill-busy-window.ts
 
       - name: Stop, window closed (schedule)
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.window_pre.outputs.window_open != 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.window_pre.outputs.window_open != 'true'
         env:
           NEXT_WINDOW_UTC: ${{ steps.window_pre.outputs.next_window_utc }}
         run: |
@@ -358,7 +437,7 @@ jobs:
       - name: Resolve run display title
         id: resolve
         # Link paths only: a schedule tick takes the env from its marker (RECOVERY_ENV).
-        if: env.skip != 'true' && github.event_name != 'schedule'
+        if: env.skip != 'true' && env.IS_RESUME != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -384,9 +463,9 @@ jobs:
           # Schedule: the marker's run and env. Link paths: empty / the job env.
           RECOVERY_ENV: ${{ steps.target.outputs.supabase_env }}
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
-          # Only a manual dispatch may acknowledge halts (SMI-7121 D4); a schedule tick
+          # Only a manual link dispatch may acknowledge halts (SMI-7121 D4); a resume
           # re-applies the acknowledgement its marker carried from that dispatch.
-          ACKNOWLEDGE_HALTS: ${{ github.event_name == 'workflow_dispatch' && inputs.acknowledge_halts || steps.target.outputs.acknowledged_halts || '' }}
+          ACKNOWLEDGE_HALTS: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'resume' && inputs.acknowledge_halts || steps.target.outputs.acknowledged_halts || '' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
@@ -510,7 +589,7 @@ jobs:
         # SMI-7121 V2: the campaign reached cursor done. Not a fault: the marker closes
         # with reason campaign_complete (the only terminal state the SQL function allows
         # from open), one info alert is sent, and the job stays green.
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.recover.outputs.skip == 'true' && steps.recover.outputs.campaign_complete == 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.recover.outputs.skip == 'true' && steps.recover.outputs.campaign_complete == 'true'
         env:
           MARKER_ID: ${{ steps.target.outputs.marker_id }}
           MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
@@ -528,7 +607,7 @@ jobs:
       - name: Close the deferral marker, not resumable (schedule)
         # A halt or the retry cap: later ticks must not repeat this recovery. The
         # marker becomes needs_intervention.
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.recover.outputs.skip == 'true' && steps.recover.outputs.campaign_complete != 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.recover.outputs.skip == 'true' && steps.recover.outputs.campaign_complete != 'true'
         env:
           SKIP_REASON: ${{ steps.recover.outputs.skip_reason }}
           MARKER_ID: ${{ steps.target.outputs.marker_id }}
@@ -594,8 +673,12 @@ jobs:
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
           # The triggering ATTEMPT, not just the run: a re-run keeps its run id.
           # A schedule tick names the attempt its marker recorded.
-          TRIGGER_EVENT: ${{ github.event_name }}
-          TRIGGER_RUN_ATTEMPT: ${{ github.event_name == 'schedule' && steps.target.outputs.completed_run_attempt || (github.event_name == 'workflow_dispatch' && inputs.completed_run_attempt || github.event.workflow_run.run_attempt) }}
+          # SMI-7142: a mode=resume dispatch is fenced exactly like a schedule tick. Its own
+          # event is workflow_dispatch, whose documented fence branch names the attempt from
+          # inputs.completed_run_attempt (default 1); a resume of a re-run run would fence on
+          # attempt 1 and wrongly close the marker. So a resume says `schedule` here.
+          TRIGGER_EVENT: ${{ env.IS_RESUME == 'true' && 'schedule' || github.event_name }}
+          TRIGGER_RUN_ATTEMPT: ${{ env.IS_RESUME == 'true' && steps.target.outputs.completed_run_attempt || (github.event_name == 'workflow_dispatch' && inputs.completed_run_attempt || github.event.workflow_run.run_attempt) }}
         run: |
           # SMI-7112: exits non-zero (red, no dispatch) when any backfill run newer
           # than the triggering attempt exists, when the triggering run was re-run
@@ -611,7 +694,7 @@ jobs:
         id: ni_alert
         # One red run and one alert; later ticks find no open marker. Fence exit 1
         # (could not evaluate) leaves the marker open for the next tick.
-        if: failure() && env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.fence.outputs.exit_code == '3'
+        if: failure() && env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.fence.outputs.exit_code == '3'
         env:
           MARKER_ID: ${{ steps.target.outputs.marker_id }}
           MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
@@ -640,7 +723,7 @@ jobs:
 
       - name: Live-marker check before deferring
         id: live
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name != 'schedule' && steps.window.outputs.window_open == 'false'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME != 'true' && steps.window.outputs.window_open == 'false'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -651,7 +734,7 @@ jobs:
 
       - name: Refuse a second deferral
         id: live_alert
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name != 'schedule' && steps.window.outputs.window_open == 'false' && steps.live.outputs.live_count != '0'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME != 'true' && steps.window.outputs.window_open == 'false' && steps.live.outputs.live_count != '0'
         env:
           LIVE: ${{ steps.live.outputs.live }}
           LIVE_COUNT: ${{ steps.live.outputs.live_count }}
@@ -667,7 +750,7 @@ jobs:
 
       - name: Defer to the next window
         id: defer
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name != 'schedule' && steps.window.outputs.window_open == 'false' && steps.live.outputs.live_count == '0'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME != 'true' && steps.window.outputs.window_open == 'false' && steps.live.outputs.live_count == '0'
         env:
           COMPLETED_RUN_ATTEMPT: ${{ github.event_name == 'workflow_dispatch' && inputs.completed_run_attempt || github.event.workflow_run.run_attempt }}
           # A manual link's acknowledgement rides on the marker to the resume (SMI-7121).
@@ -694,13 +777,13 @@ jobs:
           {
             echo "### Backfill auto-chain: deferred to the next busy-hour window"
             echo ""
-            echo "Run $COMPLETED_RUN_ID finished outside the window. Deferral marker $MARKER_ID ($MARKER_ENV) is open; a scheduled tick resumes it at or after $NEXT_WINDOW_UTC."
+            echo "Run $COMPLETED_RUN_ID finished outside the window. Deferral marker $MARKER_ID ($MARKER_ENV) is open; a resume (pg_cron dispatch, or the schedule fallback) picks it up at or after $NEXT_WINDOW_UTC."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ---------------------------------------------------------------- schedule path: claim
 
       - name: Stop, window closed at re-check (schedule)
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.window.outputs.window_open == 'false'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.window.outputs.window_open == 'false'
         env:
           NEXT_WINDOW_UTC: ${{ steps.window.outputs.next_window_utc }}
         run: echo "Busy window closed before the claim; the deferral marker stays open until $NEXT_WINDOW_UTC."
@@ -711,14 +794,14 @@ jobs:
         # the commands immediately before the dispatch). It exists so a disabled or
         # unreadable switch fails here, BEFORE the claim, leaving the marker open (red,
         # generic alert) instead of consuming it for a dispatch that cannot happen.
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true'
         env:
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
         run: GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh
 
       - name: Claim the deferral marker (schedule)
         id: claim
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true'
         env:
           MARKER_ID: ${{ steps.target.outputs.marker_id }}
           MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
@@ -731,13 +814,14 @@ jobs:
         run: npx tsx scripts/indexer/backfill-autochain-defer.ts claim
 
       - name: Stop, marker claimed elsewhere (schedule)
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && github.event_name == 'schedule' && steps.claim.outcome == 'success' && steps.claim.outputs.claimed != 'true'
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.claim.outcome == 'success' && steps.claim.outputs.claimed != 'true'
         run: echo "Another tick already claimed this deferral marker; not dispatching."
 
       # ---------------------------------------------------------------- dispatch
 
       - name: Dispatch next chunk
-        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true' && (github.event_name != 'schedule' || steps.claim.outputs.claimed == 'true')
+        id: dispatch
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true' && (env.IS_RESUME != 'true' || steps.claim.outputs.claimed == 'true')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
@@ -774,6 +858,71 @@ jobs:
             -f dispatch_token="ac-$GITHUB_RUN_ID"
           echo "Re-dispatched indexer-backfill.yml, resume_from=$RESUME_FROM, supabase_env=$SUPABASE_ENV, dispatch_token=ac-$GITHUB_RUN_ID"
 
+      - name: Reconcile this claim after the dispatch (resume)
+        id: self_reconcile
+        # SMI-7142 (1f). The claim left the marker `consumed`; it reaches `dispatched` only
+        # when a reconcile finds the backfill run carrying [tok=ac-<this run id>]. Without
+        # this step the next link, finishing outside the window, would count the
+        # undispatched marker as live and go red with multiple_deferrals before any later
+        # tick could reconcile it. SCOPED to the marker this run claimed
+        # (reconcile-marker): the global reconcile sweeps every consumed marker in both
+        # projects and could move a different, fresh one to needs_intervention. Success is
+        # decided only by that exact marker's id in dispatched_ids. Polls up to 6 x 15s for
+        # the run to appear. If it does not, the marker stays `consumed` for the fallback
+        # reconcile (the pg_cron dispatcher's consumed arm, or the 15-minute grace) and this
+        # step warns and stays green. Red on a read or transition error, on unparseable
+        # output, and when the marker moved to needs_intervention. The chunk WAS dispatched
+        # by then, so its own alert says so, and the generic alert sends (with the same
+        # "DID dispatch" text) only if that dedicated alert was not delivered.
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.claim.outputs.claimed == 'true' && steps.dispatch.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER_ID: ${{ steps.target.outputs.marker_id }}
+          MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
+        run: |
+          [ -n "$MARKER_ID" ] || { echo "::error::No claimed marker id to reconcile."; exit 1; }
+          for attempt in 1 2 3 4 5 6; do
+            sleep 15
+            OUT=$(mktemp)
+            GITHUB_OUTPUT="$OUT" npx tsx scripts/indexer/backfill-autochain-defer.ts reconcile-marker || { echo "::error::Post-dispatch reconcile failed (read or transition error)."; exit 1; }
+            MOVED=$(awk '/^moved_count<</{getline v; print v}' "$OUT")
+            DISPATCHED_IDS=$(awk '/^dispatched_ids<</{getline v; print v}' "$OUT")
+            case "$MOVED" in
+              0) ;;
+              [1-9]*) echo "::error::Marker $MARKER_ID moved to needs_intervention during the post-dispatch reconcile (needs_intervention_ids: $(awk '/^needs_intervention_ids<</{getline v; print v}' "$OUT")); read its reason and docs/internal/runbooks/backfill-autochain-handover.md section 8.3."; exit 1 ;;
+              *) echo "::error::Post-dispatch reconcile output was unparseable (moved_count='$MOVED')."; exit 1 ;;
+            esac
+            grep -q '^dispatched_ids<<' "$OUT" || { echo "::error::Post-dispatch reconcile output had no dispatched_ids."; exit 1; }
+            case ",$DISPATCHED_IDS," in
+              *",$MARKER_ID,"*)
+                echo "dispatched=true" >> "$GITHUB_OUTPUT"
+                echo "Marker $MARKER_ID reconciled to dispatched on poll $attempt."
+                exit 0
+                ;;
+            esac
+          done
+          echo "::warning::The dispatched backfill run did not appear within 90s; the marker stays consumed for the fallback reconcile."
+
+      - name: Alert on post-dispatch reconcile failure (resume)
+        id: self_reconcile_alert
+        # The chunk WAS dispatched; only recording the marker failed. Not the generic alert,
+        # whose text says nothing was dispatched.
+        if: failure() && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.self_reconcile.outcome == 'failure'
+        env:
+          MARKER_ID: ${{ steps.target.outputs.marker_id }}
+          MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          ALERT_TYPE=indexer_backfill_autochain_needs_intervention ALERT_RUN_ID="$GITHUB_RUN_ID" ALERT_RUN_URL="$RUN_URL" \
+            ALERT_MESSAGE="The backfill autochain DID dispatch the next chunk, but reconciling its deferral marker $MARKER_ID (env $MARKER_ENV) failed afterwards (a read or transition error, unparseable output, or the marker moved to needs_intervention). Do not re-dispatch: check the marker's state and the dispatched indexer-backfill run, per docs/internal/runbooks/backfill-autochain-handover.md section 8.3." \
+            bash scripts/ci/autochain-alert.sh
+          echo "delivered=true" >> "$GITHUB_OUTPUT"
+
       - name: Send Alert on Failure
         # Any red step above (indeterminate env, missing creds, a read error, a
         # failed enable read, a failed marker write, a failed dispatch) lands here.
@@ -781,18 +930,26 @@ jobs:
         # alert step suppresses this one once delivered.
         # Gated by DISPATCH_ALLOWED like every other side effect: a verify-only run
         # is visibly red in the Actions UI without sending email. Not sent when a
-        # specific alert for this failure was delivered (one email, not two).
-        if: failure() && env.DISPATCH_ALLOWED == 'true' && steps.halt_alert.outputs.delivered != 'true' && steps.reconcile_alert.outputs.delivered != 'true' && steps.target_alert.outputs.delivered != 'true' && steps.ni_alert.outputs.delivered != 'true' && steps.live_alert.outputs.delivered != 'true' && steps.kill_alert.outputs.delivered != 'true'
+        # specific alert for this failure was delivered (one email, not two). A failed
+        # post-dispatch reconcile is suppressed only once ITS alert delivered; if that
+        # alert failed, this one still sends, saying the chunk was dispatched.
+        if: failure() && env.DISPATCH_ALLOWED == 'true' && steps.halt_alert.outputs.delivered != 'true' && steps.reconcile_alert.outputs.delivered != 'true' && steps.target_alert.outputs.delivered != 'true' && steps.ni_alert.outputs.delivered != 'true' && steps.live_alert.outputs.delivered != 'true' && steps.kill_alert.outputs.delivered != 'true' && steps.validate.outcome != 'failure' && steps.self_reconcile_alert.outputs.delivered != 'true'
         env:
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
+          SELF_RECONCILE_FAILED: ${{ steps.self_reconcile.outcome == 'failure' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         # Inline, not scripts/ci/autochain-alert.sh: a failure before Checkout must
         # still alert, and the helper exists only after Checkout. Same payload shape
         # and HTTP 200 check.
         run: |
+          if [ "$SELF_RECONCILE_FAILED" = "true" ]; then
+            MSG="The backfill autochain DID dispatch the next chunk, but reconciling its deferral marker failed afterwards and the dedicated alert could not be delivered. Do not re-dispatch: check the marker and the dispatched indexer-backfill run, per docs/internal/runbooks/backfill-autochain-handover.md section 8.3."
+          else
+            MSG="The backfill autochain failed while handling run ${COMPLETED_RUN_ID:-<none: resume (schedule or pg_cron)>}. It did not dispatch the next chunk; see the run for the failing step."
+          fi
           BODY=$(jq -n \
-            --arg msg "The backfill autochain failed while handling run ${COMPLETED_RUN_ID:-<none: scheduled resume tick>}. It did not dispatch the next chunk; see the run for the failing step." \
+            --arg msg "$MSG" \
             --arg rid "$GITHUB_RUN_ID" \
             --arg url "$RUN_URL" \
             '{type:"indexer_backfill_autochain_failed", message:$msg, workflow:"Skill Indexer Backfill Autochain", runId:$rid, runUrl:$url}')
