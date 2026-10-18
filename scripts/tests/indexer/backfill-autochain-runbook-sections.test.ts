@@ -16,24 +16,25 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-const MIGRATION = join(
-  ROOT,
-  'supabase',
-  'migrations',
-  '20261016000000_backfill_autochain_markers.sql'
-)
+// Every migration that defines the watcher's alert text: 20261017000000 (SMI-7142) replaces the
+// 20261016000000 body (SMI-7121) and adds a section, so both are read.
+const MIGRATIONS = [
+  '20261016000000_backfill_autochain_markers.sql',
+  '20261017000000_backfill_autochain_resume_pg_cron.sql',
+].map((f) => join(ROOT, 'supabase', 'migrations', f))
 const WORKFLOW = join(ROOT, '.github', 'workflows', 'indexer-backfill-autochain.yml')
 const RUNBOOK = join(ROOT, 'docs', 'internal', 'runbooks', 'backfill-autochain-handover.md')
 
-const migrationBytes = existsSync(MIGRATION) ? readFileSync(MIGRATION) : null
-const migrationEncrypted =
-  migrationBytes !== null && migrationBytes.subarray(0, 9).toString('latin1') === '\0GITCRYPT'
+const migrationBytes = MIGRATIONS.map((m) => (existsSync(m) ? readFileSync(m) : null))
+const migrationEncrypted = migrationBytes.some(
+  (b) => b !== null && b.subarray(0, 9).toString('latin1') === '\0GITCRYPT'
+)
 const runbookPresent = existsSync(RUNBOOK)
 
 const skipReason = !runbookPresent
   ? `runbook ${RUNBOOK} is absent (docs/internal submodule not checked out, as in CI)`
   : migrationEncrypted
-    ? `migration ${MIGRATION} is git-crypt-encrypted`
+    ? `a migration in ${MIGRATIONS.join(', ')} is git-crypt-encrypted`
     : ''
 if (skipReason) console.warn(`[backfill-autochain-runbook-sections] SKIPPED: ${skipReason}`)
 
@@ -138,13 +139,17 @@ describe('watcher runbook sections exist', () => {
   it.skipIf(skipReason !== '')(
     'each section the migration names is a heading in backfill-autochain-handover.md',
     () => {
-      expect(migrationBytes, `migration missing: ${MIGRATION}`).not.toBeNull()
-      const names = sectionNames(migrationBytes!.toString('utf8'))
-      // positive control: the two sections the plan requires before Wave 2b merges
+      MIGRATIONS.forEach((m, i) =>
+        expect(migrationBytes[i], `migration missing: ${m}`).not.toBeNull()
+      )
+      const names = migrationBytes.flatMap((b) => sectionNames(b!.toString('utf8')))
+      // positive control: the two sections the plan requires before Wave 2b merges, and the
+      // resume-dispatch failure section SMI-7142 adds (its heading carries the backticks)
       expect(names).toEqual(
         expect.arrayContaining([
           'A deferred chain did not resume',
           'Resume after a failed resume dispatch',
+          '`resume_dispatch_failed`',
         ])
       )
       const have = new Set(headings(readFileSync(RUNBOOK, 'utf8')))
