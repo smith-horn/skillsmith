@@ -24,6 +24,7 @@ import {
   park,
   readText,
   simpleFixture,
+  withAllFsTrapped,
   withFsStub,
 } from './park-tree.helpers.js'
 import type { Fixture } from './park-tree.helpers.js'
@@ -253,4 +254,30 @@ describe('the parked area is requested with the parent mode (ADR-166 D-3)', () =
       expect(requested).toEqual([{ mode: parentMode & 0o777 }])
     })
   }
+})
+
+describe('the parent must be absolute (retro of PR #3110)', () => {
+  it('a relative parent throws TypeError before any filesystem work, with nothing moved', () => {
+    const f = fixture()
+    const rel = path.relative(process.cwd(), f.parent)
+    expect(path.isAbsolute(rel)).toBe(false)
+    const { value, touched, deletes } = withAllFsTrapped(() => {
+      try {
+        park(rel, 'tree')
+        return 'returned'
+      } catch (e) {
+        return (e as Error).constructor.name
+      }
+    })
+    expect(value).toBe('TypeError')
+    expect(touched).toEqual([])
+    expect(deletes).toEqual([])
+    untouched(f)
+    expect(exists(path.join(f.parent, PARKED))).toBe(false)
+  })
+
+  it('control: the same tree with its absolute parent parks', () => {
+    const f = fixture()
+    expect(park(f.parent, 'tree').status).toBe('parked')
+  })
 })

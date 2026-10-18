@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- `parkTree` now refuses a relative parent path with a TypeError before any
+  filesystem work. A relative parent recorded a cwd-relative origin in the sidecar and failed the
+  index append. `parkTree` has no caller yet, so no behaviour change.
 - **Internal**: SMI-6531 -- `install/park-tree.ts` adds `parkTree`, which removes a folder or file by
   moving it to `<parent>/.skillsmith-parked/<opId>/<name>-<rnd>` with a sidecar, and never deletes
   (ADR-166). Ported from the SMI-6676 spike, with its parked index (`parked-index.ts`) and tree hash

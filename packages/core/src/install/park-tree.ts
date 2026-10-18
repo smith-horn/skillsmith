@@ -244,10 +244,11 @@ function readCoreVersion(): string {
 }
 
 /**
- * Parks `<parentAbs>/<name>`. `name` is a single path segment. Options are
- * read once and validated before any filesystem work; an unknown key, a
- * missing `client` or `kind`, or a `guardHash` that is neither omitted nor a
- * non-empty string throws TypeError (ADR-166 D-5). An unavailable core version
+ * Parks `<parentAbs>/<name>`. `parentAbs` must be absolute and `name` a single
+ * path segment. Options are read once and validated before any filesystem
+ * work; a relative parent, an unknown key, a missing `client` or `kind`, or a
+ * `guardHash` that is neither omitted nor a non-empty string throws TypeError
+ * (ADR-166 D-5). An unavailable core version
  * throws Error, also with nothing moved.
  *
  * Outcomes (ADR-166 D-8): `parked` (done); `kept` (nothing moved, a check
@@ -256,6 +257,11 @@ function readCoreVersion(): string {
  * `guard-unsupported-type`). Only `parked` is done; the caller never retries.
  */
 export function parkTree(parentAbs: string, name: string, options: ParkOptions): ParkResult {
+  // A relative parent would record a cwd-relative originPath in the sidecar and
+  // fail the index append, leaving a parked copy restore cannot place.
+  if (typeof parentAbs !== 'string' || !path.isAbsolute(parentAbs)) {
+    throw new TypeError(`parkTree: parentAbs must be an absolute path, got ${String(parentAbs)}`)
+  }
   assertPathSegment('name', name)
   const resolved = resolveParkOptions(options)
   // Read once, before any filesystem work: a barrel module calling parkTree

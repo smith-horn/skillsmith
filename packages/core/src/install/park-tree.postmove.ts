@@ -206,7 +206,7 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
   const indexed = (): { indexError?: string } => {
     if (options.indexPath === undefined) return {}
     try {
-      // Lock 4 (withFileLock on the index path, UD31) and lock 1' wrap this append in part B.
+      // Lock 4 (withFileLock on the index path, UD31) wraps this append in part B.
       appendParkedIndex(options.indexPath, {
         opId,
         path: destPath,
