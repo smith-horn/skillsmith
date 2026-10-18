@@ -263,10 +263,10 @@ export function registerResumeWatcherTests(ctx: Ctx): void {
       expect(without.lines[0]).toContain('no HTTP status (no error text)')
     })
 
-    it('the lookback is 2 hours: a failure 1h59m old alerts, one 2h01m old does not', async () => {
+    it('the lookback is 3 hours: a failure 2h59m old alerts, one 3h01m old does not', async () => {
       for (const [when, expected] of [
-        ['1 hour 59 minutes', 1],
-        ['2 hours 1 minute', 0],
+        ['2 hours 59 minutes', 1],
+        ['3 hours 1 minute', 0],
       ] as const) {
         const r = await inTxn(ctx.ctl(), [
           standardSecrets(),

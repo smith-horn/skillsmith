@@ -1,7 +1,8 @@
 /**
  * SMI-7142 plan D5: the watcher's "no response from pg_net" arm -- a resume_dispatch row still without
- * a status_code after 1 hour (inside the 2 hour lookback) is a failure, so a dispatch pg_net never
- * answered cannot stay silent. Registered from ./backfill-autochain-resume.pg.test.ts; the other
+ * a status_code after 1 hour (inside the 3 hour lookback) is a failure when pg_net has no response
+ * row for it either, so a dispatch pg_net never answered cannot stay silent while a response that
+ * arrived after the harvest is not misreported as missing. Registered from ./backfill-autochain-resume.pg.test.ts; the other
  * failure-arm cases are in ./backfill-autochain-resume.pg-watcher.ts.
  *
  * @module scripts/tests/supabase/backfill-autochain-resume.pg-noresp
@@ -80,14 +81,46 @@ export function registerNoResponseTests(ctx: Ctx): void {
       expect(r.lines).toEqual(['posts=0', 'alerts=0', 'watch_errors=0'])
     })
 
-    it('the unanswered arm shares the 2 hour lookback: 2h01m old does not alert', async () => {
+    it('the unanswered arm shares the 3 hour lookback: 2h59m old alerts, 3h01m old does not', async () => {
+      for (const [when, expected] of [
+        ['2 hours 59 minutes', 1],
+        ['3 hours 1 minute', 0],
+      ] as const) {
+        const r = await inTxn(ctx.ctl(), [standardSecrets(), dispatchRow(when, 101), WATCH, posts])
+        expect(r.lines, `unanswered ${when} old`).toEqual([`posts=${expected}`])
+      }
+    })
+
+    it('a response committed after the harvest but before the scan is not reported as missing', async () => {
+      // The trigger makes the harvest unable to record dispatch 101 (the audit row stays without a
+      // status_code key) while its net._http_response row exists: the state a response committing
+      // between the harvest statement and the failure scan leaves. Dispatch 102 (marker m2) has no
+      // response row at all and is the positive control: it must alert in the same run.
       const r = await inTxn(ctx.ctl(), [
         standardSecrets(),
-        dispatchRow('2 hours 1 minute', 101),
+        'CREATE FUNCTION pg_temp.hold_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ' +
+          'RETURN OLD; END $$;',
+        'CREATE TRIGGER hold_row BEFORE UPDATE ON audit_logs FOR EACH ROW ' +
+          "WHEN (OLD.metadata->>'net_request_id' = '101') EXECUTE FUNCTION pg_temp.hold_row();",
+        dispatchRow('70 minutes', 101, { marker: 'm1' }),
+        dispatchRow('70 minutes', 102, { marker: 'm2' }),
+        responseRow(101, 401, { content: BAD_CREDS }),
         WATCH,
         posts,
+        `SELECT 'm1_unharvested=' || count(*) FROM audit_logs WHERE event_type = '${DISPATCH}' ` +
+          `AND metadata->>'marker_id' = 'm1' AND NOT (metadata ? 'status_code');`,
+        `SELECT 'alerted=' || coalesce(string_agg(metadata->>'marker_id', ',' ` +
+          `ORDER BY metadata->>'marker_id'), '') FROM audit_logs WHERE event_type = '${ALERT}';`,
+        "SELECT 'm1_posts=' || count(*) FROM net.calls WHERE (body->>'message') LIKE '%marker m1%';",
+        "SELECT 'm2_posts=' || count(*) FROM net.calls WHERE (body->>'message') LIKE '%marker m2%';",
       ])
-      expect(r.lines).toEqual(['posts=0'])
+      expect(r.lines).toEqual([
+        'posts=1',
+        'm1_unharvested=1',
+        'alerted=m2',
+        'm1_posts=0',
+        'm2_posts=1',
+      ])
     })
   })
 }

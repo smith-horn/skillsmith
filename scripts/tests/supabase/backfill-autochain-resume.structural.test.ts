@@ -291,7 +291,7 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
       r = r.slice(0, r.indexOf('FOR v_f IN')) + r.slice(r.lastIndexOf('END;'))
       return norm(r).filter(
         (l) =>
-          !/^(v_fail_window CONSTANT interval := interval '2 hours';|v_noresp_after CONSTANT interval := interval '1 hour';|v_f record;|v_reason text;|v_msg text;|v_wrid text;)$/.test(
+          !/^(v_fail_window CONSTANT interval := interval '3 hours';|v_noresp_after CONSTANT interval := interval '1 hour';|v_f record;|v_reason text;|v_msg text;|v_wrid text;)$/.test(
             l
           )
       )
@@ -329,7 +329,8 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
     expect(t).toMatch(
       /v_wrid := \(v_h\.content::jsonb\)->>'workflow_run_id';\s+EXCEPTION WHEN OTHERS THEN/
     )
-    // the harvest still precedes the kill switch, and is still the only reader of pg_net's table
+    // the harvest still precedes the kill switch; it is the only JOIN on pg_net's table, and the
+    // failure arm's no-response check is the only other reader (one NOT EXISTS, pinned below)
     expect(
       inOrder(
         at(
@@ -339,7 +340,8 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
         )
       )
     ).toBe(true)
-    expect(t.match(/net\._http_response/g)).toHaveLength(1)
+    expect(t.match(/JOIN net\._http_response/g)).toHaveLength(1)
+    expect(t.match(/FROM net\._http_response/g)).toHaveLength(1)
     const inList = (x: string) =>
       /a\.event_type IN \('indexer_backfill_autochain_marker_alert',\s+'indexer_backfill_autochain_resume_dispatch'\)/.test(
         x
@@ -356,10 +358,10 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
     ).toBe(false)
   })
 
-  it('watcher: the failure arm -- 2h window, newest failing event per marker, regex-guarded cast, delivery dedup, own section', () => {
+  it('watcher: the failure arm -- 3h window, newest failing event per marker, regex-guarded cast, delivery dedup, own section', () => {
     const t = w()
     const arm = t.slice(t.indexOf('FOR v_f IN'))
-    expect(t).toMatch(/v_fail_window\s+CONSTANT interval := interval '2 hours';/)
+    expect(t).toMatch(/v_fail_window\s+CONSTANT interval := interval '3 hours';/)
     expect(arm).toMatch(
       /SELECT DISTINCT ON \(f\.marker_id\) f\.marker_id, f\.event_type, f\.metadata, f\.created_at/
     )
@@ -367,7 +369,7 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
       /CASE WHEN a\.event_type = 'indexer_backfill_autochain_resume_error' THEN false\s+WHEN a\.metadata->>'status_code' ~ '\^\[0-9\]\{1,3\}\$'\s+THEN \(a\.metadata->>'status_code'\)::integer BETWEEN 200 AND 299\s+ELSE false END AS ok/
     )
     expect(arm).toMatch(
-      /AND \(a\.event_type = 'indexer_backfill_autochain_resume_error'\s+OR \(a\.event_type = 'indexer_backfill_autochain_resume_dispatch'\s+AND \(a\.metadata \? 'status_code'\s+OR a\.created_at < now\(\) - v_noresp_after\)\)\)/
+      /AND \(a\.event_type = 'indexer_backfill_autochain_resume_error'\s+OR \(a\.event_type = 'indexer_backfill_autochain_resume_dispatch'\s+AND \(a\.metadata \? 'status_code'\s+OR \(a\.created_at < now\(\) - v_noresp_after\s+AND NOT EXISTS \(\s+SELECT 1 FROM net\._http_response r\s+WHERE r\.id = CASE WHEN a\.metadata->>'net_request_id' ~ '\^\[0-9\]\{1,18\}\$'\s+THEN \(a\.metadata->>'net_request_id'\)::bigint END\)\)\)\)\)/
     )
     expect(t).toMatch(/v_noresp_after\s+CONSTANT interval := interval '1 hour';/)
     expect(arm).toMatch(
@@ -384,7 +386,10 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
       /IF v_status BETWEEN 200 AND 299 AND v_alert\.metadata->>'sent' = 'true' THEN\s+v_suppress := true;\s+EXIT;/
     )
     expect(arm).toMatch(/IF v_alert\.created_at > now\(\) - v_pending THEN\s+v_suppress := true;/)
-    expect(arm).not.toMatch(/_http_response/)
+    // dedup reads only the alert rows, never pg_net's table
+    const dedup = arm.slice(arm.indexOf('v_suppress := false'), arm.indexOf("'type', 'indexer_"))
+    expect(dedup.length).toBeGreaterThan(100)
+    expect(dedup).not.toMatch(/_http_response/)
     expect(arm).toMatch(/'type', 'indexer_backfill_autochain_' \|\| v_kind/)
     expect(arm).toMatch(/'row_locked', false,\s+'failure_event', v_f\.event_type/)
     expect(arm).not.toMatch(/RAISE EXCEPTION/)
@@ -394,12 +399,19 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
     expect(
       okRange(mutate(arm, '::integer BETWEEN 200 AND 299', '::integer BETWEEN 200 AND 399'))
     ).toBe(false)
-    const keyed = (x: string) => /AND \(a\.metadata \? 'status_code'\s+OR a\.created_at/.test(x)
+    const keyed = (x: string) => /AND \(a\.metadata \? 'status_code'\s+OR \(a\.created_at/.test(x)
     expect(keyed(arm)).toBe(true)
     expect(keyed(mutate(arm, "AND (a.metadata ? 'status_code'", 'AND (true'))).toBe(false)
-    const noResp = (x: string) => /OR a\.created_at < now\(\) - v_noresp_after/.test(x)
+    const noResp = (x: string) => /OR \(a\.created_at < now\(\) - v_noresp_after/.test(x)
     expect(noResp(arm)).toBe(true)
-    expect(noResp(mutate(arm, 'OR a.created_at < now() - v_noresp_after', 'OR false'))).toBe(false)
+    expect(noResp(mutate(arm, 'OR (a.created_at < now() - v_noresp_after', 'OR (false'))).toBe(
+      false
+    )
+    // the no-response arm also requires no pg_net response row for that dispatch, in the same scan
+    const noRow = (x: string) =>
+      /v_noresp_after\s+AND NOT EXISTS \(\s+SELECT 1 FROM net\._http_response r/.test(x)
+    expect(noRow(arm)).toBe(true)
+    expect(noRow(mutate(arm, 'AND NOT EXISTS (', 'AND (EXISTS ('))).toBe(false)
   })
 
   it('watcher: the runbook section the failure alert names, and the COMMENT, name the new kind', () => {
