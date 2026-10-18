@@ -148,8 +148,10 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
     )
     expect(t).toMatch(/v_timeout_ms\s+CONSTANT integer := 30000;/)
     expect(t).toMatch(/timeout_milliseconds := v_timeout_ms/)
-    expect(t).toMatch(
-      /'ref', 'main',\s+(?:--[^\n]*\s+)*'return_run_details', true,\s+'inputs', jsonb_build_object\(\s+'mode', 'resume',\s+'verify_only', 'false',\s+'resume_source', v_source\s+\)/
+    // SQL line comments are stripped first, so the body pattern stays linear (no nested
+    // quantifier over comment lines: CodeQL js/redos).
+    expect(t.replace(/--[^\n]*/g, '')).toMatch(
+      /'ref', 'main',\s+'return_run_details', true,\s+'inputs', jsonb_build_object\(\s+'mode', 'resume',\s+'verify_only', 'false',\s+'resume_source', v_source\s+\)/
     )
     for (const h of [
       "'Accept', 'application/vnd.github+json'",
