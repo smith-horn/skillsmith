@@ -45,7 +45,7 @@ interface Harvested {
 }
 
 /** A dispatcher row. `harvested` present means the status_code KEY exists (null = transport failure). */
-const dispatchRow = (
+export const dispatchRow = (
   when: string,
   rid: number,
   o: { marker?: string; harvested?: Harvested } = {}
@@ -234,10 +234,10 @@ export function registerResumeWatcherTests(ctx: Ctx): void {
       expect(r.lines).toEqual([`posts=${expected}`])
     })
 
-    it('a dispatch with no harvested result is not a failure yet, however old', async () => {
+    it('a dispatch with no response yet is not a failure while under 1 hour old', async () => {
       const r = await inTxn(ctx.ctl(), [
         standardSecrets(),
-        dispatchRow('1 hour 59 minutes', 101), // no response row and no status_code key
+        dispatchRow('30 minutes', 101), // no response row and no status_code key
         WATCH,
         ...summary,
       ])

@@ -149,7 +149,7 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
     expect(t).toMatch(/v_timeout_ms\s+CONSTANT integer := 30000;/)
     expect(t).toMatch(/timeout_milliseconds := v_timeout_ms/)
     expect(t).toMatch(
-      /'ref', 'main',\s+'inputs', jsonb_build_object\(\s+'mode', 'resume',\s+'verify_only', 'false',\s+'resume_source', v_source\s+\)/
+      /'ref', 'main',\s+(?:--[^\n]*\s+)*'return_run_details', true,\s+'inputs', jsonb_build_object\(\s+'mode', 'resume',\s+'verify_only', 'false',\s+'resume_source', v_source\s+\)/
     )
     for (const h of [
       "'Accept', 'application/vnd.github+json'",
@@ -291,7 +291,7 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
       r = r.slice(0, r.indexOf('FOR v_f IN')) + r.slice(r.lastIndexOf('END;'))
       return norm(r).filter(
         (l) =>
-          !/^(v_fail_window CONSTANT interval := interval '2 hours';|v_f record;|v_reason text;|v_msg text;|v_wrid text;)$/.test(
+          !/^(v_fail_window CONSTANT interval := interval '2 hours';|v_noresp_after CONSTANT interval := interval '1 hour';|v_f record;|v_reason text;|v_msg text;|v_wrid text;)$/.test(
             l
           )
       )
@@ -367,7 +367,11 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
       /CASE WHEN a\.event_type = 'indexer_backfill_autochain_resume_error' THEN false\s+WHEN a\.metadata->>'status_code' ~ '\^\[0-9\]\{1,3\}\$'\s+THEN \(a\.metadata->>'status_code'\)::integer BETWEEN 200 AND 299\s+ELSE false END AS ok/
     )
     expect(arm).toMatch(
-      /AND \(a\.event_type = 'indexer_backfill_autochain_resume_error'\s+OR \(a\.event_type = 'indexer_backfill_autochain_resume_dispatch'\s+AND a\.metadata \? 'status_code'\)\)/
+      /AND \(a\.event_type = 'indexer_backfill_autochain_resume_error'\s+OR \(a\.event_type = 'indexer_backfill_autochain_resume_dispatch'\s+AND \(a\.metadata \? 'status_code'\s+OR a\.created_at < now\(\) - v_noresp_after\)\)\)/
+    )
+    expect(t).toMatch(/v_noresp_after\s+CONSTANT interval := interval '1 hour';/)
+    expect(arm).toMatch(
+      /WHEN NOT \(v_f\.metadata \? 'status_code'\)\s+THEN 'no response from pg_net after 1h'/
     )
     expect(arm).toMatch(/WHERE NOT f\.ok\s+ORDER BY f\.marker_id, f\.created_at DESC/)
     expect(arm).toMatch(
@@ -390,9 +394,12 @@ describe.skipIf(locked)('SMI-7142 -- backfill autochain resume migration (PG-fre
     expect(
       okRange(mutate(arm, '::integer BETWEEN 200 AND 299', '::integer BETWEEN 200 AND 399'))
     ).toBe(false)
-    const keyed = (x: string) => /AND a\.metadata \? 'status_code'\)\)/.test(x)
+    const keyed = (x: string) => /AND \(a\.metadata \? 'status_code'\s+OR a\.created_at/.test(x)
     expect(keyed(arm)).toBe(true)
-    expect(keyed(mutate(arm, "AND a.metadata ? 'status_code'))", 'AND true))'))).toBe(false)
+    expect(keyed(mutate(arm, "AND (a.metadata ? 'status_code'", 'AND (true'))).toBe(false)
+    const noResp = (x: string) => /OR a\.created_at < now\(\) - v_noresp_after/.test(x)
+    expect(noResp(arm)).toBe(true)
+    expect(noResp(mutate(arm, 'OR a.created_at < now() - v_noresp_after', 'OR false'))).toBe(false)
   })
 
   it('watcher: the runbook section the failure alert names, and the COMMENT, name the new kind', () => {

@@ -181,6 +181,8 @@ export function registerDispatchTests(ctx: Ctx): void {
         "SELECT 'url=' || url FROM net.calls;",
         "SELECT 'toplevel=' || (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(body) k) FROM net.calls;",
         "SELECT 'ref=' || (body->>'ref') FROM net.calls;",
+        // asks GitHub for the run id: a JSON boolean true, at the top level of the body
+        "SELECT 'rrd=' || (body->>'return_run_details') || ':' || jsonb_typeof(body->'return_run_details') FROM net.calls;",
         "SELECT 'inputkeys=' || (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(body->'inputs') k) FROM net.calls;",
         "SELECT 'mode=' || (body->'inputs'->>'mode') FROM net.calls;",
         // the workflow requires the STRING 'false', not a JSON boolean
@@ -196,8 +198,9 @@ export function registerDispatchTests(ctx: Ctx): void {
       expect(r.lines).toEqual([
         'posts=1',
         `url=${DISPATCH_URL}`,
-        'toplevel=inputs,ref',
+        'toplevel=inputs,ref,return_run_details',
         'ref=main',
+        'rrd=true:boolean',
         'inputkeys=mode,resume_source,verify_only',
         'mode=resume',
         'verify_only=false:string',

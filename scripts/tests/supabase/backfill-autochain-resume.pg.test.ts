@@ -40,6 +40,7 @@ import {
 } from './backfill-autochain-resume.test-helpers.ts'
 import { registerDispatchTests } from './backfill-autochain-resume.pg-dispatch.ts'
 import { registerResumeWatcherTests } from './backfill-autochain-resume.pg-watcher.ts'
+import { registerNoResponseTests } from './backfill-autochain-resume.pg-noresp.ts'
 
 const CALLS: Record<(typeof ALL_FNS)[number], string> = {
   invoke_backfill_autochain_resume: 'SELECT public.invoke_backfill_autochain_resume();',
@@ -165,6 +166,7 @@ describe.skipIf(noLiveTestPg)(
 
     registerDispatchTests(ctx)
     registerResumeWatcherTests(ctx)
+    registerNoResponseTests(ctx)
 
     // Rollback last: it drops the objects the arms above run against; the migration is re-applied
     // before the arm returns, success or failure.
