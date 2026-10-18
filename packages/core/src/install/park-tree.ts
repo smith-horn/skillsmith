@@ -4,7 +4,7 @@
  * yet: A1 step 8 routes every automatic removal through it.
  *
  * `parkTree(parent, name, options)` renames `<parent>/<name>` to
- * `<parent>/.skillsmith-parked/<opId>/<name>-<rnd>/` and writes a `wx` sidecar
+ * `<parent>/.skillsmith-parked/<opId>/<name>-<rnd>` and writes a `wx` sidecar
  * `<name>-<rnd>.json` beside it. It never deletes and never retries: if the
  * rename fails for any reason, nothing moves and nothing is deleted (ADR-166
  * D-4). A directory, a regular file and a symlink move the same way (UD30).
