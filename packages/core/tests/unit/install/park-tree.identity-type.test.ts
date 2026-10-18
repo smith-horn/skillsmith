@@ -25,6 +25,7 @@ import {
   runWithHooks,
   simpleFixture,
   withFsStub,
+  CALLER,
   KIND,
 } from './park-tree.helpers.js'
 
@@ -160,7 +161,13 @@ describe('post-move location checks (SMI-7132)', () => {
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId: 'op-out', guardHash: guardOf(f.origin) },
+      options: {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-out',
+        guardHash: guardOf(f.origin),
+      },
       onAfterRename: () => {
         fs.renameSync(opDir, outside)
         fs.symlinkSync(outside, opDir)
@@ -221,7 +228,13 @@ describe('post-move location checks (SMI-7132)', () => {
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId: 'op-e1', guardHash: guardOf(f.origin) },
+      options: {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-e1',
+        guardHash: guardOf(f.origin),
+      },
       onAfterRename: () => {
         fs.renameSync(area, outside)
         fs.symlinkSync(outside, area)
@@ -241,7 +254,13 @@ describe('post-move location checks (SMI-7132)', () => {
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId: 'op-e2', guardHash: guardOf(f.origin) },
+      options: {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-e2',
+        guardHash: guardOf(f.origin),
+      },
       onAfterRename: () => {
         fs.renameSync(area, aside)
         fs.mkdirSync(area, { mode: 0o700 })

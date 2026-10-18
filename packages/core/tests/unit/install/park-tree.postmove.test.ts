@@ -27,6 +27,7 @@ import {
   readText,
   runWithHooks,
   withFsStub,
+  CALLER,
   KIND,
 } from './park-tree.helpers.js'
 import type { Fixture, HookRun } from './park-tree.helpers.js'
@@ -53,7 +54,7 @@ function heldCase(a: {
   const run = runWithHooks({
     parentAbs: f.parent,
     name: f.name,
-    options: { client: CLIENT, kind: KIND, opId, guardHash },
+    options: { client: CLIENT, caller: CALLER, kind: KIND, opId, guardHash },
     onRecheck: window === 'post-hash' ? () => a.mutate(f) : undefined,
     onRename: window === 'at-rename' ? () => a.mutate(f) : undefined,
   })
@@ -208,7 +209,7 @@ describe('a clean guarded park is verified at its destination (S12)', () => {
     const run = runWithHooks({
       parentAbs: f.parent,
       name: f.name,
-      options: { client: CLIENT, kind: KIND, opId: 'pm-clean', guardHash },
+      options: { client: CLIENT, caller: CALLER, kind: KIND, opId: 'pm-clean', guardHash },
     })
     const res = run.result
     expect(res.status).toBe('parked')
@@ -246,6 +247,7 @@ describe('a held park whose byte count fails still writes its hold sidecar', () 
           name: f.name,
           options: {
             client: CLIENT,
+            caller: CALLER,
             kind: KIND,
             opId: 'pm-held-bytes',
             guardHash: guardOf(f.origin),

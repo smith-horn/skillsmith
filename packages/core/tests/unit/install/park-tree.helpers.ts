@@ -15,7 +15,9 @@ import { parkTreeIndexed } from '../../../src/install/park-call.js'
 import type { ParkOptions, ParkResult } from '../../../src/install/park-result.js'
 
 export const CLIENT = 'test-client'
-export const KIND = 'test-kind'
+/** A real caller and its kind: the park refuses a kind that is not the caller's. */
+export const CALLER = 'uninstall' as const
+export const KIND = 'uninstall'
 export const PARKED = '.skillsmith-parked'
 
 type AnyFn = (...args: unknown[]) => unknown
@@ -122,14 +124,15 @@ export const parkedEntries = (dir: string): string[] =>
   exists(dir) ? fs.readdirSync(dir).filter((n) => !n.endsWith('.json')) : []
 
 export const park = (parent: string, name: string, extra: Partial<ParkOptions> = {}): ParkResult =>
-  parkTree(parent, name, { client: CLIENT, kind: KIND, ...extra })
+  parkTree(parent, name, { client: CLIENT, caller: CALLER, kind: KIND, ...extra })
 
 /** `park` through `parkTreeIndexed`, the only entry point that accepts `indexPath`. */
 export const parkIndexed = (
   parent: string,
   name: string,
   extra: Partial<ParkOptions> = {}
-): Promise<ParkResult> => parkTreeIndexed(parent, name, { client: CLIENT, kind: KIND, ...extra })
+): Promise<ParkResult> =>
+  parkTreeIndexed(parent, name, { client: CLIENT, caller: CALLER, kind: KIND, ...extra })
 
 const asPath = (p: unknown): string | null =>
   typeof p === 'string'

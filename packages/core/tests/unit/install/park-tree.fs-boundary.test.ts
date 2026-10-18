@@ -27,6 +27,7 @@ import { checkFsBoundary, checkFsBoundarySource } from './park-tree.fs-boundary.
 const INSTALL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../src/install')
 /** The modules the walk from park-tree.ts reaches. */
 const PARK_TREE_GRAPH = [
+  'park-callers.ts',
   'park-result.ts',
   'park-tree.destination.ts',
   'park-tree.identity.ts',
@@ -94,6 +95,7 @@ describe('the real park graph', () => {
   it('parked-index.ts, its own entry for direct consumers, has no violation', () => {
     const r = checkFsBoundary(path.join(INSTALL, 'parked-index.ts'), GRAPH)
     expect(r.files.map((f) => path.basename(f)).sort()).toEqual([
+      'park-callers.ts',
       'park-result.ts',
       'parked-index.ts',
     ])

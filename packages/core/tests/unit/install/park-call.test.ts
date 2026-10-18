@@ -28,6 +28,7 @@ import type { ParkedIndexEntry } from '../../../src/install/parked-index.js'
 import { prepareParkTree } from '../../../src/install/park-tree.js'
 import {
   CLIENT,
+  CALLER,
   KIND,
   PARKED,
   cleanup,
@@ -95,7 +96,11 @@ describe('indexPath is accepted only by parkTreeIndexed', () => {
 
   it('a prepared park runs at most once', () => {
     const f = fixture()
-    const prepared = prepareParkTree(f.parent, 'tree', { client: CLIENT, kind: KIND })
+    const prepared = prepareParkTree(f.parent, 'tree', {
+      client: CLIENT,
+      caller: CALLER,
+      kind: KIND,
+    })
     expect(prepared.run().result.status).toBe('parked')
     expect(() => prepared.run()).toThrow('parkTree: a prepared park runs at most once')
   })

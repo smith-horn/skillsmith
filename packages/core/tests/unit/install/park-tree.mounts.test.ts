@@ -30,6 +30,7 @@ import {
   readText,
   runWithHooks,
   withFsStub,
+  CALLER,
   KIND,
 } from './park-tree.helpers.js'
 import type { Fixture } from './park-tree.helpers.js'
@@ -224,7 +225,13 @@ describe('a mount that appears during the move is held (R10)', () => {
         runWithHooks({
           parentAbs: f.parent,
           name: f.name,
-          options: { client: CLIENT, kind: KIND, opId: 'op-r10', guardHash: guardOf(f.origin) },
+          options: {
+            client: CLIENT,
+            caller: CALLER,
+            kind: KIND,
+            opId: 'op-r10',
+            guardHash: guardOf(f.origin),
+          },
           onAfterRename: ({ destPath }) => {
             destTarget = path.join(destPath, 'target')
           },
@@ -249,7 +256,13 @@ describe('a mount that appears during the move is held (R10)', () => {
           runWithHooks({
             parentAbs: f.parent,
             name: f.name,
-            options: { client: CLIENT, kind: KIND, opId: 'op-r10m', guardHash: guardOf(f.origin) },
+            options: {
+              client: CLIENT,
+              caller: CALLER,
+              kind: KIND,
+              opId: 'op-r10m',
+              guardHash: guardOf(f.origin),
+            },
             onAfterRename: ({ destPath }) => {
               destTarget = path.join(destPath, 'target')
             },

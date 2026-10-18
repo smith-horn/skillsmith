@@ -18,6 +18,8 @@
 import path from 'node:path'
 import util from 'node:util'
 import type { ParkedIndexEntry } from './parked-index.js'
+import { checkCaller } from './park-callers.js'
+import type { ParkCaller } from './park-callers.js'
 
 /** Every field a park result carries, in a fixed order. */
 export const RESULT_FIELDS = [
@@ -179,6 +181,14 @@ export interface ParkIdentity {
 export interface ParkOptions {
   /** UD22's client. Required: there is no default. */
   client: string
+  /**
+   * Which §3.8 park caller this is (`park-callers.ts`). Required: it picks the
+   * `held` detail, which names `skillsmith restore` only for a user-facing
+   * origin, and `kind` must be this caller's kind.
+   */
+  caller: ParkCaller
+  /** The backup the update made; `caller: 'move-source'` only, which requires it. */
+  backupPath?: string
   /** The §3.4 tree hash the caller certified (UD27). Omit for no guard. */
   guardHash?: string
   /** The operation id, a single segment not starting with `.`; random if omitted. */
@@ -202,6 +212,8 @@ export interface ParkOptions {
 /** Options after the single read and validation. Plain data. */
 export interface ResolvedParkOptions {
   client: string
+  caller: ParkCaller
+  backupPath: string | null
   guardHash: string | undefined
   opId: string | undefined
   expectIdentity: ParkIdentity | undefined
@@ -214,6 +226,8 @@ export interface ResolvedParkOptions {
 /** Every option the park consumes. Any other key is refused. */
 export const PARK_OPTION_KEYS = [
   'client',
+  'caller',
+  'backupPath',
   'guardHash',
   'opId',
   'expectIdentity',
@@ -313,6 +327,7 @@ export function resolveParkOptions(options: unknown): ResolvedParkOptions {
   if (typeof kind !== 'string' || kind.length === 0) {
     throw new TypeError(`parkTree: kind must be a non-empty string, got ${String(kind)}`)
   }
+  const caller = checkCaller(snap.caller, kind, snap.backupPath)
   if (rootKey !== undefined && rootKey !== null && typeof rootKey !== 'string') {
     throw new TypeError('parkTree: rootKey must be a string, null or omitted')
   }
@@ -330,6 +345,8 @@ export function resolveParkOptions(options: unknown): ResolvedParkOptions {
   }
   return {
     client,
+    caller,
+    backupPath: typeof snap.backupPath === 'string' ? snap.backupPath : null,
     guardHash,
     opId,
     expectIdentity: identity,

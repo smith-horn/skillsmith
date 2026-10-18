@@ -17,23 +17,26 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { computeTreeHash } from './tree-hash.js'
 import { errCode, errCodeOrMessage } from './park-result.js'
+import { heldClosing, shq } from './park-callers.js'
+import type { ParkCaller } from './park-callers.js'
 import type { ParkIdentity, PartialParkResult, ResolvedParkOptions } from './park-result.js'
 import type { ParkedIndexEntry } from './parked-index.js'
 import { mountinfoFinding, pathTreeRecord, verifyAtDestination } from './park-tree.verify.js'
 
-/** POSIX single-quote escaping, for paths quoted in a held `detail`. */
-const shq = (s: string): string => `'${String(s).replace(/'/g, `'\\''`)}'`
-
 /**
- * The `detail` of a held result: the diagnosis, where the tree is, the origin,
- * and the restore command (`skillsmith restore <id>`, SMI-6531). It claims the
- * tree is safe only when the final location block confirmed it (SMI-7134).
+ * The `detail` of a held result: the diagnosis, where the tree is, and the
+ * caller's closing sentence (`park-callers.ts`): the restore command
+ * (`skillsmith restore <id>`) for a user-facing origin, never for a
+ * Skillsmith-internal one (A1 plan §3.8). It claims the tree is safe only
+ * when the final location block confirmed it (SMI-7134).
  */
 export function heldDetail(a: {
   diagnosis: string
   destPath: string
   originPath: string
   opId: string
+  caller: ParkCaller
+  backupPath: string | null
   located?: boolean
   safe?: boolean
 }): string {
@@ -42,11 +45,7 @@ export function heldDetail(a: {
     : a.located
       ? `the tree was observed at ${shq(a.destPath)}, but its directory is not private (${a.diagnosis})`
       : `the location of your tree could not be confirmed (reported path ${shq(a.destPath)}; reason: ${a.diagnosis})`
-  return (
-    `${a.diagnosis}. Changed during removal; ${where}. ` +
-    `If something now exists at ${shq(a.originPath)}, move it aside first, then run ` +
-    `\`skillsmith restore ${a.opId}\`.`
-  )
+  return `${a.diagnosis}. Changed during removal; ${where}. ${heldClosing(a)}`
 }
 
 /**
@@ -259,6 +258,8 @@ export function finishAfterRename(a: FinishInput): FinishedPark {
         destPath,
         originPath,
         opId,
+        caller: options.caller,
+        backupPath: options.backupPath,
         located: verified.located,
         safe: verified.safe,
       }),
