@@ -91,11 +91,13 @@ export function registerNoResponseTests(ctx: Ctx): void {
       }
     })
 
-    it('a response committed after the harvest but before the scan is not reported as missing', async () => {
-      // The trigger makes the harvest unable to record dispatch 101 (the audit row stays without a
-      // status_code key) while its net._http_response row exists: the state a response committing
-      // between the harvest statement and the failure scan leaves. Dispatch 102 (marker m2) has no
-      // response row at all and is the positive control: it must alert in the same run.
+    it('an answered dispatch the harvest did not record is not reported as missing', async () => {
+      // Predicate-level, not a timing test: it does not commit a response between the watcher's
+      // two statements (no hook exists to pause the function there). It reproduces the STATE that
+      // window leaves: a trigger makes the harvest unable to record dispatch 101 (the audit row
+      // stays without a status_code key) while its net._http_response row exists, so only the
+      // scan's own NOT EXISTS can keep it from alerting. Dispatch 102 (marker m2) has no response
+      // row at all and is the positive control: it must alert in the same run.
       const r = await inTxn(ctx.ctl(), [
         standardSecrets(),
         'CREATE FUNCTION pg_temp.hold_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ' +
