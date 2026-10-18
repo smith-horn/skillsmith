@@ -20,6 +20,7 @@ import {
   field,
   guardOf,
   park,
+  parkIndexed,
   parkedEntries,
   readJson,
   readText,
@@ -129,12 +130,14 @@ describe('what a park does to the bytes and where it puts them', () => {
 })
 
 describe('a byte count that fails never suppresses the sidecar (ADR-166 D-1)', () => {
-  it('an unreadable subdirectory: the sidecar is written with bytes null and bytesError; the index line has bytes null', () => {
+  it('an unreadable subdirectory: the sidecar is written with bytes null and bytesError; the index line has bytes null', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
     // A stub, since the container runs as root: the parked copy's subdirectory
-    // cannot be listed, so treeBytes fails after the rename.
-    const r = withFsStub(
+    // cannot be listed, so treeBytes fails after the rename. The stub is
+    // synchronous; it still covers the whole park, which runs before
+    // parkTreeIndexed's first await (only the index append comes after it).
+    const r = await withFsStub(
       'readdirSync',
       (orig) =>
         (...args: unknown[]) => {
@@ -143,7 +146,7 @@ describe('a byte count that fails never suppresses the sidecar (ADR-166 D-1)', (
           }
           return orig(...args)
         },
-      () => park(f.parent, 'tree', { kind: 'uninstall', indexPath })
+      () => parkIndexed(f.parent, 'tree', { kind: 'uninstall', indexPath })
     )
     expect(r.status).toBe('parked')
     expect('sidecarError' in r).toBe(false)

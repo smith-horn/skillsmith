@@ -24,6 +24,7 @@ import {
   guardOf,
   park,
   simpleFixture,
+  CALLER,
   KIND,
   withAllFsTrapped,
   withFsStub,
@@ -52,6 +53,7 @@ const CONTRACT_FIELDS = [
   'originPath',
   'heldPath',
   'misplaced',
+  'parkedAreaCreated',
 ]
 /** The constructor name of what `fn` threw, or `ret:<status>`. */
 const outcome = (fn: () => { status: string }): string => {
@@ -159,7 +161,12 @@ describe('guardHash (ADR-166 D-5)', () => {
         },
         () =>
           outcome(() =>
-            parkLoose(f.parent, 'tree', { client: CLIENT, kind: KIND, guardHash: value })
+            parkLoose(f.parent, 'tree', {
+              client: CLIENT,
+              caller: CALLER,
+              kind: KIND,
+              guardHash: value,
+            })
           )
       )
       expect(r).toBe('TypeError')
@@ -176,7 +183,9 @@ describe('guardHash (ADR-166 D-5)', () => {
   it('the deprecated spike alias treeHash is an unknown option, not a guard', () => {
     const f = fixture()
     expect(
-      outcome(() => parkLoose(f.parent, 'tree', { client: CLIENT, kind: KIND, treeHash: 'x' }))
+      outcome(() =>
+        parkLoose(f.parent, 'tree', { client: CLIENT, caller: CALLER, kind: KIND, treeHash: 'x' })
+      )
     ).toBe('TypeError')
     expect(exists(f.origin)).toBe(true)
   })
@@ -184,7 +193,10 @@ describe('guardHash (ADR-166 D-5)', () => {
 
 describe('unknown and invalid options', () => {
   const misspelled: [string, () => object][] = [
-    ['an own literal key', () => ({ client: CLIENT, kind: KIND, guardhash: 'WRONG' })],
+    [
+      'an own literal key',
+      () => ({ client: CLIENT, caller: CALLER, kind: KIND, guardhash: 'WRONG' }),
+    ],
     [
       'an inherited key',
       () =>
@@ -192,6 +204,7 @@ describe('unknown and invalid options', () => {
           { guardhash: 'WRONG' },
           {
             client: { value: CLIENT, enumerable: true },
+            caller: { value: CALLER, enumerable: true },
             kind: { value: KIND, enumerable: true },
           }
         ),
@@ -199,7 +212,7 @@ describe('unknown and invalid options', () => {
     [
       'a non-enumerable key',
       () => {
-        const o = { client: CLIENT, kind: KIND }
+        const o = { client: CLIENT, caller: CALLER, kind: KIND }
         Object.defineProperty(o, 'guardhash', { value: 'WRONG', enumerable: false })
         return o
       },
@@ -215,15 +228,19 @@ describe('unknown and invalid options', () => {
 
   it('a missing or empty client is refused (no default)', () => {
     const f = fixture()
-    expect(outcome(() => parkLoose(f.parent, 'tree', { kind: KIND }))).toBe('TypeError')
-    expect(outcome(() => parkLoose(f.parent, 'tree', { client: '', kind: KIND }))).toBe('TypeError')
+    expect(outcome(() => parkLoose(f.parent, 'tree', { caller: CALLER, kind: KIND }))).toBe(
+      'TypeError'
+    )
+    expect(
+      outcome(() => parkLoose(f.parent, 'tree', { client: '', caller: CALLER, kind: KIND }))
+    ).toBe('TypeError')
     expect(outcome(() => parkLoose(f.parent, 'tree', undefined))).toBe('TypeError')
     expect(exists(f.origin)).toBe(true)
   })
 
   for (const [label, opts] of [
-    ['a missing kind', { client: CLIENT }],
-    ['an empty kind', { client: CLIENT, kind: '' }],
+    ['a missing kind', { client: CLIENT, caller: CALLER }],
+    ['an empty kind', { client: CLIENT, caller: CALLER, kind: '' }],
   ] as const) {
     it(`${label} throws TypeError before any filesystem work (kind is required)`, () => {
       refusedUntouched(opts)
@@ -232,16 +249,23 @@ describe('unknown and invalid options', () => {
 
   // Review round 1, F1: a guard under a symbol key was invisible to the key scan.
   const symbolShapes: [string, (h: string) => object][] = [
-    ['an own symbol key', (h) => ({ client: CLIENT, kind: KIND, [Symbol('guardHash')]: h })],
+    [
+      'an own symbol key',
+      (h) => ({ client: CLIENT, caller: CALLER, kind: KIND, [Symbol('guardHash')]: h }),
+    ],
     [
       'an inherited symbol key',
       (h) =>
-        Object.assign(Object.create({ [Symbol('guardHash')]: h }), { client: CLIENT, kind: KIND }),
+        Object.assign(Object.create({ [Symbol('guardHash')]: h }), {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+        }),
     ],
     [
       'a non-enumerable symbol key',
       (h) => {
-        const o = { client: CLIENT, kind: KIND }
+        const o = { client: CLIENT, caller: CALLER, kind: KIND }
         Object.defineProperty(o, Symbol('guardHash'), { value: h, enumerable: false })
         return o
       },
@@ -258,7 +282,12 @@ describe('unknown and invalid options', () => {
     for (const v of [null, 5]) {
       expect(
         outcome(() =>
-          parkLoose(f.parent, 'tree', { client: CLIENT, kind: KIND, maxBirthtimeNs: v })
+          parkLoose(f.parent, 'tree', {
+            client: CLIENT,
+            caller: CALLER,
+            kind: KIND,
+            maxBirthtimeNs: v,
+          })
         )
       ).toBe('TypeError')
     }
@@ -269,12 +298,22 @@ describe('unknown and invalid options', () => {
     const f = fixture()
     expect(
       outcome(() =>
-        parkLoose(f.parent, 'tree', { client: CLIENT, kind: KIND, expectIdentity: null })
+        parkLoose(f.parent, 'tree', {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+          expectIdentity: null,
+        })
       )
     ).toBe('TypeError')
     expect(
       outcome(() =>
-        parkLoose(f.parent, 'tree', { client: CLIENT, kind: KIND, indexPath: 'idx.jsonl' })
+        parkLoose(f.parent, 'tree', {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+          indexPath: 'idx.jsonl',
+        })
       )
     ).toBe('TypeError')
     expect(exists(f.origin)).toBe(true)
@@ -303,9 +342,11 @@ describe('opId and name are single segments (spike F6)', () => {
 
 describe('options are plain data, read without running caller code (review rounds 1 and 2)', () => {
   it('resolveParkOptions returns plain data with every known key', () => {
-    const r = resolveParkOptions({ client: CLIENT, kind: KIND })
+    const r = resolveParkOptions({ client: CLIENT, caller: CALLER, kind: KIND })
     expect(Object.keys(r).sort()).toEqual(
       [
+        'backupPath',
+        'caller',
         'client',
         'expectIdentity',
         'guardHash',
@@ -321,6 +362,7 @@ describe('options are plain data, read without running caller code (review round
 
   class WithOwnFields {
     client = CLIENT
+    caller = CALLER
     kind = KIND
     guardHash = 'DELIBERATELY-WRONG'
   }
@@ -330,6 +372,7 @@ describe('options are plain data, read without running caller code (review round
       () => {
         const sym = Symbol('guardHash')
         return {
+          caller: CALLER,
           kind: KIND,
           get client() {
             Object.defineProperty(this, sym, { value: 'X', enumerable: false })
@@ -342,7 +385,7 @@ describe('options are plain data, read without running caller code (review round
       'a Proxy whose ownKeys trap hides a symbol key',
       () => {
         const sym = Symbol('guardHash')
-        const target = { client: CLIENT, kind: KIND, [sym]: 'X' }
+        const target = { client: CLIENT, caller: CALLER, kind: KIND, [sym]: 'X' }
         return new Proxy(target, {
           ownKeys: (t) => Reflect.ownKeys(t).filter((k) => typeof k !== 'symbol'),
         })
@@ -350,11 +393,12 @@ describe('options are plain data, read without running caller code (review round
     ],
     [
       'a Proxy with no traps around a valid literal',
-      () => new Proxy({ client: CLIENT, kind: KIND }, {}),
+      () => new Proxy({ client: CLIENT, caller: CALLER, kind: KIND }, {}),
     ],
     [
       'a getter on client',
       () => ({
+        caller: CALLER,
         kind: KIND,
         get client() {
           return CLIENT
@@ -365,6 +409,7 @@ describe('options are plain data, read without running caller code (review round
       'a getter on guardHash',
       () => ({
         client: CLIENT,
+        caller: CALLER,
         kind: KIND,
         get guardHash() {
           return 'DELIBERATELY-WRONG'
@@ -376,6 +421,7 @@ describe('options are plain data, read without running caller code (review round
       'a setter-only guardHash',
       () => ({
         client: CLIENT,
+        caller: CALLER,
         kind: KIND,
         set guardHash(_v: string) {},
       }),
@@ -383,7 +429,10 @@ describe('options are plain data, read without running caller code (review round
     [
       'a revoked Proxy',
       () => {
-        const { proxy, revoke } = Proxy.revocable({ client: CLIENT, kind: KIND }, {})
+        const { proxy, revoke } = Proxy.revocable(
+          { client: CLIENT, caller: CALLER, kind: KIND },
+          {}
+        )
         revoke()
         return proxy
       },
@@ -394,6 +443,7 @@ describe('options are plain data, read without running caller code (review round
       () =>
         Object.assign(Object.create({ guardHash: 'DELIBERATELY-WRONG' }), {
           client: CLIENT,
+          caller: CALLER,
           kind: KIND,
         }),
     ],
@@ -406,7 +456,7 @@ describe('options are plain data, read without running caller code (review round
 
   it('a non-enumerable own guardHash data property is honoured as the guard', () => {
     const f = fixture()
-    const o = { client: CLIENT, kind: KIND }
+    const o = { client: CLIENT, caller: CALLER, kind: KIND }
     Object.defineProperty(o, 'guardHash', { value: 'DELIBERATELY-WRONG', enumerable: false })
     const r = parkLoose(f.parent, 'tree', o)
     expect(r.status).toBe('kept')
@@ -438,6 +488,7 @@ describe('options are plain data, read without running caller code (review round
     const f = fixture()
     const o = Object.assign(Object.create(null), {
       client: CLIENT,
+      caller: CALLER,
       kind: KIND,
       guardHash: guardOf(f.origin),
     }) as ParkOptions
@@ -447,7 +498,12 @@ describe('options are plain data, read without running caller code (review round
 
 describe('expectIdentity is plain data too, copied once (UD24, SMI-7130)', () => {
   const ID = { dev: 1n, ino: 2n, birthtimeNs: 3n, fmt: 0o040000n }
-  const withId = (expectIdentity: unknown) => ({ client: CLIENT, kind: KIND, expectIdentity })
+  const withId = (expectIdentity: unknown) => ({
+    client: CLIENT,
+    caller: CALLER,
+    kind: KIND,
+    expectIdentity,
+  })
 
   it('a getter on fmt is refused before any filesystem work, and the getter never runs', () => {
     let reads = 0

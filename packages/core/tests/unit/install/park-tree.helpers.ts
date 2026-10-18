@@ -11,10 +11,13 @@ import type { Stats } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { parkTree, computePathTreeHash } from '../../../src/install/park-tree.js'
+import { parkTreeIndexed } from '../../../src/install/park-call.js'
 import type { ParkOptions, ParkResult } from '../../../src/install/park-result.js'
 
 export const CLIENT = 'test-client'
-export const KIND = 'test-kind'
+/** A real caller and its kind: the park refuses a kind that is not the caller's. */
+export const CALLER = 'uninstall' as const
+export const KIND = 'uninstall'
 export const PARKED = '.skillsmith-parked'
 
 type AnyFn = (...args: unknown[]) => unknown
@@ -121,7 +124,15 @@ export const parkedEntries = (dir: string): string[] =>
   exists(dir) ? fs.readdirSync(dir).filter((n) => !n.endsWith('.json')) : []
 
 export const park = (parent: string, name: string, extra: Partial<ParkOptions> = {}): ParkResult =>
-  parkTree(parent, name, { client: CLIENT, kind: KIND, ...extra })
+  parkTree(parent, name, { client: CLIENT, caller: CALLER, kind: KIND, ...extra })
+
+/** `park` through `parkTreeIndexed`, the only entry point that accepts `indexPath`. */
+export const parkIndexed = (
+  parent: string,
+  name: string,
+  extra: Partial<ParkOptions> = {}
+): Promise<ParkResult> =>
+  parkTreeIndexed(parent, name, { client: CLIENT, caller: CALLER, kind: KIND, ...extra })
 
 const asPath = (p: unknown): string | null =>
   typeof p === 'string'
@@ -266,6 +277,21 @@ export function runWithHooks(a: {
   return { result, trace, renameIdx, fired, hookErrors }
 }
 
+/** `withFsStub` for an async body: the stub stays until the promise settles. */
+export async function withAsyncFsStub<T>(
+  name: string,
+  impl: (orig: AnyFn) => AnyFn,
+  body: () => Promise<T>
+): Promise<T> {
+  const orig = fsTable[name] as AnyFn
+  fsTable[name] = impl(orig.bind(fs) as AnyFn)
+  try {
+    return await body()
+  } finally {
+    fsTable[name] = orig
+  }
+}
+
 /** Replaces `fs[name]` for the duration of `body`, restoring it after. */
 export function withFsStub<T>(name: string, impl: (orig: AnyFn) => AnyFn, body: () => T): T {
   const orig = fsTable[name] as AnyFn
@@ -276,6 +302,20 @@ export function withFsStub<T>(name: string, impl: (orig: AnyFn) => AnyFn, body: 
     fsTable[name] = orig
   }
 }
+
+/**
+ * A `renameSync` stub that, right after the real rename of `origin`, writes a
+ * file into the parked copy, so a guarded park's post-move check finds it
+ * changed and returns `held`. Use with `withFsStub('renameSync', …)`.
+ */
+export const writeAfterRename =
+  (origin: string) =>
+  (orig: AnyFn): AnyFn =>
+  (...args: unknown[]) => {
+    const out = orig(...args)
+    if (args[0] === origin) fs.writeFileSync(path.join(String(args[1]), 'late.txt'), 'late')
+    return out
+  }
 
 /** An Error carrying an errno code, as fs throws. */
 export function errnoError(code: string): NodeJS.ErrnoException {

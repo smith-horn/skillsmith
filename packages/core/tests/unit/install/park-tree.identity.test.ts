@@ -21,6 +21,7 @@ import {
   readText,
   simpleFixture,
   withFsStub,
+  CALLER,
   KIND,
 } from './park-tree.helpers.js'
 
@@ -333,11 +334,21 @@ describe('parkTree destination checks', () => {
       const ctl = await load(false)
       const a = fixture()
       expect(
-        ctl.parkTree(a.parent, 'tree', { client: CLIENT, kind: KIND, opId: 'op-l0' }).status
+        ctl.parkTree(a.parent, 'tree', {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+          opId: 'op-l0',
+        }).status
       ).toBe('parked')
       const stubbed = await load(true)
       const b = fixture()
-      const r = stubbed.parkTree(b.parent, 'tree', { client: CLIENT, kind: KIND, opId: 'op-l1' })
+      const r = stubbed.parkTree(b.parent, 'tree', {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-l1',
+      })
       expect(r.status).toBe('kept')
       expect(r.reason).toBe('park-destination-changed')
       expect(r.detail).toBe('cannot verify op directory ownership: process.getuid is unavailable')

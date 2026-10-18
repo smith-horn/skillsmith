@@ -17,6 +17,9 @@
  */
 import path from 'node:path'
 import util from 'node:util'
+import type { ParkedIndexEntry } from './parked-index.js'
+import { checkCaller } from './park-callers.js'
+import type { ParkCaller } from './park-callers.js'
 
 /** Every field a park result carries, in a fixed order. */
 export const RESULT_FIELDS = [
@@ -34,6 +37,10 @@ export const RESULT_FIELDS = [
   'heldPath',
   // ADR-166 D-11: prune's `stopped/entry-misplaced` names what it renamed aside.
   'misplaced',
+  // A1 plan §3.2: true when this park's mkdir created the parked area (even
+  // if the park then stopped), false when it did not, null when the park
+  // stopped before the parked-area helper ran.
+  'parkedAreaCreated',
 ] as const
 
 /**
@@ -63,6 +70,7 @@ export interface ParkResultFields {
   originPath: string | null
   heldPath: string | null
   misplaced: unknown[] | null
+  parkedAreaCreated: boolean | null
 }
 
 /** A shaped result. Extra keys a path adds are carried through, never dropped. */
@@ -79,6 +87,8 @@ export interface ParkResult extends ParkResultFields {
 export type PartialParkResult = { status: ParkStatus } & Partial<ParkResultFields> & {
     sidecarError?: string
     indexError?: string
+    /** A moved tree's index line, which `prepareParkTree` strips before shaping. */
+    indexEntry?: ParkedIndexEntry
     [extra: string]: unknown
   }
 
@@ -171,6 +181,14 @@ export interface ParkIdentity {
 export interface ParkOptions {
   /** UD22's client. Required: there is no default. */
   client: string
+  /**
+   * Which §3.8 park caller this is (`park-callers.ts`). Required: it picks the
+   * `held` detail, which names `skillsmith restore` only for a user-facing
+   * origin, and `kind` must be this caller's kind.
+   */
+  caller: ParkCaller
+  /** The backup the update made; `caller: 'move-source'` only, which requires it. */
+  backupPath?: string
   /** The §3.4 tree hash the caller certified (UD27). Omit for no guard. */
   guardHash?: string
   /** The operation id, a single segment not starting with `.`; random if omitted. */
@@ -183,13 +201,19 @@ export interface ParkOptions {
   kind: string
   /** UD22's rootKey. */
   rootKey?: string | null
-  /** Absolute path of the parked index to append to (§3.5). */
+  /**
+   * Absolute path of the parked index to append to (§3.5). Only
+   * `parkTreeIndexed` accepts it: the append takes lock 4 (UD31), which waits
+   * asynchronously, so the synchronous `parkTree` refuses it.
+   */
   indexPath?: string
 }
 
 /** Options after the single read and validation. Plain data. */
 export interface ResolvedParkOptions {
   client: string
+  caller: ParkCaller
+  backupPath: string | null
   guardHash: string | undefined
   opId: string | undefined
   expectIdentity: ParkIdentity | undefined
@@ -202,6 +226,8 @@ export interface ResolvedParkOptions {
 /** Every option the park consumes. Any other key is refused. */
 export const PARK_OPTION_KEYS = [
   'client',
+  'caller',
+  'backupPath',
   'guardHash',
   'opId',
   'expectIdentity',
@@ -301,14 +327,26 @@ export function resolveParkOptions(options: unknown): ResolvedParkOptions {
   if (typeof kind !== 'string' || kind.length === 0) {
     throw new TypeError(`parkTree: kind must be a non-empty string, got ${String(kind)}`)
   }
+  const caller = checkCaller(snap.caller, kind, snap.backupPath)
   if (rootKey !== undefined && rootKey !== null && typeof rootKey !== 'string') {
     throw new TypeError('parkTree: rootKey must be a string, null or omitted')
   }
   if (indexPath !== undefined && (typeof indexPath !== 'string' || !path.isAbsolute(indexPath))) {
     throw new TypeError('parkTree: indexPath must be an absolute path or omitted')
   }
+  // Lock 4 locks `<indexPath>.lock` itself (and `<indexPath>.lock.reclaim`
+  // while reclaiming); passing either file's name would lock `….lock.lock` and
+  // append into a lock file (UD31).
+  if (typeof indexPath === 'string' && /\.lock(\.reclaim)?$/.test(indexPath)) {
+    throw new TypeError(
+      `parkTree: indexPath names a lock file (${JSON.stringify(indexPath)}); pass the index ` +
+        `itself, and lock 4 derives its lock file from it`
+    )
+  }
   return {
     client,
+    caller,
+    backupPath: typeof snap.backupPath === 'string' ? snap.backupPath : null,
     guardHash,
     opId,
     expectIdentity: identity,

@@ -7,7 +7,10 @@
  * and only merges the index, so a copy the index omits is still listed and a
  * line whose copy is gone is not an error.
  *
- * Appends and compaction take lock 4 (UD31) in the next part of A1 step 3a.
+ * The functions here take no lock. Write the index only through `park-call.ts`
+ * (`parkTreeIndexed`, `appendParkedIndexLocked`, `compactParkedIndexLocked`),
+ * which take lock 4 (UD31); a test fails if any other source module imports
+ * `appendParkedIndex` or `compactParkedIndex`.
  *
  * @module @skillsmith/core/install/parked-index
  */
@@ -34,7 +37,8 @@ export interface ParkedIndexEntry {
 /**
  * Appends one entry as a single line with O_APPEND and one write(2), so
  * concurrent appenders never interleave inside a line. Throws on failure; the
- * park records it as `indexError` and keeps its status.
+ * park records it as `indexError` and keeps its status. Takes no lock: call
+ * `appendParkedIndexLocked`, so a concurrent compaction cannot drop the line.
  */
 export function appendParkedIndex(
   indexPath: string,
@@ -175,8 +179,8 @@ const GONE = new Set(['ENOENT', 'ENOTDIR'])
  * PRECONDITION: the caller holds lock 4 (UD31, withFileLock on the index path),
  * and every append to this index takes the same lock. Without it, a line a
  * concurrent park appends between the read and the rename is lost: O_APPEND does
- * not survive the path being replaced. No caller exists until A1 step 3a part B
- * adds the lock and the wrapper that takes it.
+ * not survive the path being replaced. Call `compactParkedIndexLocked`, which
+ * takes the lock.
  */
 export function compactParkedIndex(indexPath: string): CompactResult {
   const read = readParkedIndex(indexPath)

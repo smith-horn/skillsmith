@@ -4,6 +4,28 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- `parkTree` takes a required `caller` (`install/park-callers.ts`: one per
+  park-caller row of the A1 plan, plus `doctor recovery --park`). A held tree's detail names
+  `skillsmith restore` only for a user-facing origin; a Skillsmith-internal one (a staging op dir,
+  a staging or backup folder) gets its own sentence. `kind` must be the caller's kind, and
+  `move-source` requires an absolute `backupPath`. No caller yet, so no behaviour change.
+- **Internal**: SMI-6531 -- `install/park-clock-gate.ts` adds UD25's clock gate as a caller-side
+  helper: `runClockGate` makes two empty probe directories and returns probe 2's birthtime, once it
+  is strictly later than probe 1's, as the park's `maxBirthtimeNs`, or stops with
+  `identity-unverifiable` (a 0n birthtime, a probe on another device, the 100 ms cap, an unreadable
+  parent, or a probe that cannot be made, read or removed).
+  `gateAndBind` runs the gate, then the guard hash, then the identity bind. No caller yet, so no
+  behaviour change.
+- **Internal**: SMI-6531 -- the parked-area helper (`ensureParkedRoot`) now reports `created`, true
+  only when its own `mkdir` made `.skillsmith-parked`, and refuses a relative parent. Every park
+  result carries it as `parkedAreaCreated` (`null` when the park stopped before the helper ran), for
+  the `.gitignore` hint a later A1 step adds. No caller yet, so no behaviour change.
+- **Internal**: SMI-6531 -- every parked-index write now takes lock 4 (`withFileLock` on the index
+  path, UD31), so a compaction can no longer drop a line another process appends. The new
+  `install/park-call.ts` adds `parkTreeIndexed` (the park plus a locked index append),
+  `appendParkedIndexLocked` and `compactParkedIndexLocked`. `parkTree` stays synchronous and now
+  refuses `indexPath`, and an `indexPath` naming a `.lock` or `.lock.reclaim` file is refused. No caller yet, so no
+  behaviour change.
 - **Internal**: SMI-6531 -- `parkTree` now refuses a relative parent path with a TypeError before any
   filesystem work. A relative parent recorded a cwd-relative origin in the sidecar and failed the
   index append. `parkTree` has no caller yet, so no behaviour change.
