@@ -4,9 +4,11 @@
  *
  * Outside the busy-hour window a link does not dispatch: it inserts one
  * `indexer_backfill_autochain_deferred` audit_logs row (a "marker", state `open`) in the
- * project the campaign runs against. A scheduled tick of the same workflow resumes it:
- * it reconciles markers a previous tick claimed, picks the single open marker, and claims
- * it (open -> consumed) before dispatching. Every state change is one call to the SQL
+ * project the campaign runs against. A resume of the same workflow (a `mode=resume`
+ * dispatch from the pg_cron job or an operator, or the schedule fallback, ADR-181; SMI-7142)
+ * picks it up: it reconciles markers a previous resume claimed, picks the single open
+ * marker, and claims it (open -> consumed) before dispatching. After the dispatch the
+ * resume runs `reconcile-marker` on its own claim (consumed -> dispatched). Every state change is one call to the SQL
  * function `backfill_autochain_marker_transition` (migration 20261016000000), which is
  * conditioned on the expected current state and merges its patch server-side.
  *
@@ -14,7 +16,7 @@
  * unexpected RPC result THROWS, which turns the calling workflow step red.
  *
  * The CLI (subcommand in argv[2]) writes GITHUB_OUTPUT keys; GitHub API access for
- * `reconcile` lives in backfill-autochain-defer.github.ts, and the marker primitives (types,
+ * `reconcile` and `reconcile-marker` (the same check scoped to MARKER_ID/MARKER_ENV) lives in backfill-autochain-defer.github.ts, and the marker primitives (types,
  * clients, insert, live read, transition) in backfill-autochain-defer.markers.ts. See
  * docs/internal/implementation/smi-7121-autochain-driver-halts.md.
  */
