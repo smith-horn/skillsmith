@@ -215,6 +215,86 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(fs.readFileSync(indexPath, 'utf8')).toBe('{"path":"rel/x"}\n')
   })
 
+  it('a line with an absolute path but a non-string opId is invalid and kept verbatim', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const bad = JSON.stringify({ path: path.join(f.root, 'gone'), opId: 7 })
+    fs.writeFileSync(indexPath, `${bad}\n`)
+    const idx = readOk(indexPath)
+    expect(idx.entries).toEqual([])
+    expect(idx.errors).toEqual([{ line: 1, error: 'opId is not a string or null' }])
+    expect(compactParkedIndex(indexPath)).toEqual({
+      ok: true,
+      kept: 0,
+      dropped: 0,
+      keptMalformed: 1,
+    })
+    expect(fs.readFileSync(indexPath, 'utf8')).toBe(`${bad}\n`)
+  })
+
+  it('an entry under a regular file (lstat ENOTDIR) is dropped as gone', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const file = path.join(f.root, 'a-file')
+    fs.writeFileSync(file, 'x')
+    const keepLine = JSON.stringify({ path: f.origin })
+    fs.writeFileSync(
+      indexPath,
+      `${JSON.stringify({ path: path.join(file, 'child') })}\n${keepLine}\n`
+    )
+    expect(compactParkedIndex(indexPath)).toEqual({
+      ok: true,
+      kept: 1,
+      dropped: 1,
+      keptMalformed: 0,
+    })
+    expect(fs.readFileSync(indexPath, 'utf8')).toBe(`${keepLine}\n`)
+  })
+
+  it('a failed temp write (ENOSPC) returns the error with the temp path, and the index is unchanged', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    park(f.parent, 'tree', { indexPath })
+    const before = fs.readFileSync(indexPath)
+    const r = withFsStub(
+      'writeFileSync',
+      (orig) =>
+        (...args: unknown[]) => {
+          if (String(args[0]).startsWith(`${indexPath}.tmp-`)) throw errnoError('ENOSPC')
+          return orig(...args)
+        },
+      () => compactParkedIndex(indexPath)
+    )
+    expect(r.ok).toBe(false)
+    expect(r.ok ? null : r.errno).toBe('ENOSPC')
+    expect(r.ok ? null : r.tmpPath?.startsWith(`${indexPath}.tmp-`)).toBe(true)
+    expect(fs.readFileSync(indexPath).equals(before)).toBe(true)
+  })
+
+  for (const code of ['EXDEV', 'EACCES']) {
+    it(`a failed rename (${code}) returns the error and the temp path left, and the index is unchanged`, () => {
+      const f = fixture()
+      const indexPath = path.join(f.root, 'parked-index.jsonl')
+      park(f.parent, 'tree', { indexPath })
+      const before = fs.readFileSync(indexPath)
+      const r = withFsStub(
+        'renameSync',
+        (orig) =>
+          (...args: unknown[]) => {
+            if (args[1] === indexPath) throw errnoError(code)
+            return orig(...args)
+          },
+        () => compactParkedIndex(indexPath)
+      )
+      expect(r.ok).toBe(false)
+      expect(r.ok ? null : r.errno).toBe(code)
+      const tmp = r.ok ? '' : String(r.tmpPath)
+      expect(tmp.startsWith(`${indexPath}.tmp-`)).toBe(true)
+      expect(fs.existsSync(tmp)).toBe(true)
+      expect(fs.readFileSync(indexPath).equals(before)).toBe(true)
+    })
+  }
+
   it('a relative path is refused before anything is written', () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')

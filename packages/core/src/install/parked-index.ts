@@ -78,6 +78,9 @@ export type ParkedIndexRead =
   /** The index exists but could not be read; nothing about its contents is known. */
   | { ok: false; present: true; errno: string }
 
+/** A field of an index line that does not have its declared type. */
+class InvalidEntry extends Error {}
+
 /** The entry a parsed line describes, or why it is not one. */
 function entryOf(line: string): ParkedIndexEntry | string {
   let e: unknown
@@ -87,9 +90,35 @@ function entryOf(line: string): ParkedIndexEntry | string {
     return err instanceof Error ? err.message : String(err)
   }
   if (e === null || typeof e !== 'object' || Array.isArray(e)) return 'not an object'
-  const p: unknown = (e as { path?: unknown }).path
+  const o: Record<string, unknown> = { ...e }
+  const p = o.path
   if (typeof p !== 'string' || !path.isAbsolute(p)) return 'path is not an absolute string'
-  return e as ParkedIndexEntry
+  // Every other field must have the type ParkedIndexEntry claims; an absent
+  // field reads as null. A line that fails is kept verbatim by compaction.
+  const str = (k: string): string | null => {
+    const v = o[k] ?? null
+    if (v === null || typeof v === 'string') return v
+    throw new InvalidEntry(`${k} is not a string or null`)
+  }
+  const num = (k: string): number | null => {
+    const v = o[k] ?? null
+    if (v === null || (typeof v === 'number' && Number.isFinite(v))) return v
+    throw new InvalidEntry(`${k} is not a finite number or null`)
+  }
+  try {
+    return {
+      opId: str('opId'),
+      path: p,
+      client: str('client'),
+      rootKey: str('rootKey'),
+      kind: str('kind'),
+      bytes: num('bytes'),
+      createdAt: str('createdAt'),
+    }
+  } catch (err) {
+    if (err instanceof InvalidEntry) return err.message
+    throw err
+  }
 }
 
 /**
@@ -128,7 +157,8 @@ export function readParkedIndex(indexPath: string): ParkedIndexRead {
 
 export type CompactResult =
   | { ok: true; kept: number; dropped: number; keptMalformed: number }
-  | { ok: false; errno: string }
+  /** `tmpPath`: a temp file this compaction may have left; the index is unchanged. */
+  | { ok: false; errno: string; tmpPath?: string }
 
 /** Codes that prove the parked copy is gone; any other lstat error keeps its line. */
 const GONE = new Set(['ENOENT', 'ENOTDIR'])
@@ -166,7 +196,20 @@ export function compactParkedIndex(indexPath: string): CompactResult {
     }
   })
   const tmp = `${indexPath}.tmp-${crypto.randomBytes(8).toString('hex')}`
-  fs.writeFileSync(tmp, keep.map((l) => l.raw + '\n').join(''), { flag: 'wx', mode: 0o600 })
-  fs.renameSync(tmp, indexPath)
+  // A failed write or rename leaves the index untouched and returns the error.
+  // A temp file left behind is never deleted here (the park graph contains no
+  // delete call); prune (A1 step 6) reports and removes Skillsmith's own leftovers.
+  try {
+    fs.writeFileSync(tmp, keep.map((l) => l.raw + '\n').join(''), { flag: 'wx', mode: 0o600 })
+  } catch (err) {
+    const errno = errCodeOrMessage(err)
+    // EEXIST: the name was taken, so nothing of ours was written there.
+    return errno === 'EEXIST' ? { ok: false, errno } : { ok: false, errno, tmpPath: tmp }
+  }
+  try {
+    fs.renameSync(tmp, indexPath)
+  } catch (err) {
+    return { ok: false, errno: errCodeOrMessage(err), tmpPath: tmp }
+  }
   return { ok: true, kept: keep.length - keptMalformed, dropped, keptMalformed }
 }

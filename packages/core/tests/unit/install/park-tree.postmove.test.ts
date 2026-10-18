@@ -223,6 +223,50 @@ describe('a clean guarded park is verified at its destination (S12)', () => {
   })
 })
 
+describe('a held park whose byte count fails still writes its hold sidecar', () => {
+  it('held sidecar: hold true, bytes null, bytesError set, no sidecarError', () => {
+    const f = buildFixture()
+    roots.push(f.root)
+    let destPath = ''
+    let destListings = 0
+    // The walk lists destPath once (verification); the second listing is the
+    // byte count, which fails (a stub, since the container runs as root).
+    const run = withFsStub(
+      'readdirSync',
+      (orig) =>
+        (...args: unknown[]) => {
+          if (destPath !== '' && args[0] === destPath && ++destListings === 2) {
+            throw errnoError('EACCES')
+          }
+          return orig(...args)
+        },
+      () =>
+        runWithHooks({
+          parentAbs: f.parent,
+          name: f.name,
+          options: {
+            client: CLIENT,
+            kind: KIND,
+            opId: 'pm-held-bytes',
+            guardHash: guardOf(f.origin),
+          },
+          onRecheck: () => fs.appendFileSync(path.join(f.target, 'orig-f1'), '-late'),
+          onAfterRename: (x) => {
+            destPath = x.destPath
+          },
+        })
+    )
+    expect(run.fired.recheck && run.fired.afterRename && run.hookErrors.length === 0).toBe(true)
+    expect(destListings).toBe(2)
+    expect(run.result.status).toBe('held')
+    expect('sidecarError' in run.result).toBe(false)
+    const sidecar = readJson(run.result.sidecarPath)
+    expect(field(sidecar, 'hold')).toBe(true)
+    expect(field(sidecar, 'bytes')).toBe(null)
+    expect(field(sidecar, 'bytesError')).toBe('EACCES')
+  })
+})
+
 describe('D-8 plumbing', () => {
   it('shapeResult accepts held; RESULT_FIELDS declares originPath and heldPath; held is not success', () => {
     expect(shapeResult({ status: 'held' }).status).toBe('held')

@@ -262,13 +262,19 @@ const IDENTITY_KEYS: ReadonlySet<string> = new Set(['dev', 'ino', 'birthtimeNs',
  */
 function readIdentity(value: unknown): ParkIdentity {
   const snap = readPlainData(value, 'expectIdentity', IDENTITY_KEYS)
-  const copy = Object.create(null) as Record<string, bigint>
-  for (const k of IDENTITY_KEYS) {
+  const big = (k: string): bigint => {
     const v = snap[k]
     if (typeof v !== 'bigint') refuse('expectIdentity', `${k} must be a bigint, got ${typeof v}`)
-    copy[k] = v
+    return v
   }
-  return Object.freeze(copy) as unknown as ParkIdentity
+  const id: ParkIdentity = {
+    dev: big('dev'),
+    ino: big('ino'),
+    birthtimeNs: big('birthtimeNs'),
+    fmt: big('fmt'),
+  }
+  Object.setPrototypeOf(id, null)
+  return Object.freeze(id)
 }
 
 /**
