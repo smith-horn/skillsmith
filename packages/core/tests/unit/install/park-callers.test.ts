@@ -10,9 +10,11 @@ import { PARK_CALLERS } from '../../../src/install/park-callers.js'
 import { parkTree } from '../../../src/install/park-tree.js'
 import {
   CLIENT,
+  PARKED,
   cleanup,
   exists,
   guardOf,
+  runWithHooks,
   simpleFixture,
   withAllFsTrapped,
   withFsStub,
@@ -50,8 +52,8 @@ const BACKUP = '/abs/backups/old'
 /** The closing sentence of each internal-origin caller's held detail. */
 const INTERNAL: Record<string, string> = {
   'abort-cleanup':
-    'The staged copy changed while it was set aside and is kept there. Its origin is a ' +
-    'staging directory, so there is nothing to restore.',
+    'The staged copy changed while it was set aside. Its origin is a staging directory, so ' +
+    'there is nothing to restore.',
   'move-source': `doesn't have it; the extra copy is at`,
   'fan-out-staging': 'Its origin is a temporary staging folder, so there is nothing to restore.',
   'fan-out-backup': 'Its origin is a backup folder, so there is nothing to restore.',
@@ -112,6 +114,47 @@ describe('each caller parks with its own kind and gets its own held detail', () 
     )
   })
 
+  // SMI-7134: when the post-move check cannot confirm the location, an
+  // internal-origin sentence must not assert one either.
+  for (const caller of [
+    'abort-cleanup',
+    'move-source',
+    'fan-out-staging',
+    'fan-out-backup',
+    'doctor-park',
+  ]) {
+    it(`${caller}, location not confirmed: the closing asserts no location`, () => {
+      const kind = PLAN.find(([c]) => c === caller)?.[1] ?? 'MISSING'
+      const f = fixture()
+      const opDir = path.join(f.parent, PARKED, 'op-u')
+      const outside = path.join(f.root, 'elsewhere')
+      const run = runWithHooks({
+        parentAbs: f.parent,
+        name: 'tree',
+        options: {
+          ...(optsFor(caller, kind) as object),
+          opId: 'op-u',
+          guardHash: guardOf(f.origin),
+        } as never,
+        onAfterRename: () => {
+          fs.renameSync(opDir, outside)
+          fs.symlinkSync(outside, opDir)
+        },
+      })
+      const detail = String(run.result.detail)
+      expect(run.result.status).toBe('held')
+      expect(detail).toMatch(/could not be confirmed/)
+      expect(detail.includes('skillsmith restore')).toBe(false)
+      if (caller === 'move-source') {
+        expect(detail).toContain(`the extra copy was reported at '${String(run.result.path)}'.`)
+        expect(detail).not.toContain('the extra copy is at')
+      } else {
+        expect(detail.endsWith(INTERNAL[caller] ?? 'MISSING')).toBe(true)
+      }
+      expect(detail).not.toContain('kept there')
+    })
+  }
+
   it('a parked (not held) result is unaffected by the caller', () => {
     const f = fixture()
     const r = parkTree(f.parent, 'tree', optsFor('fan-out-backup', 'fan-out-overwrite'))
@@ -135,6 +178,16 @@ describe('caller, kind and backupPath are validated before any filesystem work',
       'caller move-source requires backupPath',
     ],
     [
+      'a relative backupPath',
+      { client: CLIENT, caller: 'move-source', kind: 'move-source', backupPath: 'backups/old' },
+      'caller move-source requires backupPath, the absolute path',
+    ],
+    [
+      'a caller named like an Object.prototype member',
+      { client: CLIENT, caller: 'toString', kind: 'uninstall' },
+      'got "toString"',
+    ],
+    [
       'backupPath for another caller',
       { client: CLIENT, caller: 'uninstall', kind: 'uninstall', backupPath: BACKUP },
       'backupPath is only for caller move-source, not uninstall',
@@ -154,6 +207,39 @@ describe('caller, kind and backupPath are validated before any filesystem work',
       expect(value).toContain(message)
       expect(touched).toEqual([])
       expect(exists(f.origin)).toBe(true)
+    })
+  }
+})
+
+describe('caller and backupPath are read as plain data, never by running a getter', () => {
+  for (const key of ['caller', 'backupPath'] as const) {
+    it(`a getter for ${key} is refused and never runs`, () => {
+      const f = fixture()
+      let reads = 0
+      const opts: Record<string, unknown> = {
+        client: CLIENT,
+        caller: 'move-source',
+        kind: 'move-source',
+        backupPath: BACKUP,
+      }
+      Object.defineProperty(opts, key, {
+        enumerable: true,
+        get: () => {
+          reads += 1
+          return key === 'caller' ? 'move-source' : BACKUP
+        },
+      })
+      const { value, touched } = withAllFsTrapped(() => {
+        try {
+          parkTree(f.parent, 'tree', opts as never)
+          return 'returned'
+        } catch (e) {
+          return `${(e as Error).constructor.name}: ${(e as Error).message}`
+        }
+      })
+      expect(value).toContain(`key "${key}" is an accessor`)
+      expect(reads).toBe(0)
+      expect(touched).toEqual([])
     })
   }
 })

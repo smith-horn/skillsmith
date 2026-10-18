@@ -45,7 +45,7 @@ export function heldDetail(a: {
     : a.located
       ? `the tree was observed at ${shq(a.destPath)}, but its directory is not private (${a.diagnosis})`
       : `the location of your tree could not be confirmed (reported path ${shq(a.destPath)}; reason: ${a.diagnosis})`
-  return `${a.diagnosis}. Changed during removal; ${where}. ${heldClosing(a)}`
+  return `${a.diagnosis}. Changed during removal; ${where}. ${heldClosing({ ...a, safe: a.safe === true })}`
 }
 
 /**

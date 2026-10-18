@@ -14,8 +14,13 @@
  * kind: three fan-out callers share `fan-out-overwrite` and two callers share
  * `install-rollback`, so the kind alone cannot pick the message.
  *
+ * An internal-origin sentence never asserts where the tree is unless the
+ * post-move check confirmed it (`safe`, SMI-7134): the detail's own location
+ * clause already says when it could not be confirmed.
+ *
  * @module @skillsmith/core/install/park-callers
  */
+import path from 'node:path'
 
 /** POSIX single-quote escaping, for paths quoted in a held `detail`. */
 export const shq = (s: string): string => `'${String(s).replace(/'/g, `'\\''`)}'`
@@ -26,7 +31,9 @@ interface CallerSpec {
   /** The §3.5 kind this caller parks with. */
   kind: string
   /** The held detail's closing sentence; null means the restore line. */
-  internalOrigin: ((a: { destPath: string; backupPath: string | null }) => string) | null
+  internalOrigin:
+    | ((a: { destPath: string; backupPath: string | null; safe: boolean }) => string)
+    | null
 }
 
 const CALLERS = {
@@ -34,15 +41,16 @@ const CALLERS = {
     rows: '1',
     kind: 'abort-new',
     internalOrigin: () =>
-      'The staged copy changed while it was set aside and is kept there. Its origin is a ' +
-      'staging directory, so there is nothing to restore.',
+      'The staged copy changed while it was set aside. Its origin is a staging directory, so ' +
+      'there is nothing to restore.',
   },
   'move-source': {
     rows: '2',
     kind: 'move-source',
-    internalOrigin: ({ destPath, backupPath }) =>
+    internalOrigin: ({ destPath, backupPath, safe }) =>
       `A write landed in the old folder while it was being backed up. The backup at ` +
-      `${shq(String(backupPath))} doesn't have it; the extra copy is at ${shq(destPath)}.`,
+      `${shq(String(backupPath))} doesn't have it; the extra copy ` +
+      `${safe ? 'is' : 'was reported'} at ${shq(destPath)}.`,
   },
   uninstall: { rows: '3', kind: 'uninstall', internalOrigin: null },
   'fan-out-cleanup': { rows: '4', kind: 'fan-out-cleanup', internalOrigin: null },
@@ -99,18 +107,15 @@ export function checkCaller(caller: unknown, kind: string, backupPath: unknown):
     )
   }
   if (caller === 'move-source') {
-    if (typeof backupPath !== 'string' || backupPath.length === 0) {
-      throw new TypeError('parkTree: caller move-source requires backupPath, the backup it made')
+    if (typeof backupPath !== 'string' || !path.isAbsolute(backupPath)) {
+      throw new TypeError(
+        'parkTree: caller move-source requires backupPath, the absolute path of the backup it made'
+      )
     }
   } else if (backupPath !== undefined) {
     throw new TypeError(`parkTree: backupPath is only for caller move-source, not ${caller}`)
   }
   return caller
-}
-
-/** True when this caller's held detail names `skillsmith restore`. */
-export function namesRestore(caller: ParkCaller): boolean {
-  return CALLERS[caller].internalOrigin === null
 }
 
 /**
@@ -123,9 +128,13 @@ export function heldClosing(a: {
   destPath: string
   opId: string
   backupPath: string | null
+  /** The post-move check confirmed the tree's location (SMI-7134). */
+  safe: boolean
 }): string {
   const internal: CallerSpec['internalOrigin'] = CALLERS[a.caller].internalOrigin
-  if (internal !== null) return internal({ destPath: a.destPath, backupPath: a.backupPath })
+  if (internal !== null) {
+    return internal({ destPath: a.destPath, backupPath: a.backupPath, safe: a.safe })
+  }
   return (
     `If something now exists at ${shq(a.originPath)}, move it aside first, then run ` +
     `\`skillsmith restore ${a.opId}\`.`

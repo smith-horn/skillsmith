@@ -8,7 +8,7 @@ All notable changes to `@skillsmith/core` are documented here.
   park-caller row of the A1 plan, plus `doctor recovery --park`). A held tree's detail names
   `skillsmith restore` only for a user-facing origin; a Skillsmith-internal one (a staging op dir,
   a staging or backup folder) gets its own sentence. `kind` must be the caller's kind, and
-  `move-source` requires `backupPath`. No caller yet, so no behaviour change.
+  `move-source` requires an absolute `backupPath`. No caller yet, so no behaviour change.
 - **Internal**: SMI-6531 -- `install/park-clock-gate.ts` adds UD25's clock gate as a caller-side
   helper: `runClockGate` makes two empty probe directories and returns probe 2's birthtime, once it
   is strictly later than probe 1's, as the park's `maxBirthtimeNs`, or stops with
