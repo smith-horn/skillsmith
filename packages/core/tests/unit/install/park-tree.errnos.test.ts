@@ -266,15 +266,46 @@ describe('the parent must be absolute (retro of PR #3110)', () => {
         park(rel, 'tree')
         return 'returned'
       } catch (e) {
-        return (e as Error).constructor.name
+        return `${(e as Error).constructor.name}: ${(e as Error).message}`
       }
     })
-    expect(value).toBe('TypeError')
+    expect(value).toBe(
+      `TypeError: parkTree: parentAbs must be an absolute path, got ${JSON.stringify(rel)}`
+    )
     expect(touched).toEqual([])
     expect(deletes).toEqual([])
     untouched(f)
     expect(exists(path.join(f.parent, PARKED))).toBe(false)
   })
+
+  for (const [label, value, rendered] of [
+    ['a number', 5, 'number'],
+    ['a null-prototype object', Object.create(null) as unknown, 'object'],
+    [
+      'an object whose toString throws',
+      {
+        toString: () => {
+          throw new RangeError('boom')
+        },
+      },
+      'object',
+    ],
+  ] as const) {
+    it(`a non-string parent (${label}) throws this TypeError, rendered without calling into it`, () => {
+      const f = fixture()
+      const { value: out, touched } = withAllFsTrapped(() => {
+        try {
+          park(value as unknown as string, 'tree')
+          return 'returned'
+        } catch (e) {
+          return `${(e as Error).constructor.name}: ${(e as Error).message}`
+        }
+      })
+      expect(out).toBe(`TypeError: parkTree: parentAbs must be an absolute path, got ${rendered}`)
+      expect(touched).toEqual([])
+      untouched(f)
+    })
+  }
 
   it('control: the same tree with its absolute parent parks', () => {
     const f = fixture()

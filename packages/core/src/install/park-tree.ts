@@ -260,7 +260,10 @@ export function parkTree(parentAbs: string, name: string, options: ParkOptions):
   // A relative parent would record a cwd-relative originPath in the sidecar and
   // fail the index append, leaving a parked copy restore cannot place.
   if (typeof parentAbs !== 'string' || !path.isAbsolute(parentAbs)) {
-    throw new TypeError(`parkTree: parentAbs must be an absolute path, got ${String(parentAbs)}`)
+    // Render the value without calling into it: String() on a null-prototype
+    // object or a throwing toString would replace this TypeError.
+    const got = typeof parentAbs === 'string' ? JSON.stringify(parentAbs) : typeof parentAbs
+    throw new TypeError(`parkTree: parentAbs must be an absolute path, got ${got}`)
   }
   assertPathSegment('name', name)
   const resolved = resolveParkOptions(options)
