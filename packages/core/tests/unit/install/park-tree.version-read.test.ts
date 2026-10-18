@@ -9,6 +9,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CLIENT,
+  CALLER,
   KIND,
   cleanup,
   exists,
@@ -36,7 +37,7 @@ async function parkWithBarrel(factory: () => Record<string, unknown>) {
   const run = withAllFsTrapped(
     () => {
       try {
-        parkTree(f.parent, 'tree', { client: CLIENT, kind: KIND })
+        parkTree(f.parent, 'tree', { client: CLIENT, caller: CALLER, kind: KIND })
         return 'returned'
       } catch (e) {
         return (e as Error).message

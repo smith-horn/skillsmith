@@ -24,6 +24,7 @@ import {
   readText,
   runWithHooks,
   withFsStub,
+  CALLER,
   KIND,
 } from './park-tree.helpers.js'
 import type { Fixture, HookRun } from './park-tree.helpers.js'
@@ -76,7 +77,13 @@ describe('the origin is never touched after the rename', () => {
       const run = runWithHooks({
         parentAbs: f.parent,
         name: f.name,
-        options: { client: CLIENT, kind: KIND, guardHash: guardOf(f.origin), opId: nextOp() },
+        options: {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+          guardHash: guardOf(f.origin),
+          opId: nextOp(),
+        },
         onRecheck: () => append(f),
         onAfterRename: () => {
           fs.mkdirSync(f.origin)
@@ -112,7 +119,13 @@ describe('the origin is never touched after the rename', () => {
       const run = runWithHooks({
         parentAbs: f.parent,
         name: f.name,
-        options: { client: CLIENT, kind: KIND, guardHash: guardOf(f.origin), opId: nextOp() },
+        options: {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+          guardHash: guardOf(f.origin),
+          opId: nextOp(),
+        },
         onRecheck: () => append(f),
         onAfterRename: () => {
           child = spawn('/bin/sh', ['-c', script, 'ra', f.origin, sig], { stdio: 'ignore' })
@@ -142,7 +155,7 @@ describe('the origin is never touched after the rename', () => {
     const run = runWithHooks({
       parentAbs: f.parent,
       name: f.name,
-      options: { client: CLIENT, kind: KIND, opId: nextOp() },
+      options: { client: CLIENT, caller: CALLER, kind: KIND, opId: nextOp() },
       onRename: () => append(f),
     })
     expect(run.fired.rename && run.hookErrors.length === 0).toBe(true)
@@ -162,7 +175,13 @@ describe('sidecar write rules (ADR-166 D-10 §5)', () => {
       const run = runWithHooks({
         parentAbs: f.parent,
         name: f.name,
-        options: { client: CLIENT, kind: KIND, guardHash: guardOf(f.origin), opId: nextOp() },
+        options: {
+          client: CLIENT,
+          caller: CALLER,
+          kind: KIND,
+          guardHash: guardOf(f.origin),
+          opId: nextOp(),
+        },
         onRecheck: mode === 'held' ? () => append(f) : undefined,
         onAfterRename: ({ destPath }) => {
           planted = `${destPath}.json`
@@ -190,7 +209,13 @@ describe('sidecar write rules (ADR-166 D-10 §5)', () => {
         runWithHooks({
           parentAbs: f.parent,
           name: f.name,
-          options: { client: CLIENT, kind: KIND, guardHash: guardOf(f.origin), opId: nextOp() },
+          options: {
+            client: CLIENT,
+            caller: CALLER,
+            kind: KIND,
+            guardHash: guardOf(f.origin),
+            opId: nextOp(),
+          },
           onRecheck: () => append(f),
         })
     )

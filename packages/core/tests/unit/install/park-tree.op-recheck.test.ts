@@ -20,6 +20,7 @@ import {
   readText,
   runWithHooks,
   simpleFixture,
+  CALLER,
   KIND,
 } from './park-tree.helpers.js'
 
@@ -41,7 +42,7 @@ function swapOpDir(prefix: string, opId: string, mode: number, alsoAppend = fals
   const run = runWithHooks({
     parentAbs: f.parent,
     name: 'tree',
-    options: { client: CLIENT, kind: KIND, opId, guardHash: guardOf(f.origin) },
+    options: { client: CLIENT, caller: CALLER, kind: KIND, opId, guardHash: guardOf(f.origin) },
     onAfterRename: () => {
       const aside = path.join(area, `${opId}-aside`)
       fs.renameSync(opDir, aside)
@@ -87,7 +88,13 @@ describe('the op directory must still be the one the park validated (SMI-7134)',
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId: 'op-h', guardHash: guardOf(f.origin) },
+      options: {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-h',
+        guardHash: guardOf(f.origin),
+      },
       onAfterRename: () => fs.chmodSync(opDir, 0o777),
     })
     const r = run.result
@@ -111,7 +118,13 @@ describe('a held detail claims safety only when the location was confirmed', () 
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId: 'op-i', guardHash: guardOf(f.origin) },
+      options: {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-i',
+        guardHash: guardOf(f.origin),
+      },
       onAfterRename: () => {
         fs.renameSync(opDir, outside)
         fs.symlinkSync(outside, opDir)
@@ -130,7 +143,13 @@ describe('a held detail claims safety only when the location was confirmed', () 
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId: 'op-i2', guardHash: guardOf(f.origin) },
+      options: {
+        client: CLIENT,
+        caller: CALLER,
+        kind: KIND,
+        opId: 'op-i2',
+        guardHash: guardOf(f.origin),
+      },
       onAfterRename: ({ destPath }) => fs.appendFileSync(path.join(destPath, 'sub', 'f.txt'), 'X'),
     })
     expect(run.result.status).toBe('held')
@@ -161,7 +180,7 @@ describe('location is checked after the walk and the hash (SMI-7134 gate)', () =
     const run = runWithHooks({
       parentAbs: f.parent,
       name: 'tree',
-      options: { client: CLIENT, kind: KIND, opId, guardHash: guardOf(f.origin) },
+      options: { client: CLIENT, caller: CALLER, kind: KIND, opId, guardHash: guardOf(f.origin) },
       onCall: ({ fn, p0, renameReturned, destPath }) => {
         if (!renameReturned || injected || destPath === null || p0 === null) return
         // J: before the 2nd lstat of destPath (the walk's root lstat is the 1st),

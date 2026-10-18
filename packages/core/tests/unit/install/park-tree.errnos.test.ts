@@ -307,8 +307,9 @@ describe('the parent must be absolute (retro of PR #3110)', () => {
     })
   }
 
-  // The parent check runs first: with a bad name and bad options too, the
-  // parent's own TypeError is the one thrown (pre-merge gate PR-16).
+  // The parent check runs first: each case pairs the relative parent with one
+  // other invalid input, a name or an option key, and the parent's own
+  // TypeError is the one thrown (pre-merge gate PR-16).
   for (const [label, name, options] of [
     ['an invalid name', '../escape', {}],
     ['an unknown option key', 'tree', { notAnOption: true }],

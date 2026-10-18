@@ -37,8 +37,11 @@ import type {
 import { S_IFDIR, S_IFLNK, S_IFMT, S_IFREG } from './park-tree.perms.js'
 import { bindIdentity, sameIdentity } from './park-tree.identity.js'
 import { ensureParkedRoot, prepareOpDir, recheckDestination } from './park-tree.destination.js'
+import type { ParkedRootResult } from './park-tree.destination.js'
 import { pathTreeRecord } from './park-tree.verify.js'
 import { finishAfterRename, preMoveGuard } from './park-tree.postmove.js'
+import type { FinishedPark } from './park-tree.postmove.js'
+import type { ParkedIndexEntry } from './parked-index.js'
 
 /** 8 random hex characters: the `<rnd>` suffix and a generated opId (ADR-166 D-3). */
 function randSuffix(): string {
@@ -80,7 +83,7 @@ function parkTreeInner(
   name: string,
   o: ResolvedParkOptions,
   skillsmithVersion: string
-): PartialParkResult {
+): PartialParkResult | FinishedPark {
   const opId = o.opId ?? randSuffix()
   const originPath = path.join(parentAbs, name)
   const guardHash = o.guardHash
@@ -155,8 +158,50 @@ function parkTreeInner(
       entry: name,
       errno: area.errno,
       detail: area.detail,
+      parkedAreaCreated: area.created,
     }
   }
+  // Every result from the area step on says whether this park's mkdir created
+  // the area (the refusal just above too),
+  // which drives the .gitignore hint (A1 plan §3.2). One wrapper, so no return
+  // site below can drop it.
+  return {
+    ...parkIntoArea({
+      name,
+      o,
+      skillsmithVersion,
+      opId,
+      originPath,
+      guarded,
+      observedTreeHash,
+      boundIdentity,
+      area,
+    }),
+    parkedAreaCreated: area.created,
+  }
+}
+
+/** Everything after the parked area is validated: op dir, re-checks, rename, finish. */
+function parkIntoArea(a: {
+  name: string
+  o: ResolvedParkOptions
+  skillsmithVersion: string
+  opId: string
+  originPath: string
+  guarded: boolean
+  observedTreeHash: string | null
+  boundIdentity: ParkIdentity | null
+  area: Extract<ParkedRootResult, { ok: true }>
+}): PartialParkResult | FinishedPark {
+  const { name, o, skillsmithVersion, opId, originPath, guarded, observedTreeHash } = a
+  const { boundIdentity, area } = a
+  const stoppedAtOrigin = (errno: string | null): PartialParkResult => ({
+    status: 'stopped',
+    reason: 'park-failed',
+    path: originPath,
+    entry: name,
+    errno,
+  })
 
   const op = prepareOpDir({
     parkedRoot: area.parkedRoot,
@@ -243,20 +288,27 @@ function readCoreVersion(): string {
   return v
 }
 
+/** A validated park, run at most once. */
+export interface PreparedPark {
+  /** The resolved `indexPath`; `parkTreeIndexed` appends `indexEntry` to it. */
+  indexPath: string | undefined
+  run: () => { result: ParkResult; indexEntry: ParkedIndexEntry | null }
+}
+
 /**
- * Parks `<parentAbs>/<name>`. `parentAbs` must be absolute and `name` a single
- * path segment. Options are read once and validated before any filesystem
- * work; a relative parent, an unknown key, a missing `client` or `kind`, or a
+ * Validates everything a park takes, with no filesystem work: a relative
+ * parent, an invalid name, an unknown key, a missing `client` or `kind`, or a
  * `guardHash` that is neither omitted nor a non-empty string throws TypeError
- * (ADR-166 D-5). An unavailable core version
- * throws Error, also with nothing moved.
- *
- * Outcomes (ADR-166 D-8): `parked` (done); `kept` (nothing moved, a check
- * refused); `held` (moved, then found changed at its parked path, left there
- * whole); `stopped` (nothing moved: `park-failed`, `guard-unreadable`,
- * `guard-unsupported-type`). Only `parked` is done; the caller never retries.
+ * (ADR-166 D-5), and an unavailable core version throws Error. `run` then
+ * parks once and returns the shaped result, plus the index line when the tree
+ * moved. Shared by `parkTree` and `parkTreeIndexed` so the two cannot validate
+ * differently.
  */
-export function parkTree(parentAbs: string, name: string, options: ParkOptions): ParkResult {
+export function prepareParkTree(
+  parentAbs: string,
+  name: string,
+  options: ParkOptions
+): PreparedPark {
   // A relative parent would record a cwd-relative originPath in the sidecar and
   // fail the index append, leaving a parked copy restore cannot place.
   if (typeof parentAbs !== 'string' || !path.isAbsolute(parentAbs)) {
@@ -271,8 +323,40 @@ export function parkTree(parentAbs: string, name: string, options: ParkOptions):
   // during initialization would see VERSION in its TDZ, and nothing may move
   // on a failure (ADR-166 D-4).
   const skillsmithVersion = readCoreVersion()
-  return shapeResult({
-    entry: name,
-    ...parkTreeInner(parentAbs, name, resolved, skillsmithVersion),
-  })
+  let ran = false
+  return {
+    indexPath: resolved.indexPath,
+    run: () => {
+      if (ran) throw new Error('parkTree: a prepared park runs at most once')
+      ran = true
+      const { indexEntry, ...partial } = parkTreeInner(parentAbs, name, resolved, skillsmithVersion)
+      return {
+        result: shapeResult({ entry: name, ...partial }),
+        indexEntry: indexEntry ?? null,
+      }
+    },
+  }
+}
+
+/**
+ * Parks `<parentAbs>/<name>`. `parentAbs` must be absolute and `name` a single
+ * path segment. Options are read once and validated before any filesystem
+ * work (`prepareParkTree`). `indexPath` is refused here: the index append
+ * takes lock 4 (UD31), which waits asynchronously, so a park that records an
+ * index line goes through `parkTreeIndexed`.
+ *
+ * Outcomes (ADR-166 D-8): `parked` (done); `kept` (nothing moved, a check
+ * refused); `held` (moved, then found changed at its parked path, left there
+ * whole); `stopped` (nothing moved: `park-failed`, `guard-unreadable`,
+ * `guard-unsupported-type`). Only `parked` is done; the caller never retries.
+ */
+export function parkTree(parentAbs: string, name: string, options: ParkOptions): ParkResult {
+  const prepared = prepareParkTree(parentAbs, name, options)
+  if (prepared.indexPath !== undefined) {
+    throw new TypeError(
+      'parkTree: indexPath is not accepted here; the index append takes lock 4, ' +
+        'which waits asynchronously, so call parkTreeIndexed'
+    )
+  }
+  return prepared.run().result
 }
