@@ -8,7 +8,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 
 ## Contents
 
-- [What's New](#whats-new-in-v0816)
+- [What's New](#whats-new-in-v0817)
 - [Installation](#installation)
 - [Commands](#commands)
   - [inventory](#inventory)
@@ -16,7 +16,7 @@ Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills 
 - [Examples](#examples)
 - [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.8.16
+## What's New in v0.8.17
 
 - **`--yes` to confirm a skill outside the allowlisted tiers:** the registry now asks you to confirm installing a skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). `skillsmith install` and `skillsmith update` accept `--yes` (`-y`) to confirm. Without it, a terminal asks y/N (default No), and a script or `--json` run exits non-zero with a message naming `--yes`. `--yes` never skips the security scan, and `--skip-scan` is still refused for these tiers. `update --yes` also answers the "Update <skill>?" prompt, so it works from a script.
 - **`errorCode` in `--json`:** a failed `install --json` or `registry install --json` now includes `errorCode` (for example `CONFIRMATION_REQUIRED`) when the failure has one.
