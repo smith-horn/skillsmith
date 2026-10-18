@@ -13,6 +13,7 @@ import type { BigIntStats } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ParkIdentity } from '../../../src/install/park-result.js'
 import {
   CLIENT,
   PARKED,
@@ -176,15 +177,13 @@ describe('post-move location checks (SMI-7132)', () => {
     expect(exists(f.origin)).toBe(false)
   })
 
-  it('C1: a type-less expectIdentity never compares equal; C2: with its type it is accepted', () => {
+  it('C1: a type-less expectIdentity is refused (fmt is required); C2: with its type it is accepted', () => {
     const f = fixture('park-c-')
     const st = fs.lstatSync(f.origin, { bigint: true })
-    const r1 = park(f.parent, 'tree', {
-      opId: 'op-c1',
-      expectIdentity: { dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs },
-    })
-    expect(r1.status).toBe('kept')
-    expect(r1.reason).toBe('identity-changed')
+    const typeless = { dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs }
+    expect(() =>
+      park(f.parent, 'tree', { opId: 'op-c1', expectIdentity: typeless as ParkIdentity })
+    ).toThrow(TypeError)
     expect(readText(path.join(f.origin, 'sub', 'f.txt'))).toBe('USERBYTES')
     const g = fixture('park-c2-')
     const st2 = fs.lstatSync(g.origin, { bigint: true })

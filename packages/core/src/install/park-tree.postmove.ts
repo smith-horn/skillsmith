@@ -177,8 +177,18 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
   const kind = options.kind
   let bytes: number | null = null
   let createdAt: string | null = null
+  // A byte count that cannot be computed (an unreadable subdirectory) is
+  // recorded as `bytes: null` plus `bytesError`; it never suppresses the
+  // sidecar, which is what makes the parked copy restorable (ADR-166 D-1).
+  // Counted only after verification has decided, so it adds no reads ahead of
+  // the post-move check.
+  let bytesError: string | null = null
   const baseSidecar = (): Record<string, unknown> => {
-    bytes = treeBytes(destPath)
+    try {
+      bytes = treeBytes(destPath)
+    } catch (err) {
+      bytesError = errCodeOrMessage(err)
+    }
     createdAt = new Date().toISOString()
     return {
       opId,
@@ -188,6 +198,7 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
       originPath,
       treeHash: observedTreeHash,
       bytes,
+      ...(bytesError === null ? {} : { bytesError }),
       createdAt,
       skillsmithVersion: a.skillsmithVersion,
     }
@@ -211,12 +222,12 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
     }
   }
   // A guarded park always binds an identity first; a missing one fails closed
-  // (an identity with no file type never compares equal), never skips the check.
+  // (fmt -1n matches no real file type), never skips the check.
   const verified =
     guardHash !== undefined
       ? verifyAtDestination({
           destPath,
-          boundIdentity: a.boundIdentity ?? { dev: -1n, ino: -1n, birthtimeNs: -1n },
+          boundIdentity: a.boundIdentity ?? { dev: -1n, ino: -1n, birthtimeNs: -1n, fmt: -1n },
           guardHash,
           parkedRoot: a.parkedRoot,
           parkedRootIdentity: a.parkedRootIdentity,

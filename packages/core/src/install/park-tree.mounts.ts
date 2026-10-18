@@ -13,6 +13,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { errCode } from './park-result.js'
 
 /** mountinfo escapes space, tab, newline and backslash as a 3-digit octal. */
 function unescapeOctal(p: string): string {
@@ -56,8 +57,7 @@ export function readMountPointsAtOrUnder(dir: string): MountPointsResult {
   try {
     text = fs.readFileSync('/proc/self/mountinfo', 'utf8')
   } catch (err) {
-    const code = (err as { code?: unknown } | null)?.code
-    return { ok: false, errno: typeof code === 'string' ? code : null }
+    return { ok: false, errno: errCode(err) }
   }
   return { ok: true, points: mountPointsAtOrUnder(dir, text) }
 }

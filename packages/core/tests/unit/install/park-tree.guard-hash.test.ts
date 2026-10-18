@@ -15,6 +15,7 @@ import {
   CLIENT,
   PARKED,
   cleanup,
+  errnoError,
   exists,
   field,
   guardOf,
@@ -23,6 +24,7 @@ import {
   readJson,
   readText,
   simpleFixture,
+  withFsStub,
 } from './park-tree.helpers.js'
 
 /** packages/core/package.json's version, read here independently of the port. */
@@ -123,6 +125,36 @@ describe('what a park does to the bytes and where it puts them', () => {
     expect(field(s, 'opId')).toBe(r.opId)
     expect(field(s, 'skillsmithVersion')).toBe(PKG_VERSION)
     expect(field(s, 'bytes')).toBe(sumSizes(String(r.path)))
+  })
+})
+
+describe('a byte count that fails never suppresses the sidecar (ADR-166 D-1)', () => {
+  it('an unreadable subdirectory: the sidecar is written with bytes null and bytesError; the index line has bytes null', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    // A stub, since the container runs as root: the parked copy's subdirectory
+    // cannot be listed, so treeBytes fails after the rename.
+    const r = withFsStub(
+      'readdirSync',
+      (orig) =>
+        (...args: unknown[]) => {
+          if (String(args[0]).includes(`${path.sep}${PARKED}${path.sep}`)) {
+            throw errnoError('EACCES')
+          }
+          return orig(...args)
+        },
+      () => park(f.parent, 'tree', { kind: 'uninstall', indexPath })
+    )
+    expect(r.status).toBe('parked')
+    expect('sidecarError' in r).toBe(false)
+    const s2 = readJson(r.sidecarPath)
+    expect(field(s2, 'originPath')).toBe(f.origin)
+    expect(field(s2, 'opId')).toBe(r.opId)
+    expect(field(s2, 'kind')).toBe('uninstall')
+    expect(field(s2, 'bytes')).toBe(null)
+    expect(field(s2, 'bytesError')).toBe('EACCES')
+    const line = JSON.parse(fs.readFileSync(indexPath, 'utf8').trim()) as { bytes: unknown }
+    expect(line.bytes).toBe(null)
   })
 })
 

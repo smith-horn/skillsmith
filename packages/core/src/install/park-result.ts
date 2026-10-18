@@ -95,9 +95,9 @@ export function shapeResult(partial: PartialParkResult): ParkResult {
   }
   const out: Record<string, unknown> = {}
   for (const f of RESULT_FIELDS) out[f] = partial[f] ?? null
-  // hasOwnProperty, not `in`: `in` walks the prototype chain, so an extra key
-  // named like an Object.prototype member (toString, constructor) was dropped
-  // (spike m-6).
+  // hasOwnProperty, not `in`, so an extra key named like an Object.prototype
+  // member (toString, constructor) is still carried (ADR-166 D-8: no result
+  // field is silently dropped).
   for (const k of Object.keys(partial)) {
     if (!Object.prototype.hasOwnProperty.call(out, k)) out[k] = partial[k]
   }
@@ -164,12 +164,12 @@ export interface ParkIdentity {
   dev: bigint
   ino: bigint
   birthtimeNs: bigint
-  /** `mode & S_IFMT`. An identity without it never compares equal (SMI-7130). */
-  fmt?: bigint
+  /** `mode & S_IFMT`, required (SMI-7130: identity includes the file type). */
+  fmt: bigint
 }
 
 export interface ParkOptions {
-  /** UD22's client. Required: there is no default (the spike defaulted to 'spike'). */
+  /** UD22's client. Required: there is no default. */
   client: string
   /** The §3.4 tree hash the caller certified (UD27). Omit for no guard. */
   guardHash?: string
@@ -213,61 +213,83 @@ export const PARK_OPTION_KEYS = [
 
 const KNOWN_KEYS: ReadonlySet<string> = new Set(PARK_OPTION_KEYS)
 
+/** Throws the TypeError every option refusal uses. */
+function refuse(label: string, why: string): never {
+  throw new TypeError(`parkTree ${label}: ${why}. Pass a plain object literal.`)
+}
+
 /**
- * Reads the options as plain data and validates them (ADR-166 D-5). The rule:
- * a non-proxy object whose prototype is `Object.prototype` or null, with only
- * known string keys, each an own data property. Values come only from property
- * descriptors, so no caller code (getter, proxy trap) runs during the read and
- * no inherited value, a polluted `Object.prototype` included, is consulted.
- * Anything else throws TypeError before any filesystem work, so a misspelled
- * or hidden guard cannot run unguarded (review rounds 1 and 2).
+ * Reads `value` as plain data (ADR-166 D-5, SMI-6531): a non-proxy object whose
+ * prototype is `Object.prototype` or null, with only `allowed` string keys,
+ * each an own data property. Values come only from property descriptors, so
+ * no caller code (getter, proxy trap) runs and no inherited value, a polluted
+ * `Object.prototype` included, is consulted. Returns a null-prototype copy.
+ */
+function readPlainData(
+  value: unknown,
+  label: string,
+  allowed: ReadonlySet<string>
+): Record<string, unknown> {
+  if (value === null || typeof value !== 'object') refuse(label, `got ${String(value)}`)
+  if (util.types.isProxy(value)) refuse(label, 'a Proxy is refused (its traps run caller code)')
+  const proto: unknown = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) {
+    refuse(label, 'the prototype must be Object.prototype or null (class instances are refused)')
+  }
+  // Null prototype: an absent key reads as undefined, never an inherited value.
+  const snap = Object.create(null) as Record<string, unknown>
+  for (const k of Reflect.ownKeys(value)) {
+    if (typeof k === 'symbol') refuse(label, `symbol key ${String(k)} is refused`)
+    if (!allowed.has(k)) {
+      refuse(label, `unknown key ${JSON.stringify(k)} (known: ${[...allowed].join(', ')})`)
+    }
+    const desc = Object.getOwnPropertyDescriptor(value, k)
+    if (desc === undefined) refuse(label, `key ${JSON.stringify(k)} vanished while being read`)
+    if ('get' in desc || 'set' in desc) {
+      refuse(label, `key ${JSON.stringify(k)} is an accessor; only data properties are read`)
+    }
+    snap[k] = desc.value
+  }
+  return snap
+}
+
+const IDENTITY_KEYS: ReadonlySet<string> = new Set(['dev', 'ino', 'birthtimeNs', 'fmt'])
+
+/**
+ * `expectIdentity` under the same plain-data rule, every field a required
+ * bigint, returned as a fresh frozen null-prototype copy, so the park never
+ * re-reads the caller's object (UD24, SMI-7130).
+ */
+function readIdentity(value: unknown): ParkIdentity {
+  const snap = readPlainData(value, 'expectIdentity', IDENTITY_KEYS)
+  const copy = Object.create(null) as Record<string, bigint>
+  for (const k of IDENTITY_KEYS) {
+    const v = snap[k]
+    if (typeof v !== 'bigint') refuse('expectIdentity', `${k} must be a bigint, got ${typeof v}`)
+    copy[k] = v
+  }
+  return Object.freeze(copy) as unknown as ParkIdentity
+}
+
+/**
+ * Reads the options as plain data (`readPlainData`) and validates them. Every
+ * refusal is a TypeError before any filesystem work, so a misspelled or hidden
+ * guard cannot run unguarded (ADR-166 D-5).
  */
 export function resolveParkOptions(options: unknown): ResolvedParkOptions {
-  const refuse = (why: string): never => {
-    throw new TypeError(`parkTree options: ${why}. Pass a plain object literal.`)
-  }
-  if (options === null || typeof options !== 'object') refuse(`got ${String(options)}`)
-  const obj = options as object
-  if (util.types.isProxy(obj)) refuse('a Proxy is refused (its traps run caller code)')
-  const proto: unknown = Object.getPrototypeOf(obj)
-  if (proto !== Object.prototype && proto !== null) {
-    refuse('the prototype must be Object.prototype or null (class instances are refused)')
-  }
-  // Null prototype: an absent option must read as undefined, never as a
-  // value inherited from a polluted Object.prototype.
-  const snap = Object.create(null) as Record<string, unknown>
-  for (const k of Reflect.ownKeys(obj)) {
-    if (typeof k === 'symbol') refuse(`symbol key ${String(k)} is refused`)
-    const key = k as string
-    if (!KNOWN_KEYS.has(key)) {
-      refuse(`unknown option ${JSON.stringify(key)} (known: ${PARK_OPTION_KEYS.join(', ')})`)
-    }
-    const d = Object.getOwnPropertyDescriptor(obj, key)
-    if (d === undefined) refuse(`option ${JSON.stringify(key)} vanished while being read`)
-    const desc = d as PropertyDescriptor
-    if ('get' in desc || 'set' in desc) {
-      refuse(`option ${JSON.stringify(key)} is an accessor; only data properties are read`)
-    }
-    snap[key] = desc.value
-  }
-
+  const snap = readPlainData(options, 'options', KNOWN_KEYS)
   const { client, opId, expectIdentity, maxBirthtimeNs, kind, rootKey, indexPath } = snap
   if (typeof client !== 'string' || client.length === 0) {
     throw new TypeError(`parkTree: client must be a non-empty string, got ${String(client)}`)
   }
   const guardHash = normalizeGuardHash(snap.guardHash)
   if (opId !== undefined) assertPathSegment('opId', opId, { reserveLeadingDot: true })
-  if (
-    expectIdentity !== undefined &&
-    (expectIdentity === null || typeof expectIdentity !== 'object')
-  ) {
-    throw new TypeError('parkTree: expectIdentity must be an identity object or omitted')
-  }
+  const identity = expectIdentity === undefined ? undefined : readIdentity(expectIdentity)
   if (maxBirthtimeNs !== undefined && typeof maxBirthtimeNs !== 'bigint') {
     throw new TypeError(
       `parkTree: maxBirthtimeNs must be a bigint or omitted, got ${
         maxBirthtimeNs === null ? 'null' : typeof maxBirthtimeNs
-      }. A null is refused rather than read as "no gate", the spike's meaning.`
+      }. A null is refused rather than read as "no clock gate" (ADR-166 D-5).`
     )
   }
   if (typeof kind !== 'string' || kind.length === 0) {
@@ -283,7 +305,7 @@ export function resolveParkOptions(options: unknown): ResolvedParkOptions {
     client,
     guardHash,
     opId,
-    expectIdentity: expectIdentity as ParkIdentity | undefined,
+    expectIdentity: identity,
     maxBirthtimeNs,
     kind,
     rootKey: rootKey ?? null,

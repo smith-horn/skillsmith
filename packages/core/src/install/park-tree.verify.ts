@@ -234,58 +234,56 @@ export function verifyAtDestination(v: VerifyInput): VerifyResult {
   type Content = { reason: HeldReason; diagnosis: string; treeHash: string | null }
   // The location verdict decides which result is reported; a content failure
   // is still named, never dropped, and safety is claimed only when confirmed.
-  const finish = (content: Content | null): VerifyFailure | null => {
+  // Two functions, not one returning `| null` for both: a content failure must
+  // always come back as a failure, never as a null a caller reads as clean.
+  const failContent = (content: Content): VerifyFailure => {
     const loc = checkLocation()
     if (loc !== null) {
-      const also =
-        content === null
-          ? ''
-          : `; content check also failed: ${content.reason}: ${content.diagnosis}`
-      return { ...loc, diagnosis: loc.diagnosis + also, treeHash: content?.treeHash ?? null }
+      const also = `; content check also failed: ${content.reason}: ${content.diagnosis}`
+      return { ...loc, diagnosis: loc.diagnosis + also, treeHash: content.treeHash }
     }
-    if (content === null) return null
     return held(content.reason, content.diagnosis, content.treeHash, true, true)
   }
   const rec = pathTreeRecord(v.destPath, { mountCheck: true })
   if (!rec.ok) {
     if (rec.reason === 'mount-inside-tree') {
-      return finish({
+      return failContent({
         reason: 'mount-appeared-during-move',
         diagnosis: `mount at ${rec.rel} (st_dev differs from the root)`,
         treeHash: null,
-      }) as VerifyFailure
+      })
     }
-    return finish({
+    return failContent({
       reason: 'changed-during-move',
       diagnosis: `${rec.reason} at ${rec.path}${rec.errno ? ` (${rec.errno})` : ''}`,
       treeHash: null,
-    }) as VerifyFailure
+    })
   }
   // Probe mountinfo at opReal + entry name, never realpath(entry): a symlink
   // root would otherwise be checked at its target (SMI-7132).
   if (typeof v.opReal !== 'string') {
-    return finish({
+    return failContent({
       reason: 'changed-during-move',
       diagnosis: 'the pinned op directory path is missing, so mountinfo cannot be probed',
       treeHash: null,
-    }) as VerifyFailure
+    })
   }
   const mi = mountinfoFinding(path.join(v.opReal, path.basename(v.destPath)))
   if (mi !== null) {
-    return finish({
+    return failContent({
       reason: 'mount-appeared-during-move',
       diagnosis: mi,
       treeHash: null,
-    }) as VerifyFailure
+    })
   }
   const treeHash = computeTreeHash(rec.record)
   if (treeHash !== v.guardHash) {
-    return finish({
+    return failContent({
       reason: 'changed-during-move',
       diagnosis: 'tree hash at the destination differs from guardHash',
       treeHash,
-    }) as VerifyFailure
+    })
   }
-  const bad = finish(null)
+  const bad = checkLocation()
   return bad ?? { ok: true, treeHash }
 }

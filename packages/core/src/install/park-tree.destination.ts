@@ -56,9 +56,8 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   if (st.isSymbolicLink() || !st.isDirectory()) {
     return { ok: false, errno: null, detail: 'trash-unusable' }
   }
-  // parentStat is a Number stat and st a bigint one: `!==` across the two types
-  // is always true, so normalize once (the spike's first version refused every
-  // legitimate call this way).
+  // parentStat is a Number stat and st a bigint one; `!==` across the two types
+  // is always true, so the parent's dev is normalized to bigint once.
   const parentDev = BigInt(parentStat.dev)
   if (st.dev !== parentDev) return { ok: false, errno: null, detail: 'trash-other-mount' }
   // Return the area's IDENTITY, not just its path, so it can be re-checked

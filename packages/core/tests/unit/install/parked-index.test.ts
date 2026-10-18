@@ -12,7 +12,15 @@ import {
   compactParkedIndex,
   readParkedIndex,
 } from '../../../src/install/parked-index.js'
-import { CLIENT, cleanup, guardOf, park, simpleFixture, withFsStub } from './park-tree.helpers.js'
+import {
+  CLIENT,
+  cleanup,
+  errnoError,
+  guardOf,
+  park,
+  simpleFixture,
+  withFsStub,
+} from './park-tree.helpers.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -22,6 +30,12 @@ const fixture = () => {
   const f = simpleFixture('park-idx-')
   roots.push(f.root)
   return f
+}
+/** readParkedIndex, asserting the read succeeded. */
+const readOk = (indexPath: string) => {
+  const r = readParkedIndex(indexPath)
+  if (!r.ok) throw new Error(`index read failed: ${r.errno}`)
+  return r
 }
 const addTree = (parent: string, name: string) => {
   fs.mkdirSync(path.join(parent, name), { recursive: true })
@@ -33,7 +47,7 @@ describe('the park appends one index line', () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
     const r = park(f.parent, 'tree', { indexPath, kind: 'uninstall', guardHash: guardOf(f.origin) })
-    const idx = readParkedIndex(indexPath)
+    const idx = readOk(indexPath)
     expect(idx.present).toBe(true)
     expect(idx.entries).toHaveLength(1)
     expect(idx.entries[0]?.path).toBe(r.path)
@@ -70,25 +84,135 @@ describe('reading and compacting the index (spike Q8b)', () => {
     const a = park(f.parent, 'a', { indexPath })
     const b = park(f.parent, 'b', { indexPath })
     fs.rmSync(String(b.path), { recursive: true })
-    const before = readParkedIndex(indexPath)
+    const before = readOk(indexPath)
     expect(before.entries).toHaveLength(2)
     expect(before.errors).toEqual([])
-    expect(compactParkedIndex(indexPath)).toEqual({ kept: 1, dropped: 1 })
-    const after = readParkedIndex(indexPath)
+    expect(compactParkedIndex(indexPath)).toEqual({
+      ok: true,
+      kept: 1,
+      dropped: 1,
+      keptMalformed: 0,
+    })
+    const after = readOk(indexPath)
     expect(after.entries.map((e) => e.path)).toEqual([a.path])
     appendParkedIndex(indexPath, { opId: 'op-x', path: '/abs/x', client: 'c', kind: 'k', bytes: 1 })
-    expect(readParkedIndex(indexPath).entries).toHaveLength(2)
+    expect(readOk(indexPath).entries).toHaveLength(2)
   })
 
   it('an absent index is not an error; a malformed line is reported by number, not thrown', () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
-    expect(readParkedIndex(indexPath)).toEqual({ present: false, entries: [], errors: [] })
-    expect(compactParkedIndex(indexPath)).toEqual({ kept: 0, dropped: 0 })
+    expect(readParkedIndex(indexPath)).toEqual({
+      ok: true,
+      present: false,
+      entries: [],
+      lines: [],
+      errors: [],
+    })
+    expect(compactParkedIndex(indexPath)).toEqual({
+      ok: true,
+      kept: 0,
+      dropped: 0,
+      keptMalformed: 0,
+    })
     fs.writeFileSync(indexPath, '{"path":"/abs/ok"}\nnot json\n{"nopath":1}\n')
-    const idx = readParkedIndex(indexPath)
+    const idx = readOk(indexPath)
     expect(idx.entries.map((e) => e.path)).toEqual(['/abs/ok'])
     expect(idx.errors.map((e) => e.line)).toEqual([2, 3])
+  })
+
+  it('a read failure other than ENOENT is reported, and compaction leaves the index bytes unchanged', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    addTree(f.parent, 'a')
+    addTree(f.parent, 'b')
+    park(f.parent, 'a', { indexPath })
+    park(f.parent, 'b', { indexPath })
+    const before = fs.readFileSync(indexPath)
+    const emfile =
+      (orig: (...a: unknown[]) => unknown) =>
+      (...args: unknown[]) => {
+        if (args[0] === indexPath) throw errnoError('EMFILE')
+        return orig(...args)
+      }
+    expect(withFsStub('readFileSync', emfile, () => readParkedIndex(indexPath))).toEqual({
+      ok: false,
+      present: true,
+      errno: 'EMFILE',
+    })
+    expect(withFsStub('readFileSync', emfile, () => compactParkedIndex(indexPath))).toEqual({
+      ok: false,
+      errno: 'EMFILE',
+    })
+    expect(fs.readFileSync(indexPath).equals(before)).toBe(true)
+    expect(readOk(indexPath).entries).toHaveLength(2)
+  })
+
+  it('compaction keeps malformed and invalid lines verbatim and counts them', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const stale = JSON.stringify({ path: path.join(f.root, 'gone') })
+    fs.writeFileSync(indexPath, `not json\n${stale}\n[1,2]\n{"path":"rel/x"}\n`)
+    expect(compactParkedIndex(indexPath)).toEqual({
+      ok: true,
+      kept: 0,
+      dropped: 1,
+      keptMalformed: 3,
+    })
+    expect(fs.readFileSync(indexPath, 'utf8')).toBe('not json\n[1,2]\n{"path":"rel/x"}\n')
+  })
+
+  it('an interior empty line is kept verbatim as malformed; only the final newline is not a line', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const text = `${JSON.stringify({ path: f.root })}\n\nnot json\n`
+    fs.writeFileSync(indexPath, text)
+    const idx = readOk(indexPath)
+    expect(idx.errors.map((e) => e.line)).toEqual([2, 3])
+    expect(compactParkedIndex(indexPath)).toEqual({
+      ok: true,
+      kept: 1,
+      dropped: 0,
+      keptMalformed: 2,
+    })
+    expect(fs.readFileSync(indexPath, 'utf8')).toBe(text)
+  })
+
+  it('an lstat error other than ENOENT/ENOTDIR keeps the entry', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const r = park(f.parent, 'tree', { indexPath })
+    const before = fs.readFileSync(indexPath, 'utf8')
+    const result = withFsStub(
+      'lstatSync',
+      (orig) =>
+        (...args: unknown[]) => {
+          if (args[0] === r.path) throw errnoError('EACCES')
+          return orig(...args)
+        },
+      () => compactParkedIndex(indexPath)
+    )
+    expect(result).toEqual({ ok: true, kept: 1, dropped: 0, keptMalformed: 0 })
+    expect(fs.readFileSync(indexPath, 'utf8')).toBe(before)
+  })
+
+  it('an entry with a relative path is kept and never lstat-ed (it would resolve against the cwd)', () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    fs.writeFileSync(indexPath, '{"path":"rel/x"}\n')
+    const lstats: string[] = []
+    const result = withFsStub(
+      'lstatSync',
+      (orig) =>
+        (...args: unknown[]) => {
+          lstats.push(String(args[0]))
+          return orig(...args)
+        },
+      () => compactParkedIndex(indexPath)
+    )
+    expect(lstats.filter((p) => p.includes('rel/x'))).toEqual([])
+    expect(result).toEqual({ ok: true, kept: 0, dropped: 0, keptMalformed: 1 })
+    expect(fs.readFileSync(indexPath, 'utf8')).toBe('{"path":"rel/x"}\n')
   })
 
   it('a relative path is refused before anything is written', () => {

@@ -101,9 +101,9 @@ function parkTreeInner(
   // bind it earlier than this function can.
   let boundIdentity: ParkIdentity | null = o.expectIdentity ?? null
 
-  // Identity and UD25's clock gate run whenever any of the three inputs is
-  // given, independently of the hash: inside the hash branch the gate was
-  // silently inert for a caller passing `maxBirthtimeNs` without a hash.
+  // Identity and UD25's clock gate run whenever `expectIdentity`,
+  // `maxBirthtimeNs` or a guard is given, independently of the hash: the gate
+  // must hold for a caller that passes no hash (UD25, ADR-166 D-0).
   const needIdentity = boundIdentity !== null || o.maxBirthtimeNs !== undefined || guarded
   let rootFmt: bigint
   if (needIdentity) {

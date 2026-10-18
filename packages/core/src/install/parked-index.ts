@@ -59,64 +59,114 @@ export function appendParkedIndex(
   }
 }
 
-export interface ParkedIndexRead {
-  /** False when the index file does not exist (not an error). */
-  present: boolean
-  entries: ParkedIndexEntry[]
-  errors: { line: number; error: string }[]
+/** One line of the index as read: its exact text, and its entry when valid. */
+export interface ParkedIndexLine {
+  raw: string
+  /** Null when the line is not JSON or not an object with an absolute `path`. */
+  entry: ParkedIndexEntry | null
 }
 
-/** Reads the index. A malformed line is reported with its number, never thrown. */
+export type ParkedIndexRead =
+  | {
+      ok: true
+      /** False when the index file does not exist (not an error). */
+      present: boolean
+      entries: ParkedIndexEntry[]
+      lines: ParkedIndexLine[]
+      errors: { line: number; error: string }[]
+    }
+  /** The index exists but could not be read; nothing about its contents is known. */
+  | { ok: false; present: true; errno: string }
+
+/** The entry a parsed line describes, or why it is not one. */
+function entryOf(line: string): ParkedIndexEntry | string {
+  let e: unknown
+  try {
+    e = JSON.parse(line)
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+  if (e === null || typeof e !== 'object' || Array.isArray(e)) return 'not an object'
+  const p: unknown = (e as { path?: unknown }).path
+  if (typeof p !== 'string' || !path.isAbsolute(p)) return 'path is not an absolute string'
+  return e as ParkedIndexEntry
+}
+
+/**
+ * Reads the index. A read failure other than ENOENT is `ok: false`, never an
+ * empty index (UD31: the index may be the only route to a parked copy). A line
+ * that is not a valid entry is reported by number and kept in `lines`.
+ */
 export function readParkedIndex(indexPath: string): ParkedIndexRead {
   let text: string
   try {
     text = fs.readFileSync(indexPath, 'utf8')
   } catch (err) {
     const code = errCodeOrMessage(err)
-    if (code === 'ENOENT') return { present: false, entries: [], errors: [] }
-    return { present: true, entries: [], errors: [{ line: 0, error: code }] }
+    if (code === 'ENOENT') return { ok: true, present: false, entries: [], lines: [], errors: [] }
+    return { ok: false, present: true, errno: code }
   }
   const entries: ParkedIndexEntry[] = []
+  const lines: ParkedIndexLine[] = []
   const errors: { line: number; error: string }[] = []
-  text.split('\n').forEach((l, i) => {
-    if (l === '') return
-    try {
-      const e = JSON.parse(l) as unknown
-      if (
-        e === null ||
-        typeof e !== 'object' ||
-        typeof (e as { path?: unknown }).path !== 'string'
-      ) {
-        throw new Error('no path')
-      }
-      entries.push(e as ParkedIndexEntry)
-    } catch (err) {
-      errors.push({ line: i + 1, error: err instanceof Error ? err.message : String(err) })
+  const parts = text.split('\n')
+  // Only the empty element after a final newline is not a line; an interior
+  // empty line is kept verbatim as malformed, like any other invalid line.
+  if (parts[parts.length - 1] === '') parts.pop()
+  parts.forEach((raw, i) => {
+    const e = entryOf(raw)
+    if (typeof e === 'string') {
+      errors.push({ line: i + 1, error: e })
+      lines.push({ raw, entry: null })
+    } else {
+      entries.push(e)
+      lines.push({ raw, entry: e })
     }
   })
-  return { present: true, entries, errors }
+  return { ok: true, present: true, entries, lines, errors }
 }
 
+export type CompactResult =
+  | { ok: true; kept: number; dropped: number; keptMalformed: number }
+  | { ok: false; errno: string }
+
+/** Codes that prove the parked copy is gone; any other lstat error keeps its line. */
+const GONE = new Set(['ENOENT', 'ENOTDIR'])
+
 /**
- * Drops entries whose path no longer exists, via a temp file and rename(2).
- * Must run under lock 4 (UD31) once that lock exists.
+ * Drops lines whose parked copy is provably gone (lstat ENOENT or ENOTDIR),
+ * via a temp file and rename(2). Every other line is kept verbatim, including
+ * a malformed one and one whose lstat failed for any other reason. An index
+ * that cannot be read is left untouched and the error is returned.
+ *
+ * PRECONDITION: the caller holds lock 4 (UD31, withFileLock on the index path),
+ * and every append to this index takes the same lock. Without it, a line a
+ * concurrent park appends between the read and the rename is lost: O_APPEND does
+ * not survive the path being replaced. No caller exists until A1 step 3a part B
+ * adds the lock and the wrapper that takes it.
  */
-export function compactParkedIndex(indexPath: string): { kept: number; dropped: number } {
-  const { present, entries } = readParkedIndex(indexPath)
-  if (!present) return { kept: 0, dropped: 0 }
-  const keep = entries.filter((e) => {
-    try {
-      fs.lstatSync(e.path)
+export function compactParkedIndex(indexPath: string): CompactResult {
+  const read = readParkedIndex(indexPath)
+  if (!read.ok) return { ok: false, errno: read.errno }
+  if (!read.present) return { ok: true, kept: 0, dropped: 0, keptMalformed: 0 }
+  let dropped = 0
+  let keptMalformed = 0
+  const keep = read.lines.filter((l) => {
+    if (l.entry === null) {
+      keptMalformed += 1
       return true
-    } catch {
-      return false
+    }
+    try {
+      fs.lstatSync(l.entry.path)
+      return true
+    } catch (err) {
+      const gone = GONE.has(errCodeOrMessage(err))
+      if (gone) dropped += 1
+      return !gone
     }
   })
   const tmp = `${indexPath}.tmp-${crypto.randomBytes(8).toString('hex')}`
-  fs.writeFileSync(tmp, keep.map((e) => JSON.stringify(e) + '\n').join(''), {
-    flag: 'wx',
-    mode: 0o600,
-  })
+  fs.writeFileSync(tmp, keep.map((l) => l.raw + '\n').join(''), { flag: 'wx', mode: 0o600 })
   fs.renameSync(tmp, indexPath)
-  return { kept: keep.length, dropped: entries.length - keep.length }
+  return { ok: true, kept: keep.length - keptMalformed, dropped, keptMalformed }
 }

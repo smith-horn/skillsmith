@@ -444,3 +444,49 @@ describe('options are plain data, read without running caller code (review round
     expect(parkTree(f.parent, 'tree', o).status).toBe('parked')
   })
 })
+
+describe('expectIdentity is plain data too, copied once (UD24, SMI-7130)', () => {
+  const ID = { dev: 1n, ino: 2n, birthtimeNs: 3n, fmt: 0o040000n }
+  const withId = (expectIdentity: unknown) => ({ client: CLIENT, kind: KIND, expectIdentity })
+
+  it('a getter on fmt is refused before any filesystem work, and the getter never runs', () => {
+    let reads = 0
+    const id = {
+      dev: 1n,
+      ino: 2n,
+      birthtimeNs: 3n,
+      get fmt() {
+        reads += 1
+        return 0o040000n
+      },
+    }
+    refusedUntouched(withId(id))
+    expect(reads).toBe(0)
+  })
+
+  const refused: [string, () => unknown][] = [
+    ['a Proxy', () => new Proxy({ ...ID }, {})],
+    ['a missing field', () => ({ dev: 1n, ino: 2n, birthtimeNs: 3n })],
+    ['a number field', () => ({ ...ID, ino: 2 })],
+    ['an extra key', () => ({ ...ID, mode: 1n })],
+    ['a symbol key', () => ({ ...ID, [Symbol('fmt')]: 1n })],
+    ['a class instance', () => Object.assign(new (class Id {})(), ID)],
+  ]
+  for (const [label, make] of refused) {
+    it(`${label} is refused before any filesystem work`, () => {
+      refusedUntouched(withId(make()))
+    })
+  }
+
+  it('a valid plain identity is returned as a fresh, frozen, null-prototype copy', () => {
+    const caller = { ...ID }
+    const r = resolveParkOptions(withId(caller))
+    const copy = r.expectIdentity as unknown as Record<string, bigint>
+    expect(copy).not.toBe(caller)
+    expect(Object.getPrototypeOf(copy)).toBe(null)
+    expect(Object.isFrozen(copy)).toBe(true)
+    expect({ ...copy }).toEqual(ID)
+    caller.ino = 99n
+    expect(copy.ino).toBe(2n)
+  })
+})
