@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.14.1
+
 - **Internal**: SMI-6531 -- `parkTree` now refuses a relative parent path with a TypeError before any
   filesystem work. A relative parent recorded a cwd-relative origin in the sidecar and failed the
   index append. `parkTree` has no caller yet, so no behaviour change.

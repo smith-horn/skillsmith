@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+## v0.3.13
+
+- **Chore**: SMI-6898 -- bundle Dependabot #3024-#3030 so CI runs with the git-crypt key (#3071)
+
 ## v0.3.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.11).

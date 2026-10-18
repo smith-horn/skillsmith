@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.17
+
+- **Docs**: SMI-7056 -- install confirmation on the website docs and the Marketplace README (#3073)
+
 ## v0.8.16
 
 - **Changed**: SMI-7030 -- `skillsmith install` refuses a skill whose SKILL.md opens with an

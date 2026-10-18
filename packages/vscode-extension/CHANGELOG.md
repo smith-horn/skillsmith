@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## v0.7.14
+
+- **Chore**: SMI-6898 -- bundle Dependabot #3024-#3030 so CI runs with the git-crypt key (#3071)
+- **Docs**: SMI-7056 -- install confirmation on the website docs and the Marketplace README (#3073)
+
 ## v0.7.13
 
 - **Fix**: SMI-7056 -- installing a registry skill whose trust tier is not official, verified, curated, community or local (for example unverified) now shows a warning naming the tier and the reason, with an "Install anyway" button, and retries once with confirmation on that choice. Dismissing it cancels the install. Previously the install failed with a generic error. The security scan is never skipped. The progress notification now ends with "Complete!" only when the skill was installed: "Cancelled" when you decline (including the placeholder install offered while the MCP server is unavailable, which was reported as a failure), and "Not installed" otherwise. If the server refuses a confirmed install again, the error shows its reason instead of a bare "Installation failed".

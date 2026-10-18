@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
+- **Docs**: SMI-7056 -- install confirmation on the website docs and the Marketplace README (#3073)
+
 ## v0.8.0
 
 - **Changed** (behaviour change for every caller): SMI-7056 -- `validateTrustTier` accepted only six of the eight `TrustTier` values, so a

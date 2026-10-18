@@ -6,7 +6,7 @@ MCP (Model Context Protocol) server for agent skill publishing, installation, an
 
 Part of Skillsmith: a registry for sharing, scanning, and tracking agent skills across teams.
 
-## What's New in v0.8.0
+## What's New in v0.8.1
 
 - **Skills outside the allowlisted tiers need confirmation (behaviour change):** `install_skill` now needs `confirmed: true` for any registry skill whose trust tier is not official, verified, curated, community or local (for example `unverified`). Without it you get `CONFIRMATION_REQUIRED` with the tier and the reason. These skills can't use `skipScan`, and the security scan always runs. Clients that never send `confirmed` can't install them.
 - **`official` skills are now recognised:** an `official` registry skill was treated as `unknown`. All eight trust tiers are now accepted.
