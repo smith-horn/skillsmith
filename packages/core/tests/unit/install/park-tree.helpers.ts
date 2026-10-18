@@ -11,6 +11,7 @@ import type { Stats } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { parkTree, computePathTreeHash } from '../../../src/install/park-tree.js'
+import { parkTreeIndexed } from '../../../src/install/park-call.js'
 import type { ParkOptions, ParkResult } from '../../../src/install/park-result.js'
 
 export const CLIENT = 'test-client'
@@ -122,6 +123,13 @@ export const parkedEntries = (dir: string): string[] =>
 
 export const park = (parent: string, name: string, extra: Partial<ParkOptions> = {}): ParkResult =>
   parkTree(parent, name, { client: CLIENT, kind: KIND, ...extra })
+
+/** `park` through `parkTreeIndexed`, the only entry point that accepts `indexPath`. */
+export const parkIndexed = (
+  parent: string,
+  name: string,
+  extra: Partial<ParkOptions> = {}
+): Promise<ParkResult> => parkTreeIndexed(parent, name, { client: CLIENT, kind: KIND, ...extra })
 
 const asPath = (p: unknown): string | null =>
   typeof p === 'string'

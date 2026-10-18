@@ -17,7 +17,7 @@ import {
   cleanup,
   errnoError,
   guardOf,
-  park,
+  parkIndexed,
   simpleFixture,
   withFsStub,
 } from './park-tree.helpers.js'
@@ -43,10 +43,14 @@ const addTree = (parent: string, name: string) => {
 }
 
 describe('the park appends one index line', () => {
-  it('one park, one line, naming the parked path, the opId, the caller and the kind', () => {
+  it('one park, one line, naming the parked path, the opId, the caller and the kind', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
-    const r = park(f.parent, 'tree', { indexPath, kind: 'uninstall', guardHash: guardOf(f.origin) })
+    const r = await parkIndexed(f.parent, 'tree', {
+      indexPath,
+      kind: 'uninstall',
+      guardHash: guardOf(f.origin),
+    })
     const idx = readOk(indexPath)
     expect(idx.present).toBe(true)
     expect(idx.entries).toHaveLength(1)
@@ -57,9 +61,9 @@ describe('the park appends one index line', () => {
     expect(idx.entries[0]?.bytes).toBe(9)
   })
 
-  it('an unwritable index leaves the status parked and is reported as indexError', () => {
+  it('an unwritable index leaves the status parked and is reported as indexError', async () => {
     const f = fixture()
-    const r = park(f.parent, 'tree', {
+    const r = await parkIndexed(f.parent, 'tree', {
       guardHash: guardOf(f.origin),
       indexPath: path.join(f.root, 'no-such-dir', 'idx.jsonl'),
     })
@@ -67,22 +71,22 @@ describe('the park appends one index line', () => {
     expect(r.indexError).toBe('ENOENT')
   })
 
-  it('no indexPath, no index line and no indexError key', () => {
+  it('no indexPath, no index line and no indexError key', async () => {
     const f = fixture()
-    const r = park(f.parent, 'tree')
+    const r = await parkIndexed(f.parent, 'tree')
     expect(r.status).toBe('parked')
     expect('indexError' in r).toBe(false)
   })
 })
 
 describe('reading and compacting the index (spike Q8b)', () => {
-  it('a stale line is not an error, and compaction drops it and keeps the rest', () => {
+  it('a stale line is not an error, and compaction drops it and keeps the rest', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
     addTree(f.parent, 'a')
     addTree(f.parent, 'b')
-    const a = park(f.parent, 'a', { indexPath })
-    const b = park(f.parent, 'b', { indexPath })
+    const a = await parkIndexed(f.parent, 'a', { indexPath })
+    const b = await parkIndexed(f.parent, 'b', { indexPath })
     fs.rmSync(String(b.path), { recursive: true })
     const before = readOk(indexPath)
     expect(before.entries).toHaveLength(2)
@@ -121,13 +125,13 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(idx.errors.map((e) => e.line)).toEqual([2, 3])
   })
 
-  it('a read failure other than ENOENT is reported, and compaction leaves the index bytes unchanged', () => {
+  it('a read failure other than ENOENT is reported, and compaction leaves the index bytes unchanged', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
     addTree(f.parent, 'a')
     addTree(f.parent, 'b')
-    park(f.parent, 'a', { indexPath })
-    park(f.parent, 'b', { indexPath })
+    await parkIndexed(f.parent, 'a', { indexPath })
+    await parkIndexed(f.parent, 'b', { indexPath })
     const before = fs.readFileSync(indexPath)
     const emfile =
       (orig: (...a: unknown[]) => unknown) =>
@@ -178,10 +182,10 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(fs.readFileSync(indexPath, 'utf8')).toBe(text)
   })
 
-  it('an lstat error other than ENOENT/ENOTDIR keeps the entry', () => {
+  it('an lstat error other than ENOENT/ENOTDIR keeps the entry', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
-    const r = park(f.parent, 'tree', { indexPath })
+    const r = await parkIndexed(f.parent, 'tree', { indexPath })
     const before = fs.readFileSync(indexPath, 'utf8')
     const result = withFsStub(
       'lstatSync',
@@ -273,10 +277,10 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(fs.readFileSync(indexPath, 'utf8')).toBe(`${keepLine}\n`)
   })
 
-  it('a failed temp write (ENOSPC) returns the error with the temp path, and the index is unchanged', () => {
+  it('a failed temp write (ENOSPC) returns the error with the temp path, and the index is unchanged', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
-    park(f.parent, 'tree', { indexPath })
+    await parkIndexed(f.parent, 'tree', { indexPath })
     const before = fs.readFileSync(indexPath)
     const r = withFsStub(
       'writeFileSync',
@@ -293,10 +297,10 @@ describe('reading and compacting the index (spike Q8b)', () => {
     expect(fs.readFileSync(indexPath).equals(before)).toBe(true)
   })
 
-  it('a temp name already taken (EEXIST) returns the error with no temp path: nothing of ours is there', () => {
+  it('a temp name already taken (EEXIST) returns the error with no temp path: nothing of ours is there', async () => {
     const f = fixture()
     const indexPath = path.join(f.root, 'parked-index.jsonl')
-    park(f.parent, 'tree', { indexPath })
+    await parkIndexed(f.parent, 'tree', { indexPath })
     const before = fs.readFileSync(indexPath)
     const r = withFsStub(
       'writeFileSync',
@@ -312,10 +316,10 @@ describe('reading and compacting the index (spike Q8b)', () => {
   })
 
   for (const code of ['EXDEV', 'EACCES']) {
-    it(`a failed rename (${code}) returns the error and the temp path left, and the index is unchanged`, () => {
+    it(`a failed rename (${code}) returns the error and the temp path left, and the index is unchanged`, async () => {
       const f = fixture()
       const indexPath = path.join(f.root, 'parked-index.jsonl')
-      park(f.parent, 'tree', { indexPath })
+      await parkIndexed(f.parent, 'tree', { indexPath })
       const before = fs.readFileSync(indexPath)
       const r = withFsStub(
         'renameSync',

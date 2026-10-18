@@ -8,6 +8,11 @@
  * graph except `VERSION` from the core barrel (`park-tree.ts` only). The barrel
  * itself is not walked, so nothing here speaks for code the barrel loads.
  *
+ * Two entries cover the modules: `park-tree.ts`, and `parked-index.ts`, which
+ * only `park-call.ts` imports at runtime. `park-call.ts` itself imports
+ * `config/file-lock` for lock 4, so it is outside the confined walk; it is
+ * pinned instead to make no fs call and to import exactly its known modules.
+ *
  * Two halves: the real park graph, with its denominator, its fs imports and its
  * one exempt edge pinned, plus planted violations that must be caught; and the
  * checker flagging every known bypass while passing conforming code.
@@ -20,7 +25,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { checkFsBoundary, checkFsBoundarySource } from './park-tree.fs-boundary.js'
 
 const INSTALL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../src/install')
-const PARK_MODULES = [
+/** The modules the walk from park-tree.ts reaches. */
+const PARK_TREE_GRAPH = [
   'park-result.ts',
   'park-tree.destination.ts',
   'park-tree.identity.ts',
@@ -29,9 +35,10 @@ const PARK_MODULES = [
   'park-tree.postmove.ts',
   'park-tree.ts',
   'park-tree.verify.ts',
-  'parked-index.ts',
   'tree-hash.ts',
 ]
+/** Every module under the boundary: the walk above plus the parked-index entry. */
+const PARK_MODULES = [...PARK_TREE_GRAPH, 'parked-index.ts']
 const FS_USERS = [
   'park-tree.destination.ts',
   'park-tree.identity.ts',
@@ -76,8 +83,10 @@ describe('the real park graph', () => {
   it('reaches every park module, sees the fs default where fs is used, and has no violation', () => {
     const r = checkFsBoundary(path.join(INSTALL, 'park-tree.ts'), GRAPH)
     const rel = r.files.map((f) => path.relative(INSTALL, f)).sort()
-    expect(rel).toEqual([...PARK_MODULES].sort())
-    for (const f of FS_USERS) expect(r.fsLocalsByFile[path.join(INSTALL, f)]).toEqual(['fs'])
+    expect(rel).toEqual([...PARK_TREE_GRAPH].sort())
+    for (const f of FS_USERS.filter((u) => PARK_TREE_GRAPH.includes(u))) {
+      expect(r.fsLocalsByFile[path.join(INSTALL, f)]).toEqual(['fs'])
+    }
     expect(r.violations).toEqual([])
     expect(r.exemptUsed).toEqual([{ file: path.join(INSTALL, 'park-tree.ts'), spec: BARREL }])
   })
@@ -88,7 +97,26 @@ describe('the real park graph', () => {
       'park-result.ts',
       'parked-index.ts',
     ])
+    expect(r.fsLocalsByFile[path.join(INSTALL, 'parked-index.ts')]).toEqual(['fs'])
     expect(r.violations).toEqual([])
+  })
+
+  it('park-call.ts (lock 4) makes no fs call and imports exactly its known modules', () => {
+    const r = checkFsBoundarySource(read('park-call.ts'), PARK_OPTIONS)
+    expect(r.violations).toEqual([])
+    expect(r.fsLocals).toEqual([])
+    expect([...r.localImports].sort()).toEqual([
+      '../config/file-lock.js',
+      './park-result.js',
+      './park-tree.js',
+      './parked-index.js',
+    ])
+    expect(r.externalImports).toEqual([])
+  })
+
+  it('positive control: an fs import planted in park-call.ts is seen', () => {
+    const planted = `${read('park-call.ts')}\nimport fs from 'node:fs'\nexport const s = fs.statSync('/')\n`
+    expect(checkFsBoundarySource(planted, PARK_OPTIONS).fsLocals).toEqual(['fs'])
   })
 
   it('(a) park-tree.ts is the only park module importing the barrel', () => {
@@ -105,20 +133,25 @@ describe('the real park graph', () => {
     expect(forms).toEqual([{ spec: BARREL, form: 'named', names: ['VERSION'] }])
   })
 
-  it('(c) positive control: a barrel import planted in ANOTHER park module is reported', () => {
-    withCopy((dir) => {
-      expect(checkFsBoundary(path.join(dir, 'park-tree.ts'), graphFor(dir)).violations).toEqual([])
-      fs.appendFileSync(
-        path.join(dir, 'parked-index.ts'),
-        "\nimport { VERSION } from '../index.js'\nexport const planted = VERSION\n"
-      )
-      const r = checkFsBoundary(path.join(dir, 'park-tree.ts'), graphFor(dir))
-      expect(r.violations).toContainEqual({
-        file: path.join(dir, 'parked-index.ts'),
-        violation: "import '../index.js' leaves the confined directory",
+  for (const [entry, plantedIn] of [
+    ['park-tree.ts', 'park-tree.postmove.ts'],
+    ['parked-index.ts', 'parked-index.ts'],
+  ] as const) {
+    it(`(c) positive control: a barrel import planted in ${plantedIn} is reported from ${entry}`, () => {
+      withCopy((dir) => {
+        expect(checkFsBoundary(path.join(dir, entry), graphFor(dir)).violations).toEqual([])
+        fs.appendFileSync(
+          path.join(dir, plantedIn),
+          "\nimport { VERSION } from '../index.js'\nexport const planted = VERSION\n"
+        )
+        const r = checkFsBoundary(path.join(dir, entry), graphFor(dir))
+        expect(r.violations).toContainEqual({
+          file: path.join(dir, plantedIn),
+          violation: "import '../index.js' leaves the confined directory",
+        })
       })
     })
-  })
+  }
 
   for (const [label, planted] of [
     ['a second named import', "import { VERSION, SCANNER_RULESET_VERSION } from '../index.js'"],

@@ -18,7 +18,7 @@ import path from 'node:path'
 import { computeTreeHash } from './tree-hash.js'
 import { errCode, errCodeOrMessage } from './park-result.js'
 import type { ParkIdentity, PartialParkResult, ResolvedParkOptions } from './park-result.js'
-import { appendParkedIndex } from './parked-index.js'
+import type { ParkedIndexEntry } from './parked-index.js'
 import { mountinfoFinding, pathTreeRecord, verifyAtDestination } from './park-tree.verify.js'
 
 /** POSIX single-quote escaping, for paths quoted in a held `detail`. */
@@ -156,13 +156,17 @@ export interface FinishInput {
   skillsmithVersion: string
 }
 
+/** A moved tree's result, carrying the index line `parkTreeIndexed` appends. */
+export type FinishedPark = PartialParkResult & { indexEntry: ParkedIndexEntry }
+
 /**
  * Everything after a successful root rename: post-move verification (guarded
- * only), then `held` or `parked`, each with a `wx` sidecar, then one index line.
+ * only), then `held` or `parked`, each with a `wx` sidecar and the index line
+ * the caller appends under lock 4.
  *
- * A failure computing bytes, writing the sidecar or appending the index never
- * escapes and never triggers anything destructive; it is reported as
- * `sidecarError` / `indexError` and the status stands. The held sidecar is
+ * A failure computing bytes or writing the sidecar never escapes and never
+ * triggers anything destructive; it is reported as `sidecarError` and the
+ * status stands. The held sidecar is
  * written only after verification has decided, so a crash before it leaves no
  * sidecar, which prune treats as held.
  *
@@ -170,7 +174,7 @@ export interface FinishInput {
  * move, or null when unguarded; on a held result it is the hash computed at
  * the destination, or null when verification stopped before hashing.
  */
-export function finishAfterRename(a: FinishInput): PartialParkResult {
+export function finishAfterRename(a: FinishInput): FinishedPark {
   const { destPath, originPath, name, opId, options, observedTreeHash } = a
   const guardHash = options.guardHash
   const sidecarPath = `${destPath}.json`
@@ -203,24 +207,18 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
       skillsmithVersion: a.skillsmithVersion,
     }
   }
-  const indexed = (): { indexError?: string } => {
-    if (options.indexPath === undefined) return {}
-    try {
-      // Lock 4 (withFileLock on the index path, UD31) wraps this append in part B.
-      appendParkedIndex(options.indexPath, {
-        opId,
-        path: destPath,
-        client: options.client,
-        rootKey: options.rootKey,
-        kind,
-        bytes,
-        createdAt: createdAt ?? new Date().toISOString(),
-      })
-      return {}
-    } catch (err) {
-      return { indexError: errCodeOrMessage(err) }
-    }
-  }
+  // The index line is built here and appended by `parkTreeIndexed` under lock
+  // 4 (UD31), after this synchronous park returns: the lock waits
+  // asynchronously, and nothing here may wait.
+  const indexEntry = (): ParkedIndexEntry => ({
+    opId,
+    path: destPath,
+    client: options.client,
+    rootKey: options.rootKey,
+    kind,
+    bytes,
+    createdAt: createdAt ?? new Date().toISOString(),
+  })
   // A guarded park always binds an identity first; a missing one fails closed
   // (fmt -1n matches no real file type), never skips the check.
   const verified =
@@ -265,7 +263,7 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
         safe: verified.safe,
       }),
       ...(sidecarError === null ? {} : { sidecarError }),
-      ...indexed(),
+      indexEntry: indexEntry(),
     }
   }
 
@@ -282,6 +280,6 @@ export function finishAfterRename(a: FinishInput): PartialParkResult {
     sidecarPath,
     opId,
     ...(sidecarError === null ? {} : { sidecarError }),
-    ...indexed(),
+    indexEntry: indexEntry(),
   }
 }

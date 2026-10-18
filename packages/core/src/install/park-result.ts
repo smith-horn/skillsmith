@@ -183,7 +183,11 @@ export interface ParkOptions {
   kind: string
   /** UD22's rootKey. */
   rootKey?: string | null
-  /** Absolute path of the parked index to append to (§3.5). */
+  /**
+   * Absolute path of the parked index to append to (§3.5). Only
+   * `parkTreeIndexed` accepts it: the append takes lock 4 (UD31), which waits
+   * asynchronously, so the synchronous `parkTree` refuses it.
+   */
   indexPath?: string
 }
 
@@ -306,6 +310,14 @@ export function resolveParkOptions(options: unknown): ResolvedParkOptions {
   }
   if (indexPath !== undefined && (typeof indexPath !== 'string' || !path.isAbsolute(indexPath))) {
     throw new TypeError('parkTree: indexPath must be an absolute path or omitted')
+  }
+  // Lock 4 locks `<indexPath>.lock` itself; passing the lock file's name would
+  // lock `parked-index.jsonl.lock.lock` and append into the lock file (UD31).
+  if (typeof indexPath === 'string' && indexPath.endsWith('.lock')) {
+    throw new TypeError(
+      `parkTree: indexPath names a lock file (${JSON.stringify(indexPath)}); pass the index ` +
+        `itself, and lock 4 derives its lock file from it`
+    )
   }
   return {
     client,
