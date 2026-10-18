@@ -872,7 +872,8 @@ jobs:
         # reconcile (the pg_cron dispatcher's consumed arm, or the 15-minute grace) and this
         # step warns and stays green. Red on a read or transition error, on unparseable
         # output, and when the marker moved to needs_intervention. The chunk WAS dispatched
-        # by then, so the generic failure alert skips this step and its own alert says so.
+        # by then, so its own alert says so, and the generic alert sends (with the same
+        # "DID dispatch" text) only if that dedicated alert was not delivered.
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.claim.outputs.claimed == 'true' && steps.dispatch.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -883,6 +884,7 @@ jobs:
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
           SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
         run: |
+          [ -n "$MARKER_ID" ] || { echo "::error::No claimed marker id to reconcile."; exit 1; }
           for attempt in 1 2 3 4 5 6; do
             sleep 15
             OUT=$(mktemp)
@@ -891,7 +893,7 @@ jobs:
             DISPATCHED_IDS=$(awk '/^dispatched_ids<</{getline v; print v}' "$OUT")
             case "$MOVED" in
               0) ;;
-              [1-9]*) echo "::error::Marker $MARKER_ID moved to needs_intervention during the post-dispatch reconcile; read its reason and docs/internal/runbooks/backfill-autochain-handover.md section 8.3."; exit 1 ;;
+              [1-9]*) echo "::error::Marker $MARKER_ID moved to needs_intervention during the post-dispatch reconcile (needs_intervention_ids: $(awk '/^needs_intervention_ids<</{getline v; print v}' "$OUT")); read its reason and docs/internal/runbooks/backfill-autochain-handover.md section 8.3."; exit 1 ;;
               *) echo "::error::Post-dispatch reconcile output was unparseable (moved_count='$MOVED')."; exit 1 ;;
             esac
             grep -q '^dispatched_ids<<' "$OUT" || { echo "::error::Post-dispatch reconcile output had no dispatched_ids."; exit 1; }
@@ -928,18 +930,26 @@ jobs:
         # alert step suppresses this one once delivered.
         # Gated by DISPATCH_ALLOWED like every other side effect: a verify-only run
         # is visibly red in the Actions UI without sending email. Not sent when a
-        # specific alert for this failure was delivered (one email, not two).
-        if: failure() && env.DISPATCH_ALLOWED == 'true' && steps.halt_alert.outputs.delivered != 'true' && steps.reconcile_alert.outputs.delivered != 'true' && steps.target_alert.outputs.delivered != 'true' && steps.ni_alert.outputs.delivered != 'true' && steps.live_alert.outputs.delivered != 'true' && steps.kill_alert.outputs.delivered != 'true' && steps.validate.outcome != 'failure' && steps.self_reconcile.outcome != 'failure'
+        # specific alert for this failure was delivered (one email, not two). A failed
+        # post-dispatch reconcile is suppressed only once ITS alert delivered; if that
+        # alert failed, this one still sends, saying the chunk was dispatched.
+        if: failure() && env.DISPATCH_ALLOWED == 'true' && steps.halt_alert.outputs.delivered != 'true' && steps.reconcile_alert.outputs.delivered != 'true' && steps.target_alert.outputs.delivered != 'true' && steps.ni_alert.outputs.delivered != 'true' && steps.live_alert.outputs.delivered != 'true' && steps.kill_alert.outputs.delivered != 'true' && steps.validate.outcome != 'failure' && steps.self_reconcile_alert.outputs.delivered != 'true'
         env:
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
+          SELF_RECONCILE_FAILED: ${{ steps.self_reconcile.outcome == 'failure' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         # Inline, not scripts/ci/autochain-alert.sh: a failure before Checkout must
         # still alert, and the helper exists only after Checkout. Same payload shape
         # and HTTP 200 check.
         run: |
+          if [ "$SELF_RECONCILE_FAILED" = "true" ]; then
+            MSG="The backfill autochain DID dispatch the next chunk, but reconciling its deferral marker failed afterwards and the dedicated alert could not be delivered. Do not re-dispatch: check the marker and the dispatched indexer-backfill run, per docs/internal/runbooks/backfill-autochain-handover.md section 8.3."
+          else
+            MSG="The backfill autochain failed while handling run ${COMPLETED_RUN_ID:-<none: resume (schedule or pg_cron)>}. It did not dispatch the next chunk; see the run for the failing step."
+          fi
           BODY=$(jq -n \
-            --arg msg "The backfill autochain failed while handling run ${COMPLETED_RUN_ID:-<none: resume (schedule or pg_cron)>}. It did not dispatch the next chunk; see the run for the failing step." \
+            --arg msg "$MSG" \
             --arg rid "$GITHUB_RUN_ID" \
             --arg url "$RUN_URL" \
             '{type:"indexer_backfill_autochain_failed", message:$msg, workflow:"Skill Indexer Backfill Autochain", runId:$rid, runUrl:$url}')

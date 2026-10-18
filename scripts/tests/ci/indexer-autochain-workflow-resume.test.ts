@@ -57,6 +57,8 @@ describe('inputs and title', () => {
     const refs = [...runName.matchAll(/inputs\.([a-z_]+)/g)].map((m) => m[1])
     expect(refs).toEqual(['mode'])
     expect(runName).not.toContain('resume_source')
+    // Bracket access would slip past the dotted-ref scan above.
+    expect(runName).not.toMatch(/inputs\s*\[/)
   })
 
   it('the schedule trigger stays as the independent fallback, citing ADR-181', () => {
@@ -343,10 +345,38 @@ describe('Reconcile this claim after the dispatch (executed)', () => {
 })
 
 describe('alerts after a post-dispatch reconcile failure', () => {
-  it('the generic failure alert skips it; its own alert says the chunk WAS dispatched', () => {
-    expect(byName('Send Alert on Failure').if).toContain(
-      "steps.self_reconcile.outcome != 'failure'"
-    )
+  it('the generic failure alert is suppressed only once its own alert delivered', () => {
+    const g = byName('Send Alert on Failure')
+    expect(g.if).toContain("steps.self_reconcile_alert.outputs.delivered != 'true'")
+    // Suppressing on the reconcile's failure alone would send NO email when the
+    // dedicated alert itself failed to deliver.
+    expect(g.if).not.toContain("steps.self_reconcile.outcome != 'failure'")
+    expect(g.env!.SELF_RECONCILE_FAILED).toBe("${{ steps.self_reconcile.outcome == 'failure' }}")
+  })
+
+  it('the generic fallback says DID dispatch after a reconcile failure, did not dispatch otherwise', () => {
+    const g = byName('Send Alert on Failure')
+    // jq is not in the dev container; the stub records its args (the message is one).
+    const record = '#!/bin/sh\nprintf "%s\\n" "$@" >> "$MARK"\necho "{}"\n'
+    const sent = (failed: string) =>
+      runStepScript(g.run!, {
+        stubs: { 'bin/curl': '#!/bin/sh\necho 200\n', 'bin/jq': record },
+        env: {
+          SELF_RECONCILE_FAILED: failed,
+          COMPLETED_RUN_ID: '',
+          RUN_URL: 'u',
+          SUPABASE_URL: 'h',
+          SUPABASE_SERVICE_ROLE_KEY: 'k',
+        },
+      })
+    const yes = sent('true')
+    expect(yes.marks.join('\n'), yes.err).toContain('DID dispatch the next chunk')
+    expect(yes.marks.join('\n')).not.toContain('did not dispatch')
+    const no = sent('false')
+    expect(no.marks.join('\n')).toContain('It did not dispatch the next chunk')
+  })
+
+  it('its own alert says the chunk WAS dispatched', () => {
     const a = byId('self_reconcile_alert')
     expect(idx(a)).toBeGreaterThan(idx(byId('self_reconcile')))
     expect(idx(a)).toBeLessThan(idx(byName('Send Alert on Failure')))
