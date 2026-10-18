@@ -155,17 +155,25 @@ function consumedAtMs(m: LiveMarker, nowMs: number): number {
  * dispatched (display_title carries `[tok=ac-<consumed_by_autochain_run>]`). Exactly one:
  * consumed -> dispatched. None after the grace period, or several: consumed ->
  * needs_intervention. None and still fresh: left alone.
+ *
+ * `only` scopes the pass to ONE marker (env + id): every other consumed marker is neither
+ * evaluated nor transitioned. The post-dispatch self-reconcile uses it so it can never move
+ * a different run's fresh marker. A scoped marker that is not consumed yields an empty result.
  */
 export async function reconcileConsumed(opts: {
   clientsByEnv: ClientsByEnv
   listRuns: (createdSinceIso: string) => Promise<BackfillRunRef[]>
   autochainRunId: string
   now?: Date
+  only?: { env: SupabaseEnv; id: string }
 }): Promise<ReconcileResult> {
   const now = opts.now ?? new Date()
   const nowMs = now.getTime()
   const result: ReconcileResult = { dispatched: [], needsIntervention: [], left: [] }
-  const consumed = (await listLiveMarkers(opts.clientsByEnv)).filter((m) => m.state === 'consumed')
+  const only = opts.only
+  const consumed = (await listLiveMarkers(opts.clientsByEnv)).filter(
+    (m) => m.state === 'consumed' && (!only || (m.env === only.env && m.id === only.id))
+  )
   for (const m of consumed) {
     const client = opts.clientsByEnv[m.env]
     const completedRunId = String(m.metadata.completed_run_id ?? 'unknown')
@@ -309,7 +317,9 @@ export async function runCommand(
       })
       return { marker_id: id, marker_env: env }
     }
-    case 'reconcile': {
+    case 'reconcile':
+    case 'reconcile-marker': {
+      const scoped = cmd === 'reconcile-marker'
       const listRuns =
         deps.listRuns ??
         ((since: string) =>
@@ -323,12 +333,22 @@ export async function runCommand(
         listRuns,
         autochainRunId: runId(),
         now,
+        ...(scoped
+          ? {
+              only: {
+                env: envName(penv.MARKER_ENV, 'MARKER_ENV'),
+                id: required(penv, 'MARKER_ID'),
+              },
+            }
+          : {}),
       })
       return {
         moved_count: String(r.needsIntervention.length),
         moved: JSON.stringify(r.needsIntervention),
         dispatched_count: String(r.dispatched.length),
         left_count: String(r.left.length),
+        dispatched_ids: r.dispatched.map((d) => d.id).join(','),
+        needs_intervention_ids: r.needsIntervention.map((d) => d.id).join(','),
       }
     }
     case 'schedule-target': {
@@ -366,7 +386,7 @@ export async function runCommand(
     }
     default:
       throw new Error(
-        `Unknown subcommand ${JSON.stringify(cmd ?? null)}; expected live-check, insert, reconcile, schedule-target, claim or needs-intervention`
+        `Unknown subcommand ${JSON.stringify(cmd ?? null)}; expected live-check, insert, reconcile, reconcile-marker, schedule-target, claim or needs-intervention`
       )
   }
 }

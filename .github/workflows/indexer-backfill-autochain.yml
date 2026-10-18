@@ -89,8 +89,10 @@ name: Skill Indexer Backfill Autochain
 
 # SMI-7142: a resume (a schedule tick or a `mode=resume` dispatch) is tagged `[resume]`
 # in its title so scripts/ci/autochain-tick-yield.sh can tell it from a link: the runs
-# API returns display_title but not inputs. `resume_source` is display only.
-run-name: Skill Indexer Backfill Autochain${{ (github.event_name == 'schedule' || inputs.mode == 'resume') && ' [resume]' || '' }}${{ inputs.resume_source && format(' ({0})', inputs.resume_source) || '' }}
+# API returns display_title but not inputs. The title holds NO free-text input: run-name is
+# computed before validation runs, so any user text in it could spoof the tag while the run
+# is queued. `resume_source` is logged by a step and the step summary instead.
+run-name: Skill Indexer Backfill Autochain${{ (github.event_name == 'schedule' || inputs.mode == 'resume') && ' [resume]' || '' }}
 
 on:
   workflow_run:
@@ -118,7 +120,7 @@ on:
           - link
           - resume
       resume_source:
-        description: 'Display only: who asked for this resume (for example pg_cron-prod); appears in the run title'
+        description: 'Display only: who asked for this resume (for example pg_cron-prod); logged in the run, not in its title'
         required: false
         default: ''
         type: string
@@ -199,9 +201,11 @@ jobs:
       # Gates EVERY side-effect step (cooldown, alerts, marker writes, dispatch).
       # A workflow_run is a real chain link and a schedule tick a real resume. Any manual
       # dispatch (mode=link or mode=resume) is allowed only with verify_only explicitly
-      # false; validation refuses mode=resume with verify_only=true, and this keeps that
-      # operator error from also sending the generic failure email. Either way a kill
-      # switch wins.
+      # false, so a verify-only run sends no email. It does NOT keep an operator input
+      # mistake from emailing: validation refuses mode=resume with verify_only=true, but
+      # a mistake under verify_only=false (for example a bad resume_source) fails the
+      # validation step, and the generic failure alert skips it via steps.validate.outcome.
+      # Either way a kill switch wins.
       DISPATCH_ALLOWED: ${{ (github.event_name == 'workflow_run' || github.event_name == 'schedule' || inputs.verify_only == false) && vars.BACKFILL_AUTOCHAIN_DISABLE != '1' && vars.BACKFILL_KILL_SWITCH != '1' }}
       # Job-start fast path only; the authoritative read happens in the
       # dispatch step (scripts/ci/autochain-read-enable.sh). Registered in
@@ -217,6 +221,7 @@ jobs:
 
     steps:
       - name: Validate dispatch inputs
+        id: validate
         # SMI-7142. First step, inline (no Checkout has run). Red on a malformed
         # workflow_dispatch; other events carry no inputs. A resume takes its run,
         # attempt and acknowledgement from the marker, so any of those given is an
@@ -247,6 +252,10 @@ jobs:
               ;;
             *) bad "mode must be link or resume" ;;
           esac
+          if [ -n "$IN_RESUME_SOURCE" ]; then
+            echo "resume_source: $IN_RESUME_SOURCE"
+            printf 'resume_source: %s\n' "$IN_RESUME_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Kill-switch gate
         env:
@@ -855,14 +864,20 @@ jobs:
         # when a reconcile finds the backfill run carrying [tok=ac-<this run id>]. Without
         # this step the next link, finishing outside the window, would count the
         # undispatched marker as live and go red with multiple_deferrals before any later
-        # tick could reconcile it. Polls up to 6 x 15s for the run to appear. If it does
-        # not, the marker stays `consumed` for the fallback reconcile (the pg_cron
-        # dispatcher's consumed arm, or the 15-minute grace) and this step warns and stays
-        # green. Red on a read or transition error, and when the marker could not be
-        # resolved at all (moved to needs_intervention).
+        # tick could reconcile it. SCOPED to the marker this run claimed
+        # (reconcile-marker): the global reconcile sweeps every consumed marker in both
+        # projects and could move a different, fresh one to needs_intervention. Success is
+        # decided only by that exact marker's id in dispatched_ids. Polls up to 6 x 15s for
+        # the run to appear. If it does not, the marker stays `consumed` for the fallback
+        # reconcile (the pg_cron dispatcher's consumed arm, or the 15-minute grace) and this
+        # step warns and stays green. Red on a read or transition error, on unparseable
+        # output, and when the marker moved to needs_intervention. The chunk WAS dispatched
+        # by then, so the generic failure alert skips this step and its own alert says so.
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.claim.outputs.claimed == 'true' && steps.dispatch.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER_ID: ${{ steps.target.outputs.marker_id }}
+          MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
@@ -871,20 +886,40 @@ jobs:
           for attempt in 1 2 3 4 5 6; do
             sleep 15
             OUT=$(mktemp)
-            GITHUB_OUTPUT="$OUT" npx tsx scripts/indexer/backfill-autochain-defer.ts reconcile || { echo "::error::Post-dispatch reconcile failed (read or transition error)."; exit 1; }
+            GITHUB_OUTPUT="$OUT" npx tsx scripts/indexer/backfill-autochain-defer.ts reconcile-marker || { echo "::error::Post-dispatch reconcile failed (read or transition error)."; exit 1; }
             MOVED=$(awk '/^moved_count<</{getline v; print v}' "$OUT")
-            DISPATCHED=$(awk '/^dispatched_count<</{getline v; print v}' "$OUT")
-            if [ "$MOVED" != "0" ]; then
-              echo "::error::A deferral marker moved to needs_intervention during the post-dispatch reconcile ($MOVED); read the marker's reason and docs/internal/runbooks/backfill-autochain-handover.md section 8.3."
-              exit 1
-            fi
-            if [ "$DISPATCHED" != "0" ]; then
-              echo "dispatched=true" >> "$GITHUB_OUTPUT"
-              echo "Marker reconciled to dispatched on poll $attempt."
-              exit 0
-            fi
+            DISPATCHED_IDS=$(awk '/^dispatched_ids<</{getline v; print v}' "$OUT")
+            case "$MOVED" in
+              0) ;;
+              [1-9]*) echo "::error::Marker $MARKER_ID moved to needs_intervention during the post-dispatch reconcile; read its reason and docs/internal/runbooks/backfill-autochain-handover.md section 8.3."; exit 1 ;;
+              *) echo "::error::Post-dispatch reconcile output was unparseable (moved_count='$MOVED')."; exit 1 ;;
+            esac
+            grep -q '^dispatched_ids<<' "$OUT" || { echo "::error::Post-dispatch reconcile output had no dispatched_ids."; exit 1; }
+            case ",$DISPATCHED_IDS," in
+              *",$MARKER_ID,"*)
+                echo "dispatched=true" >> "$GITHUB_OUTPUT"
+                echo "Marker $MARKER_ID reconciled to dispatched on poll $attempt."
+                exit 0
+                ;;
+            esac
           done
           echo "::warning::The dispatched backfill run did not appear within 90s; the marker stays consumed for the fallback reconcile."
+
+      - name: Alert on post-dispatch reconcile failure (resume)
+        id: self_reconcile_alert
+        # The chunk WAS dispatched; only recording the marker failed. Not the generic alert,
+        # whose text says nothing was dispatched.
+        if: failure() && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.self_reconcile.outcome == 'failure'
+        env:
+          MARKER_ID: ${{ steps.target.outputs.marker_id }}
+          MARKER_ENV: ${{ steps.target.outputs.supabase_env }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          ALERT_TYPE=indexer_backfill_autochain_needs_intervention ALERT_RUN_ID="$GITHUB_RUN_ID" ALERT_RUN_URL="$RUN_URL" \
+            ALERT_MESSAGE="The backfill autochain DID dispatch the next chunk, but reconciling its deferral marker $MARKER_ID (env $MARKER_ENV) failed afterwards (a read or transition error, unparseable output, or the marker moved to needs_intervention). Do not re-dispatch: check the marker's state and the dispatched indexer-backfill run, per docs/internal/runbooks/backfill-autochain-handover.md section 8.3." \
+            bash scripts/ci/autochain-alert.sh
+          echo "delivered=true" >> "$GITHUB_OUTPUT"
 
       - name: Send Alert on Failure
         # Any red step above (indeterminate env, missing creds, a read error, a
@@ -894,7 +929,7 @@ jobs:
         # Gated by DISPATCH_ALLOWED like every other side effect: a verify-only run
         # is visibly red in the Actions UI without sending email. Not sent when a
         # specific alert for this failure was delivered (one email, not two).
-        if: failure() && env.DISPATCH_ALLOWED == 'true' && steps.halt_alert.outputs.delivered != 'true' && steps.reconcile_alert.outputs.delivered != 'true' && steps.target_alert.outputs.delivered != 'true' && steps.ni_alert.outputs.delivered != 'true' && steps.live_alert.outputs.delivered != 'true' && steps.kill_alert.outputs.delivered != 'true'
+        if: failure() && env.DISPATCH_ALLOWED == 'true' && steps.halt_alert.outputs.delivered != 'true' && steps.reconcile_alert.outputs.delivered != 'true' && steps.target_alert.outputs.delivered != 'true' && steps.ni_alert.outputs.delivered != 'true' && steps.live_alert.outputs.delivered != 'true' && steps.kill_alert.outputs.delivered != 'true' && steps.validate.outcome != 'failure' && steps.self_reconcile.outcome != 'failure'
         env:
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

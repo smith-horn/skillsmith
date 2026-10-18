@@ -7,6 +7,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
+import { formatOutputs } from '../../indexer/backfill-autochain-defer.ts'
 import {
   commands,
   loadWorkflow,
@@ -47,12 +48,15 @@ describe('inputs and title', () => {
     expect(wd.inputs.completed_run_id).toMatchObject({ type: 'string', required: false })
   })
 
-  it('the run title carries [resume] for a schedule tick or mode=resume, and the source when given', () => {
+  it('the run title carries [resume] for a schedule tick or mode=resume and NO free-text input', () => {
     const runName = (doc as unknown as { 'run-name': string })['run-name']
     expect(runName).toContain(
       "(github.event_name == 'schedule' || inputs.mode == 'resume') && ' [resume]'"
     )
-    expect(runName).toContain("inputs.resume_source && format(' ({0})', inputs.resume_source)")
+    // run-name is evaluated before validation, so user text in it could spoof the tag.
+    const refs = [...runName.matchAll(/inputs\.([a-z_]+)/g)].map((m) => m[1])
+    expect(refs).toEqual(['mode'])
+    expect(runName).not.toContain('resume_source')
   })
 
   it('the schedule trigger stays as the independent fallback, citing ADR-181', () => {
@@ -78,22 +82,32 @@ describe('one resume predicate', () => {
     expect(bare, `steps with a bare schedule check: ${bare.join(', ')}`).toEqual([])
   })
 
-  it('the resume-only and link-only paths read IS_RESUME with the right polarity', () => {
-    const resumeOnly = [
+  it('every (schedule)/(resume) step reads IS_RESUME == true, never != true', () => {
+    const tagged = steps.filter((s) => /\((schedule|resume)\)$/.test(s.name ?? ''))
+    // non-vacuity: the derivation finds the known members and a plausible number of them
+    const names = tagged.map((s) => s.name)
+    for (const n of [
       'Yield to a live link (schedule)',
-      'Reconcile consumed deferral markers (schedule)',
-      'Select the deferred marker to resume (schedule)',
       'Claim the deferral marker (schedule)',
-    ]
-    for (const n of resumeOnly) expect(byName(n).if, n).toContain("env.IS_RESUME == 'true'")
-    const linkOnly = [
+      'Reconcile this claim after the dispatch (resume)',
+      'Alert on post-dispatch reconcile failure (resume)',
+    ])
+      expect(names).toContain(n)
+    expect(tagged.length).toBeGreaterThanOrEqual(12)
+    for (const s of tagged) {
+      expect(s.if, s.name).toContain("env.IS_RESUME == 'true'")
+      expect(s.if, s.name).not.toContain("env.IS_RESUME != 'true'")
+    }
+  })
+
+  it('the link-only paths read IS_RESUME != true', () => {
+    for (const n of [
       'No other backfill run queued or in-progress',
       'Resolve run display title',
       'Live-marker check before deferring',
       'Refuse a second deferral',
       'Defer to the next window',
-    ]
-    for (const n of linkOnly) {
+    ]) {
       expect(byName(n).if, n).toContain("env.IS_RESUME != 'true'")
       expect(byName(n).if, n).not.toContain("env.IS_RESUME == 'true'")
     }
@@ -140,6 +154,7 @@ describe('Validate dispatch inputs (executed)', () => {
 
   it('is the first step, runs only for workflow_dispatch and reads every input through env', () => {
     expect(idx(v)).toBe(0)
+    expect(v.id).toBe('validate')
     expect(v.if).toBe("github.event_name == 'workflow_dispatch'")
     for (const k of [
       'MODE',
@@ -162,6 +177,13 @@ describe('Validate dispatch inputs (executed)', () => {
     IN_RESUME_SOURCE: '',
   }
   const resume = { ...base, MODE: 'resume', IN_COMPLETED_RUN_ID: '', IN_VERIFY_ONLY: 'false' }
+  it('a validation failure does not send the generic failure email; the resume_source is logged, not titled', () => {
+    expect(byName('Send Alert on Failure').if).toContain("steps.validate.outcome != 'failure'")
+    const r = runStepScript(v.run!, { env: { ...resume, IN_RESUME_SOURCE: 'pg_cron-prod' } })
+    expect(r.status, r.err).toBe(0)
+    expect(r.err).toContain('resume_source: pg_cron-prod')
+  })
+
   it.each([
     ['link with a run id (verify only) => exit 0', base, 0],
     ['link with a run id and verify_only=false => exit 0', { ...base, IN_VERIFY_ONLY: 'false' }, 0],
@@ -208,43 +230,132 @@ describe('Reconcile this claim after the dispatch (executed)', () => {
     expect(commands(s.run!).join('\n')).toContain('backfill-autochain-defer.ts reconcile')
   })
 
-  const stubs = (dispatchedFrom: number, moved = '0', npxRc = 0) => ({
-    'bin/sleep': 'exit 0\n',
-    'bin/npx': [
-      'n=$(cat "$MARK.n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$MARK.n"',
-      'echo "poll $n" >> "$MARK"',
-      `[ ${npxRc} -ne 0 ] && exit ${npxRc}`,
-      `d=0; [ "$n" -ge ${dispatchedFrom} ] && d=1`,
-      `printf 'moved_count<<X\\n${moved}\\nX\\ndispatched_count<<X\\n%s\\nX\\nleft_count<<X\\n0\\nX\\n' "$d" >> "$GITHUB_OUTPUT"`,
-      '',
-    ].join('\n'),
-  })
+  // The stub plays `tsx ... reconcile-marker`; its output is the real formatOutputs text.
+  // Any other subcommand (the unscoped sweep) exits 9. Polls before `from` report nothing.
+  const out = (ids: string, moved = '0') =>
+    formatOutputs({
+      moved_count: moved,
+      moved: '[]',
+      dispatched_count: ids === '' ? '0' : String(ids.split(',').length),
+      left_count: '0',
+      dispatched_ids: ids,
+      needs_intervention_ids: '',
+    })
+  const stubs = (opts: {
+    ids: string
+    from?: number
+    moved?: string
+    rc?: number
+    raw?: string
+  }) => {
+    const text = opts.raw ?? out(opts.ids, opts.moved)
+    return {
+      'bin/sleep': 'exit 0\n',
+      'bin/npx': [
+        'n=$(cat "$MARK.n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$MARK.n"',
+        'echo "poll $n" >> "$MARK"',
+        '[ "$3" = reconcile-marker ] || exit 9',
+        `[ ${opts.rc ?? 0} -ne 0 ] && exit ${opts.rc ?? 0}`,
+        `[ "$n" -ge ${opts.from ?? 1} ] || { cat <<'EMPTYEOF' >> "$GITHUB_OUTPUT"`,
+        out(''),
+        'EMPTYEOF',
+        'exit 0; }',
+        'cat <<\'STUBEOF\' >> "$GITHUB_OUTPUT"',
+        text.replace(/\n$/, ''),
+        'STUBEOF',
+        '',
+      ].join('\n'),
+    }
+  }
+  const mine = { MARKER_ID: 'a', MARKER_ENV: 'prod' }
 
-  it('stops polling as soon as the marker is dispatched and records it', () => {
-    const r = runStepScript(s.run!, { stubs: stubs(2) })
+  it('stops polling as soon as THIS marker is dispatched and records it', () => {
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: 'a', from: 2 }), env: mine })
     expect(r.status, r.err).toBe(0)
     expect(r.marks).toEqual(['poll 1', 'poll 2'])
     expect(r.output).toBe('dispatched=true\n')
   })
 
-  it('a run that never appears is a warning and green after exactly 6 polls', () => {
-    const r = runStepScript(s.run!, { stubs: stubs(99) })
+  it('this marker among several dispatched ids is found', () => {
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: 'b,a' }), env: mine })
+    expect(r.status, r.err).toBe(0)
+    expect(r.output).toBe('dispatched=true\n')
+  })
+
+  it('only the OTHER marker reaching dispatched is not success: 6 polls, no dispatched=true', () => {
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: 'b' }), env: mine })
     expect(r.status, r.err).toBe(0)
     expect(r.marks).toHaveLength(6)
     expect(r.output).toBe('')
     expect(r.err).toContain('::warning::')
   })
 
+  it('an id that merely contains ours (ba, ab) is not ours', () => {
+    for (const ids of ['ba', 'ab', 'xa,ay']) {
+      const r = runStepScript(s.run!, { stubs: stubs({ ids }), env: mine })
+      expect(r.output, ids).toBe('')
+    }
+  })
+
+  it('a run that never appears is a warning and green after exactly 6 polls', () => {
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: 'a', from: 99 }), env: mine })
+    expect(r.status, r.err).toBe(0)
+    expect(r.marks).toHaveLength(6)
+    expect(r.output).toBe('')
+    expect(r.err).toContain('::warning::')
+  })
+
+  it('uses the scoped subcommand, never the unscoped sweep, and passes the claimed marker through env', () => {
+    const e = s.env!
+    expect(e.MARKER_ID).toBe('${{ steps.target.outputs.marker_id }}')
+    expect(e.MARKER_ENV).toBe('${{ steps.target.outputs.supabase_env }}')
+    expect(commands(s.run!).join('\n')).not.toMatch(/defer\.ts reconcile(\s|$)/)
+  })
+
   it('a marker moved to needs_intervention is red, not a quiet warning', () => {
-    const r = runStepScript(s.run!, { stubs: stubs(99, '1') })
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: '', moved: '1' }), env: mine })
     expect(r.status, r.err).toBe(1)
     expect(r.marks).toEqual(['poll 1'])
     expect(r.err).toContain('needs_intervention')
   })
 
   it('a read or transition error is red', () => {
-    const r = runStepScript(s.run!, { stubs: stubs(1, '0', 1) })
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: 'a', rc: 1 }), env: mine })
     expect(r.status, r.err).toBe(1)
     expect(r.err).toContain('::error::')
+  })
+
+  it('empty output is red as unparseable, not read as "nothing moved"', () => {
+    const r = runStepScript(s.run!, { stubs: stubs({ ids: '', raw: '' }), env: mine })
+    expect(r.status, r.err).toBe(1)
+    expect(r.err).toContain('unparseable')
+    expect(r.output).toBe('')
+  })
+
+  it('output with moved_count but no dispatched_ids is red', () => {
+    const r = runStepScript(s.run!, {
+      stubs: stubs({ ids: '', raw: formatOutputs({ moved_count: '0' }) }),
+      env: mine,
+    })
+    expect(r.status, r.err).toBe(1)
+    expect(r.err).toContain('no dispatched_ids')
+  })
+})
+
+describe('alerts after a post-dispatch reconcile failure', () => {
+  it('the generic failure alert skips it; its own alert says the chunk WAS dispatched', () => {
+    expect(byName('Send Alert on Failure').if).toContain(
+      "steps.self_reconcile.outcome != 'failure'"
+    )
+    const a = byId('self_reconcile_alert')
+    expect(idx(a)).toBeGreaterThan(idx(byId('self_reconcile')))
+    expect(idx(a)).toBeLessThan(idx(byName('Send Alert on Failure')))
+    expect(a.if).toContain('failure()')
+    expect(a.if).toContain("steps.self_reconcile.outcome == 'failure'")
+    expect(a.env!.MARKER_ID).toBe('${{ steps.target.outputs.marker_id }}')
+    expect(a.run).toContain('DID dispatch')
+    expect(a.run).toContain('section 8.3')
+    expect(a.run).toContain('bash scripts/ci/autochain-alert.sh')
+    expect(a.run).not.toContain('did not dispatch')
   })
 })

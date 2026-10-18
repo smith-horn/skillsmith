@@ -99,22 +99,34 @@ describe('autochain-tick-yield.sh', () => {
   })
 
   // SMI-7142: a mode=resume workflow_dispatch is a resume, not a link. Its event is
-  // workflow_dispatch, so only the run-name tag tells it apart.
-  it('a queued mode=resume dispatch (title tagged [resume]) never makes the tick yield', () => {
-    const r = drive({
-      queued: list([
-        run(77, 'workflow_dispatch', 'Skill Indexer Backfill Autochain [resume] (pg_cron-prod)'),
-      ]),
-    })
+  // workflow_dispatch, so only the exact run-name tells it apart.
+  const RESUME_TITLE = 'Skill Indexer Backfill Autochain [resume]'
+  it('a queued mode=resume dispatch (exact tagged title) never makes the tick yield', () => {
+    const r = drive({ queued: list([run(77, 'workflow_dispatch', RESUME_TITLE)]) })
     expect(r.status, r.out).toBe(0)
     expect(r.githubEnv).toBe('')
+  })
+
+  it.each([
+    ['[resume] in the old source position', `${RESUME_TITLE} ([resume])`],
+    ['[resume] in a parenthesised source', 'Skill Indexer Backfill Autochain ([resume])'],
+    ['[resume] as a prefix', `[resume] ${RESUME_TITLE}`],
+    ['[resume] followed by anything', `${RESUME_TITLE} (pg_cron-prod)`],
+    ['[resume] followed by a space', `${RESUME_TITLE} `],
+    ['[resume] in the middle', 'Skill Indexer Backfill Autochain x [resume] y'],
+    ['a different workflow prefix', 'Other [resume]'],
+  ])('a link whose title carries %s still makes the tick yield', (_l, title) => {
+    const r = drive({ in_progress: list([run(77, 'workflow_dispatch', title)]) })
+    expect(r.status, r.out).toBe(0)
+    expect(r.githubEnv).toBe('skip=true\n')
+    expect(r.out).toMatch(/\b77:workflow_dispatch\b/)
   })
 
   it('a manual link dispatch (untagged title) still makes the tick yield, and only it is reported', () => {
     const r = drive({
       in_progress: list([
         run(77, 'workflow_dispatch', 'Skill Indexer Backfill Autochain'),
-        run(78, 'workflow_dispatch', 'Skill Indexer Backfill Autochain [resume]'),
+        run(78, 'workflow_dispatch', RESUME_TITLE),
       ]),
     })
     expect(r.status, r.out).toBe(0)
