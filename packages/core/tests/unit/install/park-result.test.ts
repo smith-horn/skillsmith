@@ -52,6 +52,7 @@ const CONTRACT_FIELDS = [
   'originPath',
   'heldPath',
   'misplaced',
+  'parkedAreaCreated',
 ]
 /** The constructor name of what `fn` threw, or `ret:<status>`. */
 const outcome = (fn: () => { status: string }): string => {

@@ -24,7 +24,14 @@ import type { BoundIdentity } from './park-tree.identity.js'
 export const PARKED_DIR_NAME = '.skillsmith-parked'
 
 export type ParkedRootResult =
-  | { ok: true; parkedRoot: string; parkedRootIdentity: BoundIdentity; parentDev: bigint }
+  | {
+      ok: true
+      parkedRoot: string
+      parkedRootIdentity: BoundIdentity
+      parentDev: bigint
+      /** True only when this call's mkdir made the area (not EEXIST). */
+      created: boolean
+    }
   | { ok: false; errno: string | null; detail: string | null }
 
 /**
@@ -34,8 +41,18 @@ export type ParkedRootResult =
  * a symlink) on the parent's device. Every failure is
  * `park-failed`; `detail` names which (`trash-unusable`, `trash-other-mount`,
  * the spellings A1 plan row Q7 uses).
+ *
+ * `created` is true only when this call's mkdir made the area. It drives the
+ * `.gitignore` hint (A1 plan §3.2), so a caller that needs the area before the
+ * park (park-caller rows 13 and 14 put the clock gate's probes in it) runs
+ * this first and uses its `created`, not the park's, which then sees EEXIST.
+ * A relative parent is a TypeError, before any filesystem work.
  */
 export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
+  if (typeof parentAbs !== 'string' || !path.isAbsolute(parentAbs)) {
+    const got = typeof parentAbs === 'string' ? JSON.stringify(parentAbs) : typeof parentAbs
+    throw new TypeError(`ensureParkedRoot: parentAbs must be an absolute path, got ${got}`)
+  }
   const parkedRoot = path.join(parentAbs, PARKED_DIR_NAME)
   let parentStat: Stats
   try {
@@ -43,8 +60,10 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   } catch (err) {
     return { ok: false, errno: errCode(err), detail: null }
   }
+  let created = false
   try {
     fs.mkdirSync(parkedRoot, { mode: parentStat.mode & 0o777 })
+    created = true
   } catch (err) {
     if (errCode(err) !== 'EEXIST') return { ok: false, errno: errCode(err), detail: null }
   }
@@ -63,7 +82,7 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   if (st.dev !== parentDev) return { ok: false, errno: null, detail: 'trash-other-mount' }
   // Return the area's IDENTITY, not just its path, so it can be re-checked
   // immediately before the rename and after it.
-  return { ok: true, parkedRoot, parkedRootIdentity: identityOf(st), parentDev }
+  return { ok: true, parkedRoot, parkedRootIdentity: identityOf(st), parentDev, created }
 }
 
 export type OpDirResult =

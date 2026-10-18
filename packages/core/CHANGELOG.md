@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- the parked-area helper (`ensureParkedRoot`) now reports `created`, true
+  only when its own `mkdir` made `.skillsmith-parked`, and refuses a relative parent. Every park
+  result carries it as `parkedAreaCreated` (`null` when the park stopped before the area step), for
+  the `.gitignore` hint a later A1 step adds. No caller yet, so no behaviour change.
 - **Internal**: SMI-6531 -- every parked-index write now takes lock 4 (`withFileLock` on the index
   path, UD31), so a compaction can no longer drop a line another process appends. The new
   `install/park-call.ts` adds `parkTreeIndexed` (the park plus a locked index append),

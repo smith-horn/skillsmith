@@ -34,6 +34,9 @@ export const RESULT_FIELDS = [
   'heldPath',
   // ADR-166 D-11: prune's `stopped/entry-misplaced` names what it renamed aside.
   'misplaced',
+  // A1 plan §3.2: true when this park's mkdir created the parked area, false
+  // when it already existed, null when the park stopped before reaching it.
+  'parkedAreaCreated',
 ] as const
 
 /**
@@ -63,6 +66,7 @@ export interface ParkResultFields {
   originPath: string | null
   heldPath: string | null
   misplaced: unknown[] | null
+  parkedAreaCreated: boolean | null
 }
 
 /** A shaped result. Extra keys a path adds are carried through, never dropped. */

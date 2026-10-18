@@ -37,6 +37,7 @@ import type {
 import { S_IFDIR, S_IFLNK, S_IFMT, S_IFREG } from './park-tree.perms.js'
 import { bindIdentity, sameIdentity } from './park-tree.identity.js'
 import { ensureParkedRoot, prepareOpDir, recheckDestination } from './park-tree.destination.js'
+import type { ParkedRootResult } from './park-tree.destination.js'
 import { pathTreeRecord } from './park-tree.verify.js'
 import { finishAfterRename, preMoveGuard } from './park-tree.postmove.js'
 import type { FinishedPark } from './park-tree.postmove.js'
@@ -159,6 +160,46 @@ function parkTreeInner(
       detail: area.detail,
     }
   }
+  // Every result from here on says whether this park's mkdir created the area,
+  // which drives the .gitignore hint (A1 plan §3.2). One wrapper, so no return
+  // site below can drop it.
+  return {
+    ...parkIntoArea({
+      name,
+      o,
+      skillsmithVersion,
+      opId,
+      originPath,
+      guarded,
+      observedTreeHash,
+      boundIdentity,
+      area,
+    }),
+    parkedAreaCreated: area.created,
+  }
+}
+
+/** Everything after the parked area is validated: op dir, re-checks, rename, finish. */
+function parkIntoArea(a: {
+  name: string
+  o: ResolvedParkOptions
+  skillsmithVersion: string
+  opId: string
+  originPath: string
+  guarded: boolean
+  observedTreeHash: string | null
+  boundIdentity: ParkIdentity | null
+  area: Extract<ParkedRootResult, { ok: true }>
+}): PartialParkResult | FinishedPark {
+  const { name, o, skillsmithVersion, opId, originPath, guarded, observedTreeHash } = a
+  const { boundIdentity, area } = a
+  const stoppedAtOrigin = (errno: string | null): PartialParkResult => ({
+    status: 'stopped',
+    reason: 'park-failed',
+    path: originPath,
+    entry: name,
+    errno,
+  })
 
   const op = prepareOpDir({
     parkedRoot: area.parkedRoot,
