@@ -12,6 +12,15 @@
  * by construction here, since the only work done under it is one append or one
  * compaction, and this module exports no way to run anything else under it.
  *
+ * The lock file is `<indexPath>.lock`, spelled exactly as the caller spelled
+ * the index, and the OS resolves it. Measured (SMI-6531): `..`, `//` and a
+ * symlinked directory each reach the same lock file as the plain spelling, so
+ * the path is deliberately not normalized here; `path.resolve` would send
+ * `<symlink>/..` to a different directory than the OS does and split the lock.
+ * The one spelling that does not share it is a symlink to the index file
+ * itself, whose lock lands beside the symlink. Callers pass
+ * `<stateRoot>/parked-index.jsonl`.
+ *
  * This module sits outside the park graph that the static boundary test walks
  * from `park-tree.ts`, because it imports `config/file-lock`. It makes no fs
  * call of its own.
@@ -42,7 +51,9 @@ export async function appendParkedIndexLocked(
 /**
  * `compactParkedIndex` under lock 4, which is that function's precondition. A
  * lock that cannot be taken leaves the index untouched and is returned as the
- * error, never thrown.
+ * error, never thrown. Its `errno` is then the lock error's code if it has one
+ * (`ENOENT` for a missing state directory), else its message (a timeout's
+ * `StuckLockError`, which names the lock and its holder).
  */
 export async function compactParkedIndexLocked(indexPath: string): Promise<CompactResult> {
   try {
@@ -55,8 +66,9 @@ export async function compactParkedIndexLocked(indexPath: string): Promise<Compa
 /**
  * The park call for a caller that records an index line (A1 plan §3.3): the
  * same validation and park as `parkTree`, then, when the tree moved and
- * `indexPath` is given, one append under lock 4. Validation throws before any
- * filesystem work, as `parkTree` does.
+ * `indexPath` is given, one append under lock 4. Invalid input rejects the
+ * returned promise before any filesystem work, with the TypeError `parkTree`
+ * would throw.
  *
  * A failed append, a lock timeout included, is reported as `indexError` and
  * never changes the status: the index is advisory, and the sidecar beside the

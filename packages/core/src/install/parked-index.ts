@@ -7,9 +7,10 @@
  * and only merges the index, so a copy the index omits is still listed and a
  * line whose copy is gone is not an error.
  *
- * Every write to the index takes lock 4 (UD31) through `park-call.ts`
- * (`parkTreeIndexed`, `appendParkedIndexLocked`, `compactParkedIndexLocked`).
- * The functions here take no lock themselves.
+ * The functions here take no lock. Write the index only through `park-call.ts`
+ * (`parkTreeIndexed`, `appendParkedIndexLocked`, `compactParkedIndexLocked`),
+ * which take lock 4 (UD31); a test fails if any other source module imports
+ * `appendParkedIndex` or `compactParkedIndex`.
  *
  * @module @skillsmith/core/install/parked-index
  */

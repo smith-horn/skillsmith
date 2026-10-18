@@ -13,10 +13,12 @@ import {
   cleanup,
   errnoError,
   exists,
+  guardOf,
   park,
   simpleFixture,
   withAllFsTrapped,
   withFsStub,
+  writeAfterRename,
 } from './park-tree.helpers.js'
 
 const roots: string[] = []
@@ -74,6 +76,49 @@ describe('parkedAreaCreated', () => {
     expect(exists(path.join(f.parent, PARKED))).toBe(true)
   })
 
+  it('held and kept results after the area step carry it too', () => {
+    const f = fixture()
+    const held = withFsStub('renameSync', writeAfterRename(f.origin), () =>
+      park(f.parent, 'tree', { guardHash: guardOf(f.origin) })
+    )
+    expect(held.status).toBe('held')
+    expect(held.parkedAreaCreated).toBe(true)
+    // A pre-made op directory that is a symlink: kept/park-destination-changed,
+    // after the (now existing) area was validated.
+    addTree(f.parent, 'other')
+    fs.symlinkSync(f.root, path.join(f.parent, PARKED, 'op-link'))
+    const kept = park(f.parent, 'other', { opId: 'op-link' })
+    expect(kept.status).toBe('kept')
+    expect(kept.reason).toBe('park-destination-changed')
+    expect(kept.parkedAreaCreated).toBe(false)
+  })
+
+  it('a refusal at the area step reports false when the area already existed', () => {
+    const f = fixture()
+    fs.writeFileSync(path.join(f.parent, PARKED), 'a file')
+    const r = park(f.parent, 'tree')
+    expect(r.status).toBe('stopped')
+    expect(r.detail).toBe('trash-unusable')
+    expect(r.parkedAreaCreated).toBe(false)
+  })
+
+  it('a refusal at the area step after its own mkdir still reports true', () => {
+    const f = fixture()
+    const area = path.join(f.parent, PARKED)
+    const failLstat =
+      (orig: (...a: unknown[]) => unknown) =>
+      (...args: unknown[]) => {
+        if (args[0] === area) throw errnoError('EIO')
+        return orig(...args)
+      }
+    const r = withFsStub('lstatSync', failLstat, () => park(f.parent, 'tree'))
+    expect(r.status).toBe('stopped')
+    expect(r.errno).toBe('EIO')
+    expect(r.parkedAreaCreated).toBe(true)
+    expect(exists(area)).toBe(true)
+    expect(exists(f.origin)).toBe(true)
+  })
+
   it('null when the park stops before the area step, and no area is made', () => {
     const f = fixture()
     const r = park(f.parent, 'no-such-entry')
@@ -101,9 +146,20 @@ describe('ensureParkedRoot', () => {
     expect(touched).toEqual([])
   })
 
+  it('refuses a non-string parent, rendering only its type', () => {
+    expect(() => ensureParkedRoot(undefined as never)).toThrow(
+      'ensureParkedRoot: parentAbs must be an absolute path, got undefined'
+    )
+  })
+
   it('an existing non-directory at the area path is refused, not reported as created', () => {
     const f = fixture()
     fs.writeFileSync(path.join(f.parent, PARKED), 'a file')
-    expect(ensureParkedRoot(f.parent)).toEqual({ ok: false, errno: null, detail: 'trash-unusable' })
+    expect(ensureParkedRoot(f.parent)).toEqual({
+      ok: false,
+      errno: null,
+      detail: 'trash-unusable',
+      created: false,
+    })
   })
 })

@@ -12,6 +12,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { acquireOwnedLock, StuckLockError } from '../../../src/config/owned-lock.js'
 import {
@@ -24,15 +25,21 @@ import {
   readParkedIndex,
 } from '../../../src/install/parked-index.js'
 import type { ParkedIndexEntry } from '../../../src/install/parked-index.js'
+import { prepareParkTree } from '../../../src/install/park-tree.js'
 import {
+  CLIENT,
+  KIND,
   PARKED,
   cleanup,
   exists,
+  guardOf,
   park,
   parkIndexed,
   parkedEntries,
   simpleFixture,
   withAllFsTrapped,
+  withFsStub,
+  writeAfterRename,
 } from './park-tree.helpers.js'
 
 type AnyFn = (...args: unknown[]) => unknown
@@ -103,10 +110,21 @@ describe('indexPath is accepted only by parkTreeIndexed', () => {
     expect(park(f.parent, 'tree').status).toBe('parked')
   })
 
-  for (const entryPoint of ['parkTree', 'parkTreeIndexed'] as const) {
-    it(`${entryPoint} refuses an indexPath naming the lock file, before any filesystem work`, async () => {
+  it('a prepared park runs at most once', () => {
+    const f = fixture()
+    const prepared = prepareParkTree(f.parent, 'tree', { client: CLIENT, kind: KIND })
+    expect(prepared.run().result.status).toBe('parked')
+    expect(() => prepared.run()).toThrow('parkTree: a prepared park runs at most once')
+  })
+
+  for (const [entryPoint, suffix] of [
+    ['parkTree', '.lock'],
+    ['parkTreeIndexed', '.lock'],
+    ['parkTreeIndexed', '.lock.reclaim'],
+  ] as const) {
+    it(`${entryPoint} refuses an indexPath naming the ${suffix} file, before any filesystem work`, async () => {
       const f = fixture()
-      const lockName = path.join(f.root, 'parked-index.jsonl.lock')
+      const lockName = path.join(f.root, `parked-index.jsonl${suffix}`)
       const { value, touched } = withAllFsTrapped(() => {
         try {
           // Validation runs before parkTreeIndexed's first await, so a refusal
@@ -129,13 +147,22 @@ describe('indexPath is accepted only by parkTreeIndexed', () => {
 
 describe('the index append takes lock 4', () => {
   /** Runs `body` and reports whether `<indexPath>.lock` existed at each open of the index. */
+  /** True at an open when `<indexPath>.lock` holds a claim naming this process. */
   async function lockSeenAtOpen(indexPath: string, body: () => Promise<unknown>) {
     const seen: boolean[] = []
+    const heldByUs = (): boolean => {
+      try {
+        const claim = JSON.parse(fs.readFileSync(`${indexPath}.lock`, 'utf8')) as { pid?: unknown }
+        return claim.pid === process.pid
+      } catch {
+        return false
+      }
+    }
     await withAsyncFsStub(
       'openSync',
       (orig) =>
         (...args: unknown[]) => {
-          if (args[0] === indexPath) seen.push(fs.existsSync(`${indexPath}.lock`))
+          if (args[0] === indexPath) seen.push(heldByUs())
           return orig(...args)
         },
       body
@@ -177,6 +204,74 @@ describe('the index append takes lock 4', () => {
     expect(exists(indexPath)).toBe(false)
     expect(exists(f.origin)).toBe(false)
     expect(parkedEntries(path.join(f.parent, PARKED, String(r.opId)))).toHaveLength(1)
+  })
+})
+
+describe('which outcomes get an index line through parkTreeIndexed', () => {
+  it('held: one line, naming the held path', async () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const r = await withFsStub('renameSync', writeAfterRename(f.origin), () =>
+      parkIndexed(f.parent, 'tree', { indexPath, guardHash: guardOf(f.origin) })
+    )
+    expect(r.status).toBe('held')
+    expect(paths(indexPath)).toEqual([r.heldPath])
+  })
+
+  it('kept (a guard that does not match) and stopped (no such entry): no line, no index file', async () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const kept = await parkIndexed(f.parent, 'tree', { indexPath, guardHash: 'not-the-hash' })
+    expect(kept.status).toBe('kept')
+    const stopped = await parkIndexed(f.parent, 'no-such-entry', { indexPath })
+    expect(stopped.status).toBe('stopped')
+    expect(exists(indexPath)).toBe(false)
+    expect('indexError' in kept || 'indexError' in stopped).toBe(false)
+  })
+})
+
+describe('parkTreeIndexed waits for a held lock 4', () => {
+  it('a live holder delays the append; it lands once the holder releases', async () => {
+    const f = fixture()
+    const indexPath = path.join(f.root, 'parked-index.jsonl')
+    const release = acquireOwnedLock(indexPath, {
+      timeoutMs: 0,
+      reclaimProbeAfterMs: 0,
+      reclaimLockTimeoutMs: 0,
+    })
+    const pending = parkIndexed(f.parent, 'tree', { indexPath })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    // The tree is parked already; its line is not written while the lock is held.
+    expect(exists(f.origin)).toBe(false)
+    expect(exists(indexPath)).toBe(false)
+    release()
+    const r = await pending
+    expect(r.status).toBe('parked')
+    expect('indexError' in r).toBe(false)
+    expect(paths(indexPath)).toEqual([r.path])
+  })
+})
+
+describe('only park-call.ts writes the index', () => {
+  const PACKAGES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
+  const srcFiles = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+      const p = path.join(dir, d.name)
+      if (d.isDirectory()) return d.name === 'node_modules' ? [] : srcFiles(p)
+      return /\.(ts|mts|js|mjs)$/.test(d.name) && !/\.test\./.test(d.name) ? [p] : []
+    })
+  it('no source module but park-call.ts names appendParkedIndex or compactParkedIndex', () => {
+    const files = ['core', 'mcp-server', 'cli']
+      .map((pkg) => path.join(PACKAGES, pkg, 'src'))
+      .filter((d) => fs.existsSync(d))
+      .flatMap(srcFiles)
+    const writers = files
+      .filter((f) => /\b(appendParkedIndex|compactParkedIndex)\b/.test(fs.readFileSync(f, 'utf8')))
+      .map((f) => path.relative(PACKAGES, f))
+      .sort()
+    // Presence control: the scan reaches the defining module and park-call.ts.
+    expect(writers).toEqual(['core/src/install/park-call.ts', 'core/src/install/parked-index.ts'])
+    expect(files.length).toBeGreaterThan(100)
   })
 })
 

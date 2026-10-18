@@ -285,6 +285,20 @@ export function withFsStub<T>(name: string, impl: (orig: AnyFn) => AnyFn, body: 
   }
 }
 
+/**
+ * A `renameSync` stub that, right after the real rename of `origin`, writes a
+ * file into the parked copy, so a guarded park's post-move check finds it
+ * changed and returns `held`. Use with `withFsStub('renameSync', …)`.
+ */
+export const writeAfterRename =
+  (origin: string) =>
+  (orig: AnyFn): AnyFn =>
+  (...args: unknown[]) => {
+    const out = orig(...args)
+    if (args[0] === origin) fs.writeFileSync(path.join(String(args[1]), 'late.txt'), 'late')
+    return out
+  }
+
 /** An Error carrying an errno code, as fs throws. */
 export function errnoError(code: string): NodeJS.ErrnoException {
   const e = new Error(`forced ${code}`) as NodeJS.ErrnoException

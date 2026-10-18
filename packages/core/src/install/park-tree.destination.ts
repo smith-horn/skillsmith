@@ -32,7 +32,8 @@ export type ParkedRootResult =
       /** True only when this call's mkdir made the area (not EEXIST). */
       created: boolean
     }
-  | { ok: false; errno: string | null; detail: string | null }
+  /** `created`: a failure after this call's mkdir still reports it (A1 plan §3.2). */
+  | { ok: false; errno: string | null; detail: string | null; created: boolean }
 
 /**
  * Validates, creating it if absent, `<parentAbs>/.skillsmith-parked` (ADR-166
@@ -42,7 +43,8 @@ export type ParkedRootResult =
  * `park-failed`; `detail` names which (`trash-unusable`, `trash-other-mount`,
  * the spellings A1 plan row Q7 uses).
  *
- * `created` is true only when this call's mkdir made the area. It drives the
+ * `created` is true only when this call's mkdir made the area, on a refusal
+ * after that mkdir too. It drives the
  * `.gitignore` hint (A1 plan §3.2), so a caller that needs the area before the
  * park (park-caller rows 13 and 14 put the clock gate's probes in it) runs
  * this first and uses its `created`, not the park's, which then sees EEXIST.
@@ -58,28 +60,32 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   try {
     parentStat = fs.statSync(parentAbs)
   } catch (err) {
-    return { ok: false, errno: errCode(err), detail: null }
+    return { ok: false, errno: errCode(err), detail: null, created: false }
   }
   let created = false
   try {
     fs.mkdirSync(parkedRoot, { mode: parentStat.mode & 0o777 })
     created = true
   } catch (err) {
-    if (errCode(err) !== 'EEXIST') return { ok: false, errno: errCode(err), detail: null }
+    if (errCode(err) !== 'EEXIST') {
+      return { ok: false, errno: errCode(err), detail: null, created: false }
+    }
   }
   let st: BigIntStats
   try {
     st = fs.lstatSync(parkedRoot, { bigint: true })
   } catch (err) {
-    return { ok: false, errno: errCode(err), detail: null }
+    return { ok: false, errno: errCode(err), detail: null, created }
   }
   if (st.isSymbolicLink() || !st.isDirectory()) {
-    return { ok: false, errno: null, detail: 'trash-unusable' }
+    return { ok: false, errno: null, detail: 'trash-unusable', created }
   }
   // parentStat is a Number stat and st a bigint one; `!==` across the two types
   // is always true, so the parent's dev is normalized to bigint once.
   const parentDev = BigInt(parentStat.dev)
-  if (st.dev !== parentDev) return { ok: false, errno: null, detail: 'trash-other-mount' }
+  if (st.dev !== parentDev) {
+    return { ok: false, errno: null, detail: 'trash-other-mount', created }
+  }
   // Return the area's IDENTITY, not just its path, so it can be re-checked
   // immediately before the rename and after it.
   return { ok: true, parkedRoot, parkedRootIdentity: identityOf(st), parentDev, created }

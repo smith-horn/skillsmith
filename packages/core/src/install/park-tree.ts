@@ -158,9 +158,11 @@ function parkTreeInner(
       entry: name,
       errno: area.errno,
       detail: area.detail,
+      parkedAreaCreated: area.created,
     }
   }
-  // Every result from here on says whether this park's mkdir created the area,
+  // Every result from the area step on says whether this park's mkdir created
+  // the area (the refusal just above too),
   // which drives the .gitignore hint (A1 plan §3.2). One wrapper, so no return
   // site below can drop it.
   return {
@@ -330,7 +332,7 @@ export function prepareParkTree(
       const { indexEntry, ...partial } = parkTreeInner(parentAbs, name, resolved, skillsmithVersion)
       return {
         result: shapeResult({ entry: name, ...partial }),
-        indexEntry: (indexEntry as ParkedIndexEntry | undefined) ?? null,
+        indexEntry: indexEntry ?? null,
       }
     },
   }

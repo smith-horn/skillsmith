@@ -17,6 +17,7 @@
  */
 import path from 'node:path'
 import util from 'node:util'
+import type { ParkedIndexEntry } from './parked-index.js'
 
 /** Every field a park result carries, in a fixed order. */
 export const RESULT_FIELDS = [
@@ -34,8 +35,9 @@ export const RESULT_FIELDS = [
   'heldPath',
   // ADR-166 D-11: prune's `stopped/entry-misplaced` names what it renamed aside.
   'misplaced',
-  // A1 plan §3.2: true when this park's mkdir created the parked area, false
-  // when it already existed, null when the park stopped before reaching it.
+  // A1 plan §3.2: true when this park's mkdir created the parked area (even
+  // if the park then stopped), false when it did not, null when the park
+  // stopped before the parked-area helper ran.
   'parkedAreaCreated',
 ] as const
 
@@ -83,6 +85,8 @@ export interface ParkResult extends ParkResultFields {
 export type PartialParkResult = { status: ParkStatus } & Partial<ParkResultFields> & {
     sidecarError?: string
     indexError?: string
+    /** A moved tree's index line, which `prepareParkTree` strips before shaping. */
+    indexEntry?: ParkedIndexEntry
     [extra: string]: unknown
   }
 
@@ -315,9 +319,10 @@ export function resolveParkOptions(options: unknown): ResolvedParkOptions {
   if (indexPath !== undefined && (typeof indexPath !== 'string' || !path.isAbsolute(indexPath))) {
     throw new TypeError('parkTree: indexPath must be an absolute path or omitted')
   }
-  // Lock 4 locks `<indexPath>.lock` itself; passing the lock file's name would
-  // lock `parked-index.jsonl.lock.lock` and append into the lock file (UD31).
-  if (typeof indexPath === 'string' && indexPath.endsWith('.lock')) {
+  // Lock 4 locks `<indexPath>.lock` itself (and `<indexPath>.lock.reclaim`
+  // while reclaiming); passing either file's name would lock `….lock.lock` and
+  // append into a lock file (UD31).
+  if (typeof indexPath === 'string' && /\.lock(\.reclaim)?$/.test(indexPath)) {
     throw new TypeError(
       `parkTree: indexPath names a lock file (${JSON.stringify(indexPath)}); pass the index ` +
         `itself, and lock 4 derives its lock file from it`
