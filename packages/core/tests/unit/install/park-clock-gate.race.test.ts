@@ -7,9 +7,13 @@
  * that added this file.
  *
  * Each directory's filesystem type is asserted with statfs, so the test
- * cannot pass on a different filesystem than it names. It runs only where
- * both exist (Linux; the dev container and CI); elsewhere it is skipped by
- * name, never silently.
+ * cannot pass on a different filesystem than it names. It runs where both
+ * exist (Linux: the dev container and CI's Docker test job). On Linux a
+ * missing filesystem fails and names what it found, so a run that cannot test
+ * this (CI's bare-host fallback, another storage driver, a TMPDIR override) is
+ * red, not green. The trigger is the platform, not the CI variable: CI's
+ * docker run does not pass CI into the container. Only a non-Linux host (a
+ * macOS checkout outside Docker) skips.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -40,6 +44,15 @@ afterAll(() => {
   for (const r of roots.splice(0)) cleanup(r)
 })
 
+describe.runIf(!available && process.platform === 'linux')('T-X18 (d) on Linux', () => {
+  it('needs overlayfs at the temp dir and tmpfs at /dev/shm', () => {
+    const seen = TARGETS.map(
+      ([label, dir]) => `${label} wanted at ${dir}, statfs type ${fsType(dir)}`
+    )
+    throw new Error(`T-X18 (d) cannot run here: ${seen.join('; ')}`)
+  })
+})
+
 describe.skipIf(!available)('T-X18 (d): no spurious stop right after a build', () => {
   for (const [label, dir, magic] of TARGETS) {
     it(`${label}: ${RUNS} trees built just before the gate all park`, async () => {
@@ -58,9 +71,13 @@ describe.skipIf(!available)('T-X18 (d): no spurious stop right after a build', (
           parentAbs: parent,
           opId: `r${i}`,
         })
-        const key = g.ok
-          ? park(parent, 'tree', { maxBirthtimeNs: g.maxBirthtimeNs }).status
-          : `gate:${g.detail.replace(/\/\S+/g, '<p>')}`
+        let key: string
+        if (g.ok) {
+          const r = park(parent, 'tree', { maxBirthtimeNs: g.maxBirthtimeNs })
+          key = r.status === 'parked' ? 'parked' : `${r.status}/${String(r.reason)}`
+        } else {
+          key = `gate:${g.detail.replace(/\/\S+/g, '<p>')}`
+        }
         outcomes[key] = (outcomes[key] ?? 0) + 1
       }
       expect(outcomes).toEqual({ parked: RUNS })
