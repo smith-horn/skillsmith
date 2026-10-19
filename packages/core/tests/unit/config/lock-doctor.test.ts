@@ -35,6 +35,12 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 import { inspectLock, releaseLock, stateRootLockPaths } from '../../../src/config/lock-doctor.js'
+import { tryReclaimUnderLock } from '../../../src/config/owned-lock.claim.js'
+
+/** Leftover rename-aside files beside the lock. */
+function asideFiles(root: string): string[] {
+  return fs.readdirSync(root).filter((n) => n.includes('.doctor-'))
+}
 
 const roots: string[] = []
 afterEach(() => {
@@ -141,6 +147,62 @@ describe('T-M2: the lock removed is the lock inspected', () => {
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(text)
   })
 
+  it('a newer lock put in place after inspection survives: released A, acquired B', () => {
+    const { root, lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, v1(deadPid()))
+    const b = v1(process.pid)
+
+    const r = releaseLock(lockPath, {
+      beforeFinalCheck: () => {
+        fs.rmSync(lockPath) // A released
+        fs.writeFileSync(lockPath, b, { flag: 'wx' }) // B acquired
+      },
+    })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('changed')
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(b)
+    expect(asideFiles(root)).toEqual([])
+  })
+
+  it('holds the reclaim lock while it decides: an owned-lock reclaimer is shut out', () => {
+    const { lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, v1(deadPid()))
+    let reclaimer: string | null = null
+
+    const r = releaseLock(lockPath, {
+      beforeFinalCheck: () => {
+        reclaimer = tryReclaimUnderLock(lockPath, `${lockPath}.reclaim`, {
+          reclaimLockTimeoutMs: 0,
+        })
+      },
+    })
+
+    expect(reclaimer).toBe('unavailable')
+    expect(r.outcome).toBe('released')
+  })
+
+  it('refuses as gone when the lock disappears after inspection', () => {
+    const { root, lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, v1(deadPid()))
+
+    const r = releaseLock(lockPath, { beforeFinalCheck: () => fs.rmSync(lockPath) })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('gone')
+    expect(asideFiles(root)).toEqual([])
+  })
+
+  it('refuses when the lock is not the one the caller showed (expected)', () => {
+    const { lockPath } = stateRoot()
+    const text = String(deadPid())
+    fs.writeFileSync(lockPath, text)
+    const shown = { ino: BigInt(fs.statSync(lockPath).ino), bytes: Buffer.from('other claim') }
+
+    const r = releaseLock(lockPath, { unsafeUnverifiedOwner: true, expected: shown })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('changed')
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(text)
+  })
+
   it('refuses while another process holds the reclaim lock, removing nothing', () => {
     const { lockPath } = stateRoot()
     const text = v1(deadPid())
@@ -177,6 +239,16 @@ describe("a claim doctor can't read or compare is never released", () => {
 
     expect(r.outcome === 'refused' && r.refusal).toBe('not-comparable')
     expect(fs.lstatSync(lockPath).isSymbolicLink()).toBe(true)
+  })
+
+  it('refuses an oversize lock as not comparable, with the flag', () => {
+    const { lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, 'x'.repeat(5000))
+
+    const r = releaseLock(lockPath, { unsafeUnverifiedOwner: true })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('not-comparable')
+    expect(fs.statSync(lockPath).size).toBe(5000)
   })
 
   it('refuses when nothing is there', () => {

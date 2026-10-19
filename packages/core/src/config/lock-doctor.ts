@@ -8,28 +8,46 @@
  * known to be gone, and only if the file removed is the one that was looked
  * at. So:
  *
- * - `inspectLock` reads a lock once, without following a symlink, and says
- *   what it can and cannot know: the claim's kind, pid and host, whether that
- *   host is this one, whether the pid is alive on THIS host, and its age.
+ * - `inspectLock` reads a lock once, never following a symlink at the lock
+ *   path itself, and says what it can and cannot know: the claim's kind, pid
+ *   and host, whether that host is this one, whether the pid is alive on THIS
+ *   host, and its age. The folders above it are the caller's to canonicalize
+ *   (the CLI resolves the state root with `realpath`).
  * - `releaseLock` frees, without the unsafe flag, only a v1 claim from this
  *   host whose pid is dead (`kill(pid, 0)` gives `ESRCH`). A pid alive here
  *   may be a reused pid; a pid from a container may name the host's pid 1
  *   (plan E17). Every other claim needs `unsafeUnverifiedOwner`. A claim it
  *   cannot read (another user's `0600` claim, plan E31) is never released.
- * - Before unlinking, `releaseLock` takes `<path>.reclaim` by exclusive
- *   create, the file owned-lock's own reclaimers serialize on, then re-reads
- *   the lock: the inode and bytes must equal what it inspected.
+ * - `releaseLock` takes `<path>.reclaim` by exclusive create, the file
+ *   owned-lock's own reclaimers serialize on. It then renames the lock to a
+ *   unique name beside it, which moves whatever is at the path in one step,
+ *   and removes the moved file only if its inode and bytes equal what it
+ *   inspected. A removal by path name after a check would delete a newer lock
+ *   that a release and a fresh acquire put there in between, since neither
+ *   takes `.reclaim`. If the moved file is a newer lock, it is linked back
+ *   (exclusive) and the release refused.
  *
- * Residual (not closed): an older Skillsmith's manifest lock steals by
- * unlinking without `.reclaim`, so one acting between the final re-read and
- * the unlink would lose its new lock. Its steal needs a lock over 30 s old,
- * the same window owned-lock's own release has.
+ * Residuals (not closed): if yet another lock is created at the path before a
+ * moved newer lock is linked back, the moved one is left beside it, named in
+ * the refusal, and its holder no longer excludes the new one. A process of the
+ * same user that swaps a folder above the lock mid-run can redirect the
+ * rename; it could equally change the lock itself.
  *
  * @module @skillsmith/core/config/lock-doctor
  */
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  linkSync,
+  lstatSync,
+  openSync,
+  readSync,
+  renameSync,
+  unlinkSync,
+} from 'node:fs'
 import { hostname } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { createLockExclusive, parseClaim, randomHex, releaseOwned } from './owned-lock.claim.js'
 import { MAX_LOCK_BYTES } from './owned-lock.types.js'
 
@@ -74,7 +92,8 @@ type ReadResult = { bytes: Buffer; ino: bigint } | { error: string; code: string
 function readLockBytes(path: string): ReadResult {
   let fd: number
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    // O_NONBLOCK: a FIFO swapped in after lstat must not block the open.
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     return { error: `could not open it (${code ?? String(err)})`, code }
@@ -193,7 +212,13 @@ export type ReleaseResult =
 export interface ReleaseLockOptions {
   /** Release a claim whose owner can't be shown to be gone (bare-PID, unparseable, other host, live pid). */
   unsafeUnverifiedOwner?: boolean
-  /** @internal Test seam (T-M2): runs after `.reclaim` is taken, before the final re-read. */
+  /**
+   * The lock as the caller showed it to the user: refuse unless the first
+   * inspection still has this inode and these bytes, so what was shown is
+   * what is released.
+   */
+  expected?: { ino: bigint; bytes: Buffer }
+  /** @internal Test seam (T-M2): runs after `.reclaim` is taken, before the lock is moved. */
   beforeFinalCheck?: () => void
 }
 
@@ -240,6 +265,17 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
       inspection: insp,
     }
   }
+  if (
+    opts.expected !== undefined &&
+    (opts.expected.ino !== insp.ino || !opts.expected.bytes.equals(insp.bytes))
+  ) {
+    return {
+      outcome: 'refused',
+      refusal: 'changed',
+      message: `${path} changed after it was shown; nothing was removed`,
+      inspection: insp,
+    }
+  }
   const reclaimPath = `${path}.reclaim`
   const token = randomHex(8)
   const record =
@@ -250,32 +286,16 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
       outcome: 'refused',
       refusal: 'reclaim-held',
       message:
-        `${reclaimPath} exists: another process is deciding about this lock, or an earlier one ` +
-        'stopped mid-way. Run `skillsmith doctor locks` to inspect it.',
+        `${reclaimPath} exists: another process is deciding about this lock, or one stopped ` +
+        `mid-way. If no Skillsmith process is running, remove ${reclaimPath} by hand.`,
       inspection: insp,
     }
   }
   try {
     opts.beforeFinalCheck?.()
-    const now = inspectLock(path)
-    if (now === null) {
-      return {
-        outcome: 'refused',
-        refusal: 'gone',
-        message: `${path} was removed meanwhile`,
-        inspection: insp,
-      }
-    }
-    if (now.ino !== insp.ino || now.bytes === null || !now.bytes.equals(insp.bytes)) {
-      return {
-        outcome: 'refused',
-        refusal: 'changed',
-        message: `${path} changed after it was inspected (another inode or other bytes); nothing was removed`,
-        inspection: insp,
-      }
-    }
+    const aside = join(dirname(path), `.${basename(path)}.doctor-${token}`)
     try {
-      unlinkSync(path)
+      renameSync(path, aside)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
       return {
@@ -285,7 +305,32 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
         inspection: insp,
       }
     }
-    return { outcome: 'released', inspection: insp, unverifiedReason: unverified }
+    const moved = inspectLock(aside)
+    if (moved !== null && moved.ino === insp.ino && moved.bytes?.equals(insp.bytes) === true) {
+      unlinkSync(aside)
+      return { outcome: 'released', inspection: insp, unverifiedReason: unverified }
+    }
+    // The file moved is not the one inspected: a newer lock. Put it back.
+    try {
+      linkSync(aside, path)
+      unlinkSync(aside)
+    } catch (err) {
+      return {
+        outcome: 'refused',
+        refusal: 'changed',
+        message:
+          `${path} changed after it was inspected. The newer lock was moved to ${aside} and ` +
+          `could not be put back (${(err as NodeJS.ErrnoException).code ?? String(err)}); ` +
+          'nothing was removed. Check which Skillsmith process holds it.',
+        inspection: insp,
+      }
+    }
+    return {
+      outcome: 'refused',
+      refusal: 'changed',
+      message: `${path} changed after it was inspected (another inode or other bytes); nothing was removed`,
+      inspection: insp,
+    }
   } finally {
     releaseOwned(reclaimPath, token)
   }

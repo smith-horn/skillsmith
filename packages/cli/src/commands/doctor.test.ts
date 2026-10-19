@@ -12,6 +12,19 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const calls = vi.hoisted(() => ({ release: [] as Array<{ path: string; opts: unknown }> }))
+vi.mock('@skillsmith/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@skillsmith/core')>()
+  return {
+    ...actual,
+    releaseLock: (path: string, opts: Parameters<typeof actual.releaseLock>[1]) => {
+      calls.release.push({ path, opts })
+      return actual.releaseLock(path, opts)
+    },
+  }
+})
+
 import { runDoctorLocks } from './doctor.js'
 
 let root = ''
@@ -24,6 +37,7 @@ beforeEach(() => {
   lockPath = path.join(root, 'manifest.json.lock')
   out = []
   err = []
+  calls.release = []
   vi.spyOn(console, 'log').mockImplementation((...a) => void out.push(a.join(' ')))
   vi.spyOn(console, 'error').mockImplementation((...a) => void err.push(a.join(' ')))
   process.exitCode = undefined
@@ -103,6 +117,55 @@ describe('skillsmith doctor locks', () => {
     expect(claimAt).toBeGreaterThanOrEqual(0)
     expect(whyAt).toBeGreaterThan(claimAt)
     expect(releasedAt).toBeGreaterThan(whyAt)
+  })
+
+  it('with the flag, releases only the claim it printed (passes it as expected)', async () => {
+    fs.writeFileSync(lockPath, String(deadPid()))
+    const ino = BigInt(fs.statSync(lockPath).ino)
+
+    await runDoctorLocks({ stateRoot: root, release: lockPath, unsafeUnverifiedOwner: true })
+
+    expect(calls.release).toHaveLength(1)
+    const opts = calls.release[0]!.opts as { expected?: { ino: bigint; bytes: Buffer } }
+    expect(opts.expected?.ino).toBe(ino)
+    expect(opts.expected?.bytes.toString()).toMatch(/^[0-9]+$/)
+  })
+
+  it('a symlinked state root lists and releases the real files', async () => {
+    const link = path.join(os.tmpdir(), `doctor-locks-link-${process.pid}-${Date.now()}`)
+    fs.symlinkSync(root, link)
+    try {
+      fs.writeFileSync(lockPath, v1(deadPid()))
+      await runDoctorLocks({ stateRoot: link })
+      expect(out.join('\n')).toContain(`Locks under ${root}`)
+
+      await runDoctorLocks({ stateRoot: link, release: path.join(link, 'manifest.json.lock') })
+      expect(process.exitCode).toBeUndefined()
+      expect(calls.release[0]!.path).toBe(lockPath)
+      expect(fs.existsSync(lockPath)).toBe(false)
+    } finally {
+      fs.rmSync(link, { force: true })
+    }
+  })
+
+  it('refuses a path whose folder is a symlink to somewhere else, file untouched', async () => {
+    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-elsewhere-')))
+    try {
+      const theirs = path.join(elsewhere, 'manifest.json.lock')
+      fs.writeFileSync(theirs, v1(deadPid()))
+      fs.symlinkSync(elsewhere, path.join(root, 'sub'))
+
+      await runDoctorLocks({
+        stateRoot: root,
+        release: path.join(root, 'sub', 'manifest.json.lock'),
+      })
+
+      expect(process.exitCode).toBe(1)
+      expect(fs.existsSync(theirs)).toBe(true)
+      expect(calls.release).toEqual([])
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true })
+    }
   })
 
   it('refuses --unsafe-unverified-owner without --release, exit 1', async () => {

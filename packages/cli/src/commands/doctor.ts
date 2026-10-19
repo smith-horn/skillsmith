@@ -11,14 +11,17 @@
  * frees only a claim from this host whose pid is dead; anything else needs
  * `--unsafe-unverified-owner`; a claim it can't read is never released.
  *
- * `--release` accepts only a path the listing shows, so it can't delete any
- * other file. The skills-root write lock and skills-root discovery join with
- * A1 steps 2 and 6; the state root is `~/.skillsmith` or `--state-root`.
+ * The state root is `~/.skillsmith` or `--state-root`, resolved with
+ * `realpath`, so the paths listed are the real files. `--release` accepts only
+ * one of those, matched by the real path of its folder; with the unsafe flag
+ * it releases only the claim it printed. The skills-root write lock and
+ * skills-root discovery join with A1 steps 2 and 6.
  * Exit status: 0 when listed or released, 1 when a release is refused.
  */
 
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
@@ -36,9 +39,19 @@ export interface DoctorLocksOptions {
   unsafeUnverifiedOwner?: boolean
 }
 
-/** The state root doctor reads: `--state-root`, or `~/.skillsmith`. */
+/** `path` with symlinks resolved, or `path` itself when nothing is there. */
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return path // nothing to list there
+    throw err
+  }
+}
+
+/** The state root doctor reads, with symlinks resolved: `--state-root`, or `~/.skillsmith`. */
 export function resolveStateRoot(opt: string | undefined): string {
-  return opt !== undefined ? resolve(opt) : join(homedir(), '.skillsmith')
+  return realOrSelf(opt !== undefined ? resolve(opt) : join(homedir(), '.skillsmith'))
 }
 
 function describeAge(ageNs: bigint): string {
@@ -96,7 +109,10 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
     return
   }
 
-  const target = resolve(options.release)
+  // The lock file itself is never resolved (doctor refuses a symlinked lock);
+  // its folder is, so a symlinked folder can't name a file elsewhere.
+  const asGiven = resolve(options.release)
+  const target = join(realOrSelf(dirname(asGiven)), basename(asGiven))
   if (!paths.includes(target)) {
     console.error(
       chalk.red(`${target} is not a lock doctor lists. It releases only:\n  ${paths.join('\n  ')}`)
@@ -104,18 +120,22 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
     process.exitCode = 1
     return
   }
+  let expected: { ino: bigint; bytes: Buffer } | undefined
   if (options.unsafeUnverifiedOwner) {
-    // Plan §3.9: the claim and why its owner can't be verified, before acting.
+    // Plan §3.9: the claim and why its owner can't be verified, before acting;
+    // `expected` makes the release refuse unless the lock is still that claim.
     const insp = inspectLock(target)
     const why = insp !== null && insp.kind !== 'cant-read' ? unverifiedOwnerReason(insp) : null
-    if (why !== null) {
+    if (insp !== null && why !== null && insp.bytes !== null) {
       // Every line but the last, which would repeat the reason printed next.
       for (const line of describeLock(target, insp).slice(0, -1)) console.log(line)
       console.log(chalk.yellow(`Its owner can't be verified: ${why}. Releasing it anyway.`))
+      expected = { ino: insp.ino, bytes: insp.bytes }
     }
   }
   const result = releaseLock(target, {
     unsafeUnverifiedOwner: options.unsafeUnverifiedOwner === true,
+    ...(expected !== undefined ? { expected } : {}),
   })
   if (result.outcome === 'refused') {
     console.error(chalk.red(`Not released: ${result.message}`))
