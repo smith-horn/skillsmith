@@ -37,6 +37,10 @@
  *   longer excludes the new one.
  * - A process of the same user that swaps a folder above the lock mid-run
  *   can redirect the rename; it could equally change the lock itself.
+ * - A lock is identified by its inode and bytes. A fixed-content claim (a
+ *   bare PID) removed and recreated with the same bytes, on a filesystem that
+ *   reuses the inode, can't be told from the one inspected: its timestamps
+ *   matched too when measured. A v1 claim's random token rules this out.
  *
  * @module @skillsmith/core/config/lock-doctor
  */
