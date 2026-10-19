@@ -345,6 +345,8 @@ export async function validateRelinkIdentity(
     }
     return { ok: true }
   } catch (err) {
+    // A lock-order refusal is a programming error, not a validation failure.
+    if (err instanceof LockOrderError) throw err
     return { ok: false, detail: (err as Error).message }
   }
 }

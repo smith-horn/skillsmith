@@ -141,12 +141,15 @@ export function withFileLock<T>(
   options: FileLockOptions
 ): Promise<T> {
   try {
-    return runHoldingLock(target, label, options.rank, async (acquired) => {
+    return runHoldingLock(target, label, options.rank, async (acquired, releasing) => {
       const release = await acquireFileLock(target, label, options)
       acquired() // the lock's folder exists now: key it by its real path
       try {
         return await fn()
       } finally {
+        // Same synchronous step as the unlink: work `fn` started can run in the
+        // next microtask and must not see a lock whose file is already gone.
+        releasing()
         release()
       }
     })

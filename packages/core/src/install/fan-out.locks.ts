@@ -18,7 +18,7 @@
 import * as path from 'node:path'
 import * as fsp from 'node:fs/promises'
 import { withFileLock } from '../config/file-lock.js'
-import { checkLockRequest } from '../config/lock-tracker.js'
+import { checkLockRequest, lockKey } from '../config/lock-tracker.js'
 import { siblingPrefix } from './fan-out.leftovers.js'
 
 export { withFileLock }
@@ -30,28 +30,23 @@ const LOCK_TAG = '.skillsmith-fanout'
 const inProcessQueue = new Map<string, Promise<void>>()
 
 /**
- * Queue key for `dest`: its parent's real path plus its name, so a symlinked
- * spelling of the same folder shares one queue (round 7). A case-only variant
- * on a case-insensitive volume still gets its own key, but it then only waits
- * asynchronously on the shared file lock below, never blocking.
- */
-async function queueKey(dest: string): Promise<string> {
-  const parent = path.dirname(path.resolve(dest))
-  const realParent = await fsp.realpath(parent).catch(() => parent)
-  return path.join(realParent, path.basename(dest))
-}
-
-/**
  * Run `fn` holding the lock for `dest`: first queue behind any other call
  * for the same destination in this process, then take the cross-process
  * file lock `.<name>.skillsmith-fanout.lock` next to it.
  */
 export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>): Promise<T> {
   // A1 step 1: the tracker's refusal must come before the queue and the
-  // mkdir below, or a re-entry waits on itself forever (plan §3.2).
+  // mkdir below, or a re-entry waits on itself forever (plan §3.2). One
+  // identity serves both: `lockKey` is computed once, synchronously, right
+  // after the admission check (no await between them), and is the queue key
+  // too, so the check, the queue and the authoritative check in `withFileLock`
+  // all name the destination the way the filesystem does. A symlinked
+  // spelling shares the queue even while the parent doesn't exist yet (it is
+  // resolved at its nearest existing ancestor). The parent is not created
+  // before the check: a refused request must not write.
   const lockTarget = path.join(path.dirname(dest), siblingPrefix(dest, LOCK_TAG))
   checkLockRequest(lockTarget, 'fan-out destination lock', '2a')
-  const key = await queueKey(dest)
+  const key = lockKey(lockTarget)
   const previous = inProcessQueue.get(key) ?? Promise.resolve()
   let releaseQueue: () => void = () => {}
   const mine = new Promise<void>((resolve) => {

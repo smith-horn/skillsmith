@@ -14,7 +14,10 @@ vi.mock('../../src/tools/install.helpers.js', () => ({
 }))
 
 import { lookupSkillFromRegistry } from '../../src/tools/install.helpers.js'
-import { verifyEntryAgainstRegistry } from '../../src/tools/apply-manifest-reconcile.helpers.js'
+import {
+  validateRelinkIdentity,
+  verifyEntryAgainstRegistry,
+} from '../../src/tools/apply-manifest-reconcile.helpers.js'
 import type { SkillManifestEntry } from '../../src/tools/install.types.js'
 import type { ToolContext } from '../../src/context.js'
 
@@ -58,6 +61,24 @@ describe('verifyEntryAgainstRegistry: lock-order refusal from the lookup', () =>
     await expect(verifyEntryAgainstRegistry(entry, context(), () => {}, false)).resolves.toEqual({
       verified: false,
       reason: 'network-error',
+    })
+  })
+})
+
+describe('validateRelinkIdentity: lock-order refusal from the lookup', () => {
+  it('rejects with the same LockOrderError instance instead of returning ok:false', async () => {
+    const refusal = new LockOrderError('held-while-planning', 'x')
+    mockedLookup.mockRejectedValue(refusal)
+    await expect(validateRelinkIdentity('community/lock-order-skill', context())).rejects.toBe(
+      refusal
+    )
+  })
+
+  it('control: an ordinary error is still reported as a validation failure', async () => {
+    mockedLookup.mockRejectedValue(new Error('boom'))
+    await expect(validateRelinkIdentity('community/lock-order-skill', context())).resolves.toEqual({
+      ok: false,
+      detail: 'boom',
     })
   })
 })

@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import {
@@ -13,6 +14,7 @@ import {
   LockOrderError,
   lockKey,
   runHoldingLock,
+  runPureCallback,
   setLockTrackerEnabledForTests,
 } from '../../../src/config/lock-tracker.js'
 import { runManifestUpdate } from '../../../src/services/skill-manifest.lock.js'
@@ -292,4 +294,121 @@ describe('async work escaping a manifest update callback', () => {
     expect(JSON.parse(fs.readFileSync(manifestPath, 'utf8'))).toEqual({ skills: { a: 1, b: 2 } })
     expect(unhandled).toEqual([])
   })
+})
+
+describe('release and tracker clearing happen in one synchronous step', () => {
+  const LINKS = 200
+  interface Sample {
+    fileExists: boolean
+    held: boolean
+  }
+
+  /** Start a self-rescheduling microtask chain; each link samples file-vs-tracker. */
+  function startChain(
+    lockFile: string,
+    samples: Sample[],
+    onLink?: (s: Sample) => void
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const link = (n: number): void => {
+        const sample: Sample = {
+          fileExists: fs.existsSync(lockFile),
+          held: planningError() instanceof LockOrderError,
+        }
+        samples.push(sample)
+        onLink?.(sample)
+        if (n + 1 < LINKS) queueMicrotask(() => link(n + 1))
+        else resolve()
+      }
+      queueMicrotask(() => link(0))
+    })
+  }
+
+  it('no microtask sees the lock file gone while the tracker still reports it held', async () => {
+    const samples: Sample[] = []
+    let chain: Promise<void> = Promise.resolve()
+    await withFileLock(
+      target('window'),
+      'window',
+      async () => {
+        chain = startChain(`${target('window')}.lock`, samples) // not awaited: runs across the release
+      },
+      { rank: '1' }
+    )
+    await chain
+    expect(samples).toHaveLength(LINKS)
+    // The property: the file is gone only when the tracker agrees.
+    expect(samples.filter((s) => !s.fileExists && s.held)).toEqual([])
+    // Positive controls from the same run: the chain spanned the release.
+    expect(samples.some((s) => s.fileExists && s.held)).toBe(true)
+    expect(samples.some((s) => !s.fileExists && !s.held)).toBe(true)
+  })
+
+  it('work started inside the lock can take the same target the moment its file is gone', async () => {
+    const samples: Sample[] = []
+    let chain: Promise<void> = Promise.resolve()
+    let again: Promise<string> | undefined
+    await withFileLock(
+      target('again'),
+      'first',
+      async () => {
+        chain = startChain(`${target('again')}.lock`, samples, (s) => {
+          if (again === undefined && !s.fileExists) {
+            again = withFileLock(target('again'), 'second', async () => 'ok', {
+              rank: 'unordered',
+              timeoutMs: 2_000,
+            })
+          }
+        })
+      },
+      { rank: 'unordered' }
+    )
+    await chain
+    expect(again).toBeDefined() // the file did disappear during the chain
+    await expect(again).resolves.toBe('ok') // not refused as re-entry
+  })
+})
+
+describe('known gap: the purity watch sees only async resources created during the callback', () => {
+  it('KNOWN GAP (not desired behaviour): a listener added to an existing emitter is not refused', () => {
+    const emitter = new EventEmitter()
+    expect(() =>
+      runPureCallback(() => {
+        emitter.on('later', () => {}) // could run later and request a lock; the watch cannot see it
+        return 1
+      })
+    ).not.toThrow()
+    expect(emitter.listenerCount('later')).toBe(1) // the callback really ran and registered it
+    // Paired control: the same watch does refuse a resource it can see.
+    expect(() =>
+      runPureCallback(() => {
+        queueMicrotask(() => {})
+        return 1
+      })
+    ).toThrow(LockOrderError)
+  })
+})
+
+describe('lockKey: what "same key" guarantees', () => {
+  it('two hard links to one file key differently (hard links are never merged)', () => {
+    const a = target('hard-a')
+    const b = target('hard-b')
+    fs.writeFileSync(a, 'x')
+    fs.linkSync(a, b)
+    expect(fs.statSync(a).ino).toBe(fs.statSync(b).ino)
+    expect(lockKey(a)).not.toBe(lockKey(b))
+  })
+
+  it('a case variant of a folder that does not exist yet is never merged', () => {
+    expect(lockKey(path.join(dir, 'Absent', 'f'))).not.toBe(lockKey(path.join(dir, 'ABSENT', 'f')))
+  })
+
+  it.skipIf(process.platform !== 'darwin')(
+    'macOS: a case variant of an existing folder keys the same, but the final name is kept as spelled',
+    () => {
+      fs.mkdirSync(path.join(dir, 'Case'))
+      expect(lockKey(path.join(dir, 'case', 'f'))).toBe(lockKey(path.join(dir, 'CASE', 'f')))
+      expect(lockKey(path.join(dir, 'Case', 'f'))).not.toBe(lockKey(path.join(dir, 'Case', 'F')))
+    }
+  )
 })

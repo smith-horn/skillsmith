@@ -12,7 +12,9 @@ All notable changes to `@skillsmith/core` are documented here.
   for work it left running, and a lock is identified by its real path (symlinks resolved before
   `..`). The manifest lock is rank 3, fan-out's destination and link-manifest locks 2a and 2b (the
   destination lock checks before its in-process queue), the parked index 4. A manifest update
-  callback that requests a lock or starts async work is refused. `assertSkillWriteLockNotHeld(label)`
+  callback that requests a lock or starts async work while it runs (a promise, timer, microtask,
+  immediate, nextTick or fs call) is refused; a listener added to an existing emitter or stream is
+  not detected. `assertSkillWriteLockNotHeld(label)`
   throws when a skills-root lock is held; the install fetch and scan helpers, including the main
   SKILL.md scan, call it on entry. A `LockOrderError` is passed through, never turned into an
   install or lookup failure.

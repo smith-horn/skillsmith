@@ -28,7 +28,12 @@
  * Two more rules ride on the same store: `assertSkillWriteLockNotHeld` throws
  * when a skills-root lock is held while planning, fetching or scanning, and a
  * manifest update's callback (`runPureCallback`) may not request any lock,
- * nor schedule async work that could request one later.
+ * nor start async work while it runs (promises, microtasks, timers,
+ * immediates, nextTick, fs callbacks and fs promises). That watch sees only
+ * async resources CREATED during the callback. It does not detect a listener
+ * added to an EventEmitter or stream that already exists, a message posted to
+ * an existing worker, or a child-process callback registered on an existing
+ * object: such a callback can run later and request a lock unseen.
  *
  * Work a lock's `fn` starts and leaves running (a timer, an un-awaited
  * promise) inherits the store, so each held entry carries a live flag that
@@ -107,6 +112,17 @@ export function setLockTrackerEnabledForTests(on: boolean): void {
  * `real/x`, which `resolve()` would have turned into `x`. A folder that
  * doesn't exist yet is resolved at its nearest existing ancestor; the key is
  * computed again once the lock is held (`runHoldingLock`), when it exists.
+ *
+ * What "same key" guarantees, as measured (not "one file, one key"):
+ *   - Aliases `realpath` resolves: symlinks and `..`. Guaranteed.
+ *   - Case variants of an EXISTING folder component: only where the OS
+ *     canonicalizes case in `realpath.native`. Measured on macOS (APFS,
+ *     case-insensitive): yes. Measured on Linux (case-sensitive): no, and
+ *     there the variants are different folders anyway.
+ *   - Case variants of a component that does not exist yet: never. It is kept
+ *     as spelled, as is the final name (only the folder is resolved).
+ *   - Hard links: never. Two names for one inode key differently; the lock is
+ *     a file at `<target>.lock`, so two hard links are two locks.
  */
 export function lockKey(target: string): string {
   const raw = isAbsolute(target) ? target : `${process.cwd()}${sep}${target}`
@@ -213,25 +229,31 @@ export function checkLockRequest(target: string, label: string, rank: LockOrder)
  * synchronously, before `fn` or any wait, when the request breaks a rule.
  * `fn` calls `acquired()` once the file lock is taken, which recomputes the
  * entry's key now that the lock's folder exists. The entry stops counting
- * when `fn` settles.
+ * when `fn` calls `releasing()`, which it must do in the same synchronous
+ * step as the release itself (no `await` between): work `fn` started can run
+ * in the next microtask and must not see a lock that is already gone. When
+ * `fn` settles, the entry is cleared again as a backstop (idempotent).
  */
 export function runHoldingLock<T>(
   target: string,
   label: string,
   rank: LockOrder,
-  fn: (acquired: () => void) => Promise<T>
+  fn: (acquired: () => void, releasing: () => void) => Promise<T>
 ): Promise<T> {
   const entry = admit(target, label, rank)
   const acquired = (): void => {
     entry.key = lockKey(target)
   }
-  if (!enabled) return fn(acquired)
+  const releasing = (): void => {
+    entry.live = false
+  }
+  if (!enabled) return fn(acquired, releasing)
   const held = liveHeld(storage.getStore())
   return storage.run({ held: [...held, entry], pure: null }, async () => {
     try {
-      return await fn(acquired)
+      return await fn(acquired, releasing)
     } finally {
-      entry.live = false
+      releasing()
     }
   })
 }
@@ -288,6 +310,14 @@ const asyncWatch = createHook({
  * runs. Either refuses the callback's result, even if the callback caught the
  * refusal (plan §3.2: a callback may not call a lock wrapper). A callback
  * that returns a promise is returned as is, for the caller to refuse.
+ *
+ * What this enforces is narrower than "no later lock request": the hook sees
+ * only async resources of the types in `SCHEDULING_TYPES` that are created
+ * while the callback runs. It does NOT detect a listener registered on an
+ * EventEmitter or stream that already exists, a message posted to an existing
+ * worker, or a callback registered on an existing child process (none of
+ * those creates a watched resource). A callback must not do any of them; the
+ * tracker will not catch it.
  */
 export function runPureCallback<T>(fn: () => T): T {
   if (!enabled) return fn()
