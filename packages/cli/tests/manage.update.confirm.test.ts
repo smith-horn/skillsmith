@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   },
   installFn: vi.fn(),
   confirmFn: vi.fn(),
+  guardFn: vi.fn(),
 }))
 
 vi.mock('ora', () => ({ default: () => mocks.spinner }))
@@ -46,6 +47,9 @@ vi.mock('@skillsmith/core/install', () => ({
   }),
 }))
 vi.mock('@skillsmith/core', () => ({
+  // SMI-6531: the install wrappers and the update prompt call this on entry;
+  // no lock is held here unless a test makes it throw.
+  assertSkillWriteLockNotHeld: (label: string) => mocks.guardFn(label),
   SkillRepository: vi.fn().mockImplementation(function () {
     return {}
   }),
@@ -115,6 +119,7 @@ describe('SMI-7056: update confirmation path', () => {
   })
 
   afterEach(() => {
+    mocks.guardFn.mockReset() // a throwing guard must not leak into later tests
     for (const [stream, key] of [
       [process.stdin, 'stdin'],
       [process.stdout, 'stdout'],
@@ -232,6 +237,28 @@ describe('SMI-7056: update confirmation path', () => {
       'someone/low-star-skill',
       expect.objectContaining({ confirmed: true })
     )
+  })
+
+  it('SMI-6531 T-L10: the "Update <skill>?" prompt is guarded, and a held lock stops it before any prompt or install', async () => {
+    const { updateSkillWithOutcome } = await import('../src/commands/manage.update.js')
+
+    await updateSkillWithOutcome('low-star-skill', '/fake/db')
+    expect(mocks.guardFn).toHaveBeenCalledWith('prompt: update confirmation')
+
+    vi.clearAllMocks()
+    mocks.installFn.mockResolvedValue(UPDATED)
+    mocks.confirmFn.mockResolvedValue(true)
+    mocks.guardFn.mockImplementation((label: string) => {
+      if (label === 'prompt: update confirmation') throw new Error('skills-root lock held')
+    })
+
+    const outcome = await updateSkillWithOutcome('low-star-skill', '/fake/db').catch(
+      (e: unknown) => e
+    )
+
+    expect(mocks.confirmFn).not.toHaveBeenCalled()
+    expect(mocks.installFn).not.toHaveBeenCalled()
+    expect(outcome).not.toEqual(expect.objectContaining({ outcome: 'updated' }))
   })
 
   it('the update command registers --yes / -y', async () => {

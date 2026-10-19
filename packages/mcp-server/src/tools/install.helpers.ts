@@ -8,6 +8,7 @@ import type { ToolContext } from '../context.js'
 import {
   parseRepoUrl,
   QuarantineRepository,
+  assertSkillWriteLockNotHeld,
   SkillsmithError,
   ErrorCodes,
   type ParsedRepoUrl,
@@ -154,6 +155,7 @@ export async function lookupSkillFromRegistry(
     onLiveLookupFailed?: (error: unknown) => void
   }
 ): Promise<RegistrySkillInfo | null> {
+  assertSkillWriteLockNotHeld('registry-lookup: lookupSkillFromRegistry')
   // Try API first (primary data source)
   if (!context.apiClient.isOffline()) {
     try {
@@ -248,6 +250,7 @@ export async function fetchFromGitHub(
   filePath: string,
   branch: string = 'main'
 ): Promise<string> {
+  assertSkillWriteLockNotHeld('fetch: fetchFromGitHub')
   const url =
     'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/' + filePath
   const response = await fetch(url, { signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) })

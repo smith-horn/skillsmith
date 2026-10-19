@@ -58,6 +58,8 @@ vi.mock('@skillsmith/core', () => ({
   isGitHubUrl: vi.fn(() => false),
   emitInstallEvent: vi.fn(async () => undefined),
   isQuietModeEnabled: () => false,
+  // SMI-6531: the install wrappers call this on entry; no lock is held here.
+  assertSkillWriteLockNotHeld: () => undefined,
 }))
 
 const SKILL_ID = 'someone/low-star-skill'

@@ -45,7 +45,9 @@ export async function appendParkedIndexLocked(
   indexPath: string,
   entry: ParkedIndexEntry
 ): Promise<void> {
-  await withFileLock(indexPath, LOCK_LABEL, async () => appendParkedIndex(indexPath, entry))
+  await withFileLock(indexPath, LOCK_LABEL, async () => appendParkedIndex(indexPath, entry), {
+    rank: '4',
+  })
 }
 
 /**
@@ -57,7 +59,9 @@ export async function appendParkedIndexLocked(
  */
 export async function compactParkedIndexLocked(indexPath: string): Promise<CompactResult> {
   try {
-    return await withFileLock(indexPath, LOCK_LABEL, async () => compactParkedIndex(indexPath))
+    return await withFileLock(indexPath, LOCK_LABEL, async () => compactParkedIndex(indexPath), {
+      rank: '4',
+    })
   } catch (err) {
     return { ok: false, errno: errCodeOrMessage(err) }
   }

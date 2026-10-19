@@ -59,7 +59,7 @@ export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>)
     const parent = path.dirname(dest)
     await fsp.mkdir(parent, { recursive: true })
     const lockTarget = path.join(parent, siblingPrefix(dest, LOCK_TAG))
-    return await withFileLock(lockTarget, 'fan-out destination lock', fn)
+    return await withFileLock(lockTarget, 'fan-out destination lock', fn, { rank: '2a' })
   } finally {
     releaseQueue()
     if (inProcessQueue.get(key) === tail) inProcessQueue.delete(key)

@@ -21,6 +21,7 @@ import {
   createApiClient,
   loadStoredAccessToken,
   isQuietModeEnabled,
+  assertSkillWriteLockNotHeld,
   type RegistryLookup,
   type RegistrySkillInfo,
   type DatabaseType,
@@ -122,6 +123,7 @@ export function createDbRegistryLookup(
   let quarantineRepo: QuarantineRepository | undefined
   return {
     async lookup(skillId: string): Promise<RegistrySkillInfo | null> {
+      assertSkillWriteLockNotHeld('registry-lookup: createDbRegistryLookup')
       const skill = skillRepo.findById(skillId)
       if (!skill) return null
       if (!skill.repoUrl) return null
@@ -162,6 +164,7 @@ export async function createApiBackedRegistryLookup(
   const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
   return {
     async lookup(skillId: string): Promise<RegistrySkillInfo | null> {
+      assertSkillWriteLockNotHeld('registry-lookup: createApiBackedRegistryLookup')
       const local = await dbLookup.lookup(skillId)
       if (local) return local
       // API fallback for remote-only skills.

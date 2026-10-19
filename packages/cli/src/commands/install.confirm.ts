@@ -17,6 +17,7 @@
 
 import { confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
+import { assertSkillWriteLockNotHeld } from '@skillsmith/core'
 import type { CoreInstallResult, InstallOptions } from '@skillsmith/core'
 
 export interface ConfirmOptions {
@@ -66,6 +67,7 @@ function withError(result: CoreInstallResult, error: string): CoreInstallResult 
 
 /** Ask y/N (default No). Ctrl-C (`ExitPromptError`) is a "no", as in login.ts. */
 async function askToProceed(): Promise<boolean> {
+  assertSkillWriteLockNotHeld('prompt: askToProceed')
   try {
     return await confirm({ message: 'Install anyway?', default: false })
   } catch (err) {

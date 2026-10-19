@@ -42,6 +42,8 @@ vi.mock('ora', () => ({
 }))
 
 vi.mock('@skillsmith/core', () => ({
+  // SMI-6531: the install wrappers call this on entry; no lock is held here.
+  assertSkillWriteLockNotHeld: () => undefined,
   createDatabaseAsync: (...args: unknown[]) => mocks.createDatabaseAsync(...args),
   initializeSchema: (...args: unknown[]) => mocks.initializeSchema(...args),
   SkillRepository: vi.fn().mockImplementation(function () {

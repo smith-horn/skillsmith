@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 (A1 step 1) -- a lock-order tracker (`config/lock-tracker.ts`, plan §3.2).
+  `withFileLock` takes a `rank` (1, 1′, 2a, 2b, 3, 4); an `AsyncLocalStorage` records the locks a
+  context holds, and a request that re-enters one, takes a second skills-root lock, or ranks below
+  one already held rejects with `LockOrderError` before any wait. The manifest lock is rank 3,
+  fan-out's destination and link-manifest locks 2a and 2b, the parked index 4. A manifest update
+  callback that requests a lock is refused. `assertSkillWriteLockNotHeld(label)` throws when a
+  skills-root lock is held; the install fetch, scan and registry-lookup helpers call it on entry.
+  `sanitizeInstallError` passes a `LockOrderError` message through.
 - **Fixed**: SMI-7143 -- `releaseLock` and `inspectLock` (PR #3123 retro): a read that fails after
   the lock is opened (a directory or FIFO swapped in) is now `unparseable` instead of a throw, and
   owned-lock's reclaim and `doctor locks` share one liveness probe, `probePidAlive`
