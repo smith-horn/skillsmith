@@ -159,6 +159,9 @@ describe('security-acceptance lost update under a forced stale reclaim (§9 H-9)
 
       for (const c of [c1, c2]) {
         expect(c.stderr).not.toContain('lock_release_not_owner') // (d)
+        // The other way a release can fail to confirm it still owned the lock:
+        // its claim could not be read while the file remained.
+        expect(c.stderr).not.toContain('lock_release_unverified')
       }
 
       const outcomes = [c1, c2].map((c) => {

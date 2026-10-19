@@ -41,12 +41,15 @@
  * request a lock unseen.
  *
  * Work a lock's `fn` starts and leaves running (a timer, an un-awaited
- * promise) inherits the store, so each held entry carries a live flag. It is
- * cleared by `releasing()`, which `withFileLock` calls right after a release
- * that is confirmed, with no await between. The backstop in `runHoldingLock`
- * clears it only for a lock that was never acquired. A lock whose release
- * failed stays live: the file is still held, and work that inherited the store
- * must be refused rather than wait on it.
+ * promise) inherits the store, so each held entry carries a live flag. The
+ * tracker stops counting a lock only once it is shown gone or someone else's:
+ * `releasing()` clears the flag, and `withFileLock` calls it right after a
+ * release that reports the lock is no longer ours on disk (unlinked, nothing at
+ * the path, or a readable claim naming someone else), with no await between.
+ * The backstop in `runHoldingLock` clears it only for a lock that was never
+ * acquired. A release that failed, or whose claim could not be read while a
+ * file remains, keeps the lock counting: the file may still be ours, and work
+ * that inherited the store must be refused rather than wait on it.
  *
  * @module @skillsmith/core/config/lock-tracker
  */
@@ -87,7 +90,7 @@ export class LockOrderError extends Error {
 }
 
 interface HeldLock {
-  /** The lock target, resolved through the filesystem so two spellings compare equal. */
+  /** The lock file `<target>.lock`, resolved through the filesystem once it exists, so two spellings compare equal. */
   key: string
   label: string
   rank: LockOrder
@@ -119,8 +122,9 @@ export function setLockTrackerEnabledForTests(on: boolean): void {
  * `target` as the filesystem resolves it. The path is never collapsed
  * lexically before `realpath`: with `link -> real/sub`, `link/../x` opens
  * `real/x`, which `resolve()` would have turned into `x`. A folder that
- * doesn't exist yet is resolved at its nearest existing ancestor; the key is
- * computed again once the lock is held (`runHoldingLock`), when it exists.
+ * doesn't exist yet is resolved at its nearest existing ancestor. The tracker
+ * does not key by this alone: `runHoldingLock` recomputes {@link lockFileKey}
+ * once the lock is held, when the folder and the lock file exist.
  *
  * What "same key" guarantees, as measured (not "one file, one key"):
  *   - Aliases `realpath` resolves: symlinks and `..`. Guaranteed.
@@ -261,14 +265,16 @@ export function checkLockRequest(target: string, label: string, rank: LockOrder)
  * synchronously, before `fn` or any wait, when the request breaks a rule.
  * `fn` calls `acquired()` once the file lock is taken, which recomputes the
  * entry's key now that the lock file exists. The entry stops counting when
- * `fn` calls `releasing()`, which it must do only once the lock file is
- * really gone, in the same synchronous step as the release itself (no
- * `await` between): work `fn` started can run in the next microtask and must
- * not see a lock that is already gone, nor a lock that is still held as free.
- * When `fn` settles, the entry is cleared as a backstop only if `fn` never
- * called `acquired()` (the acquisition failed or was refused, so no file was
- * taken). An acquired lock whose release failed stays live for the contexts
- * that inherited it, because the file is in fact still held.
+ * `fn` calls `releasing()`, which it must do only once the lock is shown gone
+ * or someone else's (the release reports it is no longer ours on disk), in the
+ * same synchronous step as the release itself (no `await` between): work `fn`
+ * started can run in the next microtask and must not see a lock that is
+ * already gone, nor a lock that is still held as free. When `fn` settles, the
+ * entry is cleared as a backstop only if `fn` never called `acquired()` (the
+ * acquisition failed or was refused, so no file was taken). An acquired lock
+ * whose release failed, or whose claim could not be read while a file remains,
+ * stays live for the contexts that inherited it, because the file may still
+ * be ours.
  */
 export function runHoldingLock<T>(
   target: string,

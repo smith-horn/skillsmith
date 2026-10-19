@@ -13,7 +13,17 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const inject = vi.hoisted(() => ({ failUnlinkOf: null as string | null, failed: 0 }))
+const inject = vi.hoisted(() => ({
+  failUnlinkOf: null as string | null,
+  failed: 0,
+  // `openSync` of this path throws `failOpenCode` for the next `failOpenTimes`
+  // calls only, so the claim read in a release fails while a later acquisition
+  // (the leftover request) opens normally.
+  failOpenOf: null as string | null,
+  failOpenCode: 'EMFILE',
+  failOpenTimes: 0,
+  openFailed: 0,
+}))
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -26,10 +36,21 @@ vi.mock('node:fs', async (importOriginal) => {
     }
     return actual.unlinkSync(p)
   }) as typeof actual.unlinkSync
-  return { ...actual, unlinkSync, default: { ...actual, unlinkSync } }
+  const openSync = ((p: fs.PathLike, ...rest: unknown[]) => {
+    if (inject.failOpenOf !== null && String(p) === inject.failOpenOf && inject.failOpenTimes > 0) {
+      inject.failOpenTimes -= 1
+      inject.openFailed += 1
+      throw Object.assign(new Error(`${inject.failOpenCode}: injected, open '${String(p)}'`), {
+        code: inject.failOpenCode,
+      })
+    }
+    return (actual.openSync as (...a: unknown[]) => number)(p, ...rest)
+  }) as typeof actual.openSync
+  return { ...actual, unlinkSync, openSync, default: { ...actual, unlinkSync, openSync } }
 })
 
 import { withFileLock } from '../../../src/config/file-lock.js'
+import { StuckLockError } from '../../../src/config/owned-lock.js'
 import {
   LockOrderError,
   runHoldingLock,
@@ -54,29 +75,55 @@ async function settle(p: Promise<unknown>): Promise<{ error: unknown; ms: number
   }
 }
 
+let warnSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   setLockTrackerEnabledForTests(true)
   inject.failUnlinkOf = null
   inject.failed = 0
+  inject.failOpenOf = null
+  inject.failOpenTimes = 0
+  inject.openFailed = 0
   dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lock-tracker-release-')))
-  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
 afterEach(() => {
   inject.failUnlinkOf = null
+  inject.failOpenOf = null
+  inject.failOpenTimes = 0
   setLockTrackerEnabledForTests(true)
   vi.restoreAllMocks()
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+const warned = (name: string): boolean =>
+  warnSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes(name))
+
+/** Make the claim read of the next release fail with `code` (the file stays on disk). */
+function failNextClaimRead(t: string, code: string): void {
+  inject.failOpenOf = `${t}.lock`
+  inject.failOpenCode = code
+  inject.failOpenTimes = 1
+}
+
+interface Leftover {
+  error: unknown
+  ms: number
+  lockFileExists: boolean
+  unlinkFailures: number
+  openFailures: number
+}
+
 /**
- * Take `t`, start a request for `t` that fires after `fn` has settled, make the
- * lock's release fail when `failRelease`, and report how the leftover fared.
+ * Take `t`, run `duringFn(t)` inside the lock, start a request for `t` that
+ * fires after `fn` has settled, and report how the leftover fared.
  */
-async function leftoverAfterRelease(
+async function leftoverAfterFn(
   t: string,
-  failRelease: boolean
-): Promise<{ error: unknown; ms: number; lockFileExists: boolean; unlinkFailures: number }> {
+  duringFn: (t: string) => void,
+  leftoverTimeoutMs = LEFTOVER_TIMEOUT_MS
+): Promise<Leftover> {
   let leftover: Promise<{ error: unknown; ms: number }> = Promise.resolve({
     error: 'unset',
     ms: 0,
@@ -85,14 +132,14 @@ async function leftoverAfterRelease(
     t,
     'outer',
     async () => {
-      if (failRelease) inject.failUnlinkOf = `${t}.lock`
+      duringFn(t)
       leftover = new Promise((resolve) => {
         setTimeout(() => {
           resolve(
             settle(
               withFileLock(t, 'leftover', async () => 'late', {
                 rank: 'unordered',
-                timeoutMs: LEFTOVER_TIMEOUT_MS,
+                timeoutMs: leftoverTimeoutMs,
               })
             )
           )
@@ -107,7 +154,14 @@ async function leftoverAfterRelease(
     ...result,
     lockFileExists: lockFileExistsAfterFn,
     unlinkFailures: inject.failed,
+    openFailures: inject.openFailed,
   }
+}
+
+function leftoverAfterRelease(t: string, failRelease: boolean): Promise<Leftover> {
+  return leftoverAfterFn(t, () => {
+    if (failRelease) inject.failUnlinkOf = `${t}.lock`
+  })
 }
 
 describe('a lock whose release failed stays held for work it started', () => {
@@ -126,6 +180,56 @@ describe('a lock whose release failed stays held for work it started', () => {
     expect(r.unlinkFailures).toBe(0)
     expect(r.lockFileExists).toBe(false)
     expect(r.error).toBeUndefined()
+  })
+})
+
+describe('a release that could not READ the claim leaves the lock held while the file remains', () => {
+  // EMFILE/ENFILE read as `absent` and EACCES/ELOOP as `unparseable`: both used
+  // to fall into the not-owner branch and be reported as "no longer ours" while
+  // our own file was still on disk.
+  it.each([
+    ['EMFILE', 'absent'],
+    ['EACCES', 'unparseable'],
+  ])(
+    'open fails with %s (claim reads as %s): file kept, unverified warning, leftover refused as re-entry promptly',
+    async (code) => {
+      const t = path.join(dir, `r-${code}`)
+      const r = await leftoverAfterFn(t, () => failNextClaimRead(t, code))
+      expect(r.openFailures).toBe(1) // the claim read really failed
+      expect(r.lockFileExists).toBe(true) // and our file is still there
+      expect(warned('lock_release_unverified')).toBe(true)
+      expect(warned('lock_release_not_owner')).toBe(false)
+      expect(r.error).toBeInstanceOf(LockOrderError)
+      expect((r.error as LockOrderError).kind).toBe('re-entry')
+      expect(r.ms).toBeLessThan(PROMPT_MS)
+    }
+  )
+
+  it('control: when the file is really gone at release time, the leftover request takes the lock', async () => {
+    const t = path.join(dir, 'g')
+    const r = await leftoverAfterFn(t, () => fs.rmSync(`${t}.lock`))
+    expect(r.lockFileExists).toBe(false)
+    expect(warned('lock_release_unverified')).toBe(false)
+    expect(r.error).toBeUndefined()
+  })
+
+  it('control: a readable v1 claim naming another token is not removed, and the tracker stops counting it', async () => {
+    const t = path.join(dir, 'h')
+    const foreign = JSON.stringify({
+      v: 1,
+      pid: process.pid,
+      token: 'f'.repeat(16),
+      host: os.hostname(),
+      acquiredAt: Date.now(),
+    })
+    const r = await leftoverAfterFn(t, () => fs.writeFileSync(`${t}.lock`, `${foreign}\n`), 300)
+    expect(r.lockFileExists).toBe(true) // never unlinked: it is someone else's
+    expect(fs.readFileSync(`${t}.lock`, 'utf8')).toBe(`${foreign}\n`)
+    expect(warned('lock_release_not_owner')).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(false)
+    // Admitted (not a re-entry): it waited on the foreign holder and timed out.
+    expect(r.error).toBeInstanceOf(StuckLockError)
+    expect(r.error).not.toBeInstanceOf(LockOrderError)
   })
 })
 

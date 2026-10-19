@@ -149,9 +149,10 @@ export function withFileLock<T>(
       } finally {
         // Release first, then stop counting the lock, with no await between:
         // work `fn` started can run in the next microtask and must not see a
-        // lock whose file is already gone. If the unlink failed the file is
-        // still ours and the entry stays live for that work, which would
-        // otherwise pass admission and wait on its own retained lock file.
+        // lock whose file is already gone. If the release failed, or could not
+        // read the claim while a file remains, the file may still be ours and
+        // the entry stays live for that work, which would otherwise pass
+        // admission and wait on its own retained lock file.
         if (release()) releasing()
       }
     })

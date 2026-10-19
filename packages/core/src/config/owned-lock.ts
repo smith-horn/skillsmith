@@ -97,8 +97,10 @@ export { describeRemedy, StuckLockError }
  * file is `${target}.lock`, the reclaim lock `${target}.lock.reclaim`).
  * @returns A release function. Callers MUST call it exactly once, in a
  * `finally` block. Idempotent -- a second call is a no-op that returns the
- * first call's result: true when the lock is no longer ours on disk, false
- * only when the unlink failed and the file is still there.
+ * first call's result: true only when the lock is shown to be no longer ours
+ * (unlinked, nothing at the path, or a readable claim naming someone else);
+ * false when the unlink failed, or when the claim could not be read and
+ * something is still at the path (it may be our own file).
  *
  * SMI-5883 code-review round 2: `opts` is destructured field-by-field into a
  * FRESH object rather than forwarded as-is. TypeScript's excess-property

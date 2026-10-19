@@ -7,7 +7,6 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import {
@@ -397,7 +396,7 @@ describe('known gap: native request types outside SCHEDULING_TYPES', () => {
       runPureCallback(() => {
         // No promise here: creating one would be refused. The callback could run
         // later and request a lock; the watch cannot see it.
-        randomBytes(16, () => {
+        crypto.randomBytes(16, () => {
           ran = true
         })
         return 1

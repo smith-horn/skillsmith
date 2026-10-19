@@ -18,7 +18,7 @@
 import * as path from 'node:path'
 import * as fsp from 'node:fs/promises'
 import { withFileLock } from '../config/file-lock.js'
-import { checkLockRequest } from '../config/lock-tracker.js'
+import { checkLockRequest, lockKey } from '../config/lock-tracker.js'
 import { siblingPrefix } from './fan-out.leftovers.js'
 
 export { withFileLock }
@@ -36,17 +36,17 @@ const inProcessQueue = new Map<string, Promise<void>>()
  */
 export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>): Promise<T> {
   // A1 step 1: the tracker's refusal must come before the queue and the
-  // mkdir below, or a re-entry waits on itself forever (plan §3.2). One
-  // identity serves both: the admission check returns the lock-file key it
-  // computed, and that value is the queue key, so the check and the queue name
-  // the lock file the same way (the authoritative check in `withFileLock`
-  // computes its own, in the same way). A symlinked spelling
-  // shares the queue even while the parent doesn't exist yet (it is resolved
-  // at its nearest existing ancestor), and so does a case variant of an
-  // existing lock file where the OS folds case. The parent is not created
-  // before the check: a refused request must not write.
+  // mkdir below, or a re-entry waits on itself forever (plan §3.2). Admission
+  // keys by the lock file (`checkLockRequest`); the queue keys by spelling
+  // (`lockKey` of the lock file's path), which does not change with whether a
+  // case-variant lock file currently exists. Two spellings of one lock file may
+  // therefore queue separately, but they still exclude each other through the
+  // file lock. A symlinked spelling shares the queue even while the parent
+  // doesn't exist yet (it is resolved at its nearest existing ancestor). The
+  // parent is not created before the check: a refused request must not write.
   const lockTarget = path.join(path.dirname(dest), siblingPrefix(dest, LOCK_TAG))
-  const key = checkLockRequest(lockTarget, 'fan-out destination lock', '2a')
+  checkLockRequest(lockTarget, 'fan-out destination lock', '2a')
+  const key = lockKey(`${lockTarget}.lock`)
   const previous = inProcessQueue.get(key) ?? Promise.resolve()
   let releaseQueue: () => void = () => {}
   const mine = new Promise<void>((resolve) => {

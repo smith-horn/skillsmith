@@ -364,11 +364,12 @@ export function tryReclaimUnderLock(
 // ---------------------------------------------------------------------------
 
 /**
- * Release `path` if `token` still owns it. Returns whether the lock is no
- * longer ours on disk: true when it was unlinked, was already gone, or is now
- * someone else's (not-owner); false only when the unlink failed with an error
- * other than ENOENT, so the file is still there and still ours. Callers that
- * stop counting a lock as held (the lock-order tracker) rely on this.
+ * Release `path` if `token` still owns it. Returns whether the lock is shown
+ * to be no longer ours on disk: true when it was unlinked, when nothing is at
+ * the path, or when a readable claim there names someone else; false when the
+ * unlink failed, or when the claim could not be read and something is still at
+ * the path (it may be our own file). Callers that stop counting a lock as held
+ * (the lock-order tracker) rely on this, so every doubt answers false.
  */
 export function releaseOwned(path: string, token: string): boolean {
   const claim = readClaim(path)
@@ -384,14 +385,34 @@ export function releaseOwned(path: string, token: string): boolean {
       }
     }
     return true
-  } else {
-    // We no longer own it -- unlinking would destroy a live holder's lock
-    // (it was reclaimed from us after we appeared dead, or hand-edited).
-    // Release runs in a `finally`, so neither warning may throw (SMI-7143).
+  }
+  // Not provably ours, so never unlinked: that would destroy a live holder's
+  // lock (reclaimed from us after we appeared dead, or hand-edited). Release
+  // runs in a `finally`, so no warning here may throw (SMI-7143).
+  if (claim.kind === 'v1' || claim.kind === 'legacy') {
+    // A claim we can read, and it isn't ours: someone else holds it now.
     warnSafely(
       `[skillsmith] lock_release_not_owner: ${path} is no longer owned by this process -- not removing it.`
     )
     return true
+  }
+  // `absent` or `unparseable` can also mean the claim could not be READ (out of
+  // file descriptors, EACCES) while our file is still there, so only a path
+  // that is really gone counts as released (lstat needs no descriptor).
+  if (pathIsGone(path)) return true
+  warnSafely(
+    `[skillsmith] lock_release_unverified: could not read the claim at ${path} -- not removing it, ` +
+      'and this process still counts it as held.'
+  )
+  return false
+}
+
+function pathIsGone(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT'
   }
 }
 
