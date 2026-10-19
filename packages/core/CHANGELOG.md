@@ -22,10 +22,10 @@ All notable changes to `@skillsmith/core` are documented here.
   this one path (`runManifestUpdate`). An update callback can therefore run twice; the four callbacks
   that recorded results outside themselves (backfill, uninstall, telemetry rotation, reconcile
   verify) now reset them first. Not closed: a stall of more than about 5 s between the check and the
-  rename, and owned-lock's read-then-unlink release, which predates this. A wall clock 25 s or more
-  ahead of the manifest directory's file clock (a network mount served by another host) makes every
-  save fail closed, with a reason naming the skew, because an older Skillsmith there would steal
-  any lock.
+  rename, cross-host clock skew (an older Skillsmith on another host whose clock runs 30 s or more
+  ahead of the file clock can still steal a lock this check accepts), and owned-lock's
+  read-then-unlink release, which predates this. This host's wall clock 25 s or more ahead of the
+  manifest directory's file clock makes every save fail closed, with a reason naming the skew.
 - **Fixed**: SMI-7143 -- when an older Skillsmith process holds the manifest lock (a bare-PID claim),
   an update now waits up to the normal 30 s for it, with one warning naming the pid, instead of
   failing at once. Other locks keep failing at once on such a claim.

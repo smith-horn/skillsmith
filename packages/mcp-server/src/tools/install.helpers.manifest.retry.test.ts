@@ -44,6 +44,16 @@ import { SKILLSMITH_DIR, MANIFEST_PATH } from './install.types.js'
 import type { SkillManifest, SkillManifestEntry } from './install.types.js'
 import { updateManifestSafely } from './install.helpers.manifest.js'
 
+// The $HOME sandbox (vitest.setup.ts) must be in force before any hook runs. A
+// failed check inside beforeAll/beforeEach still lets afterEach run, and
+// afterEach deletes the manifest; a throw here fails collection instead.
+if (
+  !MANIFEST_PATH.includes('skillsmith-vitest-home-') ||
+  !MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')
+) {
+  throw new Error(`Refusing to run: ${MANIFEST_PATH} is not inside the vitest HOME sandbox`)
+}
+
 function entry(name: string): SkillManifestEntry {
   const at = '2026-01-01T00:00:00.000Z'
   return {
@@ -76,7 +86,6 @@ const addMine = (m: SkillManifest): SkillManifest => ({
 })
 
 beforeEach(() => {
-  expect(MANIFEST_PATH).toContain('skillsmith-vitest-home-')
   fs.mkdirSync(SKILLSMITH_DIR, { recursive: true })
   fs.rmSync(`${MANIFEST_PATH}.lock`, { force: true })
   writeManifest(['existing'])

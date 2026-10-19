@@ -97,8 +97,16 @@ describe('T-M3: lock-age boundaries on the two clocks', () => {
   it('a lock that only looks newer than the wall clock (skew) passes', () => {
     expect(at(5_000_000n, -740_000n)).toBe(null)
   })
-  it('a file clock 26 s ahead of the wall clock passes: an older Skillsmith never steals there', () => {
+  it("a file clock 26 s ahead of this host's wall clock passes (other hosts are the module's named residual)", () => {
     expect(at(1_000_000n, -26n * S)).toBe(null)
+  })
+  it('an old lock with clocks that agree is blamed on its age, not on skew', () => {
+    const why = at(24_999_000_000n, 25_000_500_000n)
+    expect(why).toMatch(/25 s old or older/)
+    expect(why).not.toMatch(/clocks agree/)
+  })
+  it("the skew named is the clocks' own difference, not the lock's age", () => {
+    expect(at(10n * S, 40n * S)).toContain('about 30 s ahead')
   })
   it('a missing lock, another inode, or other bytes fail', () => {
     const clocks = { fsNs: T0, wallNs: T0 }

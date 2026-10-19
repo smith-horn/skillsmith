@@ -31,11 +31,11 @@
  * - A stall between the check and rename(2) (a stopped process, a paused VM)
  *   of more than 30 s minus the lock's age at the check still lets a legacy
  *   stealer in; the 25 s limit leaves at least 5 s.
- * - A wall clock 25 s or more ahead of the directory's file clock (a network
- *   mount served by another host) makes every save fail closed, with a reason
- *   naming the skew: an older Skillsmith on that host would steal any lock.
- *   A file clock ahead of the wall clock saves normally; an older Skillsmith
- *   there computes a negative age and never steals.
+ * - Clocks of different hosts sharing the directory are not compared: an
+ *   older Skillsmith on another host whose clock runs 30 s or more ahead of
+ *   the file clock can steal a lock this check accepts.
+ * - This host's wall clock 25 s or more ahead of the directory's file clock
+ *   makes every save fail closed, with a reason naming the skew.
  * - Owned-lock's release reads the claim, then unlinks it: a stealer acting
  *   between the two loses its lock. This predates SMI-7143.
  *
@@ -113,22 +113,19 @@ export function lockStillOurs(
   if (fsAge < 0n) {
     return 'the lock is newer than a file just written beside it: the file clock moved backwards'
   }
-  if (fsAge >= MAX_LOCK_AGE_NS) {
-    return 'the lock is 25 s old or older, and an older Skillsmith steals it at 30 s'
-  }
   const wallAge = clocks.wallNs - now.mtimeNs
-  if (wallAge >= MAX_LOCK_AGE_NS) {
-    // Young on the file clock, old on the wall clock: the two clocks disagree
-    // by 25 s or more. An older Skillsmith here judges age on the wall clock,
-    // so it would steal this lock almost at once. Every save fails closed
-    // until the clocks agree, and the reason must say so, not blame a stall.
-    const skewS = (clocks.wallNs - clocks.fsNs) / 1_000_000_000n
+  if (fsAge < MAX_LOCK_AGE_NS && wallAge < MAX_LOCK_AGE_NS) return null
+  // The skew is the two clocks' own difference, not either age: a lock that is
+  // simply old must not be blamed on the clocks, and a skew this large fails
+  // every save, retry included, so the reason must say so.
+  const skew = clocks.wallNs - clocks.fsNs
+  if (skew >= MAX_LOCK_AGE_NS) {
     return (
-      `this computer's clock is about ${skewS} s ahead of the manifest directory's file clock, ` +
-      'so an older Skillsmith would treat the lock as abandoned; saves fail until the clocks agree'
+      `this computer's clock is about ${skew / 1_000_000_000n} s ahead of the manifest ` +
+      "directory's file clock; saves fail until the clocks agree"
     )
   }
-  return null
+  return 'the lock is 25 s old or older, and an older Skillsmith steals it at 30 s'
 }
 
 /** The wall clock in nanoseconds, rounded up to the end of the current millisecond. */

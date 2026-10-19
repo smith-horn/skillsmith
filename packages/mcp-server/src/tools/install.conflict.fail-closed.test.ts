@@ -18,7 +18,7 @@
  * only the manifest's bytes are.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -53,6 +53,16 @@ vi.mock('fs/promises', async (importOriginal) => {
 import { handleMergeAction } from './install.conflict.js'
 import { storeOriginal, getBackupsDir, hashContent } from './install.conflict-helpers.js'
 import { MANIFEST_PATH, type SkillManifest } from './install.types.js'
+
+// The $HOME sandbox (vitest.setup.ts) must be in force before any hook runs. A
+// failed check inside beforeAll/beforeEach still lets afterEach run, and
+// afterEach deletes the manifest; a throw here fails collection instead.
+if (
+  !MANIFEST_PATH.includes('skillsmith-vitest-home-') ||
+  !MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')
+) {
+  throw new Error(`Refusing to run: ${MANIFEST_PATH} is not inside the vitest HOME sandbox`)
+}
 
 const SKILL = 'fail-closed-skill'
 const ORIGINAL = 'line one\nORIGINAL middle\nline three\n'
@@ -89,11 +99,6 @@ function seed(text: string): Buffer {
 describe('T-S: MCP conflict install leaves a bad manifest byte-identical (SMI-6358)', () => {
   let installDir = ''
   let manifestObj: SkillManifest
-
-  beforeAll(() => {
-    expect(MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')).toBe(true)
-    expect(MANIFEST_PATH).toContain('skillsmith-vitest-home-')
-  })
 
   beforeEach(async () => {
     inject.target = MANIFEST_PATH

@@ -9,8 +9,8 @@
  * Also covers the manifest roundtrip (save → load preserves the telemetry
  * block) and that saveManifest() is core's durable write.
  *
- * Real files in the sandboxed vitest HOME (vitest.setup.ts; asserted in
- * beforeEach). SMI-7143: saveManifest() now delegates to core's
+ * Real files in the sandboxed vitest HOME (vitest.setup.ts; asserted at module
+ * load, below the imports). SMI-7143: saveManifest() now delegates to core's
  * ManifestManager.save(), whose write opens its temp file rather than calling
  * writeFile, so the in-memory fs/promises fake this file used to install no
  * longer reached it. Core's own tests (skill-manifest.atomic.test.ts,
@@ -33,6 +33,16 @@ import {
   type SkillManifest,
   type TelemetryManifest,
 } from './manifest.js'
+
+// The $HOME sandbox (vitest.setup.ts) must be in force before any hook runs. A
+// failed check inside beforeAll/beforeEach still lets afterEach run, and
+// afterEach deletes the manifest; a throw here fails collection instead.
+if (
+  !MANIFEST_PATH.includes('skillsmith-vitest-home-') ||
+  !MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')
+) {
+  throw new Error(`Refusing to run: ${MANIFEST_PATH} is not inside the vitest HOME sandbox`)
+}
 
 // ============================================================================
 // Helpers
@@ -74,7 +84,6 @@ function daysFromNow(n: number): string {
 
 describe('telemetry block', () => {
   beforeEach(() => {
-    expect(MANIFEST_PATH).toContain('skillsmith-vitest-home-')
     clearManifest()
   })
 
@@ -374,23 +383,22 @@ describe('telemetry block', () => {
       expect([a, b]).toContainEqual(JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8')))
     })
 
-    it('rethrows a failed save and leaves the existing manifest untouched', async () => {
-      await saveManifest(makeManifest({ enabled: false }))
-      const before = fs.readFileSync(MANIFEST_PATH)
+    it("rethrows the error core's save raised, unchanged", async () => {
+      // Core's own tests cover what a failed write leaves on disk; this pins
+      // only that saveManifest neither swallows nor wraps the failure.
       const originalError = new Error('ENOSPC: no space left on device')
       vi.spyOn(ManifestManager.prototype, 'save').mockRejectedValueOnce(originalError)
 
       await expect(saveManifest(makeManifest({ enabled: true }))).rejects.toBe(originalError)
-
-      expect(fs.readFileSync(MANIFEST_PATH).equals(before)).toBe(true)
     })
   })
 
   // SMI-6343 Wave 1 follow-up (adversarial review): saveManifest() is
   // homedir-derived with no manifestPath override parameter — the sandbox
   // (vitest.setup.ts) was this write path's only protection until
-  // assertNotRealUserHome() was wired in. This proves the guard itself
-  // fires, not just that the sandbox exists — by pointing
+  // assertNotRealUserHome() was wired in. This proves the guard fires (since
+  // SMI-7143 both saveManifest's own call and ManifestManager.save's make the
+  // same check, so it cannot tell which one did) — by pointing
   // SKILLSMITH_TEST_REAL_HOME at whatever home MANIFEST_PATH is currently
   // under (the sandbox, in this test run) so the guard treats it as "the
   // real home" for this one assertion, same technique
