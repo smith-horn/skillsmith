@@ -27,11 +27,16 @@
  *   takes `.reclaim`. If the moved file is a newer lock, it is linked back
  *   (exclusive) and the release refused.
  *
- * Residuals (not closed): if yet another lock is created at the path before a
- * moved newer lock is linked back, the moved one is left beside it, named in
- * the refusal, and its holder no longer excludes the new one. A process of the
- * same user that swaps a folder above the lock mid-run can redirect the
- * rename; it could equally change the lock itself.
+ * Residuals (not closed; owner decision 2026-10-19 to keep the move aside):
+ * - If the moved newer lock's holder releases while it is aside, its release
+ *   finds the path empty and finishes, and the link back then leaves that
+ *   lock stuck until its process exits (or for good, for a bare-PID lock).
+ *   No write is lost; `doctor locks` can release it.
+ * - If yet another lock is created at the path before the link back, the
+ *   moved one is left beside it, named in the refusal, and its holder no
+ *   longer excludes the new one.
+ * - A process of the same user that swaps a folder above the lock mid-run
+ *   can redirect the rename; it could equally change the lock itself.
  *
  * @module @skillsmith/core/config/lock-doctor
  */
@@ -313,7 +318,6 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
     // The file moved is not the one inspected: a newer lock. Put it back.
     try {
       linkSync(aside, path)
-      unlinkSync(aside)
     } catch (err) {
       return {
         outcome: 'refused',
@@ -322,6 +326,20 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
           `${path} changed after it was inspected. The newer lock was moved to ${aside} and ` +
           `could not be put back (${(err as NodeJS.ErrnoException).code ?? String(err)}); ` +
           'nothing was removed. Check which Skillsmith process holds it.',
+        inspection: insp,
+      }
+    }
+    try {
+      unlinkSync(aside)
+    } catch (err) {
+      return {
+        outcome: 'refused',
+        refusal: 'changed',
+        message:
+          `${path} changed after it was inspected; the newer lock is back in place, but its ` +
+          `extra name ${aside} could not be removed ` +
+          `(${(err as NodeJS.ErrnoException).code ?? String(err)}). Remove ${aside} by hand; ` +
+          'nothing else was changed.',
         inspection: insp,
       }
     }

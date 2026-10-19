@@ -19,7 +19,10 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const inject = vi.hoisted(() => ({ deniedOpen: null as string | null }))
+const inject = vi.hoisted(() => ({
+  deniedOpen: null as string | null,
+  failAsideUnlink: false,
+}))
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -31,7 +34,20 @@ vi.mock('node:fs', async (importOriginal) => {
     }
     return (actual.openSync as (p: fs.PathLike, ...r: unknown[]) => number)(p, ...rest)
   }) as typeof actual.openSync
-  return { ...actual, openSync, default: { ...actual, openSync } }
+  const unlinkSync = ((p: fs.PathLike) => {
+    if (inject.failAsideUnlink && String(p).includes('.doctor-')) {
+      throw Object.assign(new Error(`EBUSY: resource busy, unlink '${String(p)}'`), {
+        code: 'EBUSY',
+      })
+    }
+    return actual.unlinkSync(p)
+  }) as typeof actual.unlinkSync
+  return {
+    ...actual,
+    openSync,
+    unlinkSync,
+    default: { ...actual, openSync, unlinkSync },
+  }
 })
 
 import { inspectLock, releaseLock, stateRootLockPaths } from '../../../src/config/lock-doctor.js'
@@ -45,6 +61,7 @@ function asideFiles(root: string): string[] {
 const roots: string[] = []
 afterEach(() => {
   inject.deniedOpen = null
+  inject.failAsideUnlink = false
   for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true })
 })
 
@@ -162,6 +179,25 @@ describe('T-M2: the lock removed is the lock inspected', () => {
     expect(r.outcome === 'refused' && r.refusal).toBe('changed')
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(b)
     expect(asideFiles(root)).toEqual([])
+  })
+
+  it('a newer lock put back whose extra name could not be removed is reported as back in place', () => {
+    const { root, lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, v1(deadPid()))
+    const b = v1(process.pid)
+
+    const r = releaseLock(lockPath, {
+      beforeFinalCheck: () => {
+        fs.rmSync(lockPath)
+        fs.writeFileSync(lockPath, b, { flag: 'wx' })
+        inject.failAsideUnlink = true
+      },
+    })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('changed')
+    expect(r.outcome === 'refused' && r.message).toContain('the newer lock is back in place')
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(b)
+    expect(asideFiles(root)).toHaveLength(1)
   })
 
   it('holds the reclaim lock while it decides: an owned-lock reclaimer is shut out', () => {
