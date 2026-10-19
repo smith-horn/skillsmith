@@ -5826,13 +5826,6 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // `sklx pin`). Same justification, same mocked module.
     'packages/cli/src/commands/pin.manifest-null.test.ts':
       "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', ...) — no real manifest module is loaded",
-    // SMI-7143 retro: saveManifest() now delegates to core's ManifestManager.save(),
-    // which the old in-memory fs/promises fake never reached, so this file writes
-    // real files. Like mcp's retry test below, its writer takes no path parameter.
-    'packages/cli/src/utils/manifest.test.ts':
-      "this IS manifest.ts's own test file, and saveManifest() has no manifestPath parameter: every save writes MANIFEST_PATH under the vitest $HOME sandbox, which the file asserts at module load, so a failed check fails collection before any hook can write or delete, and saveManifest() and ManifestManager.save() both call assertNotRealUserHome first; a dedicated 'SMI-6343: real-home write guard' describe block proves that guard fires",
-    'packages/mcp-server/src/tools/install.helpers.manifest.retry.test.ts':
-      "updateManifestSafely() has no manifestPath parameter (MANIFEST_PATH is homedir-derived); this file writes MANIFEST_PATH under the vitest $HOME sandbox, which the file asserts at module load, so a failed check fails collection before any hook can write or delete, and updateManifestSafely() calls assertNotRealUserHome before taking the lock. It must use the real writer: it pins that writer to core's runManifestUpdate (SMI-7143)",
     'packages/mcp-server/src/tools/install.helpers.manifest.test.ts':
       "this IS install.helpers.manifest.ts's own test file, added by the same commit as the guard it tests — every case deliberately points SKILLSMITH_TEST_REAL_HOME at MANIFEST_PATH's current home so the guard throws BEFORE any real fs call; there is no code path in this file that reaches real fs I/O",
     'packages/mcp-server/tests/unit/install-helpers.test.ts':
