@@ -1156,9 +1156,10 @@ describe('releaseOwned return value: true only when the lock is shown not to be 
     expect(existsSync(lockPath)).toBe(false)
   })
 
-  it('nothing at the path: returns true, silently', () => {
+  it('nothing at the path: returns true, and warns that the lock was removed under us', () => {
     expect(releaseOwned(lockPath, TOKEN)).toBe(true)
-    expect(warn).not.toHaveBeenCalled()
+    expect(warned('lock_release_not_owner')).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(false)
   })
 
   it('a readable v1 claim naming another token: not removed, returns true, not_owner warning', () => {

@@ -253,11 +253,10 @@ function admit(target: string, label: string, rank: LockOrder): HeldLock {
  * Check a request without recording it. Throws `LockOrderError` exactly as
  * `runHoldingLock` would. A caller that waits or writes before reaching its
  * `withFileLock` (fan-out's per-destination queue) calls this first, so a
- * refusal still comes before any wait. Returns the lock-file key the check
- * used, so the caller can key its queue by the very same identity.
+ * refusal still comes before any wait.
  */
-export function checkLockRequest(target: string, label: string, rank: LockOrder): string {
-  return admit(target, label, rank).key
+export function checkLockRequest(target: string, label: string, rank: LockOrder): void {
+  admit(target, label, rank)
 }
 
 /**

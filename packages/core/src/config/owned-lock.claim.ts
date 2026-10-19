@@ -401,10 +401,16 @@ export function releaseOwned(path: string, token: string): boolean {
   // `absent` or `unparseable` can also mean the claim could not be READ (out of
   // file descriptors, EACCES) while our file is still there, so only a path
   // that is really gone counts as released (lstat needs no descriptor).
-  if (pathIsGone(path)) return true
+  if (pathIsGone(path)) {
+    // Released, but not by us: someone removed our lock while we held it.
+    warnSafely(
+      `[skillsmith] lock_release_not_owner: ${path} was removed while this process held it -- nothing to release.`
+    )
+    return true
+  }
   warnSafely(
     `[skillsmith] lock_release_unverified: could not show the claim at ${path} is someone else's -- ` +
-      'not removing it, and this process still counts it as held.'
+      'not removing it.'
   )
   return false
 }

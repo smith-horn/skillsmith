@@ -39,9 +39,10 @@ export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>)
   // mkdir below, or a re-entry waits on itself forever (plan §3.2). Admission
   // keys by the lock file (`checkLockRequest`); the queue keys by spelling
   // (`lockKey` of the lock file's path), which does not change with whether a
-  // case-variant lock file currently exists. Two spellings of one lock file may
-  // therefore queue separately, but they still exclude each other through the
-  // file lock. A symlinked spelling shares the queue even while the parent
+  // case-variant lock file currently exists (it can still change once a missing
+  // parent folder is created, since that folder is then resolved). Two
+  // spellings of one lock file may therefore queue separately, but they still
+  // exclude each other through the file lock; only in-process order is lost. A symlinked spelling shares the queue even while the parent
   // doesn't exist yet (it is resolved at its nearest existing ancestor). The
   // parent is not created before the check: a refused request must not write.
   const lockTarget = path.join(path.dirname(dest), siblingPrefix(dest, LOCK_TAG))
