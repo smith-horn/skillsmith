@@ -4,9 +4,16 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
-- **Added**: SMI-6531 (A1 step 1) -- a lock-order tracker (`config/lock-tracker.ts`, plan §3.2).
-  `withFileLock` requires a `rank` (1, 1′, 2a, 2b, 3, 4, or `'unordered'` for a lock outside the
-  table); an `AsyncLocalStorage` records the locks a context holds, and a request that re-enters
+- **Changed (breaking)**: SMI-6531 (A1 step 1) -- `withFileLock(target, label, fn, options)` now
+  requires its fourth argument, with a `rank`: `1`, `1′`, `2a`, `2b`, `3`, `4`, or `'unordered'` for a
+  lock outside the order table. Migrate a three-argument call by adding
+  `{ rank: 'unordered' }`, or the lock's rank from A1 plan §3.2. The rank is required, not defaulted,
+  so a new lock can't skip the order rules by omission. `acquireOwnedLock`'s release now returns a
+  boolean (true once the lock is shown gone or someone else's); a caller typed `() => void` is
+  unaffected.
+- **Added**: SMI-6531 (A1 step 1) -- a lock-order tracker (`config/lock-tracker.ts`, plan §3.2),
+  exported with `LockOrderError`, `LockOrder`, `LockRank` and `assertSkillWriteLockNotHeld`. An
+  `AsyncLocalStorage` records the locks a context holds, and a request that re-enters
   one, takes a second skills-root lock, ranks below or equal to one already held, or is made while
   lock 4 is held rejects with `LockOrderError` before any wait. The tracker stops counting a lock
   only once it is shown gone or someone else's, even for work it left running; a release that

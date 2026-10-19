@@ -375,7 +375,8 @@ export function runPureCallback<T>(fn: () => T): T {
   try {
     result = storage.run({ held: liveHeld(state), pure }, fn)
   } finally {
-    asyncWatch.disable()
+    // A nested callback returning must not unwatch the outer one still running.
+    if (outer === null) asyncWatch.disable()
     runningPure = outer
     pure.open = false
   }
