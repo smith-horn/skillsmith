@@ -11,9 +11,13 @@
  * zero-length or stale manifest behind a rename that had already happened.
  *
  * A failure after the temp file is created and before the rename removes
- * only that file and rethrows; the manifest is untouched. A failure of the directory sync after
- * the rename is rethrown too: the new manifest is in place but its rename may
- * not be durable, and the caller should not report a durable save.
+ * only that file and rethrows; the manifest is untouched. After the rename
+ * the new manifest is in place, so nothing after it throws: a throw would tell
+ * the caller "not saved" when it was. The directory sync is skipped on
+ * Windows, which cannot fsync a directory handle; a filesystem that does not
+ * support it (EINVAL, ENOTSUP, EPERM, EISDIR, ENOSYS: some FUSE and network
+ * mounts) is a no-op; any other failure is a warning that the rename may not
+ * survive a crash.
  *
  * @module @skillsmith/core/services/skill-manifest.atomic
  */
@@ -78,10 +82,28 @@ export async function writeManifestAtomic(
     }
     throw err
   }
-  const dirHandle = await open(dir, 'r')
+  await syncDirectory(dir)
+}
+
+/** Codes a filesystem returns when it cannot fsync a directory at all. */
+const DIR_SYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR', 'ENOSYS'])
+
+/** Best-effort directory fsync after the rename; never throws (see the module comment). */
+async function syncDirectory(dir: string): Promise<void> {
+  if (process.platform === 'win32') return
   try {
-    await dirHandle.sync()
-  } finally {
-    await dirHandle.close()
+    const dirHandle = await open(dir, 'r')
+    try {
+      await dirHandle.sync()
+    } finally {
+      await dirHandle.close()
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? ''
+    if (DIR_SYNC_UNSUPPORTED.has(code)) return
+    console.warn(
+      `[skillsmith] The manifest was saved, but its directory could not be synced (${code || String(err)}); ` +
+        `the save may not survive a crash.`
+    )
   }
 }

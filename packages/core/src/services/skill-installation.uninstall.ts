@@ -400,6 +400,8 @@ export async function performUninstall(params: {
     let claimedByAnotherInstall = false
     try {
       await manifest.updateSafely((current) => {
+        // Reset: a lost lock reruns this callback once (SMI-7143), so it starts from what it found, not from a prior run.
+        claimedByAnotherInstall = false
         // SMI-6733 MAJOR 3: `updateSafely` re-reads under the lock, so this
         // is a SECOND classification of a file that may have changed since
         // the read above — a nullish `installedSkills` reaches here even

@@ -8,7 +8,7 @@
  * two copies drifting apart.
  */
 
-import { StuckLockError } from '@skillsmith/core'
+import { ManifestLockLost, StuckLockError } from '@skillsmith/core'
 import { ReconcileGuardError } from './apply-manifest-reconcile.helpers.js'
 
 /**
@@ -48,6 +48,12 @@ export async function withLockTimeoutMapping<T>(run: () => Promise<T>): Promise<
     return await run()
   } catch (err) {
     if (err instanceof ReconcileGuardError) throw err
+    if (err instanceof ManifestLockLost) {
+      throw new ReconcileGuardError('manifest.reconcile.lock_lost', {
+        path: err.lockPath,
+        detail: err.why,
+      })
+    }
     if (isLockTimeoutError(err)) {
       throw new ReconcileGuardError('manifest.reconcile.lock_timeout', {
         path: err.lockPath,

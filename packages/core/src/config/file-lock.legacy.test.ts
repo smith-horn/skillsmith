@@ -50,6 +50,22 @@ describe('withFileLock and a bare-PID claim', () => {
     expect(fs.readFileSync(`${t}.lock`, 'utf8')).toBe('31337')
   })
 
+  it('with waitOnLegacy, a legacy holder that never releases ends at the deadline with the legacy error', async () => {
+    const t = target()
+    fs.writeFileSync(`${t}.lock`, '31337')
+    const t0 = Date.now()
+    const err = await withFileLock(t, 'test', async () => 'ran', {
+      waitOnLegacy: true,
+      onLegacyWait: () => {},
+      timeoutMs: 300,
+    }).catch((e: unknown) => e)
+    const waited = Date.now() - t0
+    expect((err as StuckLockError).reason).toBe('unreclaimable_legacy')
+    expect(waited).toBeGreaterThanOrEqual(300)
+    expect(waited).toBeLessThan(2000)
+    expect(fs.readFileSync(`${t}.lock`, 'utf8')).toBe('31337')
+  })
+
   it('an unparseable claim still fails at once with waitOnLegacy (the option covers legacy only)', async () => {
     const t = target()
     fs.writeFileSync(`${t}.lock`, 'not a claim')

@@ -27,6 +27,15 @@
  * Release never unlinks a lock this process no longer owns: owned-lock's
  * release checks the claim's token first (`owned-lock.claim.ts`, E8).
  *
+ * Residual windows (mitigated, not closed):
+ * - A stall between the check and rename(2) (a stopped process, a paused VM)
+ *   of more than 30 s minus the lock's age at the check still lets a legacy
+ *   stealer in; the 25 s limit leaves at least 5 s.
+ * - Clocks of different hosts sharing the directory are compared through the
+ *   lock's mtime; skew larger than that margin is not covered.
+ * - Owned-lock's release reads the claim, then unlinks it: a stealer acting
+ *   between the two loses its lock. This predates SMI-7143.
+ *
  * @module @skillsmith/core/services/skill-manifest.lock
  */
 import fs from 'node:fs'
@@ -54,12 +63,14 @@ export interface LockClocks {
 /** The manifest lock was lost between acquiring it and the rename. Nothing was saved. */
 export class ManifestLockLost extends Error {
   readonly why: string
+  readonly lockPath: string
   constructor(lockPath: string, why: string) {
     super(
       `[skillsmith] The manifest lock at ${lockPath} was lost before saving (${why}); nothing was saved.`
     )
     this.name = 'ManifestLockLost'
     this.why = why
+    this.lockPath = lockPath
   }
 }
 
@@ -110,7 +121,7 @@ function wallNowNs(): bigint {
   return BigInt(Date.now()) * 1_000_000n + 999_999n
 }
 
-/** The default warning, once per update, when an older version's claim is waited on. */
+/** The default warning, once per acquisition, when an older version's claim is waited on. */
 function warnLegacyWait(pid: number | null): void {
   console.warn(
     `[skillsmith] The manifest lock is held by an older Skillsmith process` +
@@ -122,11 +133,15 @@ export interface ManifestUpdateArgs<M> {
   manifestPath: string
   /** Loads the manifest under the lock. Throws on anything but a missing file. */
   load: () => Promise<M>
-  /** Synchronous and pure (A1 plan §3.2): a promise is refused. */
+  /**
+   * Synchronous (A1 plan §3.2): a promise is refused. It runs again if the
+   * lock is lost before saving, so state it records outside itself must be
+   * reset at its start (the run that was saved is the one that counts).
+   */
   update: (manifest: M) => M
   /** Serializes the updated manifest; JSON with two-space indent by default. */
   serialize?: (manifest: M) => string
-  /** Called once if an older version's bare-PID claim is waited on. */
+  /** Called once per lock acquisition that waits on an older version's bare-PID claim. */
   onLegacyWait?: (pid: number | null) => void
 }
 
@@ -149,7 +164,12 @@ export async function runManifestUpdate<M>(args: ManifestUpdateArgs<M>): Promise
           if (acquired === null) throw new ManifestLockLost(lockPath, 'the lock file is gone')
           const manifest = await args.load()
           const updated = args.update(manifest)
-          if (updated !== null && typeof (updated as { then?: unknown }).then === 'function') {
+          if (updated == null || typeof updated !== 'object') {
+            throw new TypeError(
+              'runManifestUpdate: update must return the manifest; it returned nothing'
+            )
+          }
+          if (typeof (updated as { then?: unknown }).then === 'function') {
             throw new TypeError(
               'runManifestUpdate: update must be synchronous; it returned a promise'
             )

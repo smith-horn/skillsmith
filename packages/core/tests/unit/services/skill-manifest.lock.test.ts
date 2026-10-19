@@ -135,6 +135,9 @@ describe('T-M1: a legacy writer that steals the lock keeps its change', () => {
     const { manifestPath, lockPath } = tmp()
     const paused = gate()
     const resume = gate()
+    // Opened by onLegacyWait: the holder's check has failed, its release has
+    // run, and its retry is waiting on the legacy claim.
+    const retryWaiting = gate()
     let loads = 0
     const holderLoad = async () => {
       const m = read(manifestPath)
@@ -151,7 +154,7 @@ describe('T-M1: a legacy writer that steals the lock keeps its change', () => {
             manifestPath,
             load: holderLoad,
             update: add('holder'),
-            onLegacyWait: () => {},
+            onLegacyWait: () => retryWaiting.open(),
           })
         : withFileLock(manifestPath, 'no-check control', async () => {
             const m = add('holder')(await holderLoad())
@@ -163,7 +166,9 @@ describe('T-M1: a legacy writer that steals the lock keeps its change', () => {
     fs.writeFileSync(manifestPath, JSON.stringify(add('legacy')(read(manifestPath))))
     resume.open()
     // The legacy writer still holds its stolen lock while the holder resumes.
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    // The real holder's retry waits on it; the control holder never re-locks.
+    if (holderWrite === 'runManifestUpdate') await retryWaiting.opened
+    else await holder
     const legacyLockWhileHeld = fs.readFileSync(lockPath, 'utf8')
     await legacyRelease(manifestPath)
     await holder
@@ -215,6 +220,35 @@ describe('the retry rule', () => {
         update: (async (m: Manifest) => m) as unknown as (m: Manifest) => Manifest,
       })
     ).rejects.toThrow(/update must be synchronous/)
+    expect(fs.readFileSync(manifestPath).equals(before)).toBe(true)
+  })
+
+  it('the file clock is the temp file beside the lock: a lock 60 s in the future is lost, and the retry saves', async () => {
+    const { manifestPath, lockPath } = tmp()
+    let loads = 0
+    await runManifestUpdate<Manifest>({
+      manifestPath,
+      load: async () => {
+        loads += 1
+        if (loads === 1) backdate(lockPath, -60)
+        return read(manifestPath)
+      },
+      update: add('a'),
+    })
+    expect(loads).toBe(2)
+    expect(Object.keys(read(manifestPath).installedSkills)).toEqual(['a'])
+  })
+
+  it('an update that returns nothing is refused and nothing is saved', async () => {
+    const { manifestPath } = tmp()
+    const before = fs.readFileSync(manifestPath)
+    await expect(
+      runManifestUpdate<Manifest>({
+        manifestPath,
+        load: () => load(manifestPath),
+        update: (() => undefined) as unknown as (m: Manifest) => Manifest,
+      })
+    ).rejects.toThrow(/returned nothing/)
     expect(fs.readFileSync(manifestPath).equals(before)).toBe(true)
   })
 

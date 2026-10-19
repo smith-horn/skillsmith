@@ -31,6 +31,7 @@ export type ManifestReconcileErrorCode =
   | 'manifest.reconcile.backup_target_not_a_file' // C8 guard rail
   | 'manifest.reconcile.backup_failed'
   | 'manifest.reconcile.lock_timeout' // ManifestManager's 30s ceiling
+  | 'manifest.reconcile.lock_lost' // SMI-7143: the lock was lost before saving, twice
   | 'manifest.reconcile.entry_changed' // C7 same-entry conflict
   | 'manifest.reconcile.revert_ambiguous' // mirrors namespace.rename.revert_ambiguous
   | 'manifest.reconcile.ledger_version_unsupported'

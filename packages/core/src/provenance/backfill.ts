@@ -298,8 +298,12 @@ export async function backfillManifest(
   }
 
   const written: string[] = []
+  const skippedBeforeWrite = skipped.length
   const manager = new ManifestManager(manifestPath)
   await manager.updateSafely((manifest) => {
+    // Reset: a lost lock reruns this callback once (SMI-7143), so it starts from what it found, not from a prior run.
+    written.length = 0
+    skipped.length = skippedBeforeWrite
     const installed = { ...manifest.installedSkills }
     for (const [name, entry] of plannedByName) {
       // SMI-6358: keyed by (name, client), not the raw skill name — a

@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7143 -- `skillsmith pin`, `unpin` and `telemetry` manifest writes run core's locked
+  update: a durable save, no save after the manifest lock was taken over by an older Skillsmith (one
+  retry), and, when an older process holds the lock, a wait of up to 30 s with one warning on stderr
+  naming its pid, instead of an immediate failure.
+
 ## v0.8.16
 
 - **Changed**: SMI-7030 -- `skillsmith install` refuses a skill whose SKILL.md opens with an

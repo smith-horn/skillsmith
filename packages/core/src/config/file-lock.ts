@@ -65,6 +65,8 @@ export interface FileLockOptions {
    * with the pid the claim names (null when it cannot be read as one).
    */
   onLegacyWait?: (pid: number | null) => void
+  /** How long to wait before giving up, in ms (default 30 s); a test seam. */
+  timeoutMs?: number
 }
 
 /** The pid a bare-PID claim names, or null. Reads the lock file only. */
@@ -90,7 +92,7 @@ async function acquireFileLock(
   label: string,
   options: FileLockOptions
 ): Promise<() => void> {
-  const deadline = Date.now() + FILE_LOCK_TIMEOUT_MS
+  const deadline = Date.now() + (options.timeoutMs ?? FILE_LOCK_TIMEOUT_MS)
   let warnedLegacy = false
   for (;;) {
     try {
