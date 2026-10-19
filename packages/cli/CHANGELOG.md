@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-7143 -- `commands/telemetry.ts`'s header comment now says manifest writes go
+  through `updateManifestEntry`.
 - **Fixed**: SMI-7143 -- `skillsmith pin`, `unpin` and `telemetry` manifest writes run core's locked
   update: a durable save, no save after the manifest lock was taken over by an older Skillsmith (one
   retry), and, when an older process holds the lock, a wait of up to 30 s with one warning on stderr

@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-7143 -- the manifest lock's cross-host residual gives the right threshold: an older
+  Skillsmith on another host steals a lock this check accepts once that host's clock runs more than
+  5 s ahead of the file clock (its 30 s minus the 25 s limit), not 30 s.
 - **Fixed**: SMI-7143 -- releasing an owned lock (`releaseOwned`) and the manifest lock's
   legacy-wait notice warn through a logger call that cannot throw (`utils/warn-safely.ts`, shared
   with `writeManifestAtomic`). A replaced `console.warn` that throws can no longer turn a saved
