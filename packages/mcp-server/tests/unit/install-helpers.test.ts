@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs/promises'
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
 import {
   parseSkillId,
   parseRepoUrl,
@@ -24,6 +24,24 @@ import {
 } from '../../src/tools/install.helpers.js'
 import { MANIFEST_PATH, SKILLSMITH_DIR } from '../../src/tools/install.types.js'
 
+/**
+ * SMI-7143: the manifest write is core's writeManifestAtomic (exclusive temp
+ * through a file handle, fsync, rename, directory fsync). Under this file's
+ * fs/promises automock those calls would return undefined, so the two write
+ * tests restore the real open/rename/unlink and check the bytes on disk in
+ * the sandboxed $HOME instead of asserting which mock was called.
+ */
+async function useRealWriteCalls(): Promise<void> {
+  const actual = await vi.importActual<typeof import('fs/promises')>('fs/promises')
+  vi.mocked(fs.open).mockImplementation(actual.open)
+  vi.mocked(fs.rename).mockImplementation(actual.rename)
+  vi.mocked(fs.unlink).mockImplementation(actual.unlink)
+  mkdirSync(SKILLSMITH_DIR, { recursive: true })
+}
+
+const leftoverTemps = (): string[] =>
+  readdirSync(SKILLSMITH_DIR).filter((n) => n.startsWith('manifest.json.tmp.'))
+
 // Mock fs module. SMI-6735: `updateManifestSafely()` now locks via
 // `withFileLock` (`@skillsmith/core`'s owned-lock primitive), which takes a
 // REAL cross-process lock through synchronous `node:fs` — independent of
@@ -32,6 +50,14 @@ import { MANIFEST_PATH, SKILLSMITH_DIR } from '../../src/tools/install.types.js'
 vi.mock('fs/promises')
 
 describe('install.helpers', () => {
+  // useRealWriteCalls swaps in real implementations; put the automock back so
+  // no later test writes to disk by accident (clearAllMocks keeps implementations).
+  afterEach(() => {
+    vi.mocked(fs.open).mockReset()
+    vi.mocked(fs.rename).mockReset()
+    vi.mocked(fs.unlink).mockReset()
+  })
+
   describe('parseSkillId', () => {
     it('parses full GitHub URL', () => {
       const result = parseSkillId('https://github.com/owner/repo')
@@ -288,7 +314,6 @@ Use this skill to do things.
   describe('saveManifest', () => {
     const mockMkdir = vi.mocked(fs.mkdir)
     const mockWriteFile = vi.mocked(fs.writeFile)
-    const mockRename = vi.mocked(fs.rename)
 
     beforeEach(() => {
       vi.clearAllMocks()
@@ -296,8 +321,7 @@ Use this skill to do things.
 
     it('saves manifest with atomic write', async () => {
       mockMkdir.mockResolvedValueOnce(undefined)
-      mockWriteFile.mockResolvedValueOnce(undefined)
-      mockRename.mockResolvedValueOnce(undefined)
+      await useRealWriteCalls()
 
       const manifest = {
         version: '1.0.0',
@@ -307,11 +331,14 @@ Use this skill to do things.
       await saveManifest(manifest)
 
       expect(mockMkdir).toHaveBeenCalledWith(expect.any(String), { recursive: true })
-      expect(mockWriteFile).toHaveBeenCalledWith(
-        expect.stringContaining('.tmp.'),
-        JSON.stringify(manifest, null, 2)
+      expect(readFileSync(MANIFEST_PATH, 'utf8')).toBe(JSON.stringify(manifest, null, 2))
+      expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
+        expect.stringContaining('manifest.json.tmp.'),
+        MANIFEST_PATH
       )
-      expect(mockRename).toHaveBeenCalled()
+      expect(mockWriteFile).not.toHaveBeenCalled()
+      expect(leftoverTemps()).toEqual([])
+      rmSync(MANIFEST_PATH, { force: true })
     })
   })
 
@@ -343,10 +370,9 @@ Use this skill to do things.
           installedSkills: {},
         })
       )
-      // Mock save
+      // The save is real (SMI-7143): it lands in the sandboxed $HOME.
       mockMkdir.mockResolvedValueOnce(undefined)
-      mockWriteFile.mockResolvedValueOnce(undefined)
-      mockRename.mockResolvedValueOnce(undefined)
+      await useRealWriteCalls()
 
       const updateFn = vi.fn((m) => ({
         ...m,
@@ -356,6 +382,11 @@ Use this skill to do things.
       await updateManifestSafely(updateFn)
 
       expect(updateFn).toHaveBeenCalled()
+      expect(JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')).installedSkills).toEqual({
+        'new/skill': { id: 'new/skill' },
+      })
+      expect(leftoverTemps()).toEqual([])
+      rmSync(MANIFEST_PATH, { force: true })
       // Lock released: withFileLock's release unlinks the REAL owned-lock
       // file it created — a mocked fs/promises.unlink can't observe this,
       // since that lock lives outside this file's mock (see beforeEach).

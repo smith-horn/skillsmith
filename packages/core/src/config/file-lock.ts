@@ -11,6 +11,7 @@
  * age-based lock protocol. `fan-out.locks.ts` re-exports `withFileLock` from
  * here so its own existing importers (`fan-out.overwrite.ts`) are unchanged.
  */
+import { readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from './owned-lock.js'
 
@@ -27,9 +28,9 @@ const FILE_LOCK_POLL_MS = 50
  * judgement call this comment used to misstate as a fact (SMI-6764): the
  * claim is never auto-*reclaimed* in any configuration (D-5), but a legacy
  * holder that is still ALIVE releases normally, so the lock can go away by
- * itself and waiting could pay off. Failing at once is deliberate, not
- * forced — revisiting it is owned by the update-safety plan, which already
- * records the opposite recommendation.
+ * itself and waiting could pay off. Failing at once stays the default; a
+ * caller that shares its lock file with older versions opts into waiting
+ * with `FileLockOptions.waitOnLegacy` (the manifest lock does, SMI-7143).
  *
  * `reclaim_disabled` is the one that needs its reason stated, because the
  * obvious one is wrong (SMI-6759). It does NOT end when the holder releases:
@@ -49,6 +50,33 @@ const RETRYABLE_REASONS: ReadonlySet<StuckLockReason> = new Set([
   'reclaim_disabled',
 ])
 
+/** Options a caller may opt into; the defaults are every caller's behaviour before SMI-7143. */
+export interface FileLockOptions {
+  /**
+   * Keep waiting on a bare-PID (legacy) claim instead of failing at once. A
+   * legacy claim is never auto-reclaimed (owned-lock D-5), but a live older
+   * process may own it and will release it when its save finishes, so a
+   * caller sharing a lock file with older versions (the manifest lock) waits
+   * out the normal budget for it like any live holder (A1 plan §3.8, #8).
+   */
+  waitOnLegacy?: boolean
+  /**
+   * Called once per acquisition, the first time a legacy claim is waited on,
+   * with the pid the claim names (null when it cannot be read as one).
+   */
+  onLegacyWait?: (pid: number | null) => void
+}
+
+/** The pid a bare-PID claim names, or null. Reads the lock file only. */
+function legacyPid(lockPath: string): number | null {
+  try {
+    const text = readFileSync(lockPath, 'utf8').trim()
+    return /^[0-9]+$/.test(text) ? Number(text) : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Take the cross-process file lock without ever blocking the event loop.
  * `acquireOwnedLock` normally waits with a synchronous sleep, which froze a
@@ -57,8 +85,13 @@ const RETRYABLE_REASONS: ReadonlySet<StuckLockReason> = new Set([
  * at once (`reclaimProbeAfterMs: 0`) and never waits on the reclaim lock
  * either (`reclaimLockTimeoutMs: 0`, round 8). Between attempts we await.
  */
-async function acquireFileLock(target: string, label: string): Promise<() => void> {
+async function acquireFileLock(
+  target: string,
+  label: string,
+  options: FileLockOptions
+): Promise<() => void> {
   const deadline = Date.now() + FILE_LOCK_TIMEOUT_MS
+  let warnedLegacy = false
   for (;;) {
     try {
       return acquireOwnedLock(target, {
@@ -68,8 +101,17 @@ async function acquireFileLock(target: string, label: string): Promise<() => voi
         label,
       })
     } catch (err) {
-      const retryable = err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason)
+      const legacy =
+        err instanceof StuckLockError &&
+        err.reason === 'unreclaimable_legacy' &&
+        options.waitOnLegacy === true
+      const retryable =
+        legacy || (err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason))
       if (!retryable || Date.now() >= deadline) throw err
+      if (legacy && !warnedLegacy) {
+        warnedLegacy = true
+        options.onLegacyWait?.(legacyPid(`${target}.lock`))
+      }
       await delay(FILE_LOCK_POLL_MS)
     }
   }
@@ -82,9 +124,10 @@ async function acquireFileLock(target: string, label: string): Promise<() => voi
 export async function withFileLock<T>(
   target: string,
   label: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  options: FileLockOptions = {}
 ): Promise<T> {
-  const release = await acquireFileLock(target, label)
+  const release = await acquireFileLock(target, label, options)
   try {
     return await fn()
   } finally {

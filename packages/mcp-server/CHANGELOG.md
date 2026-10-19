@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7143 -- the install conflict path's manifest update now runs core's shared locked
+  update: a durable save, a check before the rename that the manifest lock was not stolen by an
+  older Skillsmith (with one retry), and a wait on an older process's lock instead of an immediate
+  failure.
+
 ## v0.8.0
 
 - **Changed** (behaviour change for every caller): SMI-7056 -- `validateTrustTier` accepted only six of the eight `TrustTier` values, so a
