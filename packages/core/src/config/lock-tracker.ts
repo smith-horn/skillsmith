@@ -24,8 +24,9 @@
  *
  * Every lock names its rank; `'unordered'` is the explicit choice for a lock
  * outside the table, checked for re-entry and the leaf rule only. A missing
- * rank is a type error, so a new skills-root lock can't silently skip the
- * rules (or make `assertSkillWriteLockNotHeld` a no-op) by omission.
+ * rank is a type error, and `withFileLock` rejects a missing or unknown rank at
+ * runtime, so a new skills-root lock can't silently skip the rules (or make
+ * `assertSkillWriteLockNotHeld` a no-op) by omission.
  *
  * Two more rules ride on the same store: `assertSkillWriteLockNotHeld` throws
  * when a skills-root lock is held while planning, fetching or scanning, and a
@@ -62,6 +63,14 @@ export type LockRank = '1' | "1'" | '2a' | '2b' | '3' | '4'
 
 /** A rank, or `'unordered'` for a lock outside the table (re-entry and leaf rules only). */
 export type LockOrder = LockRank | 'unordered'
+
+/** Every accepted {@link LockOrder}; the single source of truth for runtime validation. */
+export const LOCK_ORDERS: readonly LockOrder[] = ['1', "1'", '2a', '2b', '3', '4', 'unordered']
+
+/** True when `value` is one of {@link LOCK_ORDERS}. */
+export function isLockOrder(value: unknown): value is LockOrder {
+  return typeof value === 'string' && (LOCK_ORDERS as readonly string[]).includes(value)
+}
 
 const RANK_VALUE: Record<LockRank, number> = {
   '1': 1,
@@ -379,6 +388,9 @@ export function runPureCallback<T>(fn: () => T): T {
     if (outer === null) asyncWatch.disable()
     runningPure = outer
     pure.open = false
+    // A violation in a nested scope also refuses the outer callback, even if
+    // the outer one caught the nested refusal.
+    if (outer !== null && pure.violation !== null) outer.violation ??= pure.violation
   }
   // A returned promise is left to the caller, which refuses it with a more
   // precise message ("update must be synchronous") than the async watch's.

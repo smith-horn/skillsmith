@@ -14,7 +14,13 @@
 import { readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from './owned-lock.js'
-import { LockOrderError, runHoldingLock, type LockOrder } from './lock-tracker.js'
+import {
+  isLockOrder,
+  LOCK_ORDERS,
+  LockOrderError,
+  runHoldingLock,
+  type LockOrder,
+} from './lock-tracker.js'
 
 /** How long to wait for another process's lock on the same target (ms). */
 const FILE_LOCK_TIMEOUT_MS = 30_000
@@ -70,8 +76,9 @@ export interface FileLockOptions {
   timeoutMs?: number
   /**
    * The lock's rank in A1 plan §3.2's order table (SMI-6531 step 1), or
-   * `'unordered'` for a lock outside it. Required, so a lock can't skip the
-   * order rules by omission. The tracker refuses, before any wait, a request
+   * `'unordered'` for a lock outside it. Required by the type, and a missing or
+   * unknown rank rejects at runtime, so a lock can't skip the order rules by
+   * omission. The tracker refuses, before any wait, a request
    * that re-enters a held lock, takes a second skills-root lock, ranks below
    * or equal to a held lock, or is made while lock 4 is held.
    */
@@ -140,6 +147,16 @@ export function withFileLock<T>(
   fn: () => Promise<T>,
   options: FileLockOptions
 ): Promise<T> {
+  // The type requires a rank; an untyped caller (JS, a cast) gets a rejection,
+  // not a silently unordered lock or an unrelated "reading 'rank'" crash.
+  const rank: unknown = typeof options === 'object' && options !== null ? options.rank : undefined
+  if (!isLockOrder(rank)) {
+    return Promise.reject(
+      new TypeError(
+        `withFileLock(${JSON.stringify(label)}) requires options.rank, one of ${LOCK_ORDERS.map((r) => `'${r}'`).join(', ')}; got ${rank === undefined ? 'none' : JSON.stringify(rank)}`
+      )
+    )
+  }
   try {
     return runHoldingLock(target, label, options.rank, async (acquired, releasing) => {
       const release = await acquireFileLock(target, label, options)

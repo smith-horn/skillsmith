@@ -179,6 +179,48 @@ describe('a nested runPureCallback leaves the outer callback watched', () => {
     expectKind(error, 'in-pure-callback')
   })
 
+  it('async work started in a nested callback that the outer callback caught still refuses the outer callback', () => {
+    let nestedError: unknown
+    const error = thrown(() =>
+      runPureCallback(() => {
+        try {
+          runPureCallback(() => {
+            setImmediate(() => {})
+            return 1
+          })
+        } catch (e) {
+          nestedError = e
+        }
+        return 1
+      })
+    )
+    expectKind(nestedError, 'in-pure-callback') // the nested callback really was refused, and swallowed
+    expectKind(error, 'in-pure-callback') // and the outer is refused anyway
+  })
+
+  it('a lock requested in a nested callback that the outer callback caught still refuses the outer callback', () => {
+    let nestedError: unknown
+    const error = thrown(() =>
+      runPureCallback(() => {
+        try {
+          runPureCallback(() => {
+            checkLockRequest(target('nested-swallowed'), 'nested check', 'unordered')
+            return 1
+          })
+        } catch (e) {
+          nestedError = e
+        }
+        return 1
+      })
+    )
+    expectKind(nestedError, 'in-pure-callback')
+    expectKind(error, 'in-pure-callback')
+  })
+
+  it('control: a nested callback that does nothing leaves the outer callback unrefused', () => {
+    expect(runPureCallback(() => runPureCallback(() => 5) + 1)).toBe(6)
+  })
+
   it('the watch is off again once the outermost callback returns', async () => {
     runPureCallback(() => {
       runPureCallback(() => 1)

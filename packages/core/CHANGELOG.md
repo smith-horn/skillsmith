@@ -7,8 +7,9 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Changed (breaking)**: SMI-6531 (A1 step 1) -- `withFileLock(target, label, fn, options)` now
   requires its fourth argument, with a `rank`: `1`, `1′`, `2a`, `2b`, `3`, `4`, or `'unordered'` for a
   lock outside the order table. Migrate a three-argument call by adding
-  `{ rank: 'unordered' }`, or the lock's rank from A1 plan §3.2. The rank is required, not defaulted,
-  so a new lock can't skip the order rules by omission. `acquireOwnedLock`'s release now returns a
+  `{ rank: 'unordered' }`, or the lock's rank from A1 plan §3.2. The rank is required, not defaulted:
+  the type requires it, and a missing or unknown rank rejects at runtime with a `TypeError` naming
+  the allowed values. `acquireOwnedLock`'s release now returns a
   boolean (true once the lock is shown gone or someone else's); a caller typed `() => void` is
   unaffected.
 - **Added**: SMI-6531 (A1 step 1) -- a lock-order tracker (`config/lock-tracker.ts`, plan §3.2),
