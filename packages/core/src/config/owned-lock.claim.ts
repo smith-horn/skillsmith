@@ -367,8 +367,9 @@ export function tryReclaimUnderLock(
  * Release `path` if `token` still owns it. Returns whether the lock is shown
  * to be no longer ours on disk: true when it was unlinked, when nothing is at
  * the path, or when a readable claim there names someone else; false when the
- * unlink failed, or when the claim could not be read and something is still at
- * the path (it may be our own file). Callers that stop counting a lock as held
+ * unlink failed, or when something is still at the path that can't be shown to
+ * be someone else's (an unreadable claim, or a legacy claim naming this
+ * process): it may be our own file. Callers that stop counting a lock as held
  * (the lock-order tracker) rely on this, so every doubt answers false.
  */
 export function releaseOwned(path: string, token: string): boolean {
@@ -383,6 +384,7 @@ export function releaseOwned(path: string, token: string): boolean {
         )
         return false
       }
+      warnRemovedUnderUs(path) // ours when read, gone by the unlink
     }
     return true
   }
@@ -402,10 +404,7 @@ export function releaseOwned(path: string, token: string): boolean {
   // file descriptors, EACCES) while our file is still there, so only a path
   // that is really gone counts as released (lstat needs no descriptor).
   if (pathIsGone(path)) {
-    // Released, but not by us: someone removed our lock while we held it.
-    warnSafely(
-      `[skillsmith] lock_release_not_owner: ${path} was removed while this process held it -- nothing to release.`
-    )
+    warnRemovedUnderUs(path)
     return true
   }
   warnSafely(
@@ -413,6 +412,17 @@ export function releaseOwned(path: string, token: string): boolean {
       'not removing it.'
   )
   return false
+}
+
+/**
+ * Our lock was not at its path when we released it: someone removed it, or set
+ * it aside (doctor locks), while we held it. Nothing of ours is left to remove.
+ */
+function warnRemovedUnderUs(path: string): void {
+  warnSafely(
+    `[skillsmith] lock_release_not_owner: ${path} was not at its path when this process released it ` +
+      '(removed or moved while held) -- not removing anything.'
+  )
 }
 
 function pathIsGone(path: string): boolean {

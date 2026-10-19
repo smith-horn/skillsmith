@@ -99,8 +99,9 @@ export { describeRemedy, StuckLockError }
  * `finally` block. Idempotent -- a second call is a no-op that returns the
  * first call's result: true only when the lock is shown to be no longer ours
  * (unlinked, nothing at the path, or a readable claim naming someone else);
- * false when the unlink failed, or when the claim could not be read and
- * something is still at the path (it may be our own file).
+ * false when the unlink failed, or when something is still at the path that
+ * can't be shown to be someone else's (an unreadable claim, or a legacy claim
+ * naming this process): it may be our own file.
  *
  * SMI-5883 code-review round 2: `opts` is destructured field-by-field into a
  * FRESH object rather than forwarded as-is. TypeScript's excess-property

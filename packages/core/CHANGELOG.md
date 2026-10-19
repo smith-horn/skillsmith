@@ -10,8 +10,9 @@ All notable changes to `@skillsmith/core` are documented here.
   one, takes a second skills-root lock, ranks below or equal to one already held, or is made while
   lock 4 is held rejects with `LockOrderError` before any wait. The tracker stops counting a lock
   only once it is shown gone or someone else's, even for work it left running; a release that
-  failed, or whose claim could not be read while a file remains (the new `lock_release_unverified`
-  warning), keeps counting, since the file may still be ours. A lock is identified by its lock file's real path (symlinks resolved before `..`; the
+  failed, or whose claim can't be shown to be someone else's while a file remains (unreadable, or a
+  legacy claim naming this process; the new `lock_release_unverified` warning), keeps counting,
+  since the file may still be ours. A lock is identified by its lock file's real path (symlinks resolved before `..`; the
   final name's case folded where the OS folds it, once the lock file exists). The manifest lock is rank 3, fan-out's destination and link-manifest locks 2a and 2b (the
   destination lock checks before its in-process queue), the parked index 4. A manifest update
   callback that requests a lock or starts async work while it runs (a promise, timer, microtask,

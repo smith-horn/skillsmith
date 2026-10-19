@@ -42,8 +42,9 @@ export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>)
   // case-variant lock file currently exists (it can still change once a missing
   // parent folder is created, since that folder is then resolved). Two
   // spellings of one lock file may therefore queue separately, but they still
-  // exclude each other through the file lock; only in-process order is lost. A symlinked spelling shares the queue even while the parent
-  // doesn't exist yet (it is resolved at its nearest existing ancestor). The
+  // exclude each other through the file lock; only in-process order is lost.
+  // A symlinked spelling shares the queue even while the parent doesn't exist
+  // yet (it is resolved at its nearest existing ancestor). The
   // parent is not created before the check: a refused request must not write.
   const lockTarget = path.join(path.dirname(dest), siblingPrefix(dest, LOCK_TAG))
   checkLockRequest(lockTarget, 'fan-out destination lock', '2a')

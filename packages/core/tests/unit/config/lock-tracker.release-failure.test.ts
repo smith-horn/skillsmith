@@ -16,6 +16,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const inject = vi.hoisted(() => ({
   failUnlinkOf: null as string | null,
   failed: 0,
+  // 'ENOENT' simulates the file vanishing between the claim read and the
+  // unlink: the mock removes it for real, then throws ENOENT.
+  failUnlinkCode: 'EACCES',
   // `openSync` of this path throws `failOpenCode` for the next `failOpenTimes`
   // calls only, so the claim read in a release fails while a later acquisition
   // (the leftover request) opens normally.
@@ -30,8 +33,9 @@ vi.mock('node:fs', async (importOriginal) => {
   const unlinkSync = ((p: fs.PathLike) => {
     if (inject.failUnlinkOf !== null && String(p) === inject.failUnlinkOf) {
       inject.failed += 1
-      throw Object.assign(new Error(`EACCES: permission denied, unlink '${String(p)}'`), {
-        code: 'EACCES',
+      if (inject.failUnlinkCode === 'ENOENT') actual.unlinkSync(p)
+      throw Object.assign(new Error(`${inject.failUnlinkCode}: injected, unlink '${String(p)}'`), {
+        code: inject.failUnlinkCode,
       })
     }
     return actual.unlinkSync(p)
@@ -81,6 +85,7 @@ beforeEach(() => {
   setLockTrackerEnabledForTests(true)
   inject.failUnlinkOf = null
   inject.failed = 0
+  inject.failUnlinkCode = 'EACCES'
   inject.failOpenOf = null
   inject.failOpenTimes = 0
   inject.openFailed = 0
@@ -209,6 +214,19 @@ describe('a release that could not READ the claim leaves the lock held while the
     const t = path.join(dir, 'g')
     const r = await leftoverAfterFn(t, () => fs.rmSync(`${t}.lock`))
     expect(r.lockFileExists).toBe(false)
+    expect(warned('lock_release_unverified')).toBe(false)
+    expect(r.error).toBeUndefined()
+  })
+
+  it('our claim removed between the read and the unlink: warns not_owner, and the leftover takes the lock', async () => {
+    const t = path.join(dir, 'race')
+    const r = await leftoverAfterFn(t, () => {
+      inject.failUnlinkOf = `${t}.lock`
+      inject.failUnlinkCode = 'ENOENT'
+    })
+    expect(r.unlinkFailures).toBeGreaterThan(0) // the release's own unlink hit the vanished file
+    expect(r.lockFileExists).toBe(false)
+    expect(warned('lock_release_not_owner')).toBe(true)
     expect(warned('lock_release_unverified')).toBe(false)
     expect(r.error).toBeUndefined()
   })

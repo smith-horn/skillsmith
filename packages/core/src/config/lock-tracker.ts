@@ -47,8 +47,8 @@
  * release that reports the lock is no longer ours on disk (unlinked, nothing at
  * the path, or a readable claim naming someone else), with no await between.
  * The backstop in `runHoldingLock` clears it only for a lock that was never
- * acquired. A release that failed, or whose claim could not be read while a
- * file remains, keeps the lock counting: the file may still be ours, and work
+ * acquired. A release that failed, or whose claim can't be shown to be someone
+ * else's while a file remains, keeps the lock counting: the file may still be ours, and work
  * that inherited the store must be refused rather than wait on it.
  *
  * @module @skillsmith/core/config/lock-tracker
@@ -271,8 +271,8 @@ export function checkLockRequest(target: string, label: string, rank: LockOrder)
  * already gone, nor a lock that is still held as free. When `fn` settles, the
  * entry is cleared as a backstop only if `fn` never called `acquired()` (the
  * acquisition failed or was refused, so no file was taken). An acquired lock
- * whose release failed, or whose claim could not be read while a file remains,
- * stays live for the contexts that inherited it, because the file may still
+ * whose release failed, or whose claim can't be shown to be someone else's
+ * while a file remains, stays live for the contexts that inherited it, because the file may still
  * be ours.
  */
 export function runHoldingLock<T>(
