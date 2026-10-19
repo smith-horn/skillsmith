@@ -7,9 +7,9 @@
 import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
-import { randomUUID } from 'node:crypto'
 
-import { withFileLock } from '../config/file-lock.js'
+import { writeManifestAtomic } from './skill-manifest.atomic.js'
+import { runManifestUpdate } from './skill-manifest.lock.js'
 import { loadManifestForWrite, loadManifestLenient } from './skill-manifest.read-state.js'
 import type { SkillManifest, SkillManifestEntry } from './skill-installation.types.js'
 
@@ -218,18 +218,10 @@ export class ManifestManager {
   async save(manifest: SkillManifest): Promise<void> {
     assertNotRealUserHome(this.manifestPath, 'write')
     await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
-    const tempPath = this.manifestPath + '.tmp.' + process.pid + '.' + randomUUID()
-    try {
-      await fs.writeFile(tempPath, JSON.stringify(manifest, null, 2))
-      await fs.rename(tempPath, this.manifestPath)
-    } catch (error) {
-      try {
-        await fs.unlink(tempPath)
-      } catch {
-        // best-effort cleanup — surface the original error either way
-      }
-      throw error
-    }
+    // SMI-7143: one durable write (exclusive no-follow temp, fsync, rename,
+    // directory fsync). It keeps SMI-6007's unique temp name and its removal of
+    // only this call's own temp file on failure.
+    await writeManifestAtomic(this.manifestPath, JSON.stringify(manifest, null, 2))
   }
 
   /**
@@ -266,10 +258,13 @@ export class ManifestManager {
   ): Promise<void> {
     assertNotRealUserHome(this.manifestPath, 'lock')
     await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
-    await withFileLock(this.manifestPath, 'manifest update', async () => {
-      const manifest = options?.tolerant ? await this.loadTolerant() : await this.load()
-      const updated = updateFn(manifest)
-      await this.save(updated)
+    // SMI-7143: the shared locked update, with the pre-commit lock check before
+    // the rename, one retry if the lock was lost, and a wait on an older
+    // version's claim. `save` is not called here; the write is the same one.
+    await runManifestUpdate<SkillManifest>({
+      manifestPath: this.manifestPath,
+      load: () => (options?.tolerant ? this.loadTolerant() : this.load()),
+      update: updateFn,
     })
   }
 }

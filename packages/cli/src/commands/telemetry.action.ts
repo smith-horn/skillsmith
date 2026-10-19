@@ -190,6 +190,8 @@ async function runStatus(): Promise<void> {
 
   if (peekNeedsRotation || peekNeedsSweep) {
     manifest = await updateManifestEntry((current) => {
+      // Reset: a lost lock reruns this callback once (SMI-7143), so it starts from what it found, not from a prior run.
+      rotationTriggered = false
       let next = current
       // Annual auto-rotation (plan line 706, 713)
       if (shouldRotateAnonymousId(next)) {

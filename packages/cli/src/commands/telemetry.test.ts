@@ -45,10 +45,21 @@ vi.mock('fs/promises', async (importOriginal) => {
     writeFile: vi.fn(async (path: string, content: string) => {
       memfsAsync[path] = content
     }),
+    // SMI-7143: the manifest save (core's writeManifestAtomic) writes its temp
+    // file through a real file handle, fsyncs it, and stats it for the lock
+    // check before renaming, so the temp exists on disk, not in memfsAsync.
+    // The rename moves it into memfsAsync (and removes the disk copy), so the
+    // manifest itself still lives only in memory for the assertions below.
     rename: vi.fn(async (src: string, dst: string) => {
-      const content = memfsAsync[src]
-      if (content === undefined)
-        throw Object.assign(new Error(`ENOENT: ${src}`), { code: 'ENOENT' })
+      let content = memfsAsync[src]
+      if (content === undefined) {
+        try {
+          content = await actual.readFile(src, 'utf8')
+          await actual.unlink(src)
+        } catch {
+          throw Object.assign(new Error(`ENOENT: ${src}`), { code: 'ENOENT' })
+        }
+      }
       memfsAsync[dst] = content
       delete memfsAsync[src]
     }),

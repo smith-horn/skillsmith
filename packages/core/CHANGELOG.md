@@ -4,6 +4,26 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7143 -- manifest saves are durable: `writeManifestAtomic` writes an exclusive,
+  no-follow temp file beside `manifest.json`, syncs it, renames it into place, then syncs the
+  directory. A crash can no longer leave an empty or stale manifest behind a rename that already
+  happened. The directory sync is skipped on Windows and is a no-op where the filesystem does not
+  support it; any other failure there is a warning, never an error, since the manifest is already
+  saved.
+- **Fixed**: SMI-7143 -- a manifest update no longer saves after losing its lock. An older
+  Skillsmith steals a manifest lock more than 30 s old; every update now checks, just before its
+  rename, that its lock file is the same file with the same bytes and younger than 25 s on both the
+  wall clock and the filesystem's clock, and otherwise retries once from the load
+  (`ManifestLockLost` on a second loss). `ManifestManager.updateSafely` and mcp-server's writer share
+  this one path (`runManifestUpdate`). An update callback can therefore run twice; the four callbacks
+  that recorded results outside themselves (backfill, uninstall, telemetry rotation, reconcile
+  verify) now reset them first. Not closed: a stall of more than about 5 s between the check and the
+  rename, cross-host clock skew beyond that margin, and owned-lock's read-then-unlink release, which
+  predates this.
+- **Fixed**: SMI-7143 -- when an older Skillsmith process holds the manifest lock (a bare-PID claim),
+  an update now waits up to the normal 30 s for it, with one warning naming the pid, instead of
+  failing at once. Other locks keep failing at once on such a claim.
+
 - **Internal**: SMI-6531 -- `parkTree` takes a required `caller` (`install/park-callers.ts`: one per
   park-caller row of the A1 plan, plus `doctor recovery --park`). A held tree's detail names
   `skillsmith restore` only for a user-facing origin; a Skillsmith-internal one (a staging op dir,

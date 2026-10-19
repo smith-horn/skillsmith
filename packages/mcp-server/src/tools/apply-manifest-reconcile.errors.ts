@@ -140,6 +140,14 @@ export function describeReconcileError(
         `3) if stale, remove it: rm ${lockPath}${namesReclaim ? ` ; rm ${ctx.reclaimPath}` : ''}.`
       )
     }
+    case 'manifest.reconcile.lock_lost':
+      // SMI-7143: the update's pre-commit check found its manifest lock replaced
+      // or too old before the rename, twice in a row, so nothing was saved.
+      return (
+        `The manifest lock at '${ctx.path ?? '<unknown>'}' was lost before saving, twice ` +
+        `(${ctx.detail ?? 'reason unknown'}); nothing was saved. Another Skillsmith process, possibly ` +
+        `an older version, may be writing the manifest. Retry once it has finished.`
+      )
     case 'manifest.reconcile.entry_changed':
       return (
         `Refusing to revert ledger entry '${ctx.ledgerEntryId ?? '<unknown>'}' for '${ctx.name ?? '<unknown>'}': ` +

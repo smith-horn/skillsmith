@@ -110,6 +110,8 @@ export async function runVerify(
 
   await withLockTimeoutMapping(() =>
     manager.updateSafely((m: SkillManifest) => {
+      // Reset: a lost lock reruns this callback once (SMI-7143), so it starts from what it found, not from a prior run.
+      actuallyWritten.length = 0
       const updatedSkills = { ...m.installedSkills }
       for (const { key, verifiedAt } of writes) {
         const current = updatedSkills[key] as SkillManifestEntry | undefined

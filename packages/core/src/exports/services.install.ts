@@ -72,6 +72,15 @@ export {
 // how `outdated.action.ts` reached the OLD fail-open `loadManifest` without
 // ever writing that name in its own file. Only the two wrappers and the
 // error type they throw belong on this package's public surface.
+// SMI-7143: the one locked manifest update (pre-commit lock check, one retry,
+// a wait on an older version's claim), shared by core's ManifestManager and
+// mcp-server's updateManifestSafely so the check exists once.
+export {
+  runManifestUpdate,
+  ManifestLockLost,
+  type ManifestUpdateArgs,
+} from '../services/skill-manifest.lock.js'
+
 export {
   loadManifestForWrite,
   loadManifestLenient,

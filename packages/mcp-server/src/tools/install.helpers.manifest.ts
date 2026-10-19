@@ -13,7 +13,7 @@ import {
   assertNotRealUserHome,
   loadManifestForWrite,
   loadManifestLenient,
-  withFileLock,
+  runManifestUpdate,
 } from '@skillsmith/core'
 import { MANIFEST_PATH, SKILLSMITH_DIR, type SkillManifest } from './install.types.js'
 
@@ -143,7 +143,12 @@ export async function updateManifestSafely(
   // lock file — fixes ENOENT errors in CI environments where ~/.skillsmith
   // doesn't exist yet.
   await fs.mkdir(SKILLSMITH_DIR, { recursive: true })
-  await withFileLock(MANIFEST_PATH, 'manifest update', async () => {
+  // SMI-7143: core's shared locked update (the pre-commit lock check before
+  // the rename, one retry if the lock was lost, a wait on an older version's
+  // claim), so this writer and ManifestManager cannot drift apart. The write is
+  // core's writeManifestAtomic, the same one saveManifest reaches.
+  await runManifestUpdate<SkillManifest>({
+    manifestPath: MANIFEST_PATH,
     // SMI-6733 / ADR-171 § 1: the write side takes the STRICT wrapper, so a
     // corrupt, unreadable or version-unsupported manifest throws here rather
     // than being replaced by an empty document. This module's own
@@ -153,8 +158,7 @@ export async function updateManifestSafely(
     // them the lenient wrapper and a surfaced warning is Phase 2. Splitting
     // the read from the write is the whole reason ADR-171 specifies two
     // wrappers rather than one strict reader.
-    const manifest = (await loadManifestForWrite(MANIFEST_PATH)) as SkillManifest
-    const updatedManifest = updateFn(manifest)
-    await saveManifest(updatedManifest)
+    load: async () => (await loadManifestForWrite(MANIFEST_PATH)) as SkillManifest,
+    update: updateFn,
   })
 }

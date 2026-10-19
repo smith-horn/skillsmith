@@ -39,6 +39,7 @@ vi.mock('fs/promises', async (importOriginal) => {
     writeFile: vi.fn(actual.writeFile),
     rename: vi.fn(actual.rename),
     unlink: vi.fn(actual.unlink),
+    open: vi.fn(actual.open),
   }
 })
 
@@ -179,9 +180,17 @@ describe('ManifestManager concurrency hardening (SMI-6007)', () => {
   // --------------------------------------------------------------------------
 
   describe('save() write/rename failure cleanup', () => {
-    it('on a writeFile failure, the temp file is cleaned up and the original error propagates', async () => {
+    it('on a write failure, the temp file is cleaned up and the original error propagates', async () => {
       const originalError = new Error('ENOSPC: no space left on device')
-      vi.mocked(fs.writeFile).mockRejectedValueOnce(originalError)
+      // SMI-7143: save writes through a file handle (writeManifestAtomic), so
+      // the failure is injected on that handle's write; the assertions are the
+      // SMI-6007 ones, unchanged.
+      const realOpen = (await vi.importActual<typeof import('fs/promises')>('fs/promises')).open
+      vi.mocked(fs.open).mockImplementationOnce(async (...args: Parameters<typeof realOpen>) => {
+        const handle = await realOpen(...args)
+        Object.defineProperty(handle, 'write', { value: async () => Promise.reject(originalError) })
+        return handle
+      })
 
       await expect(manager.save({ version: '1.0.0', installedSkills: {} })).rejects.toThrow(
         originalError

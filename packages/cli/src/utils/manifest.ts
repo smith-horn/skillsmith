@@ -254,8 +254,9 @@ export async function updateManifestEntry(
     result = updateFn(manifest as SkillManifest)
     return result as CoreSkillManifest
   })
-  // updateSafely()'s callback always runs exactly once before it resolves —
-  // result is always assigned by the time we get here.
+  // updateSafely()'s callback runs at least once before it resolves, and a
+  // second time if the lock was lost before saving (SMI-7143); result holds the
+  // run that was saved.
   return result as SkillManifest
 }
 
