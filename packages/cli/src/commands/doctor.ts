@@ -16,10 +16,12 @@
  * one of those, matched by the real path of its folder; with the unsafe flag
  * it releases only the claim it printed. The skills-root write lock and
  * skills-root discovery join with A1 steps 2 and 6.
- * Exit status: 0 when listed or released, 1 when a release is refused.
+ * Exit status: 0 when listed or released; 1 when a release is refused, when the
+ * arguments are invalid (an unlisted path, the unsafe flag without --release, a
+ * state root that is not a directory), or on an unexpected filesystem error.
  */
 
-import { realpathSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { Command } from 'commander'
@@ -97,11 +99,28 @@ export function describeLock(path: string, insp: LockInspection | null): string[
 export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void> {
   const stateRoot = resolveStateRoot(options.stateRoot)
   const paths = stateRootLockPaths(stateRoot)
+  let rootExists = true
+  try {
+    if (!statSync(stateRoot).isDirectory()) {
+      console.error(chalk.red(`${stateRoot} is not a directory; give the state root folder.`))
+      process.exitCode = 1
+      return
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    rootExists = false
+  }
 
   if (options.release === undefined) {
     if (options.unsafeUnverifiedOwner) {
       console.error(chalk.red('--unsafe-unverified-owner applies only with --release <path>.'))
       process.exitCode = 1
+      return
+    }
+    if (!rootExists) {
+      console.log(
+        `${stateRoot} does not exist, so it holds no locks. Check --state-root if you expected one.`
+      )
       return
     }
     console.log(chalk.bold(`Locks under ${stateRoot}`))
@@ -122,14 +141,22 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
   }
   let expected: { ino: bigint; bytes: Buffer } | undefined
   if (options.unsafeUnverifiedOwner) {
-    // Plan §3.9: the claim and why its owner can't be verified, before acting;
-    // `expected` makes the release refuse unless the lock is still that claim.
+    // Plan §3.9: the claim and why its owner can't be verified, before acting.
+    // Whatever this inspection saw, `expected` binds the release to it, so the
+    // flag never removes a lock that appeared or changed after it.
     const insp = inspectLock(target)
-    const why = insp !== null && insp.kind !== 'cant-read' ? unverifiedOwnerReason(insp) : null
-    if (insp !== null && why !== null && insp.bytes !== null) {
-      // Every line but the last, which would repeat the reason printed next.
-      for (const line of describeLock(target, insp).slice(0, -1)) console.log(line)
-      console.log(chalk.yellow(`Its owner can't be verified: ${why}. Releasing it anyway.`))
+    if (insp === null) {
+      console.error(chalk.red(`Not released: nothing is at ${target}`))
+      process.exitCode = 1
+      return
+    }
+    if (insp.bytes !== null) {
+      const why = insp.kind !== 'cant-read' ? unverifiedOwnerReason(insp) : null
+      if (why !== null) {
+        // Every line but the last, which would repeat the reason printed next.
+        for (const line of describeLock(target, insp).slice(0, -1)) console.log(line)
+        console.log(chalk.yellow(`Its owner can't be verified: ${why}. Releasing it anyway.`))
+      }
       expected = { ino: insp.ino, bytes: insp.bytes }
     }
   }
