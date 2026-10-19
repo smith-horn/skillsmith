@@ -76,8 +76,13 @@ export async function writeManifestAtomic(
     if (created && !renamed) {
       try {
         await unlink(tempPath)
-      } catch {
-        // Only this call's own temp file; surface the original error either way.
+      } catch (cleanupErr) {
+        // Only this call's own temp file. The original error is still the one
+        // rethrown; the leftover is named so it is not silent.
+        warnSafely(
+          `[skillsmith] Could not remove the temporary manifest ${tempPath} ` +
+            `(${(cleanupErr as NodeJS.ErrnoException).code ?? String(cleanupErr)}); it is safe to delete.`
+        )
       }
     }
     throw err
@@ -88,7 +93,20 @@ export async function writeManifestAtomic(
 /** Codes a filesystem returns when it cannot fsync a directory at all. */
 const DIR_SYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR', 'ENOSYS'])
 
-/** Best-effort directory fsync after the rename; never throws (see the module comment). */
+/**
+ * A warning that cannot itself throw: a replaced or throwing `console.warn`
+ * (an embedding application's logger) must not turn a saved manifest into a
+ * reported failure, or replace the error a failed save is reporting.
+ */
+function warnSafely(message: string): void {
+  try {
+    console.warn(message)
+  } catch {
+    // Nothing else can report it; the save's outcome stands either way.
+  }
+}
+
+/** Best-effort directory fsync after the rename; never throws, its warning included. */
 async function syncDirectory(dir: string): Promise<void> {
   if (process.platform === 'win32') return
   try {
@@ -101,7 +119,7 @@ async function syncDirectory(dir: string): Promise<void> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code ?? ''
     if (DIR_SYNC_UNSUPPORTED.has(code)) return
-    console.warn(
+    warnSafely(
       `[skillsmith] The manifest was saved, but its directory could not be synced (${code || String(err)}); ` +
         `the save may not survive a crash.`
     )

@@ -15,6 +15,7 @@ const trace = vi.hoisted(() => ({
   tempFlags: null as number | null,
   dirPath: null as string | null,
   dirSyncError: null as string | null,
+  failUnlinkWith: null as string | null,
 }))
 
 vi.mock('fs/promises', async (importOriginal) => {
@@ -55,6 +56,11 @@ vi.mock('fs/promises', async (importOriginal) => {
   }) as typeof actual.rename
   const unlink = (async (...args: Parameters<typeof actual.unlink>) => {
     trace.events.push(`unlink:${path.basename(String(args[0]))}`)
+    if (trace.failUnlinkWith !== null) {
+      throw Object.assign(new Error(`${trace.failUnlinkWith}: forced`), {
+        code: trace.failUnlinkWith,
+      })
+    }
     return actual.unlink(...args)
   }) as typeof actual.unlink
   return { ...actual, open, rename, unlink }
@@ -70,6 +76,7 @@ afterEach(() => {
   trace.tempFlags = null
   trace.dirPath = null
   trace.dirSyncError = null
+  trace.failUnlinkWith = null
   vi.restoreAllMocks()
   for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true })
 })
@@ -121,6 +128,41 @@ describe('writeManifestAtomic', () => {
       /saved, but its directory could not be synced \(EIO\)/
     )
   })
+
+  it('a throwing console.warn after a failed directory sync still resolves: the manifest is saved', async () => {
+    const { manifestPath } = tmp()
+    trace.dirSyncError = 'EIO'
+    vi.spyOn(console, 'warn').mockImplementation(() => {
+      throw new Error('logger exploded')
+    })
+    await expect(writeManifestAtomic(manifestPath, 'saved')).resolves.toBeUndefined()
+    expect(fs.readFileSync(manifestPath, 'utf8')).toBe('saved')
+  })
+
+  for (const loggerThrows of [false, true]) {
+    it(`a temp file that cannot be removed after a refusal is named, and the refusal is still the error${loggerThrows ? ' (logger throws)' : ''}`, async () => {
+      const { root, manifestPath } = tmp()
+      fs.writeFileSync(manifestPath, 'before')
+      trace.failUnlinkWith = 'EBUSY'
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {
+        if (loggerThrows) throw new Error('logger exploded')
+      })
+      const refusal = new Error('lock lost')
+      await expect(
+        writeManifestAtomic(manifestPath, 'after', {
+          beforeRename: () => {
+            throw refusal
+          },
+        })
+      ).rejects.toBe(refusal)
+      expect(fs.readFileSync(manifestPath, 'utf8')).toBe('before')
+      const left = temps(root)
+      expect(left).toHaveLength(1)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toContain(path.join(root, left[0] ?? 'MISSING'))
+      expect(String(warn.mock.calls[0]?.[0])).toContain('EBUSY')
+    })
+  }
 
   it('on Windows the directory sync is skipped', async () => {
     const { manifestPath } = tmp()
