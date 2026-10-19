@@ -37,6 +37,7 @@ import {
   RECLAIM_LOCK_TIMEOUT_MS,
 } from './owned-lock.types.js'
 import type { Claim, ReclaimOutcome, RefusalCategory, V1Claim } from './owned-lock.types.js'
+import { warnSafely } from '../utils/warn-safely.js'
 
 export function randomHex(bytes: number): string {
   return randomBytes(bytes).toString('hex')
@@ -352,7 +353,7 @@ export function releaseOwned(path: string, token: string): void {
       unlinkSync(path)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(
+        warnSafely(
           `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${(err as Error).message}`
         )
       }
@@ -360,7 +361,8 @@ export function releaseOwned(path: string, token: string): void {
   } else {
     // We no longer own it -- unlinking would destroy a live holder's lock
     // (it was reclaimed from us after we appeared dead, or hand-edited).
-    console.warn(
+    // Release runs in a `finally`, so neither warning may throw (SMI-7143).
+    warnSafely(
       `[skillsmith] lock_release_not_owner: ${path} is no longer owned by this process -- not removing it.`
     )
   }

@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7143 -- releasing an owned lock (`releaseOwned`) and the manifest lock's
+  legacy-wait notice warn through a logger call that cannot throw (`utils/warn-safely.ts`, shared
+  with `writeManifestAtomic`). A replaced `console.warn` that throws can no longer turn a saved
+  manifest into a reported failure, or replace the `ManifestLockLost` that triggers the retry.
 - **Fixed**: SMI-7143 -- manifest saves are durable: `writeManifestAtomic` writes an exclusive,
   no-follow temp file beside `manifest.json`, syncs it, renames it into place, then syncs the
   directory. A crash can no longer leave an empty or stale manifest behind a rename that already
@@ -18,8 +22,10 @@ All notable changes to `@skillsmith/core` are documented here.
   this one path (`runManifestUpdate`). An update callback can therefore run twice; the four callbacks
   that recorded results outside themselves (backfill, uninstall, telemetry rotation, reconcile
   verify) now reset them first. Not closed: a stall of more than about 5 s between the check and the
-  rename, cross-host clock skew beyond that margin, and owned-lock's read-then-unlink release, which
-  predates this.
+  rename, and owned-lock's read-then-unlink release, which predates this. A wall clock 25 s or more
+  ahead of the manifest directory's file clock (a network mount served by another host) makes every
+  save fail closed, with a reason naming the skew, because an older Skillsmith there would steal
+  any lock.
 - **Fixed**: SMI-7143 -- when an older Skillsmith process holds the manifest lock (a bare-PID claim),
   an update now waits up to the normal 30 s for it, with one warning naming the pid, instead of
   failing at once. Other locks keep failing at once on such a claim.

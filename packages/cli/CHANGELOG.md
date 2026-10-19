@@ -8,6 +8,10 @@ All notable changes to `@skillsmith/cli` are documented here.
   update: a durable save, no save after the manifest lock was taken over by an older Skillsmith (one
   retry), and, when an older process holds the lock, a wait of up to 30 s with one warning on stderr
   naming its pid, instead of an immediate failure.
+- **Fixed**: SMI-7143 -- `saveManifest` (`utils/manifest.ts`) now delegates to core's
+  `ManifestManager.save()`, as mcp-server's does, instead of its own unsynced temp-file write. It has
+  no caller in the CLI's commands, but it is exported and documented as safe inside an update
+  callback.
 
 ## v0.8.16
 
