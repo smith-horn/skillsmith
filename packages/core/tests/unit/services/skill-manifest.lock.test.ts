@@ -109,6 +109,7 @@ describe('T-M3: lock-age boundaries on the two clocks', () => {
     expect(at(10n * S, 40n * S)).toContain('about 30 s ahead')
     // An old lock with a large skew still names the skew: it fails every save.
     expect(at(30n * S, 60n * S)).toContain('about 30 s ahead')
+    expect(at(60n * S, 90n * S)).toContain('about 30 s ahead')
   })
   it('a missing lock, another inode, or other bytes fail', () => {
     const clocks = { fsNs: T0, wallNs: T0 }
