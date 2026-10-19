@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Docs**: SMI-7143 -- the manifest lock's cross-host residual gives the right threshold: an older
+  Skillsmith on another host steals a lock this check accepts once that host's clock runs more than
+  5 s ahead of the file clock (its 30 s minus the 25 s limit), not 30 s.
 - **Fixed**: SMI-7143 -- releasing an owned lock (`releaseOwned`) and the manifest lock's
   legacy-wait notice warn through a logger call that cannot throw (`utils/warn-safely.ts`, shared
   with `writeManifestAtomic`). A replaced `console.warn` that throws can no longer turn a saved
@@ -22,7 +25,7 @@ All notable changes to `@skillsmith/core` are documented here.
   this one path (`runManifestUpdate`). An update callback can therefore run twice; the four callbacks
   that recorded results outside themselves (backfill, uninstall, telemetry rotation, reconcile
   verify) now reset them first. Not closed: a stall of more than about 5 s between the check and the
-  rename, cross-host clock skew (an older Skillsmith on another host whose clock runs 30 s or more
+  rename, cross-host clock skew (an older Skillsmith on another host whose clock runs more than 5 s
   ahead of the file clock can still steal a lock this check accepts), and owned-lock's
   read-then-unlink release, which predates this. This host's wall clock 25 s or more ahead of the
   manifest directory's file clock makes every save fail closed, with a reason naming the skew.
