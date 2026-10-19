@@ -1169,11 +1169,19 @@ describe('releaseOwned return value: true only when the lock is shown not to be 
     expect(warned('lock_release_unverified')).toBe(false)
   })
 
-  it('a readable legacy (bare pid) claim: not removed, returns true, not_owner warning', () => {
-    seed('4242\n')
+  it('a readable legacy (bare pid) claim naming another pid: not removed, returns true, not_owner warning', () => {
+    seed(`${process.pid + 1}\n`)
     expect(releaseOwned(lockPath, TOKEN)).toBe(true)
     expect(existsSync(lockPath)).toBe(true)
     expect(warned('lock_release_not_owner')).toBe(true)
+  })
+
+  it('a legacy claim naming this pid: not removed, returns false, unverified warning (it may be ours)', () => {
+    seed(`${process.pid}\n`)
+    expect(releaseOwned(lockPath, TOKEN)).toBe(false)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(true)
+    expect(warned('lock_release_not_owner')).toBe(false)
   })
 
   it('an unparseable file that is still there: not removed, returns false, unverified warning', () => {

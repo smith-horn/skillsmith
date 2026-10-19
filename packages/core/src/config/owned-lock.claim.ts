@@ -389,7 +389,9 @@ export function releaseOwned(path: string, token: string): boolean {
   // Not provably ours, so never unlinked: that would destroy a live holder's
   // lock (reclaimed from us after we appeared dead, or hand-edited). Release
   // runs in a `finally`, so no warning here may throw (SMI-7143).
-  if (claim.kind === 'v1' || claim.kind === 'legacy') {
+  // A legacy claim is only a pid, so one naming this process can't be shown to
+  // be someone else's: it falls through to the unverified answer below.
+  if (claim.kind === 'v1' || (claim.kind === 'legacy' && claim.pid !== process.pid)) {
     // A claim we can read, and it isn't ours: someone else holds it now.
     warnSafely(
       `[skillsmith] lock_release_not_owner: ${path} is no longer owned by this process -- not removing it.`
@@ -401,8 +403,8 @@ export function releaseOwned(path: string, token: string): boolean {
   // that is really gone counts as released (lstat needs no descriptor).
   if (pathIsGone(path)) return true
   warnSafely(
-    `[skillsmith] lock_release_unverified: could not read the claim at ${path} -- not removing it, ` +
-      'and this process still counts it as held.'
+    `[skillsmith] lock_release_unverified: could not show the claim at ${path} is someone else's -- ` +
+      'not removing it, and this process still counts it as held.'
   )
   return false
 }
