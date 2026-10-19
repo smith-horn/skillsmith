@@ -4,14 +4,25 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7143 -- `releaseLock` and `inspectLock` (PR #3123 retro): a read that fails after
+  the lock is opened (a directory or FIFO swapped in) is now `unparseable` instead of a throw, and
+  owned-lock's reclaim and `doctor locks` share one liveness probe, `probePidAlive`
+  (`owned-lock.claim.ts`), so the two rules can't drift apart. Owned-lock's reclaim decisions are
+  unchanged for every pid with the real `process.kill` (an injected probe that answers `ESRCH`
+  for an unsafe-integer pid no longer reads it as dead). A pid that `kill` rejects without an
+  errno (above int32) is now reported as not probed, not as alive. `releaseLock` gains an internal test
+  seam after the move aside.
 - **Added**: SMI-7143 -- `inspectLock`, `releaseLock` and `stateRootLockPaths`
   (`config/lock-doctor.ts`), behind `skillsmith doctor locks`. `inspectLock` reads a lock once,
-  never through a symlink, and reports its claim kind, pid, host, whether that host is this one,
-  whether the pid is alive on this host, and its age. `releaseLock` frees, by default, only a v1
-  claim from this host whose pid is dead; a bare-PID, unparseable or other-host claim, or one whose
-  pid is alive here, needs `unsafeUnverifiedOwner`; a claim it can't read is never released. It
-  takes `<lock>.reclaim` first and re-checks the lock's inode and bytes immediately before
-  unlinking.
+  never through a symlink at the lock path, and reports its claim kind, pid, host, whether that
+  host is this one, whether the pid is alive on this host, and its age. `releaseLock` frees, by
+  default, only a v1 claim from this host whose pid is dead; a bare-PID, unparseable or other-host
+  claim, or one whose pid is alive here, needs `unsafeUnverifiedOwner`; a claim it can't read, or
+  can't compare, is never released, and `expected` binds a release to the claim a caller showed. It
+  takes `<lock>.reclaim`, moves the lock aside under a unique name, and removes the moved file only
+  if its inode and bytes equal the inspection; a newer lock found there is linked back and the
+  release refused. Refusals: `absent`, `cant-read`, `not-comparable`, `unverified-owner`,
+  `reclaim-held`, `changed`, `gone`.
 - **Docs**: SMI-7143 -- the manifest lock's cross-host residual gives the right threshold: an older
   Skillsmith on another host steals a lock this check accepts once that host's clock runs more than
   5 s ahead of the file clock (its 30 s minus the 25 s limit), not 30 s.

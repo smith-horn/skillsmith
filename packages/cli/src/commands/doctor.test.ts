@@ -13,13 +13,17 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls = vi.hoisted(() => ({ release: [] as Array<{ path: string; opts: unknown }> }))
+const calls = vi.hoisted(() => ({
+  release: [] as Array<{ path: string; opts: unknown }>,
+  beforeRelease: null as (() => void) | null,
+}))
 vi.mock('@skillsmith/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@skillsmith/core')>()
   return {
     ...actual,
     releaseLock: (path: string, opts: Parameters<typeof actual.releaseLock>[1]) => {
       calls.release.push({ path, opts })
+      calls.beforeRelease?.()
       return actual.releaseLock(path, opts)
     },
   }
@@ -38,6 +42,7 @@ beforeEach(() => {
   out = []
   err = []
   calls.release = []
+  calls.beforeRelease = null
   vi.spyOn(console, 'log').mockImplementation((...a) => void out.push(a.join(' ')))
   vi.spyOn(console, 'error').mockImplementation((...a) => void err.push(a.join(' ')))
   process.exitCode = undefined
@@ -166,6 +171,67 @@ describe('skillsmith doctor locks', () => {
     } finally {
       fs.rmSync(elsewhere, { recursive: true, force: true })
     }
+  })
+
+  it('with the flag, a lock that changes after the CLI looked is not removed, even a verified one', async () => {
+    fs.writeFileSync(lockPath, v1(deadPid()))
+    const live = v1(process.pid)
+    calls.beforeRelease = () => fs.writeFileSync(lockPath, live)
+
+    await runDoctorLocks({ stateRoot: root, release: lockPath, unsafeUnverifiedOwner: true })
+
+    expect(process.exitCode).toBe(1)
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(live)
+    expect(out.join('\n')).not.toContain('Released')
+  })
+
+  it('with the flag and nothing at the path, refuses without calling release', async () => {
+    await runDoctorLocks({ stateRoot: root, release: lockPath, unsafeUnverifiedOwner: true })
+
+    expect(process.exitCode).toBe(1)
+    expect(err.join('\n')).toContain(`nothing is at ${lockPath}`)
+    expect(calls.release).toEqual([])
+  })
+
+  for (const [label, plant] of [
+    ['a symlink', () => fs.symlinkSync(path.join(root, 'nowhere'), lockPath)],
+    ['a directory', () => fs.mkdirSync(lockPath)],
+    ['an oversize file', () => fs.writeFileSync(lockPath, 'x'.repeat(5000))],
+  ] as const) {
+    it(`with the flag, ${label} it can't read is refused before any release, even if a live lock replaces it`, async () => {
+      plant()
+      // Old code called releaseLock unbound; its fresh look would find this live lock.
+      calls.beforeRelease = () => {
+        fs.rmSync(lockPath, { recursive: true, force: true })
+        fs.writeFileSync(lockPath, v1(process.pid))
+      }
+
+      await runDoctorLocks({ stateRoot: root, release: lockPath, unsafeUnverifiedOwner: true })
+
+      expect(process.exitCode).toBe(1)
+      expect(calls.release).toEqual([])
+      expect(err.join('\n')).toContain('could not be read and compared')
+      expect(out.join('\n')).not.toContain('Released')
+    })
+  }
+
+  it('a missing state root says so, and exits 0', async () => {
+    const missing = path.join(root, 'no-such-root')
+
+    await runDoctorLocks({ stateRoot: missing })
+
+    expect(process.exitCode).toBeUndefined()
+    expect(out.join('\n')).toContain(`${missing} does not exist`)
+  })
+
+  it('a state root that is a file is refused, exit 1', async () => {
+    const file = path.join(root, 'a-file')
+    fs.writeFileSync(file, 'x')
+
+    await runDoctorLocks({ stateRoot: file })
+
+    expect(process.exitCode).toBe(1)
+    expect(err.join('\n')).toContain(`${file} is not a directory`)
   })
 
   it('refuses --unsafe-unverified-owner without --release, exit 1', async () => {

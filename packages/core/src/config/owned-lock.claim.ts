@@ -170,17 +170,34 @@ export function isOwnerDefinitelyDead(
   return isV1OwnerDead(claim, killProbe)
 }
 
+/**
+ * Whether `pid` is alive on THIS host: `false` only for `ESRCH`; `true` when
+ * signalable, for `EPERM` (exists, not ours) and any other errno; `null`, not
+ * probed, for a pid that is not a positive safe integer (`kill(0, 0)` signals
+ * the process group) or that `kill` rejects without an errno (a pid above
+ * int32 gives `ERR_INVALID_ARG_TYPE`). Shared by owned-lock's reclaim and
+ * `doctor locks` (SMI-7143), so the two can't drift apart; owned-lock reads
+ * only `false` as dead, so `null` and `true` both leave a lock alone.
+ */
+export function probePidAlive(
+  pid: number,
+  killProbe: typeof process.kill = process.kill
+): boolean | null {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  try {
+    killProbe(pid, 0)
+    return true // signalable -> alive
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (typeof code !== 'string' || !/^E[A-Z0-9]+$/.test(code)) return null // not an errno
+    return code !== 'ESRCH' // EPERM or other errno -> assume alive
+  }
+}
+
 /** The liveness probe behind {@link isOwnerDefinitelyDead}, without the auto-reclaim opt-out. */
 function isV1OwnerDead(claim: V1Claim, killProbe: typeof process.kill = process.kill): boolean {
   if (claim.host !== hostname()) return false
-  if (!Number.isInteger(claim.pid) || claim.pid <= 0) return false
-  try {
-    killProbe(claim.pid, 0)
-    return false // signalable -> alive
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return true // no such process -> dead
-    return false // EPERM (exists, not ours) or any other errno -> assume alive
-  }
+  return probePidAlive(claim.pid, killProbe) === false
 }
 
 export function classifyRefusal(claim: Claim): RefusalCategory {

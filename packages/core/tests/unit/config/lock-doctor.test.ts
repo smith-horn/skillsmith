@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const inject = vi.hoisted(() => ({
   deniedOpen: null as string | null,
   failAsideUnlink: false,
+  failReadOf: null as string | null,
 }))
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -34,6 +35,14 @@ vi.mock('node:fs', async (importOriginal) => {
     }
     return (actual.openSync as (p: fs.PathLike, ...r: unknown[]) => number)(p, ...rest)
   }) as typeof actual.openSync
+  const readSync = ((fd: number, ...rest: unknown[]) => {
+    if (inject.failReadOf !== null) {
+      throw Object.assign(new Error('EISDIR: illegal operation on a directory, read'), {
+        code: 'EISDIR',
+      })
+    }
+    return (actual.readSync as (fd: number, ...r: unknown[]) => number)(fd, ...rest)
+  }) as typeof actual.readSync
   const unlinkSync = ((p: fs.PathLike) => {
     if (inject.failAsideUnlink && String(p).includes('.doctor-')) {
       throw Object.assign(new Error(`EBUSY: resource busy, unlink '${String(p)}'`), {
@@ -45,13 +54,14 @@ vi.mock('node:fs', async (importOriginal) => {
   return {
     ...actual,
     openSync,
+    readSync,
     unlinkSync,
-    default: { ...actual, openSync, unlinkSync },
+    default: { ...actual, openSync, readSync, unlinkSync },
   }
 })
 
 import { inspectLock, releaseLock, stateRootLockPaths } from '../../../src/config/lock-doctor.js'
-import { tryReclaimUnderLock } from '../../../src/config/owned-lock.claim.js'
+import { probePidAlive, tryReclaimUnderLock } from '../../../src/config/owned-lock.claim.js'
 
 /** Leftover rename-aside files beside the lock. */
 function asideFiles(root: string): string[] {
@@ -62,6 +72,7 @@ const roots: string[] = []
 afterEach(() => {
   inject.deniedOpen = null
   inject.failAsideUnlink = false
+  inject.failReadOf = null
   for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true })
 })
 
@@ -200,6 +211,28 @@ describe('T-M2: the lock removed is the lock inspected', () => {
     expect(asideFiles(root)).toHaveLength(1)
   })
 
+  it('a newer lock that cannot be put back (a third lock took the path) is left aside and named', () => {
+    const { root, lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, v1(deadPid()))
+    const b = v1(process.pid)
+    const c = v1(process.pid, 'third-holder')
+
+    const r = releaseLock(lockPath, {
+      beforeFinalCheck: () => {
+        fs.rmSync(lockPath)
+        fs.writeFileSync(lockPath, b, { flag: 'wx' })
+      },
+      afterMoveAside: () => fs.writeFileSync(lockPath, c, { flag: 'wx' }),
+    })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('changed')
+    const aside = asideFiles(root)
+    expect(aside).toHaveLength(1)
+    expect(fs.readFileSync(path.join(root, aside[0]!), 'utf8')).toBe(b)
+    expect(r.outcome === 'refused' && r.message).toContain(path.join(root, aside[0]!))
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(c)
+  })
+
   it('holds the reclaim lock while it decides: an owned-lock reclaimer is shut out', () => {
     const { lockPath } = stateRoot()
     fs.writeFileSync(lockPath, v1(deadPid()))
@@ -232,6 +265,21 @@ describe('T-M2: the lock removed is the lock inspected', () => {
     const text = String(deadPid())
     fs.writeFileSync(lockPath, text)
     const shown = { ino: BigInt(fs.statSync(lockPath).ino), bytes: Buffer.from('other claim') }
+
+    const r = releaseLock(lockPath, { unsafeUnverifiedOwner: true, expected: shown })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('changed')
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(text)
+  })
+
+  it('refuses when the lock has the bytes the caller showed but another inode (expected)', () => {
+    const { root, lockPath } = stateRoot()
+    const text = String(deadPid())
+    fs.writeFileSync(lockPath, text)
+    const shown = { ino: BigInt(fs.statSync(lockPath).ino), bytes: Buffer.from(text) }
+    const other = path.join(root, 'replacement')
+    fs.writeFileSync(other, text)
+    fs.renameSync(other, lockPath) // same bytes, new inode
 
     const r = releaseLock(lockPath, { unsafeUnverifiedOwner: true, expected: shown })
 
@@ -287,10 +335,40 @@ describe("a claim doctor can't read or compare is never released", () => {
     expect(fs.statSync(lockPath).size).toBe(5000)
   })
 
+  it('a read that fails after open is unparseable and not comparable, never a throw', () => {
+    const { lockPath } = stateRoot()
+    fs.writeFileSync(lockPath, v1(deadPid()))
+    inject.failReadOf = lockPath
+
+    const i = inspectLock(lockPath)!
+    expect(i.kind).toBe('unparseable')
+    expect(i.note).toContain('EISDIR')
+    const r = releaseLock(lockPath, { unsafeUnverifiedOwner: true })
+    expect(r.outcome === 'refused' && r.refusal).toBe('not-comparable')
+    inject.failReadOf = null
+    expect(fs.existsSync(lockPath)).toBe(true)
+  })
+
   it('refuses when nothing is there', () => {
     const { lockPath } = stateRoot()
     const r = releaseLock(lockPath)
     expect(r.outcome === 'refused' && r.refusal).toBe('absent')
+  })
+})
+
+describe('probePidAlive, the liveness probe owned-lock and doctor share', () => {
+  it('does not probe a pid that is not a positive safe integer', () => {
+    for (const pid of [0, -1, 1.5, 2 ** 31, Number.MAX_SAFE_INTEGER + 2]) {
+      expect(probePidAlive(pid)).toBe(null)
+    }
+  })
+  it('alive for this process, dead for an exited one, alive for EPERM', () => {
+    expect(probePidAlive(process.pid)).toBe(true)
+    expect(probePidAlive(deadPid())).toBe(false)
+    const eperm = (() => {
+      throw Object.assign(new Error('EPERM'), { code: 'EPERM' })
+    }) as unknown as typeof process.kill
+    expect(probePidAlive(4242, eperm)).toBe(true)
   })
 })
 

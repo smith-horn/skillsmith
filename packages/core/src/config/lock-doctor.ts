@@ -37,6 +37,10 @@
  *   longer excludes the new one.
  * - A process of the same user that swaps a folder above the lock mid-run
  *   can redirect the rename; it could equally change the lock itself.
+ * - A lock is identified by its inode and bytes. A fixed-content claim (a
+ *   bare PID) removed and recreated with the same bytes, on a filesystem that
+ *   reuses the inode, can't be told from the one inspected: its timestamps
+ *   matched too when measured. A v1 claim's random token rules this out.
  *
  * @module @skillsmith/core/config/lock-doctor
  */
@@ -53,7 +57,13 @@ import {
 } from 'node:fs'
 import { hostname } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { createLockExclusive, parseClaim, randomHex, releaseOwned } from './owned-lock.claim.js'
+import {
+  createLockExclusive,
+  parseClaim,
+  probePidAlive,
+  randomHex,
+  releaseOwned,
+} from './owned-lock.claim.js'
 import { MAX_LOCK_BYTES } from './owned-lock.types.js'
 
 /** `v1` and `bare-pid` are owned-lock's claim formats; anything else it can read is `unparseable`. */
@@ -80,17 +90,6 @@ export interface LockInspection {
   pidAliveHere: boolean | null
 }
 
-/** Whether `pid` is alive on this host: `ESRCH` is dead; success and `EPERM` are alive. */
-function pidAliveHere(pid: number): boolean | null {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null // kill(0, 0) signals the group
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH'
-  }
-}
-
 type ReadResult = { bytes: Buffer; ino: bigint } | { error: string; code: string | undefined }
 
 /** One bounded read of the file at `path`, never through a symlink. */
@@ -109,6 +108,10 @@ function readLockBytes(path: string): ReadResult {
     const n = readSync(fd, buf, 0, buf.length, 0)
     if (n > MAX_LOCK_BYTES) return { error: `it is over ${MAX_LOCK_BYTES} bytes`, code: undefined }
     return { bytes: Buffer.from(buf.subarray(0, n)), ino: st.ino }
+  } catch (err) {
+    // A directory or FIFO swapped in after lstat (EISDIR, ESPIPE): unreadable, not a crash.
+    const code = (err as NodeJS.ErrnoException).code
+    return { error: `could not read it (${code ?? String(err)})`, code }
   } finally {
     closeSync(fd)
   }
@@ -157,7 +160,7 @@ export function inspectLock(path: string): LockInspection | null {
       pid: claim.pid,
       host: claim.host,
       sameHost,
-      pidAliveHere: sameHost ? pidAliveHere(claim.pid) : null,
+      pidAliveHere: sameHost ? probePidAlive(claim.pid) : null,
     }
   }
   if (claim.kind === 'legacy') {
@@ -169,7 +172,7 @@ export function inspectLock(path: string): LockInspection | null {
       note: null,
       bytes: read.bytes,
       pid: claim.pid,
-      pidAliveHere: pidAliveHere(claim.pid),
+      pidAliveHere: probePidAlive(claim.pid),
     }
   }
   return {
@@ -225,6 +228,8 @@ export interface ReleaseLockOptions {
   expected?: { ino: bigint; bytes: Buffer }
   /** @internal Test seam (T-M2): runs after `.reclaim` is taken, before the lock is moved. */
   beforeFinalCheck?: () => void
+  /** @internal Test seam: runs after the lock is moved aside, before it is checked. */
+  afterMoveAside?: () => void
 }
 
 /** Release the lock at `path` under the rules in the module comment. Never throws on a refusal. */
@@ -310,6 +315,7 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
         inspection: insp,
       }
     }
+    opts.afterMoveAside?.()
     const moved = inspectLock(aside)
     if (moved !== null && moved.ino === insp.ino && moved.bytes?.equals(insp.bytes) === true) {
       unlinkSync(aside)
