@@ -83,3 +83,6 @@ export { createAgentCommand } from './agent.js'
 // SMI-5615 Wave 3 Step 1: diagnostic snapshot + log inspection commands
 export { createDiagnoseCommand } from './diagnose.js'
 export { createLogsCommand } from './logs.js'
+
+// SMI-7143: `sklx doctor locks` lists and releases Skillsmith's own lock files
+export { createDoctorCommand } from './doctor.js'
