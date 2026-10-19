@@ -14,6 +14,7 @@ import * as fs from 'node:fs/promises'
 import type { Stats } from 'node:fs'
 
 import {
+  LockOrderError,
   compareSkillContentHashes,
   installedSkillsOf,
   manifestKeyFor,
@@ -300,7 +301,9 @@ export async function verifyEntryAgainstRegistry(
       },
     })
     registryHash = registryInfo?.contentHash ?? null
-  } catch {
+  } catch (lookupError) {
+    // A lock-order refusal is a programming error, not a network failure.
+    if (lookupError instanceof LockOrderError) throw lookupError
     liveArmFailed = true
   }
 

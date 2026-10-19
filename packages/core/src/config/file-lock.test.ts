@@ -186,7 +186,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
 
   async function settle(): Promise<Outcome> {
     let settled = false
-    const attempt = withFileLock(target, 'probe', async () => 'ok').then(
+    const attempt = withFileLock(target, 'probe', async () => 'ok', { rank: 'unordered' }).then(
       (): 'acquired' => {
         settled = true
         return 'acquired'
@@ -210,7 +210,7 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
     // on the first and the right one on the second, and pass.
     let settled = false
     let caught: unknown
-    const attempt = withFileLock(target, 'probe', async () => 'ok').then(
+    const attempt = withFileLock(target, 'probe', async () => 'ok', { rank: 'unordered' }).then(
       (): 'acquired' => {
         settled = true
         return 'acquired'
@@ -293,9 +293,14 @@ describe('withFileLock — RETRYABLE_REASONS membership is behaviour (SMI-6776 r
 describe('withFileLock', () => {
   it('(i) propagates a rejection from fn() unchanged, and releases the lock', async () => {
     await expect(
-      withFileLock(target, 'test lock', async () => {
-        throw new Error('boom')
-      })
+      withFileLock(
+        target,
+        'test lock',
+        async () => {
+          throw new Error('boom')
+        },
+        { rank: 'unordered' }
+      )
     ).rejects.toThrow('boom')
     // The release-on-throw contract itself: the lock file this call created
     // must not survive the throw.
@@ -314,7 +319,7 @@ describe('withFileLock', () => {
 
     let caught: unknown
     try {
-      await withFileLock(target, 'test lock', fn)
+      await withFileLock(target, 'test lock', fn, { rank: 'unordered' })
     } catch (err) {
       caught = err
     }

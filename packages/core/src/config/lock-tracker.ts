@@ -12,22 +12,39 @@
  *
  * Before any wait, a request throws `LockOrderError` when it would
  *   - re-enter a lock this context already holds (it would wait on itself),
- *   - take a second skills-root lock (1 and 1′ count as one), or
+ *   - take a second skills-root lock (1 and 1′ count as one),
  *   - take a lock ranked below one already held (an inversion: two contexts
- *     taking the same pair in opposite orders can deadlock across processes).
+ *     taking the same pair in opposite orders can deadlock across processes),
+ *   - take a second lock of the same rank (two destinations, two manifests:
+ *     the same deadlock between two contexts taking them in opposite orders;
+ *     §3.2 takes them "in turn"), or
+ *   - take any lock while lock 4 is held (§3.2: a leaf).
+ *
+ * Every lock names its rank; `'unordered'` is the explicit choice for a lock
+ * outside the table, checked for re-entry and the leaf rule only. A missing
+ * rank is a type error, so a new skills-root lock can't silently skip the
+ * rules (or make `assertSkillWriteLockNotHeld` a no-op) by omission.
  *
  * Two more rules ride on the same store: `assertSkillWriteLockNotHeld` throws
  * when a skills-root lock is held while planning, fetching or scanning, and a
- * manifest update's callback (`runPureCallback`) may not request any lock.
+ * manifest update's callback (`runPureCallback`) may not request any lock,
+ * nor schedule async work that could request one later.
+ *
+ * Work a lock's `fn` starts and leaves running (a timer, an un-awaited
+ * promise) inherits the store, so each held entry carries a live flag that
+ * the lock's own `finally` clears: a released lock no longer counts.
  *
  * @module @skillsmith/core/config/lock-tracker
  */
-import { AsyncLocalStorage } from 'node:async_hooks'
+import { AsyncLocalStorage, createHook } from 'node:async_hooks'
 import { realpathSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, normalize, sep } from 'node:path'
 
 /** A lock's place in A1 plan §3.2's order table. */
 export type LockRank = '1' | "1'" | '2a' | '2b' | '3' | '4'
+
+/** A rank, or `'unordered'` for a lock outside the table (re-entry and leaf rules only). */
+export type LockOrder = LockRank | 'unordered'
 
 const RANK_VALUE: Record<LockRank, number> = {
   '1': 1,
@@ -44,6 +61,8 @@ export class LockOrderError extends Error {
     | 're-entry'
     | 'second-skills-root-lock'
     | 'inversion'
+    | 'same-rank'
+    | 'under-leaf'
     | 'held-while-planning'
     | 'in-pure-callback'
   constructor(kind: LockOrderError['kind'], message: string) {
@@ -54,16 +73,24 @@ export class LockOrderError extends Error {
 }
 
 interface HeldLock {
-  /** The lock target, resolved so two spellings of one path compare equal. */
+  /** The lock target, resolved through the filesystem so two spellings compare equal. */
   key: string
   label: string
-  rank: LockRank | undefined
+  rank: LockOrder
+  /** Cleared when the lock is released; work left running afterwards ignores it. */
+  live: boolean
+}
+
+interface PureScope {
+  violation: LockOrderError | null
+  /** Cleared when the callback returns. */
+  open: boolean
 }
 
 interface TrackerState {
   held: readonly HeldLock[]
   /** Set while a manifest update's synchronous callback runs. */
-  pure: { violation: LockOrderError | null } | null
+  pure: PureScope | null
 }
 
 const storage = new AsyncLocalStorage<TrackerState>()
@@ -74,45 +101,76 @@ export function setLockTrackerEnabledForTests(on: boolean): void {
   enabled = on
 }
 
-/** `target` resolved, with its folder's symlinks followed when the folder exists. */
-function lockKey(target: string): string {
-  const abs = resolve(target)
-  try {
-    return join(realpathSync(dirname(abs)), basename(abs))
-  } catch {
-    return abs // the folder doesn't exist yet: nothing else can name it either
+/**
+ * `target` as the filesystem resolves it. The path is never collapsed
+ * lexically before `realpath`: with `link -> real/sub`, `link/../x` opens
+ * `real/x`, which `resolve()` would have turned into `x`. A folder that
+ * doesn't exist yet is resolved at its nearest existing ancestor; the key is
+ * computed again once the lock is held (`runHoldingLock`), when it exists.
+ */
+export function lockKey(target: string): string {
+  const raw = isAbsolute(target) ? target : `${process.cwd()}${sep}${target}`
+  const missing: string[] = [basename(raw)]
+  let dir = dirname(raw)
+  for (;;) {
+    try {
+      // .native, as the OS does: symlinks first, then `..`. The JS realpathSync
+      // resolves the path lexically first and would collapse `link/..` too.
+      return join(realpathSync.native(dir), ...missing)
+    } catch {
+      const parent = dirname(dir)
+      if (parent === dir) return normalize(raw)
+      missing.unshift(basename(dir))
+      dir = parent
+    }
   }
 }
 
 function describe(h: HeldLock): string {
-  return `${h.label} (${h.rank === undefined ? 'unranked' : `lock ${h.rank}`}, ${h.key})`
+  return `${h.label} (${h.rank === 'unordered' ? 'unordered' : `lock ${h.rank}`}, ${h.key})`
+}
+
+function liveHeld(state: TrackerState | undefined): HeldLock[] {
+  return state === undefined ? [] : state.held.filter((h) => h.live)
+}
+
+function pureViolation(label: string, what: string): LockOrderError {
+  return new LockOrderError(
+    'in-pure-callback',
+    `${label} ${what} inside a manifest update callback, which may not take a lock or start async work`
+  )
 }
 
 /**
  * Check a request against what this context holds. Returns the entry to hold,
  * or throws `LockOrderError`. Never waits.
  */
-function admit(target: string, label: string, rank: LockRank | undefined): HeldLock {
-  const entry: HeldLock = { key: lockKey(target), label, rank }
+function admit(target: string, label: string, rank: LockOrder): HeldLock {
+  const entry: HeldLock = { key: lockKey(target), label, rank, live: true }
   const state = storage.getStore()
   if (!enabled || state === undefined) return entry
-  if (state.pure !== null) {
-    const err = new LockOrderError(
-      'in-pure-callback',
-      `${label} was requested inside a manifest update callback, which may not take a lock`
-    )
+  if (state.pure !== null && state.pure.open) {
+    const err = pureViolation(label, 'was requested')
     state.pure.violation ??= err
     throw err
   }
-  const again = state.held.find((h) => h.key === entry.key)
+  const held = liveHeld(state)
+  const again = held.find((h) => h.key === entry.key)
   if (again !== undefined) {
     throw new LockOrderError(
       're-entry',
       `${label} is already held by this operation (${describe(again)}); taking it again would wait on itself`
     )
   }
+  const leaf = held.find((h) => h.rank === '4')
+  if (leaf !== undefined) {
+    throw new LockOrderError(
+      'under-leaf',
+      `${label} was requested while holding ${describe(leaf)}; lock 4 takes no other lock`
+    )
+  }
   if (rank === '1' || rank === "1'") {
-    const root = state.held.find((h) => h.rank === '1' || h.rank === "1'")
+    const root = held.find((h) => h.rank === '1' || h.rank === "1'")
     if (root !== undefined) {
       throw new LockOrderError(
         'second-skills-root-lock',
@@ -120,14 +178,20 @@ function admit(target: string, label: string, rank: LockRank | undefined): HeldL
       )
     }
   }
-  if (rank !== undefined) {
-    const higher = state.held.find(
-      (h) => h.rank !== undefined && RANK_VALUE[h.rank] > RANK_VALUE[rank]
-    )
+  if (rank !== 'unordered') {
+    const v = RANK_VALUE[rank]
+    const higher = held.find((h) => h.rank !== 'unordered' && RANK_VALUE[h.rank] > v)
     if (higher !== undefined) {
       throw new LockOrderError(
         'inversion',
         `${label} (lock ${rank}) was requested while holding ${describe(higher)}; locks must be taken in order`
+      )
+    }
+    const same = held.find((h) => h.rank !== 'unordered' && RANK_VALUE[h.rank] === v)
+    if (same !== undefined) {
+      throw new LockOrderError(
+        'same-rank',
+        `${label} (lock ${rank}) was requested while holding ${describe(same)}; locks of one rank are taken in turn, not nested`
       )
     }
   }
@@ -135,19 +199,41 @@ function admit(target: string, label: string, rank: LockRank | undefined): HeldL
 }
 
 /**
+ * Check a request without recording it. Throws `LockOrderError` exactly as
+ * `runHoldingLock` would. A caller that waits or writes before reaching its
+ * `withFileLock` (fan-out's per-destination queue) calls this first, so a
+ * refusal still comes before any wait.
+ */
+export function checkLockRequest(target: string, label: string, rank: LockOrder): void {
+  admit(target, label, rank)
+}
+
+/**
  * Run `fn` with `target` recorded as held. Throws `LockOrderError`
  * synchronously, before `fn` or any wait, when the request breaks a rule.
+ * `fn` calls `acquired()` once the file lock is taken, which recomputes the
+ * entry's key now that the lock's folder exists. The entry stops counting
+ * when `fn` settles.
  */
 export function runHoldingLock<T>(
   target: string,
   label: string,
-  rank: LockRank | undefined,
-  fn: () => Promise<T>
+  rank: LockOrder,
+  fn: (acquired: () => void) => Promise<T>
 ): Promise<T> {
   const entry = admit(target, label, rank)
-  if (!enabled) return fn()
-  const held = storage.getStore()?.held ?? []
-  return storage.run({ held: [...held, entry], pure: null }, fn)
+  const acquired = (): void => {
+    entry.key = lockKey(target)
+  }
+  if (!enabled) return fn(acquired)
+  const held = liveHeld(storage.getStore())
+  return storage.run({ held: [...held, entry], pure: null }, async () => {
+    try {
+      return await fn(acquired)
+    } finally {
+      entry.live = false
+    }
+  })
 }
 
 /**
@@ -157,7 +243,7 @@ export function runHoldingLock<T>(
  */
 export function assertSkillWriteLockNotHeld(label: string): void {
   if (!enabled) return
-  const root = storage.getStore()?.held.find((h) => h.rank === '1' || h.rank === "1'")
+  const root = liveHeld(storage.getStore()).find((h) => h.rank === '1' || h.rank === "1'")
   if (root !== undefined) {
     throw new LockOrderError(
       'held-while-planning',
@@ -167,16 +253,60 @@ export function assertSkillWriteLockNotHeld(label: string): void {
 }
 
 /**
- * Run a manifest update's synchronous callback. A lock requested inside it is
- * refused, and the callback's result is then refused too, even if the
- * callback caught the refusal (plan §3.2: a callback may not call a lock
- * wrapper).
+ * The scope whose callback is running now, if any; the async hook below reads
+ * it. Callbacks are synchronous, so at most one runs at a time.
+ */
+let runningPure: PureScope | null = null
+/**
+ * Async resource types that run the callback's own code later: a promise
+ * reaction, a microtask, a timer, an immediate, a nextTick, an fs callback.
+ * Not every async resource: a synchronous API may start internal work of its
+ * own (crypto.randomUUID refills its entropy pool with a RANDOMBYTESREQUEST),
+ * and refusing that would refuse a callback that is synchronous.
+ */
+const SCHEDULING_TYPES = new Set([
+  'PROMISE',
+  'Microtask',
+  'Timeout',
+  'Immediate',
+  'TickObject',
+  'FSREQCALLBACK',
+  'FSREQPROMISE',
+])
+const asyncWatch = createHook({
+  init(_id, type) {
+    if (runningPure !== null && runningPure.violation === null && SCHEDULING_TYPES.has(type)) {
+      runningPure.violation = pureViolation(`async work (${type})`, 'was started')
+    }
+  },
+})
+
+/**
+ * Run a manifest update's synchronous callback. The callback may not request
+ * a lock, and may not start async work (a promise, timer or microtask) that
+ * could request one after it returns: an `async_hooks` hook watches while it
+ * runs. Either refuses the callback's result, even if the callback caught the
+ * refusal (plan §3.2: a callback may not call a lock wrapper). A callback
+ * that returns a promise is returned as is, for the caller to refuse.
  */
 export function runPureCallback<T>(fn: () => T): T {
   if (!enabled) return fn()
   const state = storage.getStore()
-  const pure = { violation: null as LockOrderError | null }
-  const result = storage.run({ held: state?.held ?? [], pure }, fn)
+  const pure: PureScope = { violation: null, open: true }
+  const outer = runningPure
+  runningPure = pure
+  asyncWatch.enable()
+  let result: T
+  try {
+    result = storage.run({ held: liveHeld(state), pure }, fn)
+  } finally {
+    asyncWatch.disable()
+    runningPure = outer
+    pure.open = false
+  }
+  // A returned promise is left to the caller, which refuses it with a more
+  // precise message ("update must be synchronous") than the async watch's.
+  if (typeof (result as { then?: unknown } | null)?.then === 'function') return result
   if (pure.violation !== null) throw pure.violation
   return result
 }

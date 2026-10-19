@@ -10,6 +10,7 @@
  */
 
 import {
+  LockOrderError,
   SkillVersionRepository,
   compareSkillContentHashes,
   installedSkillsOf,
@@ -158,7 +159,7 @@ async function executeOutdatedImpl(
     // tried and failed.
     //
     // Driven by the onLiveLookupFailed callback, NOT a try/catch around
-    // this call: lookupSkillFromRegistry() never rethrows — every caught
+    // this call: lookupSkillFromRegistry() never rethrows (bar a LockOrderError) — every caught
     // error inside it (network, DNS, timeout, quota) falls through to a
     // local-DB fallback that itself never carries a contentHash, so a
     // try/catch here observes nothing to catch. A pr-reviewer-gate finding
@@ -184,10 +185,12 @@ async function executeOutdatedImpl(
           },
         })
         liveHash = registryInfo?.contentHash ?? null
-      } catch {
-        // Defense-in-depth only: lookupSkillFromRegistry() never rethrows
-        // in its current implementation (onLiveLookupFailed above is the
-        // real signal for every error it catches internally), but H1
+      } catch (lookupError) {
+        // A lock-order refusal is a programming error, not a failed lookup.
+        if (lookupError instanceof LockOrderError) throw lookupError
+        // Defense-in-depth only: lookupSkillFromRegistry() rethrows only a
+        // LockOrderError (handled above); onLiveLookupFailed above is the
+        // real signal for every error it catches internally, but H1
         // requires this tool to never fail the whole call for any reason —
         // an unexpected throw here (a future change to the helper, a bad
         // mock in a caller's test) must still degrade to unknown, not

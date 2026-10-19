@@ -180,29 +180,41 @@ describe('allowed orders', () => {
     await withFileLock(target('rootB'), 'root B', async () => undefined, { rank: '1' })
   })
 
-  it('lets an unranked lock nest in a ranked one', async () => {
+  it('lets an unordered lock nest in a ranked one', async () => {
     let ran = false
     await withFileLock(
       target('t3'),
       'three',
       async () => {
-        await withFileLock(target('plain'), 'unranked', async () => {
-          ran = true
-        })
+        await withFileLock(
+          target('plain'),
+          'unranked',
+          async () => {
+            ran = true
+          },
+          { rank: 'unordered' }
+        )
       },
       { rank: '3' }
     )
     expect(ran).toBe(true)
   })
 
-  it('refuses an unranked re-entry', async () => {
-    await withFileLock(target('plain'), 'unranked', async () => {
-      const { error, ms } = await settle(
-        withFileLock(target('plain'), 'unranked again', async () => 'unreachable')
-      )
-      expectOrderError(error, 're-entry')
-      expect(ms).toBeLessThan(REFUSAL_BUDGET_MS)
-    })
+  it('refuses an unordered re-entry', async () => {
+    await withFileLock(
+      target('plain'),
+      'unranked',
+      async () => {
+        const { error, ms } = await settle(
+          withFileLock(target('plain'), 'unranked again', async () => 'unreachable', {
+            rank: 'unordered',
+          })
+        )
+        expectOrderError(error, 're-entry')
+        expect(ms).toBeLessThan(REFUSAL_BUDGET_MS)
+      },
+      { rank: 'unordered' }
+    )
   })
 
   it('unwinds: after the outer lock resolves, the same target can be taken again', async () => {

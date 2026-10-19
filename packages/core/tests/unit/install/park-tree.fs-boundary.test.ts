@@ -109,6 +109,7 @@ describe('the real park graph', () => {
     expect(r.fsLocals).toEqual([])
     expect([...r.localImports].sort()).toEqual([
       '../config/file-lock.js',
+      '../config/lock-tracker.js', // SMI-6531: LockOrderError passes through, not into indexError
       './park-result.js',
       './park-tree.js',
       './parked-index.js',

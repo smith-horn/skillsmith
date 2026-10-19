@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from './owned-lock.js'
-import { LockOrderError, runHoldingLock, type LockRank } from './lock-tracker.js'
+import { LockOrderError, runHoldingLock, type LockOrder } from './lock-tracker.js'
 
 /** How long to wait for another process's lock on the same target (ms). */
 const FILE_LOCK_TIMEOUT_MS = 30_000
@@ -69,12 +69,13 @@ export interface FileLockOptions {
   /** How long to wait before giving up, in ms (default 30 s); a test seam. */
   timeoutMs?: number
   /**
-   * The lock's rank in A1 plan §3.2's order table (SMI-6531 step 1). The
-   * tracker refuses, before any wait, a request that re-enters a held lock,
-   * takes a second skills-root lock, or ranks below a lock already held.
-   * Unranked locks are checked for re-entry only.
+   * The lock's rank in A1 plan §3.2's order table (SMI-6531 step 1), or
+   * `'unordered'` for a lock outside it. Required, so a lock can't skip the
+   * order rules by omission. The tracker refuses, before any wait, a request
+   * that re-enters a held lock, takes a second skills-root lock, ranks below
+   * or equal to a held lock, or is made while lock 4 is held.
    */
-  rank?: LockRank
+  rank: LockOrder
 }
 
 /** The pid a bare-PID claim names, or null. Reads the lock file only. */
@@ -137,11 +138,12 @@ export function withFileLock<T>(
   target: string,
   label: string,
   fn: () => Promise<T>,
-  options: FileLockOptions = {}
+  options: FileLockOptions
 ): Promise<T> {
   try {
-    return runHoldingLock(target, label, options.rank, async () => {
+    return runHoldingLock(target, label, options.rank, async (acquired) => {
       const release = await acquireFileLock(target, label, options)
+      acquired() // the lock's folder exists now: key it by its real path
       try {
         return await fn()
       } finally {

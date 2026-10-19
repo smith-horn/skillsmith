@@ -49,10 +49,15 @@ describe('lock-path warnings with a throwing console.warn', () => {
     const t = target()
     const warn = throwingWarn()
 
-    const out = await withFileLock(t, 'test', async () => {
-      fs.writeFileSync(`${t}.lock`, 'replaced by another process')
-      return 'saved'
-    })
+    const out = await withFileLock(
+      t,
+      'test',
+      async () => {
+        fs.writeFileSync(`${t}.lock`, 'replaced by another process')
+        return 'saved'
+      },
+      { rank: 'unordered' }
+    )
 
     expect(out).toBe('saved')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('lock_release_not_owner'))

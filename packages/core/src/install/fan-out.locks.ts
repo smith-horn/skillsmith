@@ -18,6 +18,7 @@
 import * as path from 'node:path'
 import * as fsp from 'node:fs/promises'
 import { withFileLock } from '../config/file-lock.js'
+import { checkLockRequest } from '../config/lock-tracker.js'
 import { siblingPrefix } from './fan-out.leftovers.js'
 
 export { withFileLock }
@@ -46,6 +47,10 @@ async function queueKey(dest: string): Promise<string> {
  * file lock `.<name>.skillsmith-fanout.lock` next to it.
  */
 export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>): Promise<T> {
+  // A1 step 1: the tracker's refusal must come before the queue and the
+  // mkdir below, or a re-entry waits on itself forever (plan §3.2).
+  const lockTarget = path.join(path.dirname(dest), siblingPrefix(dest, LOCK_TAG))
+  checkLockRequest(lockTarget, 'fan-out destination lock', '2a')
   const key = await queueKey(dest)
   const previous = inProcessQueue.get(key) ?? Promise.resolve()
   let releaseQueue: () => void = () => {}
@@ -56,9 +61,7 @@ export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>)
   inProcessQueue.set(key, tail)
   await previous
   try {
-    const parent = path.dirname(dest)
-    await fsp.mkdir(parent, { recursive: true })
-    const lockTarget = path.join(parent, siblingPrefix(dest, LOCK_TAG))
+    await fsp.mkdir(path.dirname(dest), { recursive: true })
     return await withFileLock(lockTarget, 'fan-out destination lock', fn, { rank: '2a' })
   } finally {
     releaseQueue()

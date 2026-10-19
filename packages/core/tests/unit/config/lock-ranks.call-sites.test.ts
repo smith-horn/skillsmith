@@ -2,9 +2,13 @@
  * SMI-6531 (A1 step 1): each ranked lock call site carries its rank.
  *
  * The tracker refuses a request ranked BELOW a lock already held (an
- * `inversion`) and allows one at or above it. Nothing else pins which rank a
- * call site passes, so these tests drive the real functions inside an outer
- * lock of a chosen rank and observe whether the tracker refuses them.
+ * `inversion`), one of the SAME rank (`same-rank`), and anything while lock 4
+ * is held (`under-leaf`). Nothing else pins which rank a call site passes, so
+ * these tests drive the real functions inside an outer lock of a chosen rank
+ * and observe the exact refusal: inside the site's own rank (same-rank), inside
+ * the rank just above it (inversion), and allowed inside the rank just below.
+ * Together they pin each rank exactly. Lock 4 is pinned in
+ * lock-ranks.parked-index.test.ts.
  *
  * Order: 1 < 2a < 2b < 3 < 4.
  */
@@ -59,35 +63,42 @@ async function rejection(p: Promise<unknown>): Promise<unknown> {
   return undefined
 }
 
-function expectInversion(error: unknown): void {
+function expectKind(error: unknown, kind: LockOrderError['kind']): void {
   expect(error).toBeInstanceOf(LockOrderError)
-  expect((error as LockOrderError).kind).toBe('inversion')
+  expect((error as LockOrderError).kind).toBe(kind)
+}
+
+/** A manifest-update request against a fresh path; reports whether it ran. */
+async function manifestRequest(name: string): Promise<{ error: unknown; touched: boolean }> {
+  const manifestPath = path.join(dir, name)
+  let touched = false
+  const error = await rejection(
+    runManifestUpdate({
+      manifestPath,
+      load: async () => {
+        touched = true
+        return {}
+      },
+      update: (m) => {
+        touched = true
+        return m
+      },
+    })
+  )
+  return { error, touched: touched || fs.existsSync(manifestPath) }
 }
 
 describe('runManifestUpdate holds lock 3', () => {
-  it('is refused inside lock 4, and neither loads, updates nor saves', async () => {
-    const manifestPath = path.join(dir, 'skills-manifest.json')
-    let loaded = false
-    let updated = false
-    const error = await insideRank('4', () =>
-      rejection(
-        runManifestUpdate({
-          manifestPath,
-          load: async () => {
-            loaded = true
-            return {}
-          },
-          update: (m) => {
-            updated = true
-            return m
-          },
-        })
-      )
-    )
-    expectInversion(error)
-    expect(loaded).toBe(false)
-    expect(updated).toBe(false)
-    expect(fs.existsSync(manifestPath)).toBe(false)
+  it('is refused inside lock 4 (under-leaf), and neither loads, updates nor saves', async () => {
+    const { error, touched } = await insideRank('4', () => manifestRequest('m-in-4.json'))
+    expectKind(error, 'under-leaf')
+    expect(touched).toBe(false)
+  })
+
+  it('is refused inside lock 3 (same-rank), and neither loads, updates nor saves', async () => {
+    const { error, touched } = await insideRank('3', () => manifestRequest('m-in-3.json'))
+    expectKind(error, 'same-rank')
+    expect(touched).toBe(false)
   })
 
   it('is allowed inside lock 2b, and saves', async () => {
@@ -104,7 +115,7 @@ describe('runManifestUpdate holds lock 3', () => {
 })
 
 describe('the fan-out destination lock holds lock 2a', () => {
-  it('is refused inside lock 2b, and the work does not run', async () => {
+  it('is refused inside lock 2b (inversion), and the work does not run', async () => {
     const dest = path.join(dir, 'dest-a', 'skill')
     let ran = false
     const error = await insideRank('2b', () =>
@@ -114,7 +125,21 @@ describe('the fan-out destination lock holds lock 2a', () => {
         })
       )
     )
-    expectInversion(error)
+    expectKind(error, 'inversion')
+    expect(ran).toBe(false)
+  })
+
+  it('is refused inside lock 2a (same-rank), and the work does not run', async () => {
+    const dest = path.join(dir, 'dest-c', 'skill')
+    let ran = false
+    const error = await insideRank('2a', () =>
+      rejection(
+        withDestinationLock(dest, async () => {
+          ran = true
+        })
+      )
+    )
+    expectKind(error, 'same-rank')
     expect(ran).toBe(false)
   })
 
@@ -131,7 +156,7 @@ describe('the fan-out destination lock holds lock 2a', () => {
 })
 
 describe('the fan-out link manifest updateManifest holds lock 2b', () => {
-  it('is refused inside lock 3, and the manifest is not written', async () => {
+  it('is refused inside lock 3 (inversion), and the manifest is not written', async () => {
     let changed = false
     const error = await insideRank('3', () =>
       rejection(
@@ -140,7 +165,21 @@ describe('the fan-out link manifest updateManifest holds lock 2b', () => {
         })
       )
     )
-    expectInversion(error)
+    expectKind(error, 'inversion')
+    expect(changed).toBe(false)
+    expect(fs.existsSync(getLinkManifestPath())).toBe(false)
+  })
+
+  it('is refused inside lock 2b (same-rank), and the manifest is not written', async () => {
+    let changed = false
+    const error = await insideRank('2b', () =>
+      rejection(
+        updateManifest(() => {
+          changed = true
+        })
+      )
+    )
+    expectKind(error, 'same-rank')
     expect(changed).toBe(false)
     expect(fs.existsSync(getLinkManifestPath())).toBe(false)
   })

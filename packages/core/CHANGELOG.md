@@ -5,13 +5,17 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **Added**: SMI-6531 (A1 step 1) -- a lock-order tracker (`config/lock-tracker.ts`, plan §3.2).
-  `withFileLock` takes a `rank` (1, 1′, 2a, 2b, 3, 4); an `AsyncLocalStorage` records the locks a
-  context holds, and a request that re-enters one, takes a second skills-root lock, or ranks below
-  one already held rejects with `LockOrderError` before any wait. The manifest lock is rank 3,
-  fan-out's destination and link-manifest locks 2a and 2b, the parked index 4. A manifest update
-  callback that requests a lock is refused. `assertSkillWriteLockNotHeld(label)` throws when a
-  skills-root lock is held; the install fetch, scan and registry-lookup helpers call it on entry.
-  `sanitizeInstallError` passes a `LockOrderError` message through.
+  `withFileLock` requires a `rank` (1, 1′, 2a, 2b, 3, 4, or `'unordered'` for a lock outside the
+  table); an `AsyncLocalStorage` records the locks a context holds, and a request that re-enters
+  one, takes a second skills-root lock, ranks below or equal to one already held, or is made while
+  lock 4 is held rejects with `LockOrderError` before any wait. A released lock stops counting even
+  for work it left running, and a lock is identified by its real path (symlinks resolved before
+  `..`). The manifest lock is rank 3, fan-out's destination and link-manifest locks 2a and 2b (the
+  destination lock checks before its in-process queue), the parked index 4. A manifest update
+  callback that requests a lock or starts async work is refused. `assertSkillWriteLockNotHeld(label)`
+  throws when a skills-root lock is held; the install fetch and scan helpers, including the main
+  SKILL.md scan, call it on entry. A `LockOrderError` is passed through, never turned into an
+  install or lookup failure.
 - **Fixed**: SMI-7143 -- `releaseLock` and `inspectLock` (PR #3123 retro): a read that fails after
   the lock is opened (a directory or FIFO swapped in) is now `unparseable` instead of a throw, and
   owned-lock's reclaim and `doctor locks` share one liveness probe, `probePidAlive`

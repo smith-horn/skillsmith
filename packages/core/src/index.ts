@@ -412,6 +412,7 @@ export { withFileLock } from './config/file-lock.js'
 export {
   assertSkillWriteLockNotHeld,
   LockOrderError,
+  type LockOrder,
   type LockRank,
 } from './config/lock-tracker.js'
 export { describeRemedy, StuckLockError, type StuckLockReason } from './config/owned-lock.js'
