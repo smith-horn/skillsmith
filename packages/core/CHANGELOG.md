@@ -9,12 +9,14 @@ All notable changes to `@skillsmith/core` are documented here.
   table); an `AsyncLocalStorage` records the locks a context holds, and a request that re-enters
   one, takes a second skills-root lock, ranks below or equal to one already held, or is made while
   lock 4 is held rejects with `LockOrderError` before any wait. A released lock stops counting even
-  for work it left running, and a lock is identified by its real path (symlinks resolved before
-  `..`). The manifest lock is rank 3, fan-out's destination and link-manifest locks 2a and 2b (the
+  for work it left running (a lock whose release failed keeps counting, since its file is still
+  held), and a lock is identified by its lock file's real path (symlinks resolved before `..`; the
+  final name's case folded where the OS folds it, once the lock file exists). The manifest lock is rank 3, fan-out's destination and link-manifest locks 2a and 2b (the
   destination lock checks before its in-process queue), the parked index 4. A manifest update
   callback that requests a lock or starts async work while it runs (a promise, timer, microtask,
-  immediate, nextTick or fs call) is refused; a listener added to an existing emitter or stream is
-  not detected. `assertSkillWriteLockNotHeld(label)`
+  immediate, nextTick or async fs call) is refused; a callback-style crypto or dns call
+  (`randomBytes(n, cb)`, `dns.lookup`), any other native request type outside the watched set, and a
+  listener added to an existing emitter or stream are not detected. `assertSkillWriteLockNotHeld(label)`
   throws when a skills-root lock is held; the install fetch and scan helpers, including the main
   SKILL.md scan, call it on entry. A `LockOrderError` is passed through, never turned into an
   install or lookup failure.

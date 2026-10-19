@@ -363,7 +363,14 @@ export function tryReclaimUnderLock(
 // Release -- ownership-verified, idempotent
 // ---------------------------------------------------------------------------
 
-export function releaseOwned(path: string, token: string): void {
+/**
+ * Release `path` if `token` still owns it. Returns whether the lock is no
+ * longer ours on disk: true when it was unlinked, was already gone, or is now
+ * someone else's (not-owner); false only when the unlink failed with an error
+ * other than ENOENT, so the file is still there and still ours. Callers that
+ * stop counting a lock as held (the lock-order tracker) rely on this.
+ */
+export function releaseOwned(path: string, token: string): boolean {
   const claim = readClaim(path)
   if (claim.kind === 'v1' && claim.token === token) {
     try {
@@ -373,8 +380,10 @@ export function releaseOwned(path: string, token: string): void {
         warnSafely(
           `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${(err as Error).message}`
         )
+        return false
       }
     }
+    return true
   } else {
     // We no longer own it -- unlinking would destroy a live holder's lock
     // (it was reclaimed from us after we appeared dead, or hand-edited).
@@ -382,14 +391,20 @@ export function releaseOwned(path: string, token: string): void {
     warnSafely(
       `[skillsmith] lock_release_not_owner: ${path} is no longer owned by this process -- not removing it.`
     )
+    return true
   }
 }
 
-export function makeRelease(lockPath: string, token: string): () => void {
-  let released = false
+/**
+ * The release function `acquireOwnedLock` hands back. Returns what
+ * {@link releaseOwned} returned; a second call returns the first call's result
+ * without touching the file again.
+ */
+export function makeRelease(lockPath: string, token: string): () => boolean {
+  let result: boolean | undefined
   return () => {
-    if (released) return
-    released = true
-    releaseOwned(lockPath, token)
+    if (result !== undefined) return result
+    result = releaseOwned(lockPath, token)
+    return result
   }
 }

@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import {
@@ -383,6 +384,31 @@ describe('known gap: the purity watch sees only async resources created during t
     expect(() =>
       runPureCallback(() => {
         queueMicrotask(() => {})
+        return 1
+      })
+    ).toThrow(LockOrderError)
+  })
+})
+
+describe('known gap: native request types outside SCHEDULING_TYPES', () => {
+  it('KNOWN GAP (not desired behaviour): a callback-style crypto.randomBytes started inside is not refused', async () => {
+    let ran = false
+    expect(() =>
+      runPureCallback(() => {
+        // No promise here: creating one would be refused. The callback could run
+        // later and request a lock; the watch cannot see it.
+        randomBytes(16, () => {
+          ran = true
+        })
+        return 1
+      })
+    ).not.toThrow()
+    for (let i = 0; i < 100 && !ran; i++) await sleep(5)
+    expect(ran).toBe(true) // the callback really was scheduled and ran
+    // Paired control: the same watch does refuse a type it can see.
+    expect(() =>
+      runPureCallback(() => {
+        setTimeout(() => {}, 0)
         return 1
       })
     ).toThrow(LockOrderError)

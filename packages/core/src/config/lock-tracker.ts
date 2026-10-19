@@ -11,7 +11,9 @@
  *   3   `manifest.json.lock`  4   the parked index
  *
  * Before any wait, a request throws `LockOrderError` when it would
- *   - re-enter a lock this context already holds (it would wait on itself),
+ *   - re-enter a lock this context already holds (it would wait on itself;
+ *     "the same lock" is as far as `lockFileKey` recognises it: a case variant
+ *     of a component that does not exist yet, and hard links, are not),
  *   - take a second skills-root lock (1 and 1′ count as one),
  *   - take a lock ranked below one already held (an inversion: two contexts
  *     taking the same pair in opposite orders can deadlock across processes),
@@ -30,14 +32,21 @@
  * manifest update's callback (`runPureCallback`) may not request any lock,
  * nor start async work while it runs (promises, microtasks, timers,
  * immediates, nextTick, fs callbacks and fs promises). That watch sees only
- * async resources CREATED during the callback. It does not detect a listener
- * added to an EventEmitter or stream that already exists, a message posted to
- * an existing worker, or a child-process callback registered on an existing
- * object: such a callback can run later and request a lock unseen.
+ * resources of the `SCHEDULING_TYPES` created during the callback. It does not
+ * detect a callback-style crypto call (`randomBytes(n, cb)`, `pbkdf2`), a
+ * callback-style dns call (`dns.lookup`), or in general any native request
+ * type outside that set; nor a listener added to an EventEmitter or stream that
+ * already exists, a message posted to an existing worker, or a child-process
+ * callback registered on an existing object: such a callback can run later and
+ * request a lock unseen.
  *
  * Work a lock's `fn` starts and leaves running (a timer, an un-awaited
- * promise) inherits the store, so each held entry carries a live flag that
- * the lock's own `finally` clears: a released lock no longer counts.
+ * promise) inherits the store, so each held entry carries a live flag. It is
+ * cleared by `releasing()`, which `withFileLock` calls right after a release
+ * that is confirmed, with no await between. The backstop in `runHoldingLock`
+ * clears it only for a lock that was never acquired. A lock whose release
+ * failed stays live: the file is still held, and work that inherited the store
+ * must be refused rather than wait on it.
  *
  * @module @skillsmith/core/config/lock-tracker
  */
@@ -123,6 +132,9 @@ export function setLockTrackerEnabledForTests(on: boolean): void {
  *     as spelled, as is the final name (only the folder is resolved).
  *   - Hard links: never. Two names for one inode key differently; the lock is
  *     a file at `<target>.lock`, so two hard links are two locks.
+ *
+ * This keys a path; the tracker itself keys by the lock FILE, see
+ * {@link lockFileKey}.
  */
 export function lockKey(target: string): string {
   const raw = isAbsolute(target) ? target : `${process.cwd()}${sep}${target}`
@@ -139,6 +151,25 @@ export function lockKey(target: string): string {
       missing.unshift(basename(dir))
       dir = parent
     }
+  }
+}
+
+/**
+ * The key the tracker admits a request by: the lock file `<target>.lock`, not
+ * the target. The physical lock is that file, so two spellings of it must share
+ * one key. When the file exists, the full path is resolved through the
+ * filesystem (`realpath.native`), which folds the final name's case where the
+ * OS folds it (macOS) and follows a symlinked `.lock`. A lock file that does not
+ * exist yet is keyed by its spelling, with the folder resolved as `lockKey`
+ * does. Hard links remain distinct (the key is a path, never an inode: a
+ * stale entry could otherwise collide with a reused inode).
+ */
+export function lockFileKey(target: string): string {
+  const file = `${target}.lock`
+  try {
+    return realpathSync.native(isAbsolute(file) ? file : `${process.cwd()}${sep}${file}`)
+  } catch {
+    return lockKey(file)
   }
 }
 
@@ -162,7 +193,7 @@ function pureViolation(label: string, what: string): LockOrderError {
  * or throws `LockOrderError`. Never waits.
  */
 function admit(target: string, label: string, rank: LockOrder): HeldLock {
-  const entry: HeldLock = { key: lockKey(target), label, rank, live: true }
+  const entry: HeldLock = { key: lockFileKey(target), label, rank, live: true }
   const state = storage.getStore()
   if (!enabled || state === undefined) return entry
   if (state.pure !== null && state.pure.open) {
@@ -218,21 +249,26 @@ function admit(target: string, label: string, rank: LockOrder): HeldLock {
  * Check a request without recording it. Throws `LockOrderError` exactly as
  * `runHoldingLock` would. A caller that waits or writes before reaching its
  * `withFileLock` (fan-out's per-destination queue) calls this first, so a
- * refusal still comes before any wait.
+ * refusal still comes before any wait. Returns the lock-file key the check
+ * used, so the caller can key its queue by the very same identity.
  */
-export function checkLockRequest(target: string, label: string, rank: LockOrder): void {
-  admit(target, label, rank)
+export function checkLockRequest(target: string, label: string, rank: LockOrder): string {
+  return admit(target, label, rank).key
 }
 
 /**
  * Run `fn` with `target` recorded as held. Throws `LockOrderError`
  * synchronously, before `fn` or any wait, when the request breaks a rule.
  * `fn` calls `acquired()` once the file lock is taken, which recomputes the
- * entry's key now that the lock's folder exists. The entry stops counting
- * when `fn` calls `releasing()`, which it must do in the same synchronous
- * step as the release itself (no `await` between): work `fn` started can run
- * in the next microtask and must not see a lock that is already gone. When
- * `fn` settles, the entry is cleared again as a backstop (idempotent).
+ * entry's key now that the lock file exists. The entry stops counting when
+ * `fn` calls `releasing()`, which it must do only once the lock file is
+ * really gone, in the same synchronous step as the release itself (no
+ * `await` between): work `fn` started can run in the next microtask and must
+ * not see a lock that is already gone, nor a lock that is still held as free.
+ * When `fn` settles, the entry is cleared as a backstop only if `fn` never
+ * called `acquired()` (the acquisition failed or was refused, so no file was
+ * taken). An acquired lock whose release failed stays live for the contexts
+ * that inherited it, because the file is in fact still held.
  */
 export function runHoldingLock<T>(
   target: string,
@@ -241,8 +277,10 @@ export function runHoldingLock<T>(
   fn: (acquired: () => void, releasing: () => void) => Promise<T>
 ): Promise<T> {
   const entry = admit(target, label, rank)
+  let wasAcquired = false
   const acquired = (): void => {
-    entry.key = lockKey(target)
+    wasAcquired = true
+    entry.key = lockFileKey(target)
   }
   const releasing = (): void => {
     entry.live = false
@@ -253,7 +291,7 @@ export function runHoldingLock<T>(
     try {
       return await fn(acquired, releasing)
     } finally {
-      releasing()
+      if (!wasAcquired) releasing()
     }
   })
 }
@@ -313,11 +351,13 @@ const asyncWatch = createHook({
  *
  * What this enforces is narrower than "no later lock request": the hook sees
  * only async resources of the types in `SCHEDULING_TYPES` that are created
- * while the callback runs. It does NOT detect a listener registered on an
- * EventEmitter or stream that already exists, a message posted to an existing
- * worker, or a callback registered on an existing child process (none of
- * those creates a watched resource). A callback must not do any of them; the
- * tracker will not catch it.
+ * while the callback runs. It does NOT detect a callback-style crypto call
+ * (`randomBytes(n, cb)`, `pbkdf2`), a callback-style dns call (`dns.lookup`), or
+ * in general any native request type outside that set; nor a listener
+ * registered on an EventEmitter or stream that already exists, a message posted
+ * to an existing worker, or a callback registered on an existing child process
+ * (none of those creates a watched resource). A callback must not do any of
+ * them; the tracker will not catch it.
  */
 export function runPureCallback<T>(fn: () => T): T {
   if (!enabled) return fn()

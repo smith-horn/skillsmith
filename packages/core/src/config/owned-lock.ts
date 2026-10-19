@@ -96,7 +96,9 @@ export { describeRemedy, StuckLockError }
  * @param target - Path being guarded (NOT the lock file itself -- the lock
  * file is `${target}.lock`, the reclaim lock `${target}.lock.reclaim`).
  * @returns A release function. Callers MUST call it exactly once, in a
- * `finally` block. Idempotent -- a second call is a no-op.
+ * `finally` block. Idempotent -- a second call is a no-op that returns the
+ * first call's result: true when the lock is no longer ours on disk, false
+ * only when the unlink failed and the file is still there.
  *
  * SMI-5883 code-review round 2: `opts` is destructured field-by-field into a
  * FRESH object rather than forwarded as-is. TypeScript's excess-property
@@ -119,7 +121,10 @@ export { describeRemedy, StuckLockError }
  * `linkSyncOverride` would still resolve them via the prototype chain. An
  * explicit own-property `undefined` shadows any such inherited value.
  */
-export function acquireOwnedLock(target: string, opts: AcquireOwnedLockOptions = {}): () => void {
+export function acquireOwnedLock(
+  target: string,
+  opts: AcquireOwnedLockOptions = {}
+): () => boolean {
   return acquireOwnedLockCore(target, {
     timeoutMs: opts.timeoutMs,
     label: opts.label,

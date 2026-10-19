@@ -100,7 +100,7 @@ async function acquireFileLock(
   target: string,
   label: string,
   options: FileLockOptions
-): Promise<() => void> {
+): Promise<() => boolean> {
   const deadline = Date.now() + (options.timeoutMs ?? FILE_LOCK_TIMEOUT_MS)
   let warnedLegacy = false
   for (;;) {
@@ -147,10 +147,12 @@ export function withFileLock<T>(
       try {
         return await fn()
       } finally {
-        // Same synchronous step as the unlink: work `fn` started can run in the
-        // next microtask and must not see a lock whose file is already gone.
-        releasing()
-        release()
+        // Release first, then stop counting the lock, with no await between:
+        // work `fn` started can run in the next microtask and must not see a
+        // lock whose file is already gone. If the unlink failed the file is
+        // still ours and the entry stays live for that work, which would
+        // otherwise pass admission and wait on its own retained lock file.
+        if (release()) releasing()
       }
     })
   } catch (err) {

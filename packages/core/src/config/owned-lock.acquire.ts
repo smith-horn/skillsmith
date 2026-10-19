@@ -246,7 +246,7 @@ export function toTimingMs(value: number | undefined, fallback: number): number 
 export function acquireOwnedLockCore(
   target: string,
   opts: AcquireOwnedLockCoreOptions = {}
-): () => void {
+): () => boolean {
   const lockPath = `${target}.lock`
   const reclaimPath = `${lockPath}.reclaim`
   const token = randomHex(8)
