@@ -409,6 +409,18 @@ export {
 // mechanism instead of hand-rolling its own age-based lock protocol.
 export { withFileLock } from './config/file-lock.js'
 export { describeRemedy, StuckLockError, type StuckLockReason } from './config/owned-lock.js'
+// SMI-7143: what `skillsmith doctor locks` inspects and releases.
+export {
+  inspectLock,
+  releaseLock,
+  stateRootLockPaths,
+  unverifiedOwnerReason,
+  type LockClaimKind,
+  type LockInspection,
+  type ReleaseLockOptions,
+  type ReleaseRefusal,
+  type ReleaseResult,
+} from './config/lock-doctor.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)

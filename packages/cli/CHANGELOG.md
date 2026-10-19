@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-7143 -- `skillsmith doctor locks` lists the manifest lock and its reclaim lock
+  under `~/.skillsmith` (or `--state-root <dir>`) with what is known about each owner.
+  `--release <path>` removes a stuck one: alone, only a claim from this host whose pid is dead;
+  with `--unsafe-unverified-owner`, also one whose owner can't be verified (for example a
+  crashed older Skillsmith's bare-PID claim), after printing the claim and why. It accepts only a
+  path the listing shows, and exits 1 when it refuses.
 - **Internal**: SMI-7143 -- `commands/telemetry.ts`'s header comment now says manifest writes go
   through `updateManifestEntry`.
 - **Fixed**: SMI-7143 -- `skillsmith pin`, `unpin` and `telemetry` manifest writes run core's locked

@@ -42,6 +42,8 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   'sync.action': ['syncAction', 'syncConfigAction'],
   'sync.status-history.action': ['syncStatusAction', 'syncHistoryAction'],
   'search.action': ['searchAction'],
+  // SMI-7143
+  doctor: ['doctorLocksAction'],
   // SMI-5128 batch A
   logout: ['logoutAction'],
   merge: ['mergeAction'],

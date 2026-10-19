@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-7143 -- `inspectLock`, `releaseLock` and `stateRootLockPaths`
+  (`config/lock-doctor.ts`), behind `skillsmith doctor locks`. `inspectLock` reads a lock once,
+  never through a symlink, and reports its claim kind, pid, host, whether that host is this one,
+  whether the pid is alive on this host, and its age. `releaseLock` frees, by default, only a v1
+  claim from this host whose pid is dead; a bare-PID, unparseable or other-host claim, or one whose
+  pid is alive here, needs `unsafeUnverifiedOwner`; a claim it can't read is never released. It
+  takes `<lock>.reclaim` first and re-checks the lock's inode and bytes immediately before
+  unlinking.
 - **Docs**: SMI-7143 -- the manifest lock's cross-host residual gives the right threshold: an older
   Skillsmith on another host steals a lock this check accepts once that host's clock runs more than
   5 s ahead of the file clock (its 30 s minus the 25 s limit), not 30 s.
