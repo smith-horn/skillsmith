@@ -1,7 +1,7 @@
 /**
  * @fileoverview `skillsmith telemetry status` reports a rotation only if its
  * SECOND manifest update performed one, when the manifest lock is lost once.
- * @see SMI-7143: a lost lock reruns the `updateManifestEntry` callback once;
+ * @see SMI-7143: a lost lock reruns the CLI's locked manifest-update callback once;
  *   `rotationTriggered` lives outside it, so the callback resets it.
  *
  * Real writer, real manifest file. The first locked read of the manifest (while
