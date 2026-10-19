@@ -193,6 +193,28 @@ describe('skillsmith doctor locks', () => {
     expect(calls.release).toEqual([])
   })
 
+  for (const [label, plant] of [
+    ['a symlink', () => fs.symlinkSync(path.join(root, 'nowhere'), lockPath)],
+    ['a directory', () => fs.mkdirSync(lockPath)],
+    ['an oversize file', () => fs.writeFileSync(lockPath, 'x'.repeat(5000))],
+  ] as const) {
+    it(`with the flag, ${label} it can't read is refused before any release, even if a live lock replaces it`, async () => {
+      plant()
+      // Old code called releaseLock unbound; its fresh look would find this live lock.
+      calls.beforeRelease = () => {
+        fs.rmSync(lockPath, { recursive: true, force: true })
+        fs.writeFileSync(lockPath, v1(process.pid))
+      }
+
+      await runDoctorLocks({ stateRoot: root, release: lockPath, unsafeUnverifiedOwner: true })
+
+      expect(process.exitCode).toBe(1)
+      expect(calls.release).toEqual([])
+      expect(err.join('\n')).toContain('could not be read and compared')
+      expect(out.join('\n')).not.toContain('Released')
+    })
+  }
+
   it('a missing state root says so, and exits 0', async () => {
     const missing = path.join(root, 'no-such-root')
 

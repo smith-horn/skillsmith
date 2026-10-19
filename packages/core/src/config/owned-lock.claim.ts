@@ -174,8 +174,10 @@ export function isOwnerDefinitelyDead(
  * Whether `pid` is alive on THIS host: `false` only for `ESRCH`; `true` when
  * signalable, for `EPERM` (exists, not ours) and any other errno; `null`, not
  * probed, for a pid that is not a positive safe integer (`kill(0, 0)` signals
- * the process group). Shared by owned-lock's reclaim and `doctor locks`
- * (SMI-7143), so the two can't drift apart.
+ * the process group) or that `kill` rejects without an errno (a pid above
+ * int32 gives `ERR_INVALID_ARG_TYPE`). Shared by owned-lock's reclaim and
+ * `doctor locks` (SMI-7143), so the two can't drift apart; owned-lock reads
+ * only `false` as dead, so `null` and `true` both leave a lock alone.
  */
 export function probePidAlive(
   pid: number,
@@ -186,7 +188,9 @@ export function probePidAlive(
     killProbe(pid, 0)
     return true // signalable -> alive
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH' // EPERM or other -> assume alive
+    const code = (err as NodeJS.ErrnoException).code
+    if (typeof code !== 'string' || !/^E[A-Z0-9]+$/.test(code)) return null // not an errno
+    return code !== 'ESRCH' // EPERM or other errno -> assume alive
   }
 }
 

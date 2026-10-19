@@ -7,7 +7,10 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-7143 -- `releaseLock` and `inspectLock` (PR #3123 retro): a read that fails after
   the lock is opened (a directory or FIFO swapped in) is now `unparseable` instead of a throw, and
   owned-lock's reclaim and `doctor locks` share one liveness probe, `probePidAlive`
-  (`owned-lock.claim.ts`), so the two rules can't drift apart. `releaseLock` gains an internal test
+  (`owned-lock.claim.ts`), so the two rules can't drift apart. Owned-lock's reclaim decisions are
+  unchanged for every pid with the real `process.kill` (an injected probe that answers `ESRCH`
+  for an unsafe-integer pid no longer reads it as dead). A pid that `kill` rejects without an
+  errno (above int32) is now reported as not probed, not as alive. `releaseLock` gains an internal test
   seam after the move aside.
 - **Added**: SMI-7143 -- `inspectLock`, `releaseLock` and `stateRootLockPaths`
   (`config/lock-doctor.ts`), behind `skillsmith doctor locks`. `inspectLock` reads a lock once,

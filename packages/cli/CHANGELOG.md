@@ -5,9 +5,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Fixed**: SMI-7143 -- `skillsmith doctor locks` (PR #3123 retro): with
-  `--unsafe-unverified-owner`, a release is now always bound to the lock the command inspected,
-  so a lock that appears or changes in between is never removed; the flag on a path with nothing
-  there is refused at once. A state root that doesn't exist is reported as such (exit 0), and one
+  `--unsafe-unverified-owner`, a release is bound to the lock the command inspected, so a lock
+  that appears or changes in between is not removed; a lock it can't read or compare, and a path
+  with nothing there, are refused at once. A state root that doesn't exist is reported as such (exit 0), and one
   that isn't a directory is refused (exit 1).
 - **Added**: SMI-7143 -- `skillsmith doctor locks` lists the manifest lock and its reclaim lock
   under `~/.skillsmith` (or `--state-root <dir>`) with what is known about each owner.

@@ -14,7 +14,8 @@
  * The state root is `~/.skillsmith` or `--state-root`, resolved with
  * `realpath`, so the paths listed are the real files. `--release` accepts only
  * one of those, matched by the real path of its folder; with the unsafe flag
- * it releases only the claim it printed. The skills-root write lock and
+ * it releases only the claim it inspected, and refuses a lock it could not read
+ * or compare. The skills-root write lock and
  * skills-root discovery join with A1 steps 2 and 6.
  * Exit status: 0 when listed or released; 1 when a release is refused, when the
  * arguments are invalid (an unlisted path, the unsafe flag without --release, a
@@ -142,23 +143,37 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
   let expected: { ino: bigint; bytes: Buffer } | undefined
   if (options.unsafeUnverifiedOwner) {
     // Plan §3.9: the claim and why its owner can't be verified, before acting.
-    // Whatever this inspection saw, `expected` binds the release to it, so the
-    // flag never removes a lock that appeared or changed after it.
+    // The release is bound to this inspection by `expected`; an inspection
+    // with nothing to bind to (no lock, or no bytes read) refuses here, since
+    // releaseLock's own fresh look could find a different, live lock.
     const insp = inspectLock(target)
     if (insp === null) {
       console.error(chalk.red(`Not released: nothing is at ${target}`))
       process.exitCode = 1
       return
     }
-    if (insp.bytes !== null) {
-      const why = insp.kind !== 'cant-read' ? unverifiedOwnerReason(insp) : null
-      if (why !== null) {
-        // Every line but the last, which would repeat the reason printed next.
-        for (const line of describeLock(target, insp).slice(0, -1)) console.log(line)
-        console.log(chalk.yellow(`Its owner can't be verified: ${why}. Releasing it anyway.`))
-      }
-      expected = { ino: insp.ino, bytes: insp.bytes }
+    if (insp.bytes === null) {
+      for (const line of describeLock(target, insp)) console.log(line)
+      const whose =
+        insp.kind === 'cant-read'
+          ? ` It belongs to uid ${insp.uid}: run this as that user or an administrator.`
+          : ''
+      console.error(
+        chalk.red(
+          `Not released: ${target} could not be read and compared (${insp.note}); ` +
+            `nothing was removed.${whose}`
+        )
+      )
+      process.exitCode = 1
+      return
     }
+    const why = unverifiedOwnerReason(insp)
+    if (why !== null) {
+      // Every line but the last, which would repeat the reason printed next.
+      for (const line of describeLock(target, insp).slice(0, -1)) console.log(line)
+      console.log(chalk.yellow(`Its owner can't be verified: ${why}. Releasing it anyway.`))
+    }
+    expected = { ino: insp.ino, bytes: insp.bytes }
   }
   const result = releaseLock(target, {
     unsafeUnverifiedOwner: options.unsafeUnverifiedOwner === true,

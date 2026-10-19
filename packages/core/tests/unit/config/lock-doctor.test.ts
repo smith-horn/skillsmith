@@ -272,6 +272,21 @@ describe('T-M2: the lock removed is the lock inspected', () => {
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(text)
   })
 
+  it('refuses when the lock has the bytes the caller showed but another inode (expected)', () => {
+    const { root, lockPath } = stateRoot()
+    const text = String(deadPid())
+    fs.writeFileSync(lockPath, text)
+    const shown = { ino: BigInt(fs.statSync(lockPath).ino), bytes: Buffer.from(text) }
+    const other = path.join(root, 'replacement')
+    fs.writeFileSync(other, text)
+    fs.renameSync(other, lockPath) // same bytes, new inode
+
+    const r = releaseLock(lockPath, { unsafeUnverifiedOwner: true, expected: shown })
+
+    expect(r.outcome === 'refused' && r.refusal).toBe('changed')
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(text)
+  })
+
   it('refuses while another process holds the reclaim lock, removing nothing', () => {
     const { lockPath } = stateRoot()
     const text = v1(deadPid())
@@ -343,8 +358,9 @@ describe("a claim doctor can't read or compare is never released", () => {
 
 describe('probePidAlive, the liveness probe owned-lock and doctor share', () => {
   it('does not probe a pid that is not a positive safe integer', () => {
-    for (const pid of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 2])
+    for (const pid of [0, -1, 1.5, 2 ** 31, Number.MAX_SAFE_INTEGER + 2]) {
       expect(probePidAlive(pid)).toBe(null)
+    }
   })
   it('alive for this process, dead for an exited one, alive for EPERM', () => {
     expect(probePidAlive(process.pid)).toBe(true)

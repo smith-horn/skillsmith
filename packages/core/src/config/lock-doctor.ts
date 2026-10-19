@@ -105,7 +105,7 @@ function readLockBytes(path: string): ReadResult {
     if (n > MAX_LOCK_BYTES) return { error: `it is over ${MAX_LOCK_BYTES} bytes`, code: undefined }
     return { bytes: Buffer.from(buf.subarray(0, n)), ino: st.ino }
   } catch (err) {
-    // A directory or FIFO swapped in after lstat (EISDIR, EAGAIN): unreadable, not a crash.
+    // A directory or FIFO swapped in after lstat (EISDIR, ESPIPE): unreadable, not a crash.
     const code = (err as NodeJS.ErrnoException).code
     return { error: `could not read it (${code ?? String(err)})`, code }
   } finally {
