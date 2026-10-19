@@ -24,7 +24,7 @@
  *     that block, removing the inner guard would leave this file green.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -67,6 +67,16 @@ vi.mock('../utils/require-tier.js', () => ({
 
 import { createPinCommand } from './pin.js'
 import { MANIFEST_PATH } from '../utils/manifest.js'
+
+// The $HOME sandbox (vitest.setup.ts) must be in force before any hook runs. A
+// failed check inside beforeAll/beforeEach still lets afterEach run, and
+// afterEach deletes the manifest; a throw here fails collection instead.
+if (
+  !MANIFEST_PATH.includes('skillsmith-vitest-home-') ||
+  !MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')
+) {
+  throw new Error(`Refusing to run: ${MANIFEST_PATH} is not inside the vitest HOME sandbox`)
+}
 
 const FULL_HASH = 'a3f7b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1'
 
@@ -136,13 +146,6 @@ function seed(text: string): Buffer {
 }
 
 describe('T-S: skillsmith pin leaves a bad manifest byte-identical (SMI-6358)', () => {
-  beforeAll(() => {
-    // The $HOME sandbox (vitest.setup.ts) must be in force or we would write
-    // into a developer's real manifest.
-    expect(MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')).toBe(true)
-    expect(MANIFEST_PATH).toContain('skillsmith-vitest-home-')
-  })
-
   beforeEach(() => {
     inject.target = MANIFEST_PATH
     inject.mode = 'off'

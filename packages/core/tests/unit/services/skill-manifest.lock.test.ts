@@ -12,7 +12,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { acquireOwnedLock } from '../../../src/config/owned-lock.js'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import { writeManifestAtomic } from '../../../src/services/skill-manifest.atomic.js'
@@ -84,8 +84,11 @@ describe('T-M3: lock-age boundaries on the two clocks', () => {
     it(`age ${label} on the file clock fails closed`, () => {
       expect(at(age)).toMatch(/25 s old or older/)
     })
-    it(`age ${label} on the wall clock fails closed even when the file clock says young`, () => {
-      expect(at(0n, age)).toMatch(/25 s old or older/)
+    it(`age ${label} on the wall clock fails closed even when the file clock says young, naming the skew`, () => {
+      const why = at(0n, age)
+      expect(why).toMatch(/saves fail until the clocks agree/)
+      expect(why).toContain(`about ${age / S} s ahead of the manifest directory's file clock`)
+      expect(why).not.toMatch(/25 s old or older/)
     })
   }
   it('a lock 1 ns newer than the file just written beside it fails closed', () => {
@@ -93,6 +96,17 @@ describe('T-M3: lock-age boundaries on the two clocks', () => {
   })
   it('a lock that only looks newer than the wall clock (skew) passes', () => {
     expect(at(5_000_000n, -740_000n)).toBe(null)
+  })
+  it("a file clock 26 s ahead of this host's wall clock passes (other hosts are the module's named residual)", () => {
+    expect(at(1_000_000n, -26n * S)).toBe(null)
+  })
+  it('an old lock with clocks that agree is blamed on its age, not on skew', () => {
+    const why = at(24_999_000_000n, 25_000_500_000n)
+    expect(why).toMatch(/25 s old or older/)
+    expect(why).not.toMatch(/clocks agree/)
+  })
+  it("the skew named is the clocks' own difference, not the lock's age", () => {
+    expect(at(10n * S, 40n * S)).toContain('about 30 s ahead')
   })
   it('a missing lock, another inode, or other bytes fail', () => {
     const clocks = { fsNs: T0, wallNs: T0 }
@@ -223,7 +237,40 @@ describe('the retry rule', () => {
     expect(fs.readFileSync(manifestPath).equals(before)).toBe(true)
   })
 
-  it('the file clock is the temp file beside the lock: a lock 60 s in the future is lost, and the retry saves', async () => {
+  it('the file clock is the temp file beside the lock: a lock 2 s ahead of the wall clock but older than that file saves at once', async () => {
+    const { manifestPath, lockPath } = tmp()
+    let loads = 0
+    const tempStats: string[] = []
+    const realStat = fs.statSync
+    // The temp file's mtime is made 1 ms later than the lock's. Read from
+    // there, the lock is young and the save goes through; read from the wall
+    // clock (2 s behind the lock) it would look backwards and fail twice.
+    const spy = vi.spyOn(fs, 'statSync').mockImplementation(((p: fs.PathLike, opts?: unknown) => {
+      const st = (realStat as (p: fs.PathLike, o?: unknown) => fs.BigIntStats)(p, opts)
+      if (!String(p).startsWith(`${manifestPath}.tmp.`)) return st
+      tempStats.push(String(p))
+      return { ...st, mtimeNs: realStat(lockPath, { bigint: true }).mtimeNs + 1_000_000n }
+    }) as unknown as typeof fs.statSync)
+    try {
+      await runManifestUpdate<Manifest>({
+        manifestPath,
+        load: async () => {
+          loads += 1
+          const ahead = new Date(Date.now() + 2000)
+          fs.utimesSync(lockPath, ahead, ahead)
+          return read(manifestPath)
+        },
+        update: add('a'),
+      })
+    } finally {
+      spy.mockRestore()
+    }
+    expect(loads).toBe(1)
+    expect(tempStats).toHaveLength(1)
+    expect(Object.keys(read(manifestPath).installedSkills)).toEqual(['a'])
+  })
+
+  it('a lock 60 s in the future is lost (the file clock moved backwards), and the retry saves', async () => {
     const { manifestPath, lockPath } = tmp()
     let loads = 0
     await runManifestUpdate<Manifest>({

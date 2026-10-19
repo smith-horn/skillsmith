@@ -13,10 +13,10 @@
  * The CLI owns its own read path; write operations (pin/unpin/telemetry) go
  * through updateManifestEntry below, which now delegates the actual
  * lock+load+save cycle to @skillsmith/core's ManifestManager.updateSafely()
- * (SMI-6358) rather than reimplementing a fourth lock. This file's own
- * loadManifest()/saveManifest() stay as they were (SMI-6360 governs NOT
- * merging the three manifest *implementations* into one) — only the write
- * PATH used by every caller in this package now shares core's lock.
+ * (SMI-6358) rather than reimplementing a fourth lock. This file keeps its own
+ * types and lenient loadManifest() (SMI-6360 governs NOT merging the three
+ * manifest *implementations* into one); every write, saveManifest() included,
+ * is core's.
  *
  * Concurrency note (SMI-6358 supersedes the v1 note this replaced): every
  * caller of updateManifestEntry() now takes the SAME cross-process file
@@ -26,9 +26,10 @@
  * @skillsmith/core's ManifestManager uses for SkillInstallationService,
  * apply_manifest_reconcile, and manage.update.helpers.ts's adoption path —
  * and that @skillsmith/mcp-server's install.helpers.manifest.ts's
- * updateManifestSafely() ALSO already used -- and uses by importing the SAME
- * `withFileLock` from @skillsmith/core (see install.helpers.manifest.ts's
- * import), not by reimplementing it. An earlier version of this comment
+ * updateManifestSafely() also takes, through the SAME shared locked update,
+ * `runManifestUpdate` from @skillsmith/core (SMI-7143; see
+ * install.helpers.manifest.ts's import), not by reimplementing it. An earlier
+ * version of this comment
  * called it an independent implementation interoperating through a shared
  * wx-flag protocol; both halves were wrong, and the second would point a
  * future StuckLockError debugger at a plain exclusive-create rather than at
@@ -38,8 +39,8 @@
  */
 
 import { createHash, randomUUID } from 'crypto'
-import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
-import { join, dirname } from 'path'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
 import { homedir } from 'os'
 import { assertNotRealUserHome, ManifestManager } from '@skillsmith/core'
 import type { SkillManifest as CoreSkillManifest } from '@skillsmith/core'
@@ -154,16 +155,15 @@ export async function loadManifest(manifestPath: string = MANIFEST_PATH): Promis
 }
 
 /**
- * Save the manifest atomically (temp file → rename).
+ * Save the manifest durably and atomically.
  *
- * SMI-6007: the temp filename includes a `randomUUID()` suffix (not just
- * `process.pid`) — two concurrent `saveManifest()` calls in the same process
- * previously collided on an identical `.tmp.<pid>` path. Each call now owns
- * a uniquely-named temp file, and the write+rename is wrapped in try/catch
- * so a failure best-effort removes only *this invocation's* temp file
- * before rethrowing the original error (mirrors `ManifestManager.save()` in
- * `@skillsmith/core`, and `sqljsDriver.ts`'s `persist()`, SMI-5997) — the
- * error is never swallowed.
+ * SMI-7143: DELEGATES to `ManifestManager.save()` (`@skillsmith/core`), as
+ * mcp-server's saveManifest already does, instead of keeping its own
+ * temp-file-and-rename. Core's write is the one that is hardened: a
+ * uniquely-named temp file (SMI-6007) opened no-follow and exclusive, synced
+ * before the rename, the directory synced after it, and only this call's temp
+ * file removed on a failure, whose error is rethrown. This copy had drifted
+ * to an unsynced write the moment core's was hardened.
  *
  * SMI-6358: this function on its own provides NO locking — it is safe as a
  * one-shot write of a manifest you already hold exclusively (e.g. inside a
@@ -177,19 +177,8 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
   // implementation, homedir-derived with no override parameter — the $HOME
   // sandbox (vitest.setup.ts) was this file's only defense until this guard.
   assertNotRealUserHome(MANIFEST_PATH, 'write')
-  await mkdir(dirname(MANIFEST_PATH), { recursive: true })
-  const tmpPath = `${MANIFEST_PATH}.tmp.${process.pid}.${randomUUID()}`
-  try {
-    await writeFile(tmpPath, JSON.stringify(manifest, null, 2))
-    await rename(tmpPath, MANIFEST_PATH)
-  } catch (error) {
-    try {
-      await unlink(tmpPath)
-    } catch {
-      // best-effort cleanup — surface the original error either way
-    }
-    throw error
-  }
+  // The same structurally-mirrored cast as updateManifestEntry's below.
+  await new ManifestManager(MANIFEST_PATH).save(manifest as CoreSkillManifest)
 }
 
 /**
@@ -203,11 +192,10 @@ export async function saveManifest(manifest: SkillManifest): Promise<void> {
  *      repo that targets the SAME `~/.skillsmith/manifest.json` path (core's
  *      SkillInstallationService/apply_manifest_reconcile/manage.update
  *      adoption path, and mcp-server's install.helpers.manifest.ts, which
- *      locks the identical `<path>.lock` file by importing the SAME
- *      `withFileLock` from `@skillsmith/core` — not a separate
- *      implementation, and not a bare wx-flag create. See the file header
- *      above, which corrects the same claim; this sentence is the twin that
- *      correction missed, found by the round-3 pre-merge gate.
+ *      runs the SAME shared locked update, `runManifestUpdate` from
+ *      `@skillsmith/core` (SMI-7143) — not a separate implementation, and
+ *      not a bare wx-flag create. The file header above makes the same
+ *      claim; keep the two in step.
  *   2. Fail-closed reads: ManifestManager.load() throws on a non-ENOENT read
  *      error (corrupt JSON, EACCES, ...) instead of this file's own
  *      loadManifest(), which still silently returns an empty manifest on

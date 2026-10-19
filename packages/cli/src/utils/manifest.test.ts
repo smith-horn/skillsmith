@@ -6,70 +6,24 @@
  *   generateAnonymousId, shouldRotateAnonymousId, rotateAnonymousId,
  *   sweepExpiredPreviousId
  *
- * Also covers manifest roundtrip (save → load preserves telemetry block) and
- * the atomic temp-file-rename code path for the sequential-correctness
- * concurrent-writer test.
+ * Also covers the manifest roundtrip (save → load preserves the telemetry
+ * block) and that saveManifest() is core's durable write.
  *
- * Concurrency note: vitest does not support true OS-level concurrency in a
- * single process. The "concurrent writer" test exercises the temp-file rename
- * code path sequentially — two writes to the same file where the second must
- * fully overwrite the first without leaving partial state. True lock contention
- * is a v2 concern tracked in the shared-state matrix (plan line 715).
+ * Real files in the sandboxed vitest HOME (vitest.setup.ts; asserted at module
+ * load, below the imports). SMI-7143: saveManifest() now delegates to core's
+ * ManifestManager.save(), whose write opens its temp file rather than calling
+ * writeFile, so the in-memory fs/promises fake this file used to install no
+ * longer reached it. Core's own tests (skill-manifest.atomic.test.ts,
+ * skill-manifest.test.ts) cover that write's failure cleanup.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdir, writeFile, rename, unlink } from 'fs/promises'
+import * as fs from 'node:fs'
+import { dirname, basename } from 'node:path'
+import { ManifestManager } from '@skillsmith/core'
 
-// ============================================================================
-// In-memory fs mock for isolation — covers save/load roundtrip tests
-// ============================================================================
-
-// We mock 'fs/promises' so tests never touch ~/.skillsmith on the developer's machine.
-// The mock implements the subset used by manifest.ts: mkdir, writeFile, rename, readFile.
-//
-// memfs is declared as a module-scope object (not Map) so the vi.mock factory
-// closure can reference it even after vi.mock hoisting reorders the declaration.
-// Tests clear memfs keys in beforeEach/afterEach for isolation.
-const memfs: Record<string, string> = {}
-
-// SMI-6343 follow-up: `manifest.ts` now imports `assertNotRealUserHome` from
-// `@skillsmith/core`, which transitively imports `constants` from
-// `fs/promises` (packages/core/src/utils/safe-fs.ts, module-level
-// `O_NOFOLLOW` lookup). A full-replacement mock factory must re-export it
-// (and anything else the real module has) via `importOriginal`, or that
-// transitive import throws "No constants export is defined" at collection
-// time — not just at the call sites this file actually exercises.
-vi.mock('fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('fs/promises')>()
-  return {
-    ...actual,
-    mkdir: vi.fn(async () => undefined),
-    writeFile: vi.fn(async (path: string, content: string) => {
-      memfs[path] = content
-    }),
-    rename: vi.fn(async (src: string, dst: string) => {
-      const content = memfs[src]
-      if (content === undefined) throw new Error(`ENOENT: ${src}`)
-      memfs[dst] = content
-      delete memfs[src]
-    }),
-    readFile: vi.fn(async (path: string) => {
-      const content = memfs[path]
-      if (content === undefined)
-        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-      return content
-    }),
-    unlink: vi.fn(async (path: string) => {
-      if (memfs[path] === undefined) {
-        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
-      }
-      delete memfs[path]
-    }),
-  }
-})
-
-// Import AFTER mocks are registered
 import {
+  MANIFEST_PATH,
   loadManifest,
   saveManifest,
   generateAnonymousId,
@@ -80,9 +34,31 @@ import {
   type TelemetryManifest,
 } from './manifest.js'
 
+// The $HOME sandbox (vitest.setup.ts) must be in force before any hook runs. A
+// failed check inside beforeAll/beforeEach still lets afterEach run, and
+// afterEach deletes the manifest; a throw here fails collection instead.
+if (
+  !MANIFEST_PATH.includes('skillsmith-vitest-home-') ||
+  !MANIFEST_PATH.startsWith(process.env['HOME'] ?? '/nonexistent')
+) {
+  throw new Error(`Refusing to run: ${MANIFEST_PATH} is not inside the vitest HOME sandbox`)
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/** Leftover temp files beside the manifest. */
+function tempFiles(): string[] {
+  const dir = dirname(MANIFEST_PATH)
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir).filter((n) => n.startsWith(`${basename(MANIFEST_PATH)}.tmp.`))
+}
+
+function clearManifest(): void {
+  fs.rmSync(MANIFEST_PATH, { force: true })
+  for (const t of tempFiles()) fs.rmSync(`${dirname(MANIFEST_PATH)}/${t}`, { force: true })
+}
 
 function makeManifest(telemetry?: TelemetryManifest): SkillManifest {
   return {
@@ -108,12 +84,12 @@ function daysFromNow(n: number): string {
 
 describe('telemetry block', () => {
   beforeEach(() => {
-    for (const k of Object.keys(memfs)) delete memfs[k]
-    vi.clearAllMocks()
+    clearManifest()
   })
 
   afterEach(() => {
-    for (const k of Object.keys(memfs)) delete memfs[k]
+    vi.restoreAllMocks()
+    clearManifest()
   })
 
   // --------------------------------------------------------------------------
@@ -122,7 +98,7 @@ describe('telemetry block', () => {
 
   describe('default — fresh config', () => {
     it('loadManifest returns a manifest with no telemetry key when file is absent', async () => {
-      // memfs is empty → readFile throws ENOENT → loadManifest returns default
+      // No manifest file → readFile throws ENOENT → loadManifest returns default
       const m = await loadManifest()
       expect(m.telemetry).toBeUndefined()
     })
@@ -157,8 +133,8 @@ describe('telemetry block', () => {
     it('older configs without a telemetry key continue to load without error', async () => {
       // Write a manifest that has no telemetry key (legacy shape)
       const legacy = { version: '1.0.0', installedSkills: {} }
-      const { MANIFEST_PATH } = await import('./manifest.js')
-      memfs[MANIFEST_PATH] = JSON.stringify(legacy, null, 2)
+      fs.mkdirSync(dirname(MANIFEST_PATH), { recursive: true })
+      fs.writeFileSync(MANIFEST_PATH, JSON.stringify(legacy, null, 2))
 
       const m = await loadManifest()
       expect(m.telemetry).toBeUndefined()
@@ -363,16 +339,10 @@ describe('telemetry block', () => {
   })
 
   // --------------------------------------------------------------------------
-  // Concurrent-writer (sequential atomic correctness)
-  //
-  // Exercises the temp-file-rename code path: two sequential saves to the
-  // same MANIFEST_PATH must result in the second write fully replacing the
-  // first without partial state visible to readers.
-  //
-  // True OS-level concurrent write contention is a v2 concern (plan line 715).
+  // saveManifest() is core's durable write (SMI-7143)
   // --------------------------------------------------------------------------
 
-  describe('atomic write — sequential correctness', () => {
+  describe("saveManifest — core's write", () => {
     it('second save fully replaces first; reader never sees partial state', async () => {
       const first = makeManifest({ enabled: false })
       const second = makeManifest({
@@ -386,101 +356,57 @@ describe('telemetry block', () => {
       await saveManifest(second)
 
       const loaded = await loadManifest()
-      // Reader must see the second write in its entirety
       expect(loaded.telemetry?.enabled).toBe(true)
       expect(loaded.telemetry?.anonymousId).toBe('d'.repeat(64))
       expect(loaded.telemetry?.scope).toBe('personal')
     })
 
-    it('temp file is removed after rename (no stale .tmp artifacts)', async () => {
-      const { MANIFEST_PATH } = await import('./manifest.js')
-      const tmpPath = `${MANIFEST_PATH}.tmp.${process.pid}`
+    it('delegates to ManifestManager.save on MANIFEST_PATH, once, with the manifest', async () => {
+      const save = vi.spyOn(ManifestManager.prototype, 'save')
+      const m = makeManifest({ enabled: false })
 
-      await saveManifest(makeManifest({ enabled: false }))
+      await saveManifest(m)
 
-      // The tmp file should have been renamed away — not present in memfs
-      expect(memfs[tmpPath]).toBeUndefined()
-      // The final path should be present
-      expect(memfs[MANIFEST_PATH]).toBeDefined()
+      expect(save).toHaveBeenCalledTimes(1)
+      expect(save.mock.calls[0]?.[0]).toEqual(m)
+      // Saved at MANIFEST_PATH: a ManifestManager built on any other path fails here.
+      expect(JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8'))).toEqual(m)
     })
 
-    it('the write path exercises mkdir → writeFile(tmp) → rename(tmp → final)', async () => {
-      const { MANIFEST_PATH } = await import('./manifest.js')
-      await saveManifest(makeManifest({ enabled: false }))
+    it('leaves no temp file behind, even for two overlapping saves', async () => {
+      const a = makeManifest({ enabled: false })
+      const b = makeManifest({ enabled: true, anonymousId: 'e'.repeat(64) })
 
-      // Verify the mock call sequence: mkdir was called, then writeFile with tmp path,
-      // then rename from tmp to final
-      expect(mkdir).toHaveBeenCalled()
-      expect(writeFile).toHaveBeenCalledWith(expect.stringContaining('.tmp.'), expect.any(String))
-      expect(rename).toHaveBeenCalledWith(expect.stringContaining('.tmp.'), MANIFEST_PATH)
-    })
-  })
+      await Promise.all([saveManifest(a), saveManifest(b)])
 
-  // --------------------------------------------------------------------------
-  // Same-pid temp-file collision fix (SMI-6007)
-  //
-  // Two concurrent saveManifest() calls in the same process previously
-  // computed the identical `.tmp.<pid>` path with no per-call uniqueness.
-  // --------------------------------------------------------------------------
-
-  describe('temp-file collision resistance (SMI-6007)', () => {
-    it('two overlapping saveManifest() calls use distinct temp paths and neither throws', async () => {
-      const writeFileMock = vi.mocked(writeFile)
-      const first = saveManifest(makeManifest({ enabled: false }))
-      const second = saveManifest(makeManifest({ enabled: true, anonymousId: 'e'.repeat(64) }))
-
-      await expect(Promise.all([first, second])).resolves.toBeDefined()
-
-      const tmpPathsWritten = writeFileMock.mock.calls.map((call) => call[0] as string)
-      expect(new Set(tmpPathsWritten).size).toBe(tmpPathsWritten.length)
+      expect(tempFiles()).toEqual([])
+      expect([a, b]).toContainEqual(JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8')))
     })
 
-    it('on a write failure, cleanup removes only this invocation temp file and rethrows the original error', async () => {
-      const writeFileMock = vi.mocked(writeFile)
+    it("rethrows the error core's save raised, unchanged", async () => {
+      // Core's own tests cover what a failed write leaves on disk; this pins
+      // only that saveManifest neither swallows nor wraps the failure.
       const originalError = new Error('ENOSPC: no space left on device')
-      writeFileMock.mockImplementationOnce(async () => {
-        throw originalError
-      })
+      vi.spyOn(ManifestManager.prototype, 'save').mockRejectedValueOnce(originalError)
 
-      await expect(saveManifest(makeManifest({ enabled: false }))).rejects.toThrow(originalError)
-
-      // unlink was attempted for cleanup (best-effort — the temp file was
-      // never actually written, so it ENOENTs, but the call must happen).
-      expect(unlink).toHaveBeenCalledWith(expect.stringContaining('.tmp.'))
-      // No stray temp entries left behind in the backing store.
-      expect(Object.keys(memfs).some((k) => k.includes('.tmp.'))).toBe(false)
-    })
-
-    it('on a rename failure, cleanup removes the temp file and the manifest file is left untouched', async () => {
-      const renameMock = vi.mocked(rename)
-      const originalError = new Error('EPERM: operation not permitted')
-      renameMock.mockImplementationOnce(async () => {
-        throw originalError
-      })
-
-      const { MANIFEST_PATH } = await import('./manifest.js')
-      await expect(saveManifest(makeManifest({ enabled: false }))).rejects.toThrow(originalError)
-
-      expect(memfs[MANIFEST_PATH]).toBeUndefined()
-      expect(Object.keys(memfs).some((k) => k.includes('.tmp.'))).toBe(false)
+      await expect(saveManifest(makeManifest({ enabled: true }))).rejects.toBe(originalError)
     })
   })
 
   // SMI-6343 Wave 1 follow-up (adversarial review): saveManifest() is
   // homedir-derived with no manifestPath override parameter — the sandbox
   // (vitest.setup.ts) was this write path's only protection until
-  // assertNotRealUserHome() was wired in. This proves the guard itself
-  // fires, not just that the sandbox exists — by pointing
+  // assertNotRealUserHome() was wired in. This proves the guard fires (since
+  // SMI-7143 both saveManifest's own call and ManifestManager.save's make the
+  // same check, so it cannot tell which one did) — by pointing
   // SKILLSMITH_TEST_REAL_HOME at whatever home MANIFEST_PATH is currently
   // under (the sandbox, in this test run) so the guard treats it as "the
   // real home" for this one assertion, same technique
   // home-sandbox.integration.test.ts uses.
   describe('SMI-6343: real-home write guard', () => {
     it('refuses to write when MANIFEST_PATH resolves under the (simulated) real home', async () => {
-      const { MANIFEST_PATH, saveManifest } = await import('./manifest.js')
-      const path = await import('path')
       // MANIFEST_PATH = join(homedir(), '.skillsmith', 'manifest.json')
-      const simulatedRealHome = path.dirname(path.dirname(MANIFEST_PATH))
+      const simulatedRealHome = dirname(dirname(MANIFEST_PATH))
 
       const previous = process.env['SKILLSMITH_TEST_REAL_HOME']
       process.env['SKILLSMITH_TEST_REAL_HOME'] = simulatedRealHome
@@ -491,8 +417,9 @@ describe('telemetry block', () => {
         else process.env['SKILLSMITH_TEST_REAL_HOME'] = previous
       }
 
-      // The guard fired before any fs call — nothing was written.
-      expect(writeFile).not.toHaveBeenCalled()
+      // The guard fired before any write — nothing was saved.
+      expect(fs.existsSync(MANIFEST_PATH)).toBe(false)
+      expect(tempFiles()).toEqual([])
     })
   })
 })

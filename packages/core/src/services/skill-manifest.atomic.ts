@@ -27,6 +27,7 @@ import { constants } from 'node:fs'
 import { open, rename, unlink } from 'fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { warnSafely } from '../utils/warn-safely.js'
 
 export interface WriteManifestAtomicOptions {
   /**
@@ -92,19 +93,6 @@ export async function writeManifestAtomic(
 
 /** Codes a filesystem returns when it cannot fsync a directory at all. */
 const DIR_SYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR', 'ENOSYS'])
-
-/**
- * A warning that cannot itself throw: a replaced or throwing `console.warn`
- * (an embedding application's logger) must not turn a saved manifest into a
- * reported failure, or replace the error a failed save is reporting.
- */
-function warnSafely(message: string): void {
-  try {
-    console.warn(message)
-  } catch {
-    // Nothing else can report it; the save's outcome stands either way.
-  }
-}
 
 /** Best-effort directory fsync after the rename; never throws, its warning included. */
 async function syncDirectory(dir: string): Promise<void> {

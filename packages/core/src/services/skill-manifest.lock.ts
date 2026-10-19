@@ -31,8 +31,11 @@
  * - A stall between the check and rename(2) (a stopped process, a paused VM)
  *   of more than 30 s minus the lock's age at the check still lets a legacy
  *   stealer in; the 25 s limit leaves at least 5 s.
- * - Clocks of different hosts sharing the directory are compared through the
- *   lock's mtime; skew larger than that margin is not covered.
+ * - Clocks of different hosts sharing the directory are not compared: an
+ *   older Skillsmith on another host whose clock runs 30 s or more ahead of
+ *   the file clock can steal a lock this check accepts.
+ * - This host's wall clock 25 s or more ahead of the directory's file clock
+ *   makes every save fail closed, with a reason naming the skew.
  * - Owned-lock's release reads the claim, then unlinks it: a stealer acting
  *   between the two loses its lock. This predates SMI-7143.
  *
@@ -41,6 +44,7 @@
 import fs from 'node:fs'
 import { withFileLock } from '../config/file-lock.js'
 import { writeManifestAtomic } from './skill-manifest.atomic.js'
+import { warnSafely } from '../utils/warn-safely.js'
 
 /** A save is refused once the lock is this old (a legacy stealer acts after 30 s). */
 export const MAX_LOCK_AGE_NS = 25_000_000_000n
@@ -110,10 +114,18 @@ export function lockStillOurs(
     return 'the lock is newer than a file just written beside it: the file clock moved backwards'
   }
   const wallAge = clocks.wallNs - now.mtimeNs
-  if (fsAge >= MAX_LOCK_AGE_NS || wallAge >= MAX_LOCK_AGE_NS) {
-    return 'the lock is 25 s old or older, and an older Skillsmith steals it at 30 s'
+  if (fsAge < MAX_LOCK_AGE_NS && wallAge < MAX_LOCK_AGE_NS) return null
+  // The skew is the two clocks' own difference, not either age: a lock that is
+  // simply old must not be blamed on the clocks, and a skew this large fails
+  // every save, retry included, so the reason must say so.
+  const skew = clocks.wallNs - clocks.fsNs
+  if (skew >= MAX_LOCK_AGE_NS) {
+    return (
+      `this computer's clock is about ${skew / 1_000_000_000n} s ahead of the manifest ` +
+      "directory's file clock; saves fail until the clocks agree"
+    )
   }
-  return null
+  return 'the lock is 25 s old or older, and an older Skillsmith steals it at 30 s'
 }
 
 /** The wall clock in nanoseconds, rounded up to the end of the current millisecond. */
@@ -123,7 +135,7 @@ function wallNowNs(): bigint {
 
 /** The default warning, once per acquisition, when an older version's claim is waited on. */
 function warnLegacyWait(pid: number | null): void {
-  console.warn(
+  warnSafely(
     `[skillsmith] The manifest lock is held by an older Skillsmith process` +
       `${pid === null ? '' : ` (pid ${pid})`}; waiting up to 30 s for it to finish.`
   )

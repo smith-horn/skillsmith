@@ -5826,8 +5826,6 @@ console.log(`\n${BOLD}Check 65: test-suite manifest hygiene (SMI-6343)${RESET}`)
     // `sklx pin`). Same justification, same mocked module.
     'packages/cli/src/commands/pin.manifest-null.test.ts':
       "updateManifestEntry is replaced via vi.mock('../utils/manifest.js', ...) — no real manifest module is loaded",
-    'packages/cli/src/utils/manifest.test.ts':
-      "this IS manifest.ts's own test file — fs/promises is fully mocked (vi.mock with importOriginal, only mkdir/writeFile/rename/readFile/unlink overridden) so saveManifest()'s writes go to an in-memory memfs object, never real disk; a dedicated 'SMI-6343: real-home write guard' describe block additionally proves the new guard itself fires",
     'packages/mcp-server/src/tools/install.helpers.manifest.test.ts':
       "this IS install.helpers.manifest.ts's own test file, added by the same commit as the guard it tests — every case deliberately points SKILLSMITH_TEST_REAL_HOME at MANIFEST_PATH's current home so the guard throws BEFORE any real fs call; there is no code path in this file that reaches real fs I/O",
     'packages/mcp-server/tests/unit/install-helpers.test.ts':
