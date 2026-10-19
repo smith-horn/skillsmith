@@ -115,7 +115,7 @@ describe('what a park does to the bytes and where it puts them', () => {
     expect(ra.opId).not.toBe(rb.opId)
   })
 
-  it('the sidecar names the caller, the kind, the origin and the real Skillsmith version', () => {
+  it('the sidecar names the client, the kind, the origin and the real Skillsmith version', () => {
     const f = fixture()
     const r = park(f.parent, 'tree', { kind: 'uninstall', rootKey: 'rk-1' })
     const s = readJson(r.sidecarPath)
