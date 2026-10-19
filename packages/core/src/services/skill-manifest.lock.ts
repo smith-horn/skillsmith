@@ -32,8 +32,9 @@
  *   of more than 30 s minus the lock's age at the check still lets a legacy
  *   stealer in; the 25 s limit leaves at least 5 s.
  * - Clocks of different hosts sharing the directory are not compared: an
- *   older Skillsmith on another host whose clock runs 30 s or more ahead of
- *   the file clock can steal a lock this check accepts.
+ *   older Skillsmith on another host whose clock runs more than 5 s ahead of
+ *   the file clock (its 30 s minus this 25 s limit) can steal a lock this
+ *   check accepts.
  * - This host's wall clock 25 s or more ahead of the directory's file clock
  *   makes every save fail closed, with a reason naming the skew.
  * - Owned-lock's release reads the claim, then unlinks it: a stealer acting

@@ -22,7 +22,7 @@ All notable changes to `@skillsmith/core` are documented here.
   this one path (`runManifestUpdate`). An update callback can therefore run twice; the four callbacks
   that recorded results outside themselves (backfill, uninstall, telemetry rotation, reconcile
   verify) now reset them first. Not closed: a stall of more than about 5 s between the check and the
-  rename, cross-host clock skew (an older Skillsmith on another host whose clock runs 30 s or more
+  rename, cross-host clock skew (an older Skillsmith on another host whose clock runs more than 5 s
   ahead of the file clock can still steal a lock this check accepts), and owned-lock's
   read-then-unlink release, which predates this. This host's wall clock 25 s or more ahead of the
   manifest directory's file clock makes every save fail closed, with a reason naming the skew.

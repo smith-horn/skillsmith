@@ -22,7 +22,7 @@
  * Shared-state coordination (plan line 717):
  *   - install-hook reads then writes ~/.claude/settings.json via telemetry.helpers.ts
  *   - Refuses on foreign Skill matcher (security gate)
- *   - manifest read/write always via loadManifest / saveManifest (atomic rename)
+ *   - manifest writes go through updateManifestEntry (core's runManifestUpdate)
  */
 
 import { Command } from 'commander'
