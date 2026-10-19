@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 (A1 step 1) -- `fetchFromGitHub` and `lookupSkillFromRegistry` call core's
+  `assertSkillWriteLockNotHeld` on entry, so neither can run while a skills-root lock is held.
 - **Fixed**: SMI-7143 -- the install conflict path's manifest update now runs core's shared locked
   update: a durable save, a check before the rename that the manifest lock was not stolen by an
   older Skillsmith (with one retry), and a wait on an older process's lock instead of an immediate

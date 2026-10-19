@@ -408,6 +408,13 @@ export {
 // @skillsmith/mcp-server's manifest write path) can share the SAME lock
 // mechanism instead of hand-rolling its own age-based lock protocol.
 export { withFileLock } from './config/file-lock.js'
+// SMI-6531 A1 step 1: the lock-order tracker (plan §3.2).
+export {
+  assertSkillWriteLockNotHeld,
+  LockOrderError,
+  type LockOrder,
+  type LockRank,
+} from './config/lock-tracker.js'
 export { describeRemedy, StuckLockError, type StuckLockReason } from './config/owned-lock.js'
 // SMI-7143: what `skillsmith doctor locks` inspects and releases.
 export {

@@ -109,6 +109,8 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@skillsmith/core', () => ({
+  // SMI-6531: the install wrappers call this on entry; no lock is held here.
+  assertSkillWriteLockNotHeld: () => undefined,
   // ADR-175 / SMI-6946: the real predicate, not a stub. A stub returning
   // `false` would make this mock less capable than the module it replaces,
   // and would silently disable the corruption branch in every test here.

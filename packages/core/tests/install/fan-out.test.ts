@@ -74,12 +74,19 @@ function mockManifestLockFailure(beforeFail?: () => Promise<void>): void {
     return {
       ...actual,
       withFileLock: vi.fn(
-        async <T>(target: string, label: string, fn: () => Promise<T>): Promise<T> => {
+        async <T>(
+          target: string,
+          label: string,
+          fn: () => Promise<T>,
+          options: Parameters<typeof actual.withFileLock>[3]
+        ): Promise<T> => {
           if (label.includes('manifest')) {
             await beforeFail?.()
             throw new Error('manifest lock unavailable')
           }
-          return actual.withFileLock(target, label, fn)
+          // Forward the caller's options, rank included, so these tests run the
+          // real lock order rather than an 'unordered' stand-in (SMI-6531).
+          return actual.withFileLock(target, label, fn, options)
         }
       ),
     }

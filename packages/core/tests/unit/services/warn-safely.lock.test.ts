@@ -33,29 +33,54 @@ const throwingWarn = () =>
   })
 
 describe('lock-path warnings with a throwing console.warn', () => {
-  it('releaseOwned on a lock it no longer owns warns, does not throw, and leaves the lock', () => {
+  it('releaseOwned on a claim it cannot read warns, does not throw, and leaves the lock', () => {
     const t = target()
     const lockPath = `${t}.lock`
-    fs.writeFileSync(lockPath, 'someone else')
+    fs.writeFileSync(lockPath, 'someone else') // unparseable, so unverified rather than not-owner
+    const warn = throwingWarn()
+
+    expect(() => releaseOwned(lockPath, 'our-token')).not.toThrow()
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('lock_release_unverified'))
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe('someone else')
+  })
+
+  it('releaseOwned on a readable claim naming someone else warns, does not throw, and leaves the lock', () => {
+    const t = target()
+    const lockPath = `${t}.lock`
+    const foreign = JSON.stringify({
+      v: 1,
+      pid: process.pid,
+      token: 'f'.repeat(16),
+      host: os.hostname(),
+      acquiredAt: Date.now(),
+    })
+    fs.writeFileSync(lockPath, `${foreign}\n`)
     const warn = throwingWarn()
 
     expect(() => releaseOwned(lockPath, 'our-token')).not.toThrow()
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('lock_release_not_owner'))
-    expect(fs.readFileSync(lockPath, 'utf8')).toBe('someone else')
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(`${foreign}\n`)
   })
 
   it("withFileLock returns the work's result when its lock was replaced while held", async () => {
     const t = target()
     const warn = throwingWarn()
 
-    const out = await withFileLock(t, 'test', async () => {
-      fs.writeFileSync(`${t}.lock`, 'replaced by another process')
-      return 'saved'
-    })
+    const out = await withFileLock(
+      t,
+      'test',
+      async () => {
+        fs.writeFileSync(`${t}.lock`, 'replaced by another process')
+        return 'saved'
+      },
+      { rank: 'unordered' }
+    )
 
     expect(out).toBe('saved')
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('lock_release_not_owner'))
+    // The replacement text is not a claim anyone can read, so it is unverified.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('lock_release_unverified'))
   })
 
   it('runManifestUpdate waits out an older version and saves, its default notice included', async () => {

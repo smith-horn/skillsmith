@@ -28,6 +28,7 @@ export { fetchFromGitHub } from './skill-installation.io.js'
 import { CANONICAL_CLIENT, CLIENT_DISPLAY_LABELS, type ClientId } from '../install/paths.js'
 import { InstallRestoreError } from './skill-installation.io.rollback.js'
 import { ManifestUnwritableError } from './skill-manifest.read-state.js'
+import { LockOrderError } from '../config/lock-tracker.js'
 
 /** Result of applying optimization to a skill's content. */
 export interface OptimizationResult {
@@ -310,6 +311,11 @@ export function sanitizeInstallError(error: unknown): string {
   // own error type, not a 13th message-content prefix (SMI-6529 H2's
   // deliberate coupling avoidance, per ADR-171's plan).
   if (error instanceof ManifestUnwritableError) {
+    return error.message
+  }
+  // SMI-6531 A1 step 1: a lock-order refusal names the locks involved; the
+  // generic fallback would hide a programming error behind "internal error".
+  if (error instanceof LockOrderError) {
     return error.message
   }
   if (error instanceof Error) {

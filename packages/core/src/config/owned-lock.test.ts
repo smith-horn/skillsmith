@@ -14,6 +14,7 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -35,7 +36,7 @@ import {
   type StuckLockReason,
 } from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
-import { createLockExclusive, isOwnerDefinitelyDead } from './owned-lock.claim.js'
+import { createLockExclusive, isOwnerDefinitelyDead, releaseOwned } from './owned-lock.claim.js'
 // Not re-exported by `owned-lock.ts` (MAX_LOCK_BYTES is; this is not), so it
 // comes from the module that declares it. Driving the table from the real set
 // is the point -- a retyped copy would go stale exactly when it matters.
@@ -1134,5 +1135,82 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
         )
       }
     }
+  })
+})
+
+describe('releaseOwned return value: true only when the lock is shown not to be ours', () => {
+  const TOKEN = 'a'.repeat(16)
+  let warn: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    warn.mockRestore()
+  })
+  const warned = (name: string): boolean =>
+    warn.mock.calls.some((c: unknown[]) => String(c[0]).includes(name))
+
+  it('our own v1 claim: unlinked, returns true', () => {
+    seed(v1(process.pid, { token: TOKEN }))
+    expect(releaseOwned(lockPath, TOKEN)).toBe(true)
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('nothing at the path: returns true, and warns that the lock was removed under us', () => {
+    expect(releaseOwned(lockPath, TOKEN)).toBe(true)
+    expect(warned('lock_release_not_owner')).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(false)
+  })
+
+  it('a readable v1 claim naming another token: not removed, returns true, not_owner warning', () => {
+    seed(v1(process.pid, { token: 'f'.repeat(16) }))
+    expect(releaseOwned(lockPath, TOKEN)).toBe(true)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(warned('lock_release_not_owner')).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(false)
+  })
+
+  it('a readable legacy (bare pid) claim naming another pid: not removed, returns true, not_owner warning', () => {
+    seed(`${process.pid + 1}\n`)
+    expect(releaseOwned(lockPath, TOKEN)).toBe(true)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(warned('lock_release_not_owner')).toBe(true)
+  })
+
+  it('a legacy claim naming this pid: not removed, returns false, unverified warning (it may be ours)', () => {
+    seed(`${process.pid}\n`)
+    expect(releaseOwned(lockPath, TOKEN)).toBe(false)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(true)
+    expect(warned('lock_release_not_owner')).toBe(false)
+  })
+
+  it('an unparseable file that is still there: not removed, returns false, unverified warning', () => {
+    seed('someone else')
+    expect(releaseOwned(lockPath, TOKEN)).toBe(false)
+    expect(readFileSync(lockPath, 'utf-8')).toBe('someone else')
+    expect(warned('lock_release_unverified')).toBe(true)
+    expect(warned('lock_release_not_owner')).toBe(false)
+  })
+
+  it('a directory at the path (read fails after open): returns false, still there', () => {
+    mkdirSync(lockPath)
+    expect(releaseOwned(lockPath, TOKEN)).toBe(false)
+    expect(existsSync(lockPath)).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(true)
+  })
+
+  it('a symlink loop at the path (open fails ELOOP): returns false, the link is still there', () => {
+    symlinkSync(lockPath, lockPath)
+    expect(releaseOwned(lockPath, TOKEN)).toBe(false)
+    expect(lstatSync(lockPath).isSymbolicLink()).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(true)
+  })
+
+  it('a dangling symlink at the path: returns false, the link is still there', () => {
+    symlinkSync(path.join(dir, 'nowhere'), lockPath)
+    expect(releaseOwned(lockPath, TOKEN)).toBe(false)
+    expect(lstatSync(lockPath).isSymbolicLink()).toBe(true)
+    expect(warned('lock_release_unverified')).toBe(true)
   })
 })

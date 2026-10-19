@@ -46,10 +46,15 @@ describe('releaseOwned when the unlink of an owned lock fails', () => {
       throw new Error('logger exploded')
     })
 
-    const out = await withFileLock(t, 'test', async () => {
-      inject.failUnlinkOf = `${t}.lock`
-      return 'saved'
-    })
+    const out = await withFileLock(
+      t,
+      'test',
+      async () => {
+        inject.failUnlinkOf = `${t}.lock`
+        return 'saved'
+      },
+      { rank: 'unordered' }
+    )
 
     expect(out).toBe('saved')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('lock_release_unlink_failed'))

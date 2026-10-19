@@ -18,6 +18,7 @@
 import * as path from 'node:path'
 import * as fsp from 'node:fs/promises'
 import { withFileLock } from '../config/file-lock.js'
+import { checkLockRequest, lockKey } from '../config/lock-tracker.js'
 import { siblingPrefix } from './fan-out.leftovers.js'
 
 export { withFileLock }
@@ -29,24 +30,25 @@ const LOCK_TAG = '.skillsmith-fanout'
 const inProcessQueue = new Map<string, Promise<void>>()
 
 /**
- * Queue key for `dest`: its parent's real path plus its name, so a symlinked
- * spelling of the same folder shares one queue (round 7). A case-only variant
- * on a case-insensitive volume still gets its own key, but it then only waits
- * asynchronously on the shared file lock below, never blocking.
- */
-async function queueKey(dest: string): Promise<string> {
-  const parent = path.dirname(path.resolve(dest))
-  const realParent = await fsp.realpath(parent).catch(() => parent)
-  return path.join(realParent, path.basename(dest))
-}
-
-/**
  * Run `fn` holding the lock for `dest`: first queue behind any other call
  * for the same destination in this process, then take the cross-process
  * file lock `.<name>.skillsmith-fanout.lock` next to it.
  */
 export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>): Promise<T> {
-  const key = await queueKey(dest)
+  // A1 step 1: the tracker's refusal must come before the queue and the
+  // mkdir below, or a re-entry waits on itself forever (plan §3.2). Admission
+  // keys by the lock file (`checkLockRequest`); the queue keys by spelling
+  // (`lockKey` of the lock file's path), which does not change with whether a
+  // case-variant lock file currently exists (it can still change once a missing
+  // parent folder is created, since that folder is then resolved). Two
+  // spellings of one lock file may therefore queue separately, but they still
+  // exclude each other through the file lock; only in-process order is lost.
+  // A symlinked spelling shares the queue even while the parent doesn't exist
+  // yet (it is resolved at its nearest existing ancestor). The
+  // parent is not created before the check: a refused request must not write.
+  const lockTarget = path.join(path.dirname(dest), siblingPrefix(dest, LOCK_TAG))
+  checkLockRequest(lockTarget, 'fan-out destination lock', '2a')
+  const key = lockKey(`${lockTarget}.lock`)
   const previous = inProcessQueue.get(key) ?? Promise.resolve()
   let releaseQueue: () => void = () => {}
   const mine = new Promise<void>((resolve) => {
@@ -56,10 +58,8 @@ export async function withDestinationLock<T>(dest: string, fn: () => Promise<T>)
   inProcessQueue.set(key, tail)
   await previous
   try {
-    const parent = path.dirname(dest)
-    await fsp.mkdir(parent, { recursive: true })
-    const lockTarget = path.join(parent, siblingPrefix(dest, LOCK_TAG))
-    return await withFileLock(lockTarget, 'fan-out destination lock', fn)
+    await fsp.mkdir(path.dirname(dest), { recursive: true })
+    return await withFileLock(lockTarget, 'fan-out destination lock', fn, { rank: '2a' })
   } finally {
     releaseQueue()
     if (inProcessQueue.get(key) === tail) inProcessQueue.delete(key)

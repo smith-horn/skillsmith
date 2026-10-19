@@ -11,6 +11,7 @@ import { basename } from 'path'
 import chalk from 'chalk'
 import ora from 'ora'
 import {
+  assertSkillWriteLockNotHeld,
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
@@ -182,6 +183,7 @@ async function updateSkillWithOutcome(
 
     // SMI-7056: `--yes` answers this prompt as well as the trust-tier one, so
     // `update --yes` works without a terminal.
+    assertSkillWriteLockNotHeld('prompt: update confirmation') // A1 plan §3.2, T-L10
     const proceed =
       yes ||
       (await confirm({

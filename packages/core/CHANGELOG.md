@@ -4,6 +4,32 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed (breaking)**: SMI-6531 (A1 step 1) -- `withFileLock(target, label, fn, options)` now
+  requires its fourth argument, with a `rank`: `1`, `1′`, `2a`, `2b`, `3`, `4`, or `'unordered'` for a
+  lock outside the order table. Migrate a three-argument call by adding
+  `{ rank: 'unordered' }`, or the lock's rank from A1 plan §3.2. The rank is required, not defaulted:
+  the type requires it, and a missing or unknown rank rejects at runtime with a `TypeError` naming
+  the allowed values. `acquireOwnedLock`'s release now returns a
+  boolean (true once the lock is shown gone or someone else's); a caller typed `() => void` is
+  unaffected.
+- **Added**: SMI-6531 (A1 step 1) -- a lock-order tracker (`config/lock-tracker.ts`, plan §3.2),
+  exported with `LockOrderError`, `LockOrder`, `LockRank` and `assertSkillWriteLockNotHeld`. An
+  `AsyncLocalStorage` records the locks a context holds, and a request that re-enters
+  one, takes a second skills-root lock, ranks below or equal to one already held, or is made while
+  lock 4 is held rejects with `LockOrderError` before any wait. The tracker stops counting a lock
+  only once it is shown gone or someone else's, even for work it left running; a release that
+  failed, or whose claim can't be shown to be someone else's while a file remains (unreadable, or a
+  legacy claim naming this process; the new `lock_release_unverified` warning), keeps counting,
+  since the file may still be ours. A lock is identified by its lock file's real path (symlinks resolved before `..`; the
+  final name's case folded where the OS folds it, once the lock file exists). The manifest lock is rank 3, fan-out's destination and link-manifest locks 2a and 2b (the
+  destination lock checks before its in-process queue), the parked index 4. A manifest update
+  callback that requests a lock or starts async work while it runs (a promise, timer, microtask,
+  immediate, nextTick or async fs call) is refused; a callback-style crypto or dns call
+  (`randomBytes(n, cb)`, `dns.lookup`), any other native request type outside the watched set, and a
+  listener added to an existing emitter or stream are not detected. `assertSkillWriteLockNotHeld(label)`
+  throws when a skills-root lock is held; the install fetch and scan helpers, including the main
+  SKILL.md scan, call it on entry. A `LockOrderError` is passed through, never turned into an
+  install or lookup failure.
 - **Fixed**: SMI-7143 -- `releaseLock` and `inspectLock` (PR #3123 retro): a read that fails after
   the lock is opened (a directory or FIFO swapped in) is now `unparseable` instead of a throw, and
   owned-lock's reclaim and `doctor locks` share one liveness probe, `probePidAlive`

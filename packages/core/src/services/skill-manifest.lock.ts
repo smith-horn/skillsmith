@@ -44,6 +44,7 @@
  */
 import fs from 'node:fs'
 import { withFileLock } from '../config/file-lock.js'
+import { runPureCallback } from '../config/lock-tracker.js'
 import { writeManifestAtomic } from './skill-manifest.atomic.js'
 import { warnSafely } from '../utils/warn-safely.js'
 
@@ -176,7 +177,8 @@ export async function runManifestUpdate<M>(args: ManifestUpdateArgs<M>): Promise
           const acquired = snapshotLock(lockPath)
           if (acquired === null) throw new ManifestLockLost(lockPath, 'the lock file is gone')
           const manifest = await args.load()
-          const updated = args.update(manifest)
+          // A1 step 1 (T-L4): the callback may not request any lock.
+          const updated = runPureCallback(() => args.update(manifest))
           if (updated == null || typeof updated !== 'object') {
             throw new TypeError(
               'runManifestUpdate: update must return the manifest; it returned nothing'
@@ -198,7 +200,7 @@ export async function runManifestUpdate<M>(args: ManifestUpdateArgs<M>): Promise
             },
           })
         },
-        { waitOnLegacy: true, onLegacyWait: args.onLegacyWait ?? warnLegacyWait }
+        { waitOnLegacy: true, onLegacyWait: args.onLegacyWait ?? warnLegacyWait, rank: '3' }
       )
       return
     } catch (err) {

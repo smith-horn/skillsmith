@@ -125,21 +125,26 @@ export async function updateManifest(
   const manifestPath = getLinkManifestPath()
   assertNotRealUserHome(manifestPath, 'write')
   await fsp.mkdir(path.dirname(manifestPath), { recursive: true })
-  return withFileLock(manifestPath, 'fan-out link manifest lock', async () => {
-    const read = await readManifestFile()
-    if (read.state === 'unreadable') throw unreadableManifestError(read.reason)
-    let warning: string | undefined
-    if (read.state === 'corrupt') {
-      const aside = `${manifestPath}.corrupt-${Date.now()}`
-      await fsp.rename(manifestPath, aside)
-      warning =
-        `the fan-out link manifest at ${manifestPath} could not be parsed; it was moved to ` +
-        `${aside} and a new one started. Copies recorded only in the old file are no longer tracked.`
-    }
-    change(read.manifest)
-    await saveManifest(read.manifest)
-    return warning
-  })
+  return withFileLock(
+    manifestPath,
+    'fan-out link manifest lock',
+    async () => {
+      const read = await readManifestFile()
+      if (read.state === 'unreadable') throw unreadableManifestError(read.reason)
+      let warning: string | undefined
+      if (read.state === 'corrupt') {
+        const aside = `${manifestPath}.corrupt-${Date.now()}`
+        await fsp.rename(manifestPath, aside)
+        warning =
+          `the fan-out link manifest at ${manifestPath} could not be parsed; it was moved to ` +
+          `${aside} and a new one started. Copies recorded only in the old file are no longer tracked.`
+      }
+      change(read.manifest)
+      await saveManifest(read.manifest)
+      return warning
+    },
+    { rank: '2b' }
+  )
 }
 
 /**

@@ -14,6 +14,13 @@
 import { readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from './owned-lock.js'
+import {
+  isLockOrder,
+  LOCK_ORDERS,
+  LockOrderError,
+  runHoldingLock,
+  type LockOrder,
+} from './lock-tracker.js'
 
 /** How long to wait for another process's lock on the same target (ms). */
 const FILE_LOCK_TIMEOUT_MS = 30_000
@@ -67,6 +74,15 @@ export interface FileLockOptions {
   onLegacyWait?: (pid: number | null) => void
   /** How long to wait before giving up, in ms (default 30 s); a test seam. */
   timeoutMs?: number
+  /**
+   * The lock's rank in A1 plan §3.2's order table (SMI-6531 step 1), or
+   * `'unordered'` for a lock outside it. Required by the type, and a missing or
+   * unknown rank rejects at runtime, so a lock can't skip the order rules by
+   * omission. The tracker refuses, before any wait, a request
+   * that re-enters a held lock, takes a second skills-root lock, ranks below
+   * or equal to a held lock, or is made while lock 4 is held.
+   */
+  rank: LockOrder
 }
 
 /** The pid a bare-PID claim names, or null. Reads the lock file only. */
@@ -91,7 +107,7 @@ async function acquireFileLock(
   target: string,
   label: string,
   options: FileLockOptions
-): Promise<() => void> {
+): Promise<() => boolean> {
   const deadline = Date.now() + (options.timeoutMs ?? FILE_LOCK_TIMEOUT_MS)
   let warnedLegacy = false
   for (;;) {
@@ -122,17 +138,49 @@ async function acquireFileLock(
 /**
  * Run `fn` holding the cross-process file lock `<target>.lock`, waiting
  * without blocking the event loop. Callers in one process contend on it too.
+ * The lock-order tracker checks the request first: a refusal rejects with
+ * `LockOrderError` before any wait (SMI-6531 step 1).
  */
-export async function withFileLock<T>(
+export function withFileLock<T>(
   target: string,
   label: string,
   fn: () => Promise<T>,
-  options: FileLockOptions = {}
+  options: FileLockOptions
 ): Promise<T> {
-  const release = await acquireFileLock(target, label, options)
+  // The type requires a rank; an untyped caller (JS, a cast) gets a rejection,
+  // not a silently unordered lock or an unrelated "reading 'rank'" crash.
+  const rank: unknown = typeof options === 'object' && options !== null ? options.rank : undefined
+  if (!isLockOrder(rank)) {
+    return Promise.reject(
+      new TypeError(
+        `withFileLock(${JSON.stringify(label)}) requires options.rank, one of ${LOCK_ORDERS.map((r) => `'${r}'`).join(', ')}; got ${rank === undefined ? 'none' : JSON.stringify(rank)}`
+      )
+    )
+  }
   try {
-    return await fn()
-  } finally {
-    release()
+    return runHoldingLock(target, label, options.rank, async (acquired, releasing) => {
+      const release = await acquireFileLock(target, label, options)
+      acquired() // the lock's folder exists now: key it by its real path
+      try {
+        return await fn()
+      } finally {
+        // Release first, then stop counting the lock, with no await between:
+        // work `fn` started can run in the next microtask and must not see a
+        // lock whose file is already gone. If the release failed, or could not
+        // read the claim while a file remains, the file may still be ours and
+        // the entry stays live for that work, which would otherwise pass
+        // admission and wait on its own retained lock file.
+        if (release()) releasing()
+      }
+    })
+  } catch (err) {
+    const refused = Promise.reject(err)
+    // Inside a manifest callback, which is synchronous and doesn't await this,
+    // the refusal is reported when the callback returns (`runPureCallback`);
+    // handle the rejection here so it isn't also an unhandled one.
+    if (err instanceof LockOrderError && err.kind === 'in-pure-callback') {
+      refused.catch(() => {})
+    }
+    return refused as Promise<T>
   }
 }

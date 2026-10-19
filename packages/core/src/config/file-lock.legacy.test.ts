@@ -33,6 +33,7 @@ describe('withFileLock and a bare-PID claim', () => {
     const out = await withFileLock(t, 'test', async () => 'ran', {
       waitOnLegacy: true,
       onLegacyWait: (pid) => warned.push(pid),
+      rank: 'unordered',
     })
     expect(out).toBe('ran')
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250)
@@ -43,7 +44,9 @@ describe('withFileLock and a bare-PID claim', () => {
     const t = target()
     fs.writeFileSync(`${t}.lock`, '31337')
     const t0 = Date.now()
-    const err = await withFileLock(t, 'test', async () => 'ran').catch((e: unknown) => e)
+    const err = await withFileLock(t, 'test', async () => 'ran', { rank: 'unordered' }).catch(
+      (e: unknown) => e
+    )
     expect(err).toBeInstanceOf(StuckLockError)
     expect((err as StuckLockError).reason).toBe('unreclaimable_legacy')
     expect(Date.now() - t0).toBeLessThan(200)
@@ -58,6 +61,7 @@ describe('withFileLock and a bare-PID claim', () => {
       waitOnLegacy: true,
       onLegacyWait: () => {},
       timeoutMs: 300,
+      rank: 'unordered',
     }).catch((e: unknown) => e)
     const waited = Date.now() - t0
     expect((err as StuckLockError).reason).toBe('unreclaimable_legacy')
@@ -73,6 +77,7 @@ describe('withFileLock and a bare-PID claim', () => {
     const err = await withFileLock(t, 'test', async () => 'ran', {
       waitOnLegacy: true,
       onLegacyWait: () => (warned += 1),
+      rank: 'unordered',
     }).catch((e: unknown) => e)
     expect((err as StuckLockError).reason).toBe('unreclaimable_unparseable')
     expect(warned).toBe(0)

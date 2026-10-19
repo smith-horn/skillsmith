@@ -60,6 +60,7 @@ import type {
 import { TRUST_TIER_SCANNER_OPTIONS } from './skill-installation.types.js'
 import { installedSkillsOf, type ManifestManager } from './skill-manifest.js'
 import { SecurityScanner } from '../security/index.js'
+import { assertSkillWriteLockNotHeld } from '../config/lock-tracker.js'
 import type { ScanReport } from '../security/index.js'
 import {
   classifyBundledFile,
@@ -185,10 +186,11 @@ export function validateContentKeys(
  * (or was a 'doc'-class file whose scan failure is a documented FP-control
  * skip — see isRejectableScan()'s doc comment).
  */
-function scanContentFiles(
+export function scanContentFiles(
   content: Record<string, string>,
   skillId: string
 ): { file: string; report: ScanReport } | null {
+  assertSkillWriteLockNotHeld('scan: scanContentFiles')
   const scanner = new SecurityScanner(TRUST_TIER_SCANNER_OPTIONS[CONTENT_INSTALL_TRUST_TIER])
 
   for (const [filename, text] of Object.entries(content)) {

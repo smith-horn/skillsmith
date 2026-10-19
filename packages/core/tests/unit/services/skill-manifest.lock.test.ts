@@ -173,10 +173,15 @@ describe('T-M1: a legacy writer that steals the lock keeps its change', () => {
             update: add('holder'),
             onLegacyWait: () => retryWaiting.open(),
           })
-        : withFileLock(manifestPath, 'no-check control', async () => {
-            const m = add('holder')(await holderLoad())
-            await writeManifestAtomic(manifestPath, JSON.stringify(m))
-          })
+        : withFileLock(
+            manifestPath,
+            'no-check control',
+            async () => {
+              const m = add('holder')(await holderLoad())
+              await writeManifestAtomic(manifestPath, JSON.stringify(m))
+            },
+            { rank: 'unordered' }
+          )
     await paused.opened
     backdate(lockPath, 31)
     await legacyAcquire(manifestPath, { timeoutMs: 2000 })

@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 (A1 step 1) -- the install trust-tier prompt, the update confirmation
+  prompt and both registry lookups call core's `assertSkillWriteLockNotHeld` on entry, so none can
+  run while a skills-root lock is held.
 - **Fixed**: SMI-7143 -- `skillsmith doctor locks` (PR #3123 retro): with
   `--unsafe-unverified-owner`, a release is bound to the lock the command inspected (its inode
   and bytes), so a lock that appears or changes in between is not removed; a lock it can't read or

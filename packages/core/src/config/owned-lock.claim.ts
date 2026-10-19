@@ -363,7 +363,16 @@ export function tryReclaimUnderLock(
 // Release -- ownership-verified, idempotent
 // ---------------------------------------------------------------------------
 
-export function releaseOwned(path: string, token: string): void {
+/**
+ * Release `path` if `token` still owns it. Returns whether the lock is shown
+ * to be no longer ours on disk: true when it was unlinked, when nothing is at
+ * the path, or when a readable claim there names someone else; false when the
+ * unlink failed, or when something is still at the path that can't be shown to
+ * be someone else's (an unreadable claim, or a legacy claim naming this
+ * process): it may be our own file. Callers that stop counting a lock as held
+ * (the lock-order tracker) rely on this, so every doubt answers false.
+ */
+export function releaseOwned(path: string, token: string): boolean {
   const claim = readClaim(path)
   if (claim.kind === 'v1' && claim.token === token) {
     try {
@@ -373,23 +382,68 @@ export function releaseOwned(path: string, token: string): void {
         warnSafely(
           `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${(err as Error).message}`
         )
+        return false
       }
+      warnRemovedUnderUs(path) // ours when read, gone by the unlink
     }
-  } else {
-    // We no longer own it -- unlinking would destroy a live holder's lock
-    // (it was reclaimed from us after we appeared dead, or hand-edited).
-    // Release runs in a `finally`, so neither warning may throw (SMI-7143).
+    return true
+  }
+  // Not provably ours, so never unlinked: that would destroy a live holder's
+  // lock (reclaimed from us after we appeared dead, or hand-edited). Release
+  // runs in a `finally`, so no warning here may throw (SMI-7143).
+  // A legacy claim is only a pid, so one naming this process can't be shown to
+  // be someone else's: it falls through to the unverified answer below.
+  if (claim.kind === 'v1' || (claim.kind === 'legacy' && claim.pid !== process.pid)) {
+    // A claim we can read, and it isn't ours: someone else holds it now.
     warnSafely(
       `[skillsmith] lock_release_not_owner: ${path} is no longer owned by this process -- not removing it.`
     )
+    return true
+  }
+  // `absent` or `unparseable` can also mean the claim could not be READ (out of
+  // file descriptors, EACCES) while our file is still there, so only a path
+  // that is really gone counts as released (lstat needs no descriptor).
+  if (pathIsGone(path)) {
+    warnRemovedUnderUs(path)
+    return true
+  }
+  warnSafely(
+    `[skillsmith] lock_release_unverified: could not show the claim at ${path} is someone else's -- ` +
+      'not removing it.'
+  )
+  return false
+}
+
+/**
+ * Our lock was not at its path when we released it: someone removed it, or set
+ * it aside (doctor locks), while we held it. Nothing of ours is left to remove.
+ */
+function warnRemovedUnderUs(path: string): void {
+  warnSafely(
+    `[skillsmith] lock_release_not_owner: ${path} was not at its path when this process released it ` +
+      '(removed or moved while held) -- not removing anything.'
+  )
+}
+
+function pathIsGone(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT'
   }
 }
 
-export function makeRelease(lockPath: string, token: string): () => void {
-  let released = false
+/**
+ * The release function `acquireOwnedLock` hands back. Returns what
+ * {@link releaseOwned} returned; a second call returns the first call's result
+ * without touching the file again.
+ */
+export function makeRelease(lockPath: string, token: string): () => boolean {
+  let result: boolean | undefined
   return () => {
-    if (released) return
-    released = true
-    releaseOwned(lockPath, token)
+    if (result !== undefined) return result
+    result = releaseOwned(lockPath, token)
+    return result
   }
 }

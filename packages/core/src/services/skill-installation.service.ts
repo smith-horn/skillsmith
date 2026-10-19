@@ -2,6 +2,7 @@
 import * as path from 'path'
 import * as os from 'os'
 import { SecurityScanner } from '../security/index.js'
+import { LockOrderError, assertSkillWriteLockNotHeld } from '../config/lock-tracker.js'
 import type { TrustTier } from '../types/skill.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
@@ -177,7 +178,9 @@ export class SkillInstallationService {
       let skillMdContent: string
       try {
         skillMdContent = await fetchFromGitHub(owner, repo, skillMdPath, branch)
-      } catch {
+      } catch (fetchError) {
+        // A lock-order refusal is a programming error, not a missing SKILL.md.
+        if (fetchError instanceof LockOrderError) throw fetchError
         const repoUrl = 'https://github.com/' + owner + '/' + repo
         return buildInstallFailure('FETCH_FAILED', {
           skillId,
@@ -244,6 +247,7 @@ export class SkillInstallationService {
         this.onProgress('scan', 'Running security scan')
         const scannerOptions = scannerOptionsForTier(trustTier)
         const scanner = new SecurityScanner(scannerOptions)
+        assertSkillWriteLockNotHeld('scan: install SKILL.md')
         securityReport = scanner.scan(skillId, skillMdContent)
 
         if (!securityReport.passed) {

@@ -7,6 +7,7 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { SecurityScanner } from '../security/index.js'
+import { assertSkillWriteLockNotHeld } from '../config/lock-tracker.js'
 import type { ScannerOptions, ScanReport } from '../security/index.js'
 import { validateOptionalConfig } from './skill-installation.validate.js'
 import {
@@ -55,6 +56,7 @@ export async function fetchFromGitHub(
   filePath: string,
   branch: string = 'main'
 ): Promise<string> {
+  assertSkillWriteLockNotHeld('fetch: fetchFromGitHub')
   const url =
     'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/' + filePath
   const response = await fetch(url, { signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS) })
@@ -154,6 +156,7 @@ export async function fetchAndScanOptionalFiles(
   skillId: string,
   scannerOptions: ScannerOptions | null
 ): Promise<OptionalInstallFilesResult> {
+  assertSkillWriteLockNotHeld('fetch: fetchAndScanOptionalFiles')
   const optionalFileScanner = scannerOptions ? new SecurityScanner(scannerOptions) : null
   const configWarnings: string[] = []
   const failedScans: Array<{ file: string; report: ScanReport }> = []

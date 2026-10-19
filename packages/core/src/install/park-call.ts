@@ -28,6 +28,7 @@
  * @module @skillsmith/core/install/park-call
  */
 import { withFileLock } from '../config/file-lock.js'
+import { LockOrderError } from '../config/lock-tracker.js'
 import { errCodeOrMessage } from './park-result.js'
 import type { ParkOptions, ParkResult } from './park-result.js'
 import { prepareParkTree } from './park-tree.js'
@@ -45,20 +46,26 @@ export async function appendParkedIndexLocked(
   indexPath: string,
   entry: ParkedIndexEntry
 ): Promise<void> {
-  await withFileLock(indexPath, LOCK_LABEL, async () => appendParkedIndex(indexPath, entry))
+  await withFileLock(indexPath, LOCK_LABEL, async () => appendParkedIndex(indexPath, entry), {
+    rank: '4',
+  })
 }
 
 /**
  * `compactParkedIndex` under lock 4, which is that function's precondition. A
  * lock that cannot be taken leaves the index untouched and is returned as the
- * error, never thrown. Its `errno` is then the lock error's code if it has one
+ * error, never thrown, except a `LockOrderError`, which is rethrown. Its `errno` is then the lock error's code if it has one
  * (`ENOENT` for a missing state directory), else its message (a timeout's
  * `StuckLockError`, which names the lock and its holder).
  */
 export async function compactParkedIndexLocked(indexPath: string): Promise<CompactResult> {
   try {
-    return await withFileLock(indexPath, LOCK_LABEL, async () => compactParkedIndex(indexPath))
+    return await withFileLock(indexPath, LOCK_LABEL, async () => compactParkedIndex(indexPath), {
+      rank: '4',
+    })
   } catch (err) {
+    // A lock-order refusal is a programming error: thrown, never recorded.
+    if (err instanceof LockOrderError) throw err
     return { ok: false, errno: errCodeOrMessage(err) }
   }
 }
@@ -71,7 +78,7 @@ export async function compactParkedIndexLocked(indexPath: string): Promise<Compa
  * would throw.
  *
  * A failed append, a lock timeout included, is reported as `indexError` and
- * never changes the status: the index is advisory, and the sidecar beside the
+ * never changes the status (a `LockOrderError` is rethrown instead): the index is advisory, and the sidecar beside the
  * parked copy is what makes it restorable (ADR-166 D-1, D-3).
  */
 export async function parkTreeIndexed(
@@ -86,6 +93,7 @@ export async function parkTreeIndexed(
     await appendParkedIndexLocked(prepared.indexPath, indexEntry)
     return result
   } catch (err) {
+    if (err instanceof LockOrderError) throw err
     return { ...result, indexError: errCodeOrMessage(err) }
   }
 }
