@@ -39,6 +39,10 @@ const REFRESH_RPC = 'refresh_metadata_health'
 const MARKERS_MIGRATION = '20261016000000_backfill_autochain_markers.sql'
 const MARKERS_CRON_FN = 'check_backfill_autochain_markers'
 const MARKERS_RPC = 'backfill_autochain_marker_transition'
+// SMI-7142: its migration redefines the watcher (CREATE OR REPLACE, with its own revoke) and adds the
+// cron-called resume dispatcher.
+const RESUME_MIGRATION = '20261017000000_backfill_autochain_resume_pg_cron.sql'
+const RESUME_CRON_FN = 'invoke_backfill_autochain_resume'
 
 // Measured live from staging cron.job on 2026-10-11.
 const MEASURED_CRON_FNS = [
@@ -167,6 +171,10 @@ describe.skipIf(locked)('SMI-7114 -- the refresh functions are covered by the gr
 
 describe.skipIf(locked)('SMI-7121 -- the marker functions are covered by the grants guard', () => {
   const mine = () => corpus.filter((f) => f.name === MARKERS_MIGRATION)
+  // The watcher is revoked by BOTH migrations that define it (SMI-7142 redefines it), so the
+  // known-negative below must strip both, or the later migration's revoke still covers it.
+  const definers = () =>
+    corpus.filter((f) => f.name === MARKERS_MIGRATION || f.name === RESUME_MIGRATION)
   const without7121 = () => corpus.filter((f) => f.name !== MARKERS_MIGRATION)
 
   it('presence: the extractor finds the watcher, and it is not a violation', () => {
@@ -175,12 +183,13 @@ describe.skipIf(locked)('SMI-7121 -- the marker functions are covered by the gra
     expect(fnNames(corpus)).not.toContain(MARKERS_CRON_FN)
   })
 
-  it('known-negative: with the migration present but its revokes removed, the watcher is flagged', () => {
-    const stripped = mine().map((f) => ({
+  it('known-negative: with the migrations present but their revokes removed, the watcher is flagged', () => {
+    const stripped = definers().map((f) => ({
       ...f,
       sql: f.sql.replace(/REVOKE EXECUTE ON FUNCTION public\.[^;]*;/g, ''),
     }))
-    expect(fnNames([...without7121(), ...stripped])).toContain(MARKERS_CRON_FN)
+    const others = corpus.filter((f) => !definers().includes(f))
+    expect(fnNames([...others, ...stripped])).toContain(MARKERS_CRON_FN)
   })
 
   it('backfill_autochain_marker_transition (not cron-called) is revoked from all three roles exactly once', () => {
@@ -194,6 +203,25 @@ describe.skipIf(locked)('SMI-7121 -- the marker functions are covered by the gra
     expect(revokes(without7121()), 'known-negative: no other migration does').toHaveLength(0)
     // the transition function is not cron-called, so the extractor alone would never see it
     expect(cronCalledFunctions(orderedStatements(corpus)).has(MARKERS_RPC)).toBe(false)
+  })
+})
+
+describe.skipIf(locked)('SMI-7142 -- the resume dispatcher is covered by the grants guard', () => {
+  const mine = () => corpus.filter((f) => f.name === RESUME_MIGRATION)
+
+  it('presence: the extractor finds the dispatcher, and it is not a violation', () => {
+    expect(mine(), 'resume migration present').toHaveLength(1)
+    expect(cronCalledFunctions(orderedStatements(corpus)).has(RESUME_CRON_FN)).toBe(true)
+    expect(fnNames(corpus)).not.toContain(RESUME_CRON_FN)
+  })
+
+  it('known-negative: with the migration present but its revokes removed, the dispatcher is flagged', () => {
+    const stripped = mine().map((f) => ({
+      ...f,
+      sql: f.sql.replace(/REVOKE EXECUTE ON FUNCTION public\.[^;]*;/g, ''),
+    }))
+    const others = corpus.filter((f) => f.name !== RESUME_MIGRATION)
+    expect(fnNames([...others, ...stripped])).toContain(RESUME_CRON_FN)
   })
 })
 

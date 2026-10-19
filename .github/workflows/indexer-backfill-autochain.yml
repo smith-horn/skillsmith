@@ -42,8 +42,8 @@
 #     (SMI-7121): red, never a skip.
 #   - Every dispatch carries `dispatch_token=ac-<run_id>`, which appears in the
 #     dispatched run's `run-name` so the run can be resolved by token.
-#   - `workflow_dispatch` (completed_run_id + verify_only) re-runs the recovery
-#     for a past run. With verify_only=true (default) every side effect
+#   - `workflow_dispatch` mode=link (completed_run_id + verify_only) re-runs the
+#     recovery for a past run; mode=resume is a resume (see RESUME). With verify_only=true (default) every side effect
 #     (cooldown, alerts, marker writes, dispatch) is skipped; DISPATCH_ALLOWED
 #     gates them all.
 #
@@ -53,7 +53,7 @@
 #     `indexer_backfill_autochain_halted` alert (Send Alert on Failure is not also
 #     sent) and fails the job. Only `workflow_dispatch` input acknowledge_halts
 #     skips named halts. A manual link that DEFERS records that acknowledgement on
-#     its marker (metadata.acknowledged_halts), and the resume tick passes it back
+#     its marker (metadata.acknowledged_halts), and the resume passes it back
 #     to recovery, so an acknowledgement survives the pause; it is empty otherwise.
 #   - BUSY WINDOW (D5): after the fence, the link dispatches only inside the
 #     window (BACKFILL_BUSY_HOURS). Outside it, a `workflow_run`/manual link
@@ -63,15 +63,17 @@
 #   - RESUME (D6, SMI-7142): a resume is a `workflow_dispatch` with mode=resume (sent by
 #     the pg_cron job `backfill-autochain-resume`, or by an operator) or, as the
 #     independent fallback (ADR-181), a `schedule` tick. Both are one predicate,
-#     IS_RESUME. It resumes the single open marker. A resume reconciles consumed markers first (`indexer_backfill_autochain_needs_intervention`
-#     for each one it closes), resumes only inside the window, runs the fence with
-#     the marker's run and attempt (fence exit 3 closes the marker as
-#     needs_intervention and alerts), CLAIMS the marker (open -> consumed) and
-#     only then dispatches. A claim never returns to open. A tick whose recovery
-#     cannot resume (a halt, a finished campaign, the retry cap) closes the marker
-#     as needs_intervention so later ticks do not repeat it. After a successful dispatch a
-#     resume reconciles its own claim (consumed -> dispatched) so the link that follows the
-#     resumed crawl does not see an undispatched `consumed` marker as a second live deferral.
+#     IS_RESUME. It resumes the single open marker. A resume reconciles consumed
+#     markers first (`indexer_backfill_autochain_needs_intervention` for each one it
+#     closes), resumes only inside the window, runs the fence with the marker's run
+#     and attempt (fence exit 3 closes the marker as needs_intervention and
+#     alerts), CLAIMS the marker (open -> consumed) and only then dispatches. A
+#     claim never returns to open. A resume whose recovery cannot resume (a halt, a
+#     finished campaign, the retry cap) closes the marker as needs_intervention so
+#     later resumes do not repeat it. After a successful dispatch a resume
+#     reconciles its own claim (consumed -> dispatched) so the link that follows
+#     the resumed crawl does not see an undispatched `consumed` marker as a second
+#     live deferral.
 #   - Untrusted values (titles, reasons, run ids, step outputs) reach shell only
 #     through `env:`, never inlined into a `run:` script.
 #   - Stuck-marker detection is NOT here: the pg_cron watcher
@@ -307,7 +309,7 @@ jobs:
           exit 1
 
       - name: No other backfill run queued or in-progress
-        # Link paths only. A schedule tick must still reconcile its markers while
+        # Link paths only. A resume must still reconcile its markers while
         # a backfill runs; its post-cooldown re-check and the fence stop a resume.
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME != 'true'
         env:
@@ -436,7 +438,7 @@ jobs:
 
       - name: Resolve run display title
         id: resolve
-        # Link paths only: a schedule tick takes the env from its marker (RECOVERY_ENV).
+        # Link paths only: a resume takes the env from its marker (RECOVERY_ENV).
         if: env.skip != 'true' && env.IS_RESUME != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -652,7 +654,7 @@ jobs:
 
       - name: Report post-cooldown collision
         # Another backfill run appeared during the cooldown. Skipping is
-        # intentional, but it must never be silent. A schedule tick's marker
+        # intentional, but it must never be silent. A resume's marker
         # stays open; the next tick's fence decides.
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal != '0'
         env:
@@ -672,7 +674,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
           # The triggering ATTEMPT, not just the run: a re-run keeps its run id.
-          # A schedule tick names the attempt its marker recorded.
+          # A resume names the attempt its marker recorded.
           # SMI-7142: a mode=resume dispatch is fenced exactly like a schedule tick. Its own
           # event is workflow_dispatch, whose documented fence branch names the attempt from
           # inputs.completed_run_attempt (default 1); a resume of a re-run run would fence on
@@ -684,7 +686,7 @@ jobs:
           # than the triggering attempt exists, when the triggering run was re-run
           # (or is itself a re-run), or when that cannot be determined. The step's
           # exit status IS the fence's (0 clear, 3 skipped loudly, 1 could not
-          # evaluate): never collapse it. exit_code tells a schedule tick which.
+          # evaluate): never collapse it. exit_code tells a resume which.
           rc=0
           bash scripts/ci/autochain-newest-run-fence.sh || rc=$?
           echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
@@ -714,7 +716,7 @@ jobs:
       - name: Busy-window check
         id: window
         # After the fence, before the enable read (SMI-7121 D5): a refused link is
-        # refused, not deferred. On a schedule tick this is the re-check (a late
+        # refused, not deferred. On a resume this is the re-check (a late
         # tick may land after the window closed).
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success'
         run: npx tsx scripts/indexer/backfill-busy-window.ts
