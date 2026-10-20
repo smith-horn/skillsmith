@@ -159,6 +159,8 @@ function parkTreeInner(
       errno: area.errno,
       detail: area.detail,
       parkedAreaCreated: area.created,
+      // A mode refusal names both modes and the remedy; shapeResult carries the key.
+      ...(area.modeProblem === undefined ? {} : { modeProblem: area.modeProblem }),
     }
   }
   // Every result from the area step on says whether this park's mkdir created

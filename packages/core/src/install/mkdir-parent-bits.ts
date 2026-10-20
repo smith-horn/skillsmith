@@ -24,11 +24,15 @@
  * changes nothing, because the descriptor still names the original directory.
  *
  * What is not closed: a crash between the `mkdir` and the `fchmod` leaves the
- * directory with the umask-filtered bits for good, because an existing
- * directory keeps the bits it has (it belongs to whoever made it), though it
- * is judged by the policy below: a directory this call made and refused as
- * `mode-unsafe` is refused again by the next call, and a wider one planted
- * before the call is refused too. Nothing is ever removed.
+ * directory with `(want | 0o700) & ~umask` (the owner bits are always present,
+ * the rest is filtered by the umask). An existing directory keeps the bits it
+ * has (it belongs to whoever made it) but is judged by the policy below, so a
+ * directory this call made and the policy refuses as `mode-unsafe` is refused
+ * again by the next call, until its owner runs the `chmod` the refusal names;
+ * "refused every time" applies only to a directory the policy refuses, and a
+ * wider one planted before the call is refused the same way. Nothing is ever
+ * removed. The mode check is not a boundary against the directory's owner: an
+ * owner can `chmod` after the check. The identity checks protect the contents.
  *
  * Applying the bits can be refused without that being a failure of the
  * directory: a platform without `O_DIRECTORY`/`O_NOFOLLOW` (Windows) is not
@@ -36,17 +40,25 @@
  * `EPERM`, `ENOTSUP`, `EROFS`) leaves the bits as made, and a kernel may clear
  * setgid when this process is not in the directory's group. So whatever
  * happened, the ACTUAL mode is read back (from the descriptor, or from the
- * final `lstat` where there is none) and judged by `mkdir-parent-bits.policy.ts`:
+ * final `lstat` where there is none) and judged by `mkdir-parent-bits.policy.ts`,
+ * whose header is the rule. In short:
  *
- *  - a permission bit the parent does not have, or a sticky bit the parent
- *    has and the directory lacks, FAILS the call (`mode-unsafe`, with the
- *    wanted and actual bits);
- *  - otherwise any difference (setgid dropped, group/other write missing) is a
- *    narrower directory: the call succeeds, the cause is recorded as
+ *  - a class the parent lets through (it has execute for it) with a read,
+ *    write or execute bit the parent does not give it, a setgid the parent
+ *    lacks, or a lost sticky bit where a reaching class can write, FAILS the
+ *    call (`mode-unsafe`, with the wanted and actual bits, the reasons and the
+ *    owner's `chmod` remedy). Bits of a class the parent does not let through,
+ *    and owner and setuid bits, are not judged;
+ *  - otherwise a reaching class with fewer bits than the parent, setgid
+ *    dropped, a sticky bit lost with no writer, or a sticky bit added is a
+ *    different directory: the call succeeds, the cause is recorded as
  *    `bitsApplied` (`exact`, `mismatch` with the actual bits, `not-applied`
  *    with the reason, errno and actual bits), and `warnings` says in words
- *    which bits are missing and why. A caller that has a place to show a
- *    warning shows it.
+ *    what differs and why. A caller that has a place to show a warning shows it;
+ *  - on a platform with no no-follow open the mode is never judged, whether
+ *    this call made the directory or found it: the mode there is synthetic, so
+ *    the actual mode is recorded and a warning says the bits could not be
+ *    verified.
  *
  * Shared by `services/skill-write-lock.ts` (the staging directory) and
  * `install/park-tree.destination.ts` (the parked area).
@@ -58,7 +70,7 @@ import type { BigIntStats } from 'node:fs'
 import { errCode } from './park-result.js'
 import { identityOf, sameIdentity } from './park-tree.identity.js'
 import type { BoundIdentity } from './park-tree.identity.js'
-import { judgeMode, missingBits, octal } from './mkdir-parent-bits.policy.js'
+import { judgeMode, octal, remedyCommand } from './mkdir-parent-bits.policy.js'
 
 /** Permission bits, setgid and sticky; setuid is dropped (a directory's setuid is meaningless). */
 export const PARENT_BITS_MASK = 0o3777
@@ -73,7 +85,7 @@ const CHMOD_REFUSED = new Set(['EPERM', 'ENOTSUP', 'EROFS'])
 export type BitsApplied =
   /** `fchmod` ran and the directory now has exactly the wanted bits. */
   | { state: 'exact' }
-  /** `fchmod` ran and the directory has other (narrower) bits: the kernel cleared setgid, say. */
+  /** `fchmod` ran and the directory has other bits than wanted: the kernel cleared setgid, say. */
   | { state: 'mismatch'; wanted: number; actual: number }
   /**
    * No bits were applied: why, the errno when a `fchmod` was refused, and the
@@ -123,6 +135,10 @@ export type MkdirParentBitsResult =
       /** `mode-unsafe` only: the parent's bits and the directory's actual bits. */
       wanted?: number
       actual?: number
+      /** `mode-unsafe` only: why the policy refused the actual bits. */
+      reasons?: string[]
+      /** `mode-unsafe` only: the `chmod` its owner can run to make it acceptable. */
+      remedy?: string
     }
 
 /** @internal Test seams: not part of the contract. */
@@ -151,9 +167,10 @@ type How =
  *
  * The bits are applied only when this call made the directory: an existing one
  * belongs to whoever made it and keeps its own bits, but its mode is judged by
- * the same policy (`mode-unsafe` when wider than the parent's or not sticky
- * under a sticky parent; a warning when narrower). An existing entry must
- * still be a real directory, never a symlink.
+ * the same policy (`mode-unsafe` when it exposes the directory beyond the
+ * parent's access; a warning when it differs otherwise). Whoever owns an
+ * existing directory is accepted (in a shared root another user may have made
+ * it first); the entry must still be a real directory, never a symlink.
  */
 export function mkdirWithParentBits(
   dir: string,
@@ -186,7 +203,10 @@ export function mkdirWithParentBits(
       dir,
       want,
       Number(st.mode & 0o7777n),
-      { kind: 'existing-directory' },
+      // No no-follow open (Windows): the mode is synthetic, so it is not judged.
+      noFollowDirectoryFlags(hooks) === null
+        ? { kind: 'no-nofollow-open' }
+        : { kind: 'existing-directory' },
       created,
       identityOf(st)
     )
@@ -233,13 +253,35 @@ function judged(
   created: boolean,
   identity: BoundIdentity
 ): MkdirParentBitsResult {
+  if (how.kind === 'no-nofollow-open') {
+    // No descriptor, no real mode to trust (Windows): never refuse on it.
+    return {
+      ok: true,
+      created,
+      identity,
+      bitsApplied: { state: 'not-applied', reason: how.kind, errno: null, actual },
+      warnings: [
+        `${dir} has mode ${octal(actual)}; its parent's ${octal(want)} could not be verified on ` +
+          `this platform (${causeOf(how)})`,
+      ],
+    }
+  }
   const verdict = judgeMode(want, actual)
   if (verdict.kind === 'unsafe') {
-    return { ok: false, phase: 'mode-unsafe', errno: null, created, wanted: want, actual }
+    return {
+      ok: false,
+      phase: 'mode-unsafe',
+      errno: null,
+      created,
+      wanted: want,
+      actual,
+      reasons: verdict.reasons,
+      remedy: remedyCommand(dir, want),
+    }
   }
   const bitsApplied: BitsApplied =
     how.kind === 'applied'
-      ? verdict.kind === 'exact'
+      ? actual === want
         ? { state: 'exact' }
         : { state: 'mismatch', wanted: want, actual }
       : {
@@ -248,11 +290,18 @@ function judged(
           errno: how.kind === 'chmod-refused' ? how.errno : null,
           actual,
         }
-  const warnings =
+  const differences =
     verdict.kind === 'narrower'
       ? [
-          `${dir} has mode ${octal(actual)}, not its parent's ${octal(want)}; missing: ` +
-            `${missingBits(want, actual).join(', ')} (${causeOf(how)})`,
+          ...(verdict.missing.length > 0 ? [`missing: ${verdict.missing.join(', ')}`] : []),
+          ...(verdict.added.length > 0 ? [`added: ${verdict.added.join(', ')}`] : []),
+        ]
+      : []
+  const warnings =
+    differences.length > 0
+      ? [
+          `${dir} has mode ${octal(actual)}, not its parent's ${octal(want)}; ` +
+            `${differences.join('; ')} (${causeOf(how)})`,
         ]
       : []
   return { ok: true, created, identity, bitsApplied, warnings }

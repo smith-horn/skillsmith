@@ -190,11 +190,21 @@ describe('T-K2 (single uid): staging takes the root permission bits, sticky incl
       return root
     }
 
-    it('wider than the root is staging-unsafe, and the stop names both modes', async () => {
-      const stop = await stopOf(bindSkillsRoot(planted(0o700, 0o777)))
+    it('wider than the root is staging-unsafe, and the stop names both modes and the remedy', async () => {
+      const root = planted(0o755, 0o777)
+      const stop = await stopOf(bindSkillsRoot(root))
       expect(stop.code).toBe('staging-unsafe')
       expect(stop.detail).toContain('mode 0777')
-      expect(stop.detail).toContain('skills root has 0700')
+      expect(stop.detail).toContain('skills root has 0755')
+      expect(stop.detail).toContain(
+        `As its owner, run: chmod 0755 ${path.join(fs.realpathSync(root), STAGING_DIR_NAME)}`
+      )
+    })
+
+    it('under a tightened root (0700) an older 0755 ST is accepted with no warning', async () => {
+      const b = await bindSkillsRoot(planted(0o700, 0o755))
+      expect(b.stagingCreated).toBe(false)
+      expect(b.warnings).toEqual([])
     })
 
     it('non-sticky under a 1777 root is staging-unsafe', async () => {
@@ -219,7 +229,7 @@ describe('T-K2 (single uid): staging takes the root permission bits, sticky incl
     })
 
     it('a ST left behind by a mode-unsafe refusal is refused by the next bind too', async () => {
-      const root = makeRoot('r', 0o700)
+      const root = makeRoot('r', 0o755)
       fchmodLeaving(() => 0o777)
       const first = await stopOf(bindSkillsRoot(root))
       vi.restoreAllMocks()
@@ -277,13 +287,14 @@ describe('the permission policy reaches the caller (staging narrower or wider th
     expect('warnings' in r).toBe(false)
   })
 
-  it('ST wider than R is staging-unsafe, and the stop names both modes', async () => {
-    const root = makeRoot('r', 0o700)
+  it('ST wider than R is staging-unsafe, and the stop names both modes and the remedy', async () => {
+    const root = makeRoot('r', 0o755)
     fchmodLeaving(() => 0o777)
     const stop = await stopOf(bindSkillsRoot(root))
     expect(stop.code).toBe('staging-unsafe')
     expect(stop.detail).toContain('mode 0777')
-    expect(stop.detail).toContain('skills root has 0700')
+    expect(stop.detail).toContain('skills root has 0755')
+    expect(stop.detail).toContain('As its owner, run: chmod 0755 ')
   })
 })
 

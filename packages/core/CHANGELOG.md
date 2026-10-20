@@ -26,8 +26,8 @@ All notable changes to `@skillsmith/core` are documented here.
   a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. When the
   staging directory is narrower than the root's permission bits, `bindSkillsRoot` returns `warnings:
   string[]` on the binding, and every `withSkillWriteLock` result (ok or refused) carries them as
-  `warnings` (absent when empty); a staging directory with a permission the root lacks, or without
-  the root's sticky bit, is `staging-unsafe`. Exported with `SkillWriteStop`,
+  `warnings` (absent when empty); a staging directory that exposes more than the root allows (see
+  SMI-7149 below) is `staging-unsafe`. Exported with `SkillWriteStop`,
   `checkSkillsRootBinding` and `skillsRootLockPaths(root)` (the lock file and its reclaim lock; the
   `doctor locks` wiring and skills-root discovery come in step 6). Not built here: creating an absent
   root, the operation directory and its record, the backup-area binding, routing the existing writers
@@ -59,20 +59,32 @@ All notable changes to `@skillsmith/core` are documented here.
   (`want | 0o700`), so a parent whose owner lacks read (`0333`) still gives a directory this process
   can open; the `fchmod` then sets exactly the parent's bits. After the `fchmod` (or its refusal) the
   actual mode is read back from the descriptor, or from the final `lstat` on a platform without a
-  no-follow open, and judged: a permission bit the parent lacks, or a sticky bit the parent has and
-  the directory lost, fails the call (`mode-unsafe`, with `wanted` and `actual`; `ensureParkedRoot`
-  reports `trash-unusable`, `bindSkillsRoot` `staging-unsafe`). Any other difference (setgid dropped by
-  the kernel, group or other write missing because the filesystem refused `chmod`, a platform without
-  a no-follow open) is a narrower directory: the call succeeds, the cause is recorded on the result
+  no-follow open, and judged by `mkdir-parent-bits.policy.ts`. A class (group, other) REACHES the
+  directory when the parent gives it execute; only a reaching class is judged, and owner and setuid
+  bits never are. The call fails (`mode-unsafe`, with `wanted`, `actual`, the `reasons` and a `remedy`
+  that is an owner-only `chmod <parent's bits, owner rwx> <path>`) when a reaching class has a read,
+  write or execute bit the parent does not give it, when the directory has setgid and the parent does
+  not (group reaching), or when it lost the parent's sticky bit and a reaching class can write to it.
+  `ensureParkedRoot` reports that as `trash-mode-unsafe` with a `modeProblem` (both modes, reasons,
+  remedy, one sentence; `park()` carries it too), `bindSkillsRoot` as `staging-unsafe` with the same
+  sentence. Any other difference that matters (setgid dropped by the kernel, a reaching class with
+  fewer bits because the filesystem refused `chmod`, a sticky bit lost with no reaching writer, a
+  sticky bit added) is a different directory: the call succeeds, the cause is recorded on the result
   (`bitsApplied`, `stagingBits`; `not-applied` now also carries the actual mode), and a `warnings:
-  string[]` names the missing bits and the reason, on `mkdirWithParentBits`, `ensureParkedRoot`,
-  `SkillsRootBinding` and `withSkillWriteLock`. A failing `fstat` is a `fstat` failure with its errno
-  rather than a throw, and a failing `close` of the read-only directory descriptor is ignored. A
-  crash between the `mkdir` and the `fchmod` leaves the umask-filtered bits. An EXISTING directory
-  (staging, the parked area) is judged by the same policy, though it is never changed: wider than the
-  parent's bits, or not sticky under a sticky parent, is refused (`mode-unsafe`; `staging-unsafe` for
-  staging, `trash-unusable` for the parked area), so a directory planted before the call, or left
-  behind by a call that refused it, is refused every time; a narrower one succeeds with a warning.
+  string[]` names what differs and the reason, on `mkdirWithParentBits`, `ensureParkedRoot`,
+  `SkillsRootBinding` and `withSkillWriteLock`. A difference only in a class the parent does not let
+  through, or in owner bits, is exact and says nothing (a root tightened to `0700` after a `0755`
+  staging directory was made does not refuse it). A platform with no no-follow open (Windows) is never
+  judged on mode, for a new or an existing directory: the actual mode is recorded and a warning says
+  the bits could not be verified. A
+  failing `fstat` is a `fstat` failure with its errno rather than a throw, and a failing `close` of the
+  read-only directory descriptor is ignored. A crash between the `mkdir` and the `fchmod` leaves
+  `(want | 0o700) & ~umask`. An EXISTING directory (staging, the parked area), whoever owns it, is
+  judged by the same policy, though it is never changed: one the policy refuses (a planted one, or
+  one left behind by a call that refused it) is refused every time until its owner runs the `chmod`
+  the refusal names; a directory the policy accepts is accepted. The mode check is not a boundary
+  against the directory's owner, who can `chmod` after the check; the identity checks protect the
+  contents.
   `park()`'s result carries the parked area's `warnings` (absent when there are none). The directory `fsync` is now shared (`install/dir-sync.ts`); the manifest's behaviour
   (silent for an unsupported filesystem, a warning for any other failure) is unchanged.
 - **Changed (breaking)**: SMI-6531 (A1 step 1) -- `withFileLock(target, label, fn, options)` now

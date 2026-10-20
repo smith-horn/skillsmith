@@ -29,7 +29,7 @@ import { LockOrderError } from '../config/lock-tracker.js'
 import { StuckLockError } from '../config/owned-lock.js'
 import { syncDirectory } from '../install/dir-sync.js'
 import { mkdirWithParentBits } from '../install/mkdir-parent-bits.js'
-import { octal } from '../install/mkdir-parent-bits.policy.js'
+import { modeUnsafeMessage } from '../install/mkdir-parent-bits.policy.js'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { stagingGitignoreHint } from './skill-write-lock.gitignore.js'
@@ -84,8 +84,14 @@ export async function bindSkillsRoot(skillsDir: string): Promise<SkillsRootBindi
       'staging-unsafe',
       stagingDir,
       made.phase === 'mode-unsafe'
-        ? `${STAGING_DIR_NAME} has mode ${octal(made.actual ?? 0)} where the skills root has ` +
-            `${octal(made.wanted ?? 0)}: it has a permission the root lacks, or lost the root's sticky bit`
+        ? modeUnsafeMessage({
+            subject: STAGING_DIR_NAME,
+            parent: 'the skills root',
+            wanted: made.wanted ?? 0,
+            actual: made.actual ?? 0,
+            reasons: made.reasons ?? [],
+            remedy: made.remedy ?? '',
+          })
         : made.errno === null
           ? `${STAGING_DIR_NAME} is not a usable directory (${made.phase})`
           : `${STAGING_DIR_NAME} could not be made (${made.phase}: ${made.errno})`

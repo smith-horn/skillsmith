@@ -74,9 +74,10 @@ export interface SkillsRootBinding {
   /**
    * What became of R's permission bits on ST. `exact` is the normal case;
    * `mismatch` and `not-applied` (a filesystem that refuses chmod, a platform
-   * without a no-follow open) mean ST is narrower than R's bits and are recorded,
-   * not refused: the bind still succeeds. A ST with a permission bit R lacks, or
-   * without R's sticky bit, is refused (`staging-unsafe`).
+   * without a no-follow open) mean ST differs from R's bits and are recorded,
+   * not refused: the bind still succeeds. A ST that exposes more than R allows
+   * (`mkdir-parent-bits.policy.ts`) is refused (`staging-unsafe`, naming both
+   * modes and the owner's `chmod` remedy).
    */
   readonly stagingBits: BitsApplied
   /**
