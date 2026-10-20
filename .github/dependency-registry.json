@@ -199,15 +199,24 @@
       "removeWhen": "Every consumer declared range excludes the advisory ranges, so a scratch delete followed by npm audit --json reports nothing for tmp."
     },
     "hono": {
-      "pin": "^4.13.7",
+      "pin": "^4.13.11",
       "reason": "Floor for a long series of hono advisories (JSX, serve-static, cookie, IP); the most bumped override.",
       "advisories": [
         "GHSA-gq3j-xvxp-8hrf",
         "GHSA-v8w9-8mx6-g223",
         "GHSA-gqvv-2mrq-wpjv",
-        "GHSA-hxh3-vqpv-xpqv"
+        "GHSA-hxh3-vqpv-xpqv",
+        "GHSA-5r4p-p66f-jhc7"
       ],
-      "introducedBy": ["f1a17fd2e", "SMI-3984", "SMI-4248", "SMI-5249", "SMI-5788", "SMI-6478"],
+      "introducedBy": [
+        "f1a17fd2e",
+        "SMI-3984",
+        "SMI-4248",
+        "SMI-5249",
+        "SMI-5788",
+        "SMI-6478",
+        "SMI-7152"
+      ],
       "crossesMajor": null,
       "removeWhen": "Every consumer declared range excludes the advisory ranges, so a scratch delete followed by npm audit --json reports nothing for hono."
     },
@@ -241,10 +250,17 @@
       "removeWhen": "Repo decides no dependency may ever bring a vulnerable uuid back; confirm by hand with npm explain uuid returning nothing for a year."
     },
     "vite": {
-      "pin": "^7.3.5",
-      "reason": "Fixes vite path traversal, fs.deny bypass and file read advisories on the root 7.x line; astro's vite escapes via the carve-out above.",
-      "advisories": ["GHSA-4w7w-66w2-5vf9", "GHSA-v2wj-q39q-566r", "GHSA-p9ff-h696-f583"],
-      "introducedBy": ["SMI-3984", "SMI-5282"],
+      "pin": "^7.3.7",
+      "reason": "Fixes vite path traversal, fs.deny bypass, file read and bundled launch-editor advisories on the root 7.x line; astro's vite escapes via the carve-out above.",
+      "advisories": [
+        "GHSA-4w7w-66w2-5vf9",
+        "GHSA-v2wj-q39q-566r",
+        "GHSA-p9ff-h696-f583",
+        "GHSA-698v-4r3x-3vcv",
+        "GHSA-r825-w8mm-5pxw",
+        "GHSA-587h-7wmj-h5pm"
+      ],
+      "introducedBy": ["SMI-3984", "SMI-5282", "SMI-7152"],
       "crossesMajor": null,
       "removeWhen": "Root vite consumers (vitest, @tailwindcss/vite) all admit a patched 8.x, or the repo moves to the vite 8 line."
     },
