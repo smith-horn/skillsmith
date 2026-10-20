@@ -20,6 +20,7 @@ import { opDirOwnerModeProblem } from './park-tree.perms.js'
 import { bindIdentity, identityOf, sameIdentity } from './park-tree.identity.js'
 import type { BoundIdentity } from './park-tree.identity.js'
 import { mkdirWithParentBits } from './mkdir-parent-bits.js'
+import type { BitsApplied } from './mkdir-parent-bits.js'
 
 /** The parked area's name inside the parent (ADR-166 D-9, UD26). */
 export const PARKED_DIR_NAME = '.skillsmith-parked'
@@ -32,6 +33,8 @@ export type ParkedRootResult =
       parentDev: bigint
       /** True only when this call's mkdir made the area (not EEXIST). */
       created: boolean
+      /** What became of the parent's bits on the area (`mkdirWithParentBits`). */
+      bitsApplied: BitsApplied
     }
   /** `created`: a failure after this call's mkdir still reports it (A1 plan §3.2). */
   | { ok: false; errno: string | null; detail: string | null; created: boolean }
@@ -69,7 +72,12 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   // the umask), and refuses a symlink or a non-directory.
   const made = mkdirWithParentBits(parkedRoot, parentStat.mode)
   if (!made.ok) {
-    if (made.phase === 'mkdir' || made.phase === 'lstat' || made.phase === 'chmod') {
+    if (
+      made.phase === 'mkdir' ||
+      made.phase === 'lstat' ||
+      made.phase === 'open' ||
+      made.phase === 'chmod'
+    ) {
       return { ok: false, errno: made.errno, detail: null, created: made.created }
     }
     return { ok: false, errno: null, detail: 'trash-unusable', created: made.created }
@@ -83,7 +91,14 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   }
   // Return the area's IDENTITY, not just its path, so it can be re-checked
   // immediately before the rename and after it.
-  return { ok: true, parkedRoot, parkedRootIdentity: made.identity, parentDev, created }
+  return {
+    ok: true,
+    parkedRoot,
+    parkedRootIdentity: made.identity,
+    parentDev,
+    created,
+    bitsApplied: made.bitsApplied,
+  }
 }
 
 export type OpDirResult =

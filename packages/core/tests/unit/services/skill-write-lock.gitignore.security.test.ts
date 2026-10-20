@@ -139,11 +139,13 @@ describe('inherited git environment', () => {
     expect(await parkedAreaGitignoreHint(skillsRoot, 'op-1')).toBe(PARKED_LINE)
   })
 
-  it('childGitEnv drops exactly the redirecting variables and keeps the rest', () => {
+  it('childGitEnv drops every GIT_-prefixed variable in any case and keeps the rest', () => {
     const scrubbed = childGitEnv({
       PATH: '/bin',
       HOME: '/h',
       XDG_CONFIG_HOME: '/x',
+      GITHUB_TOKEN: 'not-a-git-variable',
+      GIT: 'no underscore',
       GIT_DIR: 'a',
       GIT_WORK_TREE: 'b',
       GIT_INDEX_FILE: 'c',
@@ -153,13 +155,19 @@ describe('inherited git environment', () => {
       GIT_CONFIG_KEY_0: 'k',
       GIT_CONFIG_GLOBAL: '/g',
       GIT_CONFIG_NOSYSTEM: '1',
-      GIT_AUTHOR_NAME: 'kept',
+      GIT_AUTHOR_NAME: 'dropped',
+      GIT_EXEC_PATH: '/evil/git-core',
+      GIT_TRACE: '1',
+      GIT_TRACE_PACKET: '1',
+      GIT_CEILING_DIRECTORIES: '/x',
+      Git_Dir: 'mixed-case',
     })
     expect(scrubbed).toEqual({
       PATH: '/bin',
       HOME: '/h',
       XDG_CONFIG_HOME: '/x',
-      GIT_AUTHOR_NAME: 'kept',
+      GITHUB_TOKEN: 'not-a-git-variable',
+      GIT: 'no underscore',
     })
   })
 })

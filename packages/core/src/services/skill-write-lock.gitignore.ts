@@ -9,8 +9,8 @@
  *
  * Git invocation (owner decision C6): `git -c core.fsmonitor=false -C <root>
  * check-ignore -q <path>`, through `execFile` (never a shell), with a child
- * environment that drops `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
- * `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` and every `GIT_CONFIG*` variable.
+ * environment that drops every variable whose upper-cased name starts with
+ * `GIT_` (see `childGitEnv`).
  * Without the flag a repository's own `core.fsmonitor` would run a program of
  * the repository's choosing on the first write into a cloned project; without
  * the scrub an inherited `GIT_DIR` answers for a different repository.
@@ -48,20 +48,20 @@ export interface GitignoreHintOptions {
 
 type PathVerdict = 'ignored' | 'not-ignored' | 'not-work-tree' | 'no-git' | 'unknown'
 
-/** Variables that redirect git to another repository or inject config (C6). */
-const SCRUBBED_GIT_VARS = new Set([
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_COMMON_DIR',
-  'GIT_OBJECT_DIRECTORY',
-])
-
-/** @internal Exported for the test that pins the scrub list. */
+/**
+ * The child's environment: every variable whose upper-cased name starts with
+ * `GIT_` is dropped (C6). That covers the ones that redirect git to another
+ * repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
+ * `GIT_OBJECT_DIRECTORY`), config injection (`GIT_CONFIG*`), a different git
+ * program (`GIT_EXEC_PATH`), tracing output (`GIT_TRACE*`), `GIT_CEILING_DIRECTORIES`,
+ * and Windows' case-insensitive spellings of any of them.
+ *
+ * @internal Exported for the test that pins what is dropped and kept.
+ */
 export function childGitEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(source)) {
-    if (SCRUBBED_GIT_VARS.has(key) || key.startsWith('GIT_CONFIG')) continue
+    if (key.toUpperCase().startsWith('GIT_')) continue
     env[key] = value
   }
   return env

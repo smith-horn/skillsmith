@@ -24,7 +24,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { withFileLock } from '../config/file-lock.js'
+import { endedOnUnreadableClaim, withFileLock } from '../config/file-lock.js'
 import { LockOrderError } from '../config/lock-tracker.js'
 import { StuckLockError } from '../config/owned-lock.js'
 import { syncDirectory } from '../install/dir-sync.js'
@@ -121,6 +121,7 @@ export async function bindSkillsRoot(skillsDir: string): Promise<SkillsRootBindi
     stagingIdentity: made.identity,
     stagingCreated: made.created,
     rootSync,
+    stagingBits: made.bitsApplied,
   }
 }
 
@@ -167,6 +168,18 @@ export function checkSkillsRootBinding(
   }
 }
 
+/**
+ * `busy` after the wait ended on a claim this user cannot read. Owned-lock's own
+ * remedy tells the user to `rm` the lock, which is wrong here: the claim belongs
+ * to another user's live writer.
+ */
+function unreadableClaimDetail(lockPath: string): string {
+  return (
+    `the write lock at ${lockPath} is held by another user whose claim this user cannot read. ` +
+    'Try again later; do not remove the lock file.'
+  )
+}
+
 /** Bindings whose staging hint has been taken: it is computed once per binding. */
 const hintTaken = new WeakSet<SkillsRootBinding>()
 
@@ -189,10 +202,12 @@ async function takeStagingHint(binding: SkillsRootBinding): Promise<string | und
 
 /**
  * Phase 2: run `fn` holding lock 1 for the bound root. A refusal comes back as
- * `{ ok: false, stop }`: `busy` when the wait runs out or the claim can't be
- * waited on (`stop.reason` and `stop.detail` carry owned-lock's remedy),
- * `root-changed` / `staging-unsafe` / `backup-unsafe` from `check`. Anything
- * else `fn` throws, `LockOrderError` included, propagates. A string runs
+ * `{ ok: false, stop }`: `busy` when lock 1's wait runs out or its claim can't
+ * be waited on (`stop.reason` is owned-lock's; `stop.detail` is its remedy, or,
+ * for another user's unreadable claim, a retry-later message that says not to
+ * remove it), `root-changed` / `staging-unsafe` / `backup-unsafe` from `check`.
+ * Anything else `fn` throws, `LockOrderError` and a `StuckLockError` from a lock
+ * `fn` took itself included, propagates. A string runs
  * `bindSkillsRoot` first.
  */
 export async function withSkillWriteLock<T>(
@@ -215,15 +230,24 @@ export async function withSkillWriteLock<T>(
   const target = path.join(bound.root, SKILL_WRITE_LOCK_BASENAME)
   const lockPath = `${target}.lock`
   let outcome: SkillWriteResult<T>
+  // Set as the first statement under lock 1: a `StuckLockError` is lock 1's own
+  // busy refusal only while this is false. After it, one can only come from a
+  // lock `fn` took itself, and must not be reported as lock 1 being busy.
+  let acquired = false
   try {
-    // Before the lock is even requested: a root swapped since the bind would
-    // otherwise get a lock file created inside the wrong directory. The check
-    // inside the lock covers a swap that happens after this one.
+    // Before the lock is requested: a root swapped before this call is refused
+    // here, so no lock file is created in the directory now at R's path. Node
+    // has no openat-style relative create, so this narrows the window and cannot
+    // close it: a swap after this check still gets a lock file created by path,
+    // is refused by the check under the lock before `fn` runs, and the release
+    // removes that lock file again.
     checkSkillsRootBinding(bound)
+    await options.beforeLock?.()
     const value = await withFileLock(
       target,
       label,
       async () => {
+        acquired = true
         const lockIdentity = bindIdentity(lockPath)
         if (!lockIdentity.ok) {
           throw stop(
@@ -247,13 +271,13 @@ export async function withSkillWriteLock<T>(
   } catch (err) {
     if (err instanceof SkillWriteStop) {
       outcome = { ok: false, stop: err }
-    } else if (err instanceof StuckLockError) {
+    } else if (err instanceof StuckLockError && !acquired && err.lockPath === lockPath) {
       outcome = {
         ok: false,
         stop: new SkillWriteStop({
           code: 'busy',
           path: lockPath,
-          detail: err.message,
+          detail: endedOnUnreadableClaim(err) ? unreadableClaimDetail(lockPath) : err.message,
           reason: err.reason,
           cause: err,
         }),

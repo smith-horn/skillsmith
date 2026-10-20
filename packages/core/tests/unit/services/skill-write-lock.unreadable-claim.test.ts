@@ -20,6 +20,8 @@ const inject = vi.hoisted(() => ({
   path: null as string | null,
   code: 'EACCES',
   failures: 0,
+  /** The other user releases the instant our first open is refused (E: ENOENT on the re-probe). */
+  releaseOnFirstFailure: false,
 }))
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -27,6 +29,14 @@ vi.mock('node:fs', async (importOriginal) => {
   const openSync = ((p: import('node:fs').PathLike, ...rest: unknown[]) => {
     if (inject.path !== null && String(p) === inject.path && actual.existsSync(inject.path)) {
       inject.failures += 1
+      if (inject.releaseOnFirstFailure && inject.failures === 1) {
+        // The other user's writer finishes: its claim is gone, and nothing is refused after this open.
+        actual.unlinkSync(inject.path)
+        inject.path = null
+        throw Object.assign(new Error(`${inject.code}: injected, open '${String(p)}'`), {
+          code: inject.code,
+        })
+      }
       throw Object.assign(new Error(`${inject.code}: injected, open '${String(p)}'`), {
         code: inject.code,
       })
@@ -67,6 +77,7 @@ beforeEach(() => {
   inject.path = claim
   inject.code = 'EACCES'
   inject.failures = 0
+  inject.releaseOnFirstFailure = false
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
@@ -91,6 +102,37 @@ describe('lock 1 on a claim this user cannot read', () => {
     expect(waited).toBeGreaterThanOrEqual(350)
     // It tried more than once: at least a few polls in 400 ms (each attempt opens the claim twice).
     expect(inject.failures).toBeGreaterThan(4)
+  })
+
+  it('the busy detail tells the user the lock is another user’s, to retry later, and not to remove it', async () => {
+    const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 300 })
+    expect(!r.ok && r.stop.code).toBe('busy')
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.detail).toBe(
+      `the write lock at ${claim} is held by another user whose claim this user cannot read. ` +
+        'Try again later; do not remove the lock file.'
+    )
+    expect(r.stop.detail).not.toContain('rm ')
+  })
+
+  it('control: a corrupt but readable claim keeps owned-lock’s own remedy text as the detail', async () => {
+    inject.path = null // readable
+    fs.writeFileSync(claim, 'not a claim at all\n')
+    const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 300 })
+    expect(!r.ok && r.stop.code).toBe('busy')
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.detail).toContain(`rm ${claim}`)
+    expect(r.stop.detail).not.toContain('another user whose claim this user cannot read')
+  })
+
+  it('a claim released between owned-lock’s EACCES and the re-probe (ENOENT) is retried, and lock 1 is taken', async () => {
+    inject.releaseOnFirstFailure = true
+    const fn = vi.fn(async () => 'ran')
+    const r = await withSkillWriteLock(root, 't', fn, { timeoutMs: 5000 })
+    expect(inject.failures).toBeGreaterThanOrEqual(1) // the refusal really happened first
+    expect(fs.existsSync(claim)).toBe(false) // and the other user's claim really was released
+    expect(r).toMatchObject({ ok: true, value: 'ran' })
+    expect(fn).toHaveBeenCalledTimes(1)
   })
 
   it('waiting pays off: when the other user releases, lock 1 is taken', async () => {

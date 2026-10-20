@@ -6,6 +6,7 @@
  */
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { DirSyncOutcome } from '../install/dir-sync.js'
+import type { BitsApplied } from '../install/mkdir-parent-bits.js'
 import type { StuckLockReason } from '../config/owned-lock.js'
 import { SKILL_STAGING_DIR_NAME, SKILL_WRITE_LOCK_FILE_NAME } from './skill-write-lock.gitignore.js'
 
@@ -70,6 +71,12 @@ export interface SkillsRootBinding {
   readonly stagingCreated: boolean
   /** The sync of R after creating ST; `null` when this call did not create it. */
   readonly rootSync: DirSyncOutcome | null
+  /**
+   * What became of R's permission bits on ST. `exact` is the normal case;
+   * `mismatch` and `not-applied` (a filesystem that refuses chmod, a platform
+   * without a no-follow open) are recorded, not refused: the bind still succeeds.
+   */
+  readonly stagingBits: BitsApplied
 }
 
 /** Extension points for step 4: the operation directory and backup-area components. */
@@ -95,4 +102,9 @@ export type SkillWriteResult<T> =
 export interface SkillWriteLockOptions {
   /** How long to wait for lock 1, in ms (default 30 s); a test seam. */
   timeoutMs?: number
+  /**
+   * @internal Test seam: runs after the pre-lock check and before lock 1 is
+   * requested, the window the pre-lock check narrows but cannot close.
+   */
+  beforeLock?: () => void | Promise<void>
 }
