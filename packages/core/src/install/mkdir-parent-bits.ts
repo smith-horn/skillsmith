@@ -47,9 +47,10 @@
  * chmodded at all, a filesystem that refuses `chmod` (vfat, CIFS, some NFS:
  * `EPERM`, `ENOTSUP`, `EROFS`) leaves the bits as made, and a kernel may clear
  * setgid when this process is not in the directory's group. So whatever
- * happened, the ACTUAL mode is read back (from the descriptor, or from the
- * final `lstat` where there is none) and judged by `mkdir-parent-bits.policy.ts`,
- * whose header is the rule. In short:
+ * happened, the ACTUAL mode is read back from the descriptor and judged by
+ * `mkdir-parent-bits.policy.ts`, whose header is the rule. Where there is no
+ * descriptor, it is read from the final `lstat` and recorded, not judged (the
+ * last bullet). In short:
  *
  *  - a class the parent lets through (other: the parent has other execute;
  *    group: it has group or other execute) with a read, write or execute bit

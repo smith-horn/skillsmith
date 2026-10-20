@@ -185,6 +185,8 @@ describe('a claim whose owner cannot be established is waited on, not refused at
   it('the platform has no getuid: treated as unreadable, waited out to the deadline', async () => {
     // The real lstat: the claim is this process's own, so only the missing getuid can make the
     // owner unknown. A foreign lstat uid here would also wait, and could not tell the two apart.
+    // Run as root, this also catches a guessed default uid of 0; the next case catches it as
+    // any user.
     inject.lstatUid = null
     Object.defineProperty(process, 'getuid', {
       value: undefined,
@@ -195,6 +197,23 @@ describe('a claim whose owner cannot be established is waited on, not refused at
     const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 400 })
     const waited = performance.now() - t0
     expect(typeof process.getuid).toBe('undefined') // the stub held for the whole call
+    expect(!r.ok && r.stop.code).toBe('busy')
+    if (r.ok) throw new Error('unreachable')
+    expect(waited).toBeGreaterThanOrEqual(350)
+    expect(r.stop.detail).toBe(ANOTHER_USER(claim))
+  })
+
+  it('the platform has no getuid and the claim is uid 0: still waited out, no uid is guessed', async () => {
+    inject.lstatUid = 0 // a code path that guessed uid 0 for a missing getuid would call this ours
+    Object.defineProperty(process, 'getuid', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    })
+    const t0 = performance.now()
+    const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 400 })
+    const waited = performance.now() - t0
+    expect(typeof process.getuid).toBe('undefined')
     expect(!r.ok && r.stop.code).toBe('busy')
     if (r.ok) throw new Error('unreachable')
     expect(waited).toBeGreaterThanOrEqual(350)
