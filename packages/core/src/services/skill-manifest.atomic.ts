@@ -28,6 +28,7 @@ import { open, rename, unlink } from 'fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { warnSafely } from '../utils/warn-safely.js'
+import { syncDirectory } from '../install/dir-sync.js'
 
 export interface WriteManifestAtomicOptions {
   /**
@@ -88,28 +89,19 @@ export async function writeManifestAtomic(
     }
     throw err
   }
-  await syncDirectory(dir)
+  await syncManifestDirectory(dir)
 }
 
-/** Codes a filesystem returns when it cannot fsync a directory at all. */
-const DIR_SYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR', 'ENOSYS'])
-
-/** Best-effort directory fsync after the rename; never throws, its warning included. */
-async function syncDirectory(dir: string): Promise<void> {
-  if (process.platform === 'win32') return
-  try {
-    const dirHandle = await open(dir, 'r')
-    try {
-      await dirHandle.sync()
-    } finally {
-      await dirHandle.close()
-    }
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code ?? ''
-    if (DIR_SYNC_UNSUPPORTED.has(code)) return
-    warnSafely(
-      `[skillsmith] The manifest was saved, but its directory could not be synced (${code || String(err)}); ` +
-        `the save may not survive a crash.`
-    )
-  }
+/**
+ * Best-effort directory fsync after the rename; never throws, its warning
+ * included. The shared helper reports; this caller keeps the manifest's
+ * existing policy: `unsupported` is a silent no-op, `failed` a warning.
+ */
+async function syncManifestDirectory(dir: string): Promise<void> {
+  const result = await syncDirectory(dir)
+  if (result.outcome !== 'failed') return
+  warnSafely(
+    `[skillsmith] The manifest was saved, but its directory could not be synced (${result.code}); ` +
+      `the save may not survive a crash.`
+  )
 }

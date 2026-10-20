@@ -4,6 +4,40 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 (A1 step 2) -- lock 1, the per-skills-root write lock
+  (`services/skill-write-lock.ts`, A1 plan §3.2, §3.3). `bindSkillsRoot(skillsDir)` runs outside any
+  lock: it resolves R (native `realpath`), binds R's identity (the existing `BoundIdentity`, file
+  type included), and creates or verifies `<R>/.skillsmith-staging/` with R's permission bits
+  (sticky and setgid included), binding that too; a missing or non-directory R is `root-unsafe`, a
+  symlink or non-directory at ST is `staging-unsafe`, and the sync of R after creating ST is
+  recorded (`unsupported` accepted, any other failure stops the write). `withSkillWriteLock(binding,
+  label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
+  lock file, re-verifies what was bound before requesting the lock and again under it, and runs
+  `fn(ctx)`; `ctx.check(scope?)` re-verifies R, ST, the lock file and optional operation-directory
+  and backup-area components. It returns `{ ok: true, value }` or `{ ok: false, stop }` where
+  `stop.code` is `busy` (the wait ran out; `stop.reason` and `stop.detail` keep owned-lock's reason and
+  remedy), `root-changed`, `staging-unsafe`, `backup-unsafe` or `root-unsafe`; anything else `fn`
+  throws, `LockOrderError` included, propagates. Exported with `SkillWriteStop`,
+  `checkSkillsRootBinding` and `skillsRootLockPaths(root)` (the lock file and its reclaim lock; the
+  `doctor locks` wiring and skills-root discovery come in step 6). Not built here: creating an absent
+  root, the operation directory and its record, the backup-area binding, routing the existing writers
+  through lock 1.
+- **Added**: SMI-6531 (A1 step 2) -- the staging `.gitignore` hint. Computed by
+  `stagingGitignoreHint` only for the run whose `mkdir` created `.skillsmith-staging/`, and only
+  after lock 1 is released; returned as `gitignoreHint` on the result. The `git check-ignore` pair is
+  hardened: `git -c core.fsmonitor=false`, `GIT_*` variables scrubbed from the child's environment,
+  stderr captured, a 5 s timeout. Skillsmith edits no git file. `parkedAreaGitignoreHint` and the
+  hint constants are exported too.
+- **Added**: `FileLockOptions.waitWhileUnreadable`: keep waiting while the claim cannot be read
+  (`open` fails `EACCES` or `EPERM`), then end `unreclaimable_unparseable` at the deadline. Lock 1 uses
+  it, because another user's claim is mode 0600. A claim that opens but does not parse is still
+  refused at once, and every other caller is unchanged.
+- **Fixed**: SMI-7149 -- the parked area (`.skillsmith-parked/`) and the new staging directory now
+  carry their parent's permission bits exactly, sticky and setgid included, whatever the umask. A
+  `mkdir` with a mode loses them under umask 022, so the area was `0755` under a `1777` root and
+  another user's park failed. Both use one new helper, `mkdirWithParentBits` (`mkdir`, check, `chmod`,
+  re-check). The directory `fsync` is now shared (`install/dir-sync.ts`); the manifest's behaviour
+  (silent for an unsupported filesystem, a warning for any other failure) is unchanged.
 - **Changed (breaking)**: SMI-6531 (A1 step 1) -- `withFileLock(target, label, fn, options)` now
   requires its fourth argument, with a `rank`: `1`, `1′`, `2a`, `2b`, `3`, `4`, or `'unordered'` for a
   lock outside the order table. Migrate a three-argument call by adding

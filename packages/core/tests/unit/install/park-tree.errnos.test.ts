@@ -233,7 +233,7 @@ describe.skipIf(!CAN_MOUNT)('real errnos from mounts (Linux root with CAP_SYS_AD
   })
 })
 
-describe('the parked area is requested with the parent mode (ADR-166 D-3)', () => {
+describe('the parked area carries the parent mode (ADR-166 D-3, SMI-7149)', () => {
   for (const parentMode of [0o755, 0o700, 0o1777]) {
     it(`mkdir of .skillsmith-parked asks for the parent's permission bits (${parentMode.toString(8)})`, () => {
       const f = fixture()
@@ -249,9 +249,11 @@ describe('the parked area is requested with the parent mode (ADR-166 D-3)', () =
         () => park(f.parent, 'tree')
       )
       expect(r.status).toBe('parked')
-      // The process umask still applies to the created directory; what the
-      // park controls, and this pins, is the mode it requests.
-      expect(requested).toEqual([{ mode: parentMode & 0o777 }])
+      // The mkdir only requests the bits (the umask masks the request); the
+      // area is then chmod-ed to the parent's bits, sticky and setgid included
+      // (SMI-7149), so the property is the resulting mode, not the request.
+      expect(requested).toEqual([{ mode: parentMode & 0o3777 }])
+      expect(fs.statSync(path.join(f.parent, PARKED)).mode & 0o7777).toBe(parentMode)
     })
   }
 })

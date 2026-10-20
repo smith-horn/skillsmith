@@ -11,7 +11,7 @@
  * age-based lock protocol. `fan-out.locks.ts` re-exports `withFileLock` from
  * here so its own existing importers (`fan-out.overwrite.ts`) are unchanged.
  */
-import { readFileSync } from 'node:fs'
+import { closeSync, openSync, readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from './owned-lock.js'
 import {
@@ -72,6 +72,16 @@ export interface FileLockOptions {
    * with the pid the claim names (null when it cannot be read as one).
    */
   onLegacyWait?: (pid: number | null) => void
+  /**
+   * Keep waiting while the claim cannot be READ (the open fails `EACCES` or
+   * `EPERM`), then end `unreclaimable_unparseable` at the deadline, instead of
+   * failing on the first attempt. A claim is mode 0600, so another user's lock
+   * cannot be read by this one; that user's writer may release it, so the
+   * skills-root lock waits it out like any live holder (A1 plan §3.0 item 11,
+   * SMI-6531 step 2, C2). A claim that opens but does not parse is still
+   * refused at once: nothing will make it readable.
+   */
+  waitWhileUnreadable?: boolean
   /** How long to wait before giving up, in ms (default 30 s); a test seam. */
   timeoutMs?: number
   /**
@@ -92,6 +102,22 @@ function legacyPid(lockPath: string): number | null {
     return /^[0-9]+$/.test(text) ? Number(text) : null
   } catch {
     return null
+  }
+}
+
+/**
+ * Whether the claim at `lockPath` cannot be read right now for lack of
+ * permission. Re-probed after the refusal, because owned-lock reports every
+ * open failure as one `unreclaimable_unparseable` reason; only a permission
+ * failure can clear by itself (the other user releases), so only it is waited on.
+ */
+function claimUnreadable(lockPath: string): boolean {
+  try {
+    closeSync(openSync(lockPath, 'r'))
+    return false
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    return code === 'EACCES' || code === 'EPERM'
   }
 }
 
@@ -123,8 +149,13 @@ async function acquireFileLock(
         err instanceof StuckLockError &&
         err.reason === 'unreclaimable_legacy' &&
         options.waitOnLegacy === true
+      const unreadable =
+        err instanceof StuckLockError &&
+        err.reason === 'unreclaimable_unparseable' &&
+        options.waitWhileUnreadable === true &&
+        claimUnreadable(`${target}.lock`)
       const retryable =
-        legacy || (err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason))
+        legacy || unreadable || (err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason))
       if (!retryable || Date.now() >= deadline) throw err
       if (legacy && !warnedLegacy) {
         warnedLegacy = true

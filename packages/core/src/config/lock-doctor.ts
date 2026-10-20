@@ -362,8 +362,10 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
 
 /**
  * The lock files `doctor locks` lists for a state root: the manifest lock and
- * its reclaim lock. The skills-root write lock joins them when A1 adds it
- * (plan §3.9, step 2), with the skills-root discovery of step 6.
+ * its reclaim lock. The skills-root write lock's paths are
+ * `skillsRootLockPaths` (`services/skill-write-lock.ts`, A1 step 2); listing
+ * them here needs the skills-root discovery and the CLI wiring of step 6
+ * (plan §3.9), so they are not part of this list yet.
  */
 export function stateRootLockPaths(stateRoot: string): string[] {
   const manifestLock = join(stateRoot, 'manifest.json.lock')

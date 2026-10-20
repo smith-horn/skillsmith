@@ -19,6 +19,7 @@ import type { PartialParkResult } from './park-result.js'
 import { opDirOwnerModeProblem } from './park-tree.perms.js'
 import { bindIdentity, identityOf, sameIdentity } from './park-tree.identity.js'
 import type { BoundIdentity } from './park-tree.identity.js'
+import { mkdirWithParentBits } from './mkdir-parent-bits.js'
 
 /** The parked area's name inside the parent (ADR-166 D-9, UD26). */
 export const PARKED_DIR_NAME = '.skillsmith-parked'
@@ -37,8 +38,9 @@ export type ParkedRootResult =
 
 /**
  * Validates, creating it if absent, `<parentAbs>/.skillsmith-parked` (ADR-166
- * D-3). Its mkdir requests the parent's permission bits (the process umask
- * still applies), EEXIST accepted, and then it must be a real directory (never
+ * D-3). A new area carries the parent's permission bits, sticky and setgid
+ * included, whatever the process umask (`mkdirWithParentBits`, SMI-7149);
+ * EEXIST is accepted, and then it must be a real directory (never
  * a symlink) on the parent's device. Every failure is
  * `park-failed`; `detail` names which (`trash-unusable`, `trash-other-mount`,
  * the spellings A1 plan row Q7 uses).
@@ -62,33 +64,26 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   } catch (err) {
     return { ok: false, errno: errCode(err), detail: null, created: false }
   }
-  let created = false
-  try {
-    fs.mkdirSync(parkedRoot, { mode: parentStat.mode & 0o777 })
-    created = true
-  } catch (err) {
-    if (errCode(err) !== 'EEXIST') {
-      return { ok: false, errno: errCode(err), detail: null, created: false }
+  // The shared helper makes the area with the parent's bits applied by chmod,
+  // sticky and setgid included (SMI-7149: a mkdir mode alone loses them under
+  // the umask), and refuses a symlink or a non-directory.
+  const made = mkdirWithParentBits(parkedRoot, parentStat.mode)
+  if (!made.ok) {
+    if (made.phase === 'mkdir' || made.phase === 'lstat' || made.phase === 'chmod') {
+      return { ok: false, errno: made.errno, detail: null, created: made.created }
     }
+    return { ok: false, errno: null, detail: 'trash-unusable', created: made.created }
   }
-  let st: BigIntStats
-  try {
-    st = fs.lstatSync(parkedRoot, { bigint: true })
-  } catch (err) {
-    return { ok: false, errno: errCode(err), detail: null, created }
-  }
-  if (st.isSymbolicLink() || !st.isDirectory()) {
-    return { ok: false, errno: null, detail: 'trash-unusable', created }
-  }
-  // parentStat is a Number stat and st a bigint one; `!==` across the two types
-  // is always true, so the parent's dev is normalized to bigint once.
+  const { created } = made
+  // parentStat is a Number stat and the identity a bigint one; `!==` across the
+  // two types is always true, so the parent's dev is normalized to bigint once.
   const parentDev = BigInt(parentStat.dev)
-  if (st.dev !== parentDev) {
+  if (made.identity.dev !== parentDev) {
     return { ok: false, errno: null, detail: 'trash-other-mount', created }
   }
   // Return the area's IDENTITY, not just its path, so it can be re-checked
   // immediately before the rename and after it.
-  return { ok: true, parkedRoot, parkedRootIdentity: identityOf(st), parentDev, created }
+  return { ok: true, parkedRoot, parkedRootIdentity: made.identity, parentDev, created }
 }
 
 export type OpDirResult =
