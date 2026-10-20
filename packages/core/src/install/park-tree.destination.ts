@@ -35,6 +35,8 @@ export type ParkedRootResult =
       created: boolean
       /** What became of the parent's bits on the area (`mkdirWithParentBits`). */
       bitsApplied: BitsApplied
+      /** Why the area is narrower than the parent's bits (setgid dropped, say); empty when it is not. */
+      warnings: string[]
     }
   /** `created`: a failure after this call's mkdir still reports it (A1 plan §3.2). */
   | { ok: false; errno: string | null; detail: string | null; created: boolean }
@@ -67,15 +69,17 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   } catch (err) {
     return { ok: false, errno: errCode(err), detail: null, created: false }
   }
-  // The shared helper makes the area with the parent's bits applied by chmod,
-  // sticky and setgid included (SMI-7149: a mkdir mode alone loses them under
-  // the umask), and refuses a symlink or a non-directory.
+  // The shared helper makes the area with the parent's bits applied by fchmod
+  // through a no-follow descriptor, sticky and setgid included (SMI-7149: a
+  // mkdir mode alone loses them under the umask), refuses a symlink or a
+  // non-directory, and refuses a mode wider than the parent's (`mode-unsafe`).
   const made = mkdirWithParentBits(parkedRoot, parentStat.mode)
   if (!made.ok) {
     if (
       made.phase === 'mkdir' ||
       made.phase === 'lstat' ||
       made.phase === 'open' ||
+      made.phase === 'fstat' ||
       made.phase === 'chmod'
     ) {
       return { ok: false, errno: made.errno, detail: null, created: made.created }
@@ -98,6 +102,7 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
     parentDev,
     created,
     bitsApplied: made.bitsApplied,
+    warnings: made.warnings,
   }
 }
 

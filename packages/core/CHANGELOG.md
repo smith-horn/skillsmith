@@ -15,14 +15,19 @@ All notable changes to `@skillsmith/core` are documented here.
   lock file, re-verifies what was bound before requesting the lock and again under it, and runs
   `fn(ctx)`. The check before the lock refuses a root swapped before the call, so no lock file is
   created in the replacement; Node has no openat-style relative create, so a swap after that check
-  still gets a lock file created by path, which the check under the lock refuses before `fn` runs and
-  whose release removes again, leaving nothing of ours in the replacement root. `ctx.check(scope?)`
+  still gets a lock file created by path; the check under the lock refuses it before `fn` runs, and
+  the release then removes that lock file again, leaving nothing of ours in the replacement root.
+  `ctx.check(scope?)`
   re-verifies R, ST, the lock file and optional operation-directory and backup-area components. It
   returns `{ ok: true, value }` or `{ ok: false, stop }` where `stop.code` is `busy` (lock 1's wait
   ran out; `stop.reason` and `stop.detail` keep owned-lock's reason and remedy, except that another
   user's unreadable claim gets a retry-later message that says not to remove it), `root-changed`,
   `staging-unsafe`, `backup-unsafe` or `root-unsafe`; anything else `fn` throws, `LockOrderError` and
-  a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. Exported with `SkillWriteStop`,
+  a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. When the
+  staging directory is narrower than the root's permission bits, `bindSkillsRoot` returns `warnings:
+  string[]` on the binding, and every `withSkillWriteLock` result (ok or refused) carries them as
+  `warnings` (absent when empty); a staging directory with a permission the root lacks, or without
+  the root's sticky bit, is `staging-unsafe`. Exported with `SkillWriteStop`,
   `checkSkillsRootBinding` and `skillsRootLockPaths(root)` (the lock file and its reclaim lock; the
   `doctor locks` wiring and skills-root discovery come in step 6). Not built here: creating an absent
   root, the operation directory and its record, the backup-area binding, routing the existing writers
@@ -32,24 +37,43 @@ All notable changes to `@skillsmith/core` are documented here.
   after lock 1 is released; returned as `gitignoreHint` on the result. The `git check-ignore` pair is
   hardened: `git -c core.fsmonitor=false`, every environment variable whose upper-cased name starts
   with `GIT_` dropped from the child's environment (redirects such as `GIT_DIR`, `GIT_CONFIG*`,
-  `GIT_EXEC_PATH`, `GIT_TRACE*`, `GIT_CEILING_DIRECTORIES`, and Windows-cased spellings), stderr
-  captured, a 5 s timeout. Skillsmith edits no git file. `parkedAreaGitignoreHint` and the
+  `GIT_EXEC_PATH`, `GIT_TRACE*`, and Windows-cased spellings), except `GIT_CEILING_DIRECTORIES` (in any
+  case), which is kept because it only narrows repository discovery; stderr captured, a 5 s timeout. Skillsmith edits no git file. `parkedAreaGitignoreHint` and the
   hint constants are exported too.
 - **Added**: `FileLockOptions.waitWhileUnreadable`: keep waiting while the claim cannot be read
   (`open` fails `EACCES` or `EPERM`), then end `unreclaimable_unparseable` at the deadline. Lock 1 uses
   it, because another user's claim is mode 0600. A claim that opens but does not parse is still
-  refused at once, and every other caller is unchanged. If the claim is released between owned-lock's
-  `EACCES` and the re-probe (`ENOENT`), or the process is out of descriptors (`EMFILE`, `ENFILE`), the
-  wait retries instead of failing at once.
+  refused at once, and every other caller is unchanged. So is a claim this user owns but cannot read
+  (mode 000, an ACL, a sandbox; the owner is read with `lstat`): no other user's writer will release
+  it, so it is refused at once with owned-lock's own remedy rather than waited on. If the claim is
+  released between owned-lock's `EACCES` and the re-probe (`ENOENT`), or the process is out of
+  descriptors (`EMFILE`, `ENFILE`), the wait retries instead of failing at once; if the claim was
+  another user's unreadable one on any earlier probe, the final refusal still says so (do not remove
+  the lock file), whichever kind of probe came last.
 - **Fixed**: SMI-7149 -- the parked area (`.skillsmith-parked/`) and the new staging directory now
   carry their parent's permission bits exactly, sticky and setgid included, whatever the umask. A
   `mkdir` with a mode loses them under umask 022, so the area was `0755` under a `1777` root and
   another user's park failed. Both use one new helper, `mkdirWithParentBits` (`mkdir`, `lstat`, then
   `fchmod` on a descriptor opened `O_DIRECTORY | O_NOFOLLOW` and checked against that `lstat`, never a
-  `chmod` by path, then a re-check). A refused `chmod` (vfat, CIFS, NFS), a mode other than the wanted
-  one, or a platform without a no-follow open is recorded on the result (`bitsApplied`,
-  `stagingBits`) and does not fail the call; a crash between the `mkdir` and the `fchmod` leaves the
-  umask-filtered bits. The directory `fsync` is now shared (`install/dir-sync.ts`); the manifest's behaviour
+  `chmod` by path, then a re-check). The directory is made with owner read, write and execute added
+  (`want | 0o700`), so a parent whose owner lacks read (`0333`) still gives a directory this process
+  can open; the `fchmod` then sets exactly the parent's bits. After the `fchmod` (or its refusal) the
+  actual mode is read back from the descriptor, or from the final `lstat` on a platform without a
+  no-follow open, and judged: a permission bit the parent lacks, or a sticky bit the parent has and
+  the directory lost, fails the call (`mode-unsafe`, with `wanted` and `actual`; `ensureParkedRoot`
+  reports `trash-unusable`, `bindSkillsRoot` `staging-unsafe`). Any other difference (setgid dropped by
+  the kernel, group or other write missing because the filesystem refused `chmod`, a platform without
+  a no-follow open) is a narrower directory: the call succeeds, the cause is recorded on the result
+  (`bitsApplied`, `stagingBits`; `not-applied` now also carries the actual mode), and a `warnings:
+  string[]` names the missing bits and the reason, on `mkdirWithParentBits`, `ensureParkedRoot`,
+  `SkillsRootBinding` and `withSkillWriteLock`. A failing `fstat` is a `fstat` failure with its errno
+  rather than a throw, and a failing `close` of the read-only directory descriptor is ignored. A
+  crash between the `mkdir` and the `fchmod` leaves the umask-filtered bits. An EXISTING directory
+  (staging, the parked area) is judged by the same policy, though it is never changed: wider than the
+  parent's bits, or not sticky under a sticky parent, is refused (`mode-unsafe`; `staging-unsafe` for
+  staging, `trash-unusable` for the parked area), so a directory planted before the call, or left
+  behind by a call that refused it, is refused every time; a narrower one succeeds with a warning.
+  `park()`'s result carries the parked area's `warnings` (absent when there are none). The directory `fsync` is now shared (`install/dir-sync.ts`); the manifest's behaviour
   (silent for an unsupported filesystem, a warning for any other failure) is unchanged.
 - **Changed (breaking)**: SMI-6531 (A1 step 1) -- `withFileLock(target, label, fn, options)` now
   requires its fourth argument, with a `rank`: `1`, `1′`, `2a`, `2b`, `3`, `4`, or `'unordered'` for a

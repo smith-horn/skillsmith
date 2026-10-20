@@ -80,6 +80,11 @@ export interface ParkResult extends ParkResultFields {
   sidecarError?: string
   /** A failed parked-index append; does not change the status. */
   indexError?: string
+  /**
+   * Why the parked area is narrower than its parent's permission bits (setgid
+   * dropped, group or other write missing, and why). Present only when it is.
+   */
+  warnings?: string[]
   [extra: string]: unknown
 }
 
@@ -87,6 +92,7 @@ export interface ParkResult extends ParkResultFields {
 export type PartialParkResult = { status: ParkStatus } & Partial<ParkResultFields> & {
     sidecarError?: string
     indexError?: string
+    warnings?: string[]
     /** A moved tree's index line, which `prepareParkTree` strips before shaping. */
     indexEntry?: ParkedIndexEntry
     [extra: string]: unknown

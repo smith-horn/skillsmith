@@ -50,6 +50,41 @@ describe('a StuckLockError from a lock fn took itself', () => {
     expect(fs.existsSync(path.join(root, '.skillsmith-writes.lock'))).toBe(false) // lock 1 released
   })
 
+  // The conversion to `busy` needs BOTH conjuncts: lock 1 not yet acquired, AND
+  // the error is about lock 1's own file. Each has its own test, because the
+  // other test cannot tell if it is dropped.
+  it('a StuckLockError naming lock 1’s own file, thrown from inside fn after lock 1 was acquired, propagates', async () => {
+    const lockPath = path.join(root, '.skillsmith-writes.lock')
+    const inside = new StuckLockError(lockPath, `${lockPath}.reclaim`, 'lock 1', 'held', {
+      kind: 'absent',
+    })
+    const err = await withSkillWriteLock(root, 't', async () => {
+      throw inside
+    }).then(
+      (r) => r,
+      (e: unknown) => e
+    )
+    expect(err).toBe(inside) // rethrown as it is, not turned into `{ ok: false, stop: busy }`
+  })
+
+  it('a StuckLockError for some other file, thrown before lock 1 is requested, propagates', async () => {
+    const other = path.join(root, 'elsewhere.lock')
+    const foreign = new StuckLockError(other, `${other}.reclaim`, 'other', 'held', {
+      kind: 'absent',
+    })
+    const fn = vi.fn(async () => 'ran')
+    const err = await withSkillWriteLock(root, 't', fn, {
+      beforeLock: () => {
+        throw foreign
+      },
+    }).then(
+      (r) => r,
+      (e: unknown) => e
+    )
+    expect(err).toBe(foreign) // lock 1 was never acquired, but the error is not about lock 1's file
+    expect(fn).not.toHaveBeenCalled()
+  })
+
   it('control: lock 1 itself refused is still the busy result', async () => {
     fs.writeFileSync(path.join(root, '.skillsmith-writes.lock'), 'not a claim at all\n')
     const fn = vi.fn(async () => 'ran')

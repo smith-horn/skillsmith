@@ -29,6 +29,7 @@ import { LockOrderError } from '../config/lock-tracker.js'
 import { StuckLockError } from '../config/owned-lock.js'
 import { syncDirectory } from '../install/dir-sync.js'
 import { mkdirWithParentBits } from '../install/mkdir-parent-bits.js'
+import { octal } from '../install/mkdir-parent-bits.policy.js'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { stagingGitignoreHint } from './skill-write-lock.gitignore.js'
@@ -82,9 +83,12 @@ export async function bindSkillsRoot(skillsDir: string): Promise<SkillsRootBindi
     throw stop(
       'staging-unsafe',
       stagingDir,
-      made.errno === null
-        ? `${STAGING_DIR_NAME} is not a usable directory (${made.phase})`
-        : `${STAGING_DIR_NAME} could not be made (${made.phase}: ${made.errno})`
+      made.phase === 'mode-unsafe'
+        ? `${STAGING_DIR_NAME} has mode ${octal(made.actual ?? 0)} where the skills root has ` +
+            `${octal(made.wanted ?? 0)}: it has a permission the root lacks, or lost the root's sticky bit`
+        : made.errno === null
+          ? `${STAGING_DIR_NAME} is not a usable directory (${made.phase})`
+          : `${STAGING_DIR_NAME} could not be made (${made.phase}: ${made.errno})`
     )
   }
   let stagingReal: string
@@ -122,6 +126,7 @@ export async function bindSkillsRoot(skillsDir: string): Promise<SkillsRootBindi
     stagingCreated: made.created,
     rootSync,
     stagingBits: made.bitsApplied,
+    warnings: made.warnings,
   }
 }
 
@@ -208,7 +213,8 @@ async function takeStagingHint(binding: SkillsRootBinding): Promise<string | und
  * remove it), `root-changed` / `staging-unsafe` / `backup-unsafe` from `check`.
  * Anything else `fn` throws, `LockOrderError` and a `StuckLockError` from a lock
  * `fn` took itself included, propagates. A string runs
- * `bindSkillsRoot` first.
+ * `bindSkillsRoot` first. The result carries the binding's `warnings` (how ST is
+ * narrower than R's permission bits) whenever there are any, ok or not.
  */
 export async function withSkillWriteLock<T>(
   binding: SkillsRootBinding | string,
@@ -289,5 +295,6 @@ export async function withSkillWriteLock<T>(
   // Lock 1 is released here (withFileLock's finally ran): the hint's
   // `git check-ignore` never runs under it.
   const gitignoreHint = await takeStagingHint(bound)
-  return gitignoreHint === undefined ? outcome : { ...outcome, gitignoreHint }
+  const withHint = gitignoreHint === undefined ? outcome : { ...outcome, gitignoreHint }
+  return bound.warnings.length === 0 ? withHint : { ...withHint, warnings: bound.warnings }
 }

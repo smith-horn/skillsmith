@@ -22,6 +22,17 @@ const inject = vi.hoisted(() => ({
   failures: 0,
   /** The other user releases the instant our first open is refused (E: ENOENT on the re-probe). */
   releaseOnFirstFailure: false,
+  /**
+   * The uid `lstat` reports for the claim. The container runs as one uid, so
+   * "another user's claim" is simulated by reporting a different owner; `null`
+   * leaves the real lstat, whose owner is this process (a claim this user owns
+   * but cannot read).
+   */
+  lstatUid: null as number | null,
+  /** The claim's path, for the lstat override (`path` is cleared when the claim is meant to be readable). */
+  claimPath: null as string | null,
+  /** Overrides `code` for failure number n (1-based); each attempt is two opens: owned-lock's, then the re-probe's. */
+  codeFor: null as ((n: number) => string) | null,
 }))
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -29,21 +40,25 @@ vi.mock('node:fs', async (importOriginal) => {
   const openSync = ((p: import('node:fs').PathLike, ...rest: unknown[]) => {
     if (inject.path !== null && String(p) === inject.path && actual.existsSync(inject.path)) {
       inject.failures += 1
+      const code = inject.codeFor?.(inject.failures) ?? inject.code
+      // 'pass': this open is not refused (the claim has become readable).
+      if (code === 'pass') return (actual.openSync as (...a: unknown[]) => number)(p, ...rest)
       if (inject.releaseOnFirstFailure && inject.failures === 1) {
         // The other user's writer finishes: its claim is gone, and nothing is refused after this open.
         actual.unlinkSync(inject.path)
         inject.path = null
-        throw Object.assign(new Error(`${inject.code}: injected, open '${String(p)}'`), {
-          code: inject.code,
-        })
+        throw Object.assign(new Error(`${code}: injected, open '${String(p)}'`), { code })
       }
-      throw Object.assign(new Error(`${inject.code}: injected, open '${String(p)}'`), {
-        code: inject.code,
-      })
+      throw Object.assign(new Error(`${code}: injected, open '${String(p)}'`), { code })
     }
     return (actual.openSync as (...a: unknown[]) => number)(p, ...rest)
   }) as typeof actual.openSync
-  return { ...actual, openSync, default: { ...actual, openSync } }
+  const lstatSync = ((p: import('node:fs').PathLike, ...rest: unknown[]) => {
+    const st = (actual.lstatSync as (...a: unknown[]) => import('node:fs').Stats)(p, ...rest)
+    if (inject.lstatUid === null || String(p) !== inject.claimPath) return st
+    return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { uid: inject.lstatUid })
+  }) as typeof actual.lstatSync
+  return { ...actual, openSync, lstatSync, default: { ...actual, openSync, lstatSync } }
 })
 
 vi.mock('../../../src/services/skill-write-lock.gitignore.js', async (importOriginal) => ({
@@ -75,14 +90,20 @@ beforeEach(() => {
   claim = path.join(root, '.skillsmith-writes.lock')
   fs.writeFileSync(claim, `${foreignClaim()}\n`, { mode: 0o600 })
   inject.path = claim
+  inject.claimPath = claim
   inject.code = 'EACCES'
   inject.failures = 0
   inject.releaseOnFirstFailure = false
+  inject.codeFor = null
+  // Another user's claim by default: any uid but this process's.
+  inject.lstatUid = (process.getuid?.() ?? 0) + 1
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
 afterEach(() => {
   inject.path = null
+  inject.lstatUid = null
+  inject.codeFor = null
   vi.restoreAllMocks()
   fs.rmSync(root, { recursive: true, force: true })
 })
@@ -164,6 +185,60 @@ describe('lock 1 on a claim this user cannot read', () => {
     const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 1000 })
     expect(!r.ok && r.stop.reason).toBe('unreclaimable_unparseable')
     expect(performance.now() - t0).toBeLessThan(300)
+  })
+
+  it('a claim this very user owns but cannot read (mode 000, an ACL) is refused at once, with owned-lock’s own remedy', async () => {
+    inject.lstatUid = null // the real lstat: the claim is owned by this process's uid
+    const fn = vi.fn(async () => 'ran')
+    const t0 = performance.now()
+    const r = await withSkillWriteLock(root, 't', fn, { timeoutMs: 2000 })
+    const waited = performance.now() - t0
+    expect(fn).not.toHaveBeenCalled()
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.code).toBe('busy')
+    expect(r.stop.reason).toBe('unreclaimable_unparseable')
+    // No other user's writer will ever release it: no wait, and not the "another user" text.
+    expect(waited).toBeLessThan(500)
+    expect(r.stop.detail).toContain(`rm ${claim}`)
+    expect(r.stop.detail).not.toContain('another user whose claim this user cannot read')
+    expect(inject.failures).toBe(2) // owned-lock's open and the one re-probe, nothing more
+  })
+
+  it('the wording depends on the history, not the last probe: unreadable twice, then out of descriptors at the deadline, still says do not remove', async () => {
+    // Failure n: odd = owned-lock's open (always EACCES), even = the re-probe's.
+    // The first two re-probes find another user's unreadable claim; every later one is EMFILE.
+    inject.codeFor = (n) => (n % 2 === 1 || n <= 4 ? 'EACCES' : 'EMFILE')
+    const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 400 })
+    expect(!r.ok && r.stop.code).toBe('busy')
+    if (r.ok) throw new Error('unreachable')
+    expect(inject.failures).toBeGreaterThan(6) // it really went on to the EMFILE probes
+    expect(r.stop.detail).toBe(
+      `the write lock at ${claim} is held by another user whose claim this user cannot read. ` +
+        'Try again later; do not remove the lock file.'
+    )
+  })
+
+  it('but not when the last probe found the claim readable: unreadable first, then a live holder, ends with owned-lock’s text', async () => {
+    // The first two attempts (failures 1-4) are refused for permission; after that the claim opens,
+    // and it names a live process, so the refusal is `held` and the claim is no longer "unreadable".
+    inject.codeFor = (n) => (n <= 4 ? 'EACCES' : 'pass')
+    const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 300 })
+    expect(!r.ok && r.stop.code).toBe('busy')
+    if (r.ok) throw new Error('unreachable')
+    expect(inject.failures).toBeGreaterThan(4) // it really went on past the unreadable probes
+    expect(r.stop.reason).toBe('held')
+    expect(r.stop.detail).toContain(`rm ${claim}`)
+    expect(r.stop.detail).not.toContain('another user whose claim this user cannot read')
+  })
+
+  it('control: descriptors exhausted from the first probe, claim never seen unreadable, keeps owned-lock’s remedy', async () => {
+    inject.codeFor = (n) => (n % 2 === 1 ? 'EACCES' : 'EMFILE')
+    const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 300 })
+    expect(!r.ok && r.stop.code).toBe('busy')
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.detail).toContain(`rm ${claim}`)
+    expect(r.stop.detail).not.toContain('another user whose claim this user cannot read')
   })
 
   it('control: a non-permission open failure (EIO) is not waited on either', async () => {

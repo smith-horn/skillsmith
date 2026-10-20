@@ -139,7 +139,7 @@ describe('inherited git environment', () => {
     expect(await parkedAreaGitignoreHint(skillsRoot, 'op-1')).toBe(PARKED_LINE)
   })
 
-  it('childGitEnv drops every GIT_-prefixed variable in any case and keeps the rest', () => {
+  it('childGitEnv drops every GIT_-prefixed variable in any case, keeps GIT_CEILING_DIRECTORIES in any case, and keeps the rest', () => {
     const scrubbed = childGitEnv({
       PATH: '/bin',
       HOME: '/h',
@@ -159,6 +159,9 @@ describe('inherited git environment', () => {
       GIT_EXEC_PATH: '/evil/git-core',
       GIT_TRACE: '1',
       GIT_TRACE_PACKET: '1',
+      // Kept on purpose: it only NARROWS repository discovery (git stops its
+      // upward search at the listed directories), so it cannot make git answer
+      // for a different repository. Every other GIT_ name is dropped.
       GIT_CEILING_DIRECTORIES: '/x',
       Git_Dir: 'mixed-case',
     })
@@ -168,6 +171,11 @@ describe('inherited git environment', () => {
       XDG_CONFIG_HOME: '/x',
       GITHUB_TOKEN: 'not-a-git-variable',
       GIT: 'no underscore',
+      GIT_CEILING_DIRECTORIES: '/x',
+    })
+    // And in a Windows-style spelling, under that spelling.
+    expect(childGitEnv({ Git_Ceiling_Directories: '/y', Git_Dir: 'z' })).toEqual({
+      Git_Ceiling_Directories: '/y',
     })
   })
 })

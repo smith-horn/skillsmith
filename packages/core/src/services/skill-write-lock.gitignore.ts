@@ -10,7 +10,7 @@
  * Git invocation (owner decision C6): `git -c core.fsmonitor=false -C <root>
  * check-ignore -q <path>`, through `execFile` (never a shell), with a child
  * environment that drops every variable whose upper-cased name starts with
- * `GIT_` (see `childGitEnv`).
+ * `GIT_` except `GIT_CEILING_DIRECTORIES` (see `childGitEnv`).
  * Without the flag a repository's own `core.fsmonitor` would run a program of
  * the repository's choosing on the first write into a cloned project; without
  * the scrub an inherited `GIT_DIR` answers for a different repository.
@@ -50,18 +50,25 @@ type PathVerdict = 'ignored' | 'not-ignored' | 'not-work-tree' | 'no-git' | 'unk
 
 /**
  * The child's environment: every variable whose upper-cased name starts with
- * `GIT_` is dropped (C6). That covers the ones that redirect git to another
- * repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`,
- * `GIT_OBJECT_DIRECTORY`), config injection (`GIT_CONFIG*`), a different git
- * program (`GIT_EXEC_PATH`), tracing output (`GIT_TRACE*`), `GIT_CEILING_DIRECTORIES`,
- * and Windows' case-insensitive spellings of any of them.
+ * `GIT_` is dropped (C6), except `GIT_CEILING_DIRECTORIES`. The dropped ones
+ * redirect git to another repository (`GIT_DIR`, `GIT_WORK_TREE`,
+ * `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`), inject config
+ * (`GIT_CONFIG*`), name a different git program (`GIT_EXEC_PATH`) or turn on
+ * tracing (`GIT_TRACE*`), in any case spelling (Windows').
+ *
+ * `GIT_CEILING_DIRECTORIES` is kept, matched case-insensitively like the rest,
+ * because it only NARROWS repository discovery: it stops git's upward search at
+ * the listed directories, so it cannot make git answer for a different
+ * repository. It is how a user keeps `check-ignore` from walking up out of a
+ * home directory or into a slow mount.
  *
  * @internal Exported for the test that pins what is dropped and kept.
  */
 export function childGitEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(source)) {
-    if (key.toUpperCase().startsWith('GIT_')) continue
+    const name = key.toUpperCase()
+    if (name.startsWith('GIT_') && name !== 'GIT_CEILING_DIRECTORIES') continue
     env[key] = value
   }
   return env

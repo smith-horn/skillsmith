@@ -13,7 +13,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLockTrackerEnabledForTests } from '../../../src/config/lock-tracker.js'
 import {
@@ -53,6 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   process.umask(prevUmask)
   fs.rmSync(base, { recursive: true, force: true })
 })
@@ -170,13 +171,119 @@ describe('T-K2 (single uid): staging takes the root permission bits, sticky incl
   )
 
   it('an existing ST keeps its own bits (only a created one takes the root bits)', async () => {
-    const root = makeRoot('r', 0o1777)
+    const root = makeRoot('r', 0o777) // was 1777: a sticky root now refuses a non-sticky ST
     const st = path.join(root, STAGING_DIR_NAME)
     fs.mkdirSync(st)
     fs.chmodSync(st, 0o700)
     const b = await bindSkillsRoot(root)
     expect(b.stagingCreated).toBe(false)
     expect(bits(st)).toBe(0o700)
+    expect(b.warnings).toHaveLength(1) // narrower than the root, so it is said
+  })
+
+  describe('an existing ST is judged by the permission policy too', () => {
+    const planted = (rootMode: number, stMode: number): string => {
+      const root = makeRoot('r', rootMode)
+      const st = path.join(root, STAGING_DIR_NAME)
+      fs.mkdirSync(st)
+      fs.chmodSync(st, stMode)
+      return root
+    }
+
+    it('wider than the root is staging-unsafe, and the stop names both modes', async () => {
+      const stop = await stopOf(bindSkillsRoot(planted(0o700, 0o777)))
+      expect(stop.code).toBe('staging-unsafe')
+      expect(stop.detail).toContain('mode 0777')
+      expect(stop.detail).toContain('skills root has 0700')
+    })
+
+    it('non-sticky under a 1777 root is staging-unsafe', async () => {
+      const stop = await stopOf(bindSkillsRoot(planted(0o1777, 0o777)))
+      expect(stop.code).toBe('staging-unsafe')
+      expect(stop.detail).toContain('skills root has 1777')
+    })
+
+    it('narrower than the root succeeds, with the warning on the binding and the result', async () => {
+      const root = planted(0o777, 0o755)
+      const b = await bindSkillsRoot(root)
+      const expected = [
+        `${b.stagingDir} has mode 0755, not its parent's 0777; missing: group write, other write ` +
+          '(the directory already existed and was left as it is)',
+      ]
+      expect(b.stagingCreated).toBe(false)
+      expect(b.warnings).toEqual(expected)
+      expect(await withSkillWriteLock(b, 't', async () => 'ran')).toMatchObject({
+        ok: true,
+        warnings: expected,
+      })
+    })
+
+    it('a ST left behind by a mode-unsafe refusal is refused by the next bind too', async () => {
+      const root = makeRoot('r', 0o700)
+      fchmodLeaving(() => 0o777)
+      const first = await stopOf(bindSkillsRoot(root))
+      vi.restoreAllMocks()
+      expect(first.code).toBe('staging-unsafe')
+      expect(fs.existsSync(path.join(root, STAGING_DIR_NAME))).toBe(true) // left behind
+      const second = await stopOf(bindSkillsRoot(root))
+      expect(second.code).toBe('staging-unsafe')
+      expect(second.detail).toContain('mode 0777')
+    })
+  })
+})
+
+/** Real `fchmod`, but leaving `mode(wanted)` (a kernel that clears setgid, a filesystem that adds bits). */
+function fchmodLeaving(mode: (wanted: number) => number): void {
+  const real = fs.fchmodSync.bind(fs)
+  vi.spyOn(fs, 'fchmodSync').mockImplementation((fd, wanted) => real(fd, mode(Number(wanted))))
+}
+
+describe('the permission policy reaches the caller (staging narrower or wider than the root)', () => {
+  const dropSetgid = (wanted: number): number => wanted & ~0o2000
+
+  it('ST narrower than R: the binding carries a warning, and so does every withSkillWriteLock result', async () => {
+    const root = makeRoot('r', 0o2777)
+    fchmodLeaving(dropSetgid)
+    const b = await bindSkillsRoot(root)
+    const expected = [
+      `${b.stagingDir} has mode 0777, not its parent's 2777; missing: setgid ` +
+        '(chmod ran, but the filesystem or kernel left these bits unset)',
+    ]
+    expect(b.stagingBits).toEqual({ state: 'mismatch', wanted: 0o2777, actual: 0o777 })
+    expect(b.warnings).toEqual(expected)
+    const ok = await withSkillWriteLock(b, 't', async () => 'ran')
+    expect(ok).toMatchObject({ ok: true, value: 'ran', warnings: expected })
+    // A refusal carries them too: the caller still has to be told.
+    fs.writeFileSync(path.join(b.root, `${SKILL_WRITE_LOCK_BASENAME}.lock`), 'not a claim\n')
+    const busy = await withSkillWriteLock(b, 't', async () => 'ran', { timeoutMs: 200 })
+    expect(!busy.ok && busy.stop.code).toBe('busy')
+    expect(busy.warnings).toEqual(expected)
+  })
+
+  it('given a path instead of a binding, the result still carries the warnings', async () => {
+    const root = makeRoot('r', 0o2777)
+    fchmodLeaving(dropSetgid)
+    const r = await withSkillWriteLock(root, 't', async () => 'ran')
+    expect(r.ok).toBe(true)
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings?.[0]).toContain('missing: setgid')
+  })
+
+  it('control: ST exact, no warnings, and the result has no warnings field at all', async () => {
+    const root = makeRoot('r', 0o2777)
+    const b = await bindSkillsRoot(root)
+    const r = await withSkillWriteLock(b, 't', async () => 'ran')
+    expect(b.warnings).toEqual([])
+    expect('warnings' in r).toBe(false)
+  })
+
+  it('ST wider than R is staging-unsafe, and the stop names both modes', async () => {
+    const root = makeRoot('r', 0o700)
+    fchmodLeaving(() => 0o777)
+    const stop = await stopOf(bindSkillsRoot(root))
+    expect(stop.code).toBe('staging-unsafe')
+    expect(stop.detail).toContain('mode 0777')
+    expect(stop.detail).toContain('skills root has 0700')
   })
 })
 

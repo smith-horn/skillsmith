@@ -85,11 +85,11 @@ describe('mkdirWithParentBits', () => {
   })
 
   it('an existing directory is accepted, reported not created, and keeps its own bits', () => {
-    const parent = parentWith(0o1777)
+    const parent = parentWith(0o755) // was 1777: a sticky parent now refuses a non-sticky child
     const child = path.join(parent, 'child')
     fs.mkdirSync(child)
     fs.chmodSync(child, 0o750)
-    const r = mkdirWithParentBits(child, 0o1777)
+    const r = mkdirWithParentBits(child, 0o755)
     expect(r.ok).toBe(true)
     expect(r.ok && r.created).toBe(false)
     expect(bits(child)).toBe(0o750)
@@ -113,15 +113,17 @@ describe('mkdirWithParentBits', () => {
   })
 
   it('an existing directory records that no bits were applied', () => {
-    const parent = parentWith(0o1777)
+    const parent = parentWith(0o755) // was 1777: the 0755 child made below would be non-sticky
     const child = path.join(parent, 'child')
     fs.mkdirSync(child)
-    const r = mkdirWithParentBits(child, 0o1777)
+    const r = mkdirWithParentBits(child, 0o755)
     expect(r.ok && r.bitsApplied).toEqual({
       state: 'not-applied',
       reason: 'existing-directory',
       errno: null,
+      actual: 0o755,
     })
+    expect(r.ok && r.warnings).toEqual([])
   })
 
   it('refuses a regular file in the way', () => {
@@ -155,13 +157,14 @@ describe('the bits are applied through a no-follow descriptor, never by path', (
     expect(chmodByPath).not.toHaveBeenCalled()
   })
 
-  it('a filesystem that refuses chmod (EPERM, ENOTSUP, EROFS) is recorded and the call still succeeds', () => {
+  it('a filesystem that refuses chmod (EPERM, ENOTSUP, EROFS) is recorded and the call still succeeds when the directory is only narrower', () => {
     for (const code of ['EPERM', 'ENOTSUP', 'EROFS']) {
-      const parent = parentWith(0o1777)
+      // 0777 under umask 022 is made 0755: narrower than the parent, nothing wider.
+      const parent = parentWith(0o777)
       const spy = vi.spyOn(fs, 'fchmodSync').mockImplementation(() => {
         throw Object.assign(new Error(`${code}: injected`), { code })
       })
-      const r = mkdirWithParentBits(path.join(parent, 'child'), 0o1777)
+      const r = mkdirWithParentBits(path.join(parent, 'child'), 0o777)
       spy.mockRestore()
       expect(r.ok).toBe(true)
       expect(r.ok && r.created).toBe(true)
@@ -169,6 +172,7 @@ describe('the bits are applied through a no-follow descriptor, never by path', (
         state: 'not-applied',
         reason: 'chmod-refused',
         errno: code,
+        actual: 0o755,
       })
     }
   })
@@ -182,29 +186,236 @@ describe('the bits are applied through a no-follow descriptor, never by path', (
     expect(r).toMatchObject({ ok: false, phase: 'chmod', errno: 'EIO', created: true })
   })
 
-  it('bits other than the wanted ones after fchmod are reported as a mismatch with the actual bits', () => {
-    const parent = parentWith(0o1777)
-    const real = fs.fchmodSync.bind(fs)
-    vi.spyOn(fs, 'fchmodSync').mockImplementation((fd, _mode) => real(fd, 0o750))
-    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o1777)
-    expect(r.ok).toBe(true)
-    expect(r.ok && r.bitsApplied).toEqual({ state: 'mismatch', wanted: 0o1777, actual: 0o750 })
-  })
-
   it('a platform without O_NOFOLLOW/O_DIRECTORY never chmods at all and says so', () => {
-    const parent = parentWith(0o1777)
+    const parent = parentWith(0o777)
     const child = path.join(parent, 'child')
     const byPath = vi.spyOn(fs, 'chmodSync')
     const byFd = vi.spyOn(fs, 'fchmodSync')
-    const r = mkdirWithParentBits(child, 0o1777, { constants: { O_RDONLY: 0 } })
+    const r = mkdirWithParentBits(child, 0o777, { constants: { O_RDONLY: 0 } })
     expect(byPath).not.toHaveBeenCalled()
     expect(byFd).not.toHaveBeenCalled()
     expect(r.ok && r.bitsApplied).toEqual({
       state: 'not-applied',
       reason: 'no-nofollow-open',
       errno: null,
+      actual: 0o755,
     })
-    expect(bits(child)).not.toBe(0o1777) // the umask-filtered bits stay
+    expect(bits(child)).not.toBe(0o777) // the umask-filtered bits stay
+  })
+})
+
+/** Run the real `fchmod`, but with `mode` instead of the requested one (what a filesystem or kernel may do). */
+function fchmodLeaving(mode: number | ((wanted: number) => number)): void {
+  const real = fs.fchmodSync.bind(fs)
+  vi.spyOn(fs, 'fchmodSync').mockImplementation((fd, wanted) =>
+    real(fd, typeof mode === 'function' ? mode(Number(wanted)) : mode)
+  )
+}
+
+const refused = (code: string): Error => Object.assign(new Error(`${code}: injected`), { code })
+
+describe('the permission policy: wider or sticky-less fails closed, narrower succeeds with a warning', () => {
+  it('a filesystem that leaves wider bits (0777 under a 0700 parent) is mode-unsafe, with both modes', () => {
+    const parent = parentWith(0o700)
+    fchmodLeaving(0o777)
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o700)
+    expect(r).toMatchObject({
+      ok: false,
+      phase: 'mode-unsafe',
+      errno: null,
+      created: true,
+      wanted: 0o700,
+      actual: 0o777,
+    })
+  })
+
+  it('a lost sticky bit under a 1777 parent is mode-unsafe, though no bit is wider', () => {
+    const parent = parentWith(0o1777)
+    fchmodLeaving(0o777)
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o1777)
+    expect(r).toMatchObject({ ok: false, phase: 'mode-unsafe', wanted: 0o1777, actual: 0o777 })
+  })
+
+  it('chmod refused, leaving wider bits, is mode-unsafe (the mode is read before the descriptor is closed)', () => {
+    const parent = parentWith(0o700)
+    const real = fs.fchmodSync.bind(fs)
+    vi.spyOn(fs, 'fchmodSync').mockImplementation((fd) => {
+      real(fd, 0o777) // the bits change, and the call still reports a refusal
+      throw refused('EPERM')
+    })
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o700)
+    expect(r).toMatchObject({ ok: false, phase: 'mode-unsafe', wanted: 0o700, actual: 0o777 })
+  })
+
+  it('chmod refused, with the sticky bit lost, is mode-unsafe', () => {
+    const parent = parentWith(0o1777)
+    const real = fs.fchmodSync.bind(fs)
+    vi.spyOn(fs, 'fchmodSync').mockImplementation((fd) => {
+      real(fd, 0o777)
+      throw refused('EPERM')
+    })
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o1777)
+    expect(r).toMatchObject({ ok: false, phase: 'mode-unsafe', wanted: 0o1777, actual: 0o777 })
+  })
+
+  it('wider bits seen only by the final lstat (no no-follow open) are mode-unsafe too', () => {
+    const parent = parentWith(0o700)
+    const child = path.join(parent, 'child')
+    const real = fs.lstatSync
+    let calls = 0
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((p: fs.PathLike, o?: unknown) => {
+      const st = (real as (...a: unknown[]) => fs.BigIntStats)(p, o)
+      calls += 1
+      if (calls < 2 || String(p) !== child) return st // the second lstat is the final one
+      return Object.assign(Object.create(Object.getPrototypeOf(st)), st, {
+        mode: (st.mode & ~0o7777n) | 0o777n,
+      })
+    }) as typeof fs.lstatSync)
+    const r = mkdirWithParentBits(child, 0o700, { constants: { O_RDONLY: 0 } })
+    expect(r).toMatchObject({ ok: false, phase: 'mode-unsafe', wanted: 0o700, actual: 0o777 })
+  })
+
+  it('setgid dropped under a 2777 parent succeeds, as a mismatch, with a warning naming setgid', () => {
+    const parent = parentWith(0o2777)
+    const child = path.join(parent, 'child')
+    fchmodLeaving((wanted) => wanted & ~0o2000) // the kernel clears setgid for a group we are not in
+    const r = mkdirWithParentBits(child, 0o2777)
+    expect(r.ok && r.bitsApplied).toEqual({ state: 'mismatch', wanted: 0o2777, actual: 0o777 })
+    expect(r.ok && r.warnings).toEqual([
+      `${child} has mode 0777, not its parent's 2777; missing: setgid ` +
+        '(chmod ran, but the filesystem or kernel left these bits unset)',
+    ])
+  })
+
+  it('chmod refused with the umask narrower than the parent succeeds, with a warning naming group and other write', () => {
+    const parent = parentWith(0o777)
+    const child = path.join(parent, 'child')
+    vi.spyOn(fs, 'fchmodSync').mockImplementation(() => {
+      throw refused('EPERM')
+    })
+    const r = mkdirWithParentBits(child, 0o777)
+    expect(r.ok && r.bitsApplied).toEqual({
+      state: 'not-applied',
+      reason: 'chmod-refused',
+      errno: 'EPERM',
+      actual: 0o755,
+    })
+    expect(r.ok && r.warnings).toEqual([
+      `${child} has mode 0755, not its parent's 0777; missing: group write, other write ` +
+        '(the filesystem refused chmod: EPERM)',
+    ])
+  })
+
+  it('a platform without a no-follow open, with the umask narrower than the parent, warns and says why', () => {
+    const parent = parentWith(0o777)
+    const child = path.join(parent, 'child')
+    const r = mkdirWithParentBits(child, 0o777, { constants: { O_RDONLY: 0 } })
+    expect(r.ok && r.warnings).toEqual([
+      `${child} has mode 0755, not its parent's 0777; missing: group write, other write ` +
+        "(this platform has no no-follow directory open, so the parent's bits were not applied)",
+    ])
+  })
+
+  it('control: the exact case has no warnings', () => {
+    const parent = parentWith(0o1777)
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o1777)
+    expect(r.ok && r.warnings).toEqual([])
+  })
+
+  it('control: chmod refused where the made mode already equals the parent’s warns of nothing', () => {
+    const parent = parentWith(0o755)
+    vi.spyOn(fs, 'fchmodSync').mockImplementation(() => {
+      throw refused('EPERM')
+    })
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o755)
+    expect(r.ok && r.bitsApplied).toMatchObject({ state: 'not-applied', actual: 0o755 })
+    expect(r.ok && r.warnings).toEqual([])
+  })
+})
+
+describe('a parent whose owner lacks read (0333)', () => {
+  // As a non-root user (run this file with `docker exec -u node`) the first test fails
+  // without the owner bits: the O_DIRECTORY open of a 0333 directory is EACCES. Root
+  // reads anything, so there the second test is what pins the property.
+  it('is made openable by this process: the directory ends with exactly the parent’s bits', () => {
+    const parent = parentWith(0o333)
+    const child = path.join(parent, 'child')
+    try {
+      const r = mkdirWithParentBits(child, 0o40333)
+      expect(r).toMatchObject({ ok: true, created: true })
+      expect(r.ok && r.bitsApplied).toEqual({ state: 'exact' })
+      expect(bits(child)).toBe(0o333)
+    } finally {
+      fs.chmodSync(child, 0o755) // so the cleanup can read it
+      fs.chmodSync(parent, 0o755)
+    }
+  })
+
+  it('is created with owner read, write and execute added to the requested bits, the property that makes it openable', () => {
+    const parent = parentWith(0o333)
+    const child = path.join(parent, 'child')
+    const mkdir = vi.spyOn(fs, 'mkdirSync')
+    try {
+      mkdirWithParentBits(child, 0o40333)
+      const requested = (mkdir.mock.calls[0]?.[1] as { mode: number }).mode
+      expect(requested & 0o700).toBe(0o700) // a non-root owner could not open a 0333 directory
+      expect(requested & 0o077).toBe(0o033) // and nothing else is added
+    } finally {
+      fs.chmodSync(child, 0o755)
+      fs.chmodSync(parent, 0o755)
+    }
+  })
+})
+
+describe('a failing fstat or close does not escape a result-typed function', () => {
+  it('the identity fstat throwing EIO is a fstat failure, not a throw', () => {
+    const parent = parentWith(0o755)
+    vi.spyOn(fs, 'fstatSync').mockImplementation(() => {
+      throw refused('EIO')
+    })
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o755)
+    expect(r).toMatchObject({ ok: false, phase: 'fstat', errno: 'EIO', created: true })
+  })
+
+  it('the fstat after fchmod throwing EIO is a fstat failure, not a throw', () => {
+    const parent = parentWith(0o755)
+    const real = fs.fstatSync
+    let calls = 0
+    vi.spyOn(fs, 'fstatSync').mockImplementation(((fd: number, o?: unknown) => {
+      calls += 1
+      if (calls >= 2) throw refused('EIO')
+      return (real as (...a: unknown[]) => unknown)(fd, o)
+    }) as typeof fs.fstatSync)
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o755)
+    expect(calls).toBe(2) // the failure really came from the second fstat
+    expect(r).toMatchObject({ ok: false, phase: 'fstat', errno: 'EIO', created: true })
+  })
+
+  it('a close that throws does not replace the ready result', () => {
+    const parent = parentWith(0o755)
+    const real = fs.closeSync.bind(fs)
+    const close = vi.spyOn(fs, 'closeSync').mockImplementation((fd) => {
+      real(fd) // really closed; only the report fails
+      throw refused('EIO')
+    })
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o755)
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(r).toMatchObject({ ok: true, created: true, bitsApplied: { state: 'exact' } })
+  })
+
+  it('a close that throws does not replace a refusal made inside the descriptor block either', () => {
+    const parent = parentWith(0o755)
+    const real = fs.closeSync.bind(fs)
+    const close = vi.spyOn(fs, 'closeSync').mockImplementation((fd) => {
+      real(fd)
+      throw refused('EIO')
+    })
+    vi.spyOn(fs, 'fstatSync').mockImplementation(() => {
+      throw refused('ENOMEM')
+    })
+    const r = mkdirWithParentBits(path.join(parent, 'child'), 0o755)
+    expect(close).toHaveBeenCalledTimes(1) // the refusal really went through the close
+    expect(r).toMatchObject({ ok: false, phase: 'fstat', errno: 'ENOMEM' })
   })
 })
 
@@ -220,8 +431,48 @@ describe('ensureParkedRoot carries the parent bits (SMI-7149)', () => {
     expect(bits(path.join(parent, PARKED_DIR_NAME))).toBe(mode)
   })
 
+  it('an exact area carries no warnings', () => {
+    const r = ensureParkedRoot(parentWith(0o1777))
+    expect(r.ok && r.warnings).toEqual([])
+  })
+
+  it('surfaces why the area is narrower than the parent (setgid dropped under a 2777 parent)', () => {
+    const parent = parentWith(0o2777)
+    fchmodLeaving((wanted) => wanted & ~0o2000)
+    const r = ensureParkedRoot(parent)
+    expect(r.ok && r.bitsApplied).toEqual({ state: 'mismatch', wanted: 0o2777, actual: 0o777 })
+    expect(r.ok && r.warnings).toEqual([
+      `${path.join(parent, PARKED_DIR_NAME)} has mode 0777, not its parent's 2777; missing: setgid ` +
+        '(chmod ran, but the filesystem or kernel left these bits unset)',
+    ])
+  })
+
+  it('refuses an area wider than the parent as trash-unusable, reported created', () => {
+    const parent = parentWith(0o700)
+    fchmodLeaving(0o777)
+    expect(ensureParkedRoot(parent)).toEqual({
+      ok: false,
+      errno: null,
+      detail: 'trash-unusable',
+      created: true,
+    })
+  })
+
+  it('reports a failing fstat with its errno', () => {
+    const parent = parentWith(0o755)
+    vi.spyOn(fs, 'fstatSync').mockImplementation(() => {
+      throw refused('EIO')
+    })
+    expect(ensureParkedRoot(parent)).toEqual({
+      ok: false,
+      errno: 'EIO',
+      detail: null,
+      created: true,
+    })
+  })
+
   it('an existing parked area is left with its own bits and reported not created', () => {
-    const parent = parentWith(0o1777)
+    const parent = parentWith(0o777) // was 1777: a sticky parent now refuses a non-sticky area
     const area = path.join(parent, PARKED_DIR_NAME)
     fs.mkdirSync(area)
     fs.chmodSync(area, 0o700)

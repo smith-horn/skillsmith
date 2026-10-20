@@ -178,6 +178,8 @@ function parkTreeInner(
       area,
     }),
     parkedAreaCreated: area.created,
+    // Only when the area is narrower than its parent's bits; the caller shows them.
+    ...(area.warnings.length > 0 ? { warnings: area.warnings } : {}),
   }
 }
 

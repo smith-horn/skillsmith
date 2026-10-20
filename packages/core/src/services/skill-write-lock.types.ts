@@ -74,9 +74,16 @@ export interface SkillsRootBinding {
   /**
    * What became of R's permission bits on ST. `exact` is the normal case;
    * `mismatch` and `not-applied` (a filesystem that refuses chmod, a platform
-   * without a no-follow open) are recorded, not refused: the bind still succeeds.
+   * without a no-follow open) mean ST is narrower than R's bits and are recorded,
+   * not refused: the bind still succeeds. A ST with a permission bit R lacks, or
+   * without R's sticky bit, is refused (`staging-unsafe`).
    */
   readonly stagingBits: BitsApplied
+  /**
+   * One sentence per way ST is narrower than R's bits (setgid dropped, group or
+   * other write missing, and why); empty when it is not. The caller shows them.
+   */
+  readonly warnings: readonly string[]
 }
 
 /** Extension points for step 4: the operation directory and backup-area components. */
@@ -95,9 +102,10 @@ export interface SkillWriteContext extends SkillsRootBinding {
   check(scope?: CheckScope): void
 }
 
+/** `warnings` is the binding's (`SkillsRootBinding.warnings`), present only when it is not empty. */
 export type SkillWriteResult<T> =
-  | { ok: true; value: T; gitignoreHint?: string }
-  | { ok: false; stop: SkillWriteStop; gitignoreHint?: string }
+  | { ok: true; value: T; gitignoreHint?: string; warnings?: readonly string[] }
+  | { ok: false; stop: SkillWriteStop; gitignoreHint?: string; warnings?: readonly string[] }
 
 export interface SkillWriteLockOptions {
   /** How long to wait for lock 1, in ms (default 30 s); a test seam. */
