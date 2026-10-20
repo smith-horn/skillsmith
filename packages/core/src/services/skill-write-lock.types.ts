@@ -26,7 +26,9 @@ export type SkillWriteStopCode =
   | 'root-changed'
   /**
    * `bindSkillsRoot` or `check` refused ST. Causes: a mode that exposes more
-   * than R allows; a failed mkdir, lstat, open, fstat or chmod of ST; ST not a
+   * than R allows; a failed mkdir, lstat, open or fstat of ST, or a chmod of ST
+   * failing with an errno other than EPERM, ENOTSUP or EROFS (those three are
+   * a refusal: ST is bound and `stagingBits` records `chmod-refused`); ST not a
    * usable directory (not a directory, not ours, or changed during creation);
    * ST's realpath unresolvable or different from ST; ST swapped
    * while bound; or `check` finding ST (or an operation directory) not the one
@@ -82,7 +84,9 @@ export interface SkillsRootBinding {
   /**
    * What this bind did with R's permission bits on ST, not whether ST matches
    * R: after the bind that made ST, every bind reports `not-applied` /
-   * `existing-directory`. A ST that exposes more than R allows is refused
+   * `existing-directory` (`no-nofollow-open` on a platform with no no-follow
+   * open, whether or not this bind made ST). Use `stagingCreated` to tell
+   * whether this bind made ST. A ST that exposes more than R allows is refused
    * (`staging-unsafe`), not recorded here.
    */
   readonly stagingBits: BitsApplied
