@@ -27,6 +27,8 @@ import { checkFsBoundary, checkFsBoundarySource } from './park-tree.fs-boundary.
 const INSTALL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../src/install')
 /** The modules the walk from park-tree.ts reaches. */
 const PARK_TREE_GRAPH = [
+  'mkdir-parent-bits.policy.ts',
+  'mkdir-parent-bits.ts',
   'park-callers.ts',
   'park-result.ts',
   'park-tree.destination.ts',
@@ -41,6 +43,7 @@ const PARK_TREE_GRAPH = [
 /** Every module under the boundary: the walk above plus the parked-index entry. */
 const PARK_MODULES = [...PARK_TREE_GRAPH, 'parked-index.ts']
 const FS_USERS = [
+  'mkdir-parent-bits.ts',
   'park-tree.destination.ts',
   'park-tree.identity.ts',
   'park-tree.mounts.ts',

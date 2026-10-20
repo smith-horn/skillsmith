@@ -159,6 +159,8 @@ function parkTreeInner(
       errno: area.errno,
       detail: area.detail,
       parkedAreaCreated: area.created,
+      // A mode refusal names both modes and the reasons; shapeResult carries the key.
+      ...(area.modeProblem === undefined ? {} : { modeProblem: area.modeProblem }),
     }
   }
   // Every result from the area step on says whether this park's mkdir created
@@ -178,6 +180,8 @@ function parkTreeInner(
       area,
     }),
     parkedAreaCreated: area.created,
+    // Only when the area is narrower than its parent's bits; the caller shows them.
+    ...(area.warnings.length > 0 ? { warnings: area.warnings } : {}),
   }
 }
 

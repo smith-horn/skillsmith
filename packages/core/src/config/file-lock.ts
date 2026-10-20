@@ -11,7 +11,7 @@
  * age-based lock protocol. `fan-out.locks.ts` re-exports `withFileLock` from
  * here so its own existing importers (`fan-out.overwrite.ts`) are unchanged.
  */
-import { readFileSync } from 'node:fs'
+import { closeSync, lstatSync, openSync, readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { acquireOwnedLock, StuckLockError, type StuckLockReason } from './owned-lock.js'
 import {
@@ -72,6 +72,20 @@ export interface FileLockOptions {
    * with the pid the claim names (null when it cannot be read as one).
    */
   onLegacyWait?: (pid: number | null) => void
+  /**
+   * Keep waiting while the claim cannot be READ (the open fails `EACCES` or
+   * `EPERM`), then end `unreclaimable_unparseable` at the deadline, instead of
+   * failing on the first attempt. A claim is mode 0600, so another user's lock
+   * cannot be read by this one; that user's writer may release it, so the
+   * skills-root lock waits it out like any live holder (A1 plan §3.0 item 11,
+   * SMI-6531 step 2, C2). A claim that opens but does not parse is still
+   * refused at once: nothing will make it readable. So is one this user owns
+   * but cannot read (mode 000, an ACL, a sandbox): no other user's writer
+   * will release it. The re-probe after a
+   * refusal also retries when the claim is gone (`ENOENT`, released meanwhile)
+   * or the process is out of descriptors (`EMFILE`, `ENFILE`).
+   */
+  waitWhileUnreadable?: boolean
   /** How long to wait before giving up, in ms (default 30 s); a test seam. */
   timeoutMs?: number
   /**
@@ -95,6 +109,67 @@ function legacyPid(lockPath: string): number | null {
   }
 }
 
+/** Refusals whose last probe found the claim unreadable by permission, so a caller can word the stop. */
+const endedUnreadable = new WeakSet<object>()
+
+/**
+ * Whether `err` is the refusal `waitWhileUnreadable` threw at its deadline
+ * because the claim stayed unreadable for lack of permission (another user's
+ * live lock), as opposed to a claim that opened but did not parse.
+ */
+export function endedOnUnreadableClaim(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && endedUnreadable.has(err)
+}
+
+type ClaimProbe =
+  /** The open failed `EACCES`/`EPERM` on a claim another user owns: that user's writer may release it. */
+  | 'unreadable'
+  /** The open failed in a way that can clear by itself (released meanwhile, or out of descriptors). */
+  | 'transient'
+  /**
+   * It opened, failed some other way, or cannot be read although this very user
+   * owns it (mode 000, an ACL, a sandbox): nothing will make it readable, and no
+   * other user's writer will release it.
+   */
+  | 'other'
+
+/**
+ * Re-probe the claim at `lockPath` after owned-lock's refusal, because
+ * owned-lock reports every open failure as one `unreclaimable_unparseable`
+ * reason. A permission failure on ANOTHER user's claim can clear by itself (that
+ * user releases); on a claim this user owns it cannot (nobody else will release
+ * it), so it is `other` and the caller refuses at once with owned-lock's own
+ * remedy. The owner is read with an `lstat` (which needs no read permission on
+ * the claim); where the owner cannot be established the claim stays
+ * `unreadable`, the cautious reading. `ENOENT` (the claim was released between
+ * owned-lock's `EACCES` and this open) and `EMFILE`/`ENFILE` (descriptor
+ * exhaustion) clear by themselves too. All three are retried, and a retry goes
+ * back through owned-lock's exclusive create, so it can never take a lock
+ * wrongly.
+ */
+function probeClaim(lockPath: string): ClaimProbe {
+  try {
+    closeSync(openSync(lockPath, 'r'))
+    return 'other'
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'EACCES' || code === 'EPERM')
+      return ownedByThisUser(lockPath) ? 'other' : 'unreadable'
+    if (code === 'ENOENT' || code === 'EMFILE' || code === 'ENFILE') return 'transient'
+    return 'other'
+  }
+}
+
+/** Whether the file at `p` belongs to this process's uid; false where that cannot be established. */
+function ownedByThisUser(p: string): boolean {
+  if (typeof process.getuid !== 'function') return false
+  try {
+    return lstatSync(p).uid === process.getuid()
+  } catch {
+    return false
+  }
+}
+
 /**
  * Take the cross-process file lock without ever blocking the event loop.
  * `acquireOwnedLock` normally waits with a synchronous sleep, which froze a
@@ -110,6 +185,11 @@ async function acquireFileLock(
 ): Promise<() => boolean> {
   const deadline = Date.now() + (options.timeoutMs ?? FILE_LOCK_TIMEOUT_MS)
   let warnedLegacy = false
+  // Set once any probe finds another user's unreadable claim. The wording of
+  // the final refusal depends on that history, not on the last probe alone: a
+  // later probe can be `transient` (out of descriptors) without the claim
+  // having stopped being another user's.
+  let sawUnreadable = false
   for (;;) {
     try {
       return acquireOwnedLock(target, {
@@ -123,9 +203,23 @@ async function acquireFileLock(
         err instanceof StuckLockError &&
         err.reason === 'unreclaimable_legacy' &&
         options.waitOnLegacy === true
+      const probe: ClaimProbe =
+        err instanceof StuckLockError &&
+        err.reason === 'unreclaimable_unparseable' &&
+        options.waitWhileUnreadable === true
+          ? probeClaim(`${target}.lock`)
+          : 'other'
+      if (probe === 'unreadable') sawUnreadable = true
       const retryable =
-        legacy || (err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason))
-      if (!retryable || Date.now() >= deadline) throw err
+        legacy ||
+        probe !== 'other' ||
+        (err instanceof StuckLockError && RETRYABLE_REASONS.has(err.reason))
+      if (!retryable || Date.now() >= deadline) {
+        if (sawUnreadable && probe !== 'other' && typeof err === 'object' && err !== null) {
+          endedUnreadable.add(err)
+        }
+        throw err
+      }
       if (legacy && !warnedLegacy) {
         warnedLegacy = true
         options.onLegacyWait?.(legacyPid(`${target}.lock`))
