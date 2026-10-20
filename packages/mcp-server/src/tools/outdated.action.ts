@@ -159,7 +159,7 @@ async function executeOutdatedImpl(
     // tried and failed.
     //
     // Driven by the onLiveLookupFailed callback, NOT a try/catch around
-    // this call: lookupSkillFromRegistry() never rethrows (bar a LockOrderError) — every caught
+    // this call: lookupSkillFromRegistry() throws only a LockOrderError (from its entry guard) — every caught
     // error inside it (network, DNS, timeout, quota) falls through to a
     // local-DB fallback that itself never carries a contentHash, so a
     // try/catch here observes nothing to catch. A pr-reviewer-gate finding
@@ -188,11 +188,11 @@ async function executeOutdatedImpl(
       } catch (lookupError) {
         // A lock-order refusal is a programming error, not a failed lookup.
         if (lookupError instanceof LockOrderError) throw lookupError
-        // Defense-in-depth only: lookupSkillFromRegistry() rethrows only a
+        // Defense-in-depth only: lookupSkillFromRegistry() throws only a
         // LockOrderError (handled above); onLiveLookupFailed above is the
-        // real signal for every error it catches internally, but H1
-        // requires this tool to never fail the whole call for any reason —
-        // an unexpected throw here (a future change to the helper, a bad
+        // real signal for every error it catches internally, and H1
+        // requires this tool to never fail the whole call for any reason
+        // except a LockOrderError (a programming error) — an unexpected throw here (a future change to the helper, a bad
         // mock in a caller's test) must still degrade to unknown, not
         // propagate.
         liveHash = null

@@ -664,7 +664,7 @@ describe('executeOutdated', () => {
       // installed content — the exact shape that would incorrectly render
       // as 'current' under the pre-fix fallback — so it fails loudly if the
       // regression returns. Signals failure via onLiveLookupFailed, not a
-      // rejected promise — lookupSkillFromRegistry() never rethrows.
+      // rejected promise — lookupSkillFromRegistry() never rethrows a network error.
       const skillId = 'community/flaky-with-history'
       mockedLoadManifest.mockResolvedValue(
         manifestWithSkills([

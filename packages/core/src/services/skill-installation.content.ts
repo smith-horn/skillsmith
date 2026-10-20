@@ -185,6 +185,9 @@ export function validateContentKeys(
  * Returns the first rejecting file's report, or null if every file passed
  * (or was a 'doc'-class file whose scan failure is a documented FP-control
  * skip — see isRejectableScan()'s doc comment).
+ *
+ * @internal Exported only for skill-installation.planning-guard.test.ts; not
+ * part of the package API.
  */
 export function scanContentFiles(
   content: Record<string, string>,
