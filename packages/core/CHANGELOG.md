@@ -28,8 +28,9 @@ All notable changes to `@skillsmith/core` are documented here.
   (`randomBytes(n, cb)`, `dns.lookup`), any other native request type outside the watched set, and a
   listener added to an existing emitter or stream are not detected. `assertSkillWriteLockNotHeld(label)`
   throws when a skills-root lock is held; the install fetch and scan helpers, including the main
-  SKILL.md scan, call it on entry. A `LockOrderError` is passed through, never turned into an
-  install or lookup failure.
+  SKILL.md scan, call it on entry. A `LockOrderError` is never masked: lookup and fetch callers
+  rethrow it, and `install()` reports it as an `UNKNOWN` failure carrying the refusal message
+  rather than `FETCH_FAILED` or an internal error.
 - **Fixed**: SMI-7143 -- `releaseLock` and `inspectLock` (PR #3123 retro): a read that fails after
   the lock is opened (a directory or FIFO swapped in) is now `unparseable` instead of a throw, and
   owned-lock's reclaim and `doctor locks` share one liveness probe, `probePidAlive`

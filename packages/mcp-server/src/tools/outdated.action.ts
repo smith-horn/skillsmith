@@ -159,8 +159,8 @@ async function executeOutdatedImpl(
     // tried and failed.
     //
     // Driven by the onLiveLookupFailed callback, NOT a try/catch around
-    // this call: lookupSkillFromRegistry() never rethrows (bar a LockOrderError) — every caught
-    // error inside it (network, DNS, timeout, quota) falls through to a
+    // this call: lookupSkillFromRegistry() catches every error from its live
+    // API request (network, DNS, timeout, quota) and falls through to a
     // local-DB fallback that itself never carries a contentHash, so a
     // try/catch here observes nothing to catch. A pr-reviewer-gate finding
     // caught this: the adversarial-review round's fix correctly handled
@@ -188,13 +188,14 @@ async function executeOutdatedImpl(
       } catch (lookupError) {
         // A lock-order refusal is a programming error, not a failed lookup.
         if (lookupError instanceof LockOrderError) throw lookupError
-        // Defense-in-depth only: lookupSkillFromRegistry() rethrows only a
-        // LockOrderError (handled above); onLiveLookupFailed above is the
-        // real signal for every error it catches internally, but H1
-        // requires this tool to never fail the whole call for any reason —
-        // an unexpected throw here (a future change to the helper, a bad
-        // mock in a caller's test) must still degrade to unknown, not
-        // propagate.
+        // Defense-in-depth: lookupSkillFromRegistry() catches its live API
+        // errors and reports them through onLiveLookupFailed above, but its
+        // entry guard throws a LockOrderError (handled above) and a callback
+        // or its local-DB fallback can also throw. H1 requires this tool to
+        // never fail the whole call for any reason except a LockOrderError
+        // (a programming error), so any other throw here (including a future
+        // change to the helper, or a bad mock in a caller's test) degrades to
+        // unknown instead of propagating.
         liveHash = null
         liveArmFailed = true
       }
