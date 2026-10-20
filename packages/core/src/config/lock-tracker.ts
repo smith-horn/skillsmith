@@ -312,8 +312,9 @@ export function runHoldingLock<T>(
 
 /**
  * Throws `LockOrderError` when this context holds a skills-root lock (1 or
- * 1′). The prompt, fetch, registry-lookup and scan wrappers call it on entry:
- * none of them may run under that lock (plan §3.2, #8).
+ * 1′). The fetch, registry-lookup and scan wrappers in core and mcp-server,
+ * and the CLI's prompts and registry lookups, call it on entry: none of them
+ * may run under that lock (plan §3.2, #8).
  */
 export function assertSkillWriteLockNotHeld(label: string): void {
   if (!enabled) return
