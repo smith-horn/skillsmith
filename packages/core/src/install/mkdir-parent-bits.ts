@@ -63,9 +63,9 @@
  *    no writer, or a sticky bit added is a
  *    different directory: the call succeeds, the cause is recorded as
  *    `bitsApplied` (`exact`, `mismatch` with the actual bits, `not-applied`
- *    with the reason, errno and actual bits), and `warnings` holds at most one
- *    sentence naming every difference and why. A caller that has a place to
- *    show a warning shows it;
+ *    with the reason, errno and actual bits), and `warnings` says what differs
+ *    and why (see the result type). A caller that has a place to show a
+ *    warning shows it;
  *  - on a platform with no no-follow open the mode is never judged, whether
  *    this call made the directory or found it: the mode there is synthetic, so
  *    the actual mode is recorded and a warning says the bits could not be
@@ -117,17 +117,19 @@ export type MkdirParentBitsResult =
       /** The directory's identity from the last `lstat` this call made. */
       identity: BoundIdentity
       /**
-       * What became of the parent's bits. When this call did not make the
-       * directory it is `not-applied` with reason `existing-directory` (the
-       * steady state, not a difference), or `no-nofollow-open` on a platform
-       * with no no-follow open, whether or not the call made it. It says nothing
-       * about whether the bits match: `warnings` is that signal.
+       * What this call did with the parent's bits, not whether they match: a
+       * directory this call did not make is `not-applied` / `existing-directory`,
+       * and on a platform with no no-follow open it is `no-nofollow-open`.
        */
       bitsApplied: BitsApplied
       /**
-       * Empty when the directory's bits are the parent's. Otherwise at most one
-       * sentence naming every difference: missing bits, added bits, or (on a
-       * platform with no no-follow open) that the bits could not be verified.
+       * At most one sentence for the caller to show. It names the differences
+       * the policy reports (bits missing from a class the parent lets through,
+       * setgid added or lost, sticky added, or sticky lost where no reaching
+       * class can write; a gained read, write or execute bit, or sticky lost
+       * where one can, is refused instead); owner bits and classes the parent does not let through
+       * are not compared. On a platform with no no-follow open it always
+       * holds one sentence saying the bits could not be verified.
        */
       warnings: string[]
     }

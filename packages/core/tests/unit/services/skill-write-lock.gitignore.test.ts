@@ -80,7 +80,7 @@ describe('staging hint (T-N1)', () => {
     expectOnlyCheckIgnore(skillsRoot)
   })
 
-  it('is silent when both entries are in the repo .gitignore, checking each path with its own call', async () => {
+  it('is silent when both entries are in the repo .gitignore, checking each of the three paths with its own call', async () => {
     put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock*\n.skillsmith-staging/\n')
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
     expect(expectOnlyCheckIgnore(skillsRoot)).toEqual([
@@ -100,6 +100,12 @@ describe('staging hint (T-N1)', () => {
     ])
     put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock*\n.skillsmith-staging/\n')
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
+    // the silence came from all three checks answering "ignored", not from a check that never ran
+    expect(expectOnlyCheckIgnore(skillsRoot).slice(-3)).toEqual([
+      '.skillsmith-writes.lock',
+      '.skillsmith-writes.lock.reclaim',
+      '.skillsmith-staging/owner.json',
+    ])
   })
 
   it('is silent when both entries are in .git/info/exclude', async () => {
@@ -125,7 +131,7 @@ describe('staging hint (T-N1)', () => {
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
   })
 
-  it('hints when only one of the two entries is ignored, in either order', async () => {
+  it('hints when only one of the two .gitignore entries is present, in either order', async () => {
     put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock\n')
     expect(await stagingGitignoreHint(skillsRoot)).toBe(STAGING_LINE)
     put(path.join(repo, '.gitignore'), '.skillsmith-staging/\n')

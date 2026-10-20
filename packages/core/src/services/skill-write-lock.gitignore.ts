@@ -32,8 +32,7 @@ import { SKILL_WRITE_LOCK_BASENAME, STAGING_DIR_NAME } from './skill-write-lock.
 const LOCK_FILE_NAME = `${SKILL_WRITE_LOCK_BASENAME}.lock`
 const LOCK_RECLAIM_FILE_NAME = `${LOCK_FILE_NAME}.reclaim`
 
-export const STAGING_GITIGNORE_HINT =
-  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock* and .skillsmith-staging/ to .gitignore"
+export const STAGING_GITIGNORE_HINT = `hint: to keep Skillsmith's temporary files out of git status, add ${LOCK_FILE_NAME}* and ${STAGING_DIR_NAME}/ to .gitignore`
 export const PARKED_GITIGNORE_HINT = `hint: to keep Skillsmith's parked copies out of git status, add ${PARKED_DIR_NAME}/ to .gitignore`
 
 /** The child is killed after this long and the answer is "no hint" (C8). */

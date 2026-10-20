@@ -218,8 +218,7 @@ async function takeStagingHint(binding: SkillsRootBinding): Promise<string | und
  * remove it), `root-changed` / `staging-unsafe` / `backup-unsafe` from `check`.
  * Anything else `fn` throws, `LockOrderError` and a `StuckLockError` from a lock
  * `fn` took itself included, propagates. A string runs
- * `bindSkillsRoot` first. The result carries the binding's `warnings` (at most
- * one sentence naming every way ST's permission bits differ from R's) whenever
+ * `bindSkillsRoot` first. The result carries the binding's `warnings` whenever
  * there are any, ok or not.
  */
 export async function withSkillWriteLock<T>(

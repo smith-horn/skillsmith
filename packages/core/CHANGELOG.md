@@ -12,8 +12,9 @@ All notable changes to `@skillsmith/core` are documented here.
   symlink or non-directory at ST is `staging-unsafe`, and the sync of R after creating ST is
   recorded (`unsupported` accepted, any other failure stops the write with `staging-unsafe` and
   `path` = R, not ST). `staging-unsafe` is also raised for a mode that exposes more than R allows, a
-  failed mkdir, open or fstat of ST, a realpath of ST that cannot be resolved or differs from ST, and
-  ST swapped while it was bound. `withSkillWriteLock(binding, label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
+  failed mkdir, lstat, open, fstat or chmod of ST, an ST that is not a usable directory (not ours,
+  or changed while it was being made), a realpath of ST that cannot be resolved or differs from ST,
+  and ST swapped while it was bound. `withSkillWriteLock(binding, label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
   lock file, re-verifies what was bound before requesting the lock and again under it, and runs
   `fn(ctx)`. The check before the lock refuses a root swapped before the call, so no lock file is
   created in the replacement; Node has no openat-style relative create, so a swap after that check
@@ -27,10 +28,8 @@ All notable changes to `@skillsmith/core` are documented here.
   ran out; `stop.reason` and `stop.detail` keep owned-lock's reason and remedy, except that another
   user's unreadable claim gets a retry-later message that says not to remove it), `root-changed`,
   `staging-unsafe`, `backup-unsafe` or `root-unsafe`; anything else `fn` throws, `LockOrderError` and
-  a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. When the
-  staging directory's permission bits differ from the root's, `bindSkillsRoot` returns `warnings:
-  string[]` on the binding (at most one sentence naming every difference: missing bits, added bits,
-  or, on a platform with no no-follow open, that the bits could not be verified), and every
+  a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. `bindSkillsRoot`
+  returns the staging directory's `warnings: string[]` (see SMI-7149 below) on the binding, and every
   `withSkillWriteLock` result (ok or refused) carries them as `warnings` (absent when empty); a
   staging directory that exposes more than the root allows (see SMI-7149 below) is `staging-unsafe`.
   Exported with `SkillWriteStop`,
@@ -89,12 +88,11 @@ All notable changes to `@skillsmith/core` are documented here.
   `chmod`; a sticky bit lost with no reaching writer; a sticky bit added) is a different directory:
   the call succeeds, the cause is recorded on the result
   (`bitsApplied`, `stagingBits`; `not-applied` carries the actual mode), and `warnings: string[]`
-  holds at most one sentence naming every difference (missing bits, added bits, or, on a platform
-  with no no-follow open, that the bits could not be verified) and the reason, on
-  `mkdirWithParentBits`, `ensureParkedRoot`, `SkillsRootBinding` and `withSkillWriteLock`.
-  `bitsApplied` is not the signal for a difference: a directory this call did not make reports
-  `not-applied` with reason `existing-directory` whether or not its bits match, and `warnings` is
-  the signal. `BitsApplied` and `DirSyncOutcome` are exported as types. A difference only in a class the parent does not let
+  (on `mkdirWithParentBits`, `ensureParkedRoot`, `SkillsRootBinding` and `withSkillWriteLock`)
+  holds at most one sentence naming those differences and the reason; on a platform with no
+  no-follow open it always holds one saying the bits could not be verified. `bitsApplied` records
+  what the call did, not whether the bits match: a directory this call did not make reports
+  `not-applied` with reason `existing-directory`. `BitsApplied` and `DirSyncOutcome` are exported as types. A difference only in a class the parent does not let
   through, or in owner bits, is exact and says nothing (a root tightened to `0700` after a `0755`
   staging directory was made does not refuse it). A platform with no no-follow open (Windows) is never
   judged on mode, for a new or an existing directory: the actual mode is recorded and a warning says

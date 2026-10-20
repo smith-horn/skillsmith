@@ -11,8 +11,8 @@ import type { StuckLockReason } from '../config/owned-lock.js'
 
 /**
  * Lock 1's target inside the skills root; `withFileLock` appends `.lock`. The
- * `.gitignore` hint module derives its paths from this name, so the lock and
- * the hint cannot name different files.
+ * `.gitignore` hint module builds both its checked paths and its hint text
+ * from this name and `STAGING_DIR_NAME`.
  */
 export const SKILL_WRITE_LOCK_BASENAME = '.skillsmith-writes'
 /** The per-root staging directory (A1 plan §3.2). Never removed by Skillsmith. */
@@ -26,8 +26,9 @@ export type SkillWriteStopCode =
   | 'root-changed'
   /**
    * `bindSkillsRoot` or `check` refused ST. Causes: a mode that exposes more
-   * than R allows; a failed mkdir, open or fstat of ST; ST not a usable
-   * directory; ST's realpath unresolvable or different from ST; ST swapped
+   * than R allows; a failed mkdir, lstat, open, fstat or chmod of ST; ST not a
+   * usable directory (not a directory, not ours, or changed during creation);
+   * ST's realpath unresolvable or different from ST; ST swapped
    * while bound; or `check` finding ST (or an operation directory) not the one
    * that was bound. A failed sync of R after creating ST is also this code, but
    * its `path` is R, not ST.
@@ -79,22 +80,13 @@ export interface SkillsRootBinding {
   /** The sync of R after creating ST; `null` when this call did not create it. */
   readonly rootSync: DirSyncOutcome | null
   /**
-   * What this bind did with R's permission bits on ST. It is not the signal for
-   * whether ST matches R: every bind after the one that made ST reports
-   * `not-applied` with reason `existing-directory` (the steady state, not a
-   * difference), and a platform with no no-follow open reports
-   * `no-nofollow-open` whether or not this call made ST, even when the bits
-   * match. `warnings` is the difference signal. A ST that exposes more than R
-   * allows (`mkdir-parent-bits.policy.ts`; the promise is parity with R's mode
-   * bits, ACLs and aliases not modelled) is refused (`staging-unsafe`, naming
-   * both modes and the reasons, with no command), not recorded here.
+   * What this bind did with R's permission bits on ST, not whether ST matches
+   * R: after the bind that made ST, every bind reports `not-applied` /
+   * `existing-directory`. A ST that exposes more than R allows is refused
+   * (`staging-unsafe`), not recorded here.
    */
   readonly stagingBits: BitsApplied
-  /**
-   * Empty when ST's bits are R's. Otherwise at most one sentence naming every
-   * difference: missing bits, added bits, or (on a platform with no no-follow
-   * open) that the bits could not be verified, and why. The caller shows it.
-   */
+  /** What the caller should show about ST's bits; see `MkdirParentBitsResult.warnings`. */
   readonly warnings: readonly string[]
 }
 

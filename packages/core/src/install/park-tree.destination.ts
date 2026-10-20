@@ -37,7 +37,7 @@ export type ParkedRootResult =
       created: boolean
       /** What became of the parent's bits on the area (`mkdirWithParentBits`). */
       bitsApplied: BitsApplied
-      /** Empty when the area's bits are the parent's; otherwise at most one sentence naming every difference. */
+      /** `mkdirWithParentBits`' warnings for the area (see `MkdirParentBitsResult`). */
       warnings: string[]
     }
   /**
