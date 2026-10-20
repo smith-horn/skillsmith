@@ -194,6 +194,9 @@ describe('a platform missing either open flag is never chmodded', () => {
     ['O_NOFOLLOW', { O_RDONLY: 0, O_DIRECTORY: flags.O_DIRECTORY }],
     ['O_DIRECTORY', { O_RDONLY: 0, O_NOFOLLOW: flags.O_NOFOLLOW }],
   ])('without only %s: no-nofollow-open, no fchmod, no chmod by path', (_missing, constants) => {
+    // Both flags must exist here, or each case silently becomes "both missing".
+    expect(flags.O_DIRECTORY).toBeDefined()
+    expect(flags.O_NOFOLLOW).toBeDefined()
     const parent = parentWith(0o777)
     const child = path.join(parent, 'child')
     const byFd = vi.spyOn(fs, 'fchmodSync')

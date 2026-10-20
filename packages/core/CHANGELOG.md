@@ -53,15 +53,17 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-7149 -- the parked area (`.skillsmith-parked/`) and the new staging directory are
   now given their parent's permission bits, sticky and setgid included, whatever the umask, and the
   result is verified: a widening is refused, and a narrower result (a filesystem that refuses
-  `chmod`, a kernel that drops setgid, Windows) is reported as a warning. A
+  `chmod`, a kernel that drops setgid) is reported as a warning. On a platform with no no-follow
+  open (Windows) the bits are neither applied nor verified, and a warning says so. A
   `mkdir` with a mode loses them under umask 022, so the area was `0755` under a `1777` root and
   another user's park failed. Both use one new helper, `mkdirWithParentBits` (`mkdir`, `lstat`, then
   `fchmod` on a descriptor opened `O_DIRECTORY | O_NOFOLLOW` and checked against that `lstat`, never a
   `chmod` by path, then a re-check). The directory is made with owner read, write and execute added
   (`want | 0o700`), so a parent whose owner lacks read (`0333`) still gives a directory this process
   can open; the `fchmod` then sets exactly the parent's bits. After the `fchmod` (or its refusal) the
-  actual mode is read back from the descriptor, or from the final `lstat` on a platform without a
-  no-follow open, and judged by `mkdir-parent-bits.policy.ts`. The promise is PARITY with the parent:
+  actual mode is read back from the descriptor and judged by `mkdir-parent-bits.policy.ts` (on a
+  platform without a no-follow open it is read from the final `lstat` and recorded, not judged). The
+  promise is PARITY with the parent:
   the directory never gives other users more access, through the mode bits seen through the parent,
   than the parent does. ACLs, bind mounts and other aliases are not modelled, the same as for the
   parent's own files. A class REACHES the directory through the parent: other when the parent gives

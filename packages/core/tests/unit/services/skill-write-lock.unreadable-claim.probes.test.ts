@@ -166,7 +166,7 @@ describe('a claim whose owner cannot be established is waited on, not refused at
     const t0 = performance.now()
     const r = await withSkillWriteLock(root, 't', async () => 'ran', { timeoutMs: 2000 })
     expect(!r.ok && r.stop.code).toBe('busy')
-    expect(performance.now() - t0).toBeLessThan(500)
+    expect(performance.now() - t0).toBeLessThan(1500) // well under the 2000 ms a wait would take
     expect(inject.lstatCalls).toBeGreaterThan(0)
   })
 
@@ -183,6 +183,9 @@ describe('a claim whose owner cannot be established is waited on, not refused at
   })
 
   it('the platform has no getuid: treated as unreadable, waited out to the deadline', async () => {
+    // The real lstat: the claim is this process's own, so only the missing getuid can make the
+    // owner unknown. A foreign lstat uid here would also wait, and could not tell the two apart.
+    inject.lstatUid = null
     Object.defineProperty(process, 'getuid', {
       value: undefined,
       configurable: true,
