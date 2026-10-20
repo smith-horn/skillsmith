@@ -82,8 +82,10 @@ export interface ParkResult extends ParkResultFields {
   /** A failed parked-index append; does not change the status. */
   indexError?: string
   /**
-   * Why the parked area is narrower than its parent's permission bits (setgid
-   * dropped, group or other write missing, and why). Present only when it is.
+   * Present only when the parked area's permission bits differ from its
+   * parent's: at most one sentence naming every difference (missing bits, added
+   * bits, or, on a platform with no no-follow open, that the bits could not be
+   * verified) and why.
    */
   warnings?: string[]
   /**

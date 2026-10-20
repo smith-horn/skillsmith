@@ -448,12 +448,13 @@ export {
 export {
   PARKED_GITIGNORE_HINT,
   parkedAreaGitignoreHint,
-  SKILL_STAGING_DIR_NAME,
-  SKILL_WRITE_LOCK_FILE_NAME,
   STAGING_GITIGNORE_HINT,
   stagingGitignoreHint,
   type GitignoreHintOptions,
 } from './services/skill-write-lock.gitignore.js'
+// The types `SkillsRootBinding` (above) names in its fields.
+export type { BitsApplied } from './install/mkdir-parent-bits.js'
+export type { DirSyncOutcome } from './install/dir-sync.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)

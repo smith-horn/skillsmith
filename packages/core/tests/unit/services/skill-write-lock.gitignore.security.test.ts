@@ -23,7 +23,7 @@ import {
 } from './skill-write-lock.gitignore.helpers.js'
 
 const STAGING_LINE =
-  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock and .skillsmith-staging/ to .gitignore"
+  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock* and .skillsmith-staging/ to .gitignore"
 const PARKED_LINE =
   "hint: to keep Skillsmith's parked copies out of git status, add .skillsmith-parked/ to .gitignore"
 
@@ -123,7 +123,7 @@ describe('inherited git environment', () => {
 
   it('GIT_CONFIG_COUNT injecting core.excludesFile does not change the answer', async () => {
     const excludes = path.join(sb.dir, 'injected-excludes')
-    put(excludes, '.skillsmith-writes.lock\n.skillsmith-staging/\n.skillsmith-parked/\n')
+    put(excludes, '.skillsmith-writes.lock*\n.skillsmith-staging/\n.skillsmith-parked/\n')
     const injected = {
       GIT_CONFIG_COUNT: '1',
       GIT_CONFIG_KEY_0: 'core.excludesFile',

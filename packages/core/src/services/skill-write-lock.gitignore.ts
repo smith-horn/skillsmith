@@ -25,18 +25,16 @@ import { execFile } from 'node:child_process'
 import { lstat } from 'node:fs/promises'
 import path from 'node:path'
 import { assertSkillWriteLockNotHeld } from '../config/lock-tracker.js'
+import { PARKED_DIR_NAME } from '../install/park-tree.destination.js'
+import { SKILL_WRITE_LOCK_BASENAME, STAGING_DIR_NAME } from './skill-write-lock.types.js'
 
-/** Lock 1's file name under the skills root; `withFileLock` appends `.lock` to `.skillsmith-writes`. */
-export const SKILL_WRITE_LOCK_FILE_NAME = '.skillsmith-writes.lock'
-/** The staging directory inside the skills root. */
-export const SKILL_STAGING_DIR_NAME = '.skillsmith-staging'
-/** The parked area directory name (mirrors `PARKED_DIR_NAME` in `install/park-tree.destination.ts`). */
-const PARKED_AREA_DIR_NAME = '.skillsmith-parked'
+/** Lock 1's file, and the reclaim lock beside it (`skillsRootLockPaths`): both sit in the skills root. */
+const LOCK_FILE_NAME = `${SKILL_WRITE_LOCK_BASENAME}.lock`
+const LOCK_RECLAIM_FILE_NAME = `${LOCK_FILE_NAME}.reclaim`
 
 export const STAGING_GITIGNORE_HINT =
-  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock and .skillsmith-staging/ to .gitignore"
-export const PARKED_GITIGNORE_HINT =
-  "hint: to keep Skillsmith's parked copies out of git status, add .skillsmith-parked/ to .gitignore"
+  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock* and .skillsmith-staging/ to .gitignore"
+export const PARKED_GITIGNORE_HINT = `hint: to keep Skillsmith's parked copies out of git status, add ${PARKED_DIR_NAME}/ to .gitignore`
 
 /** The child is killed after this long and the answer is "no hint" (C8). */
 export const CHECK_IGNORE_TIMEOUT_MS = 5000
@@ -148,7 +146,7 @@ export async function stagingGitignoreHint(
   assertSkillWriteLockNotHeld('stagingGitignoreHint')
   return hintFor(
     skillsRoot,
-    [SKILL_WRITE_LOCK_FILE_NAME, `${SKILL_STAGING_DIR_NAME}/owner.json`],
+    [LOCK_FILE_NAME, LOCK_RECLAIM_FILE_NAME, `${STAGING_DIR_NAME}/owner.json`],
     STAGING_GITIGNORE_HINT,
     options
   )
@@ -166,5 +164,5 @@ export async function parkedAreaGitignoreHint(
   options?: GitignoreHintOptions
 ): Promise<string | null> {
   assertSkillWriteLockNotHeld('parkedAreaGitignoreHint')
-  return hintFor(parent, [`${PARKED_AREA_DIR_NAME}/${opId}`], PARKED_GITIGNORE_HINT, options)
+  return hintFor(parent, [`${PARKED_DIR_NAME}/${opId}`], PARKED_GITIGNORE_HINT, options)
 }
