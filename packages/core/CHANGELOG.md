@@ -50,8 +50,10 @@ All notable changes to `@skillsmith/core` are documented here.
   descriptors (`EMFILE`, `ENFILE`), the wait retries instead of failing at once; if the claim was
   another user's unreadable one on any earlier probe, the final refusal still says so (do not remove
   the lock file), whichever kind of probe came last.
-- **Fixed**: SMI-7149 -- the parked area (`.skillsmith-parked/`) and the new staging directory now
-  carry their parent's permission bits exactly, sticky and setgid included, whatever the umask. A
+- **Fixed**: SMI-7149 -- the parked area (`.skillsmith-parked/`) and the new staging directory are
+  now given their parent's permission bits, sticky and setgid included, whatever the umask, and the
+  result is verified: a widening is refused, and a narrower result (a filesystem that refuses
+  `chmod`, a kernel that drops setgid, Windows) is reported as a warning. A
   `mkdir` with a mode loses them under umask 022, so the area was `0755` under a `1777` root and
   another user's park failed. Both use one new helper, `mkdirWithParentBits` (`mkdir`, `lstat`, then
   `fchmod` on a descriptor opened `O_DIRECTORY | O_NOFOLLOW` and checked against that `lstat`, never a

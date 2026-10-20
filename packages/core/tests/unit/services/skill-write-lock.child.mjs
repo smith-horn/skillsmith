@@ -50,8 +50,11 @@ const out = { role, mode }
 
 if (role === 'A') {
   const r = await attempt('A', 20_000, async () => {
-    mark('a-in')
+    // The window opens BEFORE the marker that tells B it may look. The other order
+    // let B (polling every 10 ms) see 'a-in' in the gap before the window file
+    // existed, so the nolock control observed windowOpen: false (~1 run in 200).
     writeFileSync(join(dir, 'window'), 'A') // A's mutation window opens
+    mark('a-in')
     await waitFor('b-first-done')
     rmSync(join(dir, 'window')) // ...and closes
     mark('a-done')
