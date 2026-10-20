@@ -81,10 +81,7 @@ export interface ParkResult extends ParkResultFields {
   sidecarError?: string
   /** A failed parked-index append; does not change the status. */
   indexError?: string
-  /**
-   * Why the parked area is narrower than its parent's permission bits (setgid
-   * dropped, group or other write missing, and why). Present only when it is.
-   */
+  /** The parked area's `mkdirWithParentBits` warnings, present only when there are any. */
   warnings?: string[]
   /**
    * Present only for `detail: 'trash-mode-unsafe'`: both modes, the reasons and

@@ -37,7 +37,7 @@ export type ParkedRootResult =
       created: boolean
       /** What became of the parent's bits on the area (`mkdirWithParentBits`). */
       bitsApplied: BitsApplied
-      /** Why the area is narrower than the parent's bits (setgid dropped, say); empty when it is not. */
+      /** `mkdirWithParentBits`' warnings for the area (see `MkdirParentBitsResult`). */
       warnings: string[]
     }
   /**

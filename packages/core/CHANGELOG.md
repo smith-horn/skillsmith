@@ -10,31 +10,38 @@ All notable changes to `@skillsmith/core` are documented here.
   type included), and creates or verifies `<R>/.skillsmith-staging/` with R's permission bits
   (sticky and setgid included), binding that too; a missing or non-directory R is `root-unsafe`, a
   symlink or non-directory at ST is `staging-unsafe`, and the sync of R after creating ST is
-  recorded (`unsupported` accepted, any other failure stops the write). `withSkillWriteLock(binding,
-  label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
+  recorded (`unsupported` accepted, any other failure stops the write with `staging-unsafe` and
+  `path` = R, not ST). `staging-unsafe` is also raised for a mode that exposes more than R allows, a
+  failed mkdir, lstat, open, fstat or chmod of ST, an ST that is not a usable directory (not ours,
+  or changed while it was being made), a realpath of ST that cannot be resolved or differs from ST,
+  and ST swapped while it was bound. `withSkillWriteLock(binding, label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
   lock file, re-verifies what was bound before requesting the lock and again under it, and runs
   `fn(ctx)`. The check before the lock refuses a root swapped before the call, so no lock file is
   created in the replacement; Node has no openat-style relative create, so a swap after that check
   still gets a lock file created by path; the check under the lock refuses it before `fn` runs, and
   the release then removes that lock file again, leaving nothing of ours in the replacement root.
   `ctx.check(scope?)`
-  re-verifies R, ST, the lock file and optional operation-directory and backup-area components. It
-  returns `{ ok: true, value }` or `{ ok: false, stop }` where `stop.code` is `busy` (lock 1's wait
+  re-verifies R, ST, the lock file and optional operation-directory and backup-area components, and
+  throws `SkillWriteStop` when one is not the one that was bound. `withSkillWriteLock` returns
+  `{ ok: true, value }` when `fn` completes, or `{ ok: false, stop }` when a `SkillWriteStop` ends
+  it, where `stop.code` is `busy` (lock 1's wait
   ran out; `stop.reason` and `stop.detail` keep owned-lock's reason and remedy, except that another
   user's unreadable claim gets a retry-later message that says not to remove it), `root-changed`,
   `staging-unsafe`, `backup-unsafe` or `root-unsafe`; anything else `fn` throws, `LockOrderError` and
-  a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. When the
-  staging directory is narrower than the root's permission bits, `bindSkillsRoot` returns `warnings:
-  string[]` on the binding, and every `withSkillWriteLock` result (ok or refused) carries them as
-  `warnings` (absent when empty); a staging directory that exposes more than the root allows (see
-  SMI-7149 below) is `staging-unsafe`. Exported with `SkillWriteStop`,
+  a `StuckLockError` from a lock `fn` took itself included, propagates, never as `busy`. `bindSkillsRoot`
+  returns the staging directory's `warnings: string[]` (see SMI-7149 below) on the binding, and every
+  `withSkillWriteLock` result (ok or refused) carries them as `warnings` (absent when empty); a
+  staging directory that exposes more than the root allows (see SMI-7149 below) is `staging-unsafe`.
+  Exported with `SkillWriteStop`,
   `checkSkillsRootBinding` and `skillsRootLockPaths(root)` (the lock file and its reclaim lock; the
   `doctor locks` wiring and skills-root discovery come in step 6). Not built here: creating an absent
   root, the operation directory and its record, the backup-area binding, routing the existing writers
   through lock 1.
 - **Added**: SMI-6531 (A1 step 2) -- the staging `.gitignore` hint. Computed by
   `stagingGitignoreHint` only for the run whose `mkdir` created `.skillsmith-staging/`, and only
-  after lock 1 is released; returned as `gitignoreHint` on the result. The `git check-ignore` pair is
+  after lock 1 is released; returned as `gitignoreHint` on the result. It suggests
+  `.skillsmith-writes.lock*` and `.skillsmith-staging/`, and is shown when the lock file, its
+  `.reclaim` lock or the staging directory would not be ignored. The `git check-ignore` calls are
   hardened: `git -c core.fsmonitor=false`, every environment variable whose upper-cased name starts
   with `GIT_` dropped from the child's environment (redirects such as `GIT_DIR`, `GIT_CONFIG*`,
   `GIT_EXEC_PATH`, `GIT_TRACE*`, and Windows-cased spellings), except `GIT_CEILING_DIRECTORIES` (in any
@@ -80,9 +87,12 @@ All notable changes to `@skillsmith/core` are documented here.
   which grants no access by itself; a reaching class with fewer bits because the filesystem refused
   `chmod`; a sticky bit lost with no reaching writer; a sticky bit added) is a different directory:
   the call succeeds, the cause is recorded on the result
-  (`bitsApplied`, `stagingBits`; `not-applied` now also carries the actual mode), and a `warnings:
-  string[]` names what differs and the reason, on `mkdirWithParentBits`, `ensureParkedRoot`,
-  `SkillsRootBinding` and `withSkillWriteLock`. A difference only in a class the parent does not let
+  (`bitsApplied`, `stagingBits`; `not-applied` carries the actual mode), and `warnings: string[]`
+  (on `mkdirWithParentBits`, `ensureParkedRoot`, `SkillsRootBinding` and `withSkillWriteLock`)
+  holds at most one sentence naming those differences and the reason; on a platform with no
+  no-follow open it always holds one saying the bits could not be verified. `bitsApplied` records
+  what the call did, not whether the bits match: a directory this call did not make reports
+  `not-applied` with reason `existing-directory`. `BitsApplied` and `DirSyncOutcome` are exported as types. A difference only in a class the parent does not let
   through, or in owner bits, is exact and says nothing (a root tightened to `0700` after a `0755`
   staging directory was made does not refuse it). A platform with no no-follow open (Windows) is never
   judged on mode, for a new or an existing directory: the actual mode is recorded and a warning says

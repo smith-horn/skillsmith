@@ -63,8 +63,9 @@
  *    no writer, or a sticky bit added is a
  *    different directory: the call succeeds, the cause is recorded as
  *    `bitsApplied` (`exact`, `mismatch` with the actual bits, `not-applied`
- *    with the reason, errno and actual bits), and `warnings` says in words
- *    what differs and why. A caller that has a place to show a warning shows it;
+ *    with the reason, errno and actual bits), and `warnings` says what differs
+ *    and why (see the result type). A caller that has a place to show a
+ *    warning shows it;
  *  - on a platform with no no-follow open the mode is never judged, whether
  *    this call made the directory or found it: the mode there is synthetic, so
  *    the actual mode is recorded and a warning says the bits could not be
@@ -115,9 +116,21 @@ export type MkdirParentBitsResult =
       created: boolean
       /** The directory's identity from the last `lstat` this call made. */
       identity: BoundIdentity
-      /** What became of the parent's bits; `existing-directory` when this call did not make it. */
+      /**
+       * What this call did with the parent's bits, not whether they match: a
+       * directory this call did not make is `not-applied` / `existing-directory`,
+       * and on a platform with no no-follow open it is `no-nofollow-open`.
+       */
       bitsApplied: BitsApplied
-      /** One sentence per way the directory is narrower than the parent's bits; empty when it is not. */
+      /**
+       * At most one sentence for the caller to show. It names the differences
+       * the policy reports (bits missing from a class the parent lets through,
+       * setgid added or lost, sticky added, or sticky lost where no reaching
+       * class can write; a gained read, write or execute bit, or sticky lost
+       * where one can, is refused instead); owner bits and classes the parent does not let through
+       * are not compared. On a platform with no no-follow open it always
+       * holds one sentence saying the bits could not be verified.
+       */
       warnings: string[]
     }
   | {

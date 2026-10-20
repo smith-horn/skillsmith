@@ -11,6 +11,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import { LockOrderError, setLockTrackerEnabledForTests } from '../../../src/config/lock-tracker.js'
+import { PARKED_DIR_NAME } from '../../../src/install/park-tree.destination.js'
 import {
   PARKED_GITIGNORE_HINT,
   STAGING_GITIGNORE_HINT,
@@ -30,7 +31,7 @@ import {
 
 // The plan's text (§3.2), spelled out so a drifted constant fails here.
 const STAGING_LINE =
-  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock and .skillsmith-staging/ to .gitignore"
+  "hint: to keep Skillsmith's temporary files out of git status, add .skillsmith-writes.lock* and .skillsmith-staging/ to .gitignore"
 const PARKED_LINE =
   "hint: to keep Skillsmith's parked copies out of git status, add .skillsmith-parked/ to .gitignore"
 
@@ -79,11 +80,30 @@ describe('staging hint (T-N1)', () => {
     expectOnlyCheckIgnore(skillsRoot)
   })
 
-  it('is silent when both entries are in the repo .gitignore, checking each path with its own call', async () => {
-    put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock\n.skillsmith-staging/\n')
+  it('is silent when both entries are in the repo .gitignore, checking each of the three paths with its own call', async () => {
+    put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock*\n.skillsmith-staging/\n')
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
     expect(expectOnlyCheckIgnore(skillsRoot)).toEqual([
       '.skillsmith-writes.lock',
+      '.skillsmith-writes.lock.reclaim',
+      '.skillsmith-staging/owner.json',
+    ])
+  })
+
+  it('hints when the lock file is ignored but its .reclaim lock is not, and is silent once `.lock*` covers both', async () => {
+    put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock\n.skillsmith-staging/\n')
+    expect(await stagingGitignoreHint(skillsRoot)).toBe(STAGING_LINE)
+    // the lock file was ignored, so the reclaim path was asked about next and settled it
+    expect(expectOnlyCheckIgnore(skillsRoot)).toEqual([
+      '.skillsmith-writes.lock',
+      '.skillsmith-writes.lock.reclaim',
+    ])
+    put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock*\n.skillsmith-staging/\n')
+    expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
+    // the silence came from all three checks answering "ignored", not from a check that never ran
+    expect(expectOnlyCheckIgnore(skillsRoot).slice(-3)).toEqual([
+      '.skillsmith-writes.lock',
+      '.skillsmith-writes.lock.reclaim',
       '.skillsmith-staging/owner.json',
     ])
   })
@@ -91,7 +111,7 @@ describe('staging hint (T-N1)', () => {
   it('is silent when both entries are in .git/info/exclude', async () => {
     put(
       path.join(repo, '.git', 'info', 'exclude'),
-      '.skillsmith-writes.lock\n.skillsmith-staging/\n'
+      '.skillsmith-writes.lock*\n.skillsmith-staging/\n'
     )
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
     expectOnlyCheckIgnore(skillsRoot)
@@ -101,7 +121,7 @@ describe('staging hint (T-N1)', () => {
     expect(await stagingGitignoreHint(skillsRoot)).toBe(STAGING_LINE) // control: the file matters
     put(
       path.join(sb.home, '.config', 'git', 'ignore'),
-      '.skillsmith-writes.lock\n.skillsmith-staging/\n'
+      '.skillsmith-writes.lock*\n.skillsmith-staging/\n'
     )
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
   })
@@ -111,7 +131,7 @@ describe('staging hint (T-N1)', () => {
     expect(await stagingGitignoreHint(skillsRoot)).toBeNull()
   })
 
-  it('hints when only one of the two entries is ignored, in either order', async () => {
+  it('hints when only one of the two .gitignore entries is present, in either order', async () => {
     put(path.join(repo, '.gitignore'), '.skillsmith-writes.lock\n')
     expect(await stagingGitignoreHint(skillsRoot)).toBe(STAGING_LINE)
     put(path.join(repo, '.gitignore'), '.skillsmith-staging/\n')
@@ -150,6 +170,11 @@ describe('parked-area hint', () => {
     const hint = await parkedAreaGitignoreHint(skillsRoot, 'op-77')
     expect(hint).toBe(PARKED_LINE)
     expect(expectOnlyCheckIgnore(skillsRoot)).toEqual(['.skillsmith-parked/op-77'])
+  })
+
+  it('asks about a path under the directory name the parked area is really made with', async () => {
+    await parkedAreaGitignoreHint(skillsRoot, 'op-77')
+    expect(expectOnlyCheckIgnore(skillsRoot)).toEqual([`${PARKED_DIR_NAME}/op-77`])
   })
 
   it('is silent under a .skillsmith-parked/ rule, whether or not the area exists', async () => {
