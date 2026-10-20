@@ -165,6 +165,8 @@ Disposition is one of: `FIX-NOW` (stale, fixed in this PR), `STILL-TRUE` (assert
 - [ ] `docker exec skillsmith-dev-1 npm run preflight`
 - [ ] [Manual testing steps specific to this change]
 - [ ] Linear issue(s) updated with commit SHA
+- [ ] Every verification tick and run record names the PR head SHA it was measured at (the tree identity measured inside the container for a container run); a later commit touching the tested paths reopens it, and evidence naming no commit fails. Exceptions (PR-18 "Evidence currency"): equal content digest, a shown comment-only diff, or an in-place supersession note.
+- [ ] A script that a durable claim cites as producing its evidence is committed beside that evidence. A scratchpad path may appear only for throwaway output, marked `[scratch-only: not evidence]`; throwaway fixtures stay in the scratchpad.
 - [ ] Surface grounding (P-1, P-2): every cross-surface reference has a canonical source + verification command
 - [ ] PL/pgSQL name-collision audit (P-3) completed _if_ plan touches a `RETURNS TABLE` function
 - [ ] Smoke path (P-4) specified and run post-deploy (or `scripts/smoke-prod.sh` invoked once it exists)
