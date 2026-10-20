@@ -3,16 +3,17 @@
  * parent's mode, A the directory's actual mode. Each row states the verdict the
  * rule gives and, for a non-exact verdict, a fragment the explanation must carry.
  *
- * A class REACHES the directory when P gives it execute. Only a reaching class
- * is judged; owner bits and setuid never are.
+ * The promise is parity with the parent through the mode bits. A class REACHES
+ * the directory through the parent: other when P gives other execute, group when
+ * P gives group OR other execute. Only a reaching class is judged; owner bits
+ * and setuid never are, and setgid, which grants nothing by itself, is only a
+ * warning.
  */
 import { describe, expect, it } from 'vitest'
 import {
   judgeMode,
+  modeProblemOf,
   modeUnsafeMessage,
-  octal,
-  remedyCommand,
-  remedyMode,
 } from '../../../src/install/mkdir-parent-bits.policy.js'
 
 type Kind = 'exact' | 'unsafe' | 'narrower'
@@ -22,14 +23,20 @@ const ROWS: Array<[string, number, number, Kind, string | null]> = [
   ['exact 1777', 0o1777, 0o1777, 'exact', null],
   ['exact 2775', 0o2775, 0o2775, 'exact', null],
   ['wider group, group reaching', 0o755, 0o775, 'unsafe', 'group write'],
-  ['wider group, group not reaching', 0o705, 0o775, 'exact', null],
+  // The group reaches through the parent's OTHER execute bit: its group can differ from the parent's.
+  ['wider group, group reaching only through other execute', 0o705, 0o775, 'unsafe', 'group read'],
+  ['wider group, P 0701 (other execute only)', 0o701, 0o770, 'unsafe', 'group read'],
+  ['wider group, nobody reaches (P 0700)', 0o700, 0o770, 'exact', null],
   ['wider other, other reaching', 0o751, 0o757, 'unsafe', 'other read'],
   ['wider other, other not reaching', 0o750, 0o757, 'exact', null],
+  ['wider other, only group reaches (P 0710)', 0o710, 0o717, 'exact', null],
   ['extra owner bits', 0o555, 0o755, 'exact', null],
   ['owner bits differ, group and other equal', 0o777, 0o077, 'exact', null],
   ['extra setuid', 0o755, 0o4755, 'exact', null],
-  ['extra setgid, group reaching', 0o755, 0o2755, 'unsafe', 'setgid'],
-  ['extra setgid, group not reaching', 0o705, 0o2705, 'exact', null],
+  // Setgid grants no access by itself: a warning, never unsafe, reaching or not.
+  ['extra setgid, group reaching', 0o755, 0o2755, 'narrower', 'setgid'],
+  ['extra setgid, same group bits (P 0750)', 0o750, 0o2750, 'narrower', 'setgid'],
+  ['extra setgid, nobody reaches', 0o700, 0o2700, 'narrower', 'setgid'],
   ['lost setgid', 0o2755, 0o755, 'narrower', 'setgid'],
   ['lost setgid, group not reaching', 0o2705, 0o705, 'narrower', 'setgid'],
   ['lost sticky, a reaching writer', 0o1777, 0o777, 'unsafe', 'sticky'],
@@ -72,62 +79,84 @@ describe('judgeMode: the case table', () => {
     expect(judgeMode(0o755, 0o1755)).toEqual({ kind: 'narrower', missing: [], added: ['sticky'] })
   })
 
+  it('an added setgid is a warning that says so, never a refusal', () => {
+    expect(judgeMode(0o750, 0o2750)).toEqual({ kind: 'narrower', missing: [], added: ['setgid'] })
+    expect(judgeMode(0o755, 0o2777).kind).toBe('unsafe') // the wider bits are what refuse it
+  })
+
   it('names every missing bit of a reaching class and no bit of a non-reaching one', () => {
-    // group does not reach (P group has no execute): its read is not named.
+    // other does not reach (P other has no execute): its read is not named. Group reaches.
+    expect(judgeMode(0o754, 0o700)).toEqual({
+      kind: 'narrower',
+      missing: ['group read', 'group execute'],
+      added: [],
+    })
+    // P 0741: group has no execute of its own but reaches through other's, so its read IS named
+    // (it was not, before the group class was allowed to reach through the other execute bit).
     expect(judgeMode(0o741, 0o700)).toEqual({
       kind: 'narrower',
-      missing: ['other execute'],
+      missing: ['group read', 'other execute'],
       added: [],
     })
   })
+
+  it('PROPERTY: unless the verdict is unsafe, a reaching class never has a bit the parent lacks', () => {
+    const groupReaches = (p: number): boolean => (p & 0o011) !== 0
+    const otherReaches = (p: number): boolean => (p & 0o001) !== 0
+    let checked = 0
+    for (let p = 0; p <= 0o7777; p += 1) {
+      for (let a = 0; a <= 0o777; a += 1) {
+        const wider =
+          (groupReaches(p) && ((a >> 3) & ~(p >> 3) & 0o7) !== 0) ||
+          (otherReaches(p) && (a & ~p & 0o7) !== 0)
+        const kind = judgeMode(p, a).kind
+        if (wider && kind !== 'unsafe') throw new Error(`P=${p.toString(8)} A=${a.toString(8)}`)
+        if (!wider && kind === 'unsafe' && (p & 0o1000) === 0) {
+          throw new Error(`refused without a wider bit: P=${p.toString(8)} A=${a.toString(8)}`)
+        }
+        checked += 1
+      }
+    }
+    expect(checked).toBe(4096 * 512)
+  })
 })
 
-describe('the remedy', () => {
-  it('satisfies the policy against every possible parent mode (owner bits and all)', () => {
-    for (let p = 0; p <= 0o7777; p += 1) {
-      expect(judgeMode(p, remedyMode(p)), `P=${octal(p)}`).toEqual({ kind: 'exact' })
-    }
-  })
+describe('the refusal text', () => {
+  const args = {
+    subject: '.skillsmith-staging',
+    parent: 'the skills root',
+    wanted: 0o755,
+    actual: 0o777,
+    reasons: ['group write is allowed where the parent does not allow it', 'other read is x'],
+  }
 
-  it('turns every unsafe row in the table into an exact directory', () => {
-    for (const [label, p, a, kind] of ROWS) {
-      if (kind !== 'unsafe') continue
-      expect(judgeMode(p, a).kind, label).toBe('unsafe')
-      expect(judgeMode(p, remedyMode(p)).kind, label).toBe('exact')
-    }
-  })
-
-  it('is the parent’s permission, setgid and sticky bits with owner rwx, never setuid', () => {
-    expect(remedyMode(0o1777)).toBe(0o1777)
-    expect(remedyMode(0o2755)).toBe(0o2755)
-    expect(remedyMode(0o4755)).toBe(0o755)
-    expect(remedyMode(0o333)).toBe(0o733)
-  })
-
-  it('is an owner-only chmod command with a four-digit mode and the path', () => {
-    expect(remedyCommand('/srv/skills/.skillsmith-staging', 0o755)).toBe(
-      'chmod 0755 /srv/skills/.skillsmith-staging'
-    )
-    expect(remedyCommand('/srv/skills/.s', 0o1777)).toBe('chmod 1777 /srv/skills/.s')
-  })
-
-  it('quotes a path a shell would split or expand', () => {
-    expect(remedyCommand('/a b/it’s', 0o755)).toBe(`chmod 0755 '/a b/it’s'`)
-    expect(remedyCommand(`/a'b`, 0o755)).toBe(`chmod 0755 '/a'\\''b'`)
-  })
-
-  it('the refusal text names both modes, the reasons and the remedy', () => {
-    const message = modeUnsafeMessage({
-      subject: '.skillsmith-staging',
-      parent: 'the skills root',
-      wanted: 0o755,
-      actual: 0o777,
-      reasons: ['group write is allowed where the parent does not allow it'],
-      remedy: 'chmod 0755 /r/.skillsmith-staging',
-    })
+  it('names both modes and the reasons, and what must hold', () => {
+    const message = modeUnsafeMessage(args)
     expect(message).toContain('mode 0777')
     expect(message).toContain('the skills root has 0755')
     expect(message).toContain('group write is allowed')
-    expect(message).toContain('As its owner, run: chmod 0755 /r/.skillsmith-staging')
+    expect(message).toContain('other read is x')
+    expect(message).toContain('must not give other users more access than the skills root does')
+  })
+
+  it('prints no command to copy: a symlink swapped in before it runs would be followed', () => {
+    const message = modeUnsafeMessage(args)
+    expect(message).not.toMatch(/chmod/i)
+    expect(message).not.toMatch(/run:/i)
+  })
+
+  it('the ModeProblem carries the same fields and message', () => {
+    expect(modeProblemOf(args)).toEqual({
+      wanted: 0o755,
+      actual: 0o777,
+      reasons: args.reasons,
+      message: modeUnsafeMessage(args),
+    })
+    expect(Object.keys(modeProblemOf(args)).sort()).toEqual([
+      'actual',
+      'message',
+      'reasons',
+      'wanted',
+    ])
   })
 })

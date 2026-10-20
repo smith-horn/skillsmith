@@ -159,7 +159,7 @@ function parkTreeInner(
       errno: area.errno,
       detail: area.detail,
       parkedAreaCreated: area.created,
-      // A mode refusal names both modes and the remedy; shapeResult carries the key.
+      // A mode refusal names both modes and the reasons; shapeResult carries the key.
       ...(area.modeProblem === undefined ? {} : { modeProblem: area.modeProblem }),
     }
   }

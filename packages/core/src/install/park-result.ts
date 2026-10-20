@@ -17,6 +17,7 @@
  */
 import path from 'node:path'
 import util from 'node:util'
+import type { ModeProblem } from './mkdir-parent-bits.policy.js'
 import type { ParkedIndexEntry } from './parked-index.js'
 import { checkCaller } from './park-callers.js'
 import type { ParkCaller } from './park-callers.js'
@@ -85,6 +86,11 @@ export interface ParkResult extends ParkResultFields {
    * dropped, group or other write missing, and why). Present only when it is.
    */
   warnings?: string[]
+  /**
+   * Present only for `detail: 'trash-mode-unsafe'`: both modes, the reasons and
+   * the message of the parked area's refusal (no command).
+   */
+  modeProblem?: ModeProblem
   [extra: string]: unknown
 }
 
@@ -93,6 +99,7 @@ export type PartialParkResult = { status: ParkStatus } & Partial<ParkResultField
     sidecarError?: string
     indexError?: string
     warnings?: string[]
+    modeProblem?: ModeProblem
     /** A moved tree's index line, which `prepareParkTree` strips before shaping. */
     indexEntry?: ParkedIndexEntry
     [extra: string]: unknown

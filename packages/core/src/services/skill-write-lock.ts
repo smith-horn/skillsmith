@@ -87,10 +87,9 @@ export async function bindSkillsRoot(skillsDir: string): Promise<SkillsRootBindi
         ? modeUnsafeMessage({
             subject: STAGING_DIR_NAME,
             parent: 'the skills root',
-            wanted: made.wanted ?? 0,
-            actual: made.actual ?? 0,
-            reasons: made.reasons ?? [],
-            remedy: made.remedy ?? '',
+            wanted: made.wanted,
+            actual: made.actual,
+            reasons: made.reasons,
           })
         : made.errno === null
           ? `${STAGING_DIR_NAME} is not a usable directory (${made.phase})`

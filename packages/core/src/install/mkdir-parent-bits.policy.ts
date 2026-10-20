@@ -2,19 +2,30 @@
  * SMI-6531 (A1 step 2): the permission policy for `mkdir-parent-bits.ts`. What
  * a directory's actual mode may be, given the mode its parent has.
  *
+ * THE PROMISE is parity with the parent: the directory never gives other users
+ * more access, through the mode bits as seen through the parent, than the
+ * parent itself does. It is a promise about mode bits and nothing else. ACLs,
+ * bind mounts and other aliases of the directory are not modelled, the same as
+ * they are not for the parent's own files, and the check is not a boundary
+ * against the directory's owner, who can `chmod` after the check.
+ *
  * Let P be the parent's mode and A the directory's, both `& 0o7777`.
  *
  *  - The owner class (0o700) and setuid (0o4000) never make a directory unsafe
  *    and are never reported: the owner can change the mode at will, so the mode
  *    is not a boundary against them (the identity checks protect the contents).
- *  - A class (group, other) REACHES the directory when P gives it execute: it
- *    can only get to the directory through the parent. For a reaching class,
- *    a read, write or execute bit A gives it that P does not is UNSAFE (wider),
+ *  - A class REACHES the directory when it can get to it through the parent.
+ *    The other class reaches when P gives other execute (`P & 0o001`). The
+ *    group class reaches when P gives group OR other execute (`P & 0o011`): a
+ *    member of the directory's group traverses the parent through its other
+ *    execute bit, and the directory's group can differ from the parent's (on
+ *    Linux a new directory takes the process's egid). For a reaching class, a
+ *    read, write or execute bit A gives it that P does not is UNSAFE (wider),
  *    and a bit P gives it that A lacks is a warning. A class the parent does not
  *    let through is ignored: its bits in A change nobody's access (a root
  *    tightened to 0700 after a staging directory was made at 0755 is fine).
- *  - Setgid: A has it and P does not, with the group reaching: UNSAFE. P has it
- *    and A does not: a warning.
+ *  - Setgid: it grants no access by itself. A has it and P does not: a warning
+ *    (setgid added). P has it and A does not: a warning (setgid missing).
  *  - Sticky: P has it and A does not: UNSAFE when a reaching class can write
  *    to A (anyone who can write may rename or remove another user's entries),
  *    otherwise a warning. A has it and P does not: a warning.
@@ -24,10 +35,10 @@
  * are synthetic. The caller records the actual mode and warns that the bits
  * could not be verified.
  *
- * Every unsafe verdict comes with a remedy the directory's owner can run:
- * `chmod <P & 0o3777 with owner rwx> <path>`. That mode satisfies this policy
- * against P by construction (a reaching class has exactly P's bits, the
- * setgid/sticky bits match, the owner class is not judged).
+ * An unsafe verdict is refused with a message that names both modes and the
+ * reasons and says what is wrong; it prints no command. A command printed for
+ * the user to copy could be run after a group member swapped the directory for
+ * a symlink, and `chmod` follows it.
  *
  * @module @skillsmith/core/install/mkdir-parent-bits.policy
  */
@@ -36,9 +47,17 @@ const SETGID = 0o2000
 const STICKY = 0o1000
 /** Every bit a mode can carry. */
 const ALL_BITS = 0o7777
-/** The bits the remedy sets: permissions, setgid and sticky; never setuid. */
-const REMEDY_MASK = 0o3777
-const OWNER_RWX = 0o700
+
+/** Why a directory was refused for its mode: both modes, the reasons, and the sentence built from them. */
+export interface ModeProblem {
+  /** The parent's bits. */
+  wanted: number
+  /** The directory's actual bits. */
+  actual: number
+  reasons: string[]
+  /** One sentence: both modes, the reasons, what must hold. No command. */
+  message: string
+}
 
 export type ModeVerdict =
   /** Nothing to refuse and nothing to say. */
@@ -47,15 +66,15 @@ export type ModeVerdict =
   | { kind: 'unsafe'; reasons: string[] }
   /**
    * Not unsafe, but different where it matters: `missing` bits the parent has
-   * and the directory lacks, `added` bits (sticky) the directory has and the
-   * parent does not.
+   * and the directory lacks, `added` bits (sticky, setgid) the directory has and
+   * the parent does not.
    */
   | { kind: 'narrower'; missing: string[]; added: string[] }
 
-/** The classes a parent's execute bit lets through, with their shift and name. */
+/** The classes the parent can let through, with their shift, name and the parent bits that let them. */
 const REACHABLE_CLASSES = [
-  { name: 'group', shift: 3 },
-  { name: 'other', shift: 0 },
+  { name: 'group', shift: 3, via: 0o011 },
+  { name: 'other', shift: 0, via: 0o001 },
 ] as const
 const PERMISSIONS = [
   { name: 'read', bit: 0o4 },
@@ -72,8 +91,7 @@ export function octal(mode: number): string {
 export function judgeMode(want: number, actual: number): ModeVerdict {
   const p = want & ALL_BITS
   const a = actual & ALL_BITS
-  const reaching = REACHABLE_CLASSES.filter(({ shift }) => ((p >> shift) & 0o1) !== 0)
-  const groupReaches = reaching.some(({ name }) => name === 'group')
+  const reaching = REACHABLE_CLASSES.filter(({ via }) => (p & via) !== 0)
   const unsafe: string[] = []
   const missing: string[] = []
   const added: string[] = []
@@ -88,9 +106,7 @@ export function judgeMode(want: number, actual: number): ModeVerdict {
   }
   if ((a & STICKY) !== 0 && (p & STICKY) === 0) added.push('sticky')
   if ((p & SETGID) !== 0 && (a & SETGID) === 0) missing.push('setgid')
-  if ((a & SETGID) !== 0 && (p & SETGID) === 0 && groupReaches) {
-    unsafe.push('it has setgid where the parent does not')
-  }
+  if ((a & SETGID) !== 0 && (p & SETGID) === 0) added.push('setgid')
   for (const { name, shift } of reaching) {
     for (const permission of PERMISSIONS) {
       const bit = permission.bit << shift
@@ -106,32 +122,36 @@ export function judgeMode(want: number, actual: number): ModeVerdict {
   return { kind: 'narrower', missing, added }
 }
 
-/** The mode that satisfies `judgeMode` against `want`: its permission, setgid and sticky bits, owner rwx. */
-export function remedyMode(want: number): number {
-  return (want & REMEDY_MASK) | OWNER_RWX
-}
-
-/** Quote a path for a POSIX shell only when it needs it. */
-function shellQuote(p: string): string {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`
-}
-
-/** The command the directory's owner can run to make `dir` satisfy the policy against `want`. */
-export function remedyCommand(dir: string, want: number): string {
-  return `chmod ${octal(remedyMode(want))} ${shellQuote(dir)}`
-}
-
-/** The refusal text for an unsafe directory: both modes, why, and the owner's remedy. */
+/**
+ * The refusal text for an unsafe directory: both modes, why, and what must
+ * hold. It carries no command (see the module header).
+ */
 export function modeUnsafeMessage(a: {
   subject: string
   parent: string
   wanted: number
   actual: number
   reasons: readonly string[]
-  remedy: string
 }): string {
   return (
     `${a.subject} has mode ${octal(a.actual)} where ${a.parent} has ${octal(a.wanted)}: ` +
-    `${a.reasons.join('; ')}. As its owner, run: ${a.remedy}`
+    `${a.reasons.join('; ')}. It must not give other users more access than ${a.parent} does. ` +
+    `Fix its permissions or remove it; if another user owns it, ask them.`
   )
+}
+
+/** The `ModeProblem` for a refused directory, its message included. */
+export function modeProblemOf(a: {
+  subject: string
+  parent: string
+  wanted: number
+  actual: number
+  reasons: readonly string[]
+}): ModeProblem {
+  return {
+    wanted: a.wanted,
+    actual: a.actual,
+    reasons: [...a.reasons],
+    message: modeUnsafeMessage(a),
+  }
 }

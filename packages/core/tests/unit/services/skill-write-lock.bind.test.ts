@@ -190,15 +190,15 @@ describe('T-K2 (single uid): staging takes the root permission bits, sticky incl
       return root
     }
 
-    it('wider than the root is staging-unsafe, and the stop names both modes and the remedy', async () => {
+    it('wider than the root is staging-unsafe, and the stop names both modes and the reasons, with no command', async () => {
       const root = planted(0o755, 0o777)
       const stop = await stopOf(bindSkillsRoot(root))
       expect(stop.code).toBe('staging-unsafe')
       expect(stop.detail).toContain('mode 0777')
       expect(stop.detail).toContain('skills root has 0755')
-      expect(stop.detail).toContain(
-        `As its owner, run: chmod 0755 ${path.join(fs.realpathSync(root), STAGING_DIR_NAME)}`
-      )
+      expect(stop.detail).toContain('group write is allowed')
+      expect(stop.detail).toContain('must not give other users more access than the skills root')
+      expect(stop.detail).not.toMatch(/chmod/i)
     })
 
     it('under a tightened root (0700) an older 0755 ST is accepted with no warning', async () => {
@@ -287,14 +287,15 @@ describe('the permission policy reaches the caller (staging narrower or wider th
     expect('warnings' in r).toBe(false)
   })
 
-  it('ST wider than R is staging-unsafe, and the stop names both modes and the remedy', async () => {
+  it('ST wider than R is staging-unsafe, and the stop names both modes and the reasons, with no command', async () => {
     const root = makeRoot('r', 0o755)
     fchmodLeaving(() => 0o777)
     const stop = await stopOf(bindSkillsRoot(root))
     expect(stop.code).toBe('staging-unsafe')
     expect(stop.detail).toContain('mode 0777')
     expect(stop.detail).toContain('skills root has 0755')
-    expect(stop.detail).toContain('As its owner, run: chmod 0755 ')
+    expect(stop.detail).toContain('group write is allowed')
+    expect(stop.detail).not.toMatch(/chmod/i)
   })
 })
 

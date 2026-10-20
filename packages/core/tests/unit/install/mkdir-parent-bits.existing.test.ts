@@ -13,7 +13,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirWithParentBits } from '../../../src/install/mkdir-parent-bits.js'
+import {
+  mkdirWithParentBits,
+  setNoFollowConstantsForTests,
+} from '../../../src/install/mkdir-parent-bits.js'
 import { ensureParkedRoot, PARKED_DIR_NAME } from '../../../src/install/park-tree.destination.js'
 import { PARKED, cleanup, park, simpleFixture } from './park-tree.helpers.js'
 
@@ -40,6 +43,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setNoFollowConstantsForTests(null)
   vi.restoreAllMocks()
   process.umask(prevUmask)
   fs.rmSync(base, { recursive: true, force: true })
@@ -56,16 +60,60 @@ describe('mkdirWithParentBits on an existing directory', () => {
       created: false,
       wanted: 0o755,
       actual: 0o777,
-      remedy: `chmod 0755 ${dir}`,
     })
+    expect(JSON.stringify(r)).not.toMatch(/chmod|remedy/i)
     expect(fs.statSync(dir).mode & 0o7777).toBe(0o777) // nothing is changed or removed
+  })
+
+  it('a group that reaches the parent only through its OTHER execute bit is judged: P 0701, A 0770 is mode-unsafe', () => {
+    const parent = parentWith(0o701)
+    const dir = existing(parent, 'child', 0o770)
+    const r = mkdirWithParentBits(dir, 0o701)
+    expect(r).toMatchObject({ ok: false, phase: 'mode-unsafe', wanted: 0o701, actual: 0o770 })
+    expect(!r.ok && r.phase === 'mode-unsafe' && r.reasons.join(' ')).toContain('group read')
+    // control: with nobody reaching (P 0700) the same directory is accepted
+    expect(mkdirWithParentBits(dir, 0o700)).toMatchObject({ ok: true, warnings: [] })
+  })
+
+  it('an added setgid is a warning, not a refusal: P 0750, A 2750 succeeds and says setgid was added', () => {
+    const parent = parentWith(0o750)
+    const dir = existing(parent, 'child', 0o2750)
+    expect(fs.statSync(dir).mode & 0o7777).toBe(0o2750) // control: the setgid is really there
+    const r = mkdirWithParentBits(dir, 0o750)
+    expect(r.ok && r.warnings).toEqual([
+      `${dir} has mode 2750, not its parent's 0750; added: setgid ` +
+        '(the directory already existed and was left as it is)',
+    ])
+  })
+
+  it('the platform exemption is not reachable from the call arguments: a hooks.constants is ignored', () => {
+    const parent = parentWith(0o755)
+    const dir = existing(parent, 'child', 0o777)
+    const hooks = { constants: { O_RDONLY: 0 } } as unknown as Parameters<
+      typeof mkdirWithParentBits
+    >[2]
+    expect(mkdirWithParentBits(dir, 0o755, hooks)).toMatchObject({
+      ok: false,
+      phase: 'mode-unsafe',
+    })
+  })
+
+  it('the constants seam refuses to run outside vitest', () => {
+    const saved = process.env.VITEST
+    delete process.env.VITEST
+    try {
+      expect(() => setNoFollowConstantsForTests({ O_RDONLY: 0 })).toThrow(/only under vitest/)
+    } finally {
+      process.env.VITEST = saved
+    }
   })
 
   it('without a no-follow open an existing wider directory is not judged: ok, recorded, warned (control: mode-unsafe with it)', () => {
     const parent = parentWith(0o755)
     const dir = existing(parent, 'child', 0o777)
     expect(mkdirWithParentBits(dir, 0o755)).toMatchObject({ ok: false, phase: 'mode-unsafe' })
-    const r = mkdirWithParentBits(dir, 0o755, { constants: { O_RDONLY: 0 } })
+    setNoFollowConstantsForTests({ O_RDONLY: 0 })
+    const r = mkdirWithParentBits(dir, 0o755)
     expect(r).toMatchObject({
       ok: true,
       created: false,
@@ -77,7 +125,7 @@ describe('mkdirWithParentBits on an existing directory', () => {
     ])
     const link = path.join(parent, 'link')
     fs.symlinkSync(dir, link)
-    expect(mkdirWithParentBits(link, 0o755, { constants: { O_RDONLY: 0 } })).toMatchObject({
+    expect(mkdirWithParentBits(link, 0o755)).toMatchObject({
       ok: false,
       phase: 'not-directory',
     })
@@ -100,7 +148,6 @@ describe('mkdirWithParentBits on an existing directory', () => {
       created: false,
       wanted: 0o1777,
       actual: 0o777,
-      remedy: `chmod 1777 ${dir}`,
     })
   })
 
@@ -151,20 +198,19 @@ describe('mkdirWithParentBits on an existing directory', () => {
 })
 
 describe('ensureParkedRoot on an existing parked area', () => {
-  it('wider than the parent is refused as trash-mode-unsafe, not created, with both modes and the remedy', () => {
+  it('wider than the parent is refused as trash-mode-unsafe, not created, with both modes and the reasons, and no command', () => {
     const parent = parentWith(0o755)
-    const area = existing(parent, PARKED_DIR_NAME, 0o777)
+    existing(parent, PARKED_DIR_NAME, 0o777)
     const r = ensureParkedRoot(parent)
     expect(r).toMatchObject({ ok: false, errno: null, detail: 'trash-mode-unsafe', created: false })
-    expect(!r.ok && r.modeProblem).toMatchObject({
-      wanted: 0o755,
-      actual: 0o777,
-      remedy: `chmod 0755 ${area}`,
-    })
+    expect(!r.ok && r.modeProblem).toMatchObject({ wanted: 0o755, actual: 0o777 })
+    expect(!r.ok && r.modeProblem?.reasons.join(' ')).toContain('group write')
     const message = (!r.ok && r.modeProblem?.message) || ''
     expect(message).toContain('mode 0777')
     expect(message).toContain('its parent has 0755')
-    expect(message).toContain(`As its owner, run: chmod 0755 ${area}`)
+    expect(message).toContain('must not give other users more access than its parent does')
+    expect(message).not.toMatch(/chmod/i)
+    expect(JSON.stringify(r)).not.toMatch(/chmod|remedy/i)
   })
 
   it('a new area the filesystem made wider than the parent is refused the same way, reported created', () => {
@@ -173,7 +219,8 @@ describe('ensureParkedRoot on an existing parked area', () => {
     vi.spyOn(fs, 'fchmodSync').mockImplementation((fd) => real(fd, 0o777))
     const r = ensureParkedRoot(parent)
     expect(r).toMatchObject({ ok: false, errno: null, detail: 'trash-mode-unsafe', created: true })
-    expect(!r.ok && r.modeProblem?.remedy).toBe(`chmod 0755 ${path.join(parent, PARKED_DIR_NAME)}`)
+    expect(!r.ok && r.modeProblem).toMatchObject({ wanted: 0o755, actual: 0o777 })
+    expect(!r.ok && r.modeProblem?.message).toContain(path.join(parent, PARKED_DIR_NAME))
   })
 
   it('a tightened parent (0700) over an older 0755 area is accepted with no warning', () => {
@@ -227,18 +274,20 @@ describe('park() carries the parked area’s warnings', () => {
     expect('warnings' in r).toBe(false)
   })
 
-  it('a wider existing area stops the park as park-failed, naming the modes and the remedy, and nothing is parked', () => {
+  it('a wider existing area stops the park as park-failed, naming both modes and the reasons, and nothing is parked', () => {
     const f = simpleFixture('park-wide-')
     roots.push(f.root)
     fs.chmodSync(f.parent, 0o755)
-    const area = existing(f.parent, PARKED, 0o777)
+    existing(f.parent, PARKED, 0o777)
     const r = park(f.parent, 'tree')
     expect(r).toMatchObject({
       status: 'stopped',
       reason: 'park-failed',
       detail: 'trash-mode-unsafe',
-      modeProblem: { wanted: 0o755, actual: 0o777, remedy: `chmod 0755 ${area}` },
+      modeProblem: { wanted: 0o755, actual: 0o777 },
     })
+    expect(r.modeProblem?.reasons.join(' ')).toContain('group write')
+    expect(r.modeProblem?.message).not.toMatch(/chmod/i)
     expect(fs.existsSync(f.origin)).toBe(true) // the tree did not move
   })
 })

@@ -21,7 +21,8 @@ import { bindIdentity, identityOf, sameIdentity } from './park-tree.identity.js'
 import type { BoundIdentity } from './park-tree.identity.js'
 import { mkdirWithParentBits } from './mkdir-parent-bits.js'
 import type { BitsApplied } from './mkdir-parent-bits.js'
-import { modeUnsafeMessage } from './mkdir-parent-bits.policy.js'
+import { modeProblemOf } from './mkdir-parent-bits.policy.js'
+import type { ModeProblem } from './mkdir-parent-bits.policy.js'
 
 /** The parked area's name inside the parent (ADR-166 D-9, UD26). */
 export const PARKED_DIR_NAME = '.skillsmith-parked'
@@ -48,20 +49,8 @@ export type ParkedRootResult =
       errno: string | null
       detail: string | null
       created: boolean
-      modeProblem?: ParkedAreaModeProblem
+      modeProblem?: ModeProblem
     }
-
-/** Why an existing or new parked area was refused for its mode (`trash-mode-unsafe`). */
-export interface ParkedAreaModeProblem {
-  /** The parent's bits and the area's actual bits. */
-  wanted: number
-  actual: number
-  reasons: string[]
-  /** The `chmod` the area's owner can run to make it acceptable. */
-  remedy: string
-  /** One sentence: both modes, the reasons and the remedy. */
-  message: string
-}
 
 /**
  * Validates, creating it if absent, `<parentAbs>/.skillsmith-parked` (ADR-166
@@ -71,8 +60,9 @@ export interface ParkedAreaModeProblem {
  * a symlink) on the parent's device. Every failure is
  * `park-failed`; `detail` names which (`trash-unusable`, `trash-other-mount`,
  * the spellings A1 plan row Q7 uses, and `trash-mode-unsafe` when the area's
- * mode is refused, with `modeProblem` carrying both modes and the owner's
- * `chmod` remedy).
+ * mode is refused, with `modeProblem` carrying both modes, the reasons and the
+ * message; the promise is parity with the parent's mode bits, see
+ * `mkdir-parent-bits.policy.ts`, and it prints no command).
  *
  * `created` is true only when this call's mkdir made the area, on a refusal
  * after that mkdir too. It drives the
@@ -97,7 +87,7 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
   // through a no-follow descriptor, sticky and setgid included (SMI-7149: a
   // mkdir mode alone loses them under the umask), refuses a symlink or a
   // non-directory, and refuses a mode that exposes the area beyond the parent's
-  // access (`mode-unsafe`, reported as `trash-mode-unsafe` with the remedy).
+  // access (`mode-unsafe`, reported as `trash-mode-unsafe` with `modeProblem`).
   const made = mkdirWithParentBits(parkedRoot, parentStat.mode)
   if (!made.ok) {
     if (
@@ -110,24 +100,18 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
       return { ok: false, errno: made.errno, detail: null, created: made.created }
     }
     if (made.phase === 'mode-unsafe') {
-      const wanted = made.wanted ?? 0
-      const actual = made.actual ?? 0
-      const reasons = made.reasons ?? []
-      const remedy = made.remedy ?? ''
-      const message = modeUnsafeMessage({
-        subject: parkedRoot,
-        parent: 'its parent',
-        wanted,
-        actual,
-        reasons,
-        remedy,
-      })
       return {
         ok: false,
         errno: null,
         detail: 'trash-mode-unsafe',
         created: made.created,
-        modeProblem: { wanted, actual, reasons, remedy, message },
+        modeProblem: modeProblemOf({
+          subject: parkedRoot,
+          parent: 'its parent',
+          wanted: made.wanted,
+          actual: made.actual,
+          reasons: made.reasons,
+        }),
       }
     }
     return { ok: false, errno: null, detail: 'trash-unusable', created: made.created }

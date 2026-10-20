@@ -24,15 +24,23 @@
  * changes nothing, because the descriptor still names the original directory.
  *
  * What is not closed: a crash between the `mkdir` and the `fchmod` leaves the
- * directory with `(want | 0o700) & ~umask` (the owner bits are always present,
- * the rest is filtered by the umask). An existing directory keeps the bits it
- * has (it belongs to whoever made it) but is judged by the policy below, so a
- * directory this call made and the policy refuses as `mode-unsafe` is refused
- * again by the next call, until its owner runs the `chmod` the refusal names;
- * "refused every time" applies only to a directory the policy refuses, and a
- * wider one planted before the call is refused the same way. Nothing is ever
- * removed. The mode check is not a boundary against the directory's owner: an
- * owner can `chmod` after the check. The identity checks protect the contents.
+ * directory with the permission bits `(want | 0o700) & ~umask`, owner rwx
+ * among them (the umask filters the rest). Whether the sticky and setgid bits
+ * survive depends on the platform: macOS `mkdir` drops them, Linux keeps
+ * sticky and inherits setgid from a setgid parent. An existing directory keeps
+ * the bits it has (it belongs to whoever made it) but is judged by the policy
+ * below, so a directory this call made and the policy refuses as `mode-unsafe`
+ * is refused again by the next call, until its permissions are fixed or it is
+ * removed; the same holds for a wider one planted before the call. Nothing is
+ * ever removed here. The refusal prints no command: one to copy could run after
+ * a swap for a symlink, and `chmod` follows it.
+ *
+ * What the mode check promises is PARITY with the parent: the directory never
+ * gives other users more access, through the mode bits seen through the parent,
+ * than the parent does. ACLs, bind mounts and other aliases are not modelled,
+ * the same as for the parent's own files, and the check is not a boundary
+ * against the directory's owner, who can `chmod` after it. The identity checks
+ * protect the contents.
  *
  * Applying the bits can be refused without that being a failure of the
  * directory: a platform without `O_DIRECTORY`/`O_NOFOLLOW` (Windows) is not
@@ -43,14 +51,15 @@
  * final `lstat` where there is none) and judged by `mkdir-parent-bits.policy.ts`,
  * whose header is the rule. In short:
  *
- *  - a class the parent lets through (it has execute for it) with a read,
- *    write or execute bit the parent does not give it, a setgid the parent
- *    lacks, or a lost sticky bit where a reaching class can write, FAILS the
- *    call (`mode-unsafe`, with the wanted and actual bits, the reasons and the
- *    owner's `chmod` remedy). Bits of a class the parent does not let through,
- *    and owner and setuid bits, are not judged;
+ *  - a class the parent lets through (other: the parent has other execute;
+ *    group: it has group or other execute) with a read, write or execute bit
+ *    the parent does not give it, or a lost sticky bit where a reaching class
+ *    can write, FAILS the call (`mode-unsafe`, with the wanted and actual bits
+ *    and the reasons). Bits of a class the parent does not let through, and
+ *    owner and setuid bits, are not judged;
  *  - otherwise a reaching class with fewer bits than the parent, setgid
- *    dropped, a sticky bit lost with no writer, or a sticky bit added is a
+ *    dropped or added (it grants no access by itself), a sticky bit lost with
+ *    no writer, or a sticky bit added is a
  *    different directory: the call succeeds, the cause is recorded as
  *    `bitsApplied` (`exact`, `mismatch` with the actual bits, `not-applied`
  *    with the reason, errno and actual bits), and `warnings` says in words
@@ -70,7 +79,7 @@ import type { BigIntStats } from 'node:fs'
 import { errCode } from './park-result.js'
 import { identityOf, sameIdentity } from './park-tree.identity.js'
 import type { BoundIdentity } from './park-tree.identity.js'
-import { judgeMode, octal, remedyCommand } from './mkdir-parent-bits.policy.js'
+import { judgeMode, octal } from './mkdir-parent-bits.policy.js'
 
 /** Permission bits, setgid and sticky; setuid is dropped (a directory's setuid is meaningless). */
 export const PARENT_BITS_MASK = 0o3777
@@ -116,8 +125,8 @@ export type MkdirParentBitsResult =
        * Where it stopped. `mkdir`/`lstat`/`open`/`fstat`/`chmod` carry an errno.
        * `changed` (replaced while the bits were being applied) carries one only
        * when the swap showed as a failed open (`ELOOP`/`ENOTDIR`), else null.
-       * `not-directory`, `not-ours` (created by this call only) and
-       * `mode-unsafe` are verdicts with no errno.
+       * `not-directory` and `not-ours` (created by this call only) are verdicts
+       * with no errno.
        */
       phase:
         | 'mkdir'
@@ -128,29 +137,52 @@ export type MkdirParentBitsResult =
         | 'not-directory'
         | 'not-ours'
         | 'changed'
-        | 'mode-unsafe'
       errno: string | null
       /** True when this call's mkdir made the directory, on a refusal after it too. */
       created: boolean
-      /** `mode-unsafe` only: the parent's bits and the directory's actual bits. */
-      wanted?: number
-      actual?: number
-      /** `mode-unsafe` only: why the policy refused the actual bits. */
-      reasons?: string[]
-      /** `mode-unsafe` only: the `chmod` its owner can run to make it acceptable. */
-      remedy?: string
+    }
+  | {
+      ok: false
+      /** The policy refused the directory's actual mode. */
+      phase: 'mode-unsafe'
+      errno: null
+      /** True when this call's mkdir made the directory. */
+      created: boolean
+      /** The parent's bits. */
+      wanted: number
+      /** The directory's actual bits. */
+      actual: number
+      /** Why the policy refused the actual bits. */
+      reasons: string[]
     }
 
-/** @internal Test seams: not part of the contract. */
+/** @internal Test seam: not part of the contract. */
 export interface MkdirParentBitsHooks {
   /** Runs after the first `lstat` and before the directory is opened. */
   beforeOpen?: () => void
-  /** Replaces `fs.constants` for the open-flag lookup (a platform without `O_NOFOLLOW`). */
-  constants?: Partial<Record<'O_RDONLY' | 'O_DIRECTORY' | 'O_NOFOLLOW', number>>
 }
 
-function noFollowDirectoryFlags(hooks: MkdirParentBitsHooks): number | null {
-  const c = hooks.constants ?? fs.constants
+type NoFollowConstants = Partial<Record<'O_RDONLY' | 'O_DIRECTORY' | 'O_NOFOLLOW', number>>
+
+/** Module state, set only through `setNoFollowConstantsForTests`; never reachable from a call's arguments. */
+let constantsForTests: NoFollowConstants | null = null
+
+/**
+ * @internal Test seam: pretend the platform has other open-flag constants (none
+ * of `O_DIRECTORY`/`O_NOFOLLOW`, as on Windows). `null` restores the real
+ * `fs.constants`. It is a module-level setter, not a parameter, so no argument
+ * to `mkdirWithParentBits` can switch the platform exemption on; it refuses to
+ * run outside vitest.
+ */
+export function setNoFollowConstantsForTests(constants: NoFollowConstants | null): void {
+  if (process.env.VITEST === undefined) {
+    throw new Error('setNoFollowConstantsForTests is a test seam and runs only under vitest')
+  }
+  constantsForTests = constants
+}
+
+function noFollowDirectoryFlags(): number | null {
+  const c: NoFollowConstants = constantsForTests ?? fs.constants
   if (c.O_DIRECTORY === undefined || c.O_NOFOLLOW === undefined) return null
   return (c.O_RDONLY ?? 0) | c.O_DIRECTORY | c.O_NOFOLLOW
 }
@@ -204,7 +236,7 @@ export function mkdirWithParentBits(
       want,
       Number(st.mode & 0o7777n),
       // No no-follow open (Windows): the mode is synthetic, so it is not judged.
-      noFollowDirectoryFlags(hooks) === null
+      noFollowDirectoryFlags() === null
         ? { kind: 'no-nofollow-open' }
         : { kind: 'existing-directory' },
       created,
@@ -217,7 +249,7 @@ export function mkdirWithParentBits(
     return { ok: false, phase: 'not-ours', errno: null, created }
   }
   hooks.beforeOpen?.()
-  const flags = noFollowDirectoryFlags(hooks)
+  const flags = noFollowDirectoryFlags()
   let how: How
   let descriptorMode: number | null = null
   if (flags === null) {
@@ -276,7 +308,6 @@ function judged(
       wanted: want,
       actual,
       reasons: verdict.reasons,
-      remedy: remedyCommand(dir, want),
     }
   }
   const bitsApplied: BitsApplied =

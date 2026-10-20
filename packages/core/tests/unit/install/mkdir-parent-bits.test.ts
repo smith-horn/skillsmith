@@ -11,7 +11,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirWithParentBits, PARENT_BITS_MASK } from '../../../src/install/mkdir-parent-bits.js'
+import {
+  mkdirWithParentBits,
+  PARENT_BITS_MASK,
+  setNoFollowConstantsForTests,
+} from '../../../src/install/mkdir-parent-bits.js'
 import { ensureParkedRoot, PARKED_DIR_NAME } from '../../../src/install/park-tree.destination.js'
 
 let prevUmask: number
@@ -33,6 +37,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setNoFollowConstantsForTests(null)
   vi.restoreAllMocks()
   process.umask(prevUmask)
   fs.rmSync(base, { recursive: true, force: true })
@@ -191,7 +196,8 @@ describe('the bits are applied through a no-follow descriptor, never by path', (
     const child = path.join(parent, 'child')
     const byPath = vi.spyOn(fs, 'chmodSync')
     const byFd = vi.spyOn(fs, 'fchmodSync')
-    const r = mkdirWithParentBits(child, 0o777, { constants: { O_RDONLY: 0 } })
+    setNoFollowConstantsForTests({ O_RDONLY: 0 })
+    const r = mkdirWithParentBits(child, 0o777)
     expect(byPath).not.toHaveBeenCalled()
     expect(byFd).not.toHaveBeenCalled()
     expect(r.ok && r.bitsApplied).toEqual({
@@ -215,7 +221,7 @@ function fchmodLeaving(mode: number | ((wanted: number) => number)): void {
 const refused = (code: string): Error => Object.assign(new Error(`${code}: injected`), { code })
 
 describe('the permission policy: wider or sticky-less fails closed, narrower succeeds with a warning', () => {
-  it('a filesystem that leaves wider bits (0777 under a 0755 parent) is mode-unsafe, with both modes and the remedy', () => {
+  it('a filesystem that leaves wider bits (0777 under a 0755 parent) is mode-unsafe, with both modes and the reasons, and no command', () => {
     const parent = parentWith(0o755)
     const child = path.join(parent, 'child')
     fchmodLeaving(0o777)
@@ -227,9 +233,9 @@ describe('the permission policy: wider or sticky-less fails closed, narrower suc
       created: true,
       wanted: 0o755,
       actual: 0o777,
-      remedy: `chmod 0755 ${child}`,
     })
-    expect(!r.ok && r.reasons?.join(' ')).toContain('group write')
+    expect(!r.ok && r.phase === 'mode-unsafe' && r.reasons.join(' ')).toContain('group write')
+    expect(JSON.stringify(r)).not.toMatch(/chmod|remedy/i)
   })
 
   it('a lost sticky bit under a 1777 parent is mode-unsafe, though no bit is wider', () => {
@@ -274,7 +280,8 @@ describe('the permission policy: wider or sticky-less fails closed, narrower suc
         mode: (st.mode & ~0o7777n) | 0o777n,
       })
     }) as typeof fs.lstatSync)
-    const r = mkdirWithParentBits(child, 0o755, { constants: { O_RDONLY: 0 } })
+    setNoFollowConstantsForTests({ O_RDONLY: 0 })
+    const r = mkdirWithParentBits(child, 0o755)
     expect(r.ok && r.bitsApplied).toEqual({
       state: 'not-applied',
       reason: 'no-nofollow-open',
@@ -321,7 +328,8 @@ describe('the permission policy: wider or sticky-less fails closed, narrower suc
   it('a platform without a no-follow open, with the umask narrower than the parent, says the bits could not be verified', () => {
     const parent = parentWith(0o777)
     const child = path.join(parent, 'child')
-    const r = mkdirWithParentBits(child, 0o777, { constants: { O_RDONLY: 0 } })
+    setNoFollowConstantsForTests({ O_RDONLY: 0 })
+    const r = mkdirWithParentBits(child, 0o777)
     expect(r.ok && r.warnings).toEqual([
       `${child} has mode 0755; its parent's 0777 could not be verified on this platform ` +
         "(this platform has no no-follow directory open, so the parent's bits were not applied)",
