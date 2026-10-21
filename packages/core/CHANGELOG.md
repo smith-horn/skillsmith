@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7148 -- releasing an owned lock can no longer delete another owner's lock, and a
+  `doctor locks --release` that sets a lock aside can no longer leave it orphaned. The release of a
+  main lock (`releaseOwned`, now in `config/owned-lock.release.ts`) takes `<lock>.reclaim`, the lock
+  automatic reclaim and `doctor locks` already take, before it checks that the claim is still ours
+  and unlinks it, so nothing can replace or move the lock between that check and the unlink. Before,
+  a lock reclaimed from a holder that only looked dead (its pid seen from another PID namespace, or a
+  `doctor locks --release --unsafe-unverified-owner`) and then re-acquired by someone else was
+  unlinked by the original holder's release with no warning; and a holder that released while
+  doctor had its lock set aside returned "released" while doctor then put the lock back with a live
+  pid and a token nobody holds. Release waits up to 500 ms (`RECLAIM_LOCK_TIMEOUT_MS`) for
+  `.reclaim`, synchronously; if it is still held (in practice an orphan left by a crash) or cannot be
+  created (`ENOSPC`, `EDQUOT`, `EACCES`), release removes nothing, never takes over the leftover
+  `.reclaim`, returns `false` and warns `lock_release_reclaim_unavailable` or
+  `lock_release_reclaim_failed`, and the lock stays with this process until it exits; remove an
+  orphaned `.reclaim` with `skillsmith doctor locks --release <lock>.reclaim` or by hand. An
+  orphaned `.reclaim` therefore now stops releases of that lock as well as reclaims. The reclaim
+  lock's own release (`releaseClaimFile`) is unchanged and unguarded. A person deleting a lock file
+  by hand still bypasses every lock.
 - **Added**: SMI-6531 (A1 step 2) -- lock 1, the per-skills-root write lock
   (`services/skill-write-lock.ts`, A1 plan §3.2, §3.3). `bindSkillsRoot(skillsDir)` runs outside any
   lock: it resolves R (native `realpath`), binds R's identity (the existing `BoundIdentity`, file

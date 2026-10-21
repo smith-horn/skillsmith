@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { releaseOwned } from '../../../src/config/owned-lock.claim.js'
+import { releaseOwned } from '../../../src/config/owned-lock.release.js'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import { runManifestUpdate } from '../../../src/services/skill-manifest.lock.js'
 

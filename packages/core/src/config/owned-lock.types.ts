@@ -16,7 +16,7 @@ export const LOCK_RETRY_DELAY_MS = 20
 export const RECLAIM_PROBE_AFTER_MS = 250
 /** Backoff between reclaim probe attempts once contention is established. */
 export const RECLAIM_PROBE_INTERVAL_MS = 250
-/** Max time to wait for the RECLAIM lock. Its critical section is 3 syscalls with no caller code -- a longer wait would itself indicate an orphan (R1). */
+/** Max time to wait for the RECLAIM lock, by reclaim and by release. Its critical section is a few syscalls with no caller code -- a longer wait would itself indicate an orphan (R1). */
 export const RECLAIM_LOCK_TIMEOUT_MS = 500
 /** Bounded read cap for a lock claim file -- refuses (never crashes on) an oversized/garbage lock file. */
 export const MAX_LOCK_BYTES = 4_096

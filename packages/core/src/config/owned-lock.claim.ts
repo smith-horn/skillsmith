@@ -355,24 +355,45 @@ export function tryReclaimUnderLock(
     }
     return 'reclaimed'
   } finally {
-    releaseOwned(reclaimPath, rToken)
+    // The reclaim lock's own release stays unguarded (SMI-7148): a guarded one
+    // would take `<reclaimPath>.reclaim`, a third-level file and a new orphan site.
+    releaseClaimFile(reclaimPath, rToken)
   }
 }
 
 // ---------------------------------------------------------------------------
-// Release -- ownership-verified, idempotent
+// Release of a claim FILE -- ownership-verified, idempotent, unguarded
 // ---------------------------------------------------------------------------
 
 /**
- * Release `path` if `token` still owns it. Returns whether the lock is shown
- * to be no longer ours on disk: true when it was unlinked, when nothing is at
- * the path, or when a readable claim there names someone else; false when the
- * unlink failed, or when something is still at the path that can't be shown to
- * be someone else's (an unreadable claim, or a legacy claim naming this
- * process): it may be our own file. Callers that stop counting a lock as held
- * (the lock-order tracker) rely on this, so every doubt answers false.
+ * A timing option as a finite, non-negative number of milliseconds. Anything
+ * else (NaN, Infinity, a negative number) falls back to `fallback`: a NaN
+ * deadline never passes, so it hung the synchronous wait loop forever
+ * (SMI-6529 round 9).
  */
-export function releaseOwned(path: string, token: string): boolean {
+export function toTimingMs(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+/**
+ * Release the claim file at `path` if `token` still owns it, UNGUARDED: it
+ * takes no lock of its own. Returns whether the file is shown to be no longer
+ * ours on disk: true when it was unlinked, when nothing is at the path, or when
+ * a readable claim there names someone else; false when the unlink failed, or
+ * when something is still at the path that can't be shown to be someone else's
+ * (an unreadable claim, or a legacy claim naming this process): it may be our
+ * own file. Callers that stop counting a lock as held (the lock-order tracker)
+ * rely on this, so every doubt answers false.
+ *
+ * Used for the reclaim lock ITSELF (`tryReclaimUnderLock`, `doctor locks`),
+ * which only its holder, `doctor locks --release <lock>.reclaim`, or a person
+ * can remove. A MAIN lock is released through `releaseOwned`
+ * (`owned-lock.release.ts`), which holds `<lock>.reclaim` across this read and
+ * unlink (SMI-7148): this function alone checks then unlinks, so a reclaimer
+ * that took the lock from a holder that only looked dead could have its
+ * successor's lock unlinked between the two.
+ */
+export function releaseClaimFile(path: string, token: string): boolean {
   const claim = readClaim(path)
   if (claim.kind === 'v1' && claim.token === token) {
     try {
@@ -431,19 +452,5 @@ function pathIsGone(path: string): boolean {
     return false
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'ENOENT'
-  }
-}
-
-/**
- * The release function `acquireOwnedLock` hands back. Returns what
- * {@link releaseOwned} returned; a second call returns the first call's result
- * without touching the file again.
- */
-export function makeRelease(lockPath: string, token: string): () => boolean {
-  let result: boolean | undefined
-  return () => {
-    if (result !== undefined) return result
-    result = releaseOwned(lockPath, token)
-    return result
   }
 }

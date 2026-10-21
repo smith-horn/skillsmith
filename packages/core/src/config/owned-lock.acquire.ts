@@ -22,12 +22,13 @@ import {
   classifyRefusal,
   createLockExclusive,
   isOwnerDefinitelyDead,
-  makeRelease,
   randomHex,
   readClaim,
   sleepSync,
+  toTimingMs,
   tryReclaimUnderLock,
 } from './owned-lock.claim.js'
+import { makeRelease } from './owned-lock.release.js'
 import {
   LOCK_ACQUIRE_TIMEOUT_MS,
   LOCK_RETRY_DELAY_MS,
@@ -58,7 +59,7 @@ function describeReason(reason: StuckLockReason, claim: Claim, reclaimPath: stri
     case 'unreclaimable_unparseable':
       return 'the lock file could not be parsed as a recognized claim -- never auto-reclaimed'
     case 'reclaim_unavailable':
-      return `the reclaim lock at ${reclaimPath} is held or was orphaned by a crash inside the reclaim critical section (residual R1)`
+      return `the reclaim lock at ${reclaimPath} is held or was orphaned by a crash inside a reclaim or release critical section (residual R1)`
     case 'reclaim_disabled':
       return 'auto-reclaim is disabled (SKILLSMITH_LOCK_NO_AUTO_RECLAIM=1)'
     default: {
@@ -227,15 +228,9 @@ export interface AcquireOwnedLockCoreOptions {
   linkSyncOverride?: (existingPath: string, newPath: string) => void
 }
 
-/**
- * A timing option as a finite, non-negative number of milliseconds. Anything
- * else (NaN, Infinity, a negative number) falls back to `fallback`: a NaN
- * deadline never passes, so it hung the synchronous wait loop forever
- * (SMI-6529 round 9).
- */
-export function toTimingMs(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
-}
+// `toTimingMs` moved to owned-lock.claim.ts (release needs it too); re-exported
+// here so existing importers keep working without an import cycle (SMI-7148).
+export { toTimingMs }
 
 /**
  * The full acquire loop. `owned-lock.ts`'s public `acquireOwnedLock` is a

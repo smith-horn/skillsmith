@@ -28,6 +28,11 @@
  *                                 barrierDir/<name> (used by "A").
  *   --unsafe-skip-revalidation    Pass `unsafeSkipReclaimRevalidation: true`
  *                                 -- NEGATIVE CONTROL ONLY.
+ *   --wait-before-acquire=<name>  Before acquiring, poll for
+ *                                 barrierDir/<name> (SMI-7148, T2b).
+ *   --touch-before-release=<name> Immediately before `release()`, touch
+ *                                 barrierDir/<name>; after it, write
+ *                                 `released-<id>-<true|false>` (SMI-7148).
  *   --reclaim-probe-after=<ms>    Override `reclaimProbeAfterMs` (default 0).
  *   --timeout=<ms>                Override `timeoutMs` (default 20000).
  *
@@ -92,6 +97,14 @@ function onReclaimOutcome(outcome) {
 }
 
 try {
+  const waitBeforeAcquire = flags.get('wait-before-acquire')
+  if (waitBeforeAcquire) {
+    waitFor(
+      () => existsSync(join(barrierDir, String(waitBeforeAcquire))),
+      `acquire marker '${waitBeforeAcquire}'`
+    )
+  }
+
   const release = acquireOwnedLockCore(target, {
     timeoutMs: Number(flags.get('timeout') ?? 20_000),
     reclaimProbeAfterMs: Number(flags.get('reclaim-probe-after') ?? 0),
@@ -113,7 +126,10 @@ try {
     )
   }
 
-  release()
+  const touchBeforeRelease = flags.get('touch-before-release')
+  if (touchBeforeRelease) touch(String(touchBeforeRelease))
+  const released = release()
+  if (touchBeforeRelease) touch(`released-${id}-${String(released)}`)
   process.exit(0)
 } catch (err) {
   writeFileSync(join(barrierDir, `error-${id}`), String(err && err.stack ? err.stack : err))

@@ -36,7 +36,8 @@ import {
   type StuckLockReason,
 } from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
-import { createLockExclusive, isOwnerDefinitelyDead, releaseOwned } from './owned-lock.claim.js'
+import { createLockExclusive, isOwnerDefinitelyDead } from './owned-lock.claim.js'
+import { releaseOwned } from './owned-lock.release.js'
 // Not re-exported by `owned-lock.ts` (MAX_LOCK_BYTES is; this is not), so it
 // comes from the module that declares it. Driving the table from the real set
 // is the point -- a retyped copy would go stale exactly when it matters.
@@ -512,10 +513,34 @@ describe('orphaned reclaim lock (residual R1, §8c)', () => {
     expect(readFileSync(reclaimPath).equals(beforeReclaim)).toBe(true)
   })
 
-  it('2. with no main lock present, acquisition succeeds despite an orphaned reclaim lock (locking unaffected)', () => {
-    seed(v1(process.pid), reclaimPath) // orphan stand-in; no `.lock` file exists
-    const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
-    release()
+  // SMI-7148: release takes `.reclaim` too, so an orphan no longer leaves
+  // locking itself unaffected: acquiring still works, but RELEASING fails closed.
+  it('2. an orphaned reclaim lock no longer blocks acquisition but makes release fail closed', () => {
+    const orphan = v1(process.pid)
+    seed(orphan, reclaimPath) // orphan stand-in; no `.lock` file exists
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
+      const held = readFileSync(lockPath)
+
+      expect(release()).toBe(false) // waits out the whole budget, then leaves the lock
+      expect(readFileSync(lockPath).equals(held)).toBe(true)
+      expect(readFileSync(reclaimPath, 'utf-8')).toBe(orphan)
+      const message = warnSpy.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .find((m: string) => m.includes('lock_release_reclaim_unavailable'))
+      expect(message, 'lock_release_reclaim_unavailable was warned').toBeDefined()
+      expect(message).toContain(lockPath)
+      expect(message).toContain(reclaimPath)
+
+      rmSync(reclaimPath) // the documented manual unstick: a fresh cycle works again
+      rmSync(lockPath)
+      const again = acquireOwnedLock(target, { timeoutMs: 1_000 })
+      expect(again()).toBe(true)
+      expect(existsSync(lockPath)).toBe(false)
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('3. removing the orphan restores service — the dead-PID lock reclaims normally afterward', () => {
@@ -527,7 +552,8 @@ describe('orphaned reclaim lock (residual R1, §8c)', () => {
 
     const release = acquireOwnedLock(target, { timeoutMs: 2_000, reclaimProbeAfterMs: 0 })
     expect(existsSync(reclaimPath)).toBe(false)
-    release()
+    expect(release()).toBe(true) // a fresh acquire-and-release cycle succeeds
+    expect(existsSync(lockPath)).toBe(false)
   })
 })
 
@@ -895,7 +921,7 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
 
   const EXPECTED_REASON_CLAUSE: Record<StuckLockReason, string> = {
     held: 'held by another process',
-    reclaim_unavailable: `the reclaim lock at ${R} is held or was orphaned by a crash inside the reclaim critical section (residual R1)`,
+    reclaim_unavailable: `the reclaim lock at ${R} is held or was orphaned by a crash inside a reclaim or release critical section (residual R1)`,
     unreclaimable_legacy:
       'held by a legacy (pre-v1) claim -- legacy claims carry no host attribution and are NEVER auto-reclaimed (SMI-5883 D-5)',
     unreclaimable_unparseable:
