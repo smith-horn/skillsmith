@@ -24,8 +24,11 @@
 export const CHECK77_CUTOFF_TS = '20261021000000'
 export const CHECK77_EXEMPT_FILES = ['20261021000000_explicit_grants_backfill.sql']
 
-// SMI-7151 staging rehearsal (plan Verification A3) decides whether an identity
-// column's INSERT needs a sequence grant. false = identity columns are exempt.
+// Identity columns are exempt from the sequence rule. Measured on staging in the
+// SMI-7151 rehearsal (plan Verification A3), as service_role with no sequence
+// grant: a GENERATED ALWAYS AS IDENTITY insert succeeded, a bigserial insert
+// failed with "permission denied for sequence". Set true only if a later
+// Postgres version changes that.
 export const CHECK77_IDENTITY_NEEDS_SEQUENCE_GRANT = false
 
 const MIN_REASON_LENGTH = 18
