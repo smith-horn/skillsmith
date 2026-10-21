@@ -183,12 +183,31 @@ const SERIAL_RE = /^\s*(?:(?:small|big)?serial|serial[248])\b/i
 const IDENTITY_RE = /\bGENERATED\s+(?:ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY\b/i
 
 /** Sequence trigger for one column definition (masked + raw slices), or null. */
+/**
+ * The name Postgres gives a serial column's sequence: makeObjectName(table, column, 'seq')
+ * in src/backend/commands/indexcmds.c. It trims the longer of the two parts one byte at a time
+ * until `<table>_<column>_seq` fits NAMEDATALEN - 1 = 63 bytes. Verified against PostgreSQL 17
+ * (SMI-7151; the expected names in the tests came from a real server). Assumes ASCII names,
+ * which every migration here uses; a multibyte name would need pg_mbcliplen.
+ */
+export function pgSerialSequenceName(table, column) {
+  const label = 'seq'
+  const avail = 63 - 1 - (label.length + 1) // separating underscore + "_seq"
+  let a = table.length
+  let b = column.length
+  while (a + b > avail) {
+    if (a > b) a--
+    else b--
+  }
+  return `${table.slice(0, a)}_${column.slice(0, b)}_${label}`
+}
+
 function columnTrigger(table, col, maskedDef, rawDef) {
   if (
     SERIAL_RE.test(maskedDef) ||
     (CHECK77_IDENTITY_NEEDS_SEQUENCE_GRANT && IDENTITY_RE.test(maskedDef))
   ) {
-    return { table, column: col, seq: `${table}_${col}_seq` }
+    return { table, column: col, seq: pgSerialSequenceName(table, col) }
   }
   if (/\bnextval\s*\(/i.test(maskedDef)) {
     const seq = seqNameFromNextval(rawDef)
@@ -361,14 +380,10 @@ export function findRelationsWithoutGrantDecisions(fileName, sql, opts = {}) {
 
   const usage = effective.filter((e) => e.kind === 'sequence' && e.priv === 'USAGE')
   for (const t of triggers) {
-    // Exact name only. Accepting "any sequence named in this file" let one table's grant satisfy
-    // another table's serial column (SMI-7151 review). The one fuzzy case is a derived name over
-    // Postgres's 63-byte limit, which Postgres truncates; the ack marker covers anything else.
-    const long = t.seq.length > 63
-    const covers = (e, role) =>
-      e.role === role &&
-      (e.name === t.seq ||
-        (long && e.name.endsWith('_seq') && e.name.startsWith(t.table.slice(0, 20))))
+    // Exact name only, with serial names truncated the way Postgres truncates them
+    // (pgSerialSequenceName). Any fuzzy match lets one table borrow another's grant (SMI-7151
+    // review). A collision suffix (..._seq1) is not predictable; the ack marker covers it.
+    const covers = (e, role) => e.role === role && e.name === t.seq
     const roles = ['service_role']
     for (const e of effective) {
       if (

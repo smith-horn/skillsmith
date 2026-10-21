@@ -204,6 +204,34 @@ GRANT USAGE ON SEQUENCE public.alpha_id_seq TO service_role;`
     expect(v[0].message).toContain('column beta.id')
   })
 
+  // Expected names below were produced by real PostgreSQL 17 (CREATE TABLE ... serial, then
+  // pg_class), not by this module's own truncation logic.
+  const LONG_A = 'registry_audit_volume_monitor_health_history_alpha_archive_v1'
+  const LONG_B = 'registry_audit_volume_monitor_health_history_beta_archive_v1'
+  const SEQ_A = 'registry_audit_volume_monitor_health_history_alpha_archi_id_seq'
+  const SEQ_B = 'registry_audit_volume_monitor_health_history_beta_archiv_id_seq'
+
+  it("does not let a long-named table borrow another long table's truncated sequence grant", () => {
+    const sql = `CREATE TABLE ${LONG_A} (id bigserial PRIMARY KEY);
+CREATE TABLE ${LONG_B} (id bigserial PRIMARY KEY);
+GRANT SELECT, INSERT ON public.${LONG_A}, public.${LONG_B} TO service_role;
+GRANT SELECT ON public.${LONG_A}, public.${LONG_B} TO authenticated;
+GRANT USAGE ON SEQUENCE public.${SEQ_A} TO service_role;`
+    expect(keys(run(sql))).toEqual([`sequence:${SEQ_B}`])
+  })
+
+  it('accepts the exact Postgres-truncated sequence name for long table and column names', () => {
+    const sql = `CREATE TABLE ${LONG_A} (id bigserial PRIMARY KEY);
+GRANT SELECT, INSERT ON public.${LONG_A} TO service_role;
+GRANT SELECT ON public.${LONG_A} TO authenticated;
+GRANT USAGE ON SEQUENCE public.${SEQ_A} TO service_role;
+CREATE TABLE events (a_really_long_column_name_that_goes_on_and_on_and_on_forever_x serial);
+GRANT SELECT, INSERT ON public.events TO service_role;
+GRANT SELECT ON public.events TO authenticated;
+GRANT USAGE ON SEQUENCE public.events_a_really_long_column_name_that_goes_on_and_on_and_on_seq TO service_role;`
+    expect(run(sql)).toEqual([])
+  })
+
   it('passes a sequence ack with a valid reason', () => {
     const sql = `ALTER TABLE public.bar ADD COLUMN n bigserial;
 -- audit:check-77-ack sequence none bar.n: ${GOOD_REASON}`
