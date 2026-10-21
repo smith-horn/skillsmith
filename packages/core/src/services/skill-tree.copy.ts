@@ -14,8 +14,13 @@
  * put a swap between the check and the use through `afterEntry`.
  *
  * On failure it leaves what it already wrote and removes nothing: the caller's
- * abort cleanup owns the destination. A foreign change that does not trip a
- * check here is caught by step 4's tree hash.
+ * abort cleanup owns the destination.
+ *
+ * It is not a snapshot: a file edited in place while it is read can reach the
+ * copy with either version, or a mix. The caller catches that by hashing the
+ * COPY and comparing it with `preTree` (A1 plan §3.3 step 1, "verify the copy's
+ * untouched part matches `preTree`"), which an edit restored before a later
+ * re-hash of the live folder cannot pass.
  *
  * @module @skillsmith/core/services/skill-tree.copy
  */
@@ -49,6 +54,11 @@ export interface CopyHooks {
    * its `mkdir`, before its children.
    */
   afterEntry?: (rel: string) => void
+  /**
+   * Called once a directory's names are read and before its children are
+   * typed, with the directory's path relative to the root (`''` for the root).
+   */
+  afterListed?: (rel: string) => void
 }
 
 type Failure = Extract<CopyResult, { ok: false }>
@@ -151,21 +161,26 @@ async function copyDir(
   typed: BigIntStats,
   hooks: CopyHooks | undefined
 ): Promise<Failure | null> {
-  // The path must still be the directory that was typed, before and after its
-  // names are read: readdir follows a link, so a swapped-in link would list
-  // (and the children would be read from) a directory outside the skill.
+  // The path must be the directory that was typed both before its names are
+  // read and after its children are typed: `readdir` and each child's `lstat`
+  // resolve `srcAbs` as an intermediate component, so a directory swapped for a
+  // link anywhere in that span would list, and type, entries outside the skill.
+  // One check after the typing covers the whole span. What it cannot see is a
+  // swap undone before it runs (link in, then back): the children typed then
+  // are outside inodes, so each later open either fails `copyFile`'s inode
+  // match or, only if the link is swapped in AGAIN at that open, copies them.
+  // That double race is the path-based residual (ADR-166 D-0); the caller's
+  // hash of the copy against `preTree` (§3.3 step 1) still refuses the build.
   let names: string[]
   try {
     if (!sameDir(typed, await fs.promises.lstat(srcAbs, { bigint: true }))) {
       return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
     }
     names = (await fs.promises.readdir(srcAbs)).sort()
-    if (!sameDir(typed, await fs.promises.lstat(srcAbs, { bigint: true }))) {
-      return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
-    }
   } catch (err) {
     return fail('unreadable', srcAbs, err)
   }
+  hooks?.afterListed?.(rel)
   const entries: Typed[] = []
   for (const name of names) {
     try {
@@ -173,6 +188,13 @@ async function copyDir(
     } catch (err) {
       return fail('unreadable', path.join(srcAbs, name), err)
     }
+  }
+  try {
+    if (!sameDir(typed, await fs.promises.lstat(srcAbs, { bigint: true }))) {
+      return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
+    }
+  } catch (err) {
+    return fail('unreadable', srcAbs, err)
   }
   // Refuse an unsupported entry before writing any sibling of it.
   for (const { name, st } of entries) {

@@ -252,4 +252,62 @@ describe('the lstat-to-open race: a path that changed type is refused, not copie
     expect(r).toMatchObject({ ok: false, reason: 'changed-during-copy' })
     expect(lstatBig(path.join(dest, 'b.txt'))).toBeNull()
   })
+
+  it("a file's parent directory becomes a regular file: ENOTDIR maps to changed-during-copy", async () => {
+    const root = tmp()
+    const src = path.join(root, 'skill')
+    fs.mkdirSync(path.join(src, 'd'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'd', 'a.txt'), 'a')
+    fs.writeFileSync(path.join(src, 'd', 'b.txt'), 'b')
+    const dest = path.join(root, 'dest')
+    const r = await copyTreeNoFollow(src, dest, {
+      afterEntry: (rel) => {
+        if (rel !== 'd/a.txt') return
+        fs.rmSync(path.join(src, 'd'), { recursive: true })
+        fs.writeFileSync(path.join(src, 'd'), 'now a file')
+      },
+    })
+    expect(r).toMatchObject({
+      ok: false,
+      reason: 'changed-during-copy',
+      path: path.join(src, 'd', 'b.txt'),
+      errno: 'ENOTDIR',
+    })
+    expect(lstatBig(path.join(dest, 'd', 'b.txt'))).toBeNull()
+  })
+
+  it('a symlink becomes a regular file after it was typed: EINVAL maps to changed-during-copy', async () => {
+    const root = tmp()
+    const src = path.join(root, 'skill')
+    fs.mkdirSync(src)
+    fs.writeFileSync(path.join(src, 'a.txt'), 'a')
+    fs.symlinkSync('a.txt', path.join(src, 'b-link'))
+    const dest = path.join(root, 'dest')
+    const r = await copyTreeNoFollow(src, dest, {
+      afterEntry: (rel) => {
+        if (rel !== 'a.txt') return
+        fs.rmSync(path.join(src, 'b-link'))
+        fs.writeFileSync(path.join(src, 'b-link'), 'now a file')
+      },
+    })
+    expect(r).toMatchObject({
+      ok: false,
+      reason: 'changed-during-copy',
+      path: path.join(src, 'b-link'),
+      errno: 'EINVAL',
+    })
+    expect(lstatBig(path.join(dest, 'b-link'))).toBeNull()
+  })
+})
+
+describe('treeHashOf failure', () => {
+  it('a missing root is unreadable with its errno, not unsupported-entry', () => {
+    const missing = path.join(tmp(), 'nope')
+    expect(treeHashOf(missing)).toEqual({
+      ok: false,
+      reason: 'unreadable',
+      path: missing,
+      errno: 'ENOENT',
+    })
+  })
 })

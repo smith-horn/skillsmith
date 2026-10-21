@@ -128,6 +128,30 @@ describe('T-X5: a nested change during the copy', () => {
     expect(hashOrThrow(src)).not.toBe(pre)
   })
 
+  it('a directory swapped for a link after its names are read and before its children are typed: nothing from outside is copied', async () => {
+    // Each child's lstat resolves `p` as an intermediate component, so after
+    // this swap the children would be typed from `outside`, and copyFile's
+    // inode match would then agree with the outside inode. Only the identity
+    // check of `p` after the typing stands between this and outside bytes.
+    const root = tmp()
+    const src = path.join(root, 'skill')
+    const outside = path.join(root, 'outside')
+    fs.mkdirSync(path.join(src, 'p'), { recursive: true })
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(src, 'p', 'b2.txt'), 'b2')
+    fs.writeFileSync(path.join(outside, 'b2.txt'), SENTINEL)
+    const dest = path.join(root, 'dest')
+    const r = await copyTreeNoFollow(src, dest, {
+      afterListed: (rel) => {
+        if (rel !== 'p') return
+        fs.renameSync(path.join(src, 'p'), path.join(root, 'p-aside'))
+        fs.symlinkSync(outside, path.join(src, 'p'))
+      },
+    })
+    expect(anyFileContains(dest, SENTINEL)).toBe(false)
+    expect(r).toMatchObject({ ok: false, reason: 'changed-during-copy', path: path.join(src, 'p') })
+  })
+
   it('control: with no change during the copy the hash is the same afterwards', async () => {
     const f = fixture()
     const pre = hashOrThrow(f.src)

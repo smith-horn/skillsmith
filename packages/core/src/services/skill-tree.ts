@@ -7,15 +7,20 @@
  *    `guardHash` come from here, so a guarded park never sees a foreign hash.
  *    A FIFO, socket or device makes the folder `unsupported-entry`, which is
  *    the planning refusal (T-B2). It writes nothing.
+ *    The walk reads by path, so a link raced in mid-walk is read through and
+ *    hashed (never copied); the copy's own checks do not depend on it.
  *  - `copyTreeNoFollow(src, dest)`: see `skill-tree.copy.ts`.
  *  - `claimPublish(staged, dest)`: `mkdir` the destination, which fails if
  *    anything exists, then `rename` the staged folder over that empty claim.
  *    `rename` over an empty directory replaces it silently and over a
  *    non-empty one fails `ENOTEMPTY`, so only an empty directory can ever be
- *    replaced (ADR-155 residual, SMI-6559).
+ *    replaced (ADR-155 residual, SMI-6559). That includes another process
+ *    removing the claim and making its own empty directory before the rename:
+ *    Node has no `renameat2(RENAME_NOREPLACE)`, so the window is the residual's.
  *
- * A claim whose rename failed is left in place: it is an empty directory at
- * the target, and removing it here would be a removal this module never makes.
+ * A claim whose rename failed is left in place: a directory at the target,
+ * empty unless something wrote into it first (`ENOTEMPTY`), and removing it
+ * here would be a removal this module never makes.
  * Recovery (`doctor`, step 6) owns it.
  *
  * @module @skillsmith/core/services/skill-tree
@@ -69,7 +74,10 @@ export type ClaimPublishResult =
   | { ok: false; reason: 'claim-failed'; errno: string | null }
   /** The claim was made, then the parent could not be synced. The claim stays. */
   | { ok: false; reason: 'sync-failed'; errno: string | null; claimLeft: true }
-  /** The claim was made, then the rename failed. The empty claim stays. */
+  /**
+   * The claim was made, then the rename failed. The claim stays: empty, or not
+   * empty when something wrote into it first (`ENOTEMPTY`).
+   */
   | { ok: false; reason: 'rename-failed'; errno: string | null; claimLeft: true }
 
 /** @internal Test seam. */
