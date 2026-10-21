@@ -55,6 +55,7 @@ import {
   allowlistKeyFor,
 } from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
+import { getCheck77DiffFiles, runCheck77 } from './lib/audit-check77.mjs'
 import {
   loadGeneratorInputs as loadWeakPasswordLexiconInputs,
   generateAll as generateWeakPasswordLexicon,
@@ -6410,6 +6411,40 @@ console.log(
 // FAILS on and after its expiry date and there is no opt-out (ADR-176).
 console.log(`\n${BOLD}Check 76: dependency registry coherence and expiry (SMI-6949)${RESET}`)
 runDependencyRegistryCheck({ pass, warn, fail })
+
+// Check 77: explicit API grants on new public relations (SMI-7151). Default
+// privileges give anon/authenticated/service_role NO access to new relations,
+// so a migration that creates one without GRANTs ships green and then every API
+// call returns 42501. FAILS (not warns). Scope: migrations newer than
+// CHECK77_CUTOFF_TS, never the exempt backfill. The scope, pass/fail and INCONCLUSIVE
+// logic lives in runCheck77() in scripts/lib/audit-check77.mjs (I/O injected, unit-tested).
+// Locked trees (no git-crypt key) fail INCONCLUSIVE only when an encrypted
+// in-scope file is in this PR's diff; otherwise "not checked" is stated and passes.
+console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)${RESET}`)
+{
+  const MIG_DIR = 'supabase/migrations'
+  if (!existsSync(MIG_DIR)) {
+    fail(`Check 77: ${MIG_DIR} not found, cannot check explicit API grants`)
+  } else {
+    // PR diff names come from git, which works without the git-crypt key. Every git call
+    // goes through execFileSync with an argv array: GITHUB_BASE_REF is never shell-parsed.
+    const gitOpts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    runCheck77({
+      migrationFiles: readdirSync(MIG_DIR),
+      readFile: (f) => readFileSync(join(MIG_DIR, f), 'utf8'),
+      isEncrypted: (f) => isGitCryptEncrypted(join(MIG_DIR, f)),
+      diffFiles: getCheck77DiffFiles({
+        execFile: (args) => execFileSync('git', args, gitOpts),
+        baseRef: process.env.GITHUB_BASE_REF,
+        migDir: MIG_DIR,
+      }),
+      pass,
+      fail,
+      note: (line) => console.log(`  ${YELLOW}${line}${RESET}`),
+      migDir: MIG_DIR,
+    })
+  }
+}
 
 // Summary
 console.log('\n' + '━'.repeat(50))

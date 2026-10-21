@@ -30,6 +30,10 @@
 -- search_metrics_202604/05/06 while 20260519000003 creates partitions relative to NOW()), filed
 -- as SMI-5885. This is weaker than CI regression coverage and should be described as such -- it
 -- runs when a human runs it.
+-- UPDATE 2026-10-21 (SMI-7151): that blocker is gone. 20260526000001 now guards each hard-coded
+-- partition with IF EXISTS, SMI-5885 is closed, and .github/workflows/grant-reactivate-concurrency.yml
+-- replays the full migration set on every migration PR. A CI harness for this script is now
+-- buildable; tracked as SMI-7155.
 --
 -- STAGING ONLY (ovhcifugwqnzoebwfuku). All fixtures rolled back.
 --
