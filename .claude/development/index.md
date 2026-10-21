@@ -23,7 +23,7 @@ Developer guides for local development, testing, and debugging.
 | [vscode-publishing-guide.md](vscode-publishing-guide.md) | VS Code Marketplace publishing, PAT rotation, troubleshooting |
 | [cloudinary-guide.md](cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
 | [subagent-tool-permissions-guide.md](subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior |
-| [supabase-migration-safety.md](supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention |
+| [supabase-migration-safety.md](supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention, R-Grant explicit-grant pattern and smoke-block evaluation-order guard (SMI-7151) |
 | [ruvector-dev-tooling.md](ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417) |
 | [skill-invoke-telemetry-guide.md](skill-invoke-telemetry-guide.md) | Skill-invocation telemetry pipeline (SMI-5012) — wire format, consent gate, dispatcher coverage, rotation policy |
 | [smoke-prod-guide.md](smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459), surface manifest, failure triage |
