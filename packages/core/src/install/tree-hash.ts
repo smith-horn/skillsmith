@@ -4,7 +4,11 @@
  *
  * sha256 over the entries of an `lstat` walk that never follows links, sorted
  * by path relative to the walk root: `rel`, type, mode, size, and the content
- * sha256 for a file or the link text for a symlink. Directories are included.
+ * sha256 for a file or the link text for a symlink. Directories are included,
+ * without their size: a directory's `lstat` size is filesystem bookkeeping, and
+ * on Linux one that once held many entries stays larger than a fresh copy with
+ * the same contents, so a faithful copy would hash differently from its source
+ * (owner decision 2026-10-21, SMI-6531 step 3).
  * `preTree`, `postTree`, every sidecar `treeHash` and every park `guardHash`
  * must come from this function, or every guarded park returns
  * `kept/identity-changed`.
@@ -33,7 +37,8 @@ export function computeTreeHash(record: ReadonlyMap<string, TreeRecordEntry>): s
   for (const rel of rels) {
     const e = record.get(rel) as TreeRecordEntry
     const contentPart = e.type === 'file' ? e.contentHash : e.type === 'symlink' ? e.linkText : ''
-    hash.update(`${rel}\u0000${e.type}\u0000${e.mode}\u0000${e.size}\u0000${contentPart}\n`)
+    const sizePart = e.type === 'dir' ? '' : String(e.size)
+    hash.update(`${rel}\u0000${e.type}\u0000${e.mode}\u0000${sizePart}\u0000${contentPart}\n`)
   }
   return hash.digest('hex')
 }
