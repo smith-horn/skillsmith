@@ -8,7 +8,12 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../src/install/dir-sync.js', () => ({
-  syncDirectory: vi.fn(async () => ({ outcome: 'failed', code: 'EIO', error: new Error('EIO') })),
+  // An uncommon code, so a hard-coded errno in claimPublish cannot pass for propagation.
+  syncDirectory: vi.fn(async () => ({
+    outcome: 'failed',
+    code: 'EDQUOT',
+    error: new Error('EDQUOT'),
+  })),
 }))
 
 const { claimPublish } = await import('../../../src/services/skill-tree.js')
@@ -26,7 +31,7 @@ describe('claimPublish: the claim sync fails', () => {
 
     const r = await claimPublish(staged, dest)
 
-    expect(r).toEqual({ ok: false, reason: 'sync-failed', errno: 'EIO', claimLeft: true })
+    expect(r).toEqual({ ok: false, reason: 'sync-failed', errno: 'EDQUOT', claimLeft: true })
     expect(fs.lstatSync(dest).isDirectory()).toBe(true)
     expect(listTree(dest)).toEqual([])
     expect(listTree(staged)).toEqual(['SKILL.md'])

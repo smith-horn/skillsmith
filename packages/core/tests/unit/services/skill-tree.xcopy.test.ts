@@ -152,6 +152,23 @@ describe('T-X5: a nested change during the copy', () => {
     expect(r).toMatchObject({ ok: false, reason: 'changed-during-copy', path: path.join(src, 'p') })
   })
 
+  it('the same swap to a link whose target lacks a listed name still reports changed-during-copy, not unreadable', async () => {
+    const root = tmp()
+    const src = path.join(root, 'skill')
+    const outside = path.join(root, 'outside-empty')
+    fs.mkdirSync(path.join(src, 'p'), { recursive: true })
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(src, 'p', 'b2.txt'), 'b2')
+    const r = await copyTreeNoFollow(src, path.join(root, 'dest'), {
+      afterListed: (rel) => {
+        if (rel !== 'p') return
+        fs.renameSync(path.join(src, 'p'), path.join(root, 'p-aside'))
+        fs.symlinkSync(outside, path.join(src, 'p'))
+      },
+    })
+    expect(r).toMatchObject({ ok: false, reason: 'changed-during-copy', path: path.join(src, 'p') })
+  })
+
   it('control: with no change during the copy the hash is the same afterwards', async () => {
     const f = fixture()
     const pre = hashOrThrow(f.src)

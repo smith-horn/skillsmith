@@ -7,11 +7,13 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Added**: SMI-6531 A1 step 3 -- `treeHashOf`, `copyTreeNoFollow` and `claimPublish`
   (`services/skill-tree.ts`), the tree primitives the update write path builds on. `treeHashOf` is
   the one tree hash over the no-follow walk, and a FIFO, socket or device makes the folder
-  `unsupported-entry`. `copyTreeNoFollow` copies a skill folder without reading through a link:
-  every entry is typed by `lstat`, an opened file must be the inode the walk typed, a directory
-  must keep its identity from before its names are read until after its children are typed, and
-  symlinks are recreated verbatim with modes kept; a path that changed ends `changed-during-copy`,
-  and the copy removes nothing on failure. `claimPublish` claims the target with `mkdir`, then
+  `unsupported-entry`. `copyTreeNoFollow` copies a skill folder without following a link it can
+  see: every entry is typed by `lstat`, an opened file must be the inode the walk typed, a
+  directory must keep its identity from before its names are read until after its children are
+  typed, and symlinks are recreated verbatim with modes kept. A single swap ends
+  `changed-during-copy`; a double swap timed around those checks can still read outside bytes, and
+  the update's own hash of the copy keeps that build from being published. The copy removes
+  nothing on failure. `claimPublish` claims the target with `mkdir`, then
   renames the staged folder over that empty claim, and leaves the claim for recovery if the rename
   fails. No caller uses them yet.
 - **Changed**: SMI-6531 -- the tree hash (`install/tree-hash.ts`) leaves out a directory's size and

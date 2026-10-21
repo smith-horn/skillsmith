@@ -1,13 +1,17 @@
 /**
  * SMI-6531 (A1 step 3): the no-follow tree copy (A1 plan §3.4 "Copying").
  *
- * Copies a skill folder into `new/` or a backup copy temp without ever reading
- * through a link: every entry is typed by `lstat`, a file is opened
- * `O_RDONLY|O_NOFOLLOW` and `fstat`ed on the descriptor, a symlink is
- * recreated from its verbatim text, and a directory is re-checked against the
- * identity `lstat` gave it before its names are read. A path swapped between
- * the type check and its use is refused as `changed-during-copy`, never copied
- * as whatever it became.
+ * Copies a skill folder into `new/` or a backup copy temp without following a
+ * link it can see: every entry is typed by `lstat`, a file is opened
+ * `O_RDONLY|O_NOFOLLOW` and its descriptor must be the inode the walk typed,
+ * a symlink is recreated from its verbatim text, and a directory must keep the
+ * identity `lstat` gave it from before its names are read until after its
+ * children are typed. A single swap of an entry or a parent directory between
+ * its check and its use is refused as `changed-during-copy`. What it does not
+ * refuse is a double swap: a parent swapped for a link while its children are
+ * typed, restored for its identity check, then swapped in again when a child
+ * is opened. That can read outside bytes into the copy; the caller's hash of
+ * the copy against `preTree` (below) keeps such a build from being published.
  *
  * Each directory's children are typed together before any is copied. That is
  * the plan's window (a type check, then later use), and it is what lets a test
@@ -80,6 +84,16 @@ function errno(err: unknown): string | null {
 /** The same directory the walk typed: not swapped for a link or another directory. */
 const sameDir = (a: BigIntStats, b: BigIntStats): boolean =>
   b.isDirectory() && a.dev === b.dev && a.ino === b.ino
+
+/** `changed-during-copy` when `dirAbs` is no longer the directory typed, `unreadable` when it can't be checked, else null. */
+async function dirChanged(dirAbs: string, typed: BigIntStats): Promise<Failure | null> {
+  try {
+    if (sameDir(typed, await fs.promises.lstat(dirAbs, { bigint: true }))) return null
+  } catch (err) {
+    return fail('unreadable', dirAbs, err)
+  }
+  return { ok: false, reason: 'changed-during-copy', path: dirAbs, errno: null }
+}
 
 async function syncOrFail(dir: string): Promise<Failure | null> {
   const s = await syncDirectory(dir)
@@ -186,16 +200,13 @@ async function copyDir(
     try {
       entries.push({ name, st: await fs.promises.lstat(path.join(srcAbs, name), { bigint: true }) })
     } catch (err) {
-      return fail('unreadable', path.join(srcAbs, name), err)
+      // A listed name gone missing is most often the directory itself having
+      // been swapped; say so when it was, rather than `unreadable`.
+      return (await dirChanged(srcAbs, typed)) ?? fail('unreadable', path.join(srcAbs, name), err)
     }
   }
-  try {
-    if (!sameDir(typed, await fs.promises.lstat(srcAbs, { bigint: true }))) {
-      return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
-    }
-  } catch (err) {
-    return fail('unreadable', srcAbs, err)
-  }
+  const moved = await dirChanged(srcAbs, typed)
+  if (moved !== null) return moved
   // Refuse an unsupported entry before writing any sibling of it.
   for (const { name, st } of entries) {
     if (!st.isDirectory() && !st.isFile() && !st.isSymbolicLink()) {
