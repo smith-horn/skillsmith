@@ -56,6 +56,13 @@ import {
 } from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import {
+  CHECK77_CUTOFF_TS,
+  CHECK77_EXEMPT_FILES,
+  classifyScanScope,
+  findRelationsWithoutGrantDecisions,
+  isCheck77InScope,
+} from './lib/audit-check77.mjs'
+import {
   loadGeneratorInputs as loadWeakPasswordLexiconInputs,
   generateAll as generateWeakPasswordLexicon,
   detectDrift as detectWeakPasswordLexiconDrift,
@@ -6410,6 +6417,70 @@ console.log(
 // FAILS on and after its expiry date and there is no opt-out (ADR-176).
 console.log(`\n${BOLD}Check 76: dependency registry coherence and expiry (SMI-6949)${RESET}`)
 runDependencyRegistryCheck({ pass, warn, fail })
+
+// Check 77: explicit API grants on new public relations (SMI-7151). Default
+// privileges give anon/authenticated/service_role NO access to new relations,
+// so a migration that creates one without GRANTs ships green and then every API
+// call returns 42501. FAILS (not warns). Scope: migrations newer than
+// CHECK77_CUTOFF_TS, never the exempt backfill. Pure logic and constants live in
+// scripts/lib/audit-check77.mjs (CHECK77_CUTOFF_TS, CHECK77_EXEMPT_FILES).
+// Locked trees (no git-crypt key) fail INCONCLUSIVE only when an encrypted
+// in-scope file is in this PR's diff; otherwise "not checked" is stated and passes.
+console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)${RESET}`)
+{
+  const MIG_DIR = 'supabase/migrations'
+  if (!existsSync(MIG_DIR)) {
+    fail(`Check 77: ${MIG_DIR} not found, cannot check explicit API grants`)
+  } else {
+    const inScope = readdirSync(MIG_DIR).filter(
+      (f) =>
+        f.endsWith('.sql') &&
+        isCheck77InScope(f, { cutoffTs: CHECK77_CUTOFF_TS, exemptFiles: CHECK77_EXEMPT_FILES })
+    )
+    const encrypted = inScope.filter((f) => isGitCryptEncrypted(join(MIG_DIR, f)))
+    // PR diff names come from git, which works without the git-crypt key.
+    let diffFiles = null
+    try {
+      const baseRef = process.env.GITHUB_BASE_REF
+      const gitOpts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+      const ref = baseRef ? `origin/${baseRef}` : 'origin/main'
+      const mergeBase = execSync(`git merge-base ${ref} HEAD`, gitOpts).trim()
+      diffFiles = execSync(`git diff --name-only ${mergeBase}...HEAD -- ${MIG_DIR}/`, gitOpts)
+        .split('\n')
+        .filter(Boolean)
+    } catch {
+      diffFiles = null
+    }
+    const scope = classifyScanScope({ inScopeFiles: inScope, encryptedFiles: encrypted, diffFiles })
+    if (scope.status === 'inconclusive') {
+      fail(
+        `Check 77: ${scope.reason}`,
+        'Unlock git-crypt (or run this check where the key is available) and re-run'
+      )
+    } else if (scope.status === 'not-checked') {
+      pass(`Check 77: ${scope.reason}`)
+    } else {
+      let violations = 0
+      for (const f of inScope.filter((x) => !encrypted.includes(x))) {
+        const found = findRelationsWithoutGrantDecisions(
+          `${MIG_DIR}/${f}`,
+          readFileSync(join(MIG_DIR, f), 'utf8')
+        )
+        for (const v of found) {
+          fail(`Check 77: ${v.message}`)
+          for (const line of v.fix.split('\n'))
+            console.log(`  ${YELLOW}${line.trimStart()}${RESET}`)
+          violations++
+        }
+      }
+      if (violations === 0) {
+        pass(
+          `Check 77: scanned ${scope.scanned} in-scope migration(s); every new public relation has explicit API grant decisions`
+        )
+      }
+    }
+  }
+}
 
 // Summary
 console.log('\n' + '━'.repeat(50))

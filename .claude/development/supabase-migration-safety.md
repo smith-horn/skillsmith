@@ -126,6 +126,25 @@ SELECT p.proname, p.proretset, pg_get_function_result(p.oid) AS return_type
 
 **Alternative**: change the helper to `RETURNS TABLE(team_id TEXT)` form — exposes named columns to callers. Higher maintenance cost (changing the return-type signature is a breaking change for any existing consumer), so prefer adjusting the policy `USING` clause instead.
 
+### R-Grant — a new relation with no explicit grants (SMI-7151, ADR-182)
+
+New tables, views and sequences in `public` get **no** privileges for `anon`, `authenticated` or `service_role` by default. A migration that creates one without GRANTs ships green, then every API caller gets `42501 permission denied`, edge functions (service_role) included.
+
+In the same migration that creates the relation:
+
+```sql
+CREATE TABLE public.foo (id bigserial PRIMARY KEY, ...);
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.foo TO service_role;
+GRANT SELECT ON public.foo TO authenticated;          -- or the ack marker below
+GRANT USAGE, SELECT ON SEQUENCE public.foo_id_seq TO service_role;  -- serial / bigserial / nextval
+```
+
+- **Clients:** never grant anon or authenticated `ALL`, `TRUNCATE`, `REFERENCES`, `TRIGGER` or `MAINTAIN`. List the privileges explicitly.
+- **A relation no API role should touch:** use `-- audit:check-77-ack service_role none foo: <reason>` and/or `-- audit:check-77-ack clients none foo: <reason>`.
+- **Enforcement:** `audit:standards` Check 77, which fails rather than warns.
+
+**Runtime triage:** for a `42501` on a relation, run `SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = '<rel>';` via `./scripts/pooler-psql.sh`. A sequence error names the sequence; check it with `has_sequence_privilege('service_role', 'public.<seq>', 'USAGE')`.
+
 ---
 
 ## Mandatory template
