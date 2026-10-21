@@ -145,6 +145,8 @@ GRANT USAGE, SELECT ON SEQUENCE public.foo_id_seq TO service_role;  -- serial / 
 
 **Runtime triage:** for a `42501` on a relation, run `SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = '<rel>';` via `./scripts/pooler-psql.sh`. A sequence error names the sequence; check it with `has_sequence_privilege('service_role', 'public.<seq>', 'USAGE')`.
 
+**Smoke blocks that scan `pg_class` with privilege functions: guard each call with `CASE` (SMI-7151).** `has_sequence_privilege()` raises `"<x>" is not a sequence` when it's given a non-sequence. Postgres doesn't guarantee that `WHERE` filters such as `relkind = 'S'` or the schema join run before it, so the call can reach another schema's table first. SMI-7151's first CI replay failed on `auth.instances` this way. Write `AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege(...) ELSE false END`. Do the same for any function that raises on the wrong object type.
+
 ---
 
 ## Mandatory template
