@@ -12,7 +12,8 @@ All notable changes to `@skillsmith/core` are documented here.
   symlink or non-directory at ST is `staging-unsafe`, and the sync of R after creating ST is
   recorded (`unsupported` accepted, any other failure stops the write with `staging-unsafe` and
   `path` = R, not ST). `staging-unsafe` is also raised for a mode that exposes more than R allows, a
-  failed mkdir, lstat, open, fstat or chmod of ST, an ST that is not a usable directory (not ours,
+  failed mkdir, lstat, open or fstat of ST, a chmod of ST failing with an errno other than `EPERM`,
+  `ENOTSUP` or `EROFS`, an ST that is not a usable directory (not ours,
   or changed while it was being made), a realpath of ST that cannot be resolved or differs from ST,
   and ST swapped while it was bound. `withSkillWriteLock(binding, label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
   lock file, re-verifies what was bound before requesting the lock and again under it, and runs
@@ -92,7 +93,8 @@ All notable changes to `@skillsmith/core` are documented here.
   holds at most one sentence naming those differences and the reason; on a platform with no
   no-follow open it always holds one saying the bits could not be verified. `bitsApplied` records
   what the call did, not whether the bits match: a directory this call did not make reports
-  `not-applied` with reason `existing-directory`. `BitsApplied` and `DirSyncOutcome` are exported as types. A difference only in a class the parent does not let
+  `not-applied` with reason `existing-directory` (`no-nofollow-open` on a platform with no
+  no-follow open, whether or not the call made it); `stagingCreated` says whether a bind made ST. `BitsApplied` and `DirSyncOutcome` are exported as types. A difference only in a class the parent does not let
   through, or in owner bits, is exact and says nothing (a root tightened to `0700` after a `0755`
   staging directory was made does not refuse it). A platform with no no-follow open (Windows) is never
   judged on mode, for a new or an existing directory: the actual mode is recorded and a warning says

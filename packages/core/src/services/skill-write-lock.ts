@@ -14,7 +14,8 @@
  *
  * The lock file sits inside the root, so every spelling of the root, every
  * state root and every bind mount of it resolves to one file. Nothing slow runs
- * under it: the `.gitignore` hint (one `git check-ignore` pair) runs after
+ * under it: the `.gitignore` hint (up to three `git check-ignore` calls, one
+ * per path) runs after
  * release, and only for the run whose `mkdir` created ST.
  *
  * Out of scope here (later steps): OP creation and the record, the backup-area
