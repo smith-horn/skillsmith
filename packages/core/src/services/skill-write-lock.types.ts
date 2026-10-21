@@ -27,8 +27,7 @@ export type SkillWriteStopCode =
   /**
    * `bindSkillsRoot` or `check` refused ST. Causes: a mode that exposes more
    * than R allows; a failed mkdir, lstat, open or fstat of ST, or a chmod of ST
-   * failing with an errno other than EPERM, ENOTSUP or EROFS (those three are
-   * a refusal: ST is bound and `stagingBits` records `chmod-refused`); ST not a
+   * failing with an errno other than EPERM, ENOTSUP or EROFS; ST not a
    * usable directory (not a directory, not ours, or changed during creation);
    * ST's realpath unresolvable or different from ST; ST swapped
    * while bound; or `check` finding ST (or an operation directory) not the one

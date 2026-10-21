@@ -13,7 +13,7 @@ All notable changes to `@skillsmith/core` are documented here.
   recorded (`unsupported` accepted, any other failure stops the write with `staging-unsafe` and
   `path` = R, not ST). `staging-unsafe` is also raised for a mode that exposes more than R allows, a
   failed mkdir, lstat, open or fstat of ST, a chmod of ST failing with an errno other than `EPERM`,
-  `ENOTSUP` or `EROFS` (those bind ST and record `chmod-refused`), an ST that is not a usable directory (not ours,
+  `ENOTSUP` or `EROFS`, an ST that is not a usable directory (not ours,
   or changed while it was being made), a realpath of ST that cannot be resolved or differs from ST,
   and ST swapped while it was bound. `withSkillWriteLock(binding, label, fn, options?)` takes `<R>/.skillsmith-writes.lock` (`withFileLock`, rank `'1'`), binds the
   lock file, re-verifies what was bound before requesting the lock and again under it, and runs
