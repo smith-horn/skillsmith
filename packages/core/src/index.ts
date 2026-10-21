@@ -452,7 +452,7 @@ export {
   stagingGitignoreHint,
   type GitignoreHintOptions,
 } from './services/skill-write-lock.gitignore.js'
-// The types `SkillsRootBinding` (above) names in its fields.
+// The types of `SkillsRootBinding`'s `stagingBits` and `rootSync` fields.
 export type { BitsApplied } from './install/mkdir-parent-bits.js'
 export type { DirSyncOutcome } from './install/dir-sync.js'
 
