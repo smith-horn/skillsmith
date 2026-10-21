@@ -761,7 +761,7 @@
         },
         "@modelcontextprotocol/client": {
           "pin": "^2.2.0",
-          "reason": "GHSA-6qxp-vccf-f47h also affects @modelcontextprotocol/client below 2.2.0; the seed resolved 2.1.0, an optional install via mcp-proxy (^2.0.0), which admits 2.2.0 (SMI-7017). It also nests its own @modelcontextprotocol/core 2.3.1, while @modelcontextprotocol/server (2.1.0) stays on the hoisted core 2.1.0. Today agentic-flow, the optional package that pulls in fastmcp, mcp-proxy and the MCP v2 packages, does not install in the built seed image, so neither copy ships; if it ever installs, client and server will run on different core copies (measured 2026-10-07, PR #3036).",
+          "reason": "GHSA-6qxp-vccf-f47h also affects @modelcontextprotocol/client below 2.2.0; the seed resolved 2.1.0, an optional install via mcp-proxy (^2.0.0), which admits 2.2.0 (SMI-7017). Client 2.3.1 exact-pins @modelcontextprotocol/core 2.3.1; since the @modelcontextprotocol/server 2.3.1 override below (SMI-7153), server exact-pins the same core, so both share one hoisted core 2.3.1 (before it, client nested its own 2.3.1 while server stayed on a hoisted 2.1.0). Today agentic-flow, the optional package that pulls in fastmcp, mcp-proxy and the MCP v2 packages, does not install in the built seed image (measured 2026-10-07, PR #3036).",
           "advisories": ["GHSA-6qxp-vccf-f47h"],
           "introducedBy": ["SMI-7017"],
           "crossesMajor": null,
@@ -774,6 +774,30 @@
           "introducedBy": ["SMI-6980"],
           "crossesMajor": null,
           "removeWhen": "Every @opentelemetry/core consumer in scripts/ruflo-seed other than @opentelemetry/resources 1.x (held at 1.30.1 by the nested override below and covered by the GHSA-8988-4f7v-96qf acceptance) declares a range that excludes versions below 2.8.0 (today @opentelemetry/sdk-node 0.218.0 exact-pins 2.7.1). Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "hono": {
+          "pin": "4.13.13",
+          "reason": "GHSA-5r4p-p66f-jhc7 (moderate, >=4.12.4 <4.13.11: serveStatic decodes the request path twice, bypassing middleware on static paths) affected the 4.13.8 copy the seed resolved, a production install reached through @modelcontextprotocol/sdk (^4.11.4); @hono/node-server (peer ^4) and fastmcp (^4.11.5) also declare it (SMI-7153). Pinned to 4.13.13, the newest 4.13.x, inside every declared range. Raising the lockfile alone would be undone by the next regeneration.",
+          "advisories": ["GHSA-5r4p-p66f-jhc7"],
+          "introducedBy": ["SMI-7153"],
+          "crossesMajor": null,
+          "removeWhen": "`npm ls hono` inside scripts/ruflo-seed lists only versions at or above 4.13.11 without this override (a scratch delete leaves the lockfile at or above 4.13.11), or the package is no longer in the seed. Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "follow-redirects": {
+          "pin": "1.16.1",
+          "reason": "GHSA-q3jh-wrc6-jgq8 and GHSA-8r9p-f939-6h3c (both high, >=1.16.0 <1.16.1: credential headers can survive a cross-origin redirect) affected the 1.16.0 copy the seed resolved, an optional install via axios (^1.16.0) and http-proxy (^1.0.0), both of which admit 1.16.1 (SMI-7153).",
+          "advisories": ["GHSA-q3jh-wrc6-jgq8", "GHSA-8r9p-f939-6h3c"],
+          "introducedBy": ["SMI-7153"],
+          "crossesMajor": null,
+          "removeWhen": "`npm ls follow-redirects` inside scripts/ruflo-seed lists only versions at or above 1.16.1 without this override (a scratch delete leaves the lockfile at or above 1.16.1), or the package is no longer in the seed. Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
+        },
+        "@modelcontextprotocol/server": {
+          "pin": "2.3.1",
+          "reason": "GHSA-jm63-cq47-j5jp (high: a shared transport or server instance delivered one HTTP client's messages to another), GHSA-46jr-4wx8-v453 (high: one request within the default size limit could exhaust memory during validation) and GHSA-rvq5-wwqv-78pq (moderate: bearer authentication accepted tokens issued for another service), all >=2.0.0 <2.3.0, affected the 2.1.0 copy the seed resolved, an optional install via mcp-proxy (^2.0.0), which admits 2.3.1 (SMI-7153). Server 2.3.1 exact-pins @modelcontextprotocol/core 2.3.1, the version @modelcontextprotocol/client 2.3.1 already pins, so the hoisted core moves 2.1.0 -> 2.3.1 and client's nested copy is gone.",
+          "advisories": ["GHSA-jm63-cq47-j5jp", "GHSA-46jr-4wx8-v453", "GHSA-rvq5-wwqv-78pq"],
+          "introducedBy": ["SMI-7153"],
+          "crossesMajor": null,
+          "removeWhen": "`npm ls @modelcontextprotocol/server` inside scripts/ruflo-seed lists only versions at or above 2.3.0 without this override (a scratch delete leaves the lockfile at or above 2.3.0), or the package is no longer in the seed. Re-evaluate on every @claude-flow/cli bump (scripts/ruflo-seed/regenerate-digest.sh)."
         },
         "@opentelemetry/resources@^1.0.0 > @opentelemetry/core": {
           "pin": "1.30.1",
@@ -791,10 +815,10 @@
           "severity": "high",
           "scope": "seed",
           "tier": "R3",
-          "basis": "No patched release exists (3.0.3 is latest; the advisory range is <=3.0.3). Reached only through optional installs (agentic-flow -> http-proxy-middleware -> micromatch -> braces), and the seed is served by a local-only container with network_mode none and no secrets (ADR-170 section 1).",
+          "basis": "No patched release exists (3.0.3 is latest; the advisory range is <=3.0.3). Reached only through optional installs (agentic-flow -> http-proxy-middleware -> micromatch -> braces), and the seed is served by a local-only container with network_mode none and no secrets (ADR-170 section 1). Re-triaged 2026-10-20 (SMI-7153): 3.0.3 is still the latest release.",
           "owner": "wrsmith108",
-          "accepted": "2026-10-04",
-          "expires": "2027-01-02",
+          "accepted": "2026-10-20",
+          "expires": "2027-01-18",
           "tracking": null
         },
         {
@@ -803,10 +827,10 @@
           "severity": "moderate",
           "scope": "seed",
           "tier": "R3",
-          "basis": "Covers only the 1.30.1 copy (under @opentelemetry/resources 1.30.1, which agentdb requests with ^1.25.0); the advisory's fix is 2.8.0 and there is no 1.x fix. The 21 copies that were at 2.7.1 are fixed by the seed's @opentelemetry/core override (SMI-6980). Every install is optional, and the seed is served with no network and no secrets.",
+          "basis": "Covers only the 1.30.1 copy (under @opentelemetry/resources 1.30.1, which agentdb requests with ^1.25.0); the advisory's fix is 2.8.0 and there is no 1.x fix. The 21 copies that were at 2.7.1 are fixed by the seed's @opentelemetry/core override (SMI-6980). Every install is optional, and the seed is served with no network and no secrets. Re-triaged 2026-10-20 (SMI-7153): 1.30.1 is still the latest 1.x release.",
           "owner": "wrsmith108",
-          "accepted": "2026-10-04",
-          "expires": "2027-01-02",
+          "accepted": "2026-10-20",
+          "expires": "2027-01-18",
           "tracking": "SMI-7027"
         }
       ]

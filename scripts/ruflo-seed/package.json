@@ -15,6 +15,9 @@
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@modelcontextprotocol/client": "^2.2.0",
     "@opentelemetry/core": "^2.8.0",
+    "hono": "4.13.13",
+    "follow-redirects": "1.16.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@opentelemetry/resources@^1.0.0": {
       "@opentelemetry/core": "1.30.1"
     }
