@@ -132,6 +132,15 @@ export function buildEffectiveGrants(stmts) {
     if (!grant && !/^REVOKE\b/i.test(masked)) continue
     const g = grant ? parseGrant(masked) : parseRevoke(masked)
     if (!g || g.kind === 'other') continue
+    // A column-level REVOKE (privilege written with a column list) removes only that column
+    // privilege; the table-level grant decision stands. A column-level GRANT still counts as a
+    // decision (see audit-check77.mjs header).
+    if (
+      !grant &&
+      /^REVOKE\s+(?:GRANT\s+OPTION\s+FOR\s+)?[^;]*?\([^)]*\)\s*(?:,|\bON\b)/i.test(masked)
+    ) {
+      continue
+    }
     const sequence = g.kind === 'sequence' || g.kind === 'allSequences'
     const kind = sequence ? 'sequence' : 'table'
     const privs = expand(g.privs, kind)

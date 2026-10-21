@@ -457,6 +457,18 @@ REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM authenticated;`
     ])
   })
 
+  it('does not let a column-level REVOKE cancel a table-level grant decision', () => {
+    // Postgres: REVOKE SELECT (id) removes only the column privilege; table-level SELECT stands.
+    const sql = `CREATE TABLE colrev (id int, secret text);
+GRANT SELECT ON public.colrev TO service_role, authenticated;
+REVOKE SELECT (secret) ON public.colrev FROM authenticated;
+CREATE TABLE tblrev (id int);
+GRANT SELECT ON public.tblrev TO service_role, authenticated;
+REVOKE SELECT ON public.tblrev FROM authenticated;`
+    // control: the table-level REVOKE on tblrev still cancels its client decision.
+    expect(keys(run(sql))).toEqual(['clients:tblrev'])
+  })
+
   it('counts a grant as a decision only if it carries a usable privilege', () => {
     const sql = `CREATE TABLE refs (id int);
 GRANT REFERENCES ON public.refs TO service_role;
