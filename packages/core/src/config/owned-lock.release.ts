@@ -31,6 +31,7 @@
  */
 
 import { hostname } from 'node:os'
+import { dirname } from 'node:path'
 
 import {
   createLockExclusive,
@@ -39,6 +40,7 @@ import {
   sleepSync,
   toTimingMs,
 } from './owned-lock.claim.js'
+import { stateRootLockPaths } from './lock-doctor.js'
 import { LOCK_RETRY_DELAY_MS, RECLAIM_LOCK_TIMEOUT_MS } from './owned-lock.types.js'
 import { warnSafely } from '../utils/warn-safely.js'
 
@@ -49,6 +51,22 @@ export interface ReleaseOwnedOptions {
 
 function errorCode(err: unknown): string {
   return (err as NodeJS.ErrnoException).code ?? (err as Error).message
+}
+
+/**
+ * How to clear an orphaned `.reclaim`. `skillsmith doctor locks --release` only
+ * accepts the locks `stateRootLockPaths` lists, so it is named only for those
+ * (same source of truth); any other lock gets hand removal.
+ */
+function reclaimRemedy(reclaimPath: string): string {
+  const root = dirname(reclaimPath)
+  if (stateRootLockPaths(root).includes(reclaimPath)) {
+    return (
+      'If no Skillsmith process is mid-way, remove the reclaim lock with ' +
+      `\`skillsmith doctor locks --state-root ${root} --release ${reclaimPath}\` or by hand.`
+    )
+  }
+  return `Check that no Skillsmith process is running, then remove ${reclaimPath} by hand.`
 }
 
 /**
@@ -76,9 +94,14 @@ export function releaseOwned(path: string, token: string, opts: ReleaseOwnedOpti
     try {
       taken = createLockExclusive(reclaimPath, rRecord)
     } catch (err) {
+      const code = errorCode(err)
+      // ENOENT/ENOTDIR: the lock's folder is gone, so there is no lock to keep or release.
+      const folderGone = code === 'ENOENT' || code === 'ENOTDIR'
       warnSafely(
-        `[skillsmith] lock_release_reclaim_failed: could not create ${reclaimPath} (${errorCode(err)}). ` +
-          `Not removing ${path}; it stays held by this process until it exits.`
+        `[skillsmith] lock_release_reclaim_failed: could not create ${reclaimPath} (${code}). ` +
+          (folderGone
+            ? `The folder of ${path} is gone, so there is nothing to release. Not removing ${path}.`
+            : `Not removing ${path}; it stays held by this process until it exits.`)
       )
       return false
     }
@@ -88,8 +111,7 @@ export function releaseOwned(path: string, token: string, opts: ReleaseOwnedOpti
         `[skillsmith] lock_release_reclaim_unavailable: could not take ${reclaimPath} within ${waitMs} ms: ` +
           'another process is deciding about this lock, or a crash left it behind. ' +
           `Not removing ${path}; it stays held by this process until it exits. ` +
-          'If no Skillsmith process is mid-way, remove the reclaim lock with ' +
-          `\`skillsmith doctor locks --release ${reclaimPath}\` or by hand.`
+          reclaimRemedy(reclaimPath)
       )
       return false
     }

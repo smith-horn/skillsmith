@@ -17,8 +17,12 @@ All notable changes to `@skillsmith/core` are documented here.
   `.reclaim`, synchronously; if it is still held (in practice an orphan left by a crash) or cannot be
   created (`ENOSPC`, `EDQUOT`, `EACCES`), release removes nothing, never takes over the leftover
   `.reclaim`, returns `false` and warns `lock_release_reclaim_unavailable` or
-  `lock_release_reclaim_failed`, and the lock stays with this process until it exits; remove an
-  orphaned `.reclaim` with `skillsmith doctor locks --release <lock>.reclaim` or by hand. An
+  `lock_release_reclaim_failed`, and the lock stays with this process until it exits (when the
+  lock's folder is gone, the latter says there is nothing to release); remove an orphaned
+  `.reclaim` with `skillsmith doctor locks --release <lock>.reclaim` if it is one of the locks
+  doctor lists (the manifest lock's), otherwise by hand after checking no Skillsmith process is
+  running; the warning names the one that applies. A failed write of a claim's temp file no longer
+  leaves a `.tmp` file behind. An
   orphaned `.reclaim` therefore now stops releases of that lock as well as reclaims. The reclaim
   lock's own release (`releaseClaimFile`) is unchanged and unguarded. A person deleting a lock file
   by hand still bypasses every lock.

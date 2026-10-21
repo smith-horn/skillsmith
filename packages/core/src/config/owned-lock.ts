@@ -56,8 +56,9 @@
  * is accepted and loudly diagnosable ({@link StuckLockError} names both files
  * + the manual unstick procedure below). Since SMI-7148 an orphaned reclaim
  * lock also stops RELEASES of that lock (`lock_release_reclaim_unavailable`:
- * nothing is removed, the lock stays until its process exits), and
- * `skillsmith doctor locks --release <lock>.reclaim` clears it. Legacy (pre-v1, bare-decimal-PID) claims
+ * nothing is removed, the lock stays until its process exits); the warning
+ * names `skillsmith doctor locks --release <lock>.reclaim` only for the locks
+ * doctor lists (`stateRootLockPaths`), and hand removal for any other. Legacy (pre-v1, bare-decimal-PID) claims
  * and unparseable claims are NEVER auto-reclaimed (D-5/D-6) because they
  * carry no `host` field, so "dead on this host" cannot establish "dead" for
  * a claim that might belong to a process on a different host sharing a

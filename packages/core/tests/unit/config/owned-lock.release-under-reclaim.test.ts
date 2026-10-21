@@ -276,7 +276,9 @@ describe('T3: release fails closed when .reclaim stays held', () => {
         .find((m: string) => m.includes('_unavailable'))
     )
     expect(message).toContain(lockPath)
-    expect(message).toContain(`doctor locks --release ${reclaimPath}`)
+    // m.json.lock is not a lock doctor lists, so the remedy is hand removal.
+    expect(message).toContain(`remove ${reclaimPath} by hand`)
+    expect(message).not.toContain('doctor locks')
     expect(elapsed).toBeGreaterThanOrEqual(RECLAIM_LOCK_TIMEOUT_MS - 20)
 
     // Presence, in the same run: the same call succeeds once the orphan is gone.

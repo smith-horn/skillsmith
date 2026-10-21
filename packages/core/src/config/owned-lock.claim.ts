@@ -237,11 +237,21 @@ function writeTempClaimExclusive(dir: string, base: string, recordJson: string):
       throw err
     }
     try {
-      writeFileSync(fd, recordJson)
-    } finally {
-      closeSync(fd)
+      try {
+        writeFileSync(fd, recordJson)
+      } finally {
+        closeSync(fd)
+      }
+      chmodSync(tmp, 0o600) // defeat a permissive umask BEFORE the file is reachable as a lock
+    } catch (err) {
+      // The temp exists but will never be linked: remove it rather than leak a `.tmp`.
+      try {
+        unlinkSync(tmp)
+      } catch {
+        // already gone or not removable; the original failure is the one to surface
+      }
+      throw err
     }
-    chmodSync(tmp, 0o600) // defeat a permissive umask BEFORE the file is reachable as a lock
     return tmp
   }
   throw new Error(

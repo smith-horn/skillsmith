@@ -38,6 +38,11 @@
  *   bare PID) removed and recreated with the same bytes, on a filesystem that
  *   reuses the inode, can't be told from the one inspected: its timestamps
  *   matched too when measured. A v1 claim's random token rules this out.
+ * - Two concurrent `doctor locks --release <lock>.reclaim` runs that both
+ *   inspected the same dead orphan `.reclaim` can let the second move aside a
+ *   NEW `.reclaim` that a releaser created after the first run removed the
+ *   orphan. Reachable only with two people or processes running doctor on the
+ *   same `.reclaim` at once.
  *
  * @module @skillsmith/core/config/lock-doctor
  */
