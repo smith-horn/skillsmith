@@ -31,6 +31,19 @@ const mod = (await import('../lib/audit-check77.mjs')) as {
     encryptedFiles: string[]
     diffFiles: string[] | null
   }) => Scope
+  runCheck77: (a: {
+    migrationFiles: string[]
+    readFile: (f: string) => string
+    isEncrypted: (f: string) => boolean
+    diffFiles: string[] | null
+    pass: (m: string) => void
+    fail: (m: string, hint?: string) => void
+    note?: (line: string) => void
+  }) => void
+  getCheck77DiffFiles: (a: {
+    execFile: (args: string[]) => string
+    baseRef?: string
+  }) => string[] | null
 }
 const {
   stripSqlComments,
@@ -292,9 +305,13 @@ GRANT SELECT ON public.foo TO service_role;
     expect(keys(run(sql))).toEqual(['clients:foo'])
   })
 
-  it('ignores TEMP tables and other schemas', () => {
-    expect(run('CREATE TEMP TABLE t (id int);')).toEqual([])
-    expect(run('CREATE TABLE private.x (id int);')).toEqual([])
+  it('ignores TEMP tables and other schemas, but still flags a real table beside them', () => {
+    const sql = `CREATE TEMP TABLE t (id int);
+CREATE TEMPORARY TABLE t2 (id int);
+CREATE TABLE private.x (id int);
+CREATE TABLE real_one (id int);`
+    // only real_one: a TEMP/other-schema table leaking in, or nothing being scanned, both fail
+    expect(keys(run(sql))).toEqual(['clients:real_one', 'service_role:real_one'])
   })
 
   it('ignores relation DDL inside comments', () => {
@@ -302,13 +319,18 @@ GRANT SELECT ON public.foo TO service_role;
     expect(run('/* CREATE TABLE x (id int); */')).toEqual([])
   })
 
-  it('ignores CREATE TABLE inside a $$ function body (documented gap)', () => {
+  it('ignores CREATE TABLE inside a $$ function body (documented gap) but not one after it', () => {
     const sql = `CREATE FUNCTION public.mk() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   CREATE TABLE x (id int);
 END;
-$$;`
-    expect(run(sql)).toEqual([])
+$$;
+CREATE TABLE after_body (id int);
+SELECT $$ x INTO decoy_dollar $$ AS a;
+SELECT 'x INTO decoy_string' AS b;`
+    // x and the INTO decoys sit in a dollar body / string, so they are masked. after_body proves
+    // the scan continued past the body; the decoys fail if masking stops blanking literals.
+    expect(keys(run(sql))).toEqual(['clients:after_body', 'service_role:after_body'])
   })
 
   it('ignores a file at or before the cutoff', () => {
@@ -345,6 +367,108 @@ GRANT SELECT, INSERT ON public.foo TO service_role, authenticated;`
     const sql = `CREATE TABLE foo (kind text DEFAULT 'serial');
 GRANT SELECT ON public.foo TO service_role, authenticated;`
     expect(run(sql)).toEqual([])
+  })
+
+  it('flags ALTER DEFAULT PRIVILEGES granted to PUBLIC or a quoted API role, not to others', () => {
+    const adp = (to: string) =>
+      keys(run(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ${to};`))
+    const hit = ['forbidden:ALTER DEFAULT PRIVILEGES']
+    expect(adp('PUBLIC')).toEqual(hit)
+    expect(adp('public')).toEqual(hit)
+    expect(adp('"anon"')).toEqual(hit)
+    expect(adp('GROUP authenticated')).toEqual(hit)
+    expect(adp('"service_role" WITH GRANT OPTION')).toEqual(hit)
+    expect(adp('postgres, "Anon"')).toEqual([]) // "Anon" is a different, case-sensitive role
+    expect(adp('postgres')).toEqual([])
+  })
+
+  it('normalizes quoted and PUBLIC grantees on plain GRANT too', () => {
+    expect(keys(run('GRANT TRUNCATE ON public.foo TO "anon";'))).toEqual(['forbidden:foo'])
+    expect(keys(run('GRANT ALL ON public.foo TO PUBLIC;'))).toEqual(['forbidden:foo'])
+    expect(run('GRANT TRUNCATE ON public.foo TO "Anon";')).toEqual([])
+  })
+
+  it('reports one violation for GRANT TRUNCATE ON ALL TABLES, still naming the privilege', () => {
+    const v = run('GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO anon;')
+    expect(keys(v)).toEqual(['forbidden:ALL TABLES IN SCHEMA public'])
+    expect(v[0].message).toContain('TRUNCATE')
+    // control: a different statement is a different violation
+    const two = run(
+      'GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO anon; GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;'
+    )
+    expect(keys(two)).toEqual([
+      'forbidden:ALL SEQUENCES IN SCHEMA public',
+      'forbidden:ALL TABLES IN SCHEMA public',
+    ])
+  })
+
+  it('honours acks only in real top-level -- line comments', () => {
+    const ack = (t: string) => `-- audit:check-77-ack clients none ${t}: ${GOOD_REASON}`
+    const base = (t: string) =>
+      `CREATE TABLE ${t} (id int);\nGRANT SELECT ON public.${t} TO service_role;\n`
+    const sql =
+      base('in_string') +
+      `SELECT '\n${ack('in_string')}\n';\n` +
+      base('in_dollar') +
+      `DO $$\n${ack('in_dollar')}\n$$;\n` +
+      base('in_block') +
+      `/*\n${ack('in_block')}\n*/\n` +
+      base('real') +
+      `${ack('real')}\n`
+    // the three fake acks must not count; the real one (control) must
+    expect(keys(run(sql))).toEqual(['clients:in_block', 'clients:in_dollar', 'clients:in_string'])
+  })
+
+  it('treats CREATE FOREIGN TABLE as a relation', () => {
+    const sql = `CREATE FOREIGN TABLE ft (id int) SERVER s;
+CREATE FOREIGN TABLE ok_ft (id int) SERVER s;
+GRANT SELECT ON public.ok_ft TO service_role, authenticated;`
+    expect(keys(run(sql))).toEqual(['clients:ft', 'service_role:ft'])
+  })
+
+  it('treats WITH ... SELECT INTO as creating a table, but not WITH ... INSERT INTO', () => {
+    const sql = `WITH x AS (SELECT 1 AS a) SELECT a INTO made FROM x;
+WITH y AS (SELECT 1 AS a) INSERT INTO not_made SELECT a FROM y;
+WITH z AS (SELECT 1 AS a) SELECT a INTO TEMP scratch FROM z;`
+    expect(keys(run(sql))).toEqual(['clients:made', 'service_role:made'])
+  })
+
+  it('lets a later REVOKE cancel an earlier GRANT, in statement order', () => {
+    const sql = `CREATE TABLE revoked (id int);
+GRANT SELECT ON public.revoked TO service_role, authenticated;
+REVOKE ALL ON public.revoked FROM service_role;
+CREATE TABLE early (id int);
+REVOKE ALL ON public.early FROM service_role;
+GRANT SELECT ON public.early TO service_role, authenticated;
+CREATE TABLE partial (id int);
+GRANT SELECT, INSERT ON public.partial TO service_role, authenticated;
+REVOKE INSERT, TRUNCATE ON public.partial FROM service_role;
+CREATE TABLE swept (id int);
+GRANT SELECT ON public.swept TO service_role, authenticated;
+REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM authenticated;`
+    // revoked: service_role cancelled. early: revoke came first, grant stands. partial: SELECT survives.
+    // swept: schema-wide REVOKE cancels authenticated on every table granted before it
+    // (it cancels authenticated SELECT on revoked and early too; partial keeps its INSERT, so it stays clean).
+    expect(keys(run(sql))).toEqual([
+      'clients:early',
+      'clients:revoked',
+      'clients:swept',
+      'service_role:revoked',
+    ])
+  })
+
+  it('counts a grant as a decision only if it carries a usable privilege', () => {
+    const sql = `CREATE TABLE refs (id int);
+GRANT REFERENCES ON public.refs TO service_role;
+GRANT SELECT ON public.refs TO authenticated;
+CREATE TABLE writes (id int);
+GRANT DELETE ON public.writes TO service_role, authenticated;
+CREATE SEQUENCE s_bad;
+GRANT UPDATE ON SEQUENCE public.s_bad TO service_role, authenticated;
+CREATE SEQUENCE s_ok;
+GRANT USAGE ON SEQUENCE public.s_ok TO service_role;
+GRANT SELECT ON SEQUENCE public.s_ok TO authenticated;`
+    expect(keys(run(sql))).toEqual(['clients:s_bad', 'service_role:refs', 'service_role:s_bad'])
   })
 
   it('prints the exact fix line from the spec', () => {
@@ -452,9 +576,118 @@ describe('Check 77: statement splitting and comment stripping', () => {
     expect(out).not.toContain('drop')
   })
 
-  it('finds ack markers on raw text before stripping removes them', () => {
+  it('finds ack markers in real line comments, which stripping removes from the text', () => {
     const sql = `-- audit:check-77-ack clients none foo: ${GOOD_REASON}\nSELECT 1;`
     expect(stripSqlComments(sql)).not.toContain('audit:check-77-ack')
     expect(mod.findCheck77Acks(sql)).toMatchObject([{ kind: 'clients', key: 'foo', problem: null }])
+  })
+})
+
+describe('Check 77: audit wiring (runCheck77)', () => {
+  const GOOD = '20261101000000_good.sql'
+  const BAD = '20261102000000_bad.sql'
+  const OLD = '20260101000000_old.sql'
+  const files: Record<string, string> = {
+    [GOOD]: 'CREATE TABLE ok (id int);\nGRANT SELECT ON public.ok TO service_role, authenticated;',
+    [BAD]: 'CREATE TABLE bad (id int);',
+    [OLD]: 'CREATE TABLE legacy (id int);',
+    '20261021000000_explicit_grants_backfill.sql': 'GRANT TRUNCATE ON public.x TO anon;',
+  }
+  const drive = (over: Partial<Parameters<typeof mod.runCheck77>[0]> = {}) => {
+    const calls = {
+      pass: [] as string[],
+      fail: [] as string[],
+      note: [] as string[],
+      read: [] as string[],
+    }
+    mod.runCheck77({
+      migrationFiles: Object.keys(files),
+      readFile: (f) => (calls.read.push(f), files[f]),
+      isEncrypted: () => false,
+      diffFiles: [],
+      pass: (m) => calls.pass.push(m),
+      fail: (m) => calls.fail.push(m),
+      note: (l) => calls.note.push(l),
+      ...over,
+    })
+    return calls
+  }
+
+  it('fails with the Check 77 message for an in-scope violating file', () => {
+    const c = drive()
+    expect(c.pass).toEqual([])
+    expect(c.fail.length).toBe(2)
+    expect(c.fail[0]).toContain('Check 77: supabase/migrations/' + BAD)
+    expect(c.fail[0]).toContain('public.bad has no service_role grant decision')
+    expect(c.note.join('\n')).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bad')
+  })
+
+  it('passes a clean in-scope set and states how many files it scanned', () => {
+    const c = drive({ migrationFiles: [GOOD, OLD] })
+    expect(c.fail).toEqual([])
+    expect(c.pass).toHaveLength(1)
+    expect(c.pass[0]).toContain('scanned 1 in-scope migration(s)')
+    expect(c.read).toEqual([GOOD]) // the pre-cutoff file was never read
+  })
+
+  it('says "not checked" rather than passing silently when nothing is in scope', () => {
+    const c = drive({ migrationFiles: [OLD, 'README.md'] })
+    expect(c.fail).toEqual([])
+    expect(c.pass).toEqual(['Check 77: not checked: no in-scope migrations (0 files scanned)'])
+  })
+
+  it('fails INCONCLUSIVE, without reading it, when an encrypted file is in the diff', () => {
+    const c = drive({
+      isEncrypted: (f) => f === BAD,
+      diffFiles: ['supabase/migrations/' + BAD],
+    })
+    expect(c.pass).toEqual([])
+    expect(c.fail).toHaveLength(1)
+    expect(c.fail[0]).toContain('INCONCLUSIVE')
+    expect(c.fail[0]).toContain(BAD)
+    expect(c.read).toEqual([])
+  })
+
+  it('fails INCONCLUSIVE when the diff is unknown and a file is encrypted', () => {
+    const c = drive({ isEncrypted: (f) => f === BAD, diffFiles: null })
+    expect(c.fail).toHaveLength(1)
+    expect(c.fail[0]).toContain('could not be determined')
+  })
+
+  it('still scans readable files when the encrypted one is not in the diff', () => {
+    const c = drive({ isEncrypted: (f) => f === GOOD, diffFiles: [] })
+    expect(c.fail.join('\n')).toContain('public.bad')
+    expect(c.read).toEqual([BAD])
+  })
+})
+
+describe('Check 77: PR diff computation (getCheck77DiffFiles)', () => {
+  it('passes git arguments as an argv array, never through a shell string', () => {
+    const calls: string[][] = []
+    const out = mod.getCheck77DiffFiles({
+      baseRef: 'main; touch pwned',
+      execFile: (args) => {
+        calls.push(args)
+        return args[0] === 'merge-base'
+          ? 'abc123\n'
+          : 'supabase/migrations/a.sql\n\nsupabase/migrations/b.sql\n'
+      },
+    })
+    expect(out).toEqual(['supabase/migrations/a.sql', 'supabase/migrations/b.sql'])
+    expect(calls[0]).toEqual(['merge-base', 'origin/main; touch pwned', 'HEAD'])
+    expect(calls[1]).toEqual(['diff', '--name-only', 'abc123...HEAD', '--', 'supabase/migrations/'])
+  })
+
+  it('defaults the base to origin/main and returns null when git fails', () => {
+    const seen: string[][] = []
+    expect(
+      mod.getCheck77DiffFiles({
+        execFile: (args) => {
+          seen.push(args)
+          throw new Error('no remote')
+        },
+      })
+    ).toBeNull()
+    expect(seen[0][1]).toBe('origin/main')
   })
 })

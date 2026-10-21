@@ -15,6 +15,10 @@ export function lex(sql, split) {
   let raw = ''
   let masked = ''
   const stmts = []
+  // Real top-level `--` line comments only (never inside a string, quoted identifier,
+  // dollar body or block comment, which the branches below consume whole).
+  // `ownLine` = nothing but whitespace precedes it on its line.
+  const comments = []
   const n = sql.length
   let i = 0
   const push = (r, m) => {
@@ -33,7 +37,13 @@ export function lex(sql, split) {
     const c = sql[i]
     const d = sql[i + 1]
     if (c === '-' && d === '-') {
+      const start = i
       while (i < n && sql[i] !== '\n') i++
+      const lineStart = sql.lastIndexOf('\n', start - 1) + 1
+      comments.push({
+        text: sql.slice(start, i).replace(/\r$/, ''),
+        ownLine: sql.slice(lineStart, start).trim() === '',
+      })
       continue
     }
     if (c === '/' && d === '*') {
@@ -98,7 +108,12 @@ export function lex(sql, split) {
     i++
   }
   if (split) flush()
-  return { text: raw, stmts }
+  return { text: raw, stmts, comments }
+}
+
+/** Real `--` line comments (text includes the leading dashes), in file order. */
+export function lineComments(sql) {
+  return lex(sql, false).comments
 }
 
 /** Remove `--` and nested block comments; leave string/dollar bodies intact. */

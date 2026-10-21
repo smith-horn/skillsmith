@@ -10,10 +10,15 @@
  * Spec: docs/internal/implementation/smi-7151-explicit-grants-and-rls-hardening.md
  * section 3 and Appendix B.
  *
- * Known gaps (documented, deliberate): a CREATE TABLE inside a dollar-quoted
- * function or DO body is not a top-level statement and is ignored; partition
- * children (CREATE TABLE ... PARTITION OF) are skipped because Postgres checks
- * privileges only on the table a query names.
+ * Known gaps (documented, deliberate), exactly these two:
+ *   - a CREATE TABLE inside a dollar-quoted function or DO body is not a
+ *     top-level statement and is ignored;
+ *   - partition children (CREATE TABLE ... PARTITION OF) are skipped because
+ *     Postgres checks privileges only on the table a query names.
+ *
+ * Intended, not a gap: a column-level grant (GRANT SELECT (col) ON t TO role)
+ * counts as that role's decision. It is a deliberate, narrower grant; profiles
+ * and private_registry_skills rely on exactly this shape.
  */
 
 export const CHECK77_CUTOFF_TS = '20261021000000'
@@ -27,7 +32,6 @@ const MIN_REASON_LENGTH = 18
 
 import {
   lex,
-  normIdent,
   readIdent,
   readQname,
   isPublic,
@@ -36,12 +40,18 @@ import {
   matchingParen,
 } from './audit-check77-lex.mjs'
 
-import { CLIENT_ROLES, parseGrant, forbiddenViolations } from './audit-check77-grants.mjs'
+import {
+  CLIENT_ROLES,
+  DECISION_PRIVS,
+  buildEffectiveGrants,
+  forbiddenViolations,
+} from './audit-check77-grants.mjs'
 
 export { stripSqlComments, splitSqlStatements } from './audit-check77-lex.mjs'
 
 // ---------------------------------------------------------------------------
-// Ack markers (extracted from RAW text: they are `--` comments)
+// Ack markers (real top-level `--` line comments only: the lexer never reports a
+// comment marker found inside a string, quoted identifier, dollar body or /* */)
 // ---------------------------------------------------------------------------
 
 const PLACEHOLDER_RE = /^\W*(todo|tbd|fixme|n\/?a|none|xxx|placeholder)\b/i
@@ -57,8 +67,10 @@ function reasonProblem(reason) {
 export function findCheck77Acks(sql) {
   const acks = []
   const re =
-    /^[ \t]*--[ \t]*audit:check-77-ack[ \t]+(service_role|clients|sequence)[ \t]+none[ \t]+([^:\n]+?)[ \t]*:[ \t]*(.*)$/gim
-  for (const m of sql.matchAll(re)) {
+    /^--[ \t]*audit:check-77-ack[ \t]+(service_role|clients|sequence)[ \t]+none[ \t]+([^:\n]+?)[ \t]*:[ \t]*(.*)$/i
+  for (const comment of lex(sql, false).comments) {
+    const m = comment.ownLine ? re.exec(comment.text) : null
+    if (!m) continue
     const target = m[2].trim()
     let key = null
     if (m[1] === 'sequence') {
@@ -132,12 +144,38 @@ export function classifyScanScope({ inScopeFiles, encryptedFiles, diffFiles }) {
   return { status: 'pass', scanned, reason: '' }
 }
 
-const hasName = (g, name) => g.names.some((q) => isPublic(q) && q.name === name)
 const seqNameFromNextval = (rawText) => {
   const m = /nextval\s*\(\s*'((?:[^']|'')*)'/i.exec(rawText)
   if (!m) return null
   const q = readQname(m[1].replace(/''/g, "'"), 0)
   return q && isPublic(q) ? q.name : null
+}
+
+const SELECT_INTO_RE =
+  /^SELECT\b[\s\S]*?\bINTO\s+(TEMPORARY\s+|TEMP\s+)?(?:UNLOGGED\s+)?(?:TABLE\s+)?/i
+
+/**
+ * The SELECT statement text to test for `INTO <table>`: the statement itself, or for a
+ * WITH-prefixed statement the main SELECT after its CTE list (null when the main
+ * statement is INSERT/UPDATE/DELETE/..., whose `INTO` is not a table creation).
+ */
+function selectStatement(masked) {
+  if (!/^WITH\b/i.test(masked)) return masked
+  let depth = 0
+  for (let i = 4; i < masked.length; i++) {
+    const c = masked[i]
+    if (c === '"') {
+      i++
+      while (i < masked.length && !(masked[i] === '"' && masked[i + 1] !== '"'))
+        i += masked[i] === '"' ? 2 : 1
+    } else if (c === '(') depth++
+    else if (c === ')') depth--
+    else if (depth === 0 && /[A-Za-z]/.test(c) && !/[A-Za-z0-9_$]/.test(masked[i - 1])) {
+      const w = /^(SELECT|INSERT|UPDATE|DELETE|MERGE|VALUES|TABLE)\b/i.exec(masked.slice(i))
+      if (w) return w[1].toUpperCase() === 'SELECT' ? masked.slice(i) : null
+    }
+  }
+  return null
 }
 
 const COLUMN_KEYWORD = /^(CONSTRAINT|PRIMARY|UNIQUE|FOREIGN|CHECK|EXCLUDE|LIKE)\b/i
@@ -168,7 +206,10 @@ function extractFromStatements(stmts) {
   }
   for (const { raw, masked } of stmts) {
     let m
-    if ((m = /^CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i.exec(masked))) {
+    let sel
+    if (
+      (m = /^CREATE\s+(?:UNLOGGED\s+|FOREIGN\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i.exec(masked))
+    ) {
       const q = readQname(masked, m[0].length)
       if (!isPublic(q)) continue
       const after = masked.slice(q.end)
@@ -195,12 +236,8 @@ function extractFromStatements(stmts) {
           if (t) triggers.push(t)
         }
       }
-    } else if (
-      (m = /^SELECT\b[\s\S]*?\bINTO\s+(TEMPORARY\s+|TEMP\s+)?(?:UNLOGGED\s+)?(?:TABLE\s+)?/i.exec(
-        masked
-      ))
-    ) {
-      const q = m[1] ? null : readQname(masked, m[0].length)
+    } else if ((sel = selectStatement(masked)) !== null && (m = SELECT_INTO_RE.exec(sel))) {
+      const q = m[1] ? null : readQname(sel, m[0].length)
       if (isPublic(q)) add('table', q.name)
     } else if (
       (m =
@@ -271,10 +308,7 @@ export function findRelationsWithoutGrantDecisions(fileName, sql, opts = {}) {
   const acks = findCheck77Acks(sql)
   const stmts = lex(sql, true).stmts
   const { relations, triggers } = extractFromStatements(stmts)
-  const grants = stmts
-    .filter((s) => /^GRANT\b/i.test(s.masked))
-    .map((s) => parseGrant(s.masked))
-    .filter(Boolean)
+  const effective = buildEffectiveGrants(stmts)
   const violations = forbiddenViolations(file, stmts)
 
   const ackFor = (kind, key) => acks.filter((a) => a.kind === kind && a.key === key)
@@ -294,16 +328,15 @@ export function findRelationsWithoutGrantDecisions(fileName, sql, opts = {}) {
 
   for (const rel of relations) {
     const name = rel.name
-    const mine = grants.filter(
-      (g) => (g.kind === 'table' || g.kind === 'sequence') && hasName(g, name)
-    )
     const sequence = rel.kind === 'sequence'
+    const decisive = DECISION_PRIVS[sequence ? 'sequence' : 'table']
+    const mine = effective.filter((e) => e.name === name && decisive.includes(e.priv))
     const obj = sequence ? 'SEQUENCE' : 'TABLE'
     const svcPrivs = sequence ? 'USAGE, SELECT, UPDATE' : TABLE_PRIVS
     decide(
       'service_role',
       name,
-      mine.some((g) => g.grantees.includes('service_role')),
+      mine.some((e) => e.role === 'service_role'),
       (note) => ({
         file,
         relation: name,
@@ -315,7 +348,7 @@ export function findRelationsWithoutGrantDecisions(fileName, sql, opts = {}) {
     decide(
       'clients',
       name,
-      mine.some((g) => g.grantees.some((r) => CLIENT_ROLES.includes(r))),
+      mine.some((e) => CLIENT_ROLES.includes(e.role)),
       (note) => ({
         file,
         relation: name,
@@ -326,34 +359,29 @@ export function findRelationsWithoutGrantDecisions(fileName, sql, opts = {}) {
     )
   }
 
-  const usage = grants.filter(
-    (g) => g.kind === 'sequence' && g.privs.some((p) => p === 'USAGE' || p === 'ALL')
-  )
+  const usage = effective.filter((e) => e.kind === 'sequence' && e.priv === 'USAGE')
   for (const t of triggers) {
     // Exact name only. Accepting "any sequence named in this file" let one table's grant satisfy
     // another table's serial column (SMI-7151 review). The one fuzzy case is a derived name over
     // Postgres's 63-byte limit, which Postgres truncates; the ack marker covers anything else.
     const long = t.seq.length > 63
-    const covers = (g, role) =>
-      g.grantees.includes(role) &&
-      g.names.some(
-        (q) =>
-          isPublic(q) &&
-          (q.name === t.seq ||
-            (long && q.name.endsWith('_seq') && q.name.startsWith(t.table.slice(0, 20))))
-      )
+    const covers = (e, role) =>
+      e.role === role &&
+      (e.name === t.seq ||
+        (long && e.name.endsWith('_seq') && e.name.startsWith(t.table.slice(0, 20))))
     const roles = ['service_role']
-    for (const g of grants) {
+    for (const e of effective) {
       if (
-        g.kind === 'table' &&
-        hasName(g, t.table) &&
-        g.privs.some((p) => p === 'INSERT' || p === 'ALL')
+        e.kind === 'table' &&
+        e.name === t.table &&
+        e.priv === 'INSERT' &&
+        CLIENT_ROLES.includes(e.role) &&
+        !roles.includes(e.role)
       ) {
-        for (const r of g.grantees)
-          if (CLIENT_ROLES.includes(r) && !roles.includes(r)) roles.push(r)
+        roles.push(e.role)
       }
     }
-    const missing = roles.filter((r) => !usage.some((g) => covers(g, r)))
+    const missing = roles.filter((r) => !usage.some((e) => covers(e, r)))
     decide('sequence', `${t.table}.${t.column}`, missing.length === 0, (note) => ({
       file,
       relation: t.seq,
@@ -363,4 +391,72 @@ export function findRelationsWithoutGrantDecisions(fileName, sql, opts = {}) {
     }))
   }
   return violations
+}
+
+// ---------------------------------------------------------------------------
+// Audit wiring (I/O injected so the pass/fail/inconclusive plumbing is testable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Names of migration files changed in this PR, or null when git cannot say.
+ * `execFile(args)` runs `git <args>` and returns stdout; arguments are an argv
+ * array, so a hostile base ref is one argument, never shell syntax.
+ */
+export function getCheck77DiffFiles({ execFile, baseRef, migDir = 'supabase/migrations' }) {
+  try {
+    const ref = baseRef ? `origin/${baseRef}` : 'origin/main'
+    const mergeBase = execFile(['merge-base', ref, 'HEAD']).trim()
+    return execFile(['diff', '--name-only', `${mergeBase}...HEAD`, '--', `${migDir}/`])
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Scope classification -> pass / fail / INCONCLUSIVE for Check 77. `migrationFiles` are
+ * names inside `migDir`; `readFile(name)` is never called for an encrypted file.
+ */
+export function runCheck77({
+  migrationFiles,
+  readFile,
+  isEncrypted,
+  diffFiles,
+  pass,
+  fail,
+  note = () => {},
+  migDir = 'supabase/migrations',
+}) {
+  const inScope = migrationFiles.filter(
+    (f) =>
+      f.endsWith('.sql') &&
+      isCheck77InScope(f, { cutoffTs: CHECK77_CUTOFF_TS, exemptFiles: CHECK77_EXEMPT_FILES })
+  )
+  const encrypted = inScope.filter((f) => isEncrypted(f))
+  const scope = classifyScanScope({ inScopeFiles: inScope, encryptedFiles: encrypted, diffFiles })
+  if (scope.status === 'inconclusive') {
+    fail(
+      `Check 77: ${scope.reason}`,
+      'Unlock git-crypt (or run this check where the key is available) and re-run'
+    )
+    return
+  }
+  if (scope.status === 'not-checked') {
+    pass(`Check 77: ${scope.reason}`)
+    return
+  }
+  let violations = 0
+  for (const f of inScope.filter((x) => !encrypted.includes(x))) {
+    for (const v of findRelationsWithoutGrantDecisions(`${migDir}/${f}`, readFile(f))) {
+      fail(`Check 77: ${v.message}`)
+      for (const line of v.fix.split('\n')) note(line.trimStart())
+      violations++
+    }
+  }
+  if (violations === 0) {
+    pass(
+      `Check 77: scanned ${scope.scanned} in-scope migration(s); every new public relation has explicit API grant decisions`
+    )
+  }
 }

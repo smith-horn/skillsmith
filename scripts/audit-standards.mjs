@@ -55,13 +55,7 @@ import {
   allowlistKeyFor,
 } from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
-import {
-  CHECK77_CUTOFF_TS,
-  CHECK77_EXEMPT_FILES,
-  classifyScanScope,
-  findRelationsWithoutGrantDecisions,
-  isCheck77InScope,
-} from './lib/audit-check77.mjs'
+import { getCheck77DiffFiles, runCheck77 } from './lib/audit-check77.mjs'
 import {
   loadGeneratorInputs as loadWeakPasswordLexiconInputs,
   generateAll as generateWeakPasswordLexicon,
@@ -6422,8 +6416,8 @@ runDependencyRegistryCheck({ pass, warn, fail })
 // privileges give anon/authenticated/service_role NO access to new relations,
 // so a migration that creates one without GRANTs ships green and then every API
 // call returns 42501. FAILS (not warns). Scope: migrations newer than
-// CHECK77_CUTOFF_TS, never the exempt backfill. Pure logic and constants live in
-// scripts/lib/audit-check77.mjs (CHECK77_CUTOFF_TS, CHECK77_EXEMPT_FILES).
+// CHECK77_CUTOFF_TS, never the exempt backfill. The scope, pass/fail and INCONCLUSIVE
+// logic lives in runCheck77() in scripts/lib/audit-check77.mjs (I/O injected, unit-tested).
 // Locked trees (no git-crypt key) fail INCONCLUSIVE only when an encrypted
 // in-scope file is in this PR's diff; otherwise "not checked" is stated and passes.
 console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)${RESET}`)
@@ -6432,53 +6426,23 @@ console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)$
   if (!existsSync(MIG_DIR)) {
     fail(`Check 77: ${MIG_DIR} not found, cannot check explicit API grants`)
   } else {
-    const inScope = readdirSync(MIG_DIR).filter(
-      (f) =>
-        f.endsWith('.sql') &&
-        isCheck77InScope(f, { cutoffTs: CHECK77_CUTOFF_TS, exemptFiles: CHECK77_EXEMPT_FILES })
-    )
-    const encrypted = inScope.filter((f) => isGitCryptEncrypted(join(MIG_DIR, f)))
-    // PR diff names come from git, which works without the git-crypt key.
-    let diffFiles = null
-    try {
-      const baseRef = process.env.GITHUB_BASE_REF
-      const gitOpts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-      const ref = baseRef ? `origin/${baseRef}` : 'origin/main'
-      const mergeBase = execSync(`git merge-base ${ref} HEAD`, gitOpts).trim()
-      diffFiles = execSync(`git diff --name-only ${mergeBase}...HEAD -- ${MIG_DIR}/`, gitOpts)
-        .split('\n')
-        .filter(Boolean)
-    } catch {
-      diffFiles = null
-    }
-    const scope = classifyScanScope({ inScopeFiles: inScope, encryptedFiles: encrypted, diffFiles })
-    if (scope.status === 'inconclusive') {
-      fail(
-        `Check 77: ${scope.reason}`,
-        'Unlock git-crypt (or run this check where the key is available) and re-run'
-      )
-    } else if (scope.status === 'not-checked') {
-      pass(`Check 77: ${scope.reason}`)
-    } else {
-      let violations = 0
-      for (const f of inScope.filter((x) => !encrypted.includes(x))) {
-        const found = findRelationsWithoutGrantDecisions(
-          `${MIG_DIR}/${f}`,
-          readFileSync(join(MIG_DIR, f), 'utf8')
-        )
-        for (const v of found) {
-          fail(`Check 77: ${v.message}`)
-          for (const line of v.fix.split('\n'))
-            console.log(`  ${YELLOW}${line.trimStart()}${RESET}`)
-          violations++
-        }
-      }
-      if (violations === 0) {
-        pass(
-          `Check 77: scanned ${scope.scanned} in-scope migration(s); every new public relation has explicit API grant decisions`
-        )
-      }
-    }
+    // PR diff names come from git, which works without the git-crypt key. Every git call
+    // goes through execFileSync with an argv array: GITHUB_BASE_REF is never shell-parsed.
+    const gitOpts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    runCheck77({
+      migrationFiles: readdirSync(MIG_DIR),
+      readFile: (f) => readFileSync(join(MIG_DIR, f), 'utf8'),
+      isEncrypted: (f) => isGitCryptEncrypted(join(MIG_DIR, f)),
+      diffFiles: getCheck77DiffFiles({
+        execFile: (args) => execFileSync('git', args, gitOpts),
+        baseRef: process.env.GITHUB_BASE_REF,
+        migDir: MIG_DIR,
+      }),
+      pass,
+      fail,
+      note: (line) => console.log(`  ${YELLOW}${line}${RESET}`),
+      migDir: MIG_DIR,
+    })
   }
 }
 
