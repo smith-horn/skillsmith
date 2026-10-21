@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const inject = vi.hoisted(() => ({
   throwFor: null as string | null,
+  /** When set, thrown instead of an Error: a hostile value whose formatting can itself throw. */
+  value: undefined as (() => unknown) | undefined,
   hits: 0,
   seenPaths: [] as string[],
 }))
@@ -28,6 +30,7 @@ vi.mock('../../../src/config/owned-lock.claim.js', async (importOriginal) => {
       inject.seenPaths.push(p)
       if (inject.throwFor !== null && p === inject.throwFor) {
         inject.hits++
+        if (inject.value !== undefined) throw inject.value()
         throw new Error(`injected throw releasing ${p}`)
       }
       return actual.releaseClaimFile(p, token)
@@ -46,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   inject.throwFor = null
+  inject.value = undefined
   inject.hits = 0
   inject.seenPaths = []
   vi.restoreAllMocks()
@@ -135,5 +139,71 @@ describe('releaseOwned contains a throw from either release it makes', () => {
     expect(released).toBe(false)
     expect(fs.existsSync(lockPath)).toBe(true)
     expect(warnings().some((m) => m.includes('lock_release_failed'))).toBe(true)
+  })
+})
+
+/** A value whose `instanceof` check throws: a revoked proxy. */
+function revokedProxy(): unknown {
+  const { proxy, revoke } = Proxy.revocable({}, {})
+  revoke()
+  return proxy
+}
+
+/** An Error whose `message` and `code` getters throw. */
+function throwingGetters(): unknown {
+  const err = new Error('placeholder')
+  Object.defineProperty(err, 'message', {
+    get() {
+      throw new Error('message getter throws')
+    },
+  })
+  Object.defineProperty(err, 'code', {
+    get() {
+      throw new Error('code getter throws')
+    },
+  })
+  return err
+}
+
+describe('formatting a hostile thrown value cannot break the containment', () => {
+  it('control: a revoked proxy really does make instanceof throw', () => {
+    expect(() => revokedProxy() instanceof Error).toThrow()
+  })
+
+  it('the main release throws a revoked proxy: false, no throw, and the guard is still released', () => {
+    const { lockPath, reclaimPath } = fresh()
+    fs.writeFileSync(lockPath, v1())
+    inject.throwFor = lockPath
+    inject.value = revokedProxy
+
+    let released: boolean | undefined
+    expect(() => {
+      released = releaseOwned(lockPath, TOKEN)
+    }).not.toThrow()
+
+    expect(inject.hits, 'the hostile throw fired').toBe(1)
+    expect(released).toBe(false)
+    expect(fs.readFileSync(lockPath, 'utf8')).toBe(v1())
+    expect(inject.seenPaths).toEqual([lockPath, reclaimPath]) // the guard release still ran
+    expect(fs.existsSync(reclaimPath)).toBe(false) // and the guard is gone, not left stuck
+  })
+
+  it('the guard release throws an Error with throwing getters: the main answer is kept', () => {
+    const { lockPath, reclaimPath } = fresh()
+    fs.writeFileSync(lockPath, v1())
+    inject.throwFor = reclaimPath
+    inject.value = throwingGetters
+
+    let released: boolean | undefined
+    expect(() => {
+      released = releaseOwned(lockPath, TOKEN)
+    }).not.toThrow()
+
+    expect(inject.hits, 'the hostile throw fired').toBe(1)
+    expect(released).toBe(true)
+    expect(fs.existsSync(lockPath)).toBe(false)
+    expect(
+      warnings().some((m) => m.includes('lock_release_guard_failed') && m.includes(reclaimPath))
+    ).toBe(true)
   })
 })

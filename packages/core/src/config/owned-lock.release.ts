@@ -38,9 +38,9 @@ import {
   randomHex,
   releaseClaimFile,
   sleepSync,
-  thrownText,
   toTimingMs,
 } from './owned-lock.claim.js'
+import { thrownCode, thrownText } from './owned-lock.errors.js'
 import { stateRootLockPaths } from './lock-doctor.js'
 import { LOCK_RETRY_DELAY_MS, RECLAIM_LOCK_TIMEOUT_MS } from './owned-lock.types.js'
 import { warnSafely } from '../utils/warn-safely.js'
@@ -48,10 +48,6 @@ import { warnSafely } from '../utils/warn-safely.js'
 export interface ReleaseOwnedOptions {
   /** @internal Test seam: max wait for `<path>.reclaim` (ms). Default RECLAIM_LOCK_TIMEOUT_MS. 0 means one try. */
   reclaimLockTimeoutMs?: number
-}
-
-function errorCode(err: unknown): string {
-  return (err as NodeJS.ErrnoException).code ?? (err as Error).message
 }
 
 /**
@@ -109,7 +105,7 @@ function releaseOwnedChecked(path: string, token: string, opts: ReleaseOwnedOpti
     try {
       taken = createLockExclusive(reclaimPath, rRecord)
     } catch (err) {
-      const code = errorCode(err)
+      const code = thrownCode(err)
       // ENOENT/ENOTDIR: the lock's folder is gone, so there is no lock to keep or release.
       const folderGone = code === 'ENOENT' || code === 'ENOTDIR'
       warnSafely(

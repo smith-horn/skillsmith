@@ -36,6 +36,7 @@ import {
   MAX_LOCK_BYTES,
   RECLAIM_LOCK_TIMEOUT_MS,
 } from './owned-lock.types.js'
+import { thrownCode, thrownText } from './owned-lock.errors.js'
 import type { Claim, ReclaimOutcome, RefusalCategory, V1Claim } from './owned-lock.types.js'
 import { warnSafely } from '../utils/warn-safely.js'
 
@@ -250,11 +251,11 @@ function writeTempClaimExclusive(dir: string, base: string, recordJson: string):
       } catch (cleanupErr) {
         // Already gone is fine; anything else leaves a `.tmp` behind, so say so.
         // The original failure is still the one thrown.
-        const cleanupCode = (cleanupErr as NodeJS.ErrnoException).code
+        const cleanupCode = thrownCode(cleanupErr)
         if (cleanupCode !== 'ENOENT') {
           warnSafely(
             `[skillsmith] lock_temp_cleanup_failed: could not remove the temp claim ${tmp} ` +
-              `(${cleanupCode ?? (cleanupErr as Error).message}); remove it by hand.`
+              `(${cleanupCode}); remove it by hand.`
           )
         }
       }
@@ -426,20 +427,15 @@ export function releaseClaimFile(path: string, token: string): boolean {
   }
 }
 
-/** A thrown value as warning text; total, so a warning's own construction can't throw. */
-export function thrownText(err: unknown): string {
-  return err instanceof Error ? err.message : 'not an Error'
-}
-
 function releaseClaimFileChecked(path: string, token: string): boolean {
   const claim = readClaim(path)
   if (claim.kind === 'v1' && claim.token === token) {
     try {
       unlinkSync(path)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (thrownCode(err) !== 'ENOENT') {
         warnSafely(
-          `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${(err as Error).message}`
+          `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${thrownText(err)}`
         )
         return false
       }
