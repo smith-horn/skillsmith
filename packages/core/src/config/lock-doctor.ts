@@ -19,7 +19,9 @@
  *   (plan E17). Every other claim needs `unsafeUnverifiedOwner`. A claim it
  *   cannot read (another user's `0600` claim, plan E31) is never released.
  * - `releaseLock` takes `<path>.reclaim` by exclusive create, the file
- *   owned-lock's own reclaimers and releases serialize on (SMI-7148). It then
+ *   owned-lock's reclaimers and MAIN-lock releases serialize on (SMI-7148;
+ *   the release of a `.reclaim` guard itself is not serialized, see the last
+ *   residual below). It then
  *   renames the lock to a unique name beside it, which moves whatever is at
  *   the path in one step, and removes the moved file only if its inode and
  *   bytes equal what it inspected. A removal by path name after a check would
@@ -43,6 +45,13 @@
  *   NEW `.reclaim` that a releaser created after the first run removed the
  *   orphan. Reachable only with two people or processes running doctor on the
  *   same `.reclaim` at once.
+ * - Releasing a `.reclaim` guard itself stays read-then-unlink (owner decision
+ *   2026-10-21: documented, not fixed). `doctor locks --release <lock>.reclaim
+ *   --unsafe-unverified-owner` against a LIVE guard can remove it while its
+ *   holder is releasing it; if another process creates a new guard in that
+ *   moment, the holder's unlink deletes the new one. Reachable only through
+ *   that unsafe override against a live guard (doctor accepts only the
+ *   manifest lock's `.reclaim` today).
  *
  * @module @skillsmith/core/config/lock-doctor
  */

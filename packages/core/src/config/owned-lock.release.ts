@@ -38,6 +38,7 @@ import {
   randomHex,
   releaseClaimFile,
   sleepSync,
+  thrownText,
   toTimingMs,
 } from './owned-lock.claim.js'
 import { stateRootLockPaths } from './lock-doctor.js'
@@ -77,6 +78,20 @@ function reclaimRemedy(reclaimPath: string): string {
  * runs in a `finally` (SMI-7143).
  */
 export function releaseOwned(path: string, token: string, opts: ReleaseOwnedOptions = {}): boolean {
+  try {
+    return releaseOwnedChecked(path, token, opts)
+  } catch (err) {
+    // Anything unexpected (setup, the wait, a throw nothing below contains):
+    // never escapes into the caller's `finally`; the lock may still be ours.
+    warnSafely(
+      `[skillsmith] lock_release_failed: releasing ${path} threw (${thrownText(err)}). ` +
+        `Not removing ${path}; it stays held by this process until it exits.`
+    )
+    return false
+  }
+}
+
+function releaseOwnedChecked(path: string, token: string, opts: ReleaseOwnedOptions): boolean {
   const reclaimPath = `${path}.reclaim`
   const rToken = randomHex(8)
   const rRecord =
@@ -117,11 +132,25 @@ export function releaseOwned(path: string, token: string, opts: ReleaseOwnedOpti
     }
     sleepSync(LOCK_RETRY_DELAY_MS)
   }
+  let answer = false
   try {
-    return releaseClaimFile(path, token) // ownership is decided ONLY here, under .reclaim
-  } finally {
-    releaseClaimFile(reclaimPath, rToken) // warns on its own failure; does not change the answer
+    answer = releaseClaimFile(path, token) // ownership is decided ONLY here, under .reclaim
+  } catch (err) {
+    warnSafely(
+      `[skillsmith] lock_release_failed: releasing ${path} threw (${thrownText(err)}). ` +
+        `Not removing ${path}; it may still be ours.`
+    )
   }
+  try {
+    releaseClaimFile(reclaimPath, rToken) // warns on its own failure; does not change the answer
+  } catch (err) {
+    warnSafely(
+      `[skillsmith] lock_release_guard_failed: releasing the guard ${reclaimPath} threw ` +
+        `(${thrownText(err)}); it may be left behind. Check that no Skillsmith process is ` +
+        `running, then remove ${reclaimPath} by hand.`
+    )
+  }
+  return answer
 }
 
 /**

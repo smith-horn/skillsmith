@@ -47,11 +47,19 @@ import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
 // Fault seam for the temp-claim write (SMI-7148): when armed, a write to an
 // open file DESCRIPTOR (only the temp claim is written that way; seeds write by
 // path) fails. `fired` is the presence control that the fault actually ran.
-const fsFault = vi.hoisted(() => ({ armed: false, fired: 0 }))
+// `unlinkArmed` additionally makes removing a `.tmp` file fail (EACCES).
+const fsFault = vi.hoisted(() => ({ armed: false, fired: 0, unlinkArmed: false, unlinkFired: 0 }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
     ...actual,
+    unlinkSync: (...args: Parameters<typeof actual.unlinkSync>) => {
+      if (fsFault.unlinkArmed && String(args[0]).endsWith('.tmp')) {
+        fsFault.unlinkFired++
+        throw Object.assign(new Error('injected unlink failure'), { code: 'EACCES' })
+      }
+      return actual.unlinkSync(...args)
+    },
     writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
       if (fsFault.armed && typeof args[0] === 'number') {
         fsFault.fired++
@@ -1266,9 +1274,12 @@ describe('SMI-7148 governance: release remedy text, folder-gone wording, temp-cl
     warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     fsFault.armed = false
     fsFault.fired = 0
+    fsFault.unlinkArmed = false
+    fsFault.unlinkFired = 0
   })
   afterEach(() => {
     fsFault.armed = false
+    fsFault.unlinkArmed = false
     warn.mockRestore()
   })
   const warning = (name: string): string | undefined =>
@@ -1311,5 +1322,19 @@ describe('SMI-7148 governance: release remedy text, folder-gone wording, temp-cl
     expect(fsFault.fired, 'the injected write failure fired').toBe(1)
     expect(readdirSync(dir).filter((n) => n.endsWith('.tmp'))).toEqual([])
     expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('a failed write AND a failed removal of the temp claim: the write error is thrown, a warning names the temp path', () => {
+    fsFault.armed = true
+    fsFault.unlinkArmed = true
+    expect(() => createLockExclusive(lockPath, v1(process.pid))).toThrow(/injected write failure/)
+    expect(fsFault.fired, 'the injected write failure fired').toBe(1)
+    expect(fsFault.unlinkFired, 'the injected unlink failure fired').toBe(1)
+    const leftover = readdirSync(dir).filter((n) => n.endsWith('.tmp'))
+    expect(leftover, 'the temp file really is still there').toHaveLength(1)
+    const message = warning('lock_temp_cleanup_failed')
+    expect(message, 'lock_temp_cleanup_failed was warned').toBeDefined()
+    expect(message).toContain(path.join(dir, leftover[0] as string))
+    expect(message).toContain('EACCES')
   })
 })

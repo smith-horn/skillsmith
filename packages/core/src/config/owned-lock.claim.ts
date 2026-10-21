@@ -247,8 +247,16 @@ function writeTempClaimExclusive(dir: string, base: string, recordJson: string):
       // The temp exists but will never be linked: remove it rather than leak a `.tmp`.
       try {
         unlinkSync(tmp)
-      } catch {
-        // already gone or not removable; the original failure is the one to surface
+      } catch (cleanupErr) {
+        // Already gone is fine; anything else leaves a `.tmp` behind, so say so.
+        // The original failure is still the one thrown.
+        const cleanupCode = (cleanupErr as NodeJS.ErrnoException).code
+        if (cleanupCode !== 'ENOENT') {
+          warnSafely(
+            `[skillsmith] lock_temp_cleanup_failed: could not remove the temp claim ${tmp} ` +
+              `(${cleanupCode ?? (cleanupErr as Error).message}); remove it by hand.`
+          )
+        }
       }
       throw err
     }
@@ -404,6 +412,26 @@ export function toTimingMs(value: number | undefined, fallback: number): number 
  * successor's lock unlinked between the two.
  */
 export function releaseClaimFile(path: string, token: string): boolean {
+  // Total, because it runs in callers' `finally` blocks: any throw (the read's
+  // descriptor close, say) becomes "may still be ours", and since the read is
+  // the first step, nothing has been unlinked on a failed read.
+  try {
+    return releaseClaimFileChecked(path, token)
+  } catch (err) {
+    warnSafely(
+      `[skillsmith] lock_release_failed: releasing ${path} threw (${thrownText(err)}); ` +
+        'it may still be ours -- not removing it.'
+    )
+    return false
+  }
+}
+
+/** A thrown value as warning text; total, so a warning's own construction can't throw. */
+export function thrownText(err: unknown): string {
+  return err instanceof Error ? err.message : 'not an Error'
+}
+
+function releaseClaimFileChecked(path: string, token: string): boolean {
   const claim = readClaim(path)
   if (claim.kind === 'v1' && claim.token === token) {
     try {

@@ -36,6 +36,10 @@ const inject = vi.hoisted(() => ({
   },
   failReclaimTemp: false,
   failReclaimTempHits: 0,
+  /** Make closing a read descriptor opened on this path throw (after really closing it). */
+  failCloseOf: null as string | null,
+  failCloseHits: 0,
+  readFds: new Map<number, string>(),
   watch: false,
   linked: [] as string[],
   allLinked: [] as string[],
@@ -63,8 +67,19 @@ vi.mock('node:fs', async (importOriginal) => {
         })
       }
     }
-    return (actual.openSync as (p: fs.PathLike, ...r: unknown[]) => number)(p, ...rest)
+    const fd = (actual.openSync as (p: fs.PathLike, ...r: unknown[]) => number)(p, ...rest)
+    if (flags === 'r') inject.readFds.set(fd, String(p))
+    return fd
   }) as typeof actual.openSync
+  const closeSync = ((fd: number) => {
+    const readPath = inject.readFds.get(fd)
+    inject.readFds.delete(fd)
+    actual.closeSync(fd) // really close it first: only the report fails
+    if (readPath !== undefined && readPath === inject.failCloseOf) {
+      inject.failCloseHits++
+      throw Object.assign(new Error(`EIO: i/o error, close '${readPath}'`), { code: 'EIO' })
+    }
+  }) as typeof actual.closeSync
   const linkSync = ((existing: fs.PathLike, created: fs.PathLike) => {
     const hook = inject.reclaimLinkHook
     if (hook !== null && String(created) === hook.path) {
@@ -82,14 +97,19 @@ vi.mock('node:fs', async (importOriginal) => {
     unlinkSync,
     openSync,
     linkSync,
-    default: { ...actual, unlinkSync, openSync, linkSync },
+    closeSync,
+    default: { ...actual, unlinkSync, openSync, linkSync, closeSync },
   }
 })
 
 import { acquireOwnedLock, RECLAIM_LOCK_TIMEOUT_MS } from '../../../src/config/owned-lock.js'
 import { withFileLock } from '../../../src/config/file-lock.js'
 import { releaseLock } from '../../../src/config/lock-doctor.js'
-import { createLockExclusive, tryReclaimUnderLock } from '../../../src/config/owned-lock.claim.js'
+import {
+  createLockExclusive,
+  releaseClaimFile,
+  tryReclaimUnderLock,
+} from '../../../src/config/owned-lock.claim.js'
 import type { ReclaimOutcome } from '../../../src/config/owned-lock.types.js'
 import { releaseOwned } from '../../../src/config/owned-lock.release.js'
 import { mintDeadPid } from '../../helpers/deterministic-dead-pid.js'
@@ -106,6 +126,9 @@ afterEach(() => {
   inject.reclaimLinkHook = null
   inject.failReclaimTemp = false
   inject.failReclaimTempHits = 0
+  inject.failCloseOf = null
+  inject.failCloseHits = 0
+  inject.readFds.clear()
   inject.watch = false
   inject.linked = []
   inject.allLinked = []
@@ -362,6 +385,68 @@ describe('T4: release never throws when .reclaim cannot be created', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('lock_release_reclaim_failed'))
     expect(inject.failReclaimTempHits).toBeGreaterThanOrEqual(1)
     expect(fs.existsSync(lockPath)).toBe(true) // left behind, not silently dropped
+  })
+})
+
+describe('T6: release never throws when reading a claim throws', () => {
+  it('releaseClaimFile: a throw closing the claim read warns, returns false and removes nothing', () => {
+    const { lockPath } = fresh()
+    const ours = v1(process.pid, TOKEN)
+    fs.writeFileSync(lockPath, ours)
+    inject.failCloseOf = lockPath
+
+    let released: boolean | undefined
+    expect(() => {
+      released = releaseClaimFile(lockPath, TOKEN)
+    }).not.toThrow()
+
+    expect(inject.failCloseHits, 'the injected close failure fired').toBe(1)
+    expect(released).toBe(false)
+    expect(readOrNull(lockPath)).toBe(ours) // never unlinked after a failed read
+    expect(warned('lock_release_failed')).toBe(true)
+    expect(warned('EIO')).toBe(true)
+
+    // Presence: the same call releases once the fault is gone.
+    inject.failCloseOf = null
+    expect(releaseClaimFile(lockPath, TOKEN)).toBe(true)
+    expect(fs.existsSync(lockPath)).toBe(false)
+  })
+
+  it('(a) main lock: the claim read throws; false, no throw, lock left, guard released', () => {
+    const { lockPath, reclaimPath } = fresh()
+    const ours = v1(process.pid, TOKEN)
+    fs.writeFileSync(lockPath, ours)
+    inject.failCloseOf = lockPath
+
+    let released: boolean | undefined
+    expect(() => {
+      released = releaseOwned(lockPath, TOKEN)
+    }).not.toThrow()
+
+    expect(inject.failCloseHits, 'the injected close failure fired').toBe(1)
+    expect(released).toBe(false)
+    expect(readOrNull(lockPath)).toBe(ours)
+    expect(fs.existsSync(reclaimPath), 'the guard was still released').toBe(false)
+    expect(warned('lock_release_failed')).toBe(true)
+  })
+
+  it('(b) guard: its own claim read throws; the main lock answer stands and a warning names the guard', () => {
+    const { lockPath, reclaimPath } = fresh()
+    fs.writeFileSync(lockPath, v1(process.pid, TOKEN))
+    inject.failCloseOf = reclaimPath
+
+    let released: boolean | undefined
+    expect(() => {
+      released = releaseOwned(lockPath, TOKEN)
+    }).not.toThrow()
+
+    expect(inject.failCloseHits, 'the injected close failure fired').toBe(1)
+    expect(released).toBe(true) // the main lock really was released
+    expect(fs.existsSync(lockPath)).toBe(false)
+    const named = warnSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .some((m: string) => m.includes('lock_release_') && m.includes(reclaimPath))
+    expect(named, 'a warning names the guard path').toBe(true)
   })
 })
 
