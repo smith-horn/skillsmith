@@ -36,6 +36,7 @@ import {
   MAX_LOCK_BYTES,
   RECLAIM_LOCK_TIMEOUT_MS,
 } from './owned-lock.types.js'
+import { thrownCode, thrownText } from './owned-lock.errors.js'
 import type { Claim, ReclaimOutcome, RefusalCategory, V1Claim } from './owned-lock.types.js'
 import { warnSafely } from '../utils/warn-safely.js'
 
@@ -237,11 +238,29 @@ function writeTempClaimExclusive(dir: string, base: string, recordJson: string):
       throw err
     }
     try {
-      writeFileSync(fd, recordJson)
-    } finally {
-      closeSync(fd)
+      try {
+        writeFileSync(fd, recordJson)
+      } finally {
+        closeSync(fd)
+      }
+      chmodSync(tmp, 0o600) // defeat a permissive umask BEFORE the file is reachable as a lock
+    } catch (err) {
+      // The temp exists but will never be linked: remove it rather than leak a `.tmp`.
+      try {
+        unlinkSync(tmp)
+      } catch (cleanupErr) {
+        // Already gone is fine; anything else leaves a `.tmp` behind, so say so.
+        // The original failure is still the one thrown.
+        const cleanupCode = thrownCode(cleanupErr)
+        if (cleanupCode !== 'ENOENT') {
+          warnSafely(
+            `[skillsmith] lock_temp_cleanup_failed: could not remove the temp claim ${tmp} ` +
+              `(${cleanupCode}); remove it by hand.`
+          )
+        }
+      }
+      throw err
     }
-    chmodSync(tmp, 0o600) // defeat a permissive umask BEFORE the file is reachable as a lock
     return tmp
   }
   throw new Error(
@@ -355,32 +374,68 @@ export function tryReclaimUnderLock(
     }
     return 'reclaimed'
   } finally {
-    releaseOwned(reclaimPath, rToken)
+    // The reclaim lock's own release stays unguarded (SMI-7148): a guarded one
+    // would take `<reclaimPath>.reclaim`, a third-level file and a new orphan site.
+    releaseClaimFile(reclaimPath, rToken)
   }
 }
 
 // ---------------------------------------------------------------------------
-// Release -- ownership-verified, idempotent
+// Release of a claim FILE -- ownership-verified, idempotent, unguarded
 // ---------------------------------------------------------------------------
 
 /**
- * Release `path` if `token` still owns it. Returns whether the lock is shown
- * to be no longer ours on disk: true when it was unlinked, when nothing is at
- * the path, or when a readable claim there names someone else; false when the
- * unlink failed, or when something is still at the path that can't be shown to
- * be someone else's (an unreadable claim, or a legacy claim naming this
- * process): it may be our own file. Callers that stop counting a lock as held
- * (the lock-order tracker) rely on this, so every doubt answers false.
+ * A timing option as a finite, non-negative number of milliseconds. Anything
+ * else (NaN, Infinity, a negative number) falls back to `fallback`: a NaN
+ * deadline never passes, so it hung the synchronous wait loop forever
+ * (SMI-6529 round 9).
  */
-export function releaseOwned(path: string, token: string): boolean {
+export function toTimingMs(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+/**
+ * Release the claim file at `path` if `token` still owns it, UNGUARDED: it
+ * takes no lock of its own. Returns whether the file is shown to be no longer
+ * ours on disk: true when it was unlinked, when nothing is at the path, or when
+ * a readable claim there names someone else; false when the unlink failed, or
+ * when something is still at the path that can't be shown to be someone else's
+ * (an unreadable claim, or a legacy claim naming this process): it may be our
+ * own file. Callers that stop counting a lock as held (the lock-order tracker)
+ * rely on this, so every doubt answers false.
+ *
+ * Used for the reclaim lock ITSELF (`tryReclaimUnderLock`, `doctor locks`),
+ * which only its holder, `doctor locks --release <lock>.reclaim`, or a person
+ * can remove. A MAIN lock is released through `releaseOwned`
+ * (`owned-lock.release.ts`), which holds `<lock>.reclaim` across this read and
+ * unlink (SMI-7148): this function alone checks then unlinks, so a reclaimer
+ * that took the lock from a holder that only looked dead could have its
+ * successor's lock unlinked between the two.
+ */
+export function releaseClaimFile(path: string, token: string): boolean {
+  // Total, because it runs in callers' `finally` blocks: any throw (the read's
+  // descriptor close, say) becomes "may still be ours", and since the read is
+  // the first step, nothing has been unlinked on a failed read.
+  try {
+    return releaseClaimFileChecked(path, token)
+  } catch (err) {
+    warnSafely(
+      `[skillsmith] lock_release_failed: releasing ${path} threw (${thrownText(err)}); ` +
+        'it may still be ours -- not removing it.'
+    )
+    return false
+  }
+}
+
+function releaseClaimFileChecked(path: string, token: string): boolean {
   const claim = readClaim(path)
   if (claim.kind === 'v1' && claim.token === token) {
     try {
       unlinkSync(path)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (thrownCode(err) !== 'ENOENT') {
         warnSafely(
-          `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${(err as Error).message}`
+          `[skillsmith] lock_release_unlink_failed: could not remove ${path}: ${thrownText(err)}`
         )
         return false
       }
@@ -431,19 +486,5 @@ function pathIsGone(path: string): boolean {
     return false
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'ENOENT'
-  }
-}
-
-/**
- * The release function `acquireOwnedLock` hands back. Returns what
- * {@link releaseOwned} returned; a second call returns the first call's result
- * without touching the file again.
- */
-export function makeRelease(lockPath: string, token: string): () => boolean {
-  let result: boolean | undefined
-  return () => {
-    if (result !== undefined) return result
-    result = releaseOwned(lockPath, token)
-    return result
   }
 }

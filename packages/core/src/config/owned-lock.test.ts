@@ -36,12 +36,39 @@ import {
   type StuckLockReason,
 } from './owned-lock.js'
 import { acquireOwnedLockCore, toTimingMs } from './owned-lock.acquire.js'
-import { createLockExclusive, isOwnerDefinitelyDead, releaseOwned } from './owned-lock.claim.js'
+import { createLockExclusive, isOwnerDefinitelyDead } from './owned-lock.claim.js'
+import { releaseOwned } from './owned-lock.release.js'
 // Not re-exported by `owned-lock.ts` (MAX_LOCK_BYTES is; this is not), so it
 // comes from the module that declares it. Driving the table from the real set
 // is the point -- a retyped copy would go stale exactly when it matters.
 import { HARDLINK_UNAVAILABLE_CODES } from './owned-lock.types.js'
 import { mintDeadPid } from '../../tests/helpers/deterministic-dead-pid.js'
+
+// Fault seam for the temp-claim write (SMI-7148): when armed, a write to an
+// open file DESCRIPTOR (only the temp claim is written that way; seeds write by
+// path) fails. `fired` is the presence control that the fault actually ran.
+// `unlinkArmed` additionally makes removing a `.tmp` file fail (EACCES).
+const fsFault = vi.hoisted(() => ({ armed: false, fired: 0, unlinkArmed: false, unlinkFired: 0 }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    unlinkSync: (...args: Parameters<typeof actual.unlinkSync>) => {
+      if (fsFault.unlinkArmed && String(args[0]).endsWith('.tmp')) {
+        fsFault.unlinkFired++
+        throw Object.assign(new Error('injected unlink failure'), { code: 'EACCES' })
+      }
+      return actual.unlinkSync(...args)
+    },
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      if (fsFault.armed && typeof args[0] === 'number') {
+        fsFault.fired++
+        throw Object.assign(new Error('injected write failure'), { code: 'ENOSPC' })
+      }
+      return actual.writeFileSync(...args)
+    },
+  }
+})
 
 let dir: string
 let target: string
@@ -512,10 +539,34 @@ describe('orphaned reclaim lock (residual R1, §8c)', () => {
     expect(readFileSync(reclaimPath).equals(beforeReclaim)).toBe(true)
   })
 
-  it('2. with no main lock present, acquisition succeeds despite an orphaned reclaim lock (locking unaffected)', () => {
-    seed(v1(process.pid), reclaimPath) // orphan stand-in; no `.lock` file exists
-    const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
-    release()
+  // SMI-7148: release takes `.reclaim` too, so an orphan no longer leaves
+  // locking itself unaffected: acquiring still works, but RELEASING fails closed.
+  it('2. an orphaned reclaim lock no longer blocks acquisition but makes release fail closed', () => {
+    const orphan = v1(process.pid)
+    seed(orphan, reclaimPath) // orphan stand-in; no `.lock` file exists
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const release = acquireOwnedLock(target, { timeoutMs: 1_000 })
+      const held = readFileSync(lockPath)
+
+      expect(release()).toBe(false) // waits out the whole budget, then leaves the lock
+      expect(readFileSync(lockPath).equals(held)).toBe(true)
+      expect(readFileSync(reclaimPath, 'utf-8')).toBe(orphan)
+      const message = warnSpy.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .find((m: string) => m.includes('lock_release_reclaim_unavailable'))
+      expect(message, 'lock_release_reclaim_unavailable was warned').toBeDefined()
+      expect(message).toContain(lockPath)
+      expect(message).toContain(reclaimPath)
+
+      rmSync(reclaimPath) // the documented manual unstick: a fresh cycle works again
+      rmSync(lockPath)
+      const again = acquireOwnedLock(target, { timeoutMs: 1_000 })
+      expect(again()).toBe(true)
+      expect(existsSync(lockPath)).toBe(false)
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('3. removing the orphan restores service — the dead-PID lock reclaims normally afterward', () => {
@@ -527,7 +578,8 @@ describe('orphaned reclaim lock (residual R1, §8c)', () => {
 
     const release = acquireOwnedLock(target, { timeoutMs: 2_000, reclaimProbeAfterMs: 0 })
     expect(existsSync(reclaimPath)).toBe(false)
-    release()
+    expect(release()).toBe(true) // a fresh acquire-and-release cycle succeeds
+    expect(existsSync(lockPath)).toBe(false)
   })
 })
 
@@ -895,7 +947,7 @@ describe('SMI-6764: one verb for every reason, and a remedy that may say "it dep
 
   const EXPECTED_REASON_CLAUSE: Record<StuckLockReason, string> = {
     held: 'held by another process',
-    reclaim_unavailable: `the reclaim lock at ${R} is held or was orphaned by a crash inside the reclaim critical section (residual R1)`,
+    reclaim_unavailable: `the reclaim lock at ${R} is held or was orphaned by a crash inside a reclaim or release critical section (residual R1)`,
     unreclaimable_legacy:
       'held by a legacy (pre-v1) claim -- legacy claims carry no host attribution and are NEVER auto-reclaimed (SMI-5883 D-5)',
     unreclaimable_unparseable:
@@ -1212,5 +1264,77 @@ describe('releaseOwned return value: true only when the lock is shown not to be 
     expect(releaseOwned(lockPath, TOKEN)).toBe(false)
     expect(lstatSync(lockPath).isSymbolicLink()).toBe(true)
     expect(warned('lock_release_unverified')).toBe(true)
+  })
+})
+
+describe('SMI-7148 governance: release remedy text, folder-gone wording, temp-claim cleanup', () => {
+  const TOKEN = 'b'.repeat(16)
+  let warn: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    fsFault.armed = false
+    fsFault.fired = 0
+    fsFault.unlinkArmed = false
+    fsFault.unlinkFired = 0
+  })
+  afterEach(() => {
+    fsFault.armed = false
+    fsFault.unlinkArmed = false
+    warn.mockRestore()
+  })
+  const warning = (name: string): string | undefined =>
+    warn.mock.calls.map((c: unknown[]) => String(c[0])).find((m: string) => m.includes(name))
+
+  it("the manifest lock's orphaned .reclaim: the warning names the doctor command for that path", () => {
+    const manifestLock = path.join(dir, 'manifest.json.lock')
+    const orphan = `${manifestLock}.reclaim`
+    seed(v1(process.pid, { token: TOKEN }), manifestLock)
+    seed(v1(process.pid), orphan)
+    expect(releaseOwned(manifestLock, TOKEN, { reclaimLockTimeoutMs: 0 })).toBe(false)
+    const message = warning('lock_release_reclaim_unavailable')
+    expect(message, 'lock_release_reclaim_unavailable was warned').toBeDefined()
+    expect(message).toContain(`skillsmith doctor locks --state-root ${dir} --release ${orphan}`)
+  })
+
+  it('any other lock: the warning names hand removal and never the doctor command', () => {
+    seed(v1(process.pid, { token: TOKEN }))
+    seed(v1(process.pid), reclaimPath)
+    expect(releaseOwned(lockPath, TOKEN, { reclaimLockTimeoutMs: 0 })).toBe(false)
+    const message = warning('lock_release_reclaim_unavailable')
+    expect(message, 'lock_release_reclaim_unavailable was warned').toBeDefined()
+    expect(message).toContain(`remove ${reclaimPath} by hand`)
+    expect(message).not.toContain('doctor locks')
+  })
+
+  it('the lock folder is gone (ENOENT creating .reclaim): says so, and does not say the lock stays held', () => {
+    const goneLock = path.join(dir, 'gone', 'x.lock')
+    expect(releaseOwned(goneLock, TOKEN, { reclaimLockTimeoutMs: 0 })).toBe(false)
+    const message = warning('lock_release_reclaim_failed')
+    expect(message, 'lock_release_reclaim_failed was warned').toBeDefined()
+    expect(message).toContain('ENOENT')
+    expect(message).toContain('is gone, so there is nothing to release')
+    expect(message).not.toContain('stays held')
+  })
+
+  it('a failed write of the temp claim leaves no .tmp file behind', () => {
+    fsFault.armed = true
+    expect(() => createLockExclusive(lockPath, v1(process.pid))).toThrow(/injected write failure/)
+    expect(fsFault.fired, 'the injected write failure fired').toBe(1)
+    expect(readdirSync(dir).filter((n) => n.endsWith('.tmp'))).toEqual([])
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('a failed write AND a failed removal of the temp claim: the write error is thrown, a warning names the temp path', () => {
+    fsFault.armed = true
+    fsFault.unlinkArmed = true
+    expect(() => createLockExclusive(lockPath, v1(process.pid))).toThrow(/injected write failure/)
+    expect(fsFault.fired, 'the injected write failure fired').toBe(1)
+    expect(fsFault.unlinkFired, 'the injected unlink failure fired').toBe(1)
+    const leftover = readdirSync(dir).filter((n) => n.endsWith('.tmp'))
+    expect(leftover, 'the temp file really is still there').toHaveLength(1)
+    const message = warning('lock_temp_cleanup_failed')
+    expect(message, 'lock_temp_cleanup_failed was warned').toBeDefined()
+    expect(message).toContain(path.join(dir, leftover[0] as string))
+    expect(message).toContain('EACCES')
   })
 })

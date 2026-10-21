@@ -4,6 +4,39 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7148 -- closes two windows: a release of an owned lock deleting another process's
+  lock, and a release reporting "released" while `doctor locks --release` has its lock set aside
+  (which then put the lock back with nobody left to release it). Other ways a lock can be orphaned
+  remain; the residuals are listed in `config/lock-doctor.ts`. The release of a
+  main lock (`releaseOwned`, now in `config/owned-lock.release.ts`) takes `<lock>.reclaim`, the lock
+  automatic reclaim and `doctor locks` already take, before it checks that the claim is still ours
+  and unlinks it, so nothing can replace or move the lock between that check and the unlink. Before,
+  a lock reclaimed from a holder that only looked dead (its pid seen from another PID namespace, or a
+  `doctor locks --release --unsafe-unverified-owner`) and then re-acquired by someone else was
+  unlinked by the original holder's release with no warning; and a holder that released while
+  doctor had its lock set aside returned "released" while doctor then put the lock back with a live
+  pid and a token nobody holds. Release waits up to 500 ms (`RECLAIM_LOCK_TIMEOUT_MS`) for
+  `.reclaim`, synchronously; if it is still held (in practice an orphan left by a crash) or cannot be
+  created (`ENOSPC`, `EDQUOT`, `EACCES`), release removes nothing, never takes over the leftover
+  `.reclaim`, returns `false` and warns `lock_release_reclaim_unavailable` or
+  `lock_release_reclaim_failed`, and the lock stays with this process until it exits (when the
+  lock's folder is gone, the latter says there is nothing to release); remove an orphaned
+  `.reclaim` with `skillsmith doctor locks --release <lock>.reclaim` if it is one of the locks
+  doctor lists (the manifest lock's), otherwise by hand after checking no Skillsmith process is
+  running; the warning names the one that applies. A failed write of a claim's temp file no longer
+  leaves a `.tmp` file behind, and a failed removal of that temp file is now warned
+  (`lock_temp_cleanup_failed`). `releaseOwned` and `releaseClaimFile` now never throw, as their
+  callers' `finally` blocks assume: a throw while reading a claim (for example from closing its
+  descriptor) warns `lock_release_failed`, removes nothing and returns `false`; a throw from the
+  main release still lets the `.reclaim` guard be released, and a throw from the guard's release
+  warns `lock_release_guard_failed` and keeps the main lock's answer. An
+  orphaned `.reclaim` therefore now stops releases of that lock as well as reclaims. The reclaim
+  lock's own release (`releaseClaimFile`) is unguarded and still reads then unlinks: a person
+  running `doctor locks --release <lock>.reclaim --unsafe-unverified-owner` against a LIVE guard can
+  remove it while its holder is releasing it, and if another process creates a new guard in that
+  moment, the holder's unlink deletes the new one (reachable only through that unsafe override; doctor
+  accepts only the manifest lock's `.reclaim` today). A person deleting a lock file
+  by hand still bypasses every lock.
 - **Added**: SMI-6531 (A1 step 2) -- lock 1, the per-skills-root write lock
   (`services/skill-write-lock.ts`, A1 plan §3.2, §3.3). `bindSkillsRoot(skillsDir)` runs outside any
   lock: it resolves R (native `realpath`), binds R's identity (the existing `BoundIdentity`, file

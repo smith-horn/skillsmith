@@ -19,19 +19,18 @@
  *   (plan E17). Every other claim needs `unsafeUnverifiedOwner`. A claim it
  *   cannot read (another user's `0600` claim, plan E31) is never released.
  * - `releaseLock` takes `<path>.reclaim` by exclusive create, the file
- *   owned-lock's own reclaimers serialize on. It then renames the lock to a
- *   unique name beside it, which moves whatever is at the path in one step,
- *   and removes the moved file only if its inode and bytes equal what it
- *   inspected. A removal by path name after a check would delete a newer lock
- *   that a release and a fresh acquire put there in between, since neither
- *   takes `.reclaim`. If the moved file is a newer lock, it is linked back
- *   (exclusive) and the release refused.
+ *   owned-lock's reclaimers and MAIN-lock releases serialize on (SMI-7148;
+ *   the release of a `.reclaim` guard itself is not serialized, see the last
+ *   residual below). It then
+ *   renames the lock to a unique name beside it, which moves whatever is at
+ *   the path in one step, and removes the moved file only if its inode and
+ *   bytes equal what it inspected. A removal by path name after a check would
+ *   delete a newer lock that a fresh acquire put there in between. If the
+ *   moved file is a newer lock, it is linked back (exclusive) and the release
+ *   refused. A holder that releases while its lock is aside waits for this
+ *   command to finish, then finds its lock back and removes it.
  *
  * Residuals (not closed; owner decision 2026-10-19 to keep the move aside):
- * - If the moved newer lock's holder releases while it is aside, its release
- *   finds the path empty and finishes, and the link back then leaves that
- *   lock stuck until its process exits (or for good, for a bare-PID lock).
- *   No write is lost; `doctor locks` can release it.
  * - If yet another lock is created at the path before the link back, the
  *   moved one is left beside it, named in the refusal, and its holder no
  *   longer excludes the new one.
@@ -41,6 +40,18 @@
  *   bare PID) removed and recreated with the same bytes, on a filesystem that
  *   reuses the inode, can't be told from the one inspected: its timestamps
  *   matched too when measured. A v1 claim's random token rules this out.
+ * - Two concurrent `doctor locks --release <lock>.reclaim` runs that both
+ *   inspected the same dead orphan `.reclaim` can let the second move aside a
+ *   NEW `.reclaim` that a releaser created after the first run removed the
+ *   orphan. Reachable only with two people or processes running doctor on the
+ *   same `.reclaim` at once.
+ * - Releasing a `.reclaim` guard itself stays read-then-unlink (owner decision
+ *   2026-10-21: documented, not fixed). `doctor locks --release <lock>.reclaim
+ *   --unsafe-unverified-owner` against a LIVE guard can remove it while its
+ *   holder is releasing it; if another process creates a new guard in that
+ *   moment, the holder's unlink deletes the new one. Reachable only through
+ *   that unsafe override against a live guard (doctor accepts only the
+ *   manifest lock's `.reclaim` today).
  *
  * @module @skillsmith/core/config/lock-doctor
  */
@@ -62,7 +73,7 @@ import {
   parseClaim,
   probePidAlive,
   randomHex,
-  releaseOwned,
+  releaseClaimFile,
 } from './owned-lock.claim.js'
 import { MAX_LOCK_BYTES } from './owned-lock.types.js'
 
@@ -356,7 +367,9 @@ export function releaseLock(path: string, opts: ReleaseLockOptions = {}): Releas
       inspection: insp,
     }
   } finally {
-    releaseOwned(reclaimPath, token)
+    // The reclaim lock's own release is unguarded (SMI-7148): a guarded one
+    // would take `<reclaimPath>.reclaim`.
+    releaseClaimFile(reclaimPath, token)
   }
 }
 

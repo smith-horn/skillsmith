@@ -26,12 +26,19 @@
  * stale between being computed and being consumed, because nothing that
  * could invalidate it is permitted to run in between.
  *
+ * Release takes the same lock (SMI-7148): ownership is checked and the lock
+ * unlinked only while holding `<target>.lock.reclaim`, so a reclaimer or
+ * `doctor locks` cannot remove or replace the lock between the check and the
+ * unlink. See `owned-lock.release.ts`.
+ *
  * Two files, asymmetric policies:
  *   - `<target>.lock`         -- the caller's lock. Auto-reclaimed, but ONLY
- *     from inside the reclaim critical section.
- *   - `<target>.lock.reclaim` -- serializes reclaim DECISIONS about the lock
- *     above. Strict, NEVER auto-reclaimed (a staleness heuristic here would
- *     reintroduce the identical duplicate-delete race one level up).
+ *     from inside the reclaim critical section, and released only from
+ *     inside it too.
+ *   - `<target>.lock.reclaim` -- serializes reclaim and release DECISIONS
+ *     about the lock above. Strict, NEVER auto-reclaimed (a staleness
+ *     heuristic here would reintroduce the identical duplicate-delete race
+ *     one level up). Its own release is unguarded.
  *
  * This module is a thin wrapper over `owned-lock.acquire.ts`'s
  * {@link acquireOwnedLockCore} -- it exists specifically so that the two
@@ -45,9 +52,13 @@
  *
  * New-race audit (N1-N9) and residual risks (R1-R5) are documented in the
  * SMI-5883 design doc; the short version: R1 (`SIGKILL` inside the
- * ~3-syscall reclaim critical section orphans the reclaim lock) is accepted
- * and loudly diagnosable ({@link StuckLockError} names both files + the
- * manual unstick procedure below); legacy (pre-v1, bare-decimal-PID) claims
+ * few-syscall reclaim or release critical section orphans the reclaim lock)
+ * is accepted and loudly diagnosable ({@link StuckLockError} names both files
+ * + the manual unstick procedure below). Since SMI-7148 an orphaned reclaim
+ * lock also stops RELEASES of that lock (`lock_release_reclaim_unavailable`:
+ * nothing is removed, the lock stays until its process exits); the warning
+ * names `skillsmith doctor locks --release <lock>.reclaim` only for the locks
+ * doctor lists (`stateRootLockPaths`), and hand removal for any other. Legacy (pre-v1, bare-decimal-PID) claims
  * and unparseable claims are NEVER auto-reclaimed (D-5/D-6) because they
  * carry no `host` field, so "dead on this host" cannot establish "dead" for
  * a claim that might belong to a process on a different host sharing a
