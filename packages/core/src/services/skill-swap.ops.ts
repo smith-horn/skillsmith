@@ -33,6 +33,7 @@ import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.ty
 import { NEW_DIR, OLD_DIR, OWNER_FILE, RECORD_FILE, UNDONE_DIR } from './skill-swap.types.js'
 import type {
   SwapHookPoint,
+  SwapIncomplete,
   SwapInput,
   SwapOptions,
   SwapWarning,
@@ -52,7 +53,7 @@ export class SwapFault extends Error {
 }
 
 /** Which step a failure after the commit belongs to. */
-export type PostCommitStep = 'audit' | 'publish' | 'cleanup'
+export type PostCommitStep = SwapIncomplete['step']
 
 /** The bound paths and progress of one transaction. */
 export interface SwapState {
@@ -80,8 +81,10 @@ export interface SwapState {
   /** True once step 13 unlinked `record.json`: a result must not name it after that. */
   recordRemoved: boolean
   /**
-   * The identity of every file this run created and may later unlink (its
-   * metadata and their temps, the sidecar temp), by path. A hard link made by
+   * The identity of every file `writeNewFile` created, by path: the metadata
+   * (`owner.json`, `record.json`) and their temps, the sidecar temp, and every
+   * `create` file of the write set inside `new/`. Only the metadata and the
+   * temps are ever unlinked, through `unlinkOwned`. A hard link made by
    * `linkChecked` is the same inode, so its new path is bound too.
    */
   owned: Map<string, BoundIdentity>

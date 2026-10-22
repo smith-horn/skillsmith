@@ -153,7 +153,7 @@ describe('the undo restores a non-directory O without ever replacing an entry', 
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     let ino: bigint | null = null
-    const { result } = await run(p, {
+    const { result, trace } = await run(p, {
       hooks: {
         beforeRename1: () => {
           swapForFile(fx)
@@ -162,6 +162,9 @@ describe('the undo restores a non-directory O without ever replacing an entry', 
       },
     })
     const conflict = path.join(areaOf(fx), `${OP_ID}.conflict`)
+    // A hard link is traced as one, from O to the path, never as a create.
+    expect(trace).toContainEqual({ op: 'link', path: path.join(fx.opDir, 'old'), dest: fx.realDir })
+    expect(trace.filter((t) => t.op === 'create' && t.path === fx.realDir)).toEqual([])
     expect(result).toMatchObject({ status: 'undone', reason: 'target-changed', keptAs: 'undone' })
     expect(plantedAt(fx.realDir)).toEqual({ isFile: true, text: 'a file where the folder was\n' })
     expect(fs.lstatSync(fx.realDir, { bigint: true }).ino).toBe(ino)

@@ -170,8 +170,10 @@ export type SwapResult =
       opId: string
       /**
        * Always `<area>/<opId>`: the path `record.json` and the journal name too.
-       * When `incomplete` names `audit` or `publish`, the old folder is still in
-       * OP and this is where it is meant to go.
+       * With `incomplete` `audit`, and with `incomplete` `publish` when the stop
+       * came before the move, the old folder is still in OP and this is where it
+       * is meant to go. A `publish` stop AFTER the move (a sync of the area or OP
+       * failed once the rename succeeded) leaves the old folder already here.
        */
       backupDest: string
       warnings: SwapWarning[]

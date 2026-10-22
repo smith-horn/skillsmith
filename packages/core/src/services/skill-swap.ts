@@ -18,8 +18,10 @@
  *  12. `publishTree(O, 'backup')`.
  *  13. Metadata unlinks and `rmdir OP`.
  *
- * Results: `refused` before rename 1 (every abort goes through
- * `abortBeforeRename1`, which in 4a removes nothing), `stopped` after rename 1
+ * Results: `refused` before rename 1 (every abort after OP may exist goes
+ * through `abortBeforeRename1`, which in 4a removes nothing; the two refusals
+ * that come before any staging, `ensureSkillsRoot`'s and `bindSkillsRoot`'s,
+ * return directly with `staged: 'none'`), `stopped` after rename 1
  * with the record kept, `undone`, or `committed` (with `incomplete` when a step
  * after the commit stopped; the record is then kept).
  *

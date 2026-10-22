@@ -184,7 +184,7 @@ async function syncOrReject(dir: string): Promise<void> {
 }
 
 /** Lock 5's label (A1 plan §3.2's order table, owner decision 2026-10-22). */
-export const JOURNAL_LOCK_LABEL = 'the journal lock (lock 5)'
+const JOURNAL_LOCK_LABEL = 'the journal lock (lock 5)'
 
 async function doAppend(input: JournalRecordInput): Promise<JournalRecord> {
   const filePath = getJournalFilePath()
@@ -235,9 +235,15 @@ async function appendLocked(
   } finally {
     await handle.close()
   }
-  // The new file is an entry in the journal directory: sync it so the record
-  // is reachable after a crash, not only its bytes.
-  if (created) await syncOrReject(journalDir)
+  // The new file is an entry in the journal directory, and the journal
+  // directory is an entry in ITS parent: A1 plan §3.3 step 11 ("syncs that
+  // directory and its parent"). The parent is synced here too, not only when
+  // this call made the directory, because another process may have made it
+  // and not yet synced its parent (or died before doing so).
+  if (created) {
+    await syncOrReject(journalDir)
+    await syncOrReject(dirname(journalDir))
+  }
 
   return record
 }

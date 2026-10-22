@@ -65,7 +65,7 @@ function lines(file: string): string[] {
 }
 
 describe('journal append: directory sync on create', () => {
-  it('the first append syncs each created directory parent top-down, then the journal directory', async () => {
+  it('the first append syncs each created directory parent top-down, then the journal directory and its parent', async () => {
     const a = path.join(base, 'a')
     const b = path.join(a, 'b')
     const journalDir = path.join(b, 'journal')
@@ -73,7 +73,7 @@ describe('journal append: directory sync on create', () => {
 
     await appendJournalRecord(record('one'))
 
-    expect(syncedDirs()).toEqual([base, a, b, journalDir])
+    expect(syncedDirs()).toEqual([base, a, b, journalDir, b])
     expect(lines(path.join(journalDir, 'journal.jsonl'))).toHaveLength(1)
   })
 
@@ -89,14 +89,16 @@ describe('journal append: directory sync on create', () => {
     expect(lines(path.join(journalDir, 'journal.jsonl'))).toHaveLength(2)
   })
 
-  it('an existing journal directory without the file syncs only that directory', async () => {
+  it('an existing journal directory without the file syncs that directory and its parent', async () => {
+    // Another process made the directory and may not have synced its parent:
+    // creating the file syncs both (A1 plan §3.3 step 11).
     const journalDir = path.join(base, 'journal')
     fs.mkdirSync(journalDir)
     process.env['SKILLSMITH_JOURNAL_DIR'] = journalDir
 
     await appendJournalRecord(record('one'))
 
-    expect(syncedDirs()).toEqual([journalDir])
+    expect(syncedDirs()).toEqual([journalDir, base])
   })
 })
 
@@ -134,6 +136,22 @@ describe('journal append: a directory sync that does not succeed', () => {
     expect(lines(path.join(journalDir, 'journal.jsonl'))).toHaveLength(2)
   })
 
+  it("a failed sync of the journal directory's parent rejects the append, with the record kept in the file", async () => {
+    const journalDir = path.join(base, 'journal')
+    fs.mkdirSync(journalDir)
+    process.env['SKILLSMITH_JOURNAL_DIR'] = journalDir
+    syncMock.mockResolvedValueOnce({ outcome: 'synced' }).mockResolvedValueOnce({
+      outcome: 'failed',
+      code: 'EDQUOT',
+      error: new Error('EDQUOT'),
+    })
+
+    await expect(appendJournalRecord(record('one'))).rejects.toThrow(new RegExp(`${base}.*EDQUOT`))
+
+    expect(syncedDirs()).toEqual([journalDir, base])
+    expect(lines(path.join(journalDir, 'journal.jsonl'))).toHaveLength(1)
+  })
+
   it('an unsupported sync does not reject the append', async () => {
     const journalDir = path.join(base, 'a', 'journal')
     process.env['SKILLSMITH_JOURNAL_DIR'] = journalDir
@@ -142,6 +160,6 @@ describe('journal append: a directory sync that does not succeed', () => {
     const written = await appendJournalRecord(record('one'))
 
     expect(written.suggestion_id).toBe('one')
-    expect(syncedDirs()).toEqual([base, path.join(base, 'a'), journalDir])
+    expect(syncedDirs()).toEqual([base, path.join(base, 'a'), journalDir, path.join(base, 'a')])
   })
 })

@@ -27,7 +27,9 @@
 export const JOURNAL_SCHEMA_VERSION = 2
 
 /**
- * `'apply'`   — an apply-family tool successfully mutated a file.
+ * `'apply'`   — an apply-family tool successfully mutated a file, or
+ *               `swapInPlace` (tool `'update'`, SMI-6531) committed an
+ *               in-place update of a skill folder.
  * `'error'`   — an apply-family tool attempted a mutation and it failed
  *               (the `detail` field carries the typed error kind).
  * `'undo'`    — `undo_apply` successfully restored a file from an apply on
@@ -45,27 +47,41 @@ export type JournalAction = 'apply' | 'error' | 'undo' | 'revert'
  * Every field the caller supplies. The writer (`writer.ts`) fills in
  * `prev_hash` + `record_hash` to complete a `JournalRecord`.
  *
- * Field semantics:
- * - `suggestion_id` — the `collisionId` the mutation was applied for.
- * - `target_path` — the on-disk file whose CONTENT the record's hashes
- *   describe. For a single-file mutation (prose edit, command/agent rename)
+ * Field semantics. Two writers fill these in: the apply-family tools
+ * (`apply_namespace_rename`, `apply_recommended_edit`, `undo_apply`) and the
+ * in-place update, `swapInPlace` (`tool: 'update'`, `action: 'apply'`, one
+ * record per committed update, A1 plan §3.3 step 11). Where they differ, each
+ * field says which meaning belongs to which tool.
+ * - `tool` — the writer: an apply-family tool's name, or `'update'`.
+ * - `suggestion_id` — apply-family: the `collisionId` the mutation was
+ *   applied for. `update`: the transaction's `opId` (32 hex characters), the
+ *   name of its op dir and of its backup.
+ * - `target_path` — `update`: the skill DIRECTORY that was updated (the
+ *   native realpath, `realDir`), not a file. Apply-family: the on-disk file
+ *   whose CONTENT the record's hashes describe. For a single-file mutation (prose edit, command/agent rename)
  *   this is the mutated file itself. For a skill-directory rename
  *   (`rename_skill_dir_and_frontmatter`) this is `<newSkillDir>/SKILL.md` —
  *   the one file whose bytes actually changed; the directory rename itself
  *   is not content-hashable and is intentionally out of this record's scope
  *   (see `tools/apply-journal.helpers.ts` header in `@skillsmith/mcp-server`
  *   for the full rationale).
- * - `before_hash` / `after_hash` — sha256 of `target_path`'s content
- *   immediately before / after the mutation. `null` where not applicable
+ * - `before_hash` / `after_hash` — apply-family: sha256 of `target_path`'s
+ *   content immediately before / after the mutation. `update`: the A1 plan
+ *   §3.4 TREE hashes of the folder, `preTree` (as planned and verified at step
+ *   4) and `postTree` (the new folder as built), not a file's sha256. `null` where not applicable
  *   (e.g. an `'error'` record where the mutation never reached a
  *   content-changing step, so there is no "after" state to hash).
  * - `approval` — the caller-supplied approval mode that authorized the
  *   mutation, e.g. `'apply'` / `'custom'` (namespace rename) or
- *   `'apply_with_confirmation'` (recommended edit). Always non-null for
+ *   `'apply_with_confirmation'` (recommended edit); `'update'` for an update
+ *   record. Always non-null for
  *   `'apply'`/`'error'` records (the confirmation gate ran); `'undo'` for
  *   undo records.
- * - `backup_ref` — absolute path to the apply tool's own pre-mutation
- *   backup directory (from `createSkillBackup` / `createProseBackup`).
+ * - `backup_ref` — apply-family: absolute path to the apply tool's own
+ *   pre-mutation backup directory (from `createSkillBackup` /
+ *   `createProseBackup`). `update`: the old folder's backup path,
+ *   `<stateRoot>/backups/update/<client>/<rootKey>/<dirName>/<opId>`, the same
+ *   path `record.json` names; written before step 12 moves the folder there.
  *   `null` for `'error'` and `'undo'` records — an error may not have
  *   reached the backup step, and an undo record documents a restore that
  *   already happened rather than creating a new backup.
