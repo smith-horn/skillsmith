@@ -243,7 +243,13 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
   await hook(st, 'afterSidecar')
   try {
     await renameChecked(st, src, dest)
+    st.published = { src, dest, kind }
   } catch (err) {
+    // A failure reported after the rename itself ran (its trace, say) still
+    // leaves the tree at `dest`: record that, by identity, so no report says
+    // the tree is anywhere else.
+    const there = bindIdentity(dest)
+    if (there.ok && sameIdentity(id, there)) st.published = { src, dest, kind }
     if (codeOf(err) === 'EXDEV') {
       // SMI-6531 step 4c replaces this stop with the verified cross-device copy.
       throw new SwapFault('cross-device', `the state root is on another device than ${src}`)

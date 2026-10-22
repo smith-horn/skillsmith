@@ -66,13 +66,8 @@ import {
   publishTree,
   warnForeignChange,
 } from './skill-swap.publish.js'
-import {
-  abortAfterBusy,
-  abortBeforeLock,
-  abortUnderLock,
-  describe,
-  noneResult,
-} from './skill-swap.abort.js'
+import { abortUnderLock, describe, noneResult } from './skill-swap.abort.js'
+import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
 import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
 import { undoSwap } from './skill-swap.undo.js'
 import { changedPaths } from './skill-swap.writeset.js'
@@ -372,6 +367,7 @@ function newState(
     op: null,
     area: null,
     buildIdentity: null,
+    published: null,
     owner: null,
     newIdentity: null,
     postTree: null,

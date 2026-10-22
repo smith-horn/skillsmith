@@ -78,6 +78,12 @@ export interface SwapState {
   area: Array<{ path: string; identity: BoundIdentity }> | null
   /** N's identity, bound when the build's `mkdir` made `new/` (plan §3.3 step 1). */
   buildIdentity: BoundIdentity | null
+  /**
+   * The last tree `publishTree` moved, set the moment its rename is known to
+   * have happened: a stop in the syncs after it must still report the tree as
+   * kept (`skill-swap.abort.ts`).
+   */
+  published: { src: string; dest: string; kind: string } | null
   /** What `owner.json` says, once this run published it (the park intent copies it). */
   owner: { pid: number; host: string; uid: number } | null
   newIdentity: BoundIdentity | null

@@ -28,6 +28,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
+import { S_IFDIR } from '../install/park-tree.perms.js'
 import { copyTreeNoFollow, treeHashOf } from './skill-tree.js'
 import {
   check,
@@ -137,10 +138,16 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
   check(st)
   const copied = await copyTreeNoFollow(realDir, newDir, {
     // `buildIdentity`: N as the build's own mkdir made it. Abort cleanup keeps
-    // or parks N only while N still has it (plan §3.3 abort step 3).
+    // or parks N only while N still has it (plan §3.3 abort step 3). What the
+    // mkdir made must be a directory; anything else stops the copy before a
+    // byte is written into it. `sameIdentity` compares the file type too, so
+    // every later check of N against this binding requires a directory.
     afterRootMade: () => {
       const made = bindIdentity(newDir)
-      if (made.ok) st.buildIdentity = made
+      if (!made.ok || made.fmt !== S_IFDIR) {
+        throw new SwapFault('write-failed', `${newDir} is not the directory the build made`)
+      }
+      st.buildIdentity = made
     },
     afterEntry: (rel) => {
       st.options.duringCopy?.(rel)

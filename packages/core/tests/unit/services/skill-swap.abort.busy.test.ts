@@ -68,6 +68,45 @@ async function holdLock(skillsDir: string, wait = true): Promise<Holder> {
   return h
 }
 
+/** A child that asks for lock 1 only on `go()`, once it is `ready()`; then holds it until `release()`. */
+async function goHolder(skillsDir: string) {
+  const markers = tmp('skill-swap-markers-')
+  const child = spawn(process.execPath, [
+    '--import',
+    'tsx',
+    childPath,
+    'hold',
+    skillsDir,
+    markers,
+    'go',
+  ])
+  const exited = new Promise<void>((res) => child.on('exit', () => res()))
+  const at = (n: string) => path.join(markers, n)
+  const h = {
+    go: () => fs.writeFileSync(at('go'), '1'),
+    held: () => fs.existsSync(at('held')),
+    release: () => {
+      fs.writeFileSync(at('go'), '1')
+      fs.writeFileSync(at('release'), '1')
+    },
+    exited,
+  }
+  holders.push(h)
+  const deadline = Date.now() + 20_000
+  while (!fs.existsSync(at('ready'))) {
+    if (Date.now() > deadline) throw new Error('the third writer never started')
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  return h
+}
+
+/** Moves ST aside and makes a new, empty ST in its place (R's bits): `check` refuses ST. */
+function replaceStaging(fx: Fixture): void {
+  fs.renameSync(fx.staging, path.join(fx.base, 'staging-aside'))
+  fs.mkdirSync(fx.staging)
+  fs.chmodSync(fx.staging, fs.statSync(fx.skillsDir).mode & 0o7777)
+}
+
 /** Samples R and OP every 5 ms until `stop()`; records anything a waiter must not cause. */
 function watchWhileWaiting(fx: Fixture, stop: () => boolean) {
   const rootBefore = new Set(fs.readdirSync(fx.skillsDir))
@@ -241,5 +280,99 @@ describe('T-X15: a busy update waits once more for lock 1', () => {
     })
     expect(refusedOf(out.r.result)).toMatchObject({ reason: 'busy', staged: 'left' })
     expect(fs.readdirSync(fx.opDir).sort()).toEqual(['new', 'owner.json'])
+  }, 30_000)
+
+  it('a third writer takes lock 1 while the waiter is still in its second wait', async () => {
+    const fx = makeFixture(FILES)
+    const holder = await holdLock(fx.skillsDir)
+    const third = await goHolder(fx.skillsDir)
+    let goAt = 0
+    let waiterDone = false
+    // Polls every 1.5 s: after the holder releases, lock 1 is free between the
+    // waiter's polls, and a waiter that held nothing lets the third writer in.
+    const pending = busyRun(fx, {
+      secondWaitMs: 8000,
+      secondWaitPollMs: 1500,
+      watch: false,
+      atWaitStart: () => {
+        setTimeout(() => {
+          holder.release()
+          setTimeout(() => {
+            goAt = Date.now()
+            third.go()
+          }, 100)
+        }, 200)
+      },
+    }).then((o) => {
+      waiterDone = true
+      return o
+    })
+    const deadline = Date.now() + 15_000
+    while (!third.held()) {
+      if (Date.now() > deadline) throw new Error('the third writer never got lock 1')
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    const heldAfterGo = Date.now() - goAt
+    const waiterWasDone = waiterDone
+    third.release()
+    const out = await pending
+    expect(waiterWasDone).toBe(false)
+    expect(heldAfterGo).toBeLessThan(450)
+    expect(refusedOf(out.r.result)).toMatchObject({ reason: 'busy', staged: 'parked' })
+  }, 30_000)
+
+  it('a non-busy stop on the first lock attempt (ST replaced): left with that reason, no second wait', async () => {
+    const fx = makeFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const sink = stderrSink()
+    const r = await run(p, {
+      lockTimeoutMs: 200,
+      secondWaitMs: 3000,
+      stderr: sink.stderr,
+      hooks: { afterBuild: () => replaceStaging(fx) },
+    })
+    expect(refusedOf(r.result)).toMatchObject({
+      reason: 'staging-unsafe',
+      staged: 'left',
+      warnings: [
+        expect.objectContaining({
+          code: 'removal-not-done',
+          status: 'stopped',
+          reason: 'staging-unsafe',
+        }),
+      ],
+    })
+    expect(sink.lines).toEqual([])
+    expect(fs.readdirSync(path.join(fx.base, 'staging-aside', OP_ID)).sort()).toEqual([
+      'new',
+      'owner.json',
+    ])
+  }, 30_000)
+
+  it('a non-busy stop during the polls (ST replaced): left at once, busy kept as the reason', async () => {
+    const fx = makeFixture(FILES)
+    await holdLock(fx.skillsDir)
+    let startedAt = 0
+    const out = await busyRun(fx, {
+      secondWaitMs: 3000,
+      watch: false,
+      atWaitStart: () => {
+        startedAt = Date.now()
+        replaceStaging(fx)
+      },
+    })
+    const waited = Date.now() - startedAt
+    expect(refusedOf(out.r.result)).toMatchObject({
+      reason: 'busy',
+      staged: 'left',
+      warnings: [
+        expect.objectContaining({
+          code: 'removal-not-done',
+          status: 'stopped',
+          reason: 'staging-unsafe',
+        }),
+      ],
+    })
+    expect(waited).toBeLessThan(1500)
   }, 30_000)
 })

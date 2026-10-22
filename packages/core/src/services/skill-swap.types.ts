@@ -191,8 +191,9 @@ export type AbortKeptKind = 'failed-build' | 'edited-new' | 'unrecorded-new'
  * `parked` (OP moved to `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`),
  * `kept` (the tree kept through `publishTree`, OP emptied and removed),
  * `held` (OP parked, then found changed or mounted-into at its parked path),
- * `left` (OP stays for `doctor recovery --clean-staging`), `none` (this call
- * made no OP).
+ * `left` (OP stays for `doctor recovery --clean-staging`; with `keptAs` when
+ * the tree's keep finished and a later step of cleanup stopped), `none` (this
+ * call made no OP, or OP held only its metadata and was removed).
  */
 export type AbortStaged = 'parked' | 'kept' | 'held' | 'left' | 'none'
 

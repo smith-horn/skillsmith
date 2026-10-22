@@ -8,9 +8,11 @@
  *     dirName, opId, writeSet: [{ rel, kind, text }], killAt }) and SIGKILLs
  *     itself at hook `killAt`. If it ever gets past that, it prints the result.
  *
- *   node --import tsx skill-swap.child.mjs hold <skillsDir> <markerDir>
+ *   node --import tsx skill-swap.child.mjs hold <skillsDir> <markerDir> [go]
  *     Takes lock 1 on <skillsDir>, writes <markerDir>/held, and stays inside
- *     until <markerDir>/release exists. Prints one JSON line.
+ *     until <markerDir>/release exists. Prints one JSON line. With `go`, it
+ *     first writes <markerDir>/ready and asks for the lock only once
+ *     <markerDir>/go exists.
  */
 import fs, {
   appendFileSync,
@@ -29,7 +31,12 @@ import { withSkillWriteLock } from '../../../src/services/skill-write-lock.ts'
 const [mode, ...args] = process.argv.slice(2)
 
 if (mode === 'hold') {
-  const [skillsDir, markers] = args
+  const [skillsDir, markers, waitGo] = args
+  // `go`: write <markerDir>/ready, then ask for lock 1 only once <markerDir>/go exists.
+  if (waitGo === 'go') {
+    writeFileSync(join(markers, 'ready'), '1')
+    while (!existsSync(join(markers, 'go'))) await new Promise((res) => setTimeout(res, 5))
+  }
   const r = await withSkillWriteLock(skillsDir, 'hold', async () => {
     writeFileSync(join(markers, 'held'), '1')
     const deadline = Date.now() + 20_000
