@@ -21,8 +21,9 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-6531 -- journal appends from two processes at once (two MCP servers, for
   example) could both chain to the same previous record and fork the journal's hash chain. Every
   append now runs under a cross-process lock, `journal.jsonl.lock` beside the journal (lock 5 in
-  the lock order). A lock that cannot be taken rejects the append, which the apply tools already
-  treat as fail-soft.
+  the lock order). A lock that cannot be taken rejects the append. The apply tools log that and
+  carry on, and they now register their session undo even when the append fails, so `undo_apply`
+  still reaches the change.
 
 - **Added**: SMI-6531 A1 step 3 -- `treeHashOf`, `copyTreeNoFollow` and `claimPublish`
   (`services/skill-tree.ts`), the tree primitives the update write path builds on. `treeHashOf` is

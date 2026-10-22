@@ -22,8 +22,8 @@
  *     the same deadlock between two contexts taking them in opposite orders;
  *     §3.2 takes them "in turn"), or
  *   - take any lock while lock 4 or lock 5 is held (both are leaves: §3.2
- *     for lock 4; lock 5 holds only the journal's read-head, append and
- *     fsync).
+ *     for lock 4; lock 5 holds only the journal's head read, record build,
+ *     append, file sync and directory syncs).
  *
  * Every lock names its rank; `'unordered'` is the explicit choice for a lock
  * outside the table, checked for re-entry and the leaf rule only. A missing

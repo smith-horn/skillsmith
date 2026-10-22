@@ -32,6 +32,14 @@
  * succeeded (or definitively failed) by the time these helpers run. A
  * journal I/O hiccup must never turn a successful apply into a failed tool
  * response — every call here swallows its own errors and logs to stderr.
+ *
+ * The journal append and the session-apply registration are independent
+ * (SMI-6531): an append can now also fail on lock 5 (an unparseable or
+ * foreign-host `journal.jsonl.lock` refuses every append), and a failed
+ * append must not make an apply unreachable by `undo_apply`. So the
+ * registration runs in its own `try`, after the append's, whatever the
+ * append did. `journalApplyError` and `journalUndo` only append, so they have
+ * no such coupling.
  */
 
 import { readFile } from 'node:fs/promises'
@@ -44,6 +52,7 @@ import {
   JOURNAL_SCHEMA_VERSION,
 } from '@skillsmith/core/journal'
 import { recordSessionApply, resolveBackupFileName } from './apply-session.helpers.js'
+import type { SessionAppliedChangeset } from './apply-session.helpers.js'
 
 async function hashFileSafe(path: string): Promise<string | null> {
   try {
@@ -86,6 +95,8 @@ export interface JournalApplySuccessInput {
  * register it on the session-apply stack so `undo_apply` can reach it.
  */
 export async function journalApplySuccess(input: JournalApplySuccessInput): Promise<void> {
+  // Decided before the append, registered after it whatever the append did.
+  let registration: SessionAppliedChangeset | null = null
   try {
     const afterHash = await hashFileSafe(input.targetPath)
 
@@ -140,6 +151,19 @@ export async function journalApplySuccess(input: JournalApplySuccessInput): Prom
     const beforeHash =
       backupFileName !== null ? await hashFileSafe(join(input.backupRef, backupFileName)) : null
 
+    if (backupFileName !== null && beforeHash !== null && afterHash !== null) {
+      registration = {
+        tool: input.tool,
+        suggestionId: input.suggestionId,
+        targetPath: input.targetPath,
+        beforeHash,
+        afterHash,
+        backupRef: input.backupRef,
+        backupFileName,
+        ts: Date.now(),
+      }
+    }
+
     await appendJournalRecord({
       schema: JOURNAL_SCHEMA_VERSION,
       ts: Date.now(),
@@ -154,23 +178,20 @@ export async function journalApplySuccess(input: JournalApplySuccessInput): Prom
       backup_ref: input.backupRef,
       detail: backupFileName === null ? 'backup_file_unresolved' : null,
     })
-
-    if (backupFileName !== null && beforeHash !== null && afterHash !== null) {
-      recordSessionApply({
-        tool: input.tool,
-        suggestionId: input.suggestionId,
-        targetPath: input.targetPath,
-        beforeHash,
-        afterHash,
-        backupRef: input.backupRef,
-        backupFileName,
-        ts: Date.now(),
-      })
-    }
   } catch (err) {
     console.error(
       `[apply-journal] failed to journal successful apply (tool=${input.tool}, suggestion=${input.suggestionId}): ${(err as Error).message}`
     )
+  }
+
+  if (registration !== null) {
+    try {
+      recordSessionApply(registration)
+    } catch (err) {
+      console.error(
+        `[apply-journal] failed to register the apply for undo (tool=${input.tool}, suggestion=${input.suggestionId}): ${(err as Error).message}`
+      )
+    }
   }
 }
 

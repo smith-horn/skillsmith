@@ -51,8 +51,9 @@ export interface SessionAppliedChangeset {
 // Most-recent-last array; undo consumes from the end.
 const sessionApplies: SessionAppliedChangeset[] = []
 
-/** Record a successful apply. Called by the apply-family tools after a
- * mutation + journal write both succeed. */
+/** Record a successful apply. Called by the apply-family tools after the
+ * mutation succeeds, whether or not its journal write did: a stuck journal
+ * lock rejects every append, and undo must still reach the change. */
 export function recordSessionApply(entry: SessionAppliedChangeset): void {
   sessionApplies.push(entry)
 }

@@ -13,10 +13,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { StuckLockError } from '../../../src/config/owned-lock.js'
+import { JOURNAL_DIR_ENV_VAR } from '../../../src/journal/path.js'
 import { verifyJournalChain } from '../../../src/journal/reader.js'
+import { appendJournalRecord } from '../../../src/journal/writer.js'
 
 const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'writer.lock5.child.mjs')
-const PER_CHILD = 60
+const PER_CHILD = 200
 
 let dir: string
 
@@ -79,4 +82,47 @@ describe('lock 5: concurrent appends from two processes', () => {
     // The lock file is released after every append.
     expect(fs.existsSync(path.join(journalDir, 'journal.jsonl.lock'))).toBe(false)
   }, 60_000)
+})
+
+describe('lock 5: a lock that cannot be taken rejects the append', () => {
+  it('an unparseable journal.jsonl.lock: the append rejects with StuckLockError, the journal byte-identical', async () => {
+    const journalDir = path.join(dir, 'journal')
+    const prev = process.env[JOURNAL_DIR_ENV_VAR]
+    process.env[JOURNAL_DIR_ENV_VAR] = journalDir
+    try {
+      const input = {
+        schema: 2,
+        ts: 1,
+        session_id: 's',
+        tool: 'probe',
+        action: 'apply' as const,
+        suggestion_id: 'one',
+        target_path: null,
+        before_hash: null,
+        after_hash: null,
+        approval: null,
+        backup_ref: null,
+        detail: null,
+      }
+      await appendJournalRecord(input)
+      const journal = path.join(journalDir, 'journal.jsonl')
+      const before = fs.readFileSync(journal)
+      fs.writeFileSync(path.join(journalDir, 'journal.jsonl.lock'), 'not a lock claim')
+
+      const err = await appendJournalRecord({ ...input, suggestion_id: 'two' }).then(
+        () => null,
+        (e: unknown) => e
+      )
+
+      expect(err).toBeInstanceOf(StuckLockError)
+      expect((err as StuckLockError).reason).toBe('unreclaimable_unparseable')
+      expect(fs.readFileSync(journal).equals(before)).toBe(true)
+      expect(fs.readFileSync(path.join(journalDir, 'journal.jsonl.lock'), 'utf8')).toBe(
+        'not a lock claim'
+      )
+    } finally {
+      if (prev === undefined) delete process.env[JOURNAL_DIR_ENV_VAR]
+      else process.env[JOURNAL_DIR_ENV_VAR] = prev
+    }
+  })
 })

@@ -4,13 +4,13 @@
  * @module @skillsmith/core/journal/writer
  *
  * P-5 single-writer invariant (docs/internal/implementation/smi-5456-skillsmith-agent-wave1.md
- * "Shared-State / Coordination Audit"): the journal file is written by the
- * apply-family MCP tools ONLY, and every writer in this process funnels
- * through `appendJournalRecord`, which serializes behind ONE module-scoped
- * promise queue. That queue — not any per-caller locking — is what makes
- * concurrent `apply_namespace_rename` / `apply_recommended_edit` / `undo_apply`
- * calls in the same server process produce well-formed, correctly-chained
- * lines instead of interleaved/torn writes.
+ * "Shared-State / Coordination Audit"): every journal write goes through
+ * `appendJournalRecord`. Its writers are the apply-family MCP tools
+ * (`apply_namespace_rename`, `apply_recommended_edit`, `undo_apply`) and the
+ * in-place update transaction (`swapInPlace`, SMI-6531 step 11). In one
+ * process the appends serialize behind ONE module-scoped promise queue, so
+ * concurrent callers produce well-formed, correctly-chained lines instead of
+ * interleaved/torn writes.
  *
  * Across processes (SMI-6531, owner decision 2026-10-22) the queue is not
  * enough: two processes each read the same chain head and append a record
@@ -20,8 +20,11 @@
  * the directory syncs. Lock 5 is a leaf: nothing is requested while it is
  * held. The queue stays as an in-process optimization (callers in one process
  * do not poll the file lock against each other). A lock that cannot be taken
- * (busy past its wait, a refusal) rejects the append, which callers already
- * treat as fail-soft.
+ * (busy past its wait, an unparseable or foreign-host claim) rejects the
+ * append. A rejection must cost only the journal record: the apply-family
+ * helpers log it and still register the apply for `undo_apply`
+ * (`apply-journal.helpers.ts`), and `swapInPlace` reports the update
+ * committed with `incomplete: audit`, its record kept for doctor.
  *
  * Durability: each append opens the file, writes the line, calls
  * `FileHandle.sync()` (fsync), then closes — so a record that returns
@@ -125,17 +128,19 @@ async function getLastRecordHash(filePath: string): Promise<string> {
 }
 
 // P-5 single-writer invariant: every append in this process funnels through
-// this one queue, regardless of which apply-family tool called it.
+// this one queue, whichever writer called it.
 let writeQueue: Promise<void> = Promise.resolve()
 
 /**
  * Append a record to the journal. Serialized behind the module-scoped
  * write queue and fsync'd before the returned promise resolves.
  *
- * Callers (the apply-family tools) should treat a rejection as fail-soft —
- * the journal is an evidence trail, not a gate on the user's mutation —
- * and log rather than propagate. See `tools/apply-journal.helpers.ts` in
- * `@skillsmith/mcp-server` for the call-site convention.
+ * Callers (the apply-family tools and `swapInPlace`) treat a rejection as
+ * fail-soft — the journal is an evidence trail, not a gate on the user's
+ * mutation — and must not let it undo or hide the mutation: the apply-family
+ * helpers log it and still register the apply for `undo_apply` (see
+ * `tools/apply-journal.helpers.ts` in `@skillsmith/mcp-server`); `swapInPlace`
+ * returns `committed` with `incomplete: audit` and keeps its record.
  */
 export function appendJournalRecord(input: JournalRecordInput): Promise<JournalRecord> {
   const task = writeQueue.then(() => doAppend(input))

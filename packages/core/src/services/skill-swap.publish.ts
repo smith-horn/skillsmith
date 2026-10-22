@@ -14,6 +14,13 @@
  * renamed over an entry), and its temp is unlinked only after verifying it is
  * the file this run wrote (`unlinkOwned`).
  *
+ * Residual (the ADR-155 empty-directory class): the backup move itself is a
+ * plain `rename(src, dest)`. An empty directory another process creates at
+ * `dest` after `assertBackupNameFree` and before that `rename` is replaced by
+ * it silently (`rename` over an empty directory succeeds; over a non-empty one
+ * it fails `ENOTEMPTY`, which stops the run). Nothing is lost but that empty
+ * directory. Node has no `renameat2(RENAME_NOREPLACE)`.
+ *
  * Not here yet:
  *  - Cross-device (SMI-6531 step 4c): an `EXDEV` from the move stops with
  *    `cross-device`; the record stays and the tree stays in OP. 4c copies,

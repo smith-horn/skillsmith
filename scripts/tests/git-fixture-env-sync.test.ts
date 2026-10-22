@@ -5,6 +5,8 @@
  * There are two physical copies of this helper:
  *   - canonical: `scripts/tests/_lib/git-fixture-env.ts`
  *   - per-package mirror: `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts`
+ *   - per-package mirror: `packages/core/tests/_lib/git-fixture-env.ts` (SMI-6531:
+ *     core's `composite` + `rootDir` blocks the same import from its tests)
  *
  * The mirror exists because `composite: true` + `rootDir: "."` in
  * `doc-retrieval-mcp` blocks cross-package imports from its `src/` tests.
@@ -26,6 +28,10 @@ import {
   GIT_CONFIG_INJECTION_VARS as PER_PACKAGE_INJECTION,
   GIT_DISCOVERY_VARS as PER_PACKAGE,
 } from '../../packages/doc-retrieval-mcp/src/_lib/git-fixture-env.js'
+import {
+  GIT_CONFIG_INJECTION_VARS as CORE_INJECTION,
+  GIT_DISCOVERY_VARS as CORE,
+} from '../../packages/core/tests/_lib/git-fixture-env.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const canonicalSrc = join(here, '_lib', 'git-fixture-env.ts')
@@ -39,6 +45,7 @@ const perPackageSrc = join(
   '_lib',
   'git-fixture-env.ts'
 )
+const coreSrc = join(here, '..', '..', 'packages', 'core', 'tests', '_lib', 'git-fixture-env.ts')
 
 /**
  * Extract just the string entries of the `GIT_DISCOVERY_VARS` array from the
@@ -63,14 +70,15 @@ function extractVarNames(srcPath: string): string[] {
 }
 
 describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
-  it('runtime arrays are byte-identical across both copies', () => {
+  it('runtime arrays are byte-identical across every copy', () => {
     expect([...PER_PACKAGE]).toEqual([...CANONICAL])
+    expect([...CORE]).toEqual([...CANONICAL])
   })
 
-  it('source-text var lists are identical across both copies', () => {
+  it('source-text var lists are identical across every copy', () => {
     const canonicalVars = extractVarNames(canonicalSrc)
-    const perPackageVars = extractVarNames(perPackageSrc)
-    expect(perPackageVars).toEqual(canonicalVars)
+    expect(extractVarNames(perPackageSrc)).toEqual(canonicalVars)
+    expect(extractVarNames(coreSrc)).toEqual(canonicalVars)
   })
 
   it('runtime array matches the canonical source text', () => {
@@ -82,6 +90,7 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
   // only the latter; both copies must still agree on it.
   it('GIT_CONFIG_INJECTION_VARS is identical across both copies and disjoint from discovery', () => {
     expect([...PER_PACKAGE_INJECTION]).toEqual([...CANONICAL_INJECTION])
+    expect([...CORE_INJECTION]).toEqual([...CANONICAL_INJECTION])
     for (const v of CANONICAL_INJECTION) expect(CANONICAL).not.toContain(v)
   })
 })

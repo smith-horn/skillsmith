@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { makeFixtureEnv } from '../../_lib/git-fixture-env.js'
 import { LockOrderError } from '../../../src/config/lock-tracker.js'
 import { STAGING_GITIGNORE_HINT } from '../../../src/services/skill-write-lock.gitignore.js'
 import type { ManifestCommitHandle } from '../../../src/services/skill-swap.js'
@@ -71,7 +72,7 @@ describe('a LockOrderError is a bug, not an outcome', () => {
 describe('the staging .gitignore hint', () => {
   function inRepo(files: Record<string, string>) {
     const fx = makeFixture(files)
-    execFileSync('git', ['init', '-q', fx.base])
+    execFileSync('git', ['init', '-q', fx.base], { env: makeFixtureEnv() })
     return fx
   }
 

@@ -218,6 +218,30 @@ describe('swapInPlace: stops after the swap', () => {
     }
   })
 
+  it('a stuck lock 5 (real writer) is committed with incomplete audit; the record kept, nothing published', async () => {
+    const dir = tmp('skill-swap-journal-stuck-')
+    fs.writeFileSync(path.join(dir, 'journal.jsonl.lock'), 'not a lock claim')
+    const prev = process.env[JOURNAL_DIR_ENV_VAR]
+    process.env[JOURNAL_DIR_ENV_VAR] = dir
+    try {
+      const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+      const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+      const { result } = await run(p, { appendJournal: undefined })
+      expect(result).toMatchObject({
+        status: 'committed',
+        incomplete: { step: 'audit', reason: 'journal-append-failed' },
+        recordPath: path.join(fx.opDir, 'record.json'),
+      })
+      readRecord(path.join(fx.opDir, 'record.json'))
+      expect(hashOf(path.join(fx.opDir, 'old'))).toBe(p.input.preTree)
+      expect(fs.existsSync(path.join(dir, 'journal.jsonl'))).toBe(false)
+      expect(fs.existsSync(path.join(fx.stateRoot, 'backups'))).toBe(false)
+    } finally {
+      if (prev === undefined) delete process.env[JOURNAL_DIR_ENV_VAR]
+      else process.env[JOURNAL_DIR_ENV_VAR] = prev
+    }
+  })
+
   it('a failing pre-commit check stops with the record kept and the manifest unwritten', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
