@@ -30,7 +30,10 @@ export const JOURNAL_SCHEMA_VERSION = 2
  * `'apply'`   — an apply-family tool successfully mutated a file.
  * `'error'`   — an apply-family tool attempted a mutation and it failed
  *               (the `detail` field carries the typed error kind).
- * `'undo'`    — `undo_apply` successfully reversed a prior `'apply'` record.
+ * `'undo'`    — `undo_apply` successfully restored a file from an apply on
+ *               this process's session stack. The matching `'apply'`
+ *               record may be missing: that apply's own append can have
+ *               failed while the apply itself stood (SMI-6531).
  * `'revert'`  — `apply_namespace_rename`'s `action: 'revert'` successfully
  *               reversed a prior rename via the ledger (SMI-5671) — distinct
  *               from `'undo'`, which is `undo_apply`'s same-process,

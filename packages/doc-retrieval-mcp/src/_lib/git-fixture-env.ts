@@ -3,8 +3,9 @@
  *
  * Mirrors the canonical helper at `scripts/tests/_lib/git-fixture-env.ts`.
  * Duplicated here because `composite: true` + `rootDir: "."` blocks
- * cross-package imports from `git-commits.test.ts`. Keep the two copies
- * in sync; the canonical version is authoritative. See the RCA at
+ * cross-package imports from `git-commits.test.ts`. Keep every copy in sync
+ * (there is also one at `packages/core/tests/_lib/git-fixture-env.ts`); the
+ * canonical version is authoritative. See the RCA at
  * `docs/internal/research/smi-4693-fixture-leak-rca.md` for the full
  * remediation rationale.
  */
@@ -19,8 +20,9 @@ import { join } from 'node:path'
  *
  * SMI-5126: exported (was module-private) so the production read-path helper
  * `stripGitDiscoveryEnv` and the canonical copy at
- * `scripts/tests/_lib/git-fixture-env.ts` single-source the same list. A
- * vitest sync check asserts the two copies are byte-identical.
+ * `scripts/tests/_lib/git-fixture-env.ts` single-source the same list.
+ * `scripts/tests/git-fixture-env-sync.test.ts` asserts every copy holds the
+ * same values and that their helpers behave the same.
  */
 export const GIT_DISCOVERY_VARS = [
   'GIT_DIR',
@@ -33,11 +35,13 @@ export const GIT_DISCOVERY_VARS = [
   'GIT_PREFIX',
   'GIT_CEILING_DIRECTORIES',
   'GIT_DISCOVERY_ACROSS_FILESYSTEM',
-  // SMI-4699: HOME / XDG_CONFIG_HOME / GIT_CONFIG can route a stray
-  // `git config` (without --local) into the user's real ~/.gitconfig
-  // or trigger an `[includeIf "gitdir:..."]` rule that lands in the
-  // parent worktree. Strip them; callers may opt back in by passing
-  // an explicit override (e.g. HOME: scratch).
+  // SMI-4699: XDG_CONFIG_HOME / GIT_CONFIG can route a stray
+  // `git config` (without --local) into the user's real config or
+  // trigger an `[includeIf "gitdir:..."]` rule that lands in the parent
+  // worktree, so both are stripped. HOME is NOT stripped or repinned:
+  // `makeFixtureEnv` leaves it as the caller set it and instead pins
+  // GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM to /dev/null, so neither
+  // ~/.gitconfig nor the system config is read or written.
   'GIT_CONFIG',
   'XDG_CONFIG_HOME',
 ] as const

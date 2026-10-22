@@ -94,7 +94,7 @@ export interface FileLockOptions {
    * unknown rank rejects at runtime, so a lock can't skip the order rules by
    * omission. The tracker refuses, before any wait, a request
    * that re-enters a held lock, takes a second skills-root lock, ranks below
-   * or equal to a held lock, or is made while lock 4 is held.
+   * or equal to a held lock, or is made while lock 4 or lock 5 is held.
    */
   rank: LockOrder
 }

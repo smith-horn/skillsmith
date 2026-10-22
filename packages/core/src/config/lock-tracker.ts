@@ -9,6 +9,7 @@
  *   1′  a parked area outside every skills root (A1 step 6)
  *   2a  fan-out destination   2b  fan-out link manifest
  *   3   `manifest.json.lock`  4   the parked index
+ *   5   the change journal (`journal.jsonl.lock`; owner decision 2026-10-22)
  *
  * Before any wait, a request throws `LockOrderError` when it would
  *   - re-enter a lock this context already holds (it would wait on itself;
@@ -20,7 +21,9 @@
  *   - take a second lock of the same rank (two destinations, two manifests:
  *     the same deadlock between two contexts taking them in opposite orders;
  *     §3.2 takes them "in turn"), or
- *   - take any lock while lock 4 is held (§3.2: a leaf).
+ *   - take any lock while lock 4 or lock 5 is held (both are leaves: §3.2
+ *     for lock 4; lock 5 holds only the journal's head read, record build,
+ *     append, file sync and directory syncs).
  *
  * Every lock names its rank; `'unordered'` is the explicit choice for a lock
  * outside the table, checked for re-entry and the leaf rule only. A missing
@@ -59,13 +62,13 @@ import { realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, normalize, sep } from 'node:path'
 
 /** A lock's place in A1 plan §3.2's order table. */
-export type LockRank = '1' | "1'" | '2a' | '2b' | '3' | '4'
+export type LockRank = '1' | "1'" | '2a' | '2b' | '3' | '4' | '5'
 
 /** A rank, or `'unordered'` for a lock outside the table (re-entry and leaf rules only). */
 export type LockOrder = LockRank | 'unordered'
 
 /** Every accepted {@link LockOrder}; the single source of truth for runtime validation. */
-export const LOCK_ORDERS: readonly LockOrder[] = ['1', "1'", '2a', '2b', '3', '4', 'unordered']
+export const LOCK_ORDERS: readonly LockOrder[] = ['1', "1'", '2a', '2b', '3', '4', '5', 'unordered']
 
 /** True when `value` is one of {@link LOCK_ORDERS}. */
 export function isLockOrder(value: unknown): value is LockOrder {
@@ -79,6 +82,7 @@ const RANK_VALUE: Record<LockRank, number> = {
   '2b': 2.5,
   '3': 3,
   '4': 4,
+  '5': 5,
 }
 
 /** A lock request the tracker refused, before any wait. */
@@ -222,11 +226,11 @@ function admit(target: string, label: string, rank: LockOrder): HeldLock {
       `${label} is already held by this operation (${describe(again)}); taking it again would wait on itself`
     )
   }
-  const leaf = held.find((h) => h.rank === '4')
+  const leaf = held.find((h) => h.rank === '4' || h.rank === '5')
   if (leaf !== undefined) {
     throw new LockOrderError(
       'under-leaf',
-      `${label} was requested while holding ${describe(leaf)}; lock 4 takes no other lock`
+      `${label} was requested while holding ${describe(leaf)}; lock ${leaf.rank} takes no other lock`
     )
   }
   if (rank === '1' || rank === "1'") {

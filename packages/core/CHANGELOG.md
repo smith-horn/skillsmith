@@ -4,6 +4,27 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 A1 step 4a -- `swapInPlace` (`services/skill-swap.ts`), the update's staged
+  swap on one device. It builds the new folder in `.skillsmith-staging/<opId>/`, refuses the build
+  if the live folder changed since planning, writes a durable `record.json`, swaps the two folders
+  with two renames and the directory syncs between them, checks both identities, and commits the
+  manifest through a caller-supplied port. The old folder becomes the backup, moved whole with its
+  sidecar published first. A swap that has to be undone keeps both folders: the new one as
+  `undone`, or as `conflict` when it changed while live. A foreign symlink or file put back at the
+  skill path is recreated with `symlink` or `link`, which never replace anything. Foreign edits
+  are kept and reported (`backup-holds-foreign-change`, `live-folder-changed`). An abort before
+  the first rename leaves the staged copy in place for doctor. Also `ensureSkillsRoot`
+  (`services/skill-root.ensure.ts`), which creates an absent skills root and its missing parents
+  one level at a time with each parent's mode, and the journal now syncs its directory when an
+  append creates the file or the directory. No caller uses `swapInPlace` yet.
+
+- **Fixed**: SMI-6531 -- journal appends from two processes at once (two MCP servers, for
+  example) could both chain to the same previous record and fork the journal's hash chain. Every
+  append now runs under a cross-process lock, `journal.jsonl.lock` beside the journal (lock 5 in
+  the lock order). A lock that cannot be taken rejects the append. The apply tools log that and
+  carry on, and they now register their session undo even when the append fails, so `undo_apply`
+  still reaches the change.
+
 - **Added**: SMI-6531 A1 step 3 -- `treeHashOf`, `copyTreeNoFollow` and `claimPublish`
   (`services/skill-tree.ts`), the tree primitives the update write path builds on. `treeHashOf` is
   the one tree hash over the no-follow walk, and a FIFO, socket or device makes the folder

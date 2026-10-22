@@ -43,9 +43,11 @@ import { join } from 'node:path'
  * "The Git Repository" and "Git Diffs"). Audited 2026-05-03; revisit if git
  * adds new GIT_* discovery vars in a future release.
  *
- * SMI-5126: exported (was module-private) so the per-package mirror at
- * `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts` single-sources the
- * same list. A vitest sync check asserts the two copies are byte-identical.
+ * SMI-5126: exported (was module-private) so the per-package mirrors at
+ * `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts` and
+ * `packages/core/tests/_lib/git-fixture-env.ts` single-source the same list.
+ * `scripts/tests/git-fixture-env-sync.test.ts` asserts every copy holds the
+ * same values and that their helpers behave the same.
  */
 export const GIT_DISCOVERY_VARS = [
   'GIT_DIR',
@@ -61,9 +63,9 @@ export const GIT_DISCOVERY_VARS = [
   // SMI-4699: HOME / XDG_CONFIG_HOME / GIT_CONFIG can still route a stray
   // `git config` (without --local) into the developer's real ~/.gitconfig
   // or trigger an `[includeIf "gitdir:..."]` rule that lands in the
-  // parent worktree's .git/config. Strip them; HOME is repinned to
-  // /dev/null below so any escape from --local fails loudly instead
-  // of silently writing to the host's gitconfig.
+  // parent worktree's .git/config. Strip GIT_CONFIG and XDG_CONFIG_HOME. HOME is left as the caller
+  // set it; GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are pinned to /dev/null
+  // below, so git never reads or writes the host's gitconfig through it.
   'GIT_CONFIG',
   'XDG_CONFIG_HOME',
 ] as const

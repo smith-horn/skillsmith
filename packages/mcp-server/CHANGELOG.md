@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- `apply_namespace_rename` and `apply_recommended_edit` register a
+  successful apply for `undo_apply` even when its journal write fails. Before, a failed journal
+  append also skipped the undo registration. With `@skillsmith/core`'s new journal lock, a stuck
+  lock fails every append, so every apply would have lost its undo.
+
 - **Internal**: SMI-6531 (A1 step 1) -- `fetchFromGitHub` and `lookupSkillFromRegistry` call core's
   `assertSkillWriteLockNotHeld` on entry, so neither can run while a skills-root lock is held.
   `skill_outdated` and `apply_manifest_reconcile` (registry verify and `relink` validation) now

@@ -16,12 +16,14 @@
  *      NOT a blanket `os.tmpdir()` carve-out on the production fence. See
  *      that constant's doc comment for the SMI-4691 precedent this mirrors.
  *   2. Never-clobber guard — the target's CURRENT content hash must match
- *      the journaled `after_hash`. A mismatch means the file changed since
- *      the apply (a user edit, or something else entirely) and undo refuses
- *      rather than overwriting it.
+ *      the `afterHash` the session stack recorded at apply time (not the
+ *      journal: that apply's journal record can be missing when its append
+ *      failed, SMI-6531). A mismatch means the file changed since the apply
+ *      (a user edit, or something else entirely) and undo refuses rather
+ *      than overwriting it.
  *   3. Backup-integrity guard — the backup file's content hash must match
- *      the journaled `before_hash` BEFORE anything is written, so a
- *      corrupt/mismatched backup is caught before it can clobber the
+ *      the session stack's recorded `beforeHash` BEFORE anything is written,
+ *      so a corrupt/mismatched backup is caught before it can clobber the
  *      target (not just after).
  *   4. Atomic write — `<target>.<random>.undo-tmp` + `fs.rename`.
  *   5. Journal an `'undo'` record and drop the changeset from the session

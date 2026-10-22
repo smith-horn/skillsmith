@@ -2,7 +2,7 @@
  * SMI-6531 (A1 step 1): the tracker's same-rank, under-leaf, second-root and
  * explicit-'unordered' rules, and `withDestinationLock`'s refusal ordering.
  *
- * Order: 1 = 1' < 2a < 2b < 3 < 4. Every refusal must arrive promptly: a
+ * Order: 1 = 1' < 2a < 2b < 3 < 4 < 5; locks 4 and 5 are leaves. Every refusal must arrive promptly: a
  * refusal that waits (on the in-process queue or the file lock) is a hang.
  */
 import fs from 'node:fs'
@@ -92,6 +92,54 @@ describe('lock 4 is a leaf', () => {
       expect(innerRan).toBe(false)
     })
   }
+})
+
+describe('lock 5 (the journal) is a leaf too', () => {
+  for (const request of ['5', '4', '3', 'unordered'] as const) {
+    it(`rank ${request} requested inside lock 5 is an under-leaf refusal`, async () => {
+      let innerRan = false
+      const error = await lockOn('journal', '5', () =>
+        settleWithin(
+          lockOn('other', request, async () => {
+            innerRan = true
+          }),
+          PROMPT_MS
+        )
+      )
+      expectKind(error, 'under-leaf')
+      expect(innerRan).toBe(false)
+    })
+  }
+
+  it('rank 5 is admitted under lock 1 (a swap journals under its skills-root lock), and runs', async () => {
+    let ran = false
+    await lockOn('root', '1', () =>
+      lockOn('journal', '5', async () => {
+        ran = true
+      })
+    )
+    expect(ran).toBe(true)
+  })
+
+  it('rank 5 is admitted under lock 3', async () => {
+    let ran = false
+    await lockOn('manifest', '3', () =>
+      lockOn('journal', '5', async () => {
+        ran = true
+      })
+    )
+    expect(ran).toBe(true)
+  })
+
+  it('rank 5 requested inside lock 4 is an under-leaf refusal', async () => {
+    const error = await lockOn('leaf', '4', () =>
+      settleWithin(
+        lockOn('journal', '5', async () => {}),
+        PROMPT_MS
+      )
+    )
+    expectKind(error, 'under-leaf')
+  })
 })
 
 describe('skills-root locks', () => {

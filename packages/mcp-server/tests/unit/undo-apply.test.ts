@@ -34,6 +34,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 import {
+  JOURNAL_DIR_ENV_VAR,
   sha256Hex,
   resetJournalSessionIdForTests,
   verifyJournalChain,
@@ -300,6 +301,50 @@ describe('undo_apply — scope fence (SMI-4287 reuse)', () => {
       expect(listSessionApplies()).toHaveLength(1)
     } finally {
       fs.rmSync(looseTmpDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('undo_apply — a journal append that fails on lock 5 (SMI-6531)', () => {
+  it('a stuck journal lock fails the append (logged), and the apply is still registered and undoable', async () => {
+    const journalDir = path.join(TEST_HOME, 'stuck-journal')
+    fs.mkdirSync(journalDir, { recursive: true })
+    // An unparseable claim beside the journal: owned-lock refuses it at once.
+    fs.writeFileSync(path.join(journalDir, 'journal.jsonl.lock'), 'not a lock claim')
+    const prevJournalDir = process.env[JOURNAL_DIR_ENV_VAR]
+    process.env[JOURNAL_DIR_ENV_VAR] = journalDir
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const description = 'deploy code to production'
+      const filePath = plantSkillForEdit(TEST_HOME, 'undo-stuck-journal', description)
+      const originalContent = fs.readFileSync(filePath, 'utf-8')
+      const { auditId, collisionId } = await seedAuditWithEdit(filePath, description)
+
+      const applyResponse = await applyRecommendedEditTool({
+        auditId,
+        collisionId,
+        confirmed: true,
+      })
+
+      expect(applyResponse.success).toBe(true)
+      expect(fs.existsSync(path.join(journalDir, 'journal.jsonl'))).toBe(false)
+      expect(
+        errors.mock.calls.some((c) =>
+          String(c[0]).startsWith('[apply-journal] failed to journal successful apply')
+        )
+      ).toBe(true)
+      expect(listSessionApplies()).toHaveLength(1)
+
+      const undoResponse = await undoApply({})
+      expect(undoResponse.success).toBe(true)
+      expect(undoResponse.undone[0]!.suggestionId).toBe(collisionId)
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe(originalContent)
+      expect(fs.readFileSync(path.join(journalDir, 'journal.jsonl.lock'), 'utf8')).toBe(
+        'not a lock claim'
+      )
+    } finally {
+      if (prevJournalDir === undefined) delete process.env[JOURNAL_DIR_ENV_VAR]
+      else process.env[JOURNAL_DIR_ENV_VAR] = prevJournalDir
     }
   })
 })

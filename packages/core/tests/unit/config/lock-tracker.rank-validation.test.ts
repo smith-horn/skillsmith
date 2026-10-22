@@ -27,7 +27,7 @@ const bad: Array<[string, unknown]> = [
   ['missing options', undefined],
   ['null options', null],
   ['empty options', {}],
-  ['an unknown rank string', { rank: '5' }],
+  ['an unknown rank string', { rank: '6' }],
   ['a rank of the wrong type', { rank: 2 }],
 ]
 
@@ -62,7 +62,9 @@ describe('withFileLock rejects a missing or unknown rank', () => {
   )
 
   it('LOCK_ORDERS lists every rank the type allows', () => {
-    expect([...LOCK_ORDERS].sort()).toEqual(['1', "1'", '2a', '2b', '3', '4', 'unordered'].sort())
+    expect([...LOCK_ORDERS].sort()).toEqual(
+      ['1', "1'", '2a', '2b', '3', '4', '5', 'unordered'].sort()
+    )
   })
 
   it.each(LOCK_ORDERS.map((r) => [r] as const))(
