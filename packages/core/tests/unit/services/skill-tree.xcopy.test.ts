@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { copyTreeNoFollow, treeHashOf } from '../../../src/services/skill-tree.js'
-import { anyFileContains, tmp, useTmpCleanup } from './skill-tree.helpers.js'
+import { anyFileContains, lstatBig, tmp, useTmpCleanup } from './skill-tree.helpers.js'
 
 useTmpCleanup()
 
@@ -167,6 +167,34 @@ describe('T-X5: a nested change during the copy', () => {
       },
     })
     expect(r).toMatchObject({ ok: false, reason: 'changed-during-copy', path: path.join(src, 'p') })
+  })
+
+  it('a parent swapped for a link before a SYMLINK child: the outside link text is not copied', async () => {
+    // readlink resolves the parent by path, so after this one swap (never
+    // undone) it would read `outside/z-link`. The link must still be the inode
+    // the walk typed, as copyFile requires of a file.
+    const root = tmp()
+    const src = path.join(root, 'skill')
+    const outside = path.join(root, 'outside')
+    fs.mkdirSync(path.join(src, 'p'), { recursive: true })
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(src, 'p', 'a.txt'), 'a')
+    fs.symlinkSync('INSIDE-TEXT', path.join(src, 'p', 'z-link'))
+    fs.symlinkSync('/etc/OUTSIDE-TEXT', path.join(outside, 'z-link'))
+    const dest = path.join(root, 'dest')
+    const r = await copyTreeNoFollow(src, dest, {
+      afterEntry: (rel) => {
+        if (rel !== 'p/a.txt') return
+        fs.renameSync(path.join(src, 'p'), path.join(root, 'p-aside'))
+        fs.symlinkSync(outside, path.join(src, 'p'))
+      },
+    })
+    expect(r).toMatchObject({
+      ok: false,
+      reason: 'changed-during-copy',
+      path: path.join(src, 'p', 'z-link'),
+    })
+    expect(lstatBig(path.join(dest, 'p', 'z-link'))).toBeNull()
   })
 
   it('control: with no change during the copy the hash is the same afterwards', async () => {

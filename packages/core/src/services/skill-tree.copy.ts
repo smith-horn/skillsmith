@@ -4,7 +4,8 @@
  * Copies a skill folder into `new/` or a backup copy temp without following a
  * link it can see: every entry is typed by `lstat`, a file is opened
  * `O_RDONLY|O_NOFOLLOW` and its descriptor must be the inode the walk typed,
- * a symlink is recreated from its verbatim text, and a directory must keep the
+ * a symlink is recreated from its verbatim text and must still be the link
+ * inode the walk typed after that text is read, and a directory must keep the
  * identity `lstat` gave it from before its names are read until after its
  * children are typed. A single swap of an entry or a parent directory between
  * its check and its use is refused as `changed-during-copy`. What it does not
@@ -219,7 +220,7 @@ async function copyDir(
     const childRel = rel ? `${rel}/${name}` : name
     let f: Failure | null
     if (st.isDirectory()) f = await copyDirEntry(childSrc, childDest, childRel, st, hooks)
-    else if (st.isSymbolicLink()) f = await copyLink(childSrc, childDest)
+    else if (st.isSymbolicLink()) f = await copyLink(childSrc, childDest, st)
     else f = await copyFile(childSrc, childDest, st)
     if (f !== null) return f
     if (!st.isDirectory()) hooks?.afterEntry?.(childRel)
@@ -227,13 +228,32 @@ async function copyDir(
   return null
 }
 
-async function copyLink(srcAbs: string, destAbs: string): Promise<Failure | null> {
+/**
+ * `typed` is the walk's `lstat` of this link. `readlink` resolves the parent
+ * by path, so after it the path must still be that same link inode: a parent
+ * swapped for a link after its own checks would otherwise hand back the text
+ * of a link outside the skill (round 3, SMI-6531), the symlink counterpart of
+ * `copyFile`'s descriptor check.
+ */
+async function copyLink(
+  srcAbs: string,
+  destAbs: string,
+  typed: BigIntStats
+): Promise<Failure | null> {
   let text: string
   try {
     text = await fs.promises.readlink(srcAbs)
   } catch (err) {
     // EINVAL: no longer a link.
     return fail(errno(err) === 'EINVAL' ? 'changed-during-copy' : 'unreadable', srcAbs, err)
+  }
+  try {
+    const now = await fs.promises.lstat(srcAbs, { bigint: true })
+    if (!now.isSymbolicLink() || now.dev !== typed.dev || now.ino !== typed.ino) {
+      return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
+    }
+  } catch (err) {
+    return fail('unreadable', srcAbs, err)
   }
   try {
     await fs.promises.symlink(text, destAbs)

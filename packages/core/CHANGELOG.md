@@ -10,7 +10,8 @@ All notable changes to `@skillsmith/core` are documented here.
   `unsupported-entry`. `copyTreeNoFollow` copies a skill folder without following a link it can
   see: every entry is typed by `lstat`, an opened file must be the inode the walk typed, a
   directory must keep its identity from before its names are read until after its children are
-  typed, and symlinks are recreated verbatim with modes kept. A single swap ends
+  typed, and a symlink must still be the link the walk typed after its text is read and is
+  recreated verbatim, with modes kept. A single swap ends
   `changed-during-copy`; a double swap timed around those checks can still read outside bytes, and
   the update's own hash of the copy keeps that build from being published. The copy removes
   nothing on failure. `claimPublish` claims the target with `mkdir`, then
