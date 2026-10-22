@@ -452,6 +452,16 @@ export {
   stagingGitignoreHint,
   type GitignoreHintOptions,
 } from './services/skill-write-lock.gitignore.js'
+// SMI-6531 A1 step 3: the tree hash, the no-follow copy and claim-publish (plan §3.4).
+export {
+  claimPublish,
+  copyTreeNoFollow,
+  treeHashOf,
+  type ClaimPublishResult,
+  type CopyFailureReason,
+  type CopyResult,
+  type TreeHashResult,
+} from './services/skill-tree.js'
 // The types of `SkillsRootBinding`'s `stagingBits` and `rootSync` fields.
 export type { BitsApplied } from './install/mkdir-parent-bits.js'
 export type { DirSyncOutcome } from './install/dir-sync.js'
