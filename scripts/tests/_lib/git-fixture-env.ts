@@ -63,7 +63,7 @@ export const GIT_DISCOVERY_VARS = [
   // SMI-4699: HOME / XDG_CONFIG_HOME / GIT_CONFIG can still route a stray
   // `git config` (without --local) into the developer's real ~/.gitconfig
   // or trigger an `[includeIf "gitdir:..."]` rule that lands in the
-  // parent worktree's .git/config. Strip them. HOME is left as the caller
+  // parent worktree's .git/config. Strip GIT_CONFIG and XDG_CONFIG_HOME. HOME is left as the caller
   // set it; GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM are pinned to /dev/null
   // below, so git never reads or writes the host's gitconfig through it.
   'GIT_CONFIG',

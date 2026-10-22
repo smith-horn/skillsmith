@@ -7,8 +7,9 @@
  * `packages/core/tsconfig.json` blocks importing the canonical file from
  * `packages/core/tests/**` (TS6059), the same reason
  * `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts` exists.
- * `scripts/tests/git-fixture-env-sync.test.ts` keeps the variable lists of all
- * three copies identical; the canonical version is authoritative.
+ * `scripts/tests/git-fixture-env-sync.test.ts` checks that every copy holds the
+ * same variable lists and that their helpers behave the same; the canonical
+ * version is authoritative.
  */
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'

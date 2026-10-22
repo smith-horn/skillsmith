@@ -35,9 +35,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
-import { afterEach, describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 
 import {
   GIT_CONFIG_INJECTION_VARS as CANONICAL_INJECTION,
@@ -127,8 +127,12 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
   // SMI-6531: the lists alone let the helpers drift, so their behaviour is
   // compared too.
   describe('helper behaviour', () => {
-    const saved = { ...process.env }
+    let saved: NodeJS.ProcessEnv = {}
     const made: string[] = []
+
+    beforeEach(() => {
+      saved = { ...process.env }
+    })
 
     afterEach(() => {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
@@ -159,9 +163,19 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
     for (const [name, env] of MIRRORS) {
       it(`the ${name} copy's makeFixtureEnv returns what the canonical one does`, () => {
         seedEnv()
-        expect(env()).toEqual(canonicalEnv())
+        const seeded = { ...process.env }
+        const base = canonicalEnv()
+        // The seed took effect: a listed variable is stripped, an unrelated one
+        // kept, and the identity pinned. Without this, two copies that changed
+        // alike, or a seed that failed to isolate, would still compare equal.
+        expect(base.GIT_DIR).toBeUndefined()
+        expect(base.SWAP4A_UNRELATED).toBe('kept')
+        expect(base.GIT_AUTHOR_NAME).toBe('Test')
+        expect(env()).toStrictEqual(base)
         const extra = { GIT_AUTHOR_NAME: 'Extra', SWAP4A_EXTRA: 'x' }
-        expect(env(extra)).toEqual(canonicalEnv(extra))
+        expect(env(extra)).toStrictEqual(canonicalEnv(extra))
+        // Neither copy may change the environment it reads.
+        expect({ ...process.env }).toStrictEqual(seeded)
       })
     }
 
@@ -177,13 +191,15 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
         process.env.TMPDIR = join(base, 'link')
         const ours = canonicalTempDir('sync')
         const theirs = tempDir('sync')
+        const again = tempDir('sync')
         expect(dirname(ours)).toBe(real)
         expect(dirname(theirs), name).toBe(dirname(ours))
-        for (const d of [ours, theirs]) {
+        for (const d of [ours, theirs, again]) {
           expect(statSync(d).isDirectory()).toBe(true)
           expect(readdirSync(d)).toEqual([])
+          expect(basename(d)).toMatch(/^sync-[A-Za-z0-9]{6}$/)
         }
-        expect(theirs).not.toBe(ours)
+        expect(new Set([ours, theirs, again]).size).toBe(3)
       })
     }
   })
