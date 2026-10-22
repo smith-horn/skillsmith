@@ -309,7 +309,15 @@ async function swapAndCommit(st: SwapState): Promise<SwapResult> {
     await (st.options.appendJournal ?? appendJournalRecord)(journalInput(st))
   } catch (err) {
     rethrowLockOrder(err)
-    return resultOfFailure(st, new SwapFault('journal-append-failed', messageOf(err), err))
+    return resultOfFailure(
+      st,
+      new SwapFault(
+        'journal-append-failed',
+        `the journal append failed (${messageOf(err)}); the record may already be in the journal, ` +
+          'since a failure can follow its fsynced write',
+        err
+      )
+    )
   }
   trace(st, { op: 'journal-append', path: st.opId })
 

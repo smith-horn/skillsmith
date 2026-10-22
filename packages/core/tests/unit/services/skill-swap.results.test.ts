@@ -56,8 +56,12 @@ class UnreadablePort extends FakeManifest {
       fn({
         ...m,
         casMatches: async () => {
-          this.casCalls++
-          if (this.casCalls === 1) throw new Error('manifest.json: unexpected end of JSON')
+          // The first call throws (counted here); later calls delegate, and the
+          // delegate counts them, so every call is counted exactly once.
+          if (this.casCalls === 0) {
+            this.casCalls++
+            throw new Error('manifest.json: unexpected end of JSON')
+          }
           return m.casMatches()
         },
       })

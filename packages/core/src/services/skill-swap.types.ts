@@ -141,7 +141,9 @@ export type SwapRefuseReason =
  * (also every unexpected failure, a failed rename 2 included), `staging-unsafe`,
  * `root-changed`, `backup-unsafe`, `unsupported-entry`. This module's own words
  * for steps the plan names without a reason word: `pre-commit-check-failed`
- * (step 10d), `manifest-write-failed` (10e), `journal-append-failed` (11),
+ * (step 10d), `manifest-write-failed` (10e), `journal-append-failed` (11: the
+ * append rejected; its record may still be in the journal, since a failure
+ * can follow the fsynced write),
  * `cross-device` (4c's seam), `op-not-empty` (13's park seam).
  */
 export type SwapStopReason =

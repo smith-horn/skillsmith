@@ -129,6 +129,11 @@ describe('T-X4: the folder swapped for a symlink', () => {
     })
     expect(fs.lstatSync(fx.realDir).isSymbolicLink()).toBe(true)
     expect(fs.readlinkSync(fx.realDir)).toBe(fx.outside)
+    // A recreated symlink is a new entry: traced as a create of the path, never as a link.
+    expect(trace).toContainEqual({ op: 'create', path: fx.realDir })
+    expect(
+      trace.filter((t) => t.op === 'link' && (t as { dest?: string }).dest === fx.realDir)
+    ).toEqual([])
     expect(fs.lstatSync(conflict).isSymbolicLink()).toBe(true)
     expect(fs.readlinkSync(conflict)).toBe(fx.outside)
     expect(fs.existsSync(`${conflict}.json`)).toBe(true)
