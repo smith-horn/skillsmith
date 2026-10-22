@@ -11,10 +11,10 @@ All notable changes to `@skillsmith/core` are documented here.
   see: every entry is typed by `lstat`, an opened file must be the inode the walk typed, a
   directory must keep its identity from before its names are read until after its children are
   typed, and a symlink must still be the link the walk typed after its text is read and is
-  recreated verbatim, with modes kept. A single swap ends
-  `changed-during-copy`; a double swap timed around those checks can still read outside bytes, and
-  the update's own hash of the copy keeps that build from being published. The copy removes
-  nothing on failure. `claimPublish` claims the target with `mkdir`, then
+  recreated verbatim, with modes kept. A single swap is refused, as `changed-during-copy` or,
+  when the swapped-in path no longer holds the entry, `unreadable`; either way nothing is copied
+  from it. A double swap timed around those checks can still read outside bytes, and the update's
+  own hash of the copy keeps that build from being published. The copy removes nothing on failure. `claimPublish` claims the target with `mkdir`, then
   renames the staged folder over that empty claim, and leaves the claim for recovery if the rename
   fails. No caller uses them yet.
 - **Changed**: SMI-6531 -- the tree hash (`install/tree-hash.ts`) leaves out a directory's size and

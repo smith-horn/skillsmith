@@ -300,6 +300,31 @@ describe('the lstat-to-open race: a path that changed type is refused, not copie
   })
 })
 
+describe('copyLink classifies a parent swap the way copyFile does', () => {
+  it("a symlink's parent becomes a regular file: ENOTDIR maps to changed-during-copy", async () => {
+    const root = tmp()
+    const src = path.join(root, 'skill')
+    fs.mkdirSync(path.join(src, 'd'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'd', 'a.txt'), 'a')
+    fs.symlinkSync('a.txt', path.join(src, 'd', 'b-link'))
+    const dest = path.join(root, 'dest')
+    const r = await copyTreeNoFollow(src, dest, {
+      afterEntry: (rel) => {
+        if (rel !== 'd/a.txt') return
+        fs.rmSync(path.join(src, 'd'), { recursive: true })
+        fs.writeFileSync(path.join(src, 'd'), 'now a file')
+      },
+    })
+    expect(r).toMatchObject({
+      ok: false,
+      reason: 'changed-during-copy',
+      path: path.join(src, 'd', 'b-link'),
+      errno: 'ENOTDIR',
+    })
+    expect(lstatBig(path.join(dest, 'd', 'b-link'))).toBeNull()
+  })
+})
+
 describe('treeHashOf failure', () => {
   it('a missing root is unreadable with its errno, not unsupported-entry', () => {
     const missing = path.join(tmp(), 'nope')

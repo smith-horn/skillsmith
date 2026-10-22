@@ -8,7 +8,9 @@
  * inode the walk typed after that text is read, and a directory must keep the
  * identity `lstat` gave it from before its names are read until after its
  * children are typed. A single swap of an entry or a parent directory between
- * its check and its use is refused as `changed-during-copy`. What it does not
+ * its check and its use is refused: as `changed-during-copy`, or as
+ * `unreadable` (ENOENT) when the swapped-in path no longer holds the entry at
+ * all. Nothing is copied from it either way. What it does not
  * refuse is a double swap: a parent swapped for a link while its children are
  * typed, restored for its identity check, then swapped in again when a child
  * is opened. That can read outside bytes into the copy; the caller's hash of
@@ -80,6 +82,12 @@ const fail = (reason: CopyFailureReason, p: string, err: unknown): Failure => ({
 function errno(err: unknown): string | null {
   const c = (err as { code?: unknown } | null)?.code
   return typeof c === 'string' ? c : null
+}
+
+/** An errno that means the path no longer resolves the way it was typed. */
+const pathChanged = (err: unknown): boolean => {
+  const c = errno(err)
+  return c === 'EINVAL' || c === 'ENOTDIR' || c === 'ELOOP'
 }
 
 /** The same directory the walk typed: not swapped for a link or another directory. */
@@ -244,8 +252,9 @@ async function copyLink(
   try {
     text = await fs.promises.readlink(srcAbs)
   } catch (err) {
-    // EINVAL: no longer a link.
-    return fail(errno(err) === 'EINVAL' ? 'changed-during-copy' : 'unreadable', srcAbs, err)
+    // EINVAL: no longer a link. ENOTDIR, ELOOP: a parent stopped being a
+    // directory (the same mapping `copyFile` uses).
+    return fail(pathChanged(err) ? 'changed-during-copy' : 'unreadable', srcAbs, err)
   }
   try {
     const now = await fs.promises.lstat(srcAbs, { bigint: true })
@@ -253,7 +262,7 @@ async function copyLink(
       return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
     }
   } catch (err) {
-    return fail('unreadable', srcAbs, err)
+    return fail(pathChanged(err) ? 'changed-during-copy' : 'unreadable', srcAbs, err)
   }
   try {
     await fs.promises.symlink(text, destAbs)
