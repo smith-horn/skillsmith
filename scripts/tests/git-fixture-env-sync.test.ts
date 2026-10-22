@@ -1,8 +1,15 @@
 /**
  * SMI-5126 — enforce that the copies of the git-fixture-env helper stay in
- * sync: the same `GIT_DISCOVERY_VARS` and `GIT_CONFIG_INJECTION_VARS`, and the
- * same `makeFixtureEnv` / `makeFixtureTempDir` code (and the `realpath`
- * helper the latter uses), compared with comments and whitespace stripped.
+ * sync. What is compared, and nothing more:
+ *   - the VALUES of `GIT_DISCOVERY_VARS` and `GIT_CONFIG_INJECTION_VARS` (at
+ *     runtime, and the discovery list's entries in each file's source text);
+ *   - the BEHAVIOUR of `makeFixtureEnv` (each copy, given the same seeded
+ *     `process.env` and the same `extra`, returns a deep-equal env) and of
+ *     `makeFixtureTempDir` (each copy makes an existing, empty directory
+ *     directly under the realpath of `tmpdir()`, which the test points at a
+ *     symlink so a copy that skips the realpath is caught).
+ * Source text is not compared, so comments, formatting and imports may
+ * differ between copies.
  *
  * There are three physical copies of this helper:
  *   - canonical: `scripts/tests/_lib/git-fixture-env.ts`
@@ -13,27 +20,48 @@
  * Each mirror exists because `composite: true` + `rootDir: "."` in its
  * package blocks importing the canonical file from its tests. The "keep the
  * copies in sync" rule (SMI-4693) was previously only a code comment. This
- * test makes it a hard gate: if a variable list or the code of either
- * function drifts between the copies, CI fails.
+ * test makes it a hard gate: if a list's values or either helper's behaviour
+ * drifts between the copies, CI fails.
  */
-import { readFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
 
 import {
   GIT_CONFIG_INJECTION_VARS as CANONICAL_INJECTION,
   GIT_DISCOVERY_VARS as CANONICAL,
+  makeFixtureEnv as canonicalEnv,
+  makeFixtureTempDir as canonicalTempDir,
 } from './_lib/git-fixture-env.js'
 import {
   GIT_CONFIG_INJECTION_VARS as PER_PACKAGE_INJECTION,
   GIT_DISCOVERY_VARS as PER_PACKAGE,
+  makeFixtureEnv as perPackageEnv,
+  makeFixtureTempDir as perPackageTempDir,
 } from '../../packages/doc-retrieval-mcp/src/_lib/git-fixture-env.js'
 import {
   GIT_CONFIG_INJECTION_VARS as CORE_INJECTION,
   GIT_DISCOVERY_VARS as CORE,
+  makeFixtureEnv as coreEnv,
+  makeFixtureTempDir as coreTempDir,
 } from '../../packages/core/tests/_lib/git-fixture-env.js'
+
+const MIRRORS = [
+  ['doc-retrieval-mcp', perPackageEnv, perPackageTempDir],
+  ['core', coreEnv, coreTempDir],
+] as const
 
 const here = dirname(fileURLToPath(import.meta.url))
 const canonicalSrc = join(here, '_lib', 'git-fixture-env.ts')
@@ -52,7 +80,7 @@ const coreSrc = join(here, '..', '..', 'packages', 'core', 'tests', '_lib', 'git
 /**
  * Extract just the string entries of the `GIT_DISCOVERY_VARS` array from the
  * source text, ignoring the prose comments (which legitimately differ between
- * the two copies). Each array entry is on its own line as `  'GIT_X',`, so we
+ * the copies). Each array entry is on its own line as `  'GIT_X',`, so we
  * match only lines whose sole content is a quoted UPPER_SNAKE identifier —
  * comment lines (which may contain apostrophes) are skipped.
  */
@@ -72,7 +100,7 @@ function extractVarNames(srcPath: string): string[] {
 }
 
 describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
-  it('runtime arrays are byte-identical across every copy', () => {
+  it('runtime arrays hold the same values in every copy', () => {
     expect([...PER_PACKAGE]).toEqual([...CANONICAL])
     expect([...CORE]).toEqual([...CANONICAL])
   })
@@ -96,46 +124,67 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
     for (const v of CANONICAL_INJECTION) expect(CANONICAL).not.toContain(v)
   })
 
-  // SMI-6531: the lists alone let the functions drift. Each mirror's
-  // `makeFixtureEnv`, `makeFixtureTempDir` and `realpath` helper must be the
-  // canonical code, ignoring comments and whitespace.
-  for (const [name, mirrorSrc] of [
-    ['doc-retrieval-mcp', perPackageSrc],
-    ['core', coreSrc],
-  ] as const) {
-    it(`the ${name} copy's makeFixtureEnv, makeFixtureTempDir and realpath match the canonical code`, () => {
-      const canonicalText = readFileSync(canonicalSrc, 'utf8')
-      const mirrorText = readFileSync(mirrorSrc, 'utf8')
-      for (const fn of ['makeFixtureEnv', 'makeFixtureTempDir']) {
-        expect(functionCode(mirrorText, fn), `${name}: ${fn}`).toBe(functionCode(canonicalText, fn))
-      }
-      expect(realpathCode(mirrorText), `${name}: realpath`).toBe(realpathCode(canonicalText))
+  // SMI-6531: the lists alone let the helpers drift, so their behaviour is
+  // compared too.
+  describe('helper behaviour', () => {
+    const saved = { ...process.env }
+    const made: string[] = []
+
+    afterEach(() => {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
+      for (const [k, v] of Object.entries(saved)) process.env[k] = v
+      for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true })
     })
-  }
+
+    /**
+     * `process.env` replaced by ONLY seeded values: every listed variable, plus
+     * identity, HOME and unrelated ones. Nothing inherited stays, so a failing
+     * comparison prints no real environment (no tokens in a CI log).
+     */
+    function seedEnv(): void {
+      for (const k of Object.keys(process.env)) delete process.env[k]
+      for (const v of [...CANONICAL, ...CANONICAL_INJECTION]) process.env[v] = `seeded-${v}`
+      Object.assign(process.env, {
+        HOME: '/seeded/home',
+        GIT_AUTHOR_NAME: 'Seeded Author',
+        GIT_COMMITTER_EMAIL: 'seeded@example.invalid',
+        GIT_CONFIG_GLOBAL: '/seeded/gitconfig',
+        GIT_TERMINAL_PROMPT: '1',
+        PATH: '/seeded/bin',
+        SWAP4A_UNRELATED: 'kept',
+        LANG: 'C.UTF-8',
+      })
+    }
+
+    for (const [name, env] of MIRRORS) {
+      it(`the ${name} copy's makeFixtureEnv returns what the canonical one does`, () => {
+        seedEnv()
+        expect(env()).toEqual(canonicalEnv())
+        const extra = { GIT_AUTHOR_NAME: 'Extra', SWAP4A_EXTRA: 'x' }
+        expect(env(extra)).toEqual(canonicalEnv(extra))
+      })
+    }
+
+    for (const [name, , tempDir] of MIRRORS) {
+      it(`the ${name} copy's makeFixtureTempDir makes the same shape of directory`, () => {
+        // tmpdir() reads TMPDIR at call time: point it at a symlink, so a copy
+        // that skips the realpath returns a parent other than the canonical one.
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-env-sync-')))
+        made.push(base)
+        const real = join(base, 'real')
+        mkdirSync(real)
+        symlinkSync(real, join(base, 'link'))
+        process.env.TMPDIR = join(base, 'link')
+        const ours = canonicalTempDir('sync')
+        const theirs = tempDir('sync')
+        expect(dirname(ours)).toBe(real)
+        expect(dirname(theirs), name).toBe(dirname(ours))
+        for (const d of [ours, theirs]) {
+          expect(statSync(d).isDirectory()).toBe(true)
+          expect(readdirSync(d)).toEqual([])
+        }
+        expect(theirs).not.toBe(ours)
+      })
+    }
+  })
 })
-
-/** Comments and all whitespace removed, so only code is compared. */
-function codeOnly(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/\s+/g, '')
-}
-
-/** `export function <name>(…) { … }`, up to its closing brace at column 0. */
-function functionCode(text: string, name: string): string {
-  const start = text.indexOf(`export function ${name}(`)
-  expect(start, `${name} not found`).toBeGreaterThanOrEqual(0)
-  const end = text.indexOf('\n}\n', start)
-  expect(end, `${name} has no closing brace at column 0`).toBeGreaterThan(start)
-  return codeOnly(text.slice(start, end + 2))
-}
-
-/** The `const realpath …` helper `makeFixtureTempDir` calls, up to its blank line. */
-function realpathCode(text: string): string {
-  const start = text.indexOf('const realpath')
-  expect(start, 'realpath helper not found').toBeGreaterThanOrEqual(0)
-  const end = text.indexOf('\n\n', start)
-  expect(end).toBeGreaterThan(start)
-  return codeOnly(text.slice(start, end))
-}

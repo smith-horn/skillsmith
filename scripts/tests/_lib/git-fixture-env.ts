@@ -43,9 +43,11 @@ import { join } from 'node:path'
  * "The Git Repository" and "Git Diffs"). Audited 2026-05-03; revisit if git
  * adds new GIT_* discovery vars in a future release.
  *
- * SMI-5126: exported (was module-private) so the per-package mirror at
- * `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts` single-sources the
- * same list. A vitest sync check asserts the two copies are byte-identical.
+ * SMI-5126: exported (was module-private) so the per-package mirrors at
+ * `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts` and
+ * `packages/core/tests/_lib/git-fixture-env.ts` single-source the same list.
+ * `scripts/tests/git-fixture-env-sync.test.ts` asserts every copy holds the
+ * same values and that their helpers behave the same.
  */
 export const GIT_DISCOVERY_VARS = [
   'GIT_DIR',
