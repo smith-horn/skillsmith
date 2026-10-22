@@ -81,7 +81,10 @@ async function recreateEntry(
     }
     throw err
   }
-  trace(st, { op: 'create', path: realDir })
+  trace(
+    st,
+    text !== null ? { op: 'create', path: realDir } : { op: 'link', path: oldDir, dest: realDir }
+  )
   await syncDir(st, st.binding.root)
   const kept = await publishTree(st, oldDir, 'conflict')
   st.warnings.push({ code: 'conflict-kept', path: kept })

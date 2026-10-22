@@ -46,6 +46,90 @@ class LockOrderPort extends FakeManifest {
   }
 }
 
+/** A port whose first `casMatches` throws a plain Error. */
+class UnreadablePort extends FakeManifest {
+  constructor() {
+    super({ version: '1.0.0' }, { version: '2.0.0' })
+  }
+  override async withManifestLock<T>(fn: (m: ManifestCommitHandle) => Promise<T>): Promise<T> {
+    return super.withManifestLock((m) =>
+      fn({
+        ...m,
+        casMatches: async () => {
+          // The first call throws (counted here); later calls delegate, and the
+          // delegate counts them, so every call is counted exactly once.
+          if (this.casCalls === 0) {
+            this.casCalls++
+            throw new Error('manifest.json: unexpected end of JSON')
+          }
+          return m.casMatches()
+        },
+      })
+    )
+  }
+}
+
+describe('the manifest CAS', () => {
+  it('step 4: the entry changed after the plan (at afterStep4Hash) refuses changed-since-plan before any rename', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const { result, trace } = await run(p, {
+      hooks: {
+        afterStep4Hash: () => {
+          p.manifest.entry = { version: '1.0.0', pinnedVersion: 'changed after the plan' }
+        },
+      },
+    })
+    expect(result).toMatchObject({
+      status: 'refused',
+      reason: 'changed-since-plan',
+      staged: 'left',
+      detail: 'the manifest entry changed since it was planned',
+    })
+    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    expect(p.manifest.casCalls).toBe(1)
+    expect(p.manifest.writes).toBe(0)
+    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+  })
+
+  it('step 4: a CAS that throws a plain Error refuses changed-since-plan, saying the entry could not be read', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const port = new UnreadablePort()
+    p.input = { ...p.input, manifest: port }
+    const { result, trace } = await run(p)
+    expect(result).toMatchObject({
+      status: 'refused',
+      reason: 'changed-since-plan',
+      staged: 'left',
+    })
+    expect((result as { detail: string }).detail).toMatch(/^the manifest entry could not be read/)
+    expect((result as { detail: string }).detail).toContain('unexpected end of JSON')
+    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    expect(port.casCalls).toBe(1)
+  })
+
+  it('step 10: the entry changed at beforeCommit undoes the swap (changed-since-plan)', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const { result } = await run(p, {
+      hooks: {
+        beforeCommit: () => {
+          p.manifest.entry = { version: '1.0.0', pinnedVersion: 'changed before commit' }
+        },
+      },
+    })
+    expect(result).toMatchObject({
+      status: 'undone',
+      reason: 'changed-since-plan',
+      keptAs: 'undone',
+    })
+    expect(p.manifest.casCalls).toBe(2)
+    expect(p.manifest.writes).toBe(0)
+    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+  })
+})
+
 describe('a LockOrderError is a bug, not an outcome', () => {
   for (const from of ['casMatches', 'preCommitCheck'] as const) {
     it(`thrown from the port's ${from}: swapInPlace rejects with it`, async () => {

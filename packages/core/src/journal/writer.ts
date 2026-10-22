@@ -27,10 +27,15 @@
  * committed with `incomplete: audit`, its record kept for doctor.
  *
  * Durability: each append opens the file, writes the line, calls
- * `FileHandle.sync()` (fsync), then closes — so a record that returns
- * successfully is durable on disk before the caller's apply/undo response
- * goes out, matching the "fsync'd appends" requirement in the plan's P-5
- * table.
+ * `FileHandle.sync()` (fsync), then closes, so the record's bytes are on disk
+ * before the append resolves (the "fsync'd appends" requirement in the plan's
+ * P-5 table). Directory entries: when this append's `mkdir` creates
+ * directories, each created directory's parent is synced; when this append
+ * creates `journal.jsonl`, the journal directory is synced. Nothing else is
+ * synced: in particular, a journal directory another process created is not
+ * re-synced in its parent here. A rejection can follow the fsynced write (a
+ * failed directory sync), so a rejected append may still have left its
+ * record in the file.
  */
 
 import { mkdir, open, readFile } from 'node:fs/promises'
@@ -184,7 +189,7 @@ async function syncOrReject(dir: string): Promise<void> {
 }
 
 /** Lock 5's label (A1 plan §3.2's order table, owner decision 2026-10-22). */
-export const JOURNAL_LOCK_LABEL = 'the journal lock (lock 5)'
+const JOURNAL_LOCK_LABEL = 'the journal lock (lock 5)'
 
 async function doAppend(input: JournalRecordInput): Promise<JournalRecord> {
   const filePath = getJournalFilePath()

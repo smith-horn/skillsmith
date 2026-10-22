@@ -141,7 +141,9 @@ export type SwapRefuseReason =
  * (also every unexpected failure, a failed rename 2 included), `staging-unsafe`,
  * `root-changed`, `backup-unsafe`, `unsupported-entry`. This module's own words
  * for steps the plan names without a reason word: `pre-commit-check-failed`
- * (step 10d), `manifest-write-failed` (10e), `journal-append-failed` (11),
+ * (step 10d), `manifest-write-failed` (10e), `journal-append-failed` (11: the
+ * append rejected; its record may still be in the journal, since a failure
+ * can follow the fsynced write),
  * `cross-device` (4c's seam), `op-not-empty` (13's park seam).
  */
 export type SwapStopReason =
@@ -170,8 +172,10 @@ export type SwapResult =
       opId: string
       /**
        * Always `<area>/<opId>`: the path `record.json` and the journal name too.
-       * When `incomplete` names `audit` or `publish`, the old folder is still in
-       * OP and this is where it is meant to go.
+       * With `incomplete` `audit`, and with `incomplete` `publish` when the stop
+       * came before the move, the old folder is still in OP and this is where it
+       * is meant to go. A `publish` stop AFTER the move (a sync of the area or OP
+       * failed once the rename succeeded) leaves the old folder already here.
        */
       backupDest: string
       warnings: SwapWarning[]
