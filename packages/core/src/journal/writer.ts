@@ -20,8 +20,10 @@
  */
 
 import { mkdir, open, readFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import type { FileHandle } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 
+import { syncDirectory } from '../install/dir-sync.js'
 import { JOURNAL_GENESIS_HASH, sha256Hex } from './hash.js'
 import { getJournalFilePath } from './path.js'
 import type { JournalRecord, JournalRecordInput } from './types.js'
@@ -133,9 +135,44 @@ export function appendJournalRecord(input: JournalRecordInput): Promise<JournalR
   return task
 }
 
+/**
+ * The directories a recursive `mkdir` created, top-down. `first` is what
+ * `mkdir({ recursive: true })` returned (the first directory it made, or
+ * `undefined` when nothing was created); `leaf` is the directory asked for.
+ */
+function createdDirectories(first: string | undefined, leaf: string): string[] {
+  if (first === undefined) return []
+  const top = resolve(first)
+  const chain: string[] = []
+  for (let p = resolve(leaf); ; p = dirname(p)) {
+    chain.unshift(p)
+    if (p === top || dirname(p) === p) return chain
+  }
+}
+
+/**
+ * `fsync` a directory so an entry made in it survives a crash. `unsupported`
+ * (a filesystem or platform that cannot sync a directory) is accepted; a
+ * `failed` sync rejects the append, since the record's file or directory may
+ * not survive a crash.
+ */
+async function syncOrReject(dir: string): Promise<void> {
+  const synced = await syncDirectory(dir)
+  if (synced.outcome === 'failed') {
+    throw new Error(
+      `journal directory ${dir} could not be synced after creating an entry in it (${synced.code})`,
+      { cause: synced.error }
+    )
+  }
+}
+
 async function doAppend(input: JournalRecordInput): Promise<JournalRecord> {
   const filePath = getJournalFilePath()
-  await mkdir(dirname(filePath), { recursive: true })
+  const journalDir = dirname(filePath)
+  // Each directory this mkdir made is an entry in its parent, so the parent is
+  // synced (top-down) before anything is written below it.
+  const madeDirs = createdDirectories(await mkdir(journalDir, { recursive: true }), journalDir)
+  for (const made of madeDirs) await syncOrReject(dirname(made))
 
   // Propagates as-is (including `JournalCorruptTailError`) — callers use
   // `isCorruptTailError` to distinguish it from a generic I/O failure.
@@ -145,13 +182,29 @@ async function doAppend(input: JournalRecordInput): Promise<JournalRecord> {
   const record: JournalRecord = { ...withoutHash, record_hash: computeRecordHash(withoutHash) }
 
   const line = JSON.stringify(record) + '\n'
-  const handle = await open(filePath, 'a')
+  // `'ax'` (O_CREAT|O_EXCL) creates the file atomically and fails with EEXIST
+  // when it is already there, so "this append created the file" is decided by
+  // the open itself. A separate `lstat` before an `'a'` open would leave a gap
+  // in which another creator could win and this append would sync for nothing
+  // (or skip the sync for a file it did create).
+  let created = true
+  let handle: FileHandle
+  try {
+    handle = await open(filePath, 'ax')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    created = false
+    handle = await open(filePath, 'a')
+  }
   try {
     await handle.appendFile(line, 'utf-8')
     await handle.sync()
   } finally {
     await handle.close()
   }
+  // The new file is an entry in the journal directory: sync it so the record
+  // is reachable after a crash, not only its bytes.
+  if (created) await syncOrReject(journalDir)
 
   return record
 }

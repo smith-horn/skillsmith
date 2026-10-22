@@ -428,43 +428,8 @@ export {
   type ReleaseRefusal,
   type ReleaseResult,
 } from './config/lock-doctor.js'
-// SMI-6531 A1 step 2: lock 1, the per-skills-root write lock (plan §3.2, §3.3).
-export {
-  bindSkillsRoot,
-  checkSkillsRootBinding,
-  SKILL_WRITE_LOCK_BASENAME,
-  skillsRootLockPaths,
-  SkillWriteStop,
-  STAGING_DIR_NAME,
-  withSkillWriteLock,
-  type CheckScope,
-  type SkillsRootBinding,
-  type SkillWriteContext,
-  type SkillWriteLockOptions,
-  type SkillWriteResult,
-  type SkillWriteStopCode,
-} from './services/skill-write-lock.js'
-// SMI-6531 A1 step 2: the hardened `git check-ignore` hint (computed after lock 1 is released).
-export {
-  PARKED_GITIGNORE_HINT,
-  parkedAreaGitignoreHint,
-  STAGING_GITIGNORE_HINT,
-  stagingGitignoreHint,
-  type GitignoreHintOptions,
-} from './services/skill-write-lock.gitignore.js'
-// SMI-6531 A1 step 3: the tree hash, the no-follow copy and claim-publish (plan §3.4).
-export {
-  claimPublish,
-  copyTreeNoFollow,
-  treeHashOf,
-  type ClaimPublishResult,
-  type CopyFailureReason,
-  type CopyResult,
-  type TreeHashResult,
-} from './services/skill-tree.js'
-// The types of `SkillsRootBinding`'s `stagingBits` and `rootSync` fields.
-export type { BitsApplied } from './install/mkdir-parent-bits.js'
-export type { DirSyncOutcome } from './install/dir-sync.js'
+// SMI-6531 A1 steps 2-4a: lock 1, staging, the tree primitives and the staged swap.
+export * from './exports/write-path.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
