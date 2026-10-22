@@ -1,18 +1,20 @@
 /**
- * SMI-5126 — enforce that `GIT_DISCOVERY_VARS` stays byte-identical across
- * the two copies of the git-fixture-env helper.
+ * SMI-5126 — enforce that the copies of the git-fixture-env helper stay in
+ * sync: the same `GIT_DISCOVERY_VARS` and `GIT_CONFIG_INJECTION_VARS`, and the
+ * same `makeFixtureEnv` / `makeFixtureTempDir` code (and the `realpath`
+ * helper the latter uses), compared with comments and whitespace stripped.
  *
- * There are two physical copies of this helper:
+ * There are three physical copies of this helper:
  *   - canonical: `scripts/tests/_lib/git-fixture-env.ts`
  *   - per-package mirror: `packages/doc-retrieval-mcp/src/_lib/git-fixture-env.ts`
  *   - per-package mirror: `packages/core/tests/_lib/git-fixture-env.ts` (SMI-6531:
  *     core's `composite` + `rootDir` blocks the same import from its tests)
  *
- * The mirror exists because `composite: true` + `rootDir: "."` in
- * `doc-retrieval-mcp` blocks cross-package imports from its `src/` tests.
- * The "keep the two copies in sync" rule (SMI-4693) was previously only a
- * code comment. This test makes it a hard gate: if the discovery-var list
- * drifts between the copies, CI fails.
+ * Each mirror exists because `composite: true` + `rootDir: "."` in its
+ * package blocks importing the canonical file from its tests. The "keep the
+ * copies in sync" rule (SMI-4693) was previously only a code comment. This
+ * test makes it a hard gate: if a variable list or the code of either
+ * function drifts between the copies, CI fails.
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -87,10 +89,53 @@ describe('git-fixture-env GIT_DISCOVERY_VARS sync (SMI-5126)', () => {
 
   // SMI-6919: the config-injection list is a second array, kept apart from
   // the discovery list because the per-package production scrub iterates
-  // only the latter; both copies must still agree on it.
-  it('GIT_CONFIG_INJECTION_VARS is identical across both copies and disjoint from discovery', () => {
+  // only the latter; every copy must still agree on it.
+  it('GIT_CONFIG_INJECTION_VARS is identical across every copy and disjoint from discovery', () => {
     expect([...PER_PACKAGE_INJECTION]).toEqual([...CANONICAL_INJECTION])
     expect([...CORE_INJECTION]).toEqual([...CANONICAL_INJECTION])
     for (const v of CANONICAL_INJECTION) expect(CANONICAL).not.toContain(v)
   })
+
+  // SMI-6531: the lists alone let the functions drift. Each mirror's
+  // `makeFixtureEnv`, `makeFixtureTempDir` and `realpath` helper must be the
+  // canonical code, ignoring comments and whitespace.
+  for (const [name, mirrorSrc] of [
+    ['doc-retrieval-mcp', perPackageSrc],
+    ['core', coreSrc],
+  ] as const) {
+    it(`the ${name} copy's makeFixtureEnv, makeFixtureTempDir and realpath match the canonical code`, () => {
+      const canonicalText = readFileSync(canonicalSrc, 'utf8')
+      const mirrorText = readFileSync(mirrorSrc, 'utf8')
+      for (const fn of ['makeFixtureEnv', 'makeFixtureTempDir']) {
+        expect(functionCode(mirrorText, fn), `${name}: ${fn}`).toBe(functionCode(canonicalText, fn))
+      }
+      expect(realpathCode(mirrorText), `${name}: realpath`).toBe(realpathCode(canonicalText))
+    })
+  }
 })
+
+/** Comments and all whitespace removed, so only code is compared. */
+function codeOnly(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\s+/g, '')
+}
+
+/** `export function <name>(…) { … }`, up to its closing brace at column 0. */
+function functionCode(text: string, name: string): string {
+  const start = text.indexOf(`export function ${name}(`)
+  expect(start, `${name} not found`).toBeGreaterThanOrEqual(0)
+  const end = text.indexOf('\n}\n', start)
+  expect(end, `${name} has no closing brace at column 0`).toBeGreaterThan(start)
+  return codeOnly(text.slice(start, end + 2))
+}
+
+/** The `const realpath …` helper `makeFixtureTempDir` calls, up to its blank line. */
+function realpathCode(text: string): string {
+  const start = text.indexOf('const realpath')
+  expect(start, 'realpath helper not found').toBeGreaterThanOrEqual(0)
+  const end = text.indexOf('\n\n', start)
+  expect(end).toBeGreaterThan(start)
+  return codeOnly(text.slice(start, end))
+}
