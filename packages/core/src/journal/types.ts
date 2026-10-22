@@ -70,8 +70,10 @@ export type JournalAction = 'apply' | 'error' | 'undo' | 'revert'
  *   `<newSkillDir>/SKILL.md` for a skill-directory rename
  *   (`rename_skill_dir_and_frontmatter`), the one file whose bytes changed;
  *   the directory rename itself is out of this record's scope (see
- *   `tools/apply-journal.helpers.ts`'s header for the rationale). May be
- *   `null` on an `'error'` record.
+ *   `tools/apply-journal.helpers.ts`'s header for the rationale). On an
+ *   `'error'` record it is the engine's raw path instead: `toPath`, else
+ *   `fromPath`, for a rename (so the directory, not `SKILL.md`, for a
+ *   skill-directory rename) and `filePath` for a prose edit; or `null`.
  * - `before_hash` / `after_hash` — apply-family: sha256 of `target_path`'s
  *   content (`null` wherever the file cannot be read). On a successful apply
  *   with a backup, `before_hash` is the hash of the backup's copy of the file
