@@ -13,15 +13,17 @@ All notable changes to `@skillsmith/core` are documented here.
   typed, and a symlink must still be the link the walk typed after its text is read and is
   recreated verbatim, with modes kept. A single swap is refused and nothing is copied from the
   swapped path; the reason is `changed-during-copy` when a check saw the change and otherwise
-  `unreadable` with its errno. A double swap timed around those checks can still read outside bytes, and the update's
-  own hash of the copy keeps that build from being published. The copy removes nothing on failure. `claimPublish` claims the target with `mkdir`, then
-  renames the staged folder over that empty claim, and leaves the claim for recovery if the rename
-  fails. No caller uses them yet.
+  `unreadable` with its errno. A double swap timed around those checks can still read outside
+  bytes, and the update's own hash of the copy keeps that build from being published. The copy
+  removes nothing on failure. `claimPublish` claims the target with `mkdir`, then renames the
+  staged folder over that empty claim, and leaves the claim for recovery if the rename fails. No
+  caller uses them yet.
+
 - **Changed**: SMI-6531 -- the tree hash (`install/tree-hash.ts`) leaves out a directory's size and
   a symlink's mode. On Linux a directory that once held many entries reports a larger size than a
   fresh copy with the same contents, and on macOS a symlink's mode follows the creating process's
-  umask, so either made a faithful copy hash differently from its source. Nothing persisted a tree
-  hash before this change.
+  umask, so either made a faithful copy hash differently from its source. No stored hash is
+  affected: the park writes one into its sidecar, but no shipped code calls the park yet.
 
 - **Fixed**: SMI-7148 -- closes two windows: a release of an owned lock deleting another process's
   lock, and a release reporting "released" while `doctor locks --release` has its lock set aside
