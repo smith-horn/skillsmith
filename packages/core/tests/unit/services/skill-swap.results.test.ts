@@ -133,6 +133,39 @@ describe('the backup has one fixed name (owner decision 2026-10-22)', () => {
     expect(hashOf(fx.realDir)).toBe(p.input.preTree)
   })
 
+  it('a leftover <opId>.json.tmp at plan time: refused backup-unsafe, nothing moved, the temp untouched', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const area = areaOf(fx)
+    fs.mkdirSync(area, { recursive: true })
+    const tmp = path.join(area, `${OP_ID}.json.tmp`)
+    fs.writeFileSync(tmp, 'leftover temp')
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+
+    const { result, trace } = await run(p)
+
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(fs.readFileSync(tmp, 'utf8')).toBe('leftover temp')
+    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    expect(fs.existsSync(path.join(fx.opDir, 'record.json'))).toBe(false)
+    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+  })
+
+  it('a <opId>.json.tmp planted at publish time: incomplete publish backup-unsafe, the temp untouched', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const area = areaOf(fx)
+    const tmp = path.join(area, `${OP_ID}.json.tmp`)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const { result } = await run(p, {
+      hooks: { beforePublish: () => fs.writeFileSync(tmp, 'late temp') },
+    })
+    expect(result).toMatchObject({
+      status: 'committed',
+      incomplete: { step: 'publish', reason: 'backup-unsafe' },
+    })
+    expect(fs.readFileSync(tmp, 'utf8')).toBe('late temp')
+    expect(hashOf(path.join(fx.opDir, 'old'))).toBe(p.input.preTree)
+  })
+
   it('taken at publish time: committed, incomplete publish backup-unsafe; the entry untouched, the old folder in OP', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const area = areaOf(fx)
