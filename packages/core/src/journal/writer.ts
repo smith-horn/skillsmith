@@ -12,6 +12,17 @@
  * calls in the same server process produce well-formed, correctly-chained
  * lines instead of interleaved/torn writes.
  *
+ * Across processes (SMI-6531, owner decision 2026-10-22) the queue is not
+ * enough: two processes each read the same chain head and append a record
+ * naming it, forking the chain. So each append also holds lock 5,
+ * `withFileLock(<journal file>, …, { rank: '5' })` (the lock file is
+ * `journal.jsonl.lock` beside it), from reading the head to the file sync and
+ * the directory syncs. Lock 5 is a leaf: nothing is requested while it is
+ * held. The queue stays as an in-process optimization (callers in one process
+ * do not poll the file lock against each other). A lock that cannot be taken
+ * (busy past its wait, a refusal) rejects the append, which callers already
+ * treat as fail-soft.
+ *
  * Durability: each append opens the file, writes the line, calls
  * `FileHandle.sync()` (fsync), then closes — so a record that returns
  * successfully is durable on disk before the caller's apply/undo response
@@ -23,6 +34,7 @@ import { mkdir, open, readFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
+import { withFileLock } from '../config/file-lock.js'
 import { syncDirectory } from '../install/dir-sync.js'
 import { JOURNAL_GENESIS_HASH, sha256Hex } from './hash.js'
 import { getJournalFilePath } from './path.js'
@@ -166,12 +178,28 @@ async function syncOrReject(dir: string): Promise<void> {
   }
 }
 
+/** Lock 5's label (A1 plan §3.2's order table, owner decision 2026-10-22). */
+export const JOURNAL_LOCK_LABEL = 'the journal lock (lock 5)'
+
 async function doAppend(input: JournalRecordInput): Promise<JournalRecord> {
   const filePath = getJournalFilePath()
   const journalDir = dirname(filePath)
+  // The lock file lives in the journal directory, so the directory is made
+  // first; the syncs of what this mkdir made run under the lock.
+  const madeDirs = createdDirectories(await mkdir(journalDir, { recursive: true }), journalDir)
+  return withFileLock(filePath, JOURNAL_LOCK_LABEL, () => appendLocked(input, filePath, madeDirs), {
+    rank: '5',
+  })
+}
+
+async function appendLocked(
+  input: JournalRecordInput,
+  filePath: string,
+  madeDirs: string[]
+): Promise<JournalRecord> {
+  const journalDir = dirname(filePath)
   // Each directory this mkdir made is an entry in its parent, so the parent is
   // synced (top-down) before anything is written below it.
-  const madeDirs = createdDirectories(await mkdir(journalDir, { recursive: true }), journalDir)
   for (const made of madeDirs) await syncOrReject(dirname(made))
 
   // Propagates as-is (including `JournalCorruptTailError`) — callers use

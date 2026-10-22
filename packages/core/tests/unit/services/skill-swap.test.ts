@@ -158,18 +158,20 @@ describe('swapInPlace: the committed path', () => {
     expect((rec.oldIdentity as Record<string, unknown>).ino).toBe(p.oldIdentity.ino.toString())
   })
 
-  it('a taken backup name gets a .<k> suffix, and the entry holding the name is untouched', async () => {
+  it('a backup sidecar name taken at plan time refuses backup-unsafe; nothing is moved', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const area = areaOf(fx)
-    fs.mkdirSync(path.join(area, OP_ID), { recursive: true })
-    fs.writeFileSync(path.join(area, OP_ID, 'planted.txt'), 'planted')
+    fs.mkdirSync(area, { recursive: true })
+    fs.writeFileSync(path.join(area, `${OP_ID}.json`), 'planted sidecar')
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
 
-    const { result } = await run(p)
+    const { result, trace } = await run(p)
 
-    expect(result).toMatchObject({ status: 'committed', backupDest: path.join(area, `${OP_ID}.1`) })
-    expect(listTree(path.join(area, OP_ID))).toEqual(['planted.txt'])
-    expect(hashOf(path.join(area, `${OP_ID}.1`))).toBe(p.input.preTree)
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(fs.readFileSync(path.join(area, `${OP_ID}.json`), 'utf8')).toBe('planted sidecar')
+    expect(listTree(area)).toEqual([`${OP_ID}.json`])
+    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
   })
 })
 

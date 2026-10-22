@@ -58,7 +58,7 @@ import {
 import type { SwapState } from './skill-swap.ops.js'
 import {
   backupAreaPath,
-  destFor,
+  assertBackupNameFree,
   finishOp,
   publishTree,
   warnForeignChange,
@@ -273,6 +273,7 @@ async function swapAndCommit(st: SwapState): Promise<SwapResult> {
   const root = st.binding.root
 
   await hook(st, 'beforeRename1Check')
+  await assertBackupNameFree(st)
   check(st)
   assertIdentity(realDir, oldIdentity, 'target-changed', 'the skill folder')
   await hook(st, 'beforeRename1')
@@ -324,7 +325,7 @@ async function underLock(st: SwapState): Promise<SwapResult> {
     // Step 3, the record scan of `ST/*/record.json` (`recovery-pending`,
     // `recovery-record-unreadable`): SMI-6531 step 5 of the implementation order.
     await reverify(st)
-    st.backupDest = await destFor(st, 'backup')
+    await assertBackupNameFree(st)
     await writeRecord(st)
     await hook(st, 'afterRecord')
     return await swapAndCommit(st)
@@ -367,6 +368,7 @@ function newState(
     areaPath,
     backupDest: path.join(areaPath, opId),
     recordRemoved: false,
+    owned: new Map(),
     phase: 'staging',
     step: 'audit',
   }

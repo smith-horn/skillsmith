@@ -70,6 +70,7 @@ async function recreateEntry(
     throw new SwapFault('unsupported-entry', `${oldDir} is neither a symlink nor a regular file`)
   }
   const text = o.isSymbolicLink() ? await fs.promises.readlink(oldDir) : null
+  await hook(st, 'beforeRecreate')
   check(st)
   try {
     if (text !== null) await fs.promises.symlink(text, realDir)

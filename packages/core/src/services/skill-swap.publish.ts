@@ -6,6 +6,14 @@
  * leaves OP. Its sidecar is published before the tree moves, so no crash
  * leaves a kept tree without one. On one device the move is a `rename`.
  *
+ * The backup's name is fixed, `<area>/<opId>` (owner decision 2026-10-22), so
+ * `record.json`, the journal's `backup_ref` and the result name one path. A
+ * name already taken stops the run (before rename 1 a refusal, at step 12 an
+ * incomplete publish); nothing at that name is touched. Other kinds take
+ * `<opId>.<kind>` with a `.<k>` suffix. The sidecar is linked into place (never
+ * renamed over an entry), and its temp is unlinked only after verifying it is
+ * the file this run wrote (`unlinkOwned`).
+ *
  * Not here yet:
  *  - Cross-device (SMI-6531 step 4c): an `EXDEV` from the move stops with
  *    `cross-device`; the record stays and the tree stays in OP. 4c copies,
@@ -41,7 +49,7 @@ import {
   SwapFault,
   syncDir,
   trace,
-  unlinkChecked,
+  unlinkOwned,
   writeNewFile,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
@@ -135,12 +143,20 @@ async function taken(p: string): Promise<boolean> {
 }
 
 /**
- * `<area>/<opId>` or `<area>/<opId>.<kind>`, with a `.<k>` suffix when that
- * name exists. Called before step 5 for the backup, so the record and the
- * journal name the path the tree is published at.
+ * The backup is always `<area>/<opId>` (owner decision 2026-10-22): the record,
+ * the journal and the result all name that one path. If it, its sidecar or the
+ * sidecar's temp exists, stop with `backup-unsafe` and touch nothing there.
+ * Run before step 5 (a refusal) and again at step 12 (an incomplete publish).
  */
-export async function destFor(st: SwapState, kind: PublishKind): Promise<string> {
-  const base = kind === 'backup' ? st.opId : `${st.opId}.${kind}`
+export async function assertBackupNameFree(st: SwapState): Promise<void> {
+  if (await taken(st.backupDest)) {
+    throw new SwapFault('backup-unsafe', `${st.backupDest} (or its sidecar) already exists`)
+  }
+}
+
+/** A kept tree other than the backup: `<area>/<opId>.<kind>`, with a `.<k>` suffix when taken. */
+async function destFor(st: SwapState, kind: Exclude<PublishKind, 'backup'>): Promise<string> {
+  const base = `${st.opId}.${kind}`
   let dest = path.join(st.areaPath, base)
   for (let k = 1; await taken(dest); k++) dest = path.join(st.areaPath, `${base}.${k}`)
   return dest
@@ -164,12 +180,10 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
   let dest: string
   if (kind !== 'backup') {
     dest = await destFor(st, kind)
-  } else if (await taken(st.backupDest)) {
-    // Never moved onto: the next free name, and a warning naming both, because
-    // the record and the journal already name the planned one.
-    dest = await destFor(st, kind)
-    st.warnings.push({ code: 'backup-renamed', planned: st.backupDest, actual: dest })
   } else {
+    // The backup's name is fixed (owner decision 2026-10-22): taken now means
+    // stop, with the record kept and the old folder still in OP.
+    await assertBackupNameFree(st)
     dest = st.backupDest
   }
   const h = treeHashOf(src)
@@ -201,7 +215,7 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
     }
     throw err
   }
-  await unlinkChecked(st, tmp)
+  await unlinkOwned(st, tmp, 'backup-unsafe')
   await syncDir(st, st.areaPath)
   try {
     await renameChecked(st, src, dest)
@@ -230,10 +244,10 @@ export async function finishOp(st: SwapState): Promise<void> {
     throw new SwapFault('op-not-empty', `${st.opDir} still holds ${extra.join(', ')}`)
   }
   const { record, owner } = opPaths(st)
-  await unlinkChecked(st, record)
+  await unlinkOwned(st, record, 'staging-unsafe')
   st.recordRemoved = true
   await syncDir(st, st.opDir)
-  await unlinkChecked(st, owner)
+  await unlinkOwned(st, owner, 'staging-unsafe')
   const left = await fs.promises.readdir(st.opDir)
   if (left.length > 0) {
     throw new SwapFault('op-not-empty', `${st.opDir} gained ${left.sort().join(', ')}`)

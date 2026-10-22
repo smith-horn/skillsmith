@@ -74,6 +74,8 @@ export type SwapHookPoint =
   | 'afterUndoAside'
   /** After the undo's aside and its syncs, before O goes back. */
   | 'beforeRestore'
+  /** A non-directory O: after its type and link text are read, before the `check` guarding its recreate. */
+  | 'beforeRecreate'
   /** In `publishTree`, after the name is chosen and the tree hashed, before the sidecar. */
   | 'beforeSidecar'
 
@@ -120,12 +122,6 @@ export type SwapWarning =
   | { code: 'conflict-kept'; path: string }
   /** A directory's bits differ from its parent's (`mkdirWithParentBits` warnings). */
   | { code: 'mode'; path: string; detail: string }
-  /**
-   * The backup name recorded in `record.json` and the journal was taken by the
-   * time the tree moved, so it went to the next free name. The journal is
-   * already written: this warning is the only record of the change.
-   */
-  | { code: 'backup-renamed'; planned: string; actual: string }
 
 /** Why a transaction was refused before rename 1 (plan §3.3 words). */
 export type SwapRefuseReason =
@@ -172,7 +168,11 @@ export type SwapResult =
   | {
       status: 'committed'
       opId: string
-      /** Where the old folder is, or is meant to be when `incomplete` names `audit` or `publish`. */
+      /**
+       * Always `<area>/<opId>`: the path `record.json` and the journal name too.
+       * When `incomplete` names `audit` or `publish`, the old folder is still in
+       * OP and this is where it is meant to go.
+       */
       backupDest: string
       warnings: SwapWarning[]
       incomplete?: SwapIncomplete

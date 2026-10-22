@@ -8,6 +8,11 @@
  * identities. A swap between that `check` and the syscall is the §3.0 item 9
  * residual: Node has no directory-fd syscalls.
  *
+ * Every file this run creates is bound (dev, ino, birthtime, file type) when
+ * it is created, and is unlinked only through `unlinkOwned`, which verifies
+ * that binding first and leaves anything else untouched. The window between
+ * that verification and the `unlink` is the same residual (no `unlinkat`).
+ *
  * Each successful mutation and every directory sync is reported to the
  * optional `trace` sink in order (T-P4). A directory sync that `failed` stops
  * the operation (the entry it was to make durable may not survive a crash);
@@ -19,6 +24,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { LockOrderError } from '../config/lock-tracker.js'
 import { syncDirectory } from '../install/dir-sync.js'
+import { identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { TreeRecord } from '../install/tree-hash.js'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
@@ -73,6 +79,12 @@ export interface SwapState {
   backupDest: string
   /** True once step 13 unlinked `record.json`: a result must not name it after that. */
   recordRemoved: boolean
+  /**
+   * The identity of every file this run created and may later unlink (its
+   * metadata and their temps, the sidecar temp), by path. A hard link made by
+   * `linkChecked` is the same inode, so its new path is bound too.
+   */
+  owned: Map<string, BoundIdentity>
   /** `staging` → `locked` (lock 1 held) → `swapped` (rename 1 ran) → `committed` (manifest written). */
   phase: 'staging' | 'locked' | 'swapped' | 'committed'
   step: PostCommitStep
@@ -131,6 +143,8 @@ export async function renameChecked(st: SwapState, from: string, to: string): Pr
 export async function linkChecked(st: SwapState, from: string, to: string): Promise<void> {
   check(st)
   await fs.promises.link(from, to)
+  const id = st.owned.get(from)
+  if (id !== undefined) st.owned.set(to, id)
   trace(st, { op: 'link', path: from, dest: to })
 }
 
@@ -139,9 +153,27 @@ export function rethrowLockOrder(err: unknown): void {
   if (err instanceof LockOrderError) throw err
 }
 
-export async function unlinkChecked(st: SwapState, p: string): Promise<void> {
+/**
+ * Unlinks a file this run created, and only that file: `p` must still be the
+ * inode `writeNewFile` bound (dev, ino, birthtime, file type). Anything else
+ * there (a replacement, a link, nothing) stops with `reason` and is left
+ * untouched. Node has no `unlinkat` relative to a verified directory, so a
+ * swap between this verification and the `unlink` is the plan §3.0 item 9
+ * residual.
+ */
+export async function unlinkOwned(
+  st: SwapState,
+  p: string,
+  reason: 'staging-unsafe' | 'backup-unsafe'
+): Promise<void> {
   check(st)
+  const bound = st.owned.get(p)
+  const now = await lstatOrNull(p)
+  if (bound === undefined || now === null || !sameIdentity(bound, identityOf(now))) {
+    throw new SwapFault(reason, `${p} is not the file this run wrote; it was left untouched`)
+  }
   await fs.promises.unlink(p)
+  st.owned.delete(p)
   trace(st, { op: 'unlink', path: p })
 }
 
@@ -171,6 +203,7 @@ export async function writeNewFile(
   )
   trace(st, { op: 'create', path: p })
   try {
+    st.owned.set(p, identityOf(await fh.stat({ bigint: true })))
     await writeFullBuffer(fh, bytes)
     await fh.sync()
     trace(st, { op: 'fsync', path: p })

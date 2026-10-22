@@ -29,10 +29,11 @@ import {
   codeOf,
   hook,
   opPaths,
-  renameChecked,
+  linkChecked,
   SwapFault,
   syncDir,
   trace,
+  unlinkOwned,
   writeNewFile,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
@@ -80,11 +81,23 @@ export async function createOp(st: SwapState): Promise<void> {
   await syncDir(st, st.binding.stagingDir)
 }
 
-/** Writes `JSON` to `<final>.tmp`, syncs it, renames it to `final`, syncs OP. */
+/**
+ * Writes `JSON` to `<final>.tmp` and syncs it, links it at `final` (never
+ * replacing: an entry already there stops with `staging-unsafe` and is left
+ * untouched), unlinks the temp (verified to be the one written), syncs OP.
+ */
 async function publishJson(st: SwapState, final: string, value: unknown): Promise<void> {
   const tmp = `${final}.tmp`
   await writeNewFile(st, tmp, Buffer.from(JSON.stringify(value, null, 2) + '\n'), 0o600)
-  await renameChecked(st, tmp, final)
+  try {
+    await linkChecked(st, tmp, final)
+  } catch (err) {
+    if (codeOf(err) === 'EEXIST') {
+      throw new SwapFault('staging-unsafe', `${final} already exists; it was left untouched`)
+    }
+    throw err
+  }
+  await unlinkOwned(st, tmp, 'staging-unsafe')
   await syncDir(st, st.opDir)
 }
 

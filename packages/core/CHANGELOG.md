@@ -18,6 +18,12 @@ All notable changes to `@skillsmith/core` are documented here.
   one level at a time with each parent's mode, and the journal now syncs its directory when an
   append creates the file or the directory. No caller uses `swapInPlace` yet.
 
+- **Fixed**: SMI-6531 -- journal appends from two processes at once (two MCP servers, for
+  example) could both chain to the same previous record and fork the journal's hash chain. Every
+  append now runs under a cross-process lock, `journal.jsonl.lock` beside the journal (lock 5 in
+  the lock order). A lock that cannot be taken rejects the append, which the apply tools already
+  treat as fail-soft.
+
 - **Added**: SMI-6531 A1 step 3 -- `treeHashOf`, `copyTreeNoFollow` and `claimPublish`
   (`services/skill-tree.ts`), the tree primitives the update write path builds on. `treeHashOf` is
   the one tree hash over the no-follow walk, and a FIFO, socket or device makes the folder

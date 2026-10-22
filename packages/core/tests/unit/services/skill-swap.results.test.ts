@@ -96,12 +96,47 @@ describe('the staging .gitignore hint', () => {
   })
 })
 
-describe('the backup path is decided before the record', () => {
-  it('a name taken at plan time: the record, the journal and the result all name <opId>.1', async () => {
+describe('the backup has one fixed name (owner decision 2026-10-22)', () => {
+  it('taken at plan time: refused backup-unsafe, nothing moved, the planted entry untouched', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const area = areaOf(fx)
     fs.mkdirSync(path.join(area, OP_ID), { recursive: true })
     fs.writeFileSync(path.join(area, OP_ID, 'planted.txt'), 'planted')
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+
+    const { result, trace, journal } = await run(p)
+
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(fs.readdirSync(path.join(area, OP_ID))).toEqual(['planted.txt'])
+    expect(fs.readFileSync(path.join(area, OP_ID, 'planted.txt'), 'utf8')).toBe('planted')
+    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    expect(fs.existsSync(path.join(fx.opDir, 'record.json'))).toBe(false)
+    expect(journal).toEqual([])
+    expect(p.manifest.writes).toBe(0)
+  })
+
+  it('taken after the record, before rename 1: refused backup-unsafe, nothing moved', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const area = areaOf(fx)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const { result, trace } = await run(p, {
+      hooks: {
+        afterRecord: () => {
+          fs.mkdirSync(area, { recursive: true })
+          fs.writeFileSync(path.join(area, `${OP_ID}.json`), 'late sidecar')
+        },
+      },
+    })
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    expect(fs.readFileSync(path.join(area, `${OP_ID}.json`), 'utf8')).toBe('late sidecar')
+    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+  })
+
+  it('taken at publish time: committed, incomplete publish backup-unsafe; the entry untouched, the old folder in OP', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const area = areaOf(fx)
+    const name = path.join(area, OP_ID)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     let recordText: string | null = null
     const { result, journal } = await run(p, {
@@ -109,37 +144,25 @@ describe('the backup path is decided before the record', () => {
         afterRecord: () => {
           recordText = fs.readFileSync(path.join(fx.opDir, 'record.json'), 'utf8')
         },
-      },
-    })
-    const actual = path.join(area, `${OP_ID}.1`)
-    expect(result).toMatchObject({ status: 'committed', backupDest: actual, warnings: [] })
-    expect(parseRecord(recordText!).backupDest).toBe(actual)
-    expect(journal[0]!.backup_ref).toBe(actual)
-    expect(hashOf(actual)).toBe(p.input.preTree)
-  })
-
-  it('a name taken after the journal: never moved onto; the next free name, with a warning naming both', async () => {
-    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
-    const area = areaOf(fx)
-    const planned = path.join(area, OP_ID)
-    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    const { result, journal } = await run(p, {
-      hooks: {
         beforePublish: () => {
-          fs.mkdirSync(planned)
-          fs.writeFileSync(path.join(planned, 'late.txt'), 'late')
+          fs.mkdirSync(name)
+          fs.writeFileSync(path.join(name, 'late.txt'), 'late')
         },
       },
     })
-    const actual = path.join(area, `${OP_ID}.1`)
     expect(result).toMatchObject({
       status: 'committed',
-      backupDest: actual,
-      warnings: [{ code: 'backup-renamed', planned, actual }],
+      backupDest: name,
+      incomplete: { step: 'publish', reason: 'backup-unsafe' },
+      recordPath: path.join(fx.opDir, 'record.json'),
     })
-    expect(journal[0]!.backup_ref).toBe(planned)
-    expect(fs.readdirSync(planned)).toEqual(['late.txt'])
-    expect(hashOf(actual)).toBe(p.input.preTree)
+    expect(fs.readdirSync(name)).toEqual(['late.txt'])
+    expect(fs.readFileSync(path.join(name, 'late.txt'), 'utf8')).toBe('late')
+    expect(hashOf(path.join(fx.opDir, 'old'))).toBe(p.input.preTree)
+    const rec = parseRecord(recordText!)
+    expect(rec.backupDest).toBe(name)
+    expect(journal[0]!.backup_ref).toBe(rec.backupDest)
+    readRecord(path.join(fx.opDir, 'record.json'))
   })
 })
 
