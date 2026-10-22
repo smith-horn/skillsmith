@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- `swapInPlace`'s `journal-append-failed` detail now says the record may
+  already be in the journal, since a directory sync can fail after the record is written and
+  synced. A hard-link undo restore is traced as `link`, not `create`. `journal/types.ts` documents
+  each record field for both writers: the apply tools and `skillsmith update`.
+
 - **Added**: SMI-6531 A1 step 4a -- `swapInPlace` (`services/skill-swap.ts`), the update's staged
   swap on one device. It builds the new folder in `.skillsmith-staging/<opId>/`, refuses the build
   if the live folder changed since planning, writes a durable `record.json`, swaps the two folders
