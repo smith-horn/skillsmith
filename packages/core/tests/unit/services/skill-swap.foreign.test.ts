@@ -1,10 +1,9 @@
 /**
- * SMI-6531 (A1 step 4a): foreign writes at each window. T-X5 (step-4 half),
- * T-X6, T-X10, T-X11.
+ * SMI-6531 (A1 steps 4a, 4b): foreign writes at each window. T-X5 (both
+ * halves), T-X6, T-X10, T-X11.
  *
- * T-X5's "no byte from outside the skill is in staging after cleanup" is the
- * abort cleanup's assertion (step 4b); here staging is left as it is and only
- * checked not to hold outside bytes.
+ * T-X5's cleanup half (4b): after abort cleanup, no byte from outside the
+ * skill is anywhere under ST, the parked area included, nor in the kept tree.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -36,15 +35,17 @@ describe('T-X5 (step-4 half): a change while staging is caught before any rename
     const { result, trace } = await run(p, {
       hooks: { afterCopy: () => fs.appendFileSync(path.join(fx.realDir, 'a.txt'), 'edit\n') },
     })
+    // 4b: N was built before the edit and is unchanged, so its op dir is parked.
     expect(result).toMatchObject({
       status: 'refused',
       reason: 'changed-since-plan',
-      staged: 'left',
+      staged: 'parked',
     })
     expect(renamedLive(trace, fx.realDir)).toEqual([])
     expect(fs.readFileSync(path.join(fx.realDir, 'a.txt'), 'utf8')).toBe('a\nedit\n')
     expect(fs.readFileSync(path.join(fx.realDir, 'SKILL.md'), 'utf8')).toBe('# v1\n')
     expect(p.manifest.writes).toBe(0)
+    expect(anyFileContains(fx.staging, Buffer.from('outside bytes'))).toBe(false)
   })
 
   it('(b) a nested live dir replaced by a symlink to outside after the copy: same, nothing from outside staged', async () => {
@@ -59,10 +60,49 @@ describe('T-X5 (step-4 half): a change while staging is caught before any rename
         },
       },
     })
-    expect(result).toMatchObject({ status: 'refused', reason: 'changed-since-plan' })
+    // Step 4 refuses; N (built before the swap) is unchanged and parked whole.
+    expect(result).toMatchObject({
+      status: 'refused',
+      reason: 'changed-since-plan',
+      staged: 'parked',
+    })
     expect(renamedLive(trace, fx.realDir)).toEqual([])
     expect(snapshot(fx.outside)).toEqual(outsideBefore)
+    // T-X5 cleanup half: nothing from outside anywhere under ST, the parked area included.
+    const parked = path.join(fx.staging, '.skillsmith-parked')
+    expect(fs.readdirSync(parked)).toEqual([OP_ID])
     expect(anyFileContains(fx.staging, Buffer.from('outside bytes'))).toBe(false)
+    // The parked copy's scripts/ is the copied directory, not a link.
+    const parkedOp = path.join(parked, OP_ID)
+    const copy = fs.readdirSync(parkedOp).find((n) => !n.endsWith('.json'))!
+    expect(fs.lstatSync(path.join(parkedOp, copy, 'new', 'scripts')).isDirectory()).toBe(true)
+  })
+
+  it('(b′) the same swap made during the copy: refused in step 1, kept as failed-build, nothing from outside in ST or the kept tree', async () => {
+    const fx = makeFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    let swapped = false
+    const { result } = await run(p, {
+      duringCopy: (rel) => {
+        if (rel === 'SKILL.md' && !swapped) {
+          swapped = true
+          fs.renameSync(path.join(fx.realDir, 'scripts'), path.join(fx.base, 'scripts-aside'))
+          fs.symlinkSync(fx.outside, path.join(fx.realDir, 'scripts'))
+        }
+      },
+    })
+    expect(swapped).toBe(true)
+    expect(result).toMatchObject({
+      status: 'refused',
+      reason: 'changed-since-plan',
+      staged: 'kept',
+      keptAs: { kind: 'failed-build', path: path.join(areaOf(fx), `${OP_ID}.failed-build`) },
+    })
+    expect(fs.existsSync(fx.opDir)).toBe(false)
+    expect(anyFileContains(fx.staging, Buffer.from('outside bytes'))).toBe(false)
+    expect(
+      anyFileContains(path.join(areaOf(fx), `${OP_ID}.failed-build`), Buffer.from('outside bytes'))
+    ).toBe(false)
   })
 
   it('(c) a not-yet-copied live file edited during the copy (and restored after it): the copy-hash check refuses', async () => {
@@ -91,6 +131,9 @@ describe('T-X5 (step-4 half): a change while staging is caught before any rename
     expect(restored).toBe(p.input.preTree)
     expect(renamedLive(trace, fx.realDir)).toEqual([])
     expect(p.manifest.casCalls).toBe(0) // refused in step 1, before step 4 ran
+    // A step-1 failure has no postTree: the partial tree is kept whole as failed-build.
+    expect(result).toMatchObject({ staged: 'kept', keptAs: { kind: 'failed-build' } })
+    expect(anyFileContains(fx.staging, Buffer.from('outside bytes'))).toBe(false)
   })
 })
 

@@ -83,7 +83,7 @@ describe('the manifest CAS', () => {
     expect(result).toMatchObject({
       status: 'refused',
       reason: 'changed-since-plan',
-      staged: 'left',
+      staged: 'parked',
       detail: 'the manifest entry changed since it was planned',
     })
     expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
@@ -101,7 +101,7 @@ describe('the manifest CAS', () => {
     expect(result).toMatchObject({
       status: 'refused',
       reason: 'changed-since-plan',
-      staged: 'left',
+      staged: 'parked',
     })
     expect((result as { detail: string }).detail).toMatch(/^the manifest entry could not be read/)
     expect((result as { detail: string }).detail).toContain('unexpected end of JSON')
@@ -191,7 +191,7 @@ describe('the backup has one fixed name (owner decision 2026-10-22)', () => {
 
     const { result, trace, journal } = await run(p)
 
-    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'parked' })
     expect(fs.readdirSync(path.join(area, OP_ID))).toEqual(['planted.txt'])
     expect(fs.readFileSync(path.join(area, OP_ID, 'planted.txt'), 'utf8')).toBe('planted')
     expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
@@ -212,7 +212,7 @@ describe('the backup has one fixed name (owner decision 2026-10-22)', () => {
         },
       },
     })
-    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'parked' })
     expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
     expect(fs.readFileSync(path.join(area, `${OP_ID}.json`), 'utf8')).toBe('late sidecar')
     expect(hashOf(fx.realDir)).toBe(p.input.preTree)
@@ -228,7 +228,7 @@ describe('the backup has one fixed name (owner decision 2026-10-22)', () => {
 
     const { result, trace } = await run(p)
 
-    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'parked' })
     expect(fs.readFileSync(tmp, 'utf8')).toBe('leftover temp')
     expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
     expect(fs.existsSync(path.join(fx.opDir, 'record.json'))).toBe(false)

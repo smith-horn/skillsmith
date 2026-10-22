@@ -41,7 +41,18 @@ describe('owner.json and record.json are linked into place, never renamed over a
         },
       })
       expect(fs.readFileSync(final, 'utf8')).toBe('planted\n')
-      expect(result).toMatchObject({ status: 'refused', reason: 'staging-unsafe', staged: 'left' })
+      // 4b: OP holds an entry this run did not write, so abort cleanup unlinks
+      // and parks nothing (like step 13's op-not-empty) and leaves OP for doctor.
+      expect(result).toMatchObject({
+        status: 'refused',
+        reason: 'staging-unsafe',
+        staged: 'left',
+        opDir: fx.opDir,
+        warnings: [
+          { code: 'removal-not-done', path: fx.opDir, status: 'kept', reason: 'op-not-empty' },
+        ],
+      })
+      expect(fs.readdirSync(fx.opDir)).toContain(`${file}.tmp`)
       expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
       expect(hashOf(fx.realDir)).toBe(p.input.preTree)
     })

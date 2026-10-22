@@ -25,10 +25,10 @@
  *  - Cross-device (SMI-6531 step 4c): an `EXDEV` from the move stops with
  *    `cross-device`; the record stays and the tree stays in OP. 4c copies,
  *    verifies and parks instead.
- *  - The park call and park intent (steps 4b and 4c): on one device OP is
- *    empty at step 13, so step 13 unlinks the metadata and `rmdir`s OP. An OP
- *    holding anything else stops with nothing removed (`op-not-empty`); 4c
- *    replaces that stop with the park.
+ *  - Step 13's park call and park intent (step 4c; abort cleanup's are 4b's,
+ *    `skill-swap.abort.ts`): on one device OP is empty at step 13, so step 13
+ *    unlinks the metadata and `rmdir`s OP. An OP holding anything else stops
+ *    with nothing removed (`op-not-empty`); 4c replaces that stop with the park.
  *
  * The backup area is `<stateRoot>/backups/update/<client>/<rootKey>/<dirName>/`
  * under the native realpath of the state root, so a symlinked state root
@@ -63,8 +63,21 @@ import type { SwapState } from './skill-swap.ops.js'
 import { recordIdentity } from './skill-swap.staging.js'
 import { OWNER_FILE, RECORD_FILE } from './skill-swap.types.js'
 
-/** A kept tree's kind (plan §3.5); 4a publishes these three. */
-export type PublishKind = 'backup' | 'undone' | 'conflict'
+/**
+ * A kept tree's kind (plan §3.5): 4a's three, and abort cleanup's three (4b).
+ * `failed-build` and `unrecorded-new` are kept even when the tree cannot be
+ * hashed (the sidecar's `treeHash` is then null, with `treeHashError`): that
+ * is why they are kept rather than parked. Every other kind needs the hash.
+ */
+export type PublishKind =
+  | 'backup'
+  | 'undone'
+  | 'conflict'
+  | 'failed-build'
+  | 'edited-new'
+  | 'unrecorded-new'
+
+const HASH_OPTIONAL: ReadonlySet<PublishKind> = new Set(['failed-build', 'unrecorded-new'])
 
 /** First 16 hex characters of sha256 over R, the skills root's realpath (UD22). */
 export const rootKeyOf = (root: string): string =>
@@ -195,15 +208,18 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
   }
   const h = treeHashOf(src)
   const id = bindIdentity(src)
-  if (!h.ok || !id.ok) throw new SwapFault('write-failed', `${src} could not be hashed`)
+  if (!id.ok || (!h.ok && !HASH_OPTIONAL.has(kind))) {
+    throw new SwapFault('write-failed', `${src} could not be hashed`)
+  }
   await hook(st, 'beforeSidecar')
-  if (kind === 'backup' && h.hash !== st.input.preTree) warnForeignChange(st, dest)
+  if (kind === 'backup' && h.ok && h.hash !== st.input.preTree) warnForeignChange(st, dest)
   const sidecar = {
     opId: st.opId,
     kind,
     dirName: st.input.dirName,
     createdAt: new Date().toISOString(),
-    treeHash: h.hash,
+    treeHash: h.ok ? h.hash : null,
+    ...(h.ok ? {} : { treeHashError: `${h.reason} at ${h.path}` }),
     identity: recordIdentity(id),
     client: st.input.client,
     skillsDir: st.binding.root,
@@ -224,6 +240,7 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
   }
   await unlinkOwned(st, tmp, 'backup-unsafe')
   await syncDir(st, st.areaPath)
+  await hook(st, 'afterSidecar')
   try {
     await renameChecked(st, src, dest)
   } catch (err) {

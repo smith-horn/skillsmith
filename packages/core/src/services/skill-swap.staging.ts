@@ -1,7 +1,12 @@
 /**
  * SMI-6531 (A1 step 4a): the operation directory and what goes in it (A1 plan
  * §3.3 "Staging", step 1 and step 5): OP, `owner.json`, the build of `new/`,
- * `record.json`, and the abort seam before rename 1.
+ * `record.json`, and the metadata publish they share (also used by the park
+ * intent, `skill-swap.abort.ts`).
+ *
+ * `buildIdentity` is bound by the build's own `mkdir` of `new/`, before
+ * anything is copied into it (plan §3.3 step 1), so abort cleanup can tell the
+ * tree it built from one put there in its place, even after a partial build.
  *
  * Step 1 runs outside any lock. OP is `ST/<opId>`, made with a plain `mkdir`
  * (an existing entry is `staging-collision`: a random `opId` cannot collide,
@@ -39,9 +44,9 @@ import {
 import type { SwapState } from './skill-swap.ops.js'
 import type {
   RecordIdentity,
+  SwapHookPoint,
   SwapRecord,
   SwapRefuseReason,
-  SwapResult,
 } from './skill-swap.types.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
 
@@ -85,10 +90,17 @@ export async function createOp(st: SwapState): Promise<void> {
  * Writes `JSON` to `<final>.tmp` and syncs it, links it at `final` (never
  * replacing: an entry already there stops with `staging-unsafe` and is left
  * untouched), unlinks the temp (verified to be the one written), syncs OP.
+ * `afterTemp` runs once the temp is synced, before the link (a kill point).
  */
-async function publishJson(st: SwapState, final: string, value: unknown): Promise<void> {
+export async function publishJson(
+  st: SwapState,
+  final: string,
+  value: unknown,
+  afterTemp?: SwapHookPoint
+): Promise<void> {
   const tmp = `${final}.tmp`
   await writeNewFile(st, tmp, Buffer.from(JSON.stringify(value, null, 2) + '\n'), 0o600)
+  if (afterTemp !== undefined) await hook(st, afterTemp)
   try {
     await linkChecked(st, tmp, final)
   } catch (err) {
@@ -103,12 +115,9 @@ async function publishJson(st: SwapState, final: string, value: unknown): Promis
 
 /** `owner.json`: `{ pid, host, uid, createdAt }`, written first (plan §3.3 "Staging"). */
 export async function writeOwner(st: SwapState): Promise<void> {
-  await publishJson(st, opPaths(st).owner, {
-    pid: process.pid,
-    host: os.hostname(),
-    uid: process.getuid?.() ?? -1,
-    createdAt: new Date().toISOString(),
-  })
+  const owner = { pid: process.pid, host: os.hostname(), uid: process.getuid?.() ?? -1 }
+  await publishJson(st, opPaths(st).owner, { ...owner, createdAt: new Date().toISOString() })
+  st.owner = owner
 }
 
 function copyReason(reason: string): SwapRefuseReason {
@@ -127,6 +136,12 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
   const { realDir, preTree } = st.input
   check(st)
   const copied = await copyTreeNoFollow(realDir, newDir, {
+    // `buildIdentity`: N as the build's own mkdir made it. Abort cleanup keeps
+    // or parks N only while N still has it (plan §3.3 abort step 3).
+    afterRootMade: () => {
+      const made = bindIdentity(newDir)
+      if (made.ok) st.buildIdentity = made
+    },
     afterEntry: (rel) => {
       st.options.duringCopy?.(rel)
       check(st)
@@ -139,8 +154,11 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
     )
   }
   trace(st, { op: 'copy', path: realDir, dest: newDir })
-  const buildIdentity = bindIdentity(newDir)
-  if (!buildIdentity.ok) throw new SwapFault('staging-unsafe', `${newDir} cannot be inspected`)
+  const buildIdentity = st.buildIdentity
+  const copiedId = bindIdentity(newDir)
+  if (buildIdentity === null || !copiedId.ok || !sameIdentity(buildIdentity, copiedId)) {
+    throw new SwapFault('staging-unsafe', `${newDir} is not the directory the build made`)
+  }
   await hook(st, 'afterCopy')
 
   const copyHash = treeHashOf(newDir)
@@ -254,26 +272,3 @@ export async function writeRecord(st: SwapState): Promise<void> {
 /** `skillsmith doctor recovery --clean-staging <opId>`: what a left op dir is cleaned with. */
 export const cleanStagingHint = (opId: string): string =>
   `skillsmith doctor recovery --clean-staging ${opId}`
-
-/**
- * Every abort before rename 1 comes here. Abort cleanup (keep or park the
- * staged tree, UD17/UD28) is 4b's: in 4a this removes NOTHING and leaves OP
- * exactly as it is, record included if one was written, and names the
- * command that cleans it. Doctor (step 6) sets such an op dir aside.
- */
-export function abortBeforeRename1(
-  st: SwapState,
-  reason: SwapRefuseReason,
-  detail: string
-): Extract<SwapResult, { status: 'refused' }> {
-  // 4b (SMI-6531 step 4b) replaces this body with the abort cleanup.
-  return {
-    status: 'refused',
-    reason,
-    staged: st.opCreated ? 'left' : 'none',
-    opDir: st.opCreated ? st.opDir : null,
-    cleanStagingHint: st.opCreated ? cleanStagingHint(st.opId) : null,
-    detail,
-    warnings: st.warnings,
-  }
-}

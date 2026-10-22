@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 A1 step 4b -- `swapInPlace` now cleans up after an abort before the swap, and
+  removes nothing. An unchanged staged copy is parked whole with its op directory. Before the
+  park, a durable `park-intent.json` lets doctor finish it after a crash, and the guard hash is
+  taken after the metadata is gone. A failed or changed build is kept in the backup area as
+  `failed-build`, `edited-new` or `unrecorded-new`. An update that found the skills root busy
+  waits once more for the lock before it gives up. A park that doesn't finish leaves the copy in
+  place and reports `removal-not-done` with the reason. No caller uses `swapInPlace` yet.
+
 - **Changed**: SMI-6531 -- `swapInPlace`'s `journal-append-failed` detail now says the record may
   already be in the journal, since a directory sync can fail after the record is written and
   synced. A hard-link undo restore is traced as `link`, not `create`. `journal/types.ts` documents
@@ -20,8 +28,9 @@ All notable changes to `@skillsmith/core` are documented here.
   are kept and reported (`backup-holds-foreign-change`, `live-folder-changed`). An abort before
   the first rename leaves the staged copy in place for doctor. Also `ensureSkillsRoot`
   (`services/skill-root.ensure.ts`), which creates an absent skills root and its missing parents
-  one level at a time with each parent's mode, and the journal now syncs its directory when an
-  append creates the file or the directory. No caller uses `swapInPlace` yet.
+  one level at a time with each parent's mode. A journal append now syncs the journal directory when
+  it creates the journal file, and the parent of each directory its `mkdir` creates. No caller uses
+  `swapInPlace` yet.
 
 - **Fixed**: SMI-6531 -- journal appends from two processes at once (two MCP servers, for
   example) could both chain to the same previous record and fork the journal's hash chain. Every

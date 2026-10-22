@@ -30,7 +30,14 @@ import type { TreeRecord } from '../install/tree-hash.js'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
 import { checkSkillsRootBinding } from './skill-write-lock.js'
 import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.types.js'
-import { NEW_DIR, OLD_DIR, OWNER_FILE, RECORD_FILE, UNDONE_DIR } from './skill-swap.types.js'
+import {
+  NEW_DIR,
+  OLD_DIR,
+  OWNER_FILE,
+  PARK_INTENT_FILE,
+  RECORD_FILE,
+  UNDONE_DIR,
+} from './skill-swap.types.js'
 import type {
   SwapHookPoint,
   SwapIncomplete,
@@ -69,6 +76,10 @@ export interface SwapState {
   opCreated: boolean
   op: { path: string; identity: BoundIdentity } | null
   area: Array<{ path: string; identity: BoundIdentity }> | null
+  /** N's identity, bound when the build's `mkdir` made `new/` (plan §3.3 step 1). */
+  buildIdentity: BoundIdentity | null
+  /** What `owner.json` says, once this run published it (the park intent copies it). */
+  owner: { pid: number; host: string; uid: number } | null
   newIdentity: BoundIdentity | null
   postTree: string | null
   postRecord: TreeRecord | null
@@ -99,6 +110,7 @@ export const opPaths = (st: SwapState) => ({
   undoneDir: path.join(st.opDir, UNDONE_DIR),
   record: path.join(st.opDir, RECORD_FILE),
   owner: path.join(st.opDir, OWNER_FILE),
+  intent: path.join(st.opDir, PARK_INTENT_FILE),
 })
 
 export const codeOf = (err: unknown): string | null => {

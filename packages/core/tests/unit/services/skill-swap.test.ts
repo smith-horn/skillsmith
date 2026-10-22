@@ -167,7 +167,8 @@ describe('swapInPlace: the committed path', () => {
 
     const { result, trace } = await run(p)
 
-    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    // 4b: N is unchanged, so abort cleanup parks its op dir (nothing at the area is touched).
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'parked' })
     expect(fs.readFileSync(path.join(area, `${OP_ID}.json`), 'utf8')).toBe('planted sidecar')
     expect(listTree(area)).toEqual([`${OP_ID}.json`])
     expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
@@ -355,7 +356,12 @@ describe('swapInPlace: busy', () => {
     }
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
 
-    const { result, trace } = await run(p, { lockTimeoutMs: 200 })
+    // Both waits run out (4b's second wait is 300 ms here; the plan's is 30 s).
+    const { result, trace } = await run(p, {
+      lockTimeoutMs: 200,
+      secondWaitMs: 300,
+      stderr: () => undefined,
+    })
 
     release()
     await exited
