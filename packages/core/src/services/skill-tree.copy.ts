@@ -8,9 +8,10 @@
  * inode the walk typed after that text is read, and a directory must keep the
  * identity `lstat` gave it from before its names are read until after its
  * children are typed. A single swap of an entry or a parent directory between
- * its check and its use is refused: as `changed-during-copy`, or as
- * `unreadable` (ENOENT) when the swapped-in path no longer holds the entry at
- * all. Nothing is copied from it either way. What it does not
+ * its check and its use is refused: the result is not `ok` and nothing is
+ * copied from the swapped path. The reason is `changed-during-copy` when a
+ * check saw the change, and otherwise `unreadable` with the errno the failing
+ * call returned. Callers act on `ok`, not on which of the two. What it does not
  * refuse is a double swap: a parent swapped for a link while its children are
  * typed, restored for its identity check, then swapped in again when a child
  * is opened. That can read outside bytes into the copy; the caller's hash of
@@ -262,7 +263,7 @@ async function copyLink(
       return { ok: false, reason: 'changed-during-copy', path: srcAbs, errno: null }
     }
   } catch (err) {
-    return fail(pathChanged(err) ? 'changed-during-copy' : 'unreadable', srcAbs, err)
+    return fail('unreadable', srcAbs, err)
   }
   try {
     await fs.promises.symlink(text, destAbs)
