@@ -12,10 +12,15 @@
  *    constrains only what this call creates.
  *  - Then, top-down, each missing component is made by `mkdirWithParentBits`
  *    with its OWN parent's permission bits (never a recursive `mkdir`, which
- *    would apply the process umask and one mode to every level, and would
- *    follow a symlink planted between two levels). `EEXIST` is accepted, and the
- *    entry must then be a real directory, never a symlink; the helper's mode
- *    policy applies to it as it does to the staging directory.
+ *    would apply the process umask and one mode to every level). `EEXIST` is
+ *    accepted, and the entry must then be a real directory, never a symlink;
+ *    the helper's mode policy applies to it as it does to the staging
+ *    directory. That refuses a symlink planted AT a component before its own
+ *    `mkdir`. It does not refuse one planted at a component's PARENT after that
+ *    parent's own `mkdir`: the next `mkdir` is by path and `parentMode` comes
+ *    from `statSync`, so both follow the swapped-in link and the next level is
+ *    made under its target. Node has no `mkdirat`, so this is a residual of the
+ *    same kind as plan §3.0 item 9.
  *  - A created entry is followed by a sync of its parent (the sync rule). A
  *    filesystem that cannot sync a directory (`unsupported`) is accepted; a
  *    `failed` sync stops with `root-unsafe`, because the entry may not survive
@@ -45,8 +50,14 @@ export interface EnsureRootTraceOp {
 }
 
 export interface EnsureRootOptions {
-  /** @internal Test seam: called before each `mkdir` and each directory sync. */
+  /**
+   * @internal Test seam: called AFTER each `mkdir` this call's own `mkdir`
+   * created (not one another process made first) and after each directory sync
+   * that did not fail, in order.
+   */
   trace?: (op: EnsureRootTraceOp) => void
+  /** @internal Test seam: runs just before each component's `mkdir`. */
+  beforeMkdir?: (path: string) => void
 }
 
 export type EnsureRootResult =
@@ -135,7 +146,7 @@ export async function ensureSkillsRoot(
     const parent = path.dirname(component)
     const mode = parentMode(parent)
     if (typeof mode !== 'number') return mode
-    options.trace?.({ op: 'mkdir', path: component })
+    options.beforeMkdir?.(component)
     const made = mkdirWithParentBits(component, mode)
     if (!made.ok) {
       return unsafe(
@@ -154,8 +165,9 @@ export async function ensureSkillsRoot(
     }
     if (!made.created) continue // Another process made it first: not ours, nothing to sync.
     created.push(component)
-    options.trace?.({ op: 'sync', path: parent })
+    options.trace?.({ op: 'mkdir', path: component })
     const synced = await syncDirectory(parent)
+    if (synced.outcome !== 'failed') options.trace?.({ op: 'sync', path: parent })
     if (synced.outcome === 'failed') {
       return unsafe(
         parent,

@@ -52,6 +52,7 @@ export {
   type SwapRecord,
   type SwapRefuseReason,
   type SwapResult,
+  type SwapStopReason,
   type SwapWarning,
   type SwapWriteEntry,
   type TraceOp,

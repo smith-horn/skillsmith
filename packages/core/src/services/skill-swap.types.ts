@@ -74,6 +74,8 @@ export type SwapHookPoint =
   | 'afterUndoAside'
   /** After the undo's aside and its syncs, before O goes back. */
   | 'beforeRestore'
+  /** In `publishTree`, after the name is chosen and the tree hashed, before the sidecar. */
+  | 'beforeSidecar'
 
 /** One traced mutation or sync, in the order it happened (T-P4). Recorded after it succeeds. */
 export type TraceOp =
@@ -85,6 +87,8 @@ export type TraceOp =
   /** A directory `fsync` (also recorded when the filesystem cannot sync one). */
   | { op: 'dirsync'; path: string }
   | { op: 'rename'; path: string; dest: string }
+  /** A hard link made at `dest` (never replaces: `EEXIST` refuses). */
+  | { op: 'link'; path: string; dest: string }
   | { op: 'unlink'; path: string }
   | { op: 'rmdir'; path: string }
   /** The no-follow copy of the live folder into `new/` (its own entries are not traced). */
@@ -116,6 +120,12 @@ export type SwapWarning =
   | { code: 'conflict-kept'; path: string }
   /** A directory's bits differ from its parent's (`mkdirWithParentBits` warnings). */
   | { code: 'mode'; path: string; detail: string }
+  /**
+   * The backup name recorded in `record.json` and the journal was taken by the
+   * time the tree moved, so it went to the next free name. The journal is
+   * already written: this warning is the only record of the change.
+   */
+  | { code: 'backup-renamed'; planned: string; actual: string }
 
 /** Why a transaction was refused before rename 1 (plan §3.3 words). */
 export type SwapRefuseReason =
@@ -129,10 +139,32 @@ export type SwapRefuseReason =
   | 'root-unsafe'
   | 'busy'
 
+/**
+ * Why a run stopped after rename 1 (`stopped`), or after the commit
+ * (`incomplete`). Plan §3.3/§3.4 words: `target-changed`, `write-failed`
+ * (also every unexpected failure, a failed rename 2 included), `staging-unsafe`,
+ * `root-changed`, `backup-unsafe`, `unsupported-entry`. This module's own words
+ * for steps the plan names without a reason word: `pre-commit-check-failed`
+ * (step 10d), `manifest-write-failed` (10e), `journal-append-failed` (11),
+ * `cross-device` (4c's seam), `op-not-empty` (13's park seam).
+ */
+export type SwapStopReason =
+  | 'target-changed'
+  | 'write-failed'
+  | 'staging-unsafe'
+  | 'root-changed'
+  | 'backup-unsafe'
+  | 'unsupported-entry'
+  | 'pre-commit-check-failed'
+  | 'manifest-write-failed'
+  | 'journal-append-failed'
+  | 'cross-device'
+  | 'op-not-empty'
+
 /** Left behind after a commit with the record kept (doctor finishes it). */
 export interface SwapIncomplete {
   step: 'audit' | 'publish' | 'cleanup'
-  reason: string
+  reason: SwapStopReason
   detail: string
 }
 
@@ -144,8 +176,9 @@ export type SwapResult =
       backupDest: string
       warnings: SwapWarning[]
       incomplete?: SwapIncomplete
-      /** Present when the record was kept (`incomplete`). */
+      /** Present when the record was kept: `incomplete`, and step 13 had not yet removed it. */
       recordPath?: string
+      gitignoreHint?: string
     }
   | {
       status: 'refused'
@@ -159,6 +192,7 @@ export type SwapResult =
       cleanStagingHint: string | null
       detail: string
       warnings: SwapWarning[]
+      gitignoreHint?: string
     }
   | {
       status: 'undone'
@@ -167,15 +201,19 @@ export type SwapResult =
       keptAs: 'undone' | 'conflict'
       keptPath: string
       warnings: SwapWarning[]
+      gitignoreHint?: string
     }
   | {
       /** After rename 1: the record is kept for doctor; nothing else is touched. */
       status: 'stopped'
       opId: string
-      recordPath: string
-      reason: string
+      /** Absent only when an undo's step 13 had already removed the record. */
+      recordPath?: string
+      reason: SwapStopReason
       detail: string
       warnings: SwapWarning[]
+      /** The staging `.gitignore` hint, for the run whose `mkdir` created ST. */
+      gitignoreHint?: string
     }
 
 /** `record.json`'s identity form: bigint fields as decimal strings. */

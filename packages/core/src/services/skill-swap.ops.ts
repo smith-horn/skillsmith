@@ -17,6 +17,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { LockOrderError } from '../config/lock-tracker.js'
 import { syncDirectory } from '../install/dir-sync.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { TreeRecord } from '../install/tree-hash.js'
@@ -68,8 +69,10 @@ export interface SwapState {
   stateRootReal: string
   /** `<stateRootReal>/backups/update/<client>/<rootKey>/<dirName>`. */
   areaPath: string
-  /** The intended backup path; the published one once step 12 ran. */
+  /** The backup path: resolved before the record is written, the published one once step 12 ran. */
   backupDest: string
+  /** True once step 13 unlinked `record.json`: a result must not name it after that. */
+  recordRemoved: boolean
   /** `staging` → `locked` (lock 1 held) → `swapped` (rename 1 ran) → `committed` (manifest written). */
   phase: 'staging' | 'locked' | 'swapped' | 'committed'
   step: PostCommitStep
@@ -122,6 +125,18 @@ export async function renameChecked(st: SwapState, from: string, to: string): Pr
   check(st)
   await fs.promises.rename(from, to)
   trace(st, { op: 'rename', path: from, dest: to })
+}
+
+/** A hard link at `to`; refuses (`EEXIST`) rather than replace anything there. */
+export async function linkChecked(st: SwapState, from: string, to: string): Promise<void> {
+  check(st)
+  await fs.promises.link(from, to)
+  trace(st, { op: 'link', path: from, dest: to })
+}
+
+/** A lock-order violation is a bug, never an outcome: every catch rethrows it first. */
+export function rethrowLockOrder(err: unknown): void {
+  if (err instanceof LockOrderError) throw err
 }
 
 export async function unlinkChecked(st: SwapState, p: string): Promise<void> {

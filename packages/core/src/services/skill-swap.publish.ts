@@ -33,6 +33,7 @@ import {
   check,
   codeOf,
   hook,
+  linkChecked,
   lstatOrNull,
   opPaths,
   renameChecked,
@@ -118,16 +119,27 @@ export async function ensureBackupArea(st: SwapState): Promise<void> {
   check(st)
 }
 
-async function taken(p: string): Promise<boolean> {
-  return (
-    (await lstatOrNull(p)) !== null ||
-    (await lstatOrNull(`${p}.json`)) !== null ||
-    (await lstatOrNull(`${p}.json.tmp`)) !== null
-  )
+/** An entry exists at `p`. A missing or non-directory ancestor (the area not made yet) is not one. */
+async function present(p: string): Promise<boolean> {
+  try {
+    return (await lstatOrNull(p)) !== null
+  } catch (err) {
+    if (codeOf(err) === 'ENOTDIR') return false
+    throw err
+  }
 }
 
-/** `<area>/<opId>` or `<area>/<opId>.<kind>`, with a `.<k>` suffix when that name exists. */
-async function destFor(st: SwapState, kind: PublishKind): Promise<string> {
+/** A name is taken when the tree, its sidecar or its sidecar temp exists. */
+async function taken(p: string): Promise<boolean> {
+  return (await present(p)) || (await present(`${p}.json`)) || (await present(`${p}.json.tmp`))
+}
+
+/**
+ * `<area>/<opId>` or `<area>/<opId>.<kind>`, with a `.<k>` suffix when that
+ * name exists. Called before step 5 for the backup, so the record and the
+ * journal name the path the tree is published at.
+ */
+export async function destFor(st: SwapState, kind: PublishKind): Promise<string> {
   const base = kind === 'backup' ? st.opId : `${st.opId}.${kind}`
   let dest = path.join(st.areaPath, base)
   for (let k = 1; await taken(dest); k++) dest = path.join(st.areaPath, `${base}.${k}`)
@@ -149,10 +161,21 @@ export function warnForeignChange(st: SwapState, backup: string): void {
 export async function publishTree(st: SwapState, src: string, kind: PublishKind): Promise<string> {
   if (st.area === null) await ensureBackupArea(st)
   await hook(st, 'beforePublish')
-  const dest = await destFor(st, kind)
+  let dest: string
+  if (kind !== 'backup') {
+    dest = await destFor(st, kind)
+  } else if (await taken(st.backupDest)) {
+    // Never moved onto: the next free name, and a warning naming both, because
+    // the record and the journal already name the planned one.
+    dest = await destFor(st, kind)
+    st.warnings.push({ code: 'backup-renamed', planned: st.backupDest, actual: dest })
+  } else {
+    dest = st.backupDest
+  }
   const h = treeHashOf(src)
   const id = bindIdentity(src)
   if (!h.ok || !id.ok) throw new SwapFault('write-failed', `${src} could not be hashed`)
+  await hook(st, 'beforeSidecar')
   if (kind === 'backup' && h.hash !== st.input.preTree) warnForeignChange(st, dest)
   const sidecar = {
     opId: st.opId,
@@ -168,7 +191,17 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
   }
   const tmp = `${dest}.json.tmp`
   await writeNewFile(st, tmp, Buffer.from(JSON.stringify(sidecar, null, 2) + '\n'), 0o600)
-  await renameChecked(st, tmp, `${dest}.json`)
+  // A link, not a rename: a rename would silently replace a file that appeared
+  // at the sidecar's name after the name was chosen.
+  try {
+    await linkChecked(st, tmp, `${dest}.json`)
+  } catch (err) {
+    if (codeOf(err) === 'EEXIST') {
+      throw new SwapFault('backup-unsafe', `${dest}.json appeared after the name was chosen`)
+    }
+    throw err
+  }
+  await unlinkChecked(st, tmp)
   await syncDir(st, st.areaPath)
   try {
     await renameChecked(st, src, dest)
@@ -198,6 +231,7 @@ export async function finishOp(st: SwapState): Promise<void> {
   }
   const { record, owner } = opPaths(st)
   await unlinkChecked(st, record)
+  st.recordRemoved = true
   await syncDir(st, st.opDir)
   await unlinkChecked(st, owner)
   const left = await fs.promises.readdir(st.opDir)

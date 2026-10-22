@@ -19,6 +19,7 @@ import type { TreeRecord, TreeRecordEntry } from '../install/tree-hash.js'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
 import {
   check,
+  rethrowLockOrder,
   lstatOrNull,
   messageOf,
   SwapFault,
@@ -123,6 +124,7 @@ export async function applyWriteSet(st: SwapState, newDir: string): Promise<Writ
       try {
         await writeNewFile(st, abs, entry.bytes, 0o644)
       } catch (err) {
+        rethrowLockOrder(err)
         if (err instanceof SwapFault || err instanceof SkillWriteStop) throw err
         throw fault(`${entry.rel} could not be created (${messageOf(err)})`, err)
       }

@@ -53,9 +53,18 @@ describe('T-P4: sync order (one device)', () => {
     const area = areaOf(fx)
     const dest = path.join(area, OP_ID)
     const rec = path.join(OP, 'record.json')
+    const owner = path.join(OP, 'owner.json')
     const want: Want[] = [
       { op: 'mkdir', path: OP },
       { op: 'dirsync', path: ST },
+      { op: 'create', path: `${owner}.tmp` },
+      { op: 'fsync', path: `${owner}.tmp` },
+      { op: 'rename', path: `${owner}.tmp`, dest: owner },
+      { op: 'dirsync', path: OP },
+      { op: 'copy', path: fx.realDir, dest: N },
+      { op: 'fsync', path: path.join(N, 'SKILL.md') },
+      { op: 'dirsync', path: N },
+      { op: 'dirsync', path: OP },
       { op: 'create', path: `${rec}.tmp` },
       { op: 'fsync', path: `${rec}.tmp` },
       { op: 'rename', path: `${rec}.tmp`, dest: rec },
@@ -70,13 +79,15 @@ describe('T-P4: sync order (one device)', () => {
       { op: 'journal-append' },
       { op: 'create', path: `${dest}.json.tmp` },
       { op: 'fsync', path: `${dest}.json.tmp` },
-      { op: 'rename', path: `${dest}.json.tmp`, dest: `${dest}.json` },
+      { op: 'link', path: `${dest}.json.tmp`, dest: `${dest}.json` },
+      { op: 'unlink', path: `${dest}.json.tmp` },
       { op: 'dirsync', path: area },
       { op: 'rename', path: O, dest },
       { op: 'dirsync', path: area },
       { op: 'dirsync', path: OP },
       { op: 'unlink', path: rec },
       { op: 'dirsync', path: OP },
+      { op: 'unlink', path: owner },
       { op: 'rmdir', path: OP },
       { op: 'dirsync', path: ST },
     ]

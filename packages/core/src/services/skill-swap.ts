@@ -34,13 +34,13 @@
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { LockOrderError } from '../config/lock-tracker.js'
 import { appendJournalRecord } from '../journal/writer.js'
 import { getJournalSessionId } from '../journal/path.js'
 import { JOURNAL_SCHEMA_VERSION } from '../journal/types.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import { ensureSkillsRoot } from './skill-root.ensure.js'
 import { treeHashOf } from './skill-tree.js'
+import { stagingGitignoreHint } from './skill-write-lock.gitignore.js'
 import { bindSkillsRoot, withSkillWriteLock } from './skill-write-lock.js'
 import { SkillWriteStop } from './skill-write-lock.types.js'
 import type { SkillsRootBinding } from './skill-write-lock.types.js'
@@ -49,13 +49,20 @@ import {
   hook,
   messageOf,
   opPaths,
+  rethrowLockOrder,
   renameChecked,
   SwapFault,
   syncDir,
   trace,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { backupAreaPath, finishOp, publishTree, warnForeignChange } from './skill-swap.publish.js'
+import {
+  backupAreaPath,
+  destFor,
+  finishOp,
+  publishTree,
+  warnForeignChange,
+} from './skill-swap.publish.js'
 import {
   abortBeforeRename1,
   buildNewFolder,
@@ -70,6 +77,7 @@ import type {
   SwapOptions,
   SwapRefuseReason,
   SwapResult,
+  SwapStopReason,
   SwapWarning,
 } from './skill-swap.types.js'
 
@@ -88,33 +96,57 @@ const REFUSE_REASONS: ReadonlySet<string> = new Set<SwapRefuseReason>([
   'busy',
 ])
 
-/** The reason word and detail of a failure. Unexpected errors are `write-failed` / `failed`. */
-function describe(err: unknown, fallback: string): { reason: string; detail: string } {
+const STOP_REASONS: ReadonlySet<string> = new Set<SwapStopReason>([
+  'target-changed',
+  'write-failed',
+  'staging-unsafe',
+  'root-changed',
+  'backup-unsafe',
+  'unsupported-entry',
+  'pre-commit-check-failed',
+  'manifest-write-failed',
+  'journal-append-failed',
+  'cross-device',
+  'op-not-empty',
+])
+
+/** The reason word and detail of a failure. An unexpected error is `write-failed`. */
+function describe(err: unknown): { reason: string; detail: string } {
   if (err instanceof SwapFault) return { reason: err.reason, detail: err.detail }
   if (err instanceof SkillWriteStop) return { reason: err.code, detail: err.detail }
-  return { reason: fallback, detail: messageOf(err) }
+  return { reason: 'write-failed', detail: messageOf(err) }
 }
+
+const stopReason = (r: string): SwapStopReason =>
+  STOP_REASONS.has(r) ? (r as SwapStopReason) : 'write-failed'
 
 /** Maps a failure to a result by how far the transaction got. */
 function resultOfFailure(st: SwapState, err: unknown): SwapResult {
+  rethrowLockOrder(err)
+  const { reason, detail } = describe(err)
   if (st.phase === 'staging' || st.phase === 'locked') {
-    const { reason, detail } = describe(err, 'write-failed')
     const r = REFUSE_REASONS.has(reason) ? (reason as SwapRefuseReason) : 'write-failed'
     return abortBeforeRename1(st, r, detail)
   }
-  const recordPath = opPaths(st).record
+  // Once step 13 unlinked the record, no result names it.
+  const recordPath = st.recordRemoved ? {} : { recordPath: opPaths(st).record }
   if (st.phase === 'swapped') {
-    const { reason, detail } = describe(err, 'failed')
-    return { status: 'stopped', opId: st.opId, recordPath, reason, detail, warnings: st.warnings }
+    return {
+      status: 'stopped',
+      opId: st.opId,
+      ...recordPath,
+      reason: stopReason(reason),
+      detail,
+      warnings: st.warnings,
+    }
   }
-  const { reason, detail } = describe(err, 'failed')
   return {
     status: 'committed',
     opId: st.opId,
     backupDest: st.backupDest,
     warnings: st.warnings,
-    incomplete: { step: st.step, reason, detail },
-    recordPath,
+    incomplete: { step: st.step, reason: stopReason(reason), detail },
+    ...recordPath,
   }
 }
 
@@ -140,6 +172,7 @@ async function reverify(st: SwapState): Promise<void> {
   try {
     cas = await manifest.withManifestLock((m) => m.casMatches())
   } catch (err) {
+    rethrowLockOrder(err)
     // The CAS could not confirm the entry equals `preEntry`.
     throw new SwapFault(
       'changed-since-plan',
@@ -186,11 +219,13 @@ async function commit(st: SwapState): Promise<CommitVerdict> {
     try {
       await m.preCommitCheck()
     } catch (err) {
+      rethrowLockOrder(err)
       throw new SwapFault('pre-commit-check-failed', messageOf(err), err)
     }
     try {
       await m.write()
     } catch (err) {
+      rethrowLockOrder(err)
       throw new SwapFault('manifest-write-failed', messageOf(err), err)
     }
     trace(st, { op: 'manifest-write', path: manifestPath })
@@ -205,6 +240,10 @@ async function undoAndFinish(
   reason: 'target-changed' | 'changed-since-plan'
 ): Promise<SwapResult> {
   const { keptAs, keptPath } = await undoSwap(st)
+  // Step 9's warning named a backup that an undo never makes.
+  for (let i = st.warnings.length - 1; i >= 0; i--) {
+    if (st.warnings[i]!.code === 'backup-holds-foreign-change') st.warnings.splice(i, 1)
+  }
   await finishOp(st)
   return { status: 'undone', opId: st.opId, reason, keptAs, keptPath, warnings: st.warnings }
 }
@@ -266,6 +305,7 @@ async function swapAndCommit(st: SwapState): Promise<SwapResult> {
   try {
     await (st.options.appendJournal ?? appendJournalRecord)(journalInput(st))
   } catch (err) {
+    rethrowLockOrder(err)
     return resultOfFailure(st, new SwapFault('journal-append-failed', messageOf(err), err))
   }
   trace(st, { op: 'journal-append', path: st.opId })
@@ -284,12 +324,13 @@ async function underLock(st: SwapState): Promise<SwapResult> {
     // Step 3, the record scan of `ST/*/record.json` (`recovery-pending`,
     // `recovery-record-unreadable`): SMI-6531 step 5 of the implementation order.
     await reverify(st)
+    st.backupDest = await destFor(st, 'backup')
     await writeRecord(st)
     await hook(st, 'afterRecord')
     return await swapAndCommit(st)
   } catch (err) {
     // A lock-order violation is a bug, not an outcome: it propagates.
-    if (err instanceof LockOrderError) throw err
+    rethrowLockOrder(err)
     return resultOfFailure(st, err)
   }
 }
@@ -325,6 +366,7 @@ function newState(
     stateRootReal,
     areaPath,
     backupDest: path.join(areaPath, opId),
+    recordRemoved: false,
     phase: 'staging',
     step: 'audit',
   }
@@ -383,7 +425,8 @@ export async function swapInPlace(
     await writeOwner(st)
     await buildNewFolder(st)
   } catch (err) {
-    return resultOfFailure(st, err)
+    // Lock 1 never ran, so its hint step did not either: compute it here.
+    return withHint(resultOfFailure(st, err), await stagingHintBeforeLock(binding))
   }
 
   const locked = await withSkillWriteLock(
@@ -395,7 +438,31 @@ export async function swapInPlace(
     },
     options.lockTimeoutMs === undefined ? {} : { timeoutMs: options.lockTimeoutMs }
   )
-  if (locked.ok) return locked.value
+  if (locked.ok) return withHint(locked.value, locked.gitignoreHint)
   // `busy` (4b adds the second wait), or `check` refusing as lock 1 was taken.
-  return abortBeforeRename1(st, locked.stop.code, locked.stop.detail)
+  return withHint(
+    abortBeforeRename1(st, locked.stop.code, locked.stop.detail),
+    locked.gitignoreHint
+  )
+}
+
+/** Adds the staging `.gitignore` hint to a result when there is one. */
+function withHint(r: SwapResult, hint: string | undefined): SwapResult {
+  return hint === undefined ? r : { ...r, gitignoreHint: hint }
+}
+
+/**
+ * The staging hint for a run that stopped before lock 1, which is where
+ * `withSkillWriteLock` would have computed it. Only the run whose `mkdir`
+ * created ST gets it; it is advisory, so a failure is dropped (a
+ * `LockOrderError` is not).
+ */
+async function stagingHintBeforeLock(binding: SkillsRootBinding): Promise<string | undefined> {
+  if (!binding.stagingCreated) return undefined
+  try {
+    return (await stagingGitignoreHint(binding.root)) ?? undefined
+  } catch (err) {
+    rethrowLockOrder(err)
+    return undefined
+  }
 }

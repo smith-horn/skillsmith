@@ -189,10 +189,10 @@ describe('ensureSkillsRoot: a component swapped for a symlink', () => {
     const trace: EnsureRootTraceOp[] = []
 
     const r = await ensureSkillsRoot(skills, {
-      trace: (op) => {
-        trace.push(op)
-        // Between the walk and the mkdir: p2 appears as a symlink (EEXIST).
-        if (op.op === 'mkdir' && op.path === p2) fs.symlinkSync(outside, p2)
+      trace: (op) => trace.push(op),
+      // Between the walk and the mkdir: p2 appears as a symlink (EEXIST).
+      beforeMkdir: (p) => {
+        if (p === p2) fs.symlinkSync(outside, p2)
       },
     })
 
@@ -201,6 +201,63 @@ describe('ensureSkillsRoot: a component swapped for a symlink', () => {
     expect(fs.readdirSync(outside)).toEqual([])
     expect(exists(skills)).toBe(false)
     expect(trace.map((t) => t.path)).not.toContain(skills)
+  })
+})
+
+describe('ensureSkillsRoot: the trace reports only what this call did', () => {
+  it('a component another process made first is not traced, created or synced', async () => {
+    const p1 = path.join(base, 'p1')
+    const p2 = path.join(p1, 'p2')
+    const skills = path.join(p2, 'skills')
+    const trace: EnsureRootTraceOp[] = []
+
+    const r = await ensureSkillsRoot(skills, {
+      trace: (op) => trace.push(op),
+      beforeMkdir: (p) => {
+        if (p === p2) fs.mkdirSync(p2) // the other process wins p2
+      },
+    })
+
+    expect(r).toEqual({ ok: true, created: [p1, skills] })
+    expect(trace).toEqual([
+      { op: 'mkdir', path: p1 },
+      { op: 'sync', path: base },
+      { op: 'mkdir', path: skills },
+      { op: 'sync', path: p2 },
+    ])
+  })
+
+  it('each entry is traced after its call: the mkdir already exists, the sync already ran', async () => {
+    const p1 = path.join(base, 'p1')
+    const skills = path.join(p1, 'skills')
+    const seen: Array<{ op: string; existed: boolean; syncs: number }> = []
+
+    await ensureSkillsRoot(skills, {
+      trace: (op) =>
+        seen.push({ op: op.op, existed: exists(op.path), syncs: syncMock.mock.calls.length }),
+    })
+
+    expect(seen).toEqual([
+      { op: 'mkdir', existed: true, syncs: 0 },
+      { op: 'sync', existed: true, syncs: 1 },
+      { op: 'mkdir', existed: true, syncs: 1 },
+      { op: 'sync', existed: true, syncs: 2 },
+    ])
+  })
+
+  it('a failed sync is not traced', async () => {
+    const p1 = path.join(base, 'p1')
+    syncMock.mockImplementationOnce(async () => ({
+      outcome: 'failed',
+      code: 'EIO',
+      error: new Error('EIO'),
+    }))
+    const trace: EnsureRootTraceOp[] = []
+
+    const r = await ensureSkillsRoot(path.join(p1, 'skills'), { trace: (op) => trace.push(op) })
+
+    expect(r).toMatchObject({ ok: false, errno: 'EIO' })
+    expect(trace).toEqual([{ op: 'mkdir', path: p1 }])
   })
 })
 
