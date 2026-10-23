@@ -266,8 +266,12 @@ describe('T-X8 (swap half): writes through a descriptor opened before the update
         { op: 'compare', equal: true },
         { op: 'create', path: `${sidecar}.tmp` },
         { op: 'fsync', path: `${sidecar}.tmp` },
+        // Round 1: the temp's entry durable before the old sidecar goes.
+        { op: 'dirsync', path: areaOf(fx0) },
         { op: 'unlink', path: sidecar },
         { op: 'link', path: `${sidecar}.tmp`, dest: sidecar },
+        // ...and the new sidecar durable before its temp goes.
+        { op: 'dirsync', path: areaOf(fx0) },
         { op: 'unlink', path: `${sidecar}.tmp` },
         { op: 'rename', dest },
       ])
@@ -355,5 +359,30 @@ describe('a source that changes during both copies', () => {
     expect(fs.existsSync(path.join(areaOf(fx0), OP_ID))).toBe(false)
     expect(parkedCopies(fx0)).toEqual([])
     expect(treeDeletesX(fx0, events)).toEqual([])
+  })
+})
+
+describe('a mismatch is kept with sourceUnchanged: false (plan §3.3), even when the source did not change', () => {
+  it('a copy temp that differs from an unchanged source: partial-copy with sourceUnchanged false, then a verified copy', async () => {
+    const fx0 = xdevFixture(FILES)
+    const p = plan(fx0, [modify('SKILL.md', '# v2\n')])
+    const temp = path.join(areaOf(fx0), `.tmp-${OP_ID}`)
+    let n = 0
+    const lines: string[] = []
+    const run = await runSpied(p, ALL_DELETES, {
+      stderr: (l) => lines.push(l),
+      hooks: {
+        afterBackupCopy: () => {
+          if (n++ === 0) fs.appendFileSync(path.join(temp, 'a.txt'), 'only in the temp\n')
+        },
+      },
+    })
+    const r = committedOf(run.result)
+    assertMovedAndParked(fx0, p, r, lines)
+    // The source still hashes to its sidecar's treeHash: computing it would say true.
+    expect(hashOf(path.join(areaOf(fx0), OP_ID))).toBe(p.input.preTree)
+    const kept = partials(areaOf(fx0))
+    expect(kept).toHaveLength(1)
+    expect(sidecarOf(kept[0]!)).toMatchObject({ kind: 'partial-copy', sourceUnchanged: false })
   })
 })

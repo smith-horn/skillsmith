@@ -319,7 +319,8 @@ describe('the sidecar never replaces a file', () => {
 })
 
 describe('no result names a removed record', () => {
-  it('step 13 stopping after record.json was unlinked: incomplete cleanup, no recordPath', async () => {
+  // Round 1 (governance): after the record unlink a stop is removal-not-done, not `incomplete`.
+  it('step 13 stopping after record.json was unlinked: removal-not-done kept/op-not-empty, no recordPath', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     const record = path.join(fx.opDir, 'record.json')
@@ -333,10 +334,17 @@ describe('no result names a removed record', () => {
       },
     })
     expect(fs.existsSync(record)).toBe(false)
-    expect(result).toMatchObject({
-      status: 'committed',
-      incomplete: { step: 'cleanup', reason: 'op-not-empty' },
-    })
+    expect(result.status).toBe('committed')
+    if (result.status !== 'committed') return
+    expect(result.incomplete).toBeUndefined()
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'removal-not-done',
+        path: fx.opDir,
+        status: 'kept',
+        reason: 'op-not-empty',
+      })
+    )
     expect(result).not.toHaveProperty('recordPath')
   })
 })

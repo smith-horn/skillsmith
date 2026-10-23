@@ -50,7 +50,7 @@ const CALLERS = {
     rows: '2',
     kind: 'move-source',
     internalOrigin: ({ destPath, backupPath, safe }) =>
-      `A write may have landed in the old folder while it was being backed up. The backup at ` +
+      `A write may have landed in the folder while it was being copied. The copy at ` +
       `${shq(String(backupPath))} may not have it; the extra copy ` +
       `${safe ? 'is' : 'was reported'} at ${shq(destPath)}.`,
   },
@@ -111,7 +111,7 @@ export function checkCaller(caller: unknown, kind: string, backupPath: unknown):
   if (caller === 'move-source') {
     if (typeof backupPath !== 'string' || !path.isAbsolute(backupPath)) {
       throw new TypeError(
-        'parkTree: caller move-source requires backupPath, the absolute path of the backup it made'
+        'parkTree: caller move-source requires backupPath, the absolute path of the verified copy it made (the backup, for an update)'
       )
     }
   } else if (backupPath !== undefined) {

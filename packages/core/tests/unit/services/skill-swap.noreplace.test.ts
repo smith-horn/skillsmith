@@ -77,7 +77,9 @@ describe('only files this run wrote are unlinked', () => {
     expect(hashOf(path.join(areaOf(fx), OP_ID))).toBe(p.input.preTree)
   })
 
-  it('owner.json replaced after the record unlink: incomplete cleanup, the replacement untouched, OP kept', async () => {
+  // Round 1 (governance): a stop after the record unlink is removal-not-done,
+  // not `incomplete` (no record is left for an incomplete result to name).
+  it('owner.json replaced after the record unlink: removal-not-done, the replacement untouched, OP kept', async () => {
     const fx = makeFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     const owner = path.join(fx.opDir, 'owner.json')
@@ -89,10 +91,18 @@ describe('only files this run wrote are unlinked', () => {
       },
     })
     expect(fs.readFileSync(owner, 'utf8')).toBe('planted owner\n')
-    expect(result).toMatchObject({
-      status: 'committed',
-      incomplete: { step: 'cleanup', reason: 'staging-unsafe' },
-    })
+    expect(result.status).toBe('committed')
+    if (result.status !== 'committed') return
+    expect(result.incomplete).toBeUndefined()
+    expect(result).not.toHaveProperty('recordPath')
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'removal-not-done',
+        path: fx.opDir,
+        status: 'stopped',
+        reason: 'staging-unsafe',
+      })
+    )
     expect(fs.readdirSync(fx.opDir)).toEqual(['owner.json'])
     expect(hashOf(path.join(areaOf(fx), OP_ID))).toBe(p.input.preTree)
   })

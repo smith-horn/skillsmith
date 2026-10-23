@@ -115,7 +115,7 @@ describe('the undo across devices: the undone tree is copied, and OP parked with
     expect(contentOf(kept)).toEqual(contentOf(path.join(copies[0]!, 'undone')))
     expect(fs.existsSync(fx.opDir)).toBe(false)
     expect(lines).toEqual([
-      `Undo complete: kept copy at ${kept}; an extra copy of undone from ${fx.opDir} was moved aside at ${copies[0]}.`,
+      `Undo complete: kept copy at ${kept}; an extra copy of the undone folder was moved aside at ${copies[0]}.`,
     ])
     expect(treeDeletesX(fx, run.events)).toEqual([])
   })

@@ -76,6 +76,13 @@ if (cfg.abortAt === 'build') {
     throw new Error('forced build failure')
   })
 }
+// SMI-6531 step 4c round 1: `editAfterSidecar` edits the old folder once its
+// backup sidecar is published, so the cross-device copy rewrites the sidecar.
+if (cfg.editAfterSidecar) {
+  on('afterSidecar', () =>
+    appendFileSync(join(opDir, 'old', 'a.txt'), 'edited after the sidecar\n')
+  )
+}
 if (cfg.editN) {
   on('afterBuild', () => appendFileSync(join(opDir, 'new', 'a.txt'), 'edited in N\n'))
 }

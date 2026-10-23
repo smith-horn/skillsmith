@@ -6,7 +6,9 @@
  * is forced at the copy's file creates (`fs.promises.open` under the copy
  * temp), at the backup sidecar's temp, and at the parked sidecar
  * (`fs.writeFileSync`); the space check's `statfs` is stubbed to report too
- * little room. Each stub hits only its own path and records that it fired, so
+ * little room, and for the ratchet test a whole device is simulated (`statfs`
+ * shrinks by what the area allocates, and a create that would not fit fails
+ * `ENOSPC`). Each stub hits only its own path and records that it fired, so
  * a test that never reached it fails rather than passing on a run the stub
  * never touched.
  *
@@ -137,24 +139,63 @@ describe('T-F1: ENOSPC during the cross-device copy', () => {
   })
 })
 
-/** `statfs` of the backup area reporting `free` bytes; returns how often it was asked. */
-function tooLittleSpace(fx: Fixture, free: bigint): { asked: number } {
+describe('T-F1: ENOSPC at the partial copy own sidecar', () => {
+  it('leaves the temp at its name, says so, and stops write-failed: nothing removed', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const hit = enospcAtCopy(fx)
+    const side = path.join(areaOf(fx), `${OP_ID}.partial-copy.json.tmp`)
+    let fired = 0
+    stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
+      if (a[0] === side) {
+        fired++
+        throw errnoError('ENOSPC')
+      }
+      return orig(...a)
+    })
+    const run = await runSpied(p, ALL_DELETES)
+    expect(hit.fired).toBe(1)
+    expect(fired).toBe(1)
+    const r = committedOf(run.result)
+    assertStoppedAtPublish(fx, p.input.preTree, r, 'write-failed')
+    const temp = path.join(areaOf(fx), `.tmp-${OP_ID}`)
+    expect(r.incomplete?.detail).toContain(`the partial copy is left at ${temp}`)
+    expect(partials(areaOf(fx))).toEqual([])
+    expect(Object.keys(contentOf(temp)).length).toBeGreaterThan(0)
+    expect(treeDeletesX(fx, run.events)).toEqual([])
+  })
+})
+
+const BLOCK = 4096n
+
+/** `statfs` of the backup area with `bsize` 4096, `free` bytes and `ffree` inodes; counts the calls. */
+function stubStatfs(
+  fx: Fixture,
+  free: bigint,
+  inodes: { files: bigint; ffree: bigint } = { files: 1_000_000n, ffree: 1_000_000n }
+): { asked: number } {
   const hit = { asked: 0 }
   stub(fs.promises, 'statfs', (orig) => async (...a: unknown[]) => {
     const s = (await orig(...a)) as fs.BigIntStatsFs
     if (a[0] !== areaOf(fx)) return s
     hit.asked++
-    return { ...s, bsize: 1n, bavail: free }
+    return { ...s, bsize: BLOCK, bavail: free / BLOCK, ...inodes }
   })
   return hit
 }
 
-describe('T-F1: the space check', () => {
+/**
+ * FILES allocates, by the plan-review rule written out here independently of
+ * the code: 4 files at one 4096-byte block each, 2 directories (the root and
+ * `sub`) at one block each, 2 blocks for sidecars, plus 64 KiB.
+ */
+const FILES_NEED = (4n + 2n + 2n) * BLOCK + 65536n
+
+describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
   it('refuses state-root-full naming doctor backups --prune, before any copy temp exists', async () => {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    // 64 bytes free: far below the tree's bytes plus 64 KiB.
-    const hit = tooLittleSpace(fx, 64n)
+    const hit = stubStatfs(fx, 16n * BLOCK)
     const run = await runSpied(p, ALL_DELETES)
     expect(hit.asked).toBe(1)
     const r = committedOf(run.result)
@@ -164,41 +205,155 @@ describe('T-F1: the space check', () => {
     expect(treeDeletesX(fx, run.events)).toEqual([])
   })
 
-  it('passes at exactly the tree bytes plus 64 KiB', async () => {
+  it('passes at exactly the block-rounded need', async () => {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    const bytes = BigInt(Object.values(FILES).reduce((n, t) => n + Buffer.byteLength(t), 0))
-    const hit = tooLittleSpace(fx, bytes + 65536n)
+    const hit = stubStatfs(fx, FILES_NEED)
     const run = await runSpied(p, ALL_DELETES)
     expect(hit.asked).toBe(1)
     expect(committedOf(run.result).incomplete).toBeUndefined()
   })
 
-  it('one byte less refuses: the boundary is the plan margin, not a looser one', async () => {
+  it('one block less refuses', async () => {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    const bytes = BigInt(Object.values(FILES).reduce((n, t) => n + Buffer.byteLength(t), 0))
-    tooLittleSpace(fx, bytes + 65535n)
+    stubStatfs(fx, FILES_NEED - BLOCK)
     const run = await runSpied(p, ALL_DELETES)
     expect(committedOf(run.result).incomplete?.reason).toBe('state-root-full')
   })
 
-  it('no ratchet: three attempts on too little space keep the partial-copy count and the tree bytes the same', async () => {
+  it('many small files: free space above the logical bytes but below the blocks they allocate is refused', async () => {
+    const files: Record<string, string> = { 'SKILL.md': '#\n' }
+    for (let i = 0; i < 199; i++) files[`d${i % 4}/f${i}`] = 'x'
+    const fx = xdevFixture(files)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const logical = 200n + 65536n
+    const blocks = (200n + 5n + 2n) * BLOCK + 65536n
+    const free = 200n * BLOCK
+    expect(free > logical && free < blocks).toBe(true)
+    stubStatfs(fx, free)
+    const run = await runSpied(p, ALL_DELETES)
+    const r = committedOf(run.result)
+    assertStoppedAtPublish(fx, p.input.preTree, r, 'state-root-full')
+    expect(r.incomplete?.detail).toContain('200 files and links, 5 directories')
+    expect(areaNames(areaOf(fx)).filter((n) => n.startsWith('.tmp-'))).toEqual([])
+  })
+
+  it('inodes short: refuses state-root-full though the bytes suffice', async () => {
     const fx = xdevFixture(FILES)
-    tooLittleSpace(fx, 1024n)
-    const counts: number[] = []
-    const trees: string[][] = []
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    stubStatfs(fx, FILES_NEED * 10n, { files: 1000n, ffree: 5n })
+    const run = await runSpied(p, ALL_DELETES)
+    const r = committedOf(run.result)
+    assertStoppedAtPublish(fx, p.input.preTree, r, 'state-root-full')
+    expect(r.incomplete?.detail).toMatch(/has 5 inodes free and the backup of .* needs \d+/)
+  })
+
+  it('a filesystem reporting no inode table (files 0) skips only the inode check', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    stubStatfs(fx, FILES_NEED, { files: 0n, ffree: 0n })
+    const run = await runSpied(p, ALL_DELETES)
+    expect(committedOf(run.result).incomplete).toBeUndefined()
+  })
+
+  it('a tree that cannot be measured stops write-failed, never sized at 0', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const bad = path.join(fx.opDir, 'new', 'a.txt')
+    let fired = 0
+    stub(fs, 'lstatSync', (orig) => (...a: unknown[]) => {
+      if (a[0] === bad) {
+        fired++
+        throw errnoError('EIO')
+      }
+      return orig(...a)
+    })
+    // A failed build is kept even when it cannot be hashed: its record is null,
+    // so the space check must walk it, and the walk fails.
+    const run = await runSpied(p, ALL_DELETES, {
+      hooks: {
+        afterCopy: () => {
+          throw new Error('forced build failure')
+        },
+      },
+    })
+    expect(fired).toBeGreaterThan(0)
+    expect(run.result.status).toBe('refused')
+    if (run.result.status !== 'refused') return
+    expect(run.result.staged).toBe('left')
+    expect(run.result.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'removal-not-done',
+        status: 'stopped',
+        reason: 'write-failed',
+      })
+    )
+    const w = run.result.warnings.find((x) => x.code === 'removal-not-done')
+    expect(w && 'detail' in w ? w.detail : '').toContain(
+      'could not be measured for the space check'
+    )
+    expect(areaNames(areaOf(fx)).filter((n) => n.startsWith('.tmp-'))).toEqual([])
+  })
+})
+
+/**
+ * A simulated device of `size` bytes under the backup area: `statfs` reports
+ * what is left after the blocks the area's entries allocate (each file and
+ * directory rounded up to a block), and any file create under the area that
+ * would not fit fails `ENOSPC`. So every attempt consumes what it writes.
+ */
+function simulatedDevice(fx: Fixture, size: bigint): void {
+  const area = areaOf(fx)
+  const used = (): bigint => {
+    let n = 0n
+    const walk = (p: string): void => {
+      for (const name of fs.readdirSync(p)) {
+        const c = path.join(p, name)
+        const s = fs.lstatSync(c)
+        if (s.isDirectory()) {
+          n += BLOCK
+          walk(c)
+        } else {
+          const b = (BigInt(s.size) + BLOCK - 1n) / BLOCK
+          n += (b > 0n ? b : 1n) * BLOCK
+        }
+      }
+    }
+    if (fs.existsSync(area)) walk(area)
+    return n
+  }
+  stub(fs.promises, 'statfs', (orig) => async (...a: unknown[]) => {
+    const s = (await orig(...a)) as fs.BigIntStatsFs
+    if (a[0] !== area) return s
+    const left = size > used() ? size - used() : 0n
+    return { ...s, bsize: BLOCK, bavail: left / BLOCK, files: 1_000_000n, ffree: 1_000_000n }
+  })
+  stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
+    const creates = (Number(a[1]) & fs.constants.O_CREAT) !== 0
+    if (creates && String(a[0]).startsWith(`${area}/`) && used() + BLOCK > size) {
+      throw errnoError('ENOSPC')
+    }
+    return orig(...a)
+  })
+}
+
+describe('T-F1: no ratchet', () => {
+  it('on a simulated full device, three refused attempts add no partial copy and no temp', async () => {
+    const files: Record<string, string> = { 'SKILL.md': '# v1\n' }
+    for (let i = 0; i < 24; i++) files[`d${i % 3}/f${i}.txt`] = `file ${i}\n`
+    const fx = xdevFixture(files)
+    // Room for the three attempts' sidecars, far less than one copy.
+    simulatedDevice(fx, 10n * BLOCK)
+    const kept: number[] = []
     for (const [i, version] of ['# v2\n', '# v3\n', '# v4\n'].entries()) {
       const p = plan(fx, [modify('SKILL.md', version)])
-      const opId = String(i + 1).repeat(32)
-      const run = await runSpied(p, ALL_DELETES, { opId })
+      const run = await runSpied(p, ALL_DELETES, { opId: String(i + 1).repeat(32) })
       expect(committedOf(run.result).incomplete?.reason).toBe('state-root-full')
-      counts.push(partials(areaOf(fx)).length)
-      // Only sidecars are written: no tree (partial or temp) enters the area.
-      trees.push(areaNames(areaOf(fx)).filter((n) => !n.endsWith('.json')))
+      const names = areaNames(areaOf(fx))
+      kept.push(names.filter((n) => n.startsWith('.tmp-') || n.includes('.partial-copy')).length)
     }
-    expect(counts).toEqual([0, 0, 0])
-    expect(trees).toEqual([[], [], []])
+    expect(kept).toEqual([0, 0, 0])
   })
 })
 

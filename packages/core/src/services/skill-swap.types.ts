@@ -89,6 +89,8 @@ export type SwapHookPoint =
   | 'afterBackupVerify'
   /** Cross-device: after the verified temp is renamed to `dest` and the area synced. */
   | 'afterBackupMove'
+  /** A sidecar rewrite: after the old sidecar's unlink, before the replacement's link. */
+  | 'afterSidecarUnlink'
   /** Abort cleanup (4b): after its first `check` under lock 1. */
   | 'abortAfterCheck'
   /** Abort cleanup: after N is hashed and compared with `postTree`, before a keep or any unlink. */
@@ -105,6 +107,8 @@ export type SwapHookPoint =
   | 'beforePark'
   /** The park of OP: after the park call returned (its index line appended), before lock 1 is released. */
   | 'afterPark'
+  /** The park of OP: after the moved tree's directory, `.skillsmith-parked` and ST were synced. */
+  | 'afterParkSync'
   /** After a step-2 `busy`: the second wait has announced itself and is about to poll. */
   | 'secondWaitStart'
 

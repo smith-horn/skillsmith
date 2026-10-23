@@ -382,8 +382,9 @@ function newState(
 }
 
 /**
- * Updates one skill folder in place on one device (plan §3.3). Never throws
- * for an expected outcome; see `SwapResult`.
+ * Updates one skill folder in place (plan §3.3): on one device the backup is
+ * a rename, across devices a verified copy whose source is parked with OP.
+ * Never throws for an expected outcome; see `SwapResult`.
  */
 export async function swapInPlace(
   input: SwapInput,

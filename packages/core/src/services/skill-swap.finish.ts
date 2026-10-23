@@ -6,7 +6,7 @@
  * **One device** (`st.moveSources` empty): every tree left OP through
  * `publishTree`'s rename, so OP holds only its metadata. Unlink `record.json`
  * (sync OP), unlink `owner.json`, `rmdir` OP (sync ST). OP holding anything
- * else stops first, with nothing removed (`op-not-empty`).
+ * else stops first, with nothing removed (`op-not-empty`, the record kept).
  *
  * **Across devices**: each verified source is still in OP. `check`; OP must
  * hold exactly those sources and this run's `record.json` and `owner.json`,
@@ -21,14 +21,17 @@
  *     `move-source`, `backupPath` the first source's verified copy, which for
  *     an update is the backup).
  *
- * The move is complete before any of this, so from step 2 on nothing is an
- * `incomplete` stop: a park that ends `parked` reports both copies (UD29) and
- * prints them on one line; any other ending (`kept`, `held`, `stopped`, or a
- * stop before the park) adds a `removal-not-done` warning naming OP, the status
- * and reason (and, for `held`, the parked path) and prints one line naming
- * `skillsmith doctor recovery --clean-staging <opId>`, never `skillsmith
- * restore`: the origin is an op dir. OP then holds the sources and a verifying
- * intent, with no record or owner.
+ * **Either way, once `record.json` is unlinked nothing is an `incomplete`
+ * stop** (governance round 1): the backup is complete and no record is left
+ * to name. A park that ends `parked` reports both copies (UD29) and prints them
+ * on one line. Any other ending, on either device (`kept`, `held`, `stopped`,
+ * or any failure after the unlink: a sync, the owner unlink, the `rmdir`, the
+ * entry checks) adds a `removal-not-done` warning naming OP, the status and
+ * reason (and, for `held`, the parked path) and prints one line; for `kept` and
+ * `stopped` that line names `skillsmith doctor recovery --clean-staging
+ * <opId>`. Never `skillsmith restore`: the origin is an op dir. Across devices
+ * OP then holds the sources and a verifying intent, with no record (and an
+ * owner only if its unlink is what failed).
  *
  * @module @skillsmith/core/services/skill-swap.finish
  */
@@ -52,7 +55,13 @@ import type { SwapState } from './skill-swap.ops.js'
 import { opDiffers, parkOpFromStaging, say } from './skill-swap.park-op.js'
 import type { NotDone, ParkOpOutcome } from './skill-swap.park-op.js'
 import { cleanStagingHint } from './skill-swap.staging.js'
-import { OLD_DIR, OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
+import {
+  OLD_DIR,
+  OWNER_FILE,
+  PARK_INTENT_FILE,
+  RECORD_FILE,
+  UNDONE_DIR,
+} from './skill-swap.types.js'
 
 /** What step 13 adds to the result: the parked op dir, when the park finished. */
 export interface Finish {
@@ -61,15 +70,12 @@ export interface Finish {
 
 /** Step 13. Throws a stop (`incomplete` cleanup) only while the record is still kept. */
 export async function finishOp(st: SwapState): Promise<Finish> {
-  if (st.moveSources.size === 0) {
-    await finishEmptyOp(st)
-    return {}
-  }
+  if (st.moveSources.size === 0) return finishEmptyOp(st)
   return finishMoveSources(st)
 }
 
 /** One device: OP holds only its metadata. */
-async function finishEmptyOp(st: SwapState): Promise<void> {
+async function finishEmptyOp(st: SwapState): Promise<Finish> {
   check(st)
   const meta = new Set([RECORD_FILE, OWNER_FILE])
   const extra = (await fs.promises.readdir(st.opDir)).filter((n) => !meta.has(n)).sort()
@@ -79,14 +85,49 @@ async function finishEmptyOp(st: SwapState): Promise<void> {
   const { record, owner } = opPaths(st)
   await unlinkOwned(st, record, 'staging-unsafe')
   st.recordRemoved = true
-  await syncDir(st, st.opDir)
-  await unlinkOwned(st, owner, 'staging-unsafe')
-  const left = await fs.promises.readdir(st.opDir)
-  if (left.length > 0) {
-    throw new SwapFault('op-not-empty', `${st.opDir} gained ${left.sort().join(', ')}`)
+  const n = await afterRecord(async () => {
+    await syncDir(st, st.opDir)
+    await hook(st, 'afterRecordUnlink')
+    await unlinkOwned(st, owner, 'staging-unsafe')
+    await hook(st, 'afterOwnerUnlink')
+    const left = await fs.promises.readdir(st.opDir)
+    if (left.length > 0) {
+      return {
+        status: 'kept',
+        reason: 'op-not-empty',
+        detail: `${st.opDir} gained ${left.sort().join(', ')}`,
+      }
+    }
+    await rmdirChecked(st, st.opDir)
+    await syncDir(st, st.binding.stagingDir)
+    return null
+  })
+  if (n !== null) notDoneLine(st, n, st.published?.dest ?? st.backupDest, 'its op dir')
+  return {}
+}
+
+/** Runs `fn` after the record unlink. Every failure there is a stop, reported as not done. */
+async function afterRecord(fn: () => Promise<NotDone | null>): Promise<NotDone | null> {
+  try {
+    return await fn()
+  } catch (err) {
+    rethrowLockOrder(err)
+    const reason =
+      err instanceof SwapFault ? err.reason : err instanceof SkillWriteStop ? err.code : 'stopped'
+    const detail =
+      err instanceof SwapFault
+        ? err.detail
+        : err instanceof SkillWriteStop
+          ? err.detail
+          : messageOf(err)
+    const code = (err as { cause?: { code?: unknown }; code?: unknown }).cause?.code
+    return {
+      status: 'stopped',
+      reason,
+      ...(typeof code === 'string' ? { errno: code } : {}),
+      detail,
+    }
   }
-  await rmdirChecked(st, st.opDir)
-  await syncDir(st, st.binding.stagingDir)
 }
 
 /** The sources in OP, by name, with the identities bound for their sidecars. */
@@ -117,11 +158,11 @@ async function finishMoveSources(st: SwapState): Promise<Finish> {
   await writeParkIntent(st, 'move-source')
   await unlinkOwned(st, p.record, 'staging-unsafe')
   st.recordRemoved = true
-  await syncDir(st, st.opDir)
-  await hook(st, 'afterRecordUnlink')
   const backupPath = [...st.moveSources.values()][0]!.dest
-  let outcome: ParkOpOutcome
-  try {
+  let outcome: ParkOpOutcome | null = null
+  const n = await afterRecord(async () => {
+    await syncDir(st, st.opDir)
+    await hook(st, 'afterRecordUnlink')
     await unlinkOwned(st, p.owner, 'staging-unsafe')
     await hook(st, 'afterOwnerUnlink')
     const expected = withOwned(st, sourcesExpected(st), [p.intent])
@@ -129,28 +170,16 @@ async function finishMoveSources(st: SwapState): Promise<Finish> {
       throw new SwapFault('staging-unsafe', 'the park needs its intent bound')
     }
     const differs = await opDiffers(st, expected)
-    outcome =
-      differs !== null
-        ? { status: 'not-done', notDone: differs }
-        : await parkOpFromStaging(st, {
-            caller: 'move-source',
-            kind: 'move-source',
-            backupPath,
-            expected,
-          })
-  } catch (err) {
-    rethrowLockOrder(err)
-    const reason =
-      err instanceof SwapFault ? err.reason : err instanceof SkillWriteStop ? err.code : 'stopped'
-    const detail =
-      err instanceof SwapFault
-        ? err.detail
-        : err instanceof SkillWriteStop
-          ? err.detail
-          : messageOf(err)
-    outcome = { status: 'not-done', notDone: { status: 'stopped', reason, detail } }
-  }
-  return report(st, outcome, backupPath)
+    if (differs !== null) return differs
+    outcome = await parkOpFromStaging(st, {
+      caller: 'move-source',
+      kind: 'move-source',
+      backupPath,
+      expected,
+    })
+    return null
+  })
+  return report(st, n === null ? outcome! : { status: 'not-done', notDone: n }, backupPath)
 }
 
 /** True for an update's step 13: the one source is the old folder, and its copy the backup. */
@@ -161,7 +190,9 @@ const isBackup = (st: SwapState): boolean =>
 const copyOf = (st: SwapState): string =>
   isBackup(st)
     ? 'the old folder'
-    : `${[...st.moveSources.keys()].sort().join(' and ')} from ${st.opDir}`
+    : st.moveSources.size === 1 && st.moveSources.has(UNDONE_DIR)
+      ? 'the undone folder'
+      : 'the kept folders'
 
 /** The result's `extraCopy`, or the `removal-not-done` warning, with one line either way. */
 function report(st: SwapState, o: ParkOpOutcome, backupPath: string): Finish {
@@ -174,18 +205,27 @@ function report(st: SwapState, o: ParkOpOutcome, backupPath: string): Finish {
     )
     return { extraCopy: o.parkedPath }
   }
-  const n: NotDone = o.notDone
+  notDoneLine(st, o.notDone, backupPath, `the extra copy of ${copyOf(st)}`)
+  return {}
+}
+
+/** The `removal-not-done` warning for OP and its one line, after the record unlink. */
+function notDoneLine(st: SwapState, n: NotDone, backupPath: string, what: string): void {
   st.warnings.push({ code: 'removal-not-done', path: st.opDir, ...n })
+  const label = st.published?.kind === 'backup' ? 'backup' : 'kept copy'
   const errno = n.errno === undefined ? '' : ` (${n.errno})`
-  const where = n.parkedPath === undefined ? '' : `; it is now at ${n.parkedPath}`
-  const next =
-    n.status === 'held'
-      ? 'it may have changed while it was set aside'
-      : `run \`${cleanStagingHint(st.opId)}\``
+  const status = `${n.status}/${n.reason}${errno}`
+  if (n.status === 'held') {
+    say(
+      st,
+      `The ${label} at ${backupPath} is complete; ${what} was moved aside to ${String(n.parkedPath)} ` +
+        `but is held there (${status}): it may have changed while it moved, so check it before relying on it.`
+    )
+    return
+  }
   say(
     st,
-    `The ${kept} at ${backupPath} is complete, but Skillsmith did not set aside ` +
-      `the extra copy of ${copyOf(st)} at ${st.opDir}: ${n.status}/${n.reason}${errno}${where}; ${next}.`
+    `The ${label} at ${backupPath} is complete, but Skillsmith did not set aside ${what}, ` +
+      `which stays at ${st.opDir} (${status}); run \`${cleanStagingHint(st.opId)}\`.`
   )
-  return {}
 }

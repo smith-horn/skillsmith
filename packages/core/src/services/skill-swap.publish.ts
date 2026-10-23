@@ -24,7 +24,9 @@
  * before that `rename` is replaced by it silently (`rename` over an empty
  * directory succeeds; over a non-empty one it fails `ENOTEMPTY`, which stops
  * the run). Nothing is lost but that empty directory. Node has no
- * `renameat2(RENAME_NOREPLACE)`.
+ * `renameat2(RENAME_NOREPLACE)`. The same residual applies to a cross-device
+ * copy temp kept as `partial-copy` (`skill-swap.xdev.ts`), whose rename within
+ * the area targets a name `destFor` found free.
  *
  * The backup area is `<stateRoot>/backups/update/<client>/<rootKey>/<dirName>/`
  * under the native realpath of the state root, so a symlinked state root

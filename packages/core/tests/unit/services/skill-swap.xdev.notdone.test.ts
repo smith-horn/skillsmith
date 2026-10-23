@@ -193,7 +193,9 @@ describe("T-X17 (move-source row): a park of OP that doesn't finish", () => {
       expect(intent.kind).toBe('move-source')
       // One stderr line naming OP, the status and reason, and the next step.
       expect(lines).toHaveLength(1)
-      expect(lines[0]).toContain(fx.opDir)
+      // kept/stopped name OP, where the copy stays; held names where it is now.
+      if (c.status !== 'held') expect(lines[0]).toContain(fx.opDir)
+      else expect(lines[0]).not.toContain('did not set aside')
       expect(lines[0]).toContain(dest)
       expect(lines[0]).toContain(`${c.status}/${c.reason}`)
       expect(lines[0]).not.toContain('skillsmith restore')

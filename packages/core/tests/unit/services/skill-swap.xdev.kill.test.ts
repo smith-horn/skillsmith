@@ -43,6 +43,7 @@ const FILES = { 'SKILL.md': '# v1\n', 'a.txt': 'a\n', 'sub/b.txt': 'b\n' }
 
 type State =
   | 'P0'
+  | 'P3, sidecar rewrite: temp only'
   | 'P1'
   | 'P2'
   | 'P3'
@@ -66,6 +67,11 @@ const POINTS: Point[] = [
   { name: 'mid-copy', cfg: { killMidCopy: true }, want: 'P2' },
   { name: 'copy synced', cfg: { killAt: 'afterBackupCopy' }, want: 'P3' },
   { name: 'copy verified', cfg: { killAt: 'afterBackupVerify' }, want: 'P3' },
+  {
+    name: 'sidecar rewrite, old sidecar unlinked',
+    cfg: { killAt: 'afterSidecarUnlink', editAfterSidecar: true },
+    want: 'P3, sidecar rewrite: temp only',
+  },
   { name: 'temp renamed to dest', cfg: { killAt: 'afterBackupMove' }, want: 'P4' },
   { name: 'intent durable', cfg: { killAt: 'afterIntent' }, want: 'intent, record and owner' },
   { name: 'record unlinked', cfg: { killAt: 'afterRecordUnlink' }, want: 'intent and owner' },
@@ -148,7 +154,18 @@ function classify(fx: Fixture, pre: string): State {
     return indexLines(fx).length === 1 ? 'parked' : 'parked, no index line'
   }
   expect(copies).toEqual([])
-  expect(hashOf(src)).toBe(pre)
+  if (has(`${sidecar}.tmp`) && has(temp) && !has(sidecar)) {
+    // The rewrite case edits the source after its sidecar: checked below.
+  } else expect(hashOf(src)).toBe(pre)
+  if (!has(sidecar) && has(temp)) {
+    // The rewrite's gap: the replacement only as its temp, the copy verified.
+    expect(has(dest)).toBe(false)
+    const tmp = JSON.parse(fs.readFileSync(`${sidecar}.tmp`, 'utf8'))
+    expect(hashOf(temp)).toBe(hashOf(src))
+    expect(tmp.treeHash).toBe(hashOf(src))
+    expect(tmp.treeHash).not.toBe(pre)
+    return 'P3, sidecar rewrite: temp only'
+  }
   if (!has(sidecar)) {
     expect(has(temp) || has(dest)).toBe(false)
     expect(has(`${sidecar}.tmp`)).toBe(true)
@@ -192,6 +209,8 @@ function treeDeletesIn(fx: Fixture, deletes: string[]): string[] {
       'park-intent.json.tmp',
     ].map((n) => path.join(fx.opDir, n)),
     path.join(area, `${OP_ID}.json.tmp`),
+    // A sidecar rewrite's verified unlink of this run's own old sidecar (metadata).
+    path.join(area, `${OP_ID}.json`),
   ])
   return deletes.filter(
     (d) =>
@@ -216,9 +235,15 @@ describe('T-X8 (swap half): a kill at each cross-device boundary', () => {
         expect(fs.readFileSync(path.join(k.fx.realDir, 'SKILL.md'), 'utf8')).toBe('# v2\n')
         // The record stays until the backup is complete (P4) and the intent is durable.
         const record = path.join(k.fx.opDir, 'record.json')
-        const recordDue = ['P0', 'P1', 'P2', 'P3', 'P4', 'intent, record and owner'].includes(
-          pt.want
-        )
+        const recordDue = [
+          'P0',
+          'P1',
+          'P2',
+          'P3',
+          'P3, sidecar rewrite: temp only',
+          'P4',
+          'intent, record and owner',
+        ].includes(pt.want)
         expect(has(record), pt.name).toBe(recordDue)
         if (recordDue) readRecord(record)
         expect(treeDeletesIn(k.fx, k.deletes), pt.name).toEqual([])

@@ -155,17 +155,26 @@ export async function writeSidecar(
 /**
  * Replaces this run's own `<dest>.json` with `body` (plan §3.3 `publishTree`
  * step 4, a source that changed after the sidecar was hashed): the new
- * sidecar's temp is written and synced first, then the old sidecar is
- * unlinked only once verified to be the file this run linked there, the temp
- * is linked at the final name (an entry planted there meanwhile is refused),
- * the temp unlinked, and the area synced. A kill between the old sidecar's
- * unlink and the link leaves the new sidecar only as `<dest>.json.tmp`.
+ * sidecar's temp is written and synced, and the area synced so the temp's
+ * entry is durable, before the old sidecar is unlinked (only once verified to
+ * be the file this run linked there); then the temp is linked at the final
+ * name (an entry planted there meanwhile is refused) and the area synced, so
+ * the new sidecar is durable before its temp goes; then the temp is unlinked
+ * and the area synced again. An unsynced change in one directory may reach
+ * disk without an earlier one (T-P5's model): without the first sync the old
+ * sidecar's removal could persist without the temp, and without the second
+ * the temp's removal could persist without the link. A kill, or a power loss,
+ * between the old sidecar's unlink and the link leaves the new sidecar as
+ * `<dest>.json.tmp` (hook `afterSidecarUnlink`), never neither.
  */
 export async function rewriteSidecar(st: SwapState, dest: string, body: Sidecar): Promise<void> {
   const tmp = `${dest}.json.tmp`
   await writeNewFile(st, tmp, bytesOf(body), 0o600)
+  await syncDir(st, st.areaPath)
   await unlinkOwned(st, `${dest}.json`, 'backup-unsafe')
+  await hook(st, 'afterSidecarUnlink')
   await linkSidecar(st, tmp, `${dest}.json`)
+  await syncDir(st, st.areaPath)
   await unlinkOwned(st, tmp, 'backup-unsafe')
   await syncDir(st, st.areaPath)
 }

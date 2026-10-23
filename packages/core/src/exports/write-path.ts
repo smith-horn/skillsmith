@@ -39,7 +39,7 @@ export {
   type CopyResult,
   type TreeHashResult,
 } from '../services/skill-tree.js'
-// SMI-6531 A1 step 4a: the in-place update transaction on one device (plan §3.3).
+// SMI-6531 A1 steps 4a-4c: the in-place update transaction, on one device and across devices (plan §3.3).
 export {
   computeRecordSha256,
   swapInPlace,

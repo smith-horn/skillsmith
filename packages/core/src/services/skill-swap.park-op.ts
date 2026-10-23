@@ -21,6 +21,18 @@
  * never retries: an outcome other than `parked` is the caller's to report as a
  * removal not done (UD32).
  *
+ * **The park made durable (round 1, caller side).** The ADR-166 park port
+ * creates `.skillsmith-parked/<opId>/` and renames OP into it, but syncs no
+ * directory. A later sync of ST would make OP's removal durable while the new
+ * parked-area entries could still be lost, taking with them the only copy of a
+ * write that landed in OP after a cross-device copy verified. So once the
+ * result says the tree moved (`parked` or `held`), this module syncs, in
+ * order, the directory the tree landed in, its parent (`.skillsmith-parked`),
+ * then ST, before it reports anything. A failed sync is not done: the tree has
+ * moved, so it is reported as `held` at its parked path, with reason
+ * `park-not-durable` (or, for a park already `held`, its own reason with the
+ * failure in the detail).
+ *
  * Residual (UD18's identical-serialization class, UD40): a byte-identical
  * swap of an expected entry made after the last entry check and before the
  * park's rename passes the guard hash, which covers bytes and modes but not
@@ -36,7 +48,7 @@ import type { ParkResult } from '../install/park-result.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { PARKED_INDEX_FILE } from '../install/parked-index.js'
-import { check, hook, trace } from './skill-swap.ops.js'
+import { check, hook, messageOf, syncDir, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { rootKeyOf } from './skill-swap.sidecar.js'
 import type { SwapWarning } from './skill-swap.types.js'
@@ -143,6 +155,9 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
   const moved = r.status === 'parked' || r.status === 'held'
   trace(st, { op: 'park', path: st.opDir, status: r.status, dest: moved ? r.path : null })
   await hook(st, 'afterPark')
+  const landed = String(r.status === 'held' ? (r.heldPath ?? r.path) : r.path)
+  const unsynced = moved ? await syncPark(st, landed) : null
+  await hook(st, 'afterParkSync')
   if (moved && (r.sidecarError !== undefined || r.indexError !== undefined)) {
     st.warnings.push({
       code: 'park-metadata-failed',
@@ -151,14 +166,27 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
       ...(r.indexError === undefined ? {} : { indexError: r.indexError }),
     })
   }
-  if (r.status === 'parked') return { status: 'parked', parkedPath: String(r.path) }
+  if (r.status === 'parked' && unsynced === null) return { status: 'parked', parkedPath: landed }
+  if (r.status === 'parked' && unsynced !== null) {
+    return {
+      status: 'held',
+      notDone: { status: 'held', reason: 'park-not-durable', parkedPath: landed, ...unsynced },
+    }
+  }
   const errno = r.errno === null ? {} : { errno: r.errno }
   const why = r.detail === null ? {} : { detail: r.detail }
   if (r.status === 'held') {
-    const parkedPath = String(r.heldPath ?? r.path)
+    const also = unsynced === null ? '' : `; its park could not be synced (${unsynced.detail})`
+    const detail = `${r.detail ?? `held at ${landed}`}${also}`
     return {
       status: 'held',
-      notDone: { status: 'held', reason: r.reason ?? 'held', parkedPath, ...errno, ...why },
+      notDone: {
+        status: 'held',
+        reason: r.reason ?? 'held',
+        parkedPath: landed,
+        ...errno,
+        ...(r.detail === null && also === '' ? {} : { detail }),
+      },
     }
   }
   // `kept` or `stopped` (`removed` is prune's, never a park's): OP stays.
@@ -168,4 +196,28 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
     ...errno,
     ...why,
   })
+}
+
+/**
+ * Syncs the parked copy's directory, `.skillsmith-parked`, then ST. Returns
+ * null when all three synced, else the first failure (the rest are not tried:
+ * a later sync must not make OP's removal durable before its new home is).
+ */
+async function syncPark(
+  st: SwapState,
+  landed: string
+): Promise<{ errno?: string; detail: string } | null> {
+  const opArea = path.dirname(landed)
+  for (const dir of [opArea, path.dirname(opArea), st.binding.stagingDir]) {
+    try {
+      await syncDir(st, dir)
+    } catch (err) {
+      const code = (err as { cause?: { code?: unknown } }).cause?.code
+      return {
+        ...(typeof code === 'string' ? { errno: code } : {}),
+        detail: `the park moved the tree to ${landed}, but ${dir} could not be synced (${messageOf(err)}), so the move may not survive a power loss`,
+      }
+    }
+  }
+  return null
 }

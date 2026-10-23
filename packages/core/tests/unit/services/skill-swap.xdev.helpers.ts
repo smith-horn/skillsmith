@@ -9,6 +9,7 @@
  * where they do not fails loudly instead of silently testing one device.
  */
 import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 import { afterEach, expect } from 'vitest'
 import { treeDeletes } from './skill-swap.abort.helpers.js'
@@ -87,4 +88,35 @@ export function errnoError(code: string): NodeJS.ErrnoException {
 export function treeDeletesX(fx: Fixture, events: Event[]): FsEvent[] {
   const sidecar = path.join(areaOf(fx), `${OP_ID}.json`)
   return treeDeletes(fx, events).filter((e) => e.path !== sidecar)
+}
+
+/**
+ * Makes the next directory sync `when()` allows, of a directory `match` accepts,
+ * fail with `code`: `syncDirectory` opens the directory through its named
+ * `fs/promises` import, so the stub is published to ESM with
+ * `syncBuiltinESMExports`. Restore with the returned function.
+ */
+export function failDirSync(
+  match: (dir: string) => boolean,
+  when: () => boolean = () => true,
+  code = 'EIO'
+): { fired: () => number; restore: () => void } {
+  const p = fs.promises as unknown as Record<string, (...a: unknown[]) => unknown>
+  const orig = p.open!
+  let fired = 0
+  p.open = (...a: unknown[]) => {
+    if (fired === 0 && a[1] === 'r' && match(String(a[0])) && when()) {
+      fired++
+      return Promise.reject(errnoError(code))
+    }
+    return orig.apply(fs.promises, a)
+  }
+  syncBuiltinESMExports()
+  return {
+    fired: () => fired,
+    restore: () => {
+      p.open = orig
+      syncBuiltinESMExports()
+    },
+  }
 }
