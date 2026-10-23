@@ -84,6 +84,13 @@ export interface SwapState {
    * kept (`skill-swap.abort.ts`).
    */
   published: { src: string; dest: string; kind: string } | null
+  /**
+   * Across devices (4c): every tree `publishTree` copied and verified, by its
+   * name in OP. The verified source stays in OP, which is then parked whole
+   * (UD28); `identity` is the source's as bound for its sidecar, `dest` the
+   * verified copy's path.
+   */
+  moveSources: Map<string, { identity: BoundIdentity; dest: string }>
   /** What `owner.json` says, once this run published it (the park intent copies it). */
   owner: { pid: number; host: string; uid: number } | null
   newIdentity: BoundIdentity | null

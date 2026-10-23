@@ -1,6 +1,6 @@
 /**
- * SMI-6531 (A1 steps 4a, 4b): `swapInPlace`, the in-place update transaction on
- * one device (A1 plan §3.3 steps 1-13, undo and `publishTree`; §3.1, §3.4-3.7).
+ * SMI-6531 (A1 steps 4a-4c): `swapInPlace`, the in-place update transaction
+ * (A1 plan §3.3 steps 1-13, undo and `publishTree`; §3.1, §3.4-3.7).
  *
  *  1. Outside any lock: bind R and ST, make OP, write `owner.json`, build
  *     `new/` (`skill-swap.staging.ts`).
@@ -15,8 +15,9 @@
  *     (`changed-since-plan`); (b) `check` and `newIdentity`, else `stopped`;
  *     (c) re-hash, warning `live-folder-changed`; (d) pre-commit check; (e) write.
  *  11. Journal append; a failure is `committed` with `incomplete: audit`.
- *  12. `publishTree(O, 'backup')`.
- *  13. Metadata unlinks and `rmdir OP`.
+ *  12. `publishTree(O, 'backup')`; across devices a verified copy, O left in OP.
+ *  13. Metadata unlinks and `rmdir OP`; across devices the park intent, the
+ *     unlinks and the park of OP (`skill-swap.finish.ts`, `extraCopy`).
  *
  * Results: `refused` before rename 1 (every abort once OP exists runs abort
  * cleanup, `skill-swap.abort.ts`, which removes nothing: it parks OP with an
@@ -31,7 +32,7 @@
  * Before step 1, `ensureSkillsRoot` makes an absent root and its missing
  * parents (UD22); a refusal there is `refused` / `root-unsafe`.
  *
- * Owned elsewhere: cross-device publish and step 13's park (step 4c).
+ * Owned elsewhere: the record scan (step 5) and doctor (step 6).
  *
  * @module @skillsmith/core/services/skill-swap
  */
@@ -60,13 +61,9 @@ import {
   trace,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import {
-  backupAreaPath,
-  assertBackupNameFree,
-  finishOp,
-  publishTree,
-  warnForeignChange,
-} from './skill-swap.publish.js'
+import { backupAreaPath, assertBackupNameFree, publishTree } from './skill-swap.publish.js'
+import { warnForeignChange } from './skill-swap.sidecar.js'
+import { finishOp } from './skill-swap.finish.js'
 import { abortUnderLock, describe, noneResult } from './skill-swap.abort.js'
 import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
 import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
@@ -106,7 +103,7 @@ const STOP_REASONS: ReadonlySet<string> = new Set<SwapStopReason>([
   'pre-commit-check-failed',
   'manifest-write-failed',
   'journal-append-failed',
-  'cross-device',
+  'state-root-full',
   'op-not-empty',
 ])
 
@@ -242,8 +239,8 @@ async function undoAndFinish(
   for (let i = st.warnings.length - 1; i >= 0; i--) {
     if (st.warnings[i]!.code === 'backup-holds-foreign-change') st.warnings.splice(i, 1)
   }
-  await finishOp(st)
-  return { status: 'undone', opId: st.opId, reason, keptAs, keptPath, warnings: st.warnings }
+  const r = { status: 'undone' as const, opId: st.opId, reason, keptAs, keptPath }
+  return { ...r, ...(await finishOp(st)), warnings: st.warnings }
 }
 
 /** Step 11's journal input. */
@@ -320,8 +317,8 @@ async function swapAndCommit(st: SwapState): Promise<SwapResult> {
   st.step = 'publish'
   st.backupDest = await publishTree(st, oldDir, 'backup')
   st.step = 'cleanup'
-  await finishOp(st)
-  return { status: 'committed', opId: st.opId, backupDest: st.backupDest, warnings: st.warnings }
+  const r = { status: 'committed' as const, opId: st.opId, backupDest: st.backupDest }
+  return { ...r, ...(await finishOp(st)), warnings: st.warnings }
 }
 
 /** Everything under lock 1 (steps 2-13). Never throws a `SkillWriteStop`. */
@@ -369,6 +366,7 @@ function newState(
     area: null,
     buildIdentity: null,
     published: null,
+    moveSources: new Map(),
     owner: null,
     newIdentity: null,
     postTree: null,

@@ -1,6 +1,8 @@
 /**
- * SMI-6531 (A1 step 4b): `park-intent.json`, written into OP before abort
- * cleanup unlinks `owner.json` (A1 plan §3.3 "Park intent", review round 1 F3).
+ * SMI-6531 (A1 steps 4b, 4c): `park-intent.json`, written into OP before abort
+ * cleanup (kind `abort-new`) or step 13 after a cross-device move (kind
+ * `move-source`) unlinks `owner.json` (A1 plan §3.3 "Park intent", review
+ * round 1 F3).
  *
  * Without it, a crash between the `owner.json` unlink and the park would leave
  * an op dir with no record and no owner, which doctor cannot tell apart from
@@ -22,10 +24,12 @@ import os from 'node:os'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { publishJson, recordIdentity } from './skill-swap.staging.js'
-import type { ParkIntent, RecordIdentity } from './skill-swap.types.js'
+import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.types.js'
+
+const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-source'])
 
 /** The intent this run writes: OP's identity as `createOp` bound it, and the owner it recorded. */
-export function parkIntentOf(st: SwapState): ParkIntent {
+export function parkIntentOf(st: SwapState, kind: ParkIntentKind = 'abort-new'): ParkIntent {
   if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
   // `owner.json` is written before anything else in OP; if this run never
   // published it, the owner is still this process.
@@ -39,13 +43,16 @@ export function parkIntentOf(st: SwapState): ParkIntent {
     opId: st.opId,
     owner: { pid: owner.pid, host: owner.host, uid: owner.uid },
     opIdentity: recordIdentity(st.op.identity),
-    kind: 'abort-new',
+    kind,
   }
 }
 
 /** Publishes `park-intent.json` durably. Kill points: `afterIntentTemp`, `afterIntent`. */
-export async function writeParkIntent(st: SwapState): Promise<void> {
-  await publishJson(st, opPaths(st).intent, parkIntentOf(st), 'afterIntentTemp')
+export async function writeParkIntent(
+  st: SwapState,
+  kind: ParkIntentKind = 'abort-new'
+): Promise<void> {
+  await publishJson(st, opPaths(st).intent, parkIntentOf(st, kind), 'afterIntentTemp')
   await hook(st, 'afterIntent')
 }
 
@@ -66,7 +73,8 @@ function isRecordIdentity(v: unknown): v is RecordIdentity {
 /**
  * True when `value` is a park intent for `opId` with `opIdentity` (the
  * acceptance doctor's `--clean-staging` applies, step 6). Exact keys, exact
- * types: anything else is refused, never repaired.
+ * types, and a kind of `abort-new` or `move-source` (the park doctor then
+ * finishes): anything else is refused, never repaired.
  */
 export function isParkIntentFor(
   value: unknown,
@@ -76,7 +84,7 @@ export function isParkIntentFor(
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const o = value as Record<string, unknown>
   if (Object.keys(o).sort().join(',') !== 'kind,opId,opIdentity,owner,schema') return false
-  if (o.schema !== 1 || o.opId !== opId || o.kind !== 'abort-new') return false
+  if (o.schema !== 1 || o.opId !== opId || !KINDS.has(o.kind)) return false
   const owner = o.owner as Record<string, unknown> | null
   if (owner === null || typeof owner !== 'object' || Array.isArray(owner)) return false
   if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false

@@ -79,23 +79,31 @@ export type SwapHookPoint =
   | 'beforeRecreate'
   /** In `publishTree`, after the name is chosen and the tree hashed, before the sidecar. */
   | 'beforeSidecar'
+  /** In `publishTree`, after the sidecar's temp is written and synced, before its link. */
+  | 'afterSidecarTemp'
   /** In `publishTree`, after the sidecar is published and the area synced, before the move. */
   | 'afterSidecar'
+  /** Cross-device (4c): after the copy temp is complete and synced, before either hash. */
+  | 'afterBackupCopy'
+  /** Cross-device: after the temp and the source hashed equal, before any sidecar rewrite. */
+  | 'afterBackupVerify'
+  /** Cross-device: after the verified temp is renamed to `dest` and the area synced. */
+  | 'afterBackupMove'
   /** Abort cleanup (4b): after its first `check` under lock 1. */
   | 'abortAfterCheck'
   /** Abort cleanup: after N is hashed and compared with `postTree`, before a keep or any unlink. */
   | 'abortAfterCompare'
-  /** Abort cleanup: after `record.json` is unlinked and OP synced. */
+  /** Abort cleanup and step 13: after `record.json` is unlinked and OP synced. */
   | 'afterRecordUnlink'
-  /** Abort cleanup: after the park intent's temp is written and synced, before its link. */
+  /** Abort cleanup and step 13: after the park intent's temp is written and synced, before its link. */
   | 'afterIntentTemp'
-  /** Abort cleanup: after `park-intent.json` is durable (linked, temp unlinked, OP synced). */
+  /** Abort cleanup and step 13: after `park-intent.json` is durable (linked, temp unlinked, OP synced). */
   | 'afterIntent'
-  /** Abort cleanup: after `owner.json` is unlinked. */
+  /** Abort cleanup and step 13: after `owner.json` is unlinked. */
   | 'afterOwnerUnlink'
-  /** Abort cleanup: after OP's guard hash and identity are bound, before the last `check` and the park. */
+  /** The park of OP: after its guard hash and identity are bound, before the last `check` and the park. */
   | 'beforePark'
-  /** Abort cleanup: after the park call returned (its index line appended), before lock 1 is released. */
+  /** The park of OP: after the park call returned (its index line appended), before lock 1 is released. */
   | 'afterPark'
   /** After a step-2 `busy`: the second wait has announced itself and is about to poll. */
   | 'secondWaitStart'
@@ -114,7 +122,11 @@ export type TraceOp =
   | { op: 'link'; path: string; dest: string }
   | { op: 'unlink'; path: string }
   | { op: 'rmdir'; path: string }
-  /** The no-follow copy of the live folder into `new/` (its own entries are not traced). */
+  /**
+   * A no-follow copy that completed (its own entries are not traced): the live
+   * folder into `new/`, or a cross-device source into its copy temp (4c), which
+   * copyTreeNoFollow has synced file by file and directory by directory.
+   */
   | { op: 'copy'; path: string; dest: string }
   /** `ManifestPort`'s `write()` returned. */
   | { op: 'manifest-write'; path: string }
@@ -126,7 +138,10 @@ export type TraceOp =
   | { op: 'check' }
   /** Abort cleanup step 3: N is the directory the build made (`buildIdentity`). */
   | { op: 'identity'; path: string }
-  /** Abort cleanup step 5: N hashed; `equal` is null when the hash failed. */
+  /**
+   * Abort cleanup step 5 (N hashed against `postTree`), or a cross-device copy
+   * temp hashed against its source (4c). `equal` is null when a hash failed.
+   */
   | { op: 'compare'; path: string; equal: boolean | null }
   /** Abort cleanup step 6: the clock gate ran and OP's guard hash and identity were bound. */
   | { op: 'guard'; path: string; hash: string }
@@ -140,6 +155,8 @@ export interface SwapOptions {
   hooks?: Partial<Record<SwapHookPoint, () => void | Promise<void>>>
   /** Called with each copied entry's relative path while step 1 copies (`afterEntry`). */
   duringCopy?: (rel: string) => void
+  /** Called with each copied entry's relative path while a cross-device publish copies (4c). */
+  duringBackupCopy?: (rel: string) => void
   trace?: (op: TraceOp) => void
   /** Lock 1's normal wait (default 30 s): step 2's, and a step-1 abort's (plan §3.2). */
   lockTimeoutMs?: number
@@ -149,7 +166,7 @@ export interface SwapOptions {
   secondWaitPollMs?: number
   /** Where the second wait's one line and a not-done park's one line go (default `process.stderr`). */
   stderr?: (line: string) => void
-  /** Replaces `parkTreeIndexed` for abort cleanup's park of OP (step 6). */
+  /** Replaces `parkTreeIndexed` for every park of OP (abort cleanup step 6, step 13 across devices). */
   park?: (parentAbs: string, name: string, options: ParkOptions) => Promise<ParkResult>
   /** Replaces `appendJournalRecord` (step 11). */
   appendJournal?: (input: JournalRecordInput) => Promise<unknown>
@@ -165,11 +182,12 @@ export type SwapWarning =
   /** A directory's bits differ from its parent's (`mkdirWithParentBits` warnings). */
   | { code: 'mode'; path: string; detail: string }
   /**
-   * UD32: abort cleanup did not set the staged copy aside. `path` is OP (or,
-   * for `held`, where it was); `status` is the park's (`kept`, `held`,
-   * `stopped`), or `kept`/`stopped` for a cleanup that stopped before the park
-   * (then `reason` is the stop's word, `busy` included). `parkedPath` only for
-   * `held`. Never names `skillsmith restore`: the origin is an op dir.
+   * UD32: abort cleanup did not set the staged copy aside, or step 13 did not
+   * set aside a cross-device move's source (4c). `path` is OP (or, for `held`,
+   * where it was); `status` is the park's (`kept`, `held`, `stopped`), or
+   * `kept`/`stopped` for a run that stopped before the park (then `reason` is
+   * the stop's word, `busy` included). `parkedPath` only for `held`. Never
+   * names `skillsmith restore`: the origin is an op dir.
    */
   | {
       code: 'removal-not-done'
@@ -204,8 +222,11 @@ export interface ParkIntent {
   owner: { pid: number; host: string; uid: number }
   /** OP's identity as `createOp` bound it; decimal strings. */
   opIdentity: RecordIdentity
-  kind: 'abort-new'
+  /** `abort-new` (abort cleanup) or `move-source` (step 13 after a cross-device move). */
+  kind: ParkIntentKind
 }
+
+export type ParkIntentKind = 'abort-new' | 'move-source'
 
 /** Why a transaction was refused before rename 1 (plan §3.3 words). */
 export type SwapRefuseReason =
@@ -228,7 +249,9 @@ export type SwapRefuseReason =
  * (step 10d), `manifest-write-failed` (10e), `journal-append-failed` (11: the
  * append rejected; its record may still be in the journal, since a failure
  * can follow the fsynced write),
- * `cross-device` (4c's seam), `op-not-empty` (13's park seam).
+ * `state-root-full` (4c: the backup area lacks the space for a cross-device
+ * copy; the detail names `skillsmith doctor backups --prune`), `op-not-empty`
+ * (13: OP holds an entry this run did not write).
  */
 export type SwapStopReason =
   | 'target-changed'
@@ -240,7 +263,7 @@ export type SwapStopReason =
   | 'pre-commit-check-failed'
   | 'manifest-write-failed'
   | 'journal-append-failed'
-  | 'cross-device'
+  | 'state-root-full'
   | 'op-not-empty'
 
 /** Left behind after a commit with the record kept (doctor finishes it). */
@@ -266,6 +289,12 @@ export type SwapResult =
       incomplete?: SwapIncomplete
       /** Present when the record was kept: `incomplete`, and step 13 had not yet removed it. */
       recordPath?: string
+      /**
+       * Across devices (4c, UD29): the parked op dir holding the move's verified
+       * source, a second copy of the old folder beside the backup. Absent when
+       * the park did not finish (then a `removal-not-done` warning names OP).
+       */
+      extraCopy?: string
       gitignoreHint?: string
     }
   | {
@@ -292,6 +321,8 @@ export type SwapResult =
       reason: 'target-changed' | 'changed-since-plan'
       keptAs: 'undone' | 'conflict'
       keptPath: string
+      /** Across devices: the parked op dir holding the kept trees' verified sources (4c). */
+      extraCopy?: string
       warnings: SwapWarning[]
       gitignoreHint?: string
     }
