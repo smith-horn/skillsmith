@@ -73,9 +73,13 @@ function replaceIntent(fx: Fixture, mode?: number): { ino: bigint } {
   const f = INTENT(fx)
   const bytes = fs.readFileSync(f)
   const want = mode ?? fs.statSync(f).mode & 0o7777
-  fs.unlinkSync(f)
-  fs.writeFileSync(f, bytes)
-  fs.chmodSync(f, want)
+  // Write the substitute while the original still exists, then rename it over the original, so
+  // the substitute cannot reuse the original's inode. An unlink-then-write did reuse it on CI's
+  // filesystem, which made "a different inode" an accident of the allocator.
+  const sub = path.join(path.dirname(fx.opDir), `.intent-substitute-${path.basename(fx.opDir)}`)
+  fs.writeFileSync(sub, bytes)
+  fs.chmodSync(sub, want)
+  fs.renameSync(sub, f)
   return { ino: fs.lstatSync(f, { bigint: true }).ino }
 }
 
