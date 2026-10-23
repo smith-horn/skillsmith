@@ -15,21 +15,19 @@
  *
  * Doctor running against these states is step 6's half.
  */
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { bindIdentity } from '../../../src/install/park-tree.identity.js'
 import { isParkIntentFor } from '../../../src/services/skill-swap.intent.js'
 import { recordIdentity } from '../../../src/services/skill-swap.staging.js'
 import { contentOf, indexLines, parkedOpArea } from './skill-swap.abort.helpers.js'
+import { CHILD_TEST_TIMEOUT_MS, spawnChild } from './skill-swap.child.helpers.js'
 import { areaOf, makeFixture, OP_ID, tmp, useTmpCleanup } from './skill-swap.helpers.js'
 import type { Fixture } from './skill-swap.helpers.js'
 
 useTmpCleanup()
 
-const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skill-swap.child.mjs')
 const FILES = { 'SKILL.md': '# v1\n', 'a.txt': 'a\n', 'sub/b.txt': 'b\n' }
 
 type Point =
@@ -50,6 +48,7 @@ interface Killed {
   fx: Fixture
   signal: NodeJS.Signals | null
   stdout: string
+  stderr: string
 }
 
 async function killAt(abortAt: string, point: Point, editN: boolean): Promise<Killed> {
@@ -68,13 +67,14 @@ async function killAt(abortAt: string, point: Point, editN: boolean): Promise<Ki
       writeSet: [{ rel: 'SKILL.md', kind: 'modify', text: '# v2\n' }],
     })
   )
-  const child = spawn(process.execPath, ['--import', 'tsx', childPath, 'kill', cfgPath])
-  let stdout = ''
-  child.stdout.on('data', (d) => (stdout += String(d)))
-  const signal = await new Promise<NodeJS.Signals | null>((res) =>
-    child.on('exit', (_c, s) => res(s))
-  )
-  return { fx, signal, stdout }
+  const child = spawnChild(['kill', cfgPath])
+  await child.exited
+  return {
+    fx,
+    signal: child.exit()?.signal ?? null,
+    stdout: child.stdout(),
+    stderr: child.stderr(),
+  }
 }
 
 /** N's expected bytes: the copy, the write set unless the build failed first, the edit. */
@@ -123,7 +123,7 @@ function noOrphanSidecar(fx: Fixture): void {
 /** The state doctor reads at `point` of a park-path abort. */
 function assertParkPathState(k: Killed, abortAt: string, point: Point): void {
   const { fx } = k
-  expect(k.signal).toBe('SIGKILL')
+  expect(k.signal, `child stderr: ${k.stderr}`).toBe('SIGKILL')
   expect(k.stdout).toBe('')
   const want = expectedN(abortAt, false)
   const copy = parkedCopyOrNull(fx)
@@ -166,20 +166,24 @@ describe('T-X14 (swap half): a kill at each point of a park-path cleanup leaves 
     'afterPark',
   ]
   for (const abortAt of ['step4', 'step6'] as const) {
-    it(`abort at ${abortAt}: every kill point`, async () => {
-      // `afterRecordUnlink` needs a record; at step 4 there is none, so the run passes it.
-      const points = POINTS.filter((p) => abortAt === 'step6' || p !== 'afterRecordUnlink')
-      const runs = await Promise.all(points.map((p) => killAt(abortAt, p, false)))
-      runs.forEach((k, i) => {
-        const point = points[i]!
-        try {
-          assertParkPathState(k, abortAt, point)
-          noOrphanSidecar(k.fx)
-        } catch (err) {
-          throw new Error(`kill at ${point}: ${(err as Error).message}`, { cause: err })
-        }
-      })
-    }, 60_000)
+    it(
+      `abort at ${abortAt}: every kill point`,
+      async () => {
+        // `afterRecordUnlink` needs a record; at step 4 there is none, so the run passes it.
+        const points = POINTS.filter((p) => abortAt === 'step6' || p !== 'afterRecordUnlink')
+        const runs = await Promise.all(points.map((p) => killAt(abortAt, p, false)))
+        runs.forEach((k, i) => {
+          const point = points[i]!
+          try {
+            assertParkPathState(k, abortAt, point)
+            noOrphanSidecar(k.fx)
+          } catch (err) {
+            throw new Error(`kill at ${point}: ${(err as Error).message}`, { cause: err })
+          }
+        })
+      },
+      CHILD_TEST_TIMEOUT_MS
+    )
   }
 })
 
@@ -194,26 +198,30 @@ describe('T-X14 (swap half): a kill during a keep leaves its sidecar with its tr
     ],
   ]
   for (const [abortAt, editN, kind, points] of cases) {
-    it(`${kind} (abort at ${abortAt}${editN ? ', N edited' : ''}): every kill point`, async () => {
-      const runs = await Promise.all(points.map((p) => killAt(abortAt, p, editN)))
-      runs.forEach((k, i) => {
-        const point = points[i]!
-        try {
-          expect(k.signal).toBe('SIGKILL')
-          const { fx } = k
-          const dest = path.join(areaOf(fx), `${OP_ID}.${kind}`)
-          const want = expectedN(abortAt, editN)
-          const moved = point === 'afterOwnerUnlink'
-          expect(contentOf(moved ? dest : OPF(fx, 'new'))).toEqual(want)
-          expect(has(`${dest}.json`)).toBe(point === 'afterSidecar' || moved)
-          // No intent: nothing is left in OP to park once N is kept.
-          expect(has(OPF(fx, 'park-intent.json'))).toBe(false)
-          expect(has(OPF(fx, 'owner.json'))).toBe(!moved)
-          noOrphanSidecar(fx)
-        } catch (err) {
-          throw new Error(`kill at ${point}: ${(err as Error).message}`, { cause: err })
-        }
-      })
-    }, 60_000)
+    it(
+      `${kind} (abort at ${abortAt}${editN ? ', N edited' : ''}): every kill point`,
+      async () => {
+        const runs = await Promise.all(points.map((p) => killAt(abortAt, p, editN)))
+        runs.forEach((k, i) => {
+          const point = points[i]!
+          try {
+            expect(k.signal, `child stderr: ${k.stderr}`).toBe('SIGKILL')
+            const { fx } = k
+            const dest = path.join(areaOf(fx), `${OP_ID}.${kind}`)
+            const want = expectedN(abortAt, editN)
+            const moved = point === 'afterOwnerUnlink'
+            expect(contentOf(moved ? dest : OPF(fx, 'new'))).toEqual(want)
+            expect(has(`${dest}.json`)).toBe(point === 'afterSidecar' || moved)
+            // No intent: nothing is left in OP to park once N is kept.
+            expect(has(OPF(fx, 'park-intent.json'))).toBe(false)
+            expect(has(OPF(fx, 'owner.json'))).toBe(!moved)
+            noOrphanSidecar(fx)
+          } catch (err) {
+            throw new Error(`kill at ${point}: ${(err as Error).message}`, { cause: err })
+          }
+        })
+      },
+      CHILD_TEST_TIMEOUT_MS
+    )
   }
 })

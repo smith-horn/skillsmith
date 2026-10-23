@@ -8,33 +8,47 @@
  *     after a step-2 `busy`); an abort at steps 3-6 already holds it.
  *  2. `check`. A failure stops with no mutation; OP and any record stay.
  *  3. N still has `buildIdentity` and is a directory. Otherwise OP stays.
- *  4. OP holds only N and the metadata this run wrote. Any other entry stops
- *     here, before anything is published or unlinked (`kept/op-not-empty`,
- *     like step 13), and OP stays for doctor.
+ *  4-6 below check OP with ONE rule (`opDiffers`): OP holds exactly an
+ *     expected set of names, each with the identity this run bound for it
+ *     (dev, ino, birthtime and file type). An entry not in the set ends
+ *     `left` with `kept/op-not-empty`; an expected entry missing, or present
+ *     with another identity, ends `left` with `kept/identity-changed`.
+ *  4. Before anything is published or unlinked, the set is N (with
+ *     `buildIdentity`, when the build made it) and every metadata file this
+ *     run created in OP and still holds (`st.owned`): `owner.json`, and
+ *     `record.json` and the temps only where this run created them.
  *  5. A failed build (no `postTree`): `check`, keep N as `failed-build`. A
  *     completed build: hash N; different is `edited-new`, unreadable
  *     `unrecorded-new` (`check`, then `publishTree`); equal stays to be parked.
  *  6. Metadata, then the park. Unlink `record.json` if this run published it
  *     (sync OP); if N is to be parked, write `park-intent.json` durably;
  *     unlink `record.json.tmp`, `owner.json.tmp` and `owner.json` where this
- *     run wrote them. Then OP's entries are checked again: to be parked, OP
- *     must hold exactly `new` and `park-intent.json`; otherwise it must be
- *     empty, and is `rmdir`ed (sync ST). Anything else ends `kept/op-not-empty`
- *     with nothing parked. To park: `check`, the clock gate with its probes
- *     in ST, OP's guard hash and identity (`gateAndBind`, the late-bound
- *     order), the entry check once more (an entry that arrived before the
- *     hash is in the hash, so it must be caught here; one that arrives after
- *     it fails the park's own guard recheck), `check`, and park OP from ST
- *     (`parkTreeIndexed(ST, opId, …)`, caller `abort-cleanup`, kind
- *     `abort-new`), landing at `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`.
+ *     run wrote them. Then, before the gate, the set is exactly `new`
+ *     (`buildIdentity`) and `park-intent.json` (its own binding), both present,
+ *     when N is to be parked; otherwise it is empty, and OP is `rmdir`ed (sync
+ *     ST). To park: `check`, the clock gate with its probes in ST, OP's guard
+ *     hash and identity (`gateAndBind`, the late-bound order), the same exact
+ *     set again (a change made before the hash is inside the hash, so it must
+ *     be caught here; a change made after the hash fails the park's own guard
+ *     recheck), `check`, and park OP from ST (`parkTreeIndexed(ST, opId, …)`,
+ *     caller `abort-cleanup`, kind `abort-new`), landing at
+ *     `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`.
  *  7. The report: `staged` is `parked` (with `parkedPath`), `kept` (with
  *     `keptAs`), `held` (with `parkedPath`), `left` (with `opDir` and the
  *     `--clean-staging` command; `keptAs` too when a keep finished and a later
  *     step stopped), or `none` when there was no OP or nothing in it. Every
- *     `left` and `held` adds a `removal-not-done` warning (UD32). One stderr
- *     line is written for each outcome from this module that is `left` or
- *     `held`, i.e. once lock 1 is held; a run left because lock 1 was never
- *     taken writes none here (the second wait wrote its own announcement).
+ *     `left` and `held` adds a `removal-not-done` warning (UD32). This module
+ *     writes one stderr line for each `left` or `held` outcome it produces,
+ *     all of them under lock 1. A run left because lock 1 was never taken
+ *     writes no line from this module; only the busy second wait announces
+ *     itself, once, before it polls (`skill-swap.abort.wait.ts`).
+ *
+ * Residual (UD18's identical-serialization class): a byte-identical swap of
+ * `new` (or of anything inside it) made after the last entry check and before
+ * the park's rename passes the park's guard hash, so the substitute is parked
+ * in N's place. It lands in the parked area whole and nothing is deleted; the
+ * original, wherever the swapper put it, is untouched. Node has no
+ * directory-handle rename that would close the window.
  *
  * Every unlink is `unlinkOwned` (the file this run wrote, verified) and every
  * mutation runs `check` first. The guard hash comes from `gateAndBind`, which
@@ -51,6 +65,7 @@ import { parkTreeIndexed } from '../install/park-call.js'
 import { gateAndBind } from '../install/park-clock-gate.js'
 import type { ParkResult } from '../install/park-result.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
+import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { S_IFDIR } from '../install/park-tree.perms.js'
 import { PARKED_INDEX_FILE } from '../install/parked-index.js'
 import { treeHashOf } from './skill-tree.js'
@@ -170,16 +185,47 @@ function ownedMeta(st: SwapState): string[] {
   return [p.owner, `${p.owner}.tmp`, `${p.record}.tmp`].filter((f) => st.owned.has(f))
 }
 
-/** Entries of OP outside `allowed`, sorted. */
-async function foreignIn(st: SwapState, allowed: ReadonlySet<string>): Promise<string[]> {
-  return (await fs.promises.readdir(st.opDir)).filter((n) => !allowed.has(n)).sort()
+/** What OP must hold at one point of cleanup: each name and the identity this run bound for it. */
+type Expected = ReadonlyMap<string, BoundIdentity>
+
+/**
+ * The one rule for OP's entries: OP holds exactly `expected`, each name with
+ * the identity this run bound for it (dev, ino, birthtime, file type). An
+ * entry not expected is `kept/op-not-empty`; an expected entry that is
+ * missing, or present with another identity, is `kept/identity-changed`.
+ * Returns null when OP is exactly as expected.
+ */
+async function opDiffers(st: SwapState, expected: Expected): Promise<NotDone | null> {
+  const names = (await fs.promises.readdir(st.opDir)).sort()
+  const extra = names.filter((n) => !expected.has(n))
+  if (extra.length > 0) {
+    return {
+      status: 'kept',
+      reason: 'op-not-empty',
+      detail: `${st.opDir} holds ${extra.join(', ')}, which this update did not write`,
+    }
+  }
+  for (const [name, id] of [...expected].sort(([a], [b]) => a.localeCompare(b))) {
+    const now = bindIdentity(path.join(st.opDir, name))
+    if (!now.ok || !sameIdentity(id, now)) {
+      return {
+        status: 'kept',
+        reason: 'identity-changed',
+        detail: now.ok
+          ? `${path.join(st.opDir, name)} is not the entry this update made`
+          : `${path.join(st.opDir, name)} is missing (${now.errno ?? 'unknown'})`,
+      }
+    }
+  }
+  return null
 }
 
-const opNotEmpty = (st: SwapState, foreign: string[]): NotDone => ({
-  status: 'kept',
-  reason: 'op-not-empty',
-  detail: `${st.opDir} holds ${foreign.join(', ')}, which this update did not write`,
-})
+/** Every file this run created directly in OP and still holds (`st.owned`), by name. */
+function ownedInOp(st: SwapState): Map<string, BoundIdentity> {
+  const out = new Map<string, BoundIdentity>()
+  for (const [p, id] of st.owned) if (path.dirname(p) === st.opDir) out.set(path.basename(p), id)
+  return out
+}
 
 /** Steps 2-7, holding lock 1. Never throws but a `LockOrderError`. */
 export async function runCleanup(
@@ -200,15 +246,11 @@ export async function runCleanup(
       if (notDone !== null) return leftWith(st, reason, detail, undefined, notDone)
       trace(st, { op: 'identity', path: newDir })
     }
-    // Step 4: anything in OP this run did not write stops all cleanup.
-    const p = opPaths(st)
-    const mine = new Set([
-      ...ownedMeta(st).map((f) => path.basename(f)),
-      ...(st.owned.has(p.record) ? [path.basename(p.record)] : []),
-      ...(built ? [NEW_DIR] : []),
-    ])
-    const foreign = await foreignIn(st, mine)
-    if (foreign.length > 0) return leftWith(st, reason, detail, undefined, opNotEmpty(st, foreign))
+    // Step 4: OP holds exactly N and the metadata this run created, or all cleanup stops.
+    const expected = ownedInOp(st)
+    if (built && st.buildIdentity !== null) expected.set(NEW_DIR, st.buildIdentity)
+    const differs = await opDiffers(st, expected)
+    if (differs !== null) return leftWith(st, reason, detail, undefined, differs)
     if (built) keptAs = await keepIfNeeded(st, newDir)
     return await metadataThenPark(st, reason, detail, keptAs, built && keptAs === undefined)
   } catch (err) {
@@ -295,10 +337,19 @@ async function metadataThenPark(
     await unlinkOwned(st, f, 'staging-unsafe')
     if (f === p.owner) await hook(st, 'afterOwnerUnlink')
   }
-  // Re-validate OP's entries: anything that arrived since step 4 stops here.
-  const allowed = new Set(parkN ? [NEW_DIR, PARK_INTENT_FILE] : [])
-  const foreign = await foreignIn(st, allowed)
-  if (foreign.length > 0) return leftWith(st, reason, detail, keptAs, opNotEmpty(st, foreign))
+  // Before the gate: to park, exactly N and the intent, each with its bound
+  // identity; otherwise OP is empty. Anything else stops here.
+  const expected = new Map<string, BoundIdentity>()
+  if (parkN) {
+    const intent = st.owned.get(p.intent)
+    if (st.buildIdentity === null || intent === undefined) {
+      throw new SwapFault('staging-unsafe', 'the park needs N and its intent bound')
+    }
+    expected.set(NEW_DIR, st.buildIdentity)
+    expected.set(PARK_INTENT_FILE, intent)
+  }
+  const differs = await opDiffers(st, expected)
+  if (differs !== null) return leftWith(st, reason, detail, keptAs, differs)
   if (!parkN) {
     await rmdirChecked(st, st.opDir)
     await syncDir(st, st.binding.stagingDir)
@@ -307,7 +358,7 @@ async function metadataThenPark(
       ...(keptAs === undefined ? {} : { keptAs }),
     })
   }
-  return parkOp(st, reason, detail, keptAs, allowed)
+  return parkOp(st, reason, detail, keptAs, expected)
 }
 
 /** Step 6's park of OP from ST, in the late-bound order. */
@@ -316,7 +367,7 @@ async function parkOp(
   reason: SwapRefuseReason,
   detail: string,
   keptAs: Kept,
-  allowed: ReadonlySet<string>
+  expected: Expected
 ): Promise<Refused> {
   const ST = st.binding.stagingDir
   const kept = keptAs === undefined ? {} : { keptAs }
@@ -335,9 +386,9 @@ async function parkOp(
   if (st.op === null || !sameIdentity(st.op.identity, g.expectIdentity)) {
     return left({ status: 'kept', reason: 'identity-changed', detail: `${st.opDir} changed` })
   }
-  // An entry that arrived before the hash is inside it: catch it here.
-  const foreign = await foreignIn(st, allowed)
-  if (foreign.length > 0) return left(opNotEmpty(st, foreign))
+  // A change made before the hash is inside it: the same exact set, checked again.
+  const differs = await opDiffers(st, expected)
+  if (differs !== null) return left(differs)
   trace(st, { op: 'guard', path: st.opDir, hash: g.guardHash })
   await hook(st, 'beforePark')
   checkTraced(st)
