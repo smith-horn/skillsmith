@@ -41,6 +41,39 @@ export interface ChildProc {
   waitForFile: (file: string, what: string, deadlineMs?: number) => Promise<void>
 }
 
+/**
+ * `fn` over `items` with at most `limit` running at once, results in input
+ * order. Each child compiles TypeScript at startup, so starting a dozen at
+ * once is a CPU burst that slows every other test file sharing the runner
+ * (SMI-6531: the scanner timing tests in the same CI job). After one call
+ * rejects, no further item is started; the rejection propagates.
+ */
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError(`mapLimit: limit must be a positive integer, got ${limit}`)
+  }
+  const out = new Array<R>(items.length)
+  let next = 0
+  let failed = false
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const i = next++
+      try {
+        out[i] = await fn(items[i]!)
+      } catch (err) {
+        failed = true
+        throw err
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
 /** Starts `node --import tsx skill-swap.child.mjs <args>`, capturing stdout, stderr and the exit. */
 export function spawnChild(args: string[], exe: string = process.execPath): ChildProc {
   const child = spawn(exe, ['--import', 'tsx', CHILD_PATH, ...args])

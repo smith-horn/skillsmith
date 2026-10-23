@@ -22,7 +22,7 @@ import { bindIdentity } from '../../../src/install/park-tree.identity.js'
 import { isParkIntentFor } from '../../../src/services/skill-swap.intent.js'
 import { recordIdentity } from '../../../src/services/skill-swap.staging.js'
 import { contentOf, indexLines, parkedOpArea } from './skill-swap.abort.helpers.js'
-import { CHILD_TEST_TIMEOUT_MS, spawnChild } from './skill-swap.child.helpers.js'
+import { CHILD_TEST_TIMEOUT_MS, mapLimit, spawnChild } from './skill-swap.child.helpers.js'
 import { areaOf, makeFixture, OP_ID, tmp, useTmpCleanup } from './skill-swap.helpers.js'
 import type { Fixture } from './skill-swap.helpers.js'
 
@@ -42,6 +42,8 @@ type Point =
   | 'parkRenameAfter'
   | 'parkSidecarAfter'
   | 'afterPark'
+/** Kill children run this many at a time: each compiles TypeScript at startup (CPU burst). */
+const KILL_CONCURRENCY = 2
 const FS_POINTS = new Set(['parkRenameBefore', 'parkRenameAfter', 'parkSidecarAfter'])
 
 interface Killed {
@@ -171,7 +173,7 @@ describe('T-X14 (swap half): a kill at each point of a park-path cleanup leaves 
       async () => {
         // `afterRecordUnlink` needs a record; at step 4 there is none, so the run passes it.
         const points = POINTS.filter((p) => abortAt === 'step6' || p !== 'afterRecordUnlink')
-        const runs = await Promise.all(points.map((p) => killAt(abortAt, p, false)))
+        const runs = await mapLimit(points, KILL_CONCURRENCY, (p) => killAt(abortAt, p, false))
         runs.forEach((k, i) => {
           const point = points[i]!
           try {
@@ -201,7 +203,7 @@ describe('T-X14 (swap half): a kill during a keep leaves its sidecar with its tr
     it(
       `${kind} (abort at ${abortAt}${editN ? ', N edited' : ''}): every kill point`,
       async () => {
-        const runs = await Promise.all(points.map((p) => killAt(abortAt, p, editN)))
+        const runs = await mapLimit(points, KILL_CONCURRENCY, (p) => killAt(abortAt, p, editN))
         runs.forEach((k, i) => {
           const point = points[i]!
           try {
