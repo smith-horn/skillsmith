@@ -42,23 +42,34 @@ export interface ChildProc {
 }
 
 /** Starts `node --import tsx skill-swap.child.mjs <args>`, capturing stdout, stderr and the exit. */
-export function spawnChild(args: string[]): ChildProc {
-  const child = spawn(process.execPath, ['--import', 'tsx', CHILD_PATH, ...args])
+export function spawnChild(args: string[], exe: string = process.execPath): ChildProc {
+  const child = spawn(exe, ['--import', 'tsx', CHILD_PATH, ...args])
+  let spawnError: Error | null = null
   let out = ''
   let err = ''
   let ended: { code: number | null; signal: NodeJS.Signals | null } | null = null
   child.stdout.on('data', (d) => (out += String(d)))
   child.stderr.on('data', (d) => (err += String(d)))
-  const exited = new Promise<void>((res) =>
+  const exited = new Promise<void>((res) => {
     child.on('exit', (code, signal) => {
       ended = { code, signal }
       res()
     })
-  )
+    // A spawn that fails (a missing executable) emits `error` and never `exit`.
+    child.on('error', (e) => {
+      spawnError = e
+      res()
+    })
+  })
   const waitForFile = async (file: string, what: string, deadlineMs = CHILD_READY_MS) => {
     const deadline = Date.now() + deadlineMs
     for (;;) {
       if (fs.existsSync(file)) return
+      if (spawnError !== null) {
+        throw new Error(
+          `child could not be spawned before ${what}: ${(spawnError as Error).message}`
+        )
+      }
       if (ended !== null) {
         const e: { code: number | null; signal: NodeJS.Signals | null } = ended
         throw new Error(

@@ -64,6 +64,21 @@ function swapNewForCopy(fx: Fixture): { aside: string; ino: bigint } {
   return { aside, ino: fs.lstatSync(N(fx), { bigint: true }).ino }
 }
 
+/**
+ * `park-intent.json` replaced by a new inode holding the same bytes. `mode`
+ * defaults to the original's: the tree hash includes each file's mode, so only
+ * a same-mode replacement is invisible to the park's guard hash.
+ */
+function replaceIntent(fx: Fixture, mode?: number): { ino: bigint } {
+  const f = INTENT(fx)
+  const bytes = fs.readFileSync(f)
+  const want = mode ?? fs.statSync(f).mode & 0o7777
+  fs.unlinkSync(f)
+  fs.writeFileSync(f, bytes)
+  fs.chmodSync(f, want)
+  return { ino: fs.lstatSync(f, { bigint: true }).ino }
+}
+
 const identityChanged = (fx: Fixture) =>
   expect.objectContaining({
     code: 'removal-not-done',
@@ -163,6 +178,56 @@ describe('the residual UD18 accepts (identical-serialization class)', () => {
     // The original is untouched wherever the swapper put it.
     expect(fs.lstatSync(swap!.aside, { bigint: true }).ino).toBe(run.built.ino)
     expect(contentOf(swap!.aside)).toEqual(run.built.content)
+  })
+})
+
+describe('park-intent.json: the same one rule, and the same accepted residual', () => {
+  it('same bytes and mode, new inode, before the gate: left, kept/identity-changed, nothing parked', async () => {
+    let sub: { ino: bigint } | null = null
+    const run = await abortRun((fx) => ({
+      afterOwnerUnlink: () => void (sub = replaceIntent(fx)),
+    }))
+    expect(sub).not.toBeNull()
+    const r = refusedOf(run.result)
+    expect(r.staged).toBe('left')
+    expect(r.warnings).toContainEqual(identityChanged(run.fx))
+    expect(fs.existsSync(parkedOpArea(run.fx))).toBe(false)
+    expect(fs.lstatSync(INTENT(run.fx), { bigint: true }).ino).toBe(sub!.ino)
+  })
+
+  it("pins UD40's accepted residual: the same swap at beforePark, after the last check, is parked", async () => {
+    let sub: { ino: bigint } | null = null
+    let before: bigint | null = null
+    const run = await abortRun((fx) => ({
+      beforePark: () => {
+        before = fs.lstatSync(INTENT(fx), { bigint: true }).ino
+        sub = replaceIntent(fx)
+      },
+    }))
+    expect(sub).not.toBeNull()
+    const r = refusedOf(run.result)
+    const copy = parkedCopy(run.fx)
+    // No entry check follows `beforePark` and the guard hash covers bytes and
+    // modes, not inodes, so the substitute intent travels with the tree.
+    expect(r).toMatchObject({ staged: 'parked', parkedPath: copy })
+    const parkedIntent = fs.lstatSync(path.join(copy, 'park-intent.json'), { bigint: true })
+    expect(parkedIntent.ino).toBe(sub!.ino)
+    expect(sub!.ino).not.toBe(before)
+  })
+
+  it('control: the same bytes with another mode (0o644, not 0o600) change the guard hash, so the park refuses', async () => {
+    let mode: number | null = null
+    const run = await abortRun((fx) => ({
+      beforePark: () => {
+        mode = fs.statSync(INTENT(fx)).mode & 0o7777
+        replaceIntent(fx, 0o644)
+      },
+    }))
+    expect(mode).toBe(0o600)
+    const r = refusedOf(run.result)
+    expect(r.staged).toBe('left')
+    expect(r.warnings).toContainEqual(identityChanged(run.fx))
+    expect(fs.existsSync(parkedOpArea(run.fx))).toBe(false)
   })
 })
 

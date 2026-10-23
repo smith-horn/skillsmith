@@ -43,12 +43,15 @@
  *     writes no line from this module; only the busy second wait announces
  *     itself, once, before it polls (`skill-swap.abort.wait.ts`).
  *
- * Residual (UD18's identical-serialization class): a byte-identical swap of
- * `new` (or of anything inside it) made after the last entry check and before
- * the park's rename passes the park's guard hash, so the substitute is parked
- * in N's place. It lands in the parked area whole and nothing is deleted; the
- * original, wherever the swapper put it, is untouched. Node has no
- * directory-handle rename that would close the window.
+ * Residual (UD18's identical-serialization class, UD40): a byte-identical
+ * swap of `new` (or of anything inside it), or of `park-intent.json` with the
+ * same bytes and the same mode, made after the last entry check and before the
+ * park's rename passes the park's guard hash, which covers bytes and modes but
+ * not inodes. The substitute is parked in the original's place. It lands in
+ * the parked area whole and nothing is deleted; the original, wherever the
+ * swapper put it, is untouched. A replacement with another mode changes the
+ * hash and the park refuses it. Node has no directory-handle rename that would
+ * close the window.
  *
  * Every unlink is `unlinkOwned` (the file this run wrote, verified) and every
  * mutation runs `check` first. The guard hash comes from `gateAndBind`, which
