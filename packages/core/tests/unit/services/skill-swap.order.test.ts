@@ -13,10 +13,10 @@
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { TraceOp } from '../../../src/services/skill-swap.js'
 import { changedPaths } from '../../../src/services/skill-swap.writeset.js'
+import { CHILD_PATH, CHILD_READY_MS, CHILD_TEST_TIMEOUT_MS } from './skill-swap.child.helpers.js'
 import {
   areaOf,
   hashOf,
@@ -33,8 +33,6 @@ import {
 } from './skill-swap.helpers.js'
 
 useTmpCleanup()
-
-const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skill-swap.child.mjs')
 
 type Want = Partial<TraceOp> & { op: TraceOp['op'] }
 
@@ -147,39 +145,48 @@ describe('T-P4: sync order (one device)', () => {
 
 describe('T-X2: a kill between the renames (swap half)', () => {
   for (const killAt of ['afterRename1', 'afterRename1Syncs'] as const) {
-    it(`SIGKILL at ${killAt}: the path is absent, O and N are complete, record.json verifies`, () => {
-      const fx = makeFixture({ 'SKILL.md': '# v1\n', 'scripts/run.sh': 'echo 1\n' })
-      const preTree = hashOf(fx.realDir)
-      const before = recordOf(fx.realDir)
-      const cfgPath = path.join(tmp('skill-swap-cfg-'), 'cfg.json')
-      fs.writeFileSync(
-        cfgPath,
-        JSON.stringify({
-          skillsDir: fx.skillsDir,
-          stateRoot: fx.stateRoot,
-          dirName: fx.dirName,
-          opId: OP_ID,
-          killAt,
-          writeSet: [
-            { rel: 'SKILL.md', kind: 'modify', text: '# v2\n' },
-            { rel: 'scripts/new.sh', kind: 'create', text: 'echo 2\n' },
-          ],
-        })
-      )
+    it(
+      `SIGKILL at ${killAt}: the path is absent, O and N are complete, record.json verifies`,
+      () => {
+        const fx = makeFixture({ 'SKILL.md': '# v1\n', 'scripts/run.sh': 'echo 1\n' })
+        const preTree = hashOf(fx.realDir)
+        const before = recordOf(fx.realDir)
+        const cfgPath = path.join(tmp('skill-swap-cfg-'), 'cfg.json')
+        fs.writeFileSync(
+          cfgPath,
+          JSON.stringify({
+            skillsDir: fx.skillsDir,
+            stateRoot: fx.stateRoot,
+            dirName: fx.dirName,
+            opId: OP_ID,
+            killAt,
+            writeSet: [
+              { rel: 'SKILL.md', kind: 'modify', text: '# v2\n' },
+              { rel: 'scripts/new.sh', kind: 'create', text: 'echo 2\n' },
+            ],
+          })
+        )
 
-      const child = spawnSync(process.execPath, ['--import', 'tsx', childPath, 'kill', cfgPath], {
-        encoding: 'utf8',
-      })
+        const child = spawnSync(
+          process.execPath,
+          ['--import', 'tsx', CHILD_PATH, 'kill', cfgPath],
+          {
+            encoding: 'utf8',
+            timeout: CHILD_READY_MS,
+          }
+        )
 
-      expect(child.signal).toBe('SIGKILL')
-      expect(child.stdout).toBe('')
-      expect(fs.existsSync(fx.realDir)).toBe(false)
-      const rec = readRecord(path.join(fx.opDir, 'record.json'))
-      expect(rec.preTree).toBe(preTree)
-      expect(hashOf(path.join(fx.opDir, 'old'))).toBe(preTree)
-      const n = path.join(fx.opDir, 'new')
-      expect(hashOf(n)).toBe(rec.postTree)
-      expect(changedPaths(before, recordOf(n))).toEqual(['SKILL.md', 'scripts/new.sh'])
-    })
+        expect(child.signal, `child stderr: ${child.stderr}`).toBe('SIGKILL')
+        expect(child.stdout).toBe('')
+        expect(fs.existsSync(fx.realDir)).toBe(false)
+        const rec = readRecord(path.join(fx.opDir, 'record.json'))
+        expect(rec.preTree).toBe(preTree)
+        expect(hashOf(path.join(fx.opDir, 'old'))).toBe(preTree)
+        const n = path.join(fx.opDir, 'new')
+        expect(hashOf(n)).toBe(rec.postTree)
+        expect(changedPaths(before, recordOf(n))).toEqual(['SKILL.md', 'scripts/new.sh'])
+      },
+      CHILD_TEST_TIMEOUT_MS
+    )
   }
 })

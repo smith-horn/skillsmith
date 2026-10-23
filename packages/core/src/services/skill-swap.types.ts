@@ -5,6 +5,7 @@
  * @module @skillsmith/core/services/skill-swap.types
  */
 import type { JournalRecordInput } from '../journal/types.js'
+import type { ParkOptions, ParkResult } from '../install/park-result.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 
 /** One file of the approved write set (plan §3.7). `rel` is relative to the skill folder. */
@@ -78,6 +79,26 @@ export type SwapHookPoint =
   | 'beforeRecreate'
   /** In `publishTree`, after the name is chosen and the tree hashed, before the sidecar. */
   | 'beforeSidecar'
+  /** In `publishTree`, after the sidecar is published and the area synced, before the move. */
+  | 'afterSidecar'
+  /** Abort cleanup (4b): after its first `check` under lock 1. */
+  | 'abortAfterCheck'
+  /** Abort cleanup: after N is hashed and compared with `postTree`, before a keep or any unlink. */
+  | 'abortAfterCompare'
+  /** Abort cleanup: after `record.json` is unlinked and OP synced. */
+  | 'afterRecordUnlink'
+  /** Abort cleanup: after the park intent's temp is written and synced, before its link. */
+  | 'afterIntentTemp'
+  /** Abort cleanup: after `park-intent.json` is durable (linked, temp unlinked, OP synced). */
+  | 'afterIntent'
+  /** Abort cleanup: after `owner.json` is unlinked. */
+  | 'afterOwnerUnlink'
+  /** Abort cleanup: after OP's guard hash and identity are bound, before the last `check` and the park. */
+  | 'beforePark'
+  /** Abort cleanup: after the park call returned (its index line appended), before lock 1 is released. */
+  | 'afterPark'
+  /** After a step-2 `busy`: the second wait has announced itself and is about to poll. */
+  | 'secondWaitStart'
 
 /** One traced mutation or sync, in the order it happened (T-P4). Recorded after it succeeds. */
 export type TraceOp =
@@ -99,6 +120,18 @@ export type TraceOp =
   | { op: 'manifest-write'; path: string }
   /** The journal append returned (it syncs the file itself). */
   | { op: 'journal-append'; path: string }
+  /** Abort cleanup (4b) holds lock 1: its own wait got it, or the abort came from under it. */
+  | { op: 'abort-lock' }
+  /** One of abort cleanup's explicit `check`s (the mutations' own `check`s are not traced). */
+  | { op: 'check' }
+  /** Abort cleanup step 3: N is the directory the build made (`buildIdentity`). */
+  | { op: 'identity'; path: string }
+  /** Abort cleanup step 5: N hashed; `equal` is null when the hash failed. */
+  | { op: 'compare'; path: string; equal: boolean | null }
+  /** Abort cleanup step 6: the clock gate ran and OP's guard hash and identity were bound. */
+  | { op: 'guard'; path: string; hash: string }
+  /** The park call returned. */
+  | { op: 'park'; path: string; status: string; dest: string | null }
 
 /** @internal Test seams; none is part of the contract. */
 export interface SwapOptions {
@@ -108,7 +141,16 @@ export interface SwapOptions {
   /** Called with each copied entry's relative path while step 1 copies (`afterEntry`). */
   duringCopy?: (rel: string) => void
   trace?: (op: TraceOp) => void
+  /** Lock 1's normal wait (default 30 s): step 2's, and a step-1 abort's (plan §3.2). */
   lockTimeoutMs?: number
+  /** The second wait after a step-2 `busy` (UD16; default 30 s, the plan's bound). */
+  secondWaitMs?: number
+  /** The second wait's poll interval (default 50 ms, §3.2's). */
+  secondWaitPollMs?: number
+  /** Where the second wait's one line and a not-done park's one line go (default `process.stderr`). */
+  stderr?: (line: string) => void
+  /** Replaces `parkTreeIndexed` for abort cleanup's park of OP (step 6). */
+  park?: (parentAbs: string, name: string, options: ParkOptions) => Promise<ParkResult>
   /** Replaces `appendJournalRecord` (step 11). */
   appendJournal?: (input: JournalRecordInput) => Promise<unknown>
 }
@@ -122,6 +164,48 @@ export type SwapWarning =
   | { code: 'conflict-kept'; path: string }
   /** A directory's bits differ from its parent's (`mkdirWithParentBits` warnings). */
   | { code: 'mode'; path: string; detail: string }
+  /**
+   * UD32: abort cleanup did not set the staged copy aside. `path` is OP (or,
+   * for `held`, where it was); `status` is the park's (`kept`, `held`,
+   * `stopped`), or `kept`/`stopped` for a cleanup that stopped before the park
+   * (then `reason` is the stop's word, `busy` included). `parkedPath` only for
+   * `held`. Never names `skillsmith restore`: the origin is an op dir.
+   */
+  | {
+      code: 'removal-not-done'
+      path: string
+      status: 'kept' | 'held' | 'stopped'
+      reason: string
+      parkedPath?: string
+      errno?: string
+      detail?: string
+    }
+  /** The park moved OP, but its sidecar or its index line was not written; the status stands. */
+  | { code: 'park-metadata-failed'; path: string; sidecarError?: string; indexError?: string }
+
+/** Why abort cleanup kept a staged tree through `publishTree` (plan §3.5). */
+export type AbortKeptKind = 'failed-build' | 'edited-new' | 'unrecorded-new'
+
+/**
+ * What abort cleanup did with OP (plan §3.3 "Abort cleanup" step 7):
+ * `parked` (OP moved to `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`),
+ * `kept` (the tree kept through `publishTree`, OP emptied and removed),
+ * `held` (OP parked, then found changed or mounted-into at its parked path),
+ * `left` (OP stays for `doctor recovery --clean-staging`; with `keptAs` when
+ * the tree's keep finished and a later step of cleanup stopped), `none` (this
+ * call made no OP, or OP held only its metadata and was removed).
+ */
+export type AbortStaged = 'parked' | 'kept' | 'held' | 'left' | 'none'
+
+/** `park-intent.json` (plan §3.3 "Park intent"; review round 1 F3). */
+export interface ParkIntent {
+  schema: 1
+  opId: string
+  owner: { pid: number; host: string; uid: number }
+  /** OP's identity as abort cleanup bound it; decimal strings. */
+  opIdentity: RecordIdentity
+  kind: 'abort-new'
+}
 
 /** Why a transaction was refused before rename 1 (plan §3.3 words). */
 export type SwapRefuseReason =
@@ -186,14 +270,18 @@ export type SwapResult =
     }
   | {
       status: 'refused'
+      /** `busy` stays the reason when the second wait got lock 1 (UD16). */
       reason: SwapRefuseReason
-      /**
-       * `left`: OP exists and was left exactly as it was (4a's abort cleanup
-       * removes nothing). `none`: no OP was made by this call.
-       */
-      staged: 'left' | 'none'
+      /** What abort cleanup did with OP; see `AbortStaged`. It removes nothing. */
+      staged: AbortStaged
+      /** OP, for `left` only. */
       opDir: string | null
+      /** `skillsmith doctor recovery --clean-staging <opId>`, for `left` only. */
       cleanStagingHint: string | null
+      /** For `parked` and `held`: OP's path in the parked area. */
+      parkedPath?: string
+      /** When a tree went through `publishTree`: its kind and its path in the backup area. */
+      keptAs?: { kind: AbortKeptKind; path: string }
       detail: string
       warnings: SwapWarning[]
       gitignoreHint?: string
@@ -260,3 +348,4 @@ export const OWNER_FILE = 'owner.json'
 export const NEW_DIR = 'new'
 export const OLD_DIR = 'old'
 export const UNDONE_DIR = 'undone'
+export const PARK_INTENT_FILE = 'park-intent.json'

@@ -174,6 +174,8 @@ export async function run(p: Planned, options: SwapOptions = {}): Promise<Run> {
     appendJournal: async (j) => {
       journal.push(j)
     },
+    // Abort cleanup's one-line notices; a test that asserts them passes its own sink.
+    stderr: () => undefined,
     ...options,
   })
   return { result, trace: traced, journal }

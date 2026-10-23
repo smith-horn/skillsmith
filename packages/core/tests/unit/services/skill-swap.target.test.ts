@@ -53,7 +53,9 @@ describe('T-X3: the folder replaced just before the swap', () => {
       hooks: { beforeRename1Check: () => void (made = replace()) },
     })
 
-    expect(result).toMatchObject({ status: 'refused', reason: 'target-changed', staged: 'left' })
+    // 4b: the record was published, N is unchanged: both leave staging, N parked with OP.
+    expect(result).toMatchObject({ status: 'refused', reason: 'target-changed', staged: 'parked' })
+    expect(fs.existsSync(fx.opDir)).toBe(false)
     expect(hashOf(fx.realDir)).toBe(made!.hash)
     expect(fs.lstatSync(fx.realDir, { bigint: true }).ino).toBe(made!.ino)
     expect(renamesOf(trace, fx.realDir)).toEqual([])

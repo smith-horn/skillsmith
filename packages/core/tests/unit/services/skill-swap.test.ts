@@ -2,13 +2,12 @@
  * SMI-6531 (A1 step 4a): `swapInPlace` on one device: T-X1, T-X7, the record,
  * the backup name, the journal step, the pre-commit stop and `busy`.
  */
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { JOURNAL_DIR_ENV_VAR } from '../../../src/journal/path.js'
 import { changedPaths } from '../../../src/services/skill-swap.writeset.js'
+import { CHILD_TEST_TIMEOUT_MS, spawnChild } from './skill-swap.child.helpers.js'
 import {
   areaOf,
   create,
@@ -29,8 +28,6 @@ import {
 } from './skill-swap.helpers.js'
 
 useTmpCleanup()
-
-const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skill-swap.child.mjs')
 
 describe('swapInPlace: the committed path', () => {
   it('T-X1: a 300-file folder with a 3-file write set changes exactly those files; the old folder is the backup', async () => {
@@ -167,7 +164,8 @@ describe('swapInPlace: the committed path', () => {
 
     const { result, trace } = await run(p)
 
-    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'left' })
+    // 4b: N is unchanged, so abort cleanup parks its op dir (nothing at the area is touched).
+    expect(result).toMatchObject({ status: 'refused', reason: 'backup-unsafe', staged: 'parked' })
     expect(fs.readFileSync(path.join(area, `${OP_ID}.json`), 'utf8')).toBe('planted sidecar')
     expect(listTree(area)).toEqual([`${OP_ID}.json`])
     expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
@@ -335,39 +333,36 @@ describe('swapInPlace: busy', () => {
   let release: (() => void) | null = null
   afterEach(() => release?.())
 
-  it('lock 1 held by another process: refused busy, OP left as it is, nothing renamed', async () => {
-    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
-    const markers = tmp('skill-swap-markers-')
-    const child = spawn(process.execPath, [
-      '--import',
-      'tsx',
-      childPath,
-      'hold',
-      fx.skillsDir,
-      markers,
-    ])
-    const exited = new Promise<void>((res) => child.on('exit', () => res()))
-    release = () => fs.writeFileSync(path.join(markers, 'release'), '1')
-    const deadline = Date.now() + 20_000
-    while (!fs.existsSync(path.join(markers, 'held'))) {
-      if (Date.now() > deadline) throw new Error('child never took the lock')
-      await new Promise((r) => setTimeout(r, 10))
-    }
-    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+  it(
+    'lock 1 held by another process: refused busy, OP left as it is, nothing renamed',
+    async () => {
+      const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+      const markers = tmp('skill-swap-markers-')
+      const child = spawnChild(['hold', fx.skillsDir, markers])
+      release = () => fs.writeFileSync(path.join(markers, 'release'), '1')
+      await child.waitForFile(path.join(markers, 'held'), 'take the lock')
+      const p = plan(fx, [modify('SKILL.md', '# v2\n')])
 
-    const { result, trace } = await run(p, { lockTimeoutMs: 200 })
+      // Both waits run out (4b's second wait is 300 ms here; the plan's is 30 s).
+      const { result, trace } = await run(p, {
+        lockTimeoutMs: 200,
+        secondWaitMs: 300,
+        stderr: () => undefined,
+      })
 
-    release()
-    await exited
-    expect(result).toMatchObject({
-      status: 'refused',
-      reason: 'busy',
-      staged: 'left',
-      opDir: fx.opDir,
-      cleanStagingHint: `skillsmith doctor recovery --clean-staging ${OP_ID}`,
-    })
-    expect(fs.readdirSync(fx.opDir).sort()).toEqual(['new', 'owner.json'])
-    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
-    expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
-  })
+      release()
+      await child.exited
+      expect(result).toMatchObject({
+        status: 'refused',
+        reason: 'busy',
+        staged: 'left',
+        opDir: fx.opDir,
+        cleanStagingHint: `skillsmith doctor recovery --clean-staging ${OP_ID}`,
+      })
+      expect(fs.readdirSync(fx.opDir).sort()).toEqual(['new', 'owner.json'])
+      expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+      expect(trace.filter((t) => t.op === 'rename' && t.path === fx.realDir)).toEqual([])
+    },
+    CHILD_TEST_TIMEOUT_MS
+  )
 })

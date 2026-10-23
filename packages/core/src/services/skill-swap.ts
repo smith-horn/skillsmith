@@ -1,5 +1,5 @@
 /**
- * SMI-6531 (A1 step 4a): `swapInPlace`, the in-place update transaction on
+ * SMI-6531 (A1 steps 4a, 4b): `swapInPlace`, the in-place update transaction on
  * one device (A1 plan §3.3 steps 1-13, undo and `publishTree`; §3.1, §3.4-3.7).
  *
  *  1. Outside any lock: bind R and ST, make OP, write `owner.json`, build
@@ -18,18 +18,19 @@
  *  12. `publishTree(O, 'backup')`.
  *  13. Metadata unlinks and `rmdir OP`.
  *
- * Results: `refused` before rename 1 (every abort after OP may exist goes
- * through `abortBeforeRename1`, which in 4a removes nothing; the two refusals
- * that come before any staging, `ensureSkillsRoot`'s and `bindSkillsRoot`'s,
- * return directly with `staged: 'none'`), `stopped` after rename 1
+ * Results: `refused` before rename 1 (every abort once OP exists runs abort
+ * cleanup, `skill-swap.abort.ts`, which removes nothing: it parks OP with an
+ * unchanged staged tree, keeps a changed or partial one, and reports which in
+ * `staged`; a step-2 `busy` first waits once more for lock 1, UD16. The
+ * refusals that come before OP, `ensureSkillsRoot`'s, `bindSkillsRoot`'s and
+ * `createOp`'s, return `staged: 'none'`), `stopped` after rename 1
  * with the record kept, `undone`, or `committed` (with `incomplete` when a step
  * after the commit stopped; the record is then kept).
  *
  * Before step 1, `ensureSkillsRoot` makes an absent root and its missing
  * parents (UD22); a refusal there is `refused` / `root-unsafe`.
  *
- * Owned elsewhere: abort cleanup (step 4b), cross-device publish and the park
- * (step 4c).
+ * Owned elsewhere: cross-device publish and step 13's park (step 4c).
  *
  * @module @skillsmith/core/services/skill-swap
  */
@@ -65,13 +66,9 @@ import {
   publishTree,
   warnForeignChange,
 } from './skill-swap.publish.js'
-import {
-  abortBeforeRename1,
-  buildNewFolder,
-  createOp,
-  writeOwner,
-  writeRecord,
-} from './skill-swap.staging.js'
+import { abortUnderLock, describe, noneResult } from './skill-swap.abort.js'
+import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
+import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
 import { undoSwap } from './skill-swap.undo.js'
 import { changedPaths } from './skill-swap.writeset.js'
 import type {
@@ -112,24 +109,22 @@ const STOP_REASONS: ReadonlySet<string> = new Set<SwapStopReason>([
   'op-not-empty',
 ])
 
-/** The reason word and detail of a failure. An unexpected error is `write-failed`. */
-function describe(err: unknown): { reason: string; detail: string } {
-  if (err instanceof SwapFault) return { reason: err.reason, detail: err.detail }
-  if (err instanceof SkillWriteStop) return { reason: err.code, detail: err.detail }
-  return { reason: 'write-failed', detail: messageOf(err) }
-}
-
 const stopReason = (r: string): SwapStopReason =>
   STOP_REASONS.has(r) ? (r as SwapStopReason) : 'write-failed'
 
-/** Maps a failure to a result by how far the transaction got. */
-function resultOfFailure(st: SwapState, err: unknown): SwapResult {
+const refuseReason = (r: string): SwapRefuseReason =>
+  REFUSE_REASONS.has(r) ? (r as SwapRefuseReason) : 'write-failed'
+
+/**
+ * Maps a failure to a result by how far the transaction got. Before rename 1
+ * that is abort cleanup (`skill-swap.abort.ts`): from under lock 1 here, and
+ * for a step-1 failure from `swapInPlace`, which takes lock 1 for it.
+ */
+async function resultOfFailure(st: SwapState, err: unknown): Promise<SwapResult> {
   rethrowLockOrder(err)
   const { reason, detail } = describe(err)
-  if (st.phase === 'staging' || st.phase === 'locked') {
-    const r = REFUSE_REASONS.has(reason) ? (reason as SwapRefuseReason) : 'write-failed'
-    return abortBeforeRename1(st, r, detail)
-  }
+  if (st.phase === 'staging') return abortBeforeLock(st, refuseReason(reason), detail)
+  if (st.phase === 'locked') return abortUnderLock(st, refuseReason(reason), detail)
   // Once step 13 unlinked the record, no result names it.
   const recordPath = st.recordRemoved ? {} : { recordPath: opPaths(st).record }
   if (st.phase === 'swapped') {
@@ -371,6 +366,9 @@ function newState(
     opCreated: false,
     op: null,
     area: null,
+    buildIdentity: null,
+    published: null,
+    owner: null,
     newIdentity: null,
     postTree: null,
     postRecord: null,
@@ -437,8 +435,15 @@ export async function swapInPlace(
     await writeOwner(st)
     await buildNewFolder(st)
   } catch (err) {
+    // With an OP, abort cleanup takes lock 1, and its release computes the hint.
+    if (st.opCreated) return resultOfFailure(st, err)
+    rethrowLockOrder(err)
+    const { reason, detail } = describe(err)
     // Lock 1 never ran, so its hint step did not either: compute it here.
-    return withHint(resultOfFailure(st, err), await stagingHintBeforeLock(binding))
+    return withHint(
+      noneResult(st, refuseReason(reason), detail),
+      await stagingHintBeforeLock(binding)
+    )
   }
 
   const locked = await withSkillWriteLock(
@@ -451,11 +456,9 @@ export async function swapInPlace(
     options.lockTimeoutMs === undefined ? {} : { timeoutMs: options.lockTimeoutMs }
   )
   if (locked.ok) return withHint(locked.value, locked.gitignoreHint)
-  // `busy` (4b adds the second wait), or `check` refusing as lock 1 was taken.
-  return withHint(
-    abortBeforeRename1(st, locked.stop.code, locked.stop.detail),
-    locked.gitignoreHint
-  )
+  st.ctx = null
+  // `busy` (the second wait, UD16), or `check` refusing as lock 1 was taken.
+  return abortAfterBusy(st, locked)
 }
 
 /** Adds the staging `.gitignore` hint to a result when there is one. */

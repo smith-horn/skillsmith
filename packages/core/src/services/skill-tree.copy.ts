@@ -67,6 +67,11 @@ export interface CopyHooks {
    * typed, with the directory's path relative to the root (`''` for the root).
    */
   afterListed?: (rel: string) => void
+  /**
+   * Called once, right after the `mkdir` that made `destAbs`, before anything
+   * is copied into it: where a caller binds the destination's identity.
+   */
+  afterRootMade?: () => void
 }
 
 type Failure = Extract<CopyResult, { ok: false }>
@@ -322,6 +327,7 @@ export async function copyTreeNoFollow(
   } catch (err) {
     return fail(errno(err) === 'EEXIST' ? 'dest-exists' : 'write-failed', destAbs, err)
   }
+  hooks?.afterRootMade?.()
   const f = await copyDir(srcAbs, destAbs, '', root, hooks)
   if (f !== null) return f
   try {
