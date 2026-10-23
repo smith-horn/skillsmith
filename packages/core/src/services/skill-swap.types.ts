@@ -202,7 +202,7 @@ export interface ParkIntent {
   schema: 1
   opId: string
   owner: { pid: number; host: string; uid: number }
-  /** OP's identity as abort cleanup bound it; decimal strings. */
+  /** OP's identity as `createOp` bound it; decimal strings. */
   opIdentity: RecordIdentity
   kind: 'abort-new'
 }

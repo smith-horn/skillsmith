@@ -22,8 +22,9 @@
  * cleanup, `skill-swap.abort.ts`, which removes nothing: it parks OP with an
  * unchanged staged tree, keeps a changed or partial one, and reports which in
  * `staged`; a step-2 `busy` first waits once more for lock 1, UD16. The
- * refusals that come before OP, `ensureSkillsRoot`'s, `bindSkillsRoot`'s and
- * `createOp`'s, return `staged: 'none'`), `stopped` after rename 1
+ * refusals before OP exists, `ensureSkillsRoot`'s, `bindSkillsRoot`'s and a
+ * failed `mkdir` of OP, return `staged: 'none'`; a `createOp` refusal after its
+ * `mkdir` runs abort cleanup like any other), `stopped` after rename 1
  * with the record kept, `undone`, or `committed` (with `incomplete` when a step
  * after the commit stopped; the record is then kept).
  *
