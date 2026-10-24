@@ -37,8 +37,9 @@
  * If the marker cannot be written, the original stop still stands: its detail
  * gains a sentence saying the marker was not recorded, why, and the `dest` it
  * would have named. A failed build's keep (abort cleanup step 5) always takes
- * this branch: no `postTree`, so no record was ever written, and that sentence
- * is the only description of what the move left (round 5). If the rename
+ * this branch: no `postTree`, so no record was ever written. That sentence
+ * names the move's `dest`, from which `isFullDeviceLeftover` derives what it
+ * left; nothing else records it (round 5). If the rename
  * over `record.json` succeeded and only OP's sync failed, it says the marker
  * was recorded but may not survive a power loss.
  *
