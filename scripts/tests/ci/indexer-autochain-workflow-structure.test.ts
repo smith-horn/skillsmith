@@ -9,7 +9,12 @@
  * dispatch); the SMI-7121 additions are pinned in indexer-autochain-workflow-defer.test.ts.
  */
 import { describe, it, expect } from 'vitest'
-import { commands, loadWorkflow, runStepScript } from './indexer-autochain-workflow.helpers.ts'
+import {
+  commands,
+  DISPATCH_TOKEN_CHECK,
+  loadWorkflow,
+  runStepScript,
+} from './indexer-autochain-workflow.helpers.ts'
 
 const doc = loadWorkflow()
 const job = doc.jobs.autochain
@@ -82,10 +87,11 @@ describe('autochain workflow structure', () => {
       )
     })
 
-    it('SEQUENCE: before the dispatch there is EXACTLY one command, the read, a single simple command', () => {
+    it('SEQUENCE: before the dispatch there are EXACTLY two commands, the token check (SMI-7161) then the read, each a single simple command', () => {
       const cmds = commands(dispatchStep!.run!)
       const at = cmds.findIndex((c) => c.startsWith('timeout 60 gh workflow run'))
       expect(cmds.slice(0, at), `commands: ${JSON.stringify(cmds)}`).toEqual([
+        DISPATCH_TOKEN_CHECK,
         'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh || exit 1',
       ])
       // nothing alters the shell's error handling or the step's execution, and nothing runs in the background
@@ -94,7 +100,7 @@ describe('autochain workflow structure', () => {
       expect(dispatchStep).not.toHaveProperty('continue-on-error')
       expect(dispatchStep).not.toHaveProperty('shell')
       // the dispatch step runs the read WITHOUT --verify-read (which authorises nothing)
-      expect(cmds[0]).not.toContain('--verify-read')
+      expect(cmds[1]).not.toContain('--verify-read')
     })
 
     it('the newest-run fence is its own step, BEFORE the dispatch step, preserving its exit status', () => {
@@ -166,7 +172,9 @@ describe('the fence and dispatch steps executed with stubbed scripts (exit-statu
   const dispatch = (readRc: number, flags: string[]) =>
     runStepScript(dispatchStep!.run!, {
       shellFlags: flags,
-      env: { VARIABLE_READ_PAT: 'pat' },
+      // GH_TOKEN is passed explicitly: runStepScript spreads process.env first, and the step
+      // now refuses an empty dispatch token (SMI-7161) before it reaches the read.
+      env: { VARIABLE_READ_PAT: 'pat', GH_TOKEN: 'pat' },
       stubs: {
         'scripts/ci/autochain-read-enable.sh': `echo read >> "$MARK"; exit ${readRc}\n`,
         'bin/timeout': 'shift; echo dispatch >> "$MARK"; exit 0\n',

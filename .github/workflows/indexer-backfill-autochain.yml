@@ -20,6 +20,12 @@
 #     "0", followed in the same command by a read of BACKFILL_KILL_SWITCH that
 #     must not be "1" (SMI-7121 G2). (GITHUB_TOKEN gets 403 on this read
 #     (measured, W0-7); GitHub App access is unmeasured (its token failed to mint).)
+#   - SMI-7161: the dispatch itself authenticates with the fine-grained PAT in the secret
+#     BACKFILL_AUTOCHAIN_DISPATCH_PAT, NEVER GITHUB_TOKEN. GitHub creates no workflow_run
+#     event for a run that GITHUB_TOKEN dispatched, so the next link would never start and
+#     the chain would stop silently after one generation. The job token is `actions: read`
+#     so a regression to GITHUB_TOKEN fails with 403 instead of stopping the chain quietly.
+#     An empty secret is red (no fallback). Rotation: runbook section 6.3.
 #   - Kill switches at job start (SMI-7121 G1): BACKFILL_AUTOCHAIN_DISABLE=1 stops a
 #     workflow_run link and a resume (schedule tick or mode=resume dispatch) QUIETLY
 #     (driver mode: every driver dispatch triggers a link). BACKFILL_KILL_SWITCH=1 (with
@@ -186,7 +192,10 @@ jobs:
     # Independent of the completed dispatch's own (up to 330-min) budget.
     timeout-minutes: 10
     permissions:
-      actions: write # the one gh workflow run call below needs this
+      # SMI-7161: read only. Every GITHUB_TOKEN use in this job is a read; the one dispatch
+      # authenticates with BACKFILL_AUTOCHAIN_DISPATCH_PAT. If an edit points the dispatch back at
+      # GITHUB_TOKEN it gets 403 and goes red, instead of succeeding and stopping the chain silently.
+      actions: read
       contents: read
 
     env:
@@ -532,6 +541,18 @@ jobs:
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
         run: GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh --verify-read
 
+      - name: Verify the dispatch credential (verify only)
+        # SMI-7161. A verify-only manual run proves the stored BACKFILL_AUTOCHAIN_DISPATCH_PAT is
+        # present, unexpired and can read Actions on this repository. Read only: it never
+        # dispatches. It cannot prove Actions WRITE; the staging rehearsal is that proof.
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED != 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.BACKFILL_AUTOCHAIN_DISPATCH_PAT }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT is not provisioned (empty token). See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }
+          STATE=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/indexer-backfill.yml" --jq .state) || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT cannot read Actions (expired, revoked or wrong scope). See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }
+          [ "$STATE" = active ] || { echo "::error::indexer-backfill.yml is not active (state: $STATE); a dispatch would be refused. Enable the workflow, then re-run."; exit 1; }
+
       - name: Report halt
         # Runs on verify-only too: a halt is red there, without an alert.
         if: env.skip != 'true' && steps.recover.outputs.halted == 'true'
@@ -799,7 +820,15 @@ jobs:
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && env.IS_RESUME == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true'
         env:
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
-        run: GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh
+          # SMI-7161: the dispatch credential is checked here too, so a missing or invalid one
+          # fails BEFORE the claim and leaves the marker open. Its own variable, not GH_TOKEN:
+          # the read below keeps GH_TOKEN="$VARIABLE_READ_PAT" per command.
+          DISPATCH_PAT: ${{ secrets.BACKFILL_AUTOCHAIN_DISPATCH_PAT }}
+        run: |
+          [ -n "$DISPATCH_PAT" ] || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT is not provisioned (empty token) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }
+          STATE=$(GH_TOKEN="$DISPATCH_PAT" gh api "repos/$GITHUB_REPOSITORY/actions/workflows/indexer-backfill.yml" --jq .state) || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT cannot read Actions (expired, revoked or wrong scope) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }
+          [ "$STATE" = active ] || { echo "::error::indexer-backfill.yml is not active (state: $STATE) -- refusing before the claim, which a dispatch would burn on a 422. Enable the workflow, then resume."; exit 1; }
+          GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh
 
       - name: Claim the deferral marker (schedule)
         id: claim
@@ -825,7 +854,10 @@ jobs:
         id: dispatch
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true' && (env.IS_RESUME != 'true' || steps.claim.outputs.claimed == 'true')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SMI-7161: a fine-grained PAT, NEVER secrets.GITHUB_TOKEN. GitHub creates no
+          # workflow_run event for a run dispatched with GITHUB_TOKEN, so the next link would
+          # never start and the chain would stop silently. No fallback: an empty secret is red.
+          GH_TOKEN: ${{ secrets.BACKFILL_AUTOCHAIN_DISPATCH_PAT }}
           VARIABLE_READ_PAT: ${{ secrets.BACKFILL_VARIABLE_READ_PAT }}
           RESUME_FROM: ${{ steps.recover.outputs.resume_from }}
           DRY_RUN: ${{ steps.recover.outputs.dry_run }}
@@ -844,8 +876,11 @@ jobs:
           # no variables-context reference in between. It exits non-zero (red, no dispatch)
           # unless an API read of BACKFILL_AUTOCHAIN_DISABLE returns exactly "0" and a read
           # of BACKFILL_KILL_SWITCH (same command) does not return "1".
+          # SMI-7161: the dispatch-credential presence check is the first command, before the
+          # read, so the read-to-dispatch adjacency above is unchanged.
+          [ -n "$GH_TOKEN" ] || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT is not provisioned (empty token) -- refusing to dispatch. GITHUB_TOKEN is never used here: a run it dispatches never triggers the next link (SMI-7161). See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }
           GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh || exit 1
-          timeout 60 gh workflow run indexer-backfill.yml --repo "$GITHUB_REPOSITORY" \
+          timeout 60 gh workflow run indexer-backfill.yml --repo "$GITHUB_REPOSITORY" --ref main \
             -f resume_from="$RESUME_FROM" \
             -f dry_run="$DRY_RUN" \
             -f max_skills_per_repo="$MAX_SKILLS_PER_REPO" \

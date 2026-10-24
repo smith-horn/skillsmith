@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   commands,
+  DISPATCH_TOKEN_CHECK,
   loadWorkflow,
   runStepScript,
   type Step,
@@ -27,6 +28,12 @@ const byName = (name: string): Step => {
 const idx = (s: Step) => steps.indexOf(s)
 const cmdText = (s: Step) => commands(s.run ?? '').join('\n')
 const READ = 'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh || exit 1'
+const PRECLAIM_TOKEN_CHECK =
+  '[ -n "$DISPATCH_PAT" ] || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT is not provisioned (empty token) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }'
+const PRECLAIM_PROBE =
+  'STATE=$(GH_TOKEN="$DISPATCH_PAT" gh api "repos/$GITHUB_REPOSITORY/actions/workflows/indexer-backfill.yml" --jq .state) || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT cannot read Actions (expired, revoked or wrong scope) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }'
+const PRECLAIM_ACTIVE =
+  '[ "$STATE" = active ] || { echo "::error::indexer-backfill.yml is not active (state: $STATE) -- refusing before the claim, which a dispatch would burn on a 422. Enable the workflow, then resume."; exit 1; }'
 const DA = "env.DISPATCH_ALLOWED == 'true'"
 
 describe('triggers and gates', () => {
@@ -222,17 +229,22 @@ describe('kill switches (G1)', () => {
 describe('authoritative and pre-claim reads (G2, V1)', () => {
   const READ_CMD = 'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh'
 
-  it("the dispatch step's only command before `gh workflow run` is the read of BOTH switches", () => {
+  it("the dispatch step's only commands before `gh workflow run` are the token check, then the read of BOTH switches", () => {
     const cmds = commands(byName('Dispatch next chunk').run!)
     const at = cmds.findIndex((c) => c.startsWith('timeout 60 gh workflow run'))
-    expect(cmds.slice(0, at)).toEqual([`${READ_CMD} || exit 1`])
+    expect(cmds.slice(0, at)).toEqual([DISPATCH_TOKEN_CHECK, `${READ_CMD} || exit 1`])
   })
 
   it("a schedule tick runs the same read BEFORE the claim, under the claim's exact condition", () => {
     const pre = byId('preclaim')
     const claim = byId('claim')
     expect(pre.if).toBe(claim.if)
-    expect(commands(pre.run!)).toEqual([READ_CMD])
+    expect(commands(pre.run!)).toEqual([
+      PRECLAIM_TOKEN_CHECK,
+      PRECLAIM_PROBE,
+      PRECLAIM_ACTIVE,
+      READ_CMD,
+    ])
     expect(pre.env!.VARIABLE_READ_PAT).toContain('secrets.BACKFILL_VARIABLE_READ_PAT')
     expect(idx(byId('window'))).toBeLessThan(idx(pre))
     expect(idx(pre)).toBe(idx(claim) - 1)
@@ -370,8 +382,9 @@ describe('window, fence and dispatch order', () => {
   it('on either path NOTHING runs between the enable read and `gh workflow run`', () => {
     const cmds = commands(dispatch.run!)
     const at = cmds.findIndex((c) => c.startsWith('timeout 60 gh workflow run'))
-    expect(cmds.slice(0, at + 1).length, JSON.stringify(cmds)).toBe(2)
-    expect(cmds[0]).toBe(READ)
+    expect(cmds.slice(0, at + 1).length, JSON.stringify(cmds)).toBe(3)
+    expect(cmds[0]).toBe(DISPATCH_TOKEN_CHECK)
+    expect(cmds[1]).toBe(READ)
     // the one dispatch step serves both paths: link paths, and schedule after a claim
     expect(dispatch.if).toContain(
       "(env.IS_RESUME != 'true' || steps.claim.outputs.claimed == 'true')"

@@ -11,6 +11,13 @@ import { parse as parseYaml } from 'yaml'
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 export const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'indexer-backfill-autochain.yml')
 
+/**
+ * SMI-7161: the presence check that is the first command of the dispatch step. Quoted
+ * here once so the structure, defer and dispatch-token tests pin the same literal.
+ */
+export const DISPATCH_TOKEN_CHECK =
+  '[ -n "$GH_TOKEN" ] || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT is not provisioned (empty token) -- refusing to dispatch. GITHUB_TOKEN is never used here: a run it dispatches never triggers the next link (SMI-7161). See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }'
+
 export interface Step {
   name?: string
   id?: string
