@@ -1,21 +1,22 @@
 /**
- * Regression tests for SMI-5718: doc-retrieval-mcp's `jsonSchemaOf()` used
- * to reach directly into zod v3-only internals (`_def.shape` as a callable
- * thunk). When the pinned `zod@3.25.76` dependency went missing (SMI-5452
- * bind-mount npm race) and resolution fell through to a hoisted zod v4,
- * that call threw an opaque `TypeError: schema._def.shape is not a
- * function` on `tools/list` — the literal `/mcp` incident this issue fixes.
+ * Regression tests for SMI-5718 (and SMI-7168): doc-retrieval-mcp's
+ * `jsonSchemaOf()` used to reach directly into zod v3-only internals
+ * (`_def.shape` as a callable thunk). When the pinned zod dependency went
+ * missing (SMI-5452 bind-mount npm race) and resolution fell through to a
+ * different zod major, that call threw an opaque `TypeError: schema._def.shape
+ * is not a function` on `tools/list` — the literal `/mcp` incident SMI-5718
+ * fixes.
  *
- * `jsonSchemaOf()` now delegates to `@modelcontextprotocol/sdk`'s own
- * v3/v4-aware compat layer (`normalizeObjectSchema` + `toJsonSchemaCompat`),
- * the same functions `McpServer.registerTool()` uses internally. These
- * tests were written against the *actual* runtime output of that layer
- * (probed directly, not assumed) — see plan-review changes #3/#4 in
- * docs/internal/implementation/smi-5718-doc-retrieval-mcp-schema-hardening.md
- * for why the original draft of both tests below was wrong.
+ * SMI-7168 moved the repo to a single zod major (4.x). `jsonSchemaOf()` now
+ * converts with zod's own `z.toJSONSchema` (input mode, with an override that
+ * keeps `additionalProperties: false`) and keeps both fail-loud branches: a
+ * schema that is not a zod 4 object schema (major drift), and a recognised
+ * schema that will not convert. The exact wire output for the three real tools
+ * is pinned separately in server.schema-contract.test.ts.
  */
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
+import { z as z3 } from 'zod/v3'
 import { handleListTools, jsonSchemaOf } from './server.js'
 
 describe('handleListTools', () => {
@@ -72,10 +73,10 @@ describe('jsonSchemaOf', () => {
   })
 
   it('additionally surfaces constraint fields the old hand-rolled converter silently dropped', () => {
-    // This is an intentional, disclosed behavior change from the pre-SMI-5718
-    // converter (plan-review change #4) — not a regression to guard against,
-    // but a new contract to pin so a future accidental narrowing (e.g.
-    // additionalProperties flipping back to permissive) is caught.
+    // Constraint fields and a closed object are part of the wire contract.
+    // Pin them so a future accidental narrowing (e.g. additionalProperties
+    // flipping back to permissive, which zod 4's input mode does by default)
+    // is caught.
     const SearchArgsLike = z.object({
       query: z.string().min(1),
       k: z.number().int().min(1).max(20).optional(),
@@ -100,21 +101,28 @@ describe('jsonSchemaOf', () => {
     expect(props.mode.default).toBe('incremental')
   })
 
-  it('throws a diagnosable version-drift error for a schema unrecognized by either zod major', () => {
-    // Deliberately malformed: neither a valid v3 shape thunk (no callable
-    // `_def.shape`) nor a `_zod`-marked v4 instance. This is the shape class
-    // that crashed the pre-SMI-5718 code with an opaque native TypeError.
-    const malformed = { _def: {} } as unknown as z.ZodType
+  it('throws a diagnosable version-drift error for a schema that is not a zod 4 object schema', () => {
+    // Deliberately malformed: no `_zod` internals at all. This is the shape
+    // class that crashed the pre-SMI-5718 code with an opaque native TypeError.
+    const malformed = { _def: {} } as never
     expect(() => jsonSchemaOf(malformed)).toThrow(/zod version drift/)
-    expect(() => jsonSchemaOf(malformed)).toThrow(/not recognized as a zod v3\/v4 object schema/)
+    expect(() => jsonSchemaOf(malformed)).toThrow(/not recognized as a zod v4 object schema/)
+  })
+
+  it('treats a real zod 3 schema instance as drift, not as something to convert', () => {
+    // The actual incident shape after SMI-7168: a zod 3 install resolving
+    // where zod 4 is declared. `zod/v3` ships a genuine zod 3 schema, which
+    // carries `_def` but no `_zod`. Without the guard, z.toJSONSchema would
+    // throw an unlabeled "Cannot read properties of undefined (reading 'def')".
+    const v3Schema = z3.object({ query: z3.string() }) as never
+    expect(() => jsonSchemaOf(v3Schema)).toThrow(/not recognized as a zod v4 object schema/)
+    expect(() => jsonSchemaOf(v3Schema)).toThrow(/zod version drift/)
   })
 
   it('throws a diagnosable error (distinct from the not-recognized case) when a recognized schema fails conversion', () => {
-    // Passes normalizeObjectSchema's v4 recognition check (has `_zod.def`
-    // with `shape`) but the shape itself is malformed enough that
-    // toJsonSchemaCompat's conversion throws — exercises the second
-    // fail-loud branch (the `catch` around toJsonSchemaCompat), not the
-    // `!obj` branch exercised by the previous test.
+    // Passes the recognition guard (a `_zod.def` of type object) but the shape
+    // itself is malformed enough that z.toJSONSchema throws — exercises the
+    // second fail-loud branch (the `catch`), not the not-recognized guard.
     const brokenV4Object = {
       _zod: {
         def: {
@@ -122,13 +130,61 @@ describe('jsonSchemaOf', () => {
           shape: { bad: null },
         },
       },
-    } as unknown as z.ZodType
+    } as never
     // Assert the branch-distinct message (not just the shared `[doc-retrieval]`
-    // tag, which the `!obj` branch's message also contains) — pins this test
-    // to the `catch` branch specifically, so a future SDK change that makes
-    // `normalizeObjectSchema` reject this stub instead would fail this test
-    // rather than silently sliding to the already-covered `!obj` branch.
+    // tag, which the not-recognized branch's message also contains) — pins this
+    // test to the `catch` branch specifically, so a future change that makes
+    // the guard reject this stub instead would fail this test rather than
+    // silently sliding to the already-covered not-recognized branch.
     expect(() => jsonSchemaOf(brokenV4Object)).toThrow(/failed to convert a recognized zod schema/)
+  })
+
+  it('names the cause when a genuine zod 4 schema holds a type JSON Schema cannot represent', () => {
+    // A real, non-stubbed trigger for the conversion-failure branch: z.date()
+    // has no JSON Schema form and z.toJSONSchema throws on it by default.
+    const unrepresentable = z.object({ when: z.date() })
+    expect(() => jsonSchemaOf(unrepresentable)).toThrow(/failed to convert a recognized zod schema/)
+    expect(() => jsonSchemaOf(unrepresentable)).toThrow(/cannot be represented in JSON Schema/)
+  })
+
+  it('fails closed on a top-level schema that is not an object (z.string)', () => {
+    // A tool's arguments are an object. A string schema must not be converted
+    // into a free-form schema that silently accepts anything.
+    expect(() => jsonSchemaOf(z.string() as never)).toThrow(
+      /not recognized as a zod v4 object schema/
+    )
+    expect(() => jsonSchemaOf(z.string() as never)).toThrow(/\[doc-retrieval\] jsonSchemaOf/)
+  })
+
+  it('fails closed on a top-level union and on a wrapped object', () => {
+    const union = z.union([z.object({ a: z.string() }), z.object({ b: z.number() })])
+    expect(() => jsonSchemaOf(union as never)).toThrow(/not recognized as a zod v4 object schema/)
+    expect(() => jsonSchemaOf(z.object({ a: z.string() }).optional() as never)).toThrow(
+      /not recognized as a zod v4 object schema/
+    )
+  })
+
+  it('keeps a nested object closed as well as the top level', () => {
+    const out = jsonSchemaOf(z.object({ inner: z.object({ a: z.string() }) }))
+    const inner = (out.properties as Record<string, Record<string, unknown>>).inner
+    expect(out.additionalProperties).toBe(false)
+    expect(inner.additionalProperties).toBe(false)
+  })
+
+  it('keeps every object branch of a union closed', () => {
+    const out = jsonSchemaOf(
+      z.object({ u: z.union([z.object({ a: z.string() }), z.object({ b: z.number() })]) })
+    )
+    const branches = (out.properties as Record<string, { anyOf: Array<Record<string, unknown>> }>).u
+      .anyOf
+    expect(branches).toHaveLength(2)
+    for (const branch of branches) expect(branch.additionalProperties).toBe(false)
+  })
+
+  it('does not reopen an object that already declared itself open', () => {
+    // The override only fills a MISSING additionalProperties; it must not overwrite one that zod set.
+    const out = jsonSchemaOf(z.object({ a: z.string() }).catchall(z.number()))
+    expect(out.additionalProperties).toEqual({ type: 'number' })
   })
 
   it('both remediation messages route through the mount gate, not a bare npm mutation (SMI-6654)', () => {
@@ -138,12 +194,12 @@ describe('jsonSchemaOf', () => {
     // file's own printed remediation text doesn't itself trip audit:standards
     // Check 72. Pin the printed command to the gate script so a future edit
     // can't silently drop it back to an ungated form.
-    const malformed = { _def: {} } as unknown as z.ZodType
+    const malformed = { _def: {} } as never
     expect(() => jsonSchemaOf(malformed)).toThrow(/node-modules-mount-gate\.sh/)
 
     const brokenV4Object = {
       _zod: { def: { type: 'object', shape: { bad: null } } },
-    } as unknown as z.ZodType
+    } as never
     expect(() => jsonSchemaOf(brokenV4Object)).toThrow(/node-modules-mount-gate\.sh/)
   })
 })

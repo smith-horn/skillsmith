@@ -1,0 +1,53 @@
+{
+  "skill_docs_search": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Natural-language query over the Skillsmith doc corpus"
+      },
+      "k": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Max results to return (default 5)"
+      },
+      "min_score": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Minimum cosine similarity (post distance→similarity transform). Default 0.35. <0.20=noise, 0.20-0.35=weak, 0.35-0.55=loose, 0.55-0.75=strong, >0.75=near-duplicate"
+      },
+      "scope_globs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Optional list of POSIX-style globs to restrict results (e.g. [\"docs/internal/adr/**\", \".claude/**\"])."
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "skill_docs_reindex": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["full", "incremental"],
+        "default": "incremental",
+        "description": "full rebuilds from scratch; incremental uses git diff since last run"
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  },
+  "skill_docs_status": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

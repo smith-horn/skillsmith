@@ -31,6 +31,7 @@ import type {
   SkillInventoryAuditInput,
   SkillInventoryAuditResponse,
 } from './skill-inventory-audit.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 /**
  * Zod input schema for the `skill_inventory_audit` MCP tool.
@@ -102,7 +103,7 @@ export const skillInventoryAuditToolSchema = {
 async function skillInventoryAuditImpl(
   input: unknown
 ): Promise<SkillInventoryAuditResponse | InventoryAuditValidationError> {
-  const parsed = skillInventoryAuditInputSchema.safeParse(input)
+  const parsed = legacySafeParse(skillInventoryAuditInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

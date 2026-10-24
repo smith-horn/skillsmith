@@ -179,7 +179,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'get', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'get', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -194,7 +194,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'get', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'get', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -268,7 +268,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const addResult = await executeShareSkill(
       {
         action: 'add',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -286,7 +286,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const removeResult = await executeShareSkill(
       {
         action: 'remove',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -300,7 +300,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     })
     await mockUserClient(listFake.client)
     const listResult = await executeShareSkill(
-      { action: 'list', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'list', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
     expect(listResult.success).toBe(true)
@@ -322,7 +322,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const result = await executeShareSkill(
       {
         action: 'add',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -355,7 +355,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const result = await executeShareSkill(
       {
         action: 'add',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -385,7 +385,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const result = await executeShareSkill(
       {
         action: 'remove',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -418,7 +418,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const result = await executeShareSkill(
       {
         action: 'remove',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -451,7 +451,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const result = await executeShareSkill(
       {
         action: 'remove',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -481,7 +481,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     const result = await executeShareSkill(
       {
         action: 'remove',
-        workspaceId: '00000000-0000-0000-0000-000000000001',
+        workspaceId: '00000000-0000-4000-8000-000000000001',
         skillId: 'author/name',
       },
       makeContext()
@@ -509,7 +509,7 @@ describe('team-workspace live mode — membership-gated methods — SMI-6113/SMI
     await mockUserClient(client)
 
     const result = await executeShareSkill(
-      { action: 'list', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'list', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -609,7 +609,7 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'delete', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -628,7 +628,7 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'delete', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -644,7 +644,7 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'delete', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -662,7 +662,7 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'delete', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -677,7 +677,7 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
     await mockUserClient(client)
 
     const result = await executeTeamWorkspace(
-      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000001' },
+      { action: 'delete', workspaceId: '00000000-0000-4000-8000-000000000001' },
       makeContext()
     )
 
@@ -703,7 +703,7 @@ describe('team-workspace live mode — workspace:manage-gated methods — SMI-61
 // ============================================================================
 
 describe('share_skill live mode — cross-team hardening — SMI-4312', () => {
-  const foreignWorkspaceId = '00000000-0000-0000-0000-0000000000ff'
+  const foreignWorkspaceId = '00000000-0000-4000-8000-0000000000ff'
 
   /**
    * Fake that returns "no row" whenever the team_workspaces SELECT is

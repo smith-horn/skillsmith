@@ -49,6 +49,7 @@ import {
   type SessionAppliedChangeset,
 } from './apply-session.helpers.js'
 import type { UndoApplyResponse, UndoneChangeset } from './undo-apply.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 export const undoApplyInputSchema = z
   .object({
@@ -59,7 +60,7 @@ export const undoApplyInputSchema = z
   .superRefine((value, ctx) => {
     if (value.count !== undefined && value.suggestion_id !== undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['suggestion_id'],
         message: 'count and suggestion_id are mutually exclusive',
       })
@@ -224,7 +225,7 @@ async function restoreChangeset(entry: SessionAppliedChangeset): Promise<Restore
 }
 
 async function undoApplyImpl(input: unknown): Promise<UndoApplyResponse> {
-  const parsed = undoApplyInputSchema.safeParse(input)
+  const parsed = legacySafeParse(undoApplyInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

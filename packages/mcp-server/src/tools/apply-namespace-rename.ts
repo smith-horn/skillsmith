@@ -47,6 +47,7 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import { journalApplyError, journalApplySuccess } from './apply-journal.helpers.js'
 import type { ApplyNamespaceRenameResponse } from './apply-namespace-rename.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 /**
  * SMI-5456 §7: the content-hashable file the journal + `undo_apply` track
@@ -88,14 +89,14 @@ export const applyNamespaceRenameInputSchema = z
   .superRefine((value, ctx) => {
     if (value.action === 'custom' && !value.customName) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['customName'],
         message: 'customName is required when action === "custom"',
       })
     }
     if (value.action !== 'custom' && value.customName !== undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['customName'],
         message: 'customName is only valid when action === "custom"',
       })
@@ -153,7 +154,7 @@ export const applyNamespaceRenameToolSchema = {
  * lives inside the response payload.
  */
 async function applyNamespaceRenameImpl(input: unknown): Promise<ApplyNamespaceRenameResponse> {
-  const parsed = applyNamespaceRenameInputSchema.safeParse(input)
+  const parsed = legacySafeParse(applyNamespaceRenameInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

@@ -62,6 +62,7 @@ import type {
   ApplyManifestReconcileInput,
   ApplyManifestReconcileResponse,
 } from './apply-manifest-reconcile.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 // SMI-5982-style enum derivation (mirrors install.types.ts / uninstall.ts) —
 // derives from the same source of truth `resolveClientId` validates
@@ -84,28 +85,28 @@ export const applyManifestReconcileInputSchema = z
   .superRefine((value, ctx) => {
     if (['mark_local', 'relink', 'drop_entry'].includes(value.action) && !value.name) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['name'],
         message: `'name' is required when action === '${value.action}'`,
       })
     }
     if (value.action === 'relink' && (!value.id || !value.source)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['id'],
         message: "relink requires BOTH 'id' and 'source'",
       })
     }
     if (value.action !== 'relink' && (value.id !== undefined || value.source !== undefined)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['id'],
         message: "'id'/'source' are only valid when action === 'relink'",
       })
     }
     if (value.action === 'revert' && !value.name && !value.ledgerEntryId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['ledgerEntryId'],
         message: "revert requires either 'ledgerEntryId' or 'name'",
       })
@@ -181,7 +182,7 @@ async function applyManifestReconcileImpl(
   input: unknown,
   _context?: ToolContext
 ): Promise<ApplyManifestReconcileResponse> {
-  const parsed = applyManifestReconcileInputSchema.safeParse(input)
+  const parsed = legacySafeParse(applyManifestReconcileInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

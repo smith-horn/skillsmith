@@ -52,6 +52,7 @@ export type {
   ReferenceWarning,
   PreflightResult,
 } from './publish.types.js'
+import { legacyParse } from '../validation.legacy.js'
 export { publishInputSchema, publishToolSchema } from './publish.types.js'
 export { formatPublishResults } from './publish.helpers.js'
 
@@ -69,7 +70,7 @@ async function executePublishImpl(
   _context?: ToolContext
 ): Promise<PublishResponse> {
   // Validate input with Zod
-  const validated = publishInputSchema.parse(input)
+  const validated = legacyParse(publishInputSchema, input)
   const { skill_path, check_references, reference_patterns, create_repo, visibility, add_topic } =
     validated
 

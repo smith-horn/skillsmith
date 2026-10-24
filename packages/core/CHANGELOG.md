@@ -5,8 +5,8 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **Added**: SMI-6531 A1 step 4c -- `swapInPlace` now backs up across devices when the state root
-  is on another filesystem. It first checks free space and refuses with `state-root-full` (naming
-  `skillsmith doctor backups --prune`) rather than fill the disk. It copies the old folder into a
+  is on another filesystem. It first estimates the space the copy needs and refuses with
+  `state-root-full` (naming `skillsmith doctor backups --prune`) when it clearly won't fit. It copies the old folder into a
   temp, verifies the copy against the source by tree hash, keeps a copy that doesn't match as
   `partial-copy` and copies once more, then moves the verified copy into place. The source is
   never removed: the operation's staging folder is parked whole, with a park intent first, and
@@ -22,6 +22,10 @@ All notable changes to `@skillsmith/core` are documented here.
   backup area before each unlink, and any failure after the update record is removed is reported
   as a removal not done, with the `doctor recovery --clean-staging` command. No caller uses
   `swapInPlace` yet.
+
+- **Security**: SMI-7168 -- `zod` moves from 4.2.1 to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5
+  (memory exhaustion when validating oversized constrained collections). Same major, so no code
+  change.
 
 - **Added**: SMI-6531 A1 step 4b -- `swapInPlace` now cleans up after an abort before the swap, and
   removes nothing. An unchanged staged copy is parked whole with its op directory. Before the

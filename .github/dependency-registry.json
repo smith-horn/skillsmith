@@ -340,12 +340,12 @@
       "removeWhen": "Every minimatch consumer is on minimatch 10 or higher (brace-expansion ^5); npm ls brace-expansion shows no declaring edge below ^5."
     },
     "body-parser": {
-      "pin": "^2.3.0",
-      "reason": "Floor for the low severity body-parser advisory on the copy express pulls.",
-      "advisories": [],
-      "introducedBy": ["SMI-5778", "1014d23c7"],
+      "pin": "^2.4.0",
+      "reason": "Floor for the body-parser advisories on the copy express pulls: the earlier low severity one, and GHSA-27r3-jxmh-p828 (denial of service via trailing bytes after a compressed body, affects 2.0.0 up to below 2.4.0, high).",
+      "advisories": ["GHSA-27r3-jxmh-p828"],
+      "introducedBy": ["SMI-5778", "1014d23c7", "SMI-7168"],
       "crossesMajor": null,
-      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 2.3.0 or higher."
+      "removeWhen": "It is a floor: remove when a scratch delete and fresh resolve still yields 2.4.0 or higher."
     },
     "@modelcontextprotocol/sdk > .": {
       "pin": "^1.31.0",

@@ -25,6 +25,7 @@ import { z } from 'zod'
 import { CodebaseAnalyzer, type CodebaseContext, type FrameworkInfo } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import { hasPathTraversal } from './validate.helpers.js'
+import { legacyParse } from '../validation.legacy.js'
 
 /**
  * Zod schema for analyze tool input validation
@@ -148,7 +149,7 @@ export const analyzeToolSchema = {
  */
 async function executeAnalyzeImpl(input: AnalyzeInput): Promise<AnalyzeResponse> {
   // Validate input
-  const validated = analyzeInputSchema.parse(input)
+  const validated = legacyParse(analyzeInputSchema, input)
 
   if (hasPathTraversal(validated.path)) {
     throw new Error('Path contains path traversal pattern')

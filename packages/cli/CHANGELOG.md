@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Security**: SMI-7168 -- the published bundle inlines `@skillsmith/core` and
+  `@skillsmith/mcp-server`, so it carried their vulnerable `zod`. A rebuild picks up `zod` 4.6.7
+  (GHSA-mrhx-c7xc-m3w5, memory exhaustion when validating oversized constrained collections). The
+  CLI has no code change; it needs a republish to ship the fix.
+
 - **Internal**: SMI-6531 (A1 step 1) -- the install trust-tier prompt, the update confirmation
   prompt and both registry lookups call core's `assertSkillWriteLockNotHeld` on entry, so none can
   run while a skills-root lock is held.
