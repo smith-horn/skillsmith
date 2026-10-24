@@ -1,27 +1,27 @@
 /**
- * SMI-6531 (A1 step 4c, review round 1): the power-loss model T-P5 replays a
- * recorded syscall trace through (A1 plan §3.3 sync rule, E27).
+ * SMI-6531 (A1 step 4c, review rounds 1-2): the power-loss model T-P5 replays
+ * a recorded syscall trace through (A1 plan §3.3 sync rule, E27).
  *
  * **What survives a crash.** Every directory-entry change (an entry added,
  * replaced or removed by a `mkdir`, create, `link`, `rename`, `unlink`,
  * `rmdir` or park) is pending until its directory is synced, which makes every
  * pending change in that directory durable. At a crash, any combination of the
- * pending changes may have reached disk, independently per change, subject to
- * two rules a journaling filesystem keeps:
+ * pending changes may have reached disk, independently per change, with one
+ * rule: a `rename` is atomic, so while both of its halves are pending they
+ * persist together. Nothing else is assumed (round 2 deleted the rule that a
+ * change persists only with its destination's pending directory creations:
+ * POSIX does not promise it, GPT-5.6-Sol round 2). Once one directory is
+ * synced, its half of a rename is durable and the other half stays pending on
+ * its own (E27's model, which the transaction's sync order is built on);
+ * `atomicRename: true` instead commits both halves when either directory is
+ * synced, which is what a journaling filesystem does with one rename
+ * transaction, and is used only to state the residual it would close.
  *
- *  - a `rename` is atomic: while both of its halves are pending, they persist
- *    together;
- *  - a change persists only if the creations of the directories it lands in
- *    persisted (a rename's removal half counts its destination's ancestors):
- *    an entry cannot reach disk inside a directory that never did.
- *
- * Nothing else is assumed: once a directory is synced, its half of a rename is
- * durable whatever happened to the other half, and an unsynced unlink may
- * persist on its own. File data survives once the file is `fsync`ed. A
- * directory the trace mentions before any `mkdir` of it existed before the
- * run and is durable. A park (ADR-166's port syncs nothing) creates the parked
- * area's new directories as pending `mkdir`s, then renames OP into them; the
- * caller's syncs after it (round 1, fix 1) are ordinary `dirsync` events.
+ * File data survives once the file is `fsync`ed. A directory the trace
+ * mentions before any `mkdir` of it existed before the run and is durable,
+ * except a park's destination, whose directories must come from the trace: the
+ * caller traces the port's own `mkdir`s and pre-rename syncs (round 2), and a
+ * park into a directory the trace never made is a model error.
  *
  * A tree is one node with a content token: `OLD` for the skill folder as
  * planned, `NEW` for the build in `new/`; a `copy` gives its destination its
@@ -38,7 +38,9 @@
  *     is reachable in OP, unless the update committed and the backup (a copy
  *     or the old folder, token `OLD`) is reachable at exactly `<area>/<opId>`;
  *  5. wherever the copy temp or the backup is reachable, its sidecar or its
- *     sidecar temp is reachable with synced data (so doctor can name it).
+ *     sidecar temp is reachable with synced data (so doctor can name it);
+ *  6. at the end of the run, a park the run reported `parked` is at its parked
+ *     path (what the result names has reached disk).
  */
 import path from 'node:path'
 import type { TraceOp } from '../../../src/services/skill-swap.js'
@@ -55,7 +57,6 @@ interface Change {
   dir: number
   name: string
   to: number | null
-  deps: Set<number>
   pair: number | null
 }
 
@@ -83,16 +84,19 @@ class Model {
   private readonly nodes = new Map<number, Node>()
   private readonly base = new Map<number, Map<string, number>>()
   private readonly live = new Map<number, Map<string, number>>()
-  private readonly parent = new Map<number, number>()
-  private readonly created = new Map<number, number>()
   private readonly pending = new Map<number, Change>()
   private readonly synced = new Set<number>()
   private readonly root: number
   readonly oldNode: number
   newNode: number | null = null
   committed = false
+  /** The last park the run reported `parked`: the moved node and where. */
+  parked: { node: number; dest: string } | null = null
 
-  constructor(paths: ModelPaths) {
+  constructor(
+    paths: ModelPaths,
+    private readonly atomicRename = false
+  ) {
     this.root = this.node(true, null)
     this.oldNode = this.ensure(paths.realDir)
     this.nodes.get(this.oldNode)!.token = 'OLD'
@@ -117,21 +121,6 @@ class Model {
         id = this.node(true, null)
         this.live.get(cur)!.set(part, id)
         this.base.get(cur)!.set(part, id)
-        this.parent.set(id, cur)
-      }
-      cur = id
-    }
-    return cur
-  }
-
-  /** The live node at `p`; a missing component is made now, as a pending `mkdir`. */
-  private ensurePending(p: string): number {
-    let cur = this.root
-    for (const part of p.split('/').filter(Boolean)) {
-      let id = this.live.get(cur)!.get(part)
-      if (id === undefined) {
-        id = this.node(true, null)
-        this.created.set(id, this.change(cur, part, id, this.chain(cur)))
       }
       cur = id
     }
@@ -148,28 +137,11 @@ class Model {
     return cur
   }
 
-  /** The pending creations of `dir` and its ancestors. */
-  private chain(dir: number): Set<number> {
-    const out = new Set<number>()
-    for (
-      let d: number | undefined = dir;
-      d !== undefined && d !== this.root;
-      d = this.parent.get(d)
-    ) {
-      const s = this.created.get(d)
-      if (s !== undefined && this.pending.has(s)) out.add(s)
-    }
-    return out
-  }
-
-  private change(dir: number, name: string, to: number | null, deps: Set<number>): number {
+  private change(dir: number, name: string, to: number | null): number {
     const seq = this.seq++
-    this.pending.set(seq, { seq, dir, name, to, deps, pair: null })
+    this.pending.set(seq, { seq, dir, name, to, pair: null })
     if (to === null) this.live.get(dir)!.delete(name)
-    else {
-      this.live.get(dir)!.set(name, to)
-      if (this.nodes.get(to)!.dir) this.parent.set(to, dir)
-    }
+    else this.live.get(dir)!.set(name, to)
     return seq
   }
 
@@ -177,14 +149,18 @@ class Model {
     return [this.ensure(path.dirname(p)), path.basename(p)]
   }
 
-  private rename(from: string, to: string, pendingParents: boolean): void {
+  private rename(from: string, to: string, traced: boolean): void {
     const id = this.lookup(from)
     if (id === null) throw new Error(`model: rename of a missing ${from}`)
     const [pa, na] = this.split(from)
-    const pb = pendingParents ? this.ensurePending(path.dirname(to)) : this.ensure(path.dirname(to))
-    const chain = this.chain(pb)
-    const add = this.change(pb, path.basename(to), id, chain)
-    const rem = this.change(pa, na, null, new Set([add, ...chain]))
+    let pb: number
+    if (traced) {
+      const at = this.lookup(path.dirname(to))
+      if (at === null) throw new Error(`model: park into ${path.dirname(to)}, never made`)
+      pb = at
+    } else pb = this.ensure(path.dirname(to))
+    const add = this.change(pb, path.basename(to), id)
+    const rem = this.change(pa, na, null)
     this.pending.get(add)!.pair = rem
     this.pending.get(rem)!.pair = add
   }
@@ -194,12 +170,12 @@ class Model {
       case 'mkdir': {
         const [d, n] = this.split(t.path)
         const id = this.node(true, null)
-        this.created.set(id, this.change(d, n, id, this.chain(d)))
+        this.change(d, n, id)
         return
       }
       case 'create': {
         const [d, n] = this.split(t.path)
-        this.change(d, n, this.node(false, null), this.chain(d))
+        this.change(d, n, this.node(false, null))
         return
       }
       case 'fsync': {
@@ -217,13 +193,13 @@ class Model {
         const id = this.lookup(t.path)
         if (id === null) throw new Error(`model: link of a missing ${t.path}`)
         const [d, n] = this.split(t.dest)
-        this.change(d, n, id, this.chain(d))
+        this.change(d, n, id)
         return
       }
       case 'unlink':
       case 'rmdir': {
         const [d, n] = this.split(t.path)
-        this.change(d, n, null, new Set())
+        this.change(d, n, null)
         return
       }
       case 'copy': {
@@ -235,7 +211,7 @@ class Model {
         else {
           const [d, n] = this.split(t.dest)
           const id = this.node(true, token)
-          this.created.set(id, this.change(d, n, id, this.chain(d)))
+          this.change(d, n, id)
         }
         if (token === 'NEW') this.newNode = this.lookup(t.dest)
         return
@@ -244,7 +220,9 @@ class Model {
         this.committed = true
         return
       case 'park':
-        if (t.dest !== null) this.rename(t.path, t.dest, true)
+        if (t.dest === null) return
+        this.rename(t.path, t.dest, true)
+        if (t.status === 'parked') this.parked = { node: this.lookup(t.dest)!, dest: t.dest }
         return
       default:
         return
@@ -256,9 +234,20 @@ class Model {
     this.base.set(dir, new Map(this.live.get(dir)!))
     const done = new Set<number>()
     for (const c of this.pending.values()) if (c.dir === dir) done.add(c.seq)
+    if (this.atomicRename) {
+      // One rename transaction: its other half reaches disk with this one.
+      for (const s of [...done]) {
+        const partner = this.pending.get(s)!.pair
+        if (partner === null || done.has(partner)) continue
+        const c = this.pending.get(partner)!
+        const m = this.base.get(c.dir)!
+        if (c.to === null) m.delete(c.name)
+        else m.set(c.name, c.to)
+        done.add(partner)
+      }
+    }
     for (const s of done) this.pending.delete(s)
     for (const c of this.pending.values()) {
-      for (const s of done) c.deps.delete(s)
       if (c.pair !== null && done.has(c.pair)) c.pair = null
     }
   }
@@ -279,9 +268,7 @@ class Model {
       units.forEach((u, i) => {
         if (mask & (1 << i)) for (const x of u) s.add(x)
       })
-      let ok = true
-      for (const x of s) for (const d of this.pending.get(x)!.deps) if (!s.has(d)) ok = false
-      if (ok) yield s
+      yield s
     }
   }
 
@@ -336,8 +323,12 @@ class Model {
 }
 
 /** Replays `trace` and checks every crash point in every permitted combination. */
-export function replay(trace: readonly TraceOp[], paths: ModelPaths): Verdict {
-  const m = new Model(paths)
+export function replay(
+  trace: readonly TraceOp[],
+  paths: ModelPaths,
+  opts: { atomicRename?: boolean } = {}
+): Verdict {
+  const m = new Model(paths, opts.atomicRename === true)
   let newWasDurable = false
   const temp = path.join(path.dirname(paths.backupDest), `.tmp-${path.basename(paths.backupDest)}`)
   for (let i = 0; i <= trace.length; i++) {
@@ -371,6 +362,9 @@ export function replay(trace: readonly TraceOp[], paths: ModelPaths): Verdict {
         if (!v.syncedFile(side) && !v.syncedFile(`${side}.tmp`)) {
           return fail('the copy temp or the backup is reachable without a durable sidecar')
         }
+      }
+      if (i === trace.length && m.parked !== null && v.resolve(m.parked.dest) !== m.parked.node) {
+        return fail('the park the run reported is not at its parked path')
       }
     }
     if (newEverywhere) newWasDurable = true
@@ -410,13 +404,21 @@ export function destinationAfterSource(trace: readonly TraceOp[], paths: ModelPa
   return [...trace.slice(0, i + 1), trace[i + 2]!, trace[i + 1]!, ...trace.slice(i + 3)]
 }
 
-/** The index of the park event and its three syncs (round 1, fix 1), checked present. */
+/**
+ * The park event's index, checked to be preceded by the port's two pre-rename
+ * syncs (`.skillsmith-parked`, then ST) and followed by the caller's two
+ * (`<opId>`, then ST), as round 2 places them.
+ */
 export function parkSyncs(trace: readonly TraceOp[], paths: ModelPaths): number {
   const i = trace.findIndex((t) => t.op === 'park')
-  const landed = path.join(paths.staging, '.skillsmith-parked', path.basename(paths.opDir))
-  const want = [landed, path.dirname(landed), paths.staging]
-  if (i < 0 || !want.every((d, k) => isSync(trace[i + 1 + k]!, d))) {
-    throw new Error('control: the park is not followed by its three syncs')
-  }
+  const parkedRoot = path.join(paths.staging, '.skillsmith-parked')
+  const landed = path.join(parkedRoot, path.basename(paths.opDir))
+  const ok =
+    i >= 2 &&
+    isSync(trace[i - 2], parkedRoot) &&
+    isSync(trace[i - 1], paths.staging) &&
+    isSync(trace[i + 1], landed) &&
+    isSync(trace[i + 2], paths.staging)
+  if (!ok) throw new Error('control: the park is not between its pre- and post-rename syncs')
   return i
 }

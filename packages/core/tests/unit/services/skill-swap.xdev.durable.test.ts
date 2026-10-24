@@ -1,10 +1,12 @@
 /**
  * SMI-6531 (A1 step 4c, review round 1): durability and the end of step 13.
  *
- *  - Fix 1 (GPT-5.6-Sol): after a park that moved OP, the directory it landed
- *    in, `.skillsmith-parked` and ST are synced, in that order, before
- *    anything is reported; a failed sync is not done (`held`,
- *    `park-not-durable`), for both park callers.
+ *  - The park's durability (GPT-5.6-Sol rounds 1-2, owner decision): the port
+ *    syncs `.skillsmith-parked` and ST before its rename (traced from its
+ *    `preMoveSynced`), and after a park that moved OP the caller syncs the
+ *    landing directory and then ST before reporting; a failed post-rename sync
+ *    is not done (`held`, `park-not-durable`), for both park callers, and for
+ *    a park the port already returned `held`.
  *  - Fix 4 (governance, measured): every failure after `record.json` is
  *    unlinked ends as `removal-not-done` naming OP with one stderr line and the
  *    `--clean-staging` hint, never as an `incomplete` result naming no record:
@@ -18,12 +20,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { parkTreeIndexed } from '../../../src/install/park-call.js'
 import type { SwapResult, TraceOp } from '../../../src/services/skill-swap.js'
 import { ALL_DELETES, refusedOf, runSpied } from './skill-swap.abort.helpers.js'
 import type { Event } from './skill-swap.abort.helpers.js'
 import { abortAt } from './skill-swap.abort.triggers.js'
 import {
-  isSubsequence,
+  run as runPlain,
   makeFixture,
   modify,
   OP_ID,
@@ -68,22 +71,37 @@ function assertNotDoneAfterRecord(fx: Fixture, r: Committed, lines: string[], re
 }
 
 describe('fix 1: the park is synced before it is reported', () => {
-  it('across devices: park, then sync its directory, .skillsmith-parked, ST, nothing between', async () => {
+  it('across devices: mkdirs, the port syncs .skillsmith-parked and ST, the park, then <opId> and ST, then the hook', async () => {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    const run = await runSpied(p, ALL_DELETES)
+    let atHook: number | null = null
+    const trace: TraceOp[] = []
+    const run = await runPlain(p, {
+      trace: (t) => trace.push(t),
+      hooks: { afterParkSync: () => void (atHook = trace.length) },
+    })
     const r = committedOf(run.result)
-    const trace = traceOf(run.events)
+    const parked = path.dirname(parkedArea(fx))
     const i = trace.findIndex((t) => t.op === 'park')
-    expect(trace.slice(i + 1, i + 4)).toEqual([
+    expect(trace.slice(i - 4, i + 3)).toEqual([
+      { op: 'mkdir', path: parked },
+      { op: 'mkdir', path: parkedArea(fx) },
+      { op: 'dirsync', path: parked },
+      { op: 'dirsync', path: fx.staging },
+      { op: 'park', path: fx.opDir, status: 'parked', dest: r.extraCopy },
       { op: 'dirsync', path: parkedArea(fx) },
-      { op: 'dirsync', path: path.dirname(parkedArea(fx)) },
       { op: 'dirsync', path: fx.staging },
     ])
     expect(path.dirname(String(r.extraCopy))).toBe(parkedArea(fx))
+    // The hook runs after both post-rename syncs (Sol round 2: it was unpinned).
+    expect(atHook).not.toBeNull()
+    expect(trace.slice(0, atHook!).slice(-2)).toEqual([
+      { op: 'dirsync', path: parkedArea(fx) },
+      { op: 'dirsync', path: fx.staging },
+    ])
   })
 
-  it("abort cleanup's park: the same three syncs, in the same order", async () => {
+  it("abort cleanup's park: the same pre- and post-rename syncs, in the same order", async () => {
     const fx = makeFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     const t = abortAt(fx, 'step4')
@@ -91,14 +109,15 @@ describe('fix 1: the park is synced before it is reported', () => {
       const run = await runSpied(p, ALL_DELETES, t.options)
       expect(refusedOf(run.result).staged).toBe('parked')
       const trace = traceOf(run.events)
-      expect(
-        isSubsequence(trace, [
-          { op: 'park', path: fx.opDir, status: 'parked' },
-          { op: 'dirsync', path: parkedArea(fx) },
-          { op: 'dirsync', path: path.dirname(parkedArea(fx)) },
-          { op: 'dirsync', path: fx.staging },
-        ])
-      ).toEqual({ ok: true })
+      const parked = path.dirname(parkedArea(fx))
+      const i = trace.findIndex((t) => t.op === 'park')
+      expect(trace.slice(i - 2, i + 3)).toEqual([
+        { op: 'dirsync', path: parked },
+        { op: 'dirsync', path: fx.staging },
+        expect.objectContaining({ op: 'park', path: fx.opDir, status: 'parked' }),
+        { op: 'dirsync', path: parkedArea(fx) },
+        { op: 'dirsync', path: fx.staging },
+      ])
     } finally {
       t.restore()
     }
@@ -115,6 +134,7 @@ describe('fix 1: the park is synced before it is reported', () => {
     } finally {
       f.restore()
     }
+    // Presence: the landing sync was attempted (and failed) exactly once.
     expect(f.fired()).toBe(1)
     const r = committedOf(run.result)
     expect(r.incomplete).toBeUndefined()
@@ -133,10 +153,45 @@ describe('fix 1: the park is synced before it is reported', () => {
     ])
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain(String(copies[0]))
-    // The later syncs were not tried: ST must not record OP's removal first.
-    const syncs = traceOf(run.events).filter((t) => t.op === 'dirsync')
-    expect(syncs.slice(-1)).not.toEqual([{ op: 'dirsync', path: fx.staging }])
+    // Absence, after the park only: no sync of ST or .skillsmith-parked was made.
+    const trace = traceOf(run.events)
+    const after = trace.slice(trace.findIndex((t) => t.op === 'park') + 1)
+    const parked = path.dirname(parkedArea(fx))
+    expect(
+      after.filter((t) => t.op === 'dirsync' && (t.path === fx.staging || t.path === parked))
+    ).toEqual([])
+    // ...while the pre-rename syncs before it are there (so the filter can see a dirsync).
+    expect(trace.filter((t) => t.op === 'dirsync' && t.path === fx.staging).length).toBeGreaterThan(
+      0
+    )
     expect(treeDeletesX(fx, run.events)).toEqual([])
+  })
+
+  it('a park the port already returned held, whose landing sync then fails: its own reason, the failure in the detail, the sync errno', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const f = failDirSync((d) => d === parkedArea(fx))
+    let run
+    try {
+      run = await runSpied(p, ALL_DELETES, {
+        park: async (parent, name, o) => {
+          const real = await parkTreeIndexed(parent, name, o)
+          return { ...real, status: 'held', reason: 'changed-during-move', detail: 'probe-held' }
+        },
+      })
+    } finally {
+      f.restore()
+    }
+    expect(f.fired()).toBe(1)
+    const r = committedOf(run.result)
+    const nd = r.warnings.filter((w) => w.code === 'removal-not-done')
+    expect(nd).toHaveLength(1)
+    expect(nd[0]).toMatchObject({ status: 'held', reason: 'changed-during-move', errno: 'EIO' })
+    const detail = String((nd[0] as { detail?: string }).detail)
+    expect(detail).toMatch(
+      /^probe-held; its park could not be synced \(the park moved the tree to /
+    )
+    expect(detail).toContain(`${parkedArea(fx)} could not be synced`)
   })
 
   it('abort cleanup: a failed sync of ST after its park is staged held with park-not-durable', async () => {

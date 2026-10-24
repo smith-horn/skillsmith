@@ -60,7 +60,17 @@ export interface Sidecar {
   manifestKey: string
   /** `partial-copy` only: the copy's source still hashed to its own sidecar's `treeHash`. */
   sourceUnchanged?: boolean
+  /**
+   * `partial-copy` only (round 2): why the copy was kept. `enospc` (the device
+   * filled, `ENOSPC` or `EDQUOT`) blocks every later cross-device copy into the
+   * area until it is pruned (`skill-swap.space.ts`); `mismatch` (the source
+   * changed while it was copied) and `copy-failed` (any other copy error) do
+   * not.
+   */
+  partialCause?: PartialCause
 }
+
+export type PartialCause = 'enospc' | 'mismatch' | 'copy-failed'
 
 /** First 16 hex characters of sha256 over R, the skills root's realpath (UD22). */
 export const rootKeyOf = (root: string): string =>
@@ -72,7 +82,7 @@ export function sidecarOf(
   kind: PublishKind,
   h: TreeHashResult,
   id: BoundIdentity,
-  extra: Pick<Sidecar, 'sourceUnchanged'> = {}
+  extra: Pick<Sidecar, 'sourceUnchanged' | 'partialCause'> = {}
 ): Sidecar {
   return {
     opId: st.opId,

@@ -88,6 +88,7 @@ const POINTS: Point[] = [
     want: 'parked, no index line',
   },
   { name: 'after the index line', cfg: { killAt: 'afterPark' }, want: 'parked' },
+  { name: "after the park's post-rename syncs", cfg: { killAt: 'afterParkSync' }, want: 'parked' },
 ]
 const KILL_CONCURRENCY = 2
 

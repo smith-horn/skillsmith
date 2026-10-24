@@ -409,3 +409,46 @@ describe('T-F1: ENOSPC at the park sidecar', () => {
     expect(treeDeletesX(fx, run.events)).toEqual([])
   })
 })
+
+/** Round 2 (governance minor 2): the estimate's two margins pinned at their boundaries. */
+describe('T-F1: the estimate margins, pinned', () => {
+  // Three 0-byte files still take a block each, the root directory one, the sidecars two.
+  const EMPTY = { 'SKILL.md': '', 'e1.txt': '', 'e2.txt': '' }
+  const EMPTY_NEED = (3n + 1n + 2n) * BLOCK + 65536n
+
+  it('0-byte files: one block less than the need refuses', async () => {
+    const fx = xdevFixture(EMPTY)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    stubStatfs(fx, EMPTY_NEED - BLOCK)
+    const run = await runSpied(p, ALL_DELETES)
+    expect(committedOf(run.result).incomplete?.reason).toBe('state-root-full')
+  })
+
+  it('0-byte files: exactly the need passes', async () => {
+    const fx = xdevFixture(EMPTY)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    stubStatfs(fx, EMPTY_NEED)
+    const run = await runSpied(p, ALL_DELETES)
+    expect(committedOf(run.result).incomplete).toBeUndefined()
+  })
+
+  // FILES: 4 files and 2 directories, plus 2 sidecars and a margin of 16 inodes.
+  const ENTRIES = 6n
+  it('inodes: entries + 17 free refuses', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    stubStatfs(fx, FILES_NEED * 10n, { files: 1000n, ffree: ENTRIES + 17n })
+    const run = await runSpied(p, ALL_DELETES)
+    const r = committedOf(run.result)
+    expect(r.incomplete?.reason).toBe('state-root-full')
+    expect(r.incomplete?.detail).toContain(`has ${ENTRIES + 17n} inodes free`)
+  })
+
+  it('inodes: entries + 18 free passes', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    stubStatfs(fx, FILES_NEED * 10n, { files: 1000n, ffree: ENTRIES + 18n })
+    const run = await runSpied(p, ALL_DELETES)
+    expect(committedOf(run.result).incomplete).toBeUndefined()
+  })
+})

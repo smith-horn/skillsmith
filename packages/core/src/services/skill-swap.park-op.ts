@@ -21,22 +21,38 @@
  * never retries: an outcome other than `parked` is the caller's to report as a
  * removal not done (UD32).
  *
- * **The park made durable (round 1, caller side).** The ADR-166 park port
- * creates `.skillsmith-parked/<opId>/` and renames OP into it, but syncs no
- * directory. A later sync of ST would make OP's removal durable while the new
- * parked-area entries could still be lost, taking with them the only copy of a
- * write that landed in OP after a cross-device copy verified. So once the
- * result says the tree moved (`parked` or `held`), this module syncs, in
- * order, the directory the tree landed in, its parent (`.skillsmith-parked`),
- * then ST, before it reports anything. A failed sync is not done: the tree has
- * moved, so it is reported as `held` at its parked path, with reason
+ * **Durability (review round 2, owner decision).** The ADR-166 port syncs
+ * the destination's ancestry before its rename: `.skillsmith-parked` (which
+ * holds `<opId>`'s entry) and ST (which holds `.skillsmith-parked`'s). So the
+ * rename changes only two entries, OP's new name in `<opId>` and its removal
+ * from ST, and no crash can leave OP removed from ST inside a directory that
+ * never reached disk. Its result reports those syncs (`preMoveSynced`,
+ * `opDirCreated`), which this module traces before the `park` step (A1 plan
+ * T-P5). After a park that moved the tree (`parked` or `held`), this module
+ * syncs the landing directory (`<opId>`), then ST, before it reports the move,
+ * so what it reports has reached disk. A failed sync there is not done: the
+ * tree has moved and is reported `held` at its parked path with reason
  * `park-not-durable` (or, for a park already `held`, its own reason with the
- * failure in the detail).
+ * failure in the detail and the sync's errno when the park had none), and ST
+ * is not synced by this run.
+ *
+ * Residual (measured in T-P5): between the rename and the landing directory's
+ * sync, another writer's sync of ST would make OP's removal durable while its
+ * new name in `<opId>` is not, under a model in which each directory's half of
+ * a rename is durable only once that directory is synced (E27's, which the
+ * transaction's own renames are ordered by). A failed landing sync leaves that
+ * window open. A filesystem that commits a rename's two halves in one journal
+ * transaction closes it (T-P5's `atomicRename` replay). It is the same window
+ * every rename in the transaction has between the call and its destination
+ * sync; Node has no way to close it.
  *
  * Residual (UD18's identical-serialization class, UD40): a byte-identical
  * swap of an expected entry made after the last entry check and before the
  * park's rename passes the guard hash, which covers bytes and modes but not
  * inodes, and is parked in the original's place, whole; nothing is deleted.
+ * The window runs to the port's own source re-check and rename, which come
+ * after its pre-rename syncs, so the syncs widen it by two directory fsyncs
+ * (ADR-166 D-0).
  *
  * @module @skillsmith/core/services/skill-swap.park-op
  */
@@ -153,6 +169,7 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
     indexPath: path.join(st.stateRootReal, PARKED_INDEX_FILE),
   })
   const moved = r.status === 'parked' || r.status === 'held'
+  tracePreMove(st, r)
   trace(st, { op: 'park', path: st.opDir, status: r.status, dest: moved ? r.path : null })
   await hook(st, 'afterPark')
   const landed = String(r.status === 'held' ? (r.heldPath ?? r.path) : r.path)
@@ -176,6 +193,9 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
   const errno = r.errno === null ? {} : { errno: r.errno }
   const why = r.detail === null ? {} : { detail: r.detail }
   if (r.status === 'held') {
+    // The park's own errno, else the failed sync's.
+    const heldErrno =
+      r.errno !== null ? errno : unsynced?.errno === undefined ? {} : { errno: unsynced.errno }
     const also = unsynced === null ? '' : `; its park could not be synced (${unsynced.detail})`
     const detail = `${r.detail ?? `held at ${landed}`}${also}`
     return {
@@ -184,7 +204,7 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
         status: 'held',
         reason: r.reason ?? 'held',
         parkedPath: landed,
-        ...errno,
+        ...heldErrno,
         ...(r.detail === null && also === '' ? {} : { detail }),
       },
     }
@@ -199,16 +219,30 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
 }
 
 /**
- * Syncs the parked copy's directory, `.skillsmith-parked`, then ST. Returns
- * null when all three synced, else the first failure (the rest are not tried:
- * a later sync must not make OP's removal durable before its new home is).
+ * Traces what the park port made durable before its rename (round 2), in the
+ * order it did it: the parked area and the op directory it created, then each
+ * directory it synced. A result without `preMoveSynced` (a park that stopped
+ * before that step, or a test's stub) traces nothing here.
+ */
+function tracePreMove(st: SwapState, r: ParkResult): void {
+  if (!Array.isArray(r.preMoveSynced)) return
+  const parkedRoot = path.join(st.binding.stagingDir, '.skillsmith-parked')
+  if (r.parkedAreaCreated === true) trace(st, { op: 'mkdir', path: parkedRoot })
+  if (r.opDirCreated === true) trace(st, { op: 'mkdir', path: path.join(parkedRoot, st.opId) })
+  for (const dir of r.preMoveSynced) trace(st, { op: 'dirsync', path: String(dir) })
+}
+
+/**
+ * After a park that moved OP: syncs the landing directory (`<opId>`), then ST.
+ * Returns null when both synced, else the first failure (ST is then not tried;
+ * the tree stays reachable either way, since the rename's halves persist
+ * together and the port synced their directories' ancestry before the move).
  */
 async function syncPark(
   st: SwapState,
   landed: string
 ): Promise<{ errno?: string; detail: string } | null> {
-  const opArea = path.dirname(landed)
-  for (const dir of [opArea, path.dirname(opArea), st.binding.stagingDir]) {
+  for (const dir of [path.dirname(landed), st.binding.stagingDir]) {
     try {
       await syncDir(st, dir)
     } catch (err) {

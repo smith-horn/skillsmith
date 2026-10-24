@@ -84,6 +84,13 @@ export interface ParkResult extends ParkResultFields {
   /** The parked area's `mkdirWithParentBits` warnings, present only when there are any. */
   warnings?: string[]
   /**
+   * The directories the park `fsync`ed before its rename (`.skillsmith-parked`,
+   * then the parent), present once it reached that step (step 4c round 2).
+   */
+  preMoveSynced?: string[]
+  /** Present with `preMoveSynced`: true when this park's `mkdir` made the op directory. */
+  opDirCreated?: boolean
+  /**
    * Present only for `detail: 'trash-mode-unsafe'`: both modes, the reasons and
    * the message of the parked area's refusal (no command).
    */

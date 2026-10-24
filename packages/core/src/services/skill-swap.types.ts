@@ -107,7 +107,7 @@ export type SwapHookPoint =
   | 'beforePark'
   /** The park of OP: after the park call returned (its index line appended), before lock 1 is released. */
   | 'afterPark'
-  /** The park of OP: after the moved tree's directory, `.skillsmith-parked` and ST were synced. */
+  /** The park of OP: after the moved tree's landing directory (`<opId>`) and then ST were synced. */
   | 'afterParkSync'
   /** After a step-2 `busy`: the second wait has announced itself and is about to poll. */
   | 'secondWaitStart'
@@ -186,12 +186,16 @@ export type SwapWarning =
   /** A directory's bits differ from its parent's (`mkdirWithParentBits` warnings). */
   | { code: 'mode'; path: string; detail: string }
   /**
-   * UD32: abort cleanup did not set the staged copy aside, or step 13 did not
-   * set aside a cross-device move's source (4c). `path` is OP (or, for `held`,
-   * where it was); `status` is the park's (`kept`, `held`, `stopped`), or
-   * `kept`/`stopped` for a run that stopped before the park (then `reason` is
-   * the stop's word, `busy` included). `parkedPath` only for `held`. Never
-   * names `skillsmith restore`: the origin is an op dir.
+   * UD32: a removal of OP that is not done. Three sources: abort cleanup did
+   * not set the staged copy aside; step 13 across devices did not set aside a
+   * cross-device move's source (4c); or step 13 on one device stopped after
+   * `record.json` was unlinked (a sync, the owner unlink or the `rmdir` failed,
+   * or OP gained an entry), leaving OP for doctor (4c round 1). `path` is OP,
+   * where the op dir was; `status` is the park's (`kept`, `held`, `stopped`,
+   * with `held` also for a moved park whose post-rename sync failed,
+   * `park-not-durable`), or `kept`/`stopped` for a run that stopped before
+   * any park (then `reason` is the stop's word, `busy` included). `parkedPath`
+   * only for `held`. Never names `skillsmith restore`: the origin is an op dir.
    */
   | {
       code: 'removal-not-done'

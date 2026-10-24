@@ -1,12 +1,27 @@
 /**
- * SMI-6531 (A1 step 4c, round 1): the space check that runs first in a
+ * SMI-6531 (A1 step 4c, rounds 1-2): the space checks that run first in a
  * cross-device `publishTree` (A1 plan §3.3 `publishTree` step 4, "Space
- * first"; E35). It refuses `state-root-full`, naming
+ * first"; E35). Each refuses `state-root-full`, naming
  * `skillsmith doctor backups --prune`, before anything is written.
  *
- * It estimates what the copy will ALLOCATE, not the tree's logical bytes (a
- * tree of 200 one-byte files counts 200 bytes and allocates 819,200 on tmpfs,
- * governance round 1):
+ * **The hard rule** (`refuseAfterFullDevice`, round 2, owner decision): if
+ * the backup area (`<client>/<rootKey>/<dirName>`, holding every update's
+ * backup of this folder, whatever its opId) already holds a copy a full
+ * device left behind, refuse without copying. That is a `partial-copy` whose
+ * sidecar records `partialCause: 'enospc'`, or whose sidecar is missing,
+ * unreadable or names no cause (counted conservatively as `enospc`), or a
+ * `.tmp-` copy temp (left at its name when the device was too full to write
+ * the partial's own sidecar, or by a crash; either way an unfinished copy).
+ * A `mismatch` partial (a concurrent write, not space) or a `copy-failed` one
+ * does not block. This is what bounds E35's ratchet: at most one full-device
+ * copy per area, however wrong the estimate below is.
+ *
+ * **The estimate** is a first-attempt filter only. It does not promise the
+ * copy fits: directory indexes, extent and other allocation metadata are not
+ * counted (GPT-5.6-Sol round 2), so a copy that passes it can still end
+ * `ENOSPC`. It estimates what the copy will ALLOCATE, not the tree's logical
+ * bytes (a tree of 200 one-byte files counts 200 bytes and allocates 819,200
+ * on tmpfs, governance round 1):
  *
  *  - every file and symlink rounded up to the filesystem's block size
  *    (`statfs` `bsize`), at least one block each;
@@ -22,7 +37,8 @@
  *
  * The estimate covers one copy. A copy that mismatches is kept and redone
  * once (plan §3.3), and the second copy can need the space again; if it runs
- * out it ends `ENOSPC`, kept as `partial-copy`, and never a third copy.
+ * out it ends `ENOSPC`, kept as an `enospc` partial, which the hard rule then
+ * counts.
  *
  * @module @skillsmith/core/services/skill-swap.space
  */
@@ -126,6 +142,48 @@ export async function spaceFirst(st: SwapState, src: string, record: TreeRecord 
     throw new SwapFault(
       'state-root-full',
       `${deviceOf(st)} has ${s.ffree} inodes free and the backup of ${src} needs ${inodes}; ${next}`
+    )
+  }
+}
+
+/** True when a kept partial's sidecar says the copy was not stopped by space. */
+async function notFromSpace(sidecarPath: string): Promise<boolean> {
+  try {
+    const v = JSON.parse(await fs.promises.readFile(sidecarPath, 'utf8')) as {
+      partialCause?: unknown
+    }
+    return v.partialCause === 'mismatch' || v.partialCause === 'copy-failed'
+  } catch {
+    // Missing or unreadable: counted as a full device (the conservative side).
+    return false
+  }
+}
+
+/**
+ * The hard rule (see the module comment): refuses `state-root-full` when the
+ * area already holds a copy a full device left, whatever update made it.
+ */
+export async function refuseAfterFullDevice(st: SwapState): Promise<void> {
+  let names: string[]
+  try {
+    names = (await fs.promises.readdir(st.areaPath)).sort()
+  } catch (err) {
+    throw new SwapFault(
+      'write-failed',
+      `the backup area ${st.areaPath} could not be listed (${codeOf(err) ?? 'unknown'})`,
+      err
+    )
+  }
+  for (const n of names) {
+    if (n.endsWith('.json') || n.endsWith('.json.tmp')) continue
+    const temp = n.startsWith('.tmp-')
+    if (!temp && !n.includes('.partial-copy')) continue
+    if (!temp && (await notFromSpace(path.join(st.areaPath, `${n}.json`)))) continue
+    throw new SwapFault(
+      'state-root-full',
+      `${st.areaPath} already holds ${path.join(st.areaPath, n)}, ` +
+        (temp ? 'an unfinished copy' : 'a partial copy a full device left') +
+        `, so no further copy is made there; run \`${PRUNE_COMMAND}\` to free space, then finish the update with doctor`
     )
   }
 }

@@ -11,9 +11,12 @@ All notable changes to `@skillsmith/core` are documented here.
   `partial-copy` and copies once more, then moves the verified copy into place. The source is
   never removed: the operation's staging folder is parked whole, with a park intent first, and
   the update names both the backup and the extra copy. The same path serves abort cleanup's and
-  the undo's keeps. The free-space check estimates block-rounded allocation and free inodes, not
-  just bytes. A park is synced (its folder, `.skillsmith-parked`, then the staging folder) before
-  it is reported, and a park that can't be synced is reported held. A sidecar rewrite syncs the
+  the undo's keeps. A cross-device update refuses with `state-root-full`, without copying, while
+  the backup area still holds a copy a full device left, so at most one such copy exists there;
+  the block and inode estimate is only a first-attempt filter. The park now syncs
+  `.skillsmith-parked` and its parent before its rename (a failure moves nothing), and the
+  update syncs the landing folder and then the staging folder after it; a park that can't be
+  synced is reported held. A sidecar rewrite syncs the
   backup area before each unlink, and any failure after the update record is removed is reported
   as a removal not done, with the `doctor recovery --clean-staging` command. No caller uses
   `swapInPlace` yet.

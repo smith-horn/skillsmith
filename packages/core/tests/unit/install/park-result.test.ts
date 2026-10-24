@@ -114,7 +114,11 @@ describe('the contract', () => {
     const f = fixture()
     const guardHash = guardOf(f.origin)
     const r = park(f.parent, 'tree', { guardHash })
-    expect(keys(r)).toBe([...CONTRACT_FIELDS].sort().join(','))
+    // Step 4c round 2: a park that reached its pre-rename syncs also says what it
+    // synced and whether it made the op directory (two extra keys, never dropped).
+    expect(keys(r)).toBe([...CONTRACT_FIELDS, 'opDirCreated', 'preMoveSynced'].sort().join(','))
+    expect(r.preMoveSynced).toEqual([path.join(f.parent, '.skillsmith-parked'), f.parent])
+    expect(r.opDirCreated).toBe(true)
     expect(r.status).toBe('parked')
     expect(r.treeHash).toBe(guardHash)
   })

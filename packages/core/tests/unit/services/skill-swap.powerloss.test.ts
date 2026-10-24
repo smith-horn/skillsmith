@@ -195,12 +195,14 @@ describe('T-P5 round 1 controls', () => {
     expect(v).toMatchObject({ ok: false, why: 'the path holds NEW with no durable record.json' })
   })
 
-  it("(b) cross-device: the park's three syncs dropped, then ST synced by a later writer", async () => {
+  // Round 2 (owner decision): the port syncs .skillsmith-parked and ST before
+  // its rename, and the caller syncs <opId> and ST after it.
+  it("(b) cross-device: the port's two pre-rename syncs dropped, then ST synced by a later writer", async () => {
     const { fx, trace } = await traced('cross-device')
     const i = parkSyncs(trace, pathsOf(fx))
     const mutated = [
-      ...trace.slice(0, i + 1),
-      ...trace.slice(i + 4),
+      ...trace.slice(0, i - 2),
+      ...trace.slice(i),
       { op: 'dirsync' as const, path: fx.staging },
     ]
     expect(replay(mutated, pathsOf(fx))).toMatchObject({
@@ -209,24 +211,37 @@ describe('T-P5 round 1 controls', () => {
     })
   })
 
-  it("(b') cross-device: only ST synced after the park (its directory and .skillsmith-parked not)", async () => {
+  it("(b') cross-device: only the port's sync of .skillsmith-parked dropped (<opId> itself never durable)", async () => {
     const { fx, trace } = await traced('cross-device')
     const i = parkSyncs(trace, pathsOf(fx))
-    const mutated = [...trace.slice(0, i + 1), ...trace.slice(i + 3)]
+    const mutated = [...trace.slice(0, i - 2), ...trace.slice(i - 1)]
     expect(replay(mutated, pathsOf(fx))).toMatchObject({
       ok: false,
       why: 'the old tree is reachable nowhere',
     })
   })
 
-  it("(b'') cross-device: the sync of .skillsmith-parked dropped (the park's new directory is itself unsynced)", async () => {
+  it("(b'') cross-device: the caller's two post-rename syncs dropped, so the reported park is not durable", async () => {
     const { fx, trace } = await traced('cross-device')
     const i = parkSyncs(trace, pathsOf(fx))
-    const mutated = [...trace.slice(0, i + 2), ...trace.slice(i + 3)]
+    const mutated = [...trace.slice(0, i + 1), ...trace.slice(i + 3)]
+    expect(replay(mutated, pathsOf(fx))).toMatchObject({
+      ok: false,
+      why: 'the park the run reported is not at its parked path',
+    })
+  })
+
+  it('residual: a failed landing sync, then ST synced by another writer, loses OP under the strict model only', async () => {
+    const { fx, trace } = await traced('cross-device')
+    const i = parkSyncs(trace, pathsOf(fx))
+    // Our run stops at the failed landing sync (no sync of ST); then another writer syncs ST.
+    const mutated = [...trace.slice(0, i + 1), { op: 'dirsync' as const, path: fx.staging }]
     expect(replay(mutated, pathsOf(fx))).toMatchObject({
       ok: false,
       why: 'the old tree is reachable nowhere',
     })
+    // A filesystem that commits a rename's halves together (one journal transaction) keeps it.
+    expect(replay(mutated, pathsOf(fx), { atomicRename: true })).toMatchObject({ ok: true })
   })
 
   it("(c) cross-device rewrite: the area sync before the old sidecar's unlink dropped", async () => {
