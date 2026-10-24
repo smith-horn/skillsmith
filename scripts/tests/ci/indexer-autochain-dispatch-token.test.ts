@@ -45,6 +45,8 @@ const preclaim = byId('preclaim')
 const readStub = { 'scripts/ci/autochain-read-enable.sh': 'echo read >> "$MARK"; exit 0\n' }
 const timeoutStub = { 'bin/timeout': 'shift; exec "$@"\n' }
 const recordingGh = 'echo "gh token=$GH_TOKEN argv=$*" >> "$MARK"; exit 0\n'
+// A probe stub: records the call and answers like `gh api ... --jq .state` for a workflow state.
+const probeGh = (state: string) => `echo "gh token=$GH_TOKEN argv=$*" >> "$MARK"; echo ${state}\n`
 
 describe('the dispatch credential is the PAT, never GITHUB_TOKEN', () => {
   it('1. the dispatch step GH_TOKEN is exactly the PAT secret (no fallback expression)', () => {
@@ -136,7 +138,8 @@ describe('the same check guards the claim (preclaim)', () => {
     expect(cmds[0]).toMatch(/^\[ -n "\$DISPATCH_PAT" \] \|\| \{ echo "::error::/)
     expect(cmds[0]).toContain(NOT_PROVISIONED)
     expect(cmds[0]).toMatch(/exit 1; \}$/)
-    expect(probeCmd()).toMatch(/^GH_TOKEN="\$DISPATCH_PAT" gh api /)
+    expect(probeCmd()).toMatch(/^STATE=\$\(GH_TOKEN="\$DISPATCH_PAT" gh api /)
+    expect(cmds[2]).toMatch(/^\[ "\$STATE" = active \] \|\| \{ echo "::error::/)
     expect(cmds.at(-1)).toBe(
       'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enable.sh'
     )
@@ -148,7 +151,7 @@ describe('the same check guards the claim (preclaim)', () => {
     expect(empty.marks).toEqual([])
     expect(empty.err).toContain(NOT_PROVISIONED)
     // CONTROL: the probe saw the PAT, then the read ran
-    const ok = run('pat-sentinel', recordingGh)
+    const ok = run('pat-sentinel', probeGh('active'))
     expect(ok.status, ok.err).toBe(0)
     expect(ok.marks[0]).toMatch(/^gh token=pat-sentinel argv=api repos\/o\/r\/actions\/workflows\//)
     expect(ok.marks[1]).toBe('read')
@@ -159,6 +162,14 @@ describe('the same check guards the claim (preclaim)', () => {
     expect(bad.status, bad.err).toBe(1)
     expect(bad.marks, 'the read must not run after a failed probe').toEqual(['probe'])
     expect(bad.err).toContain('cannot read Actions')
+  })
+
+  it('5. a workflow that is not active fails before the claim, and before the read', () => {
+    const off = run('pat-sentinel', probeGh('disabled_manually'))
+    expect(off.status, off.err).toBe(1)
+    expect(off.marks.map((m) => m.split(' ')[0])).toEqual(['gh'])
+    expect(off.err).toContain('is not active (state: disabled_manually)')
+    expect(off.err).not.toContain('cannot read Actions')
   })
 })
 
@@ -176,7 +187,7 @@ describe('the verify-only step proves the stored secret without dispatching', ()
     const run = (token: string) =>
       runStepScript(verifyStep.run!, {
         env: { GH_TOKEN: token },
-        stubs: { 'bin/gh': recordingGh },
+        stubs: { 'bin/gh': probeGh('active') },
       })
     const empty = run('')
     expect(empty.status, empty.err).toBe(1)
@@ -187,5 +198,25 @@ describe('the verify-only step proves the stored secret without dispatching', ()
     expect(ok.marks).toHaveLength(1)
     expect(ok.marks[0]).toMatch(/^gh token=pat-sentinel argv=api repos\/o\/r\/actions\/workflows\//)
     expect(ok.marks[0]).not.toContain('workflow run')
+  })
+
+  it('6. executed: a failing probe call is red, with the cannot-read message', () => {
+    const r = runStepScript(verifyStep.run!, {
+      env: { GH_TOKEN: 'pat-sentinel' },
+      stubs: { 'bin/gh': 'echo probe >> "$MARK"; exit 1\n' },
+    })
+    expect(r.status, r.err).not.toBe(0)
+    expect(r.marks).toEqual(['probe'])
+    expect(r.err).toContain('cannot read Actions')
+  })
+
+  it('6. executed: a workflow that is not active is red', () => {
+    const r = runStepScript(verifyStep.run!, {
+      env: { GH_TOKEN: 'pat-sentinel' },
+      stubs: { 'bin/gh': probeGh('disabled_manually') },
+    })
+    expect(r.status, r.err).toBe(1)
+    expect(r.err).toContain('is not active (state: disabled_manually)')
+    expect(r.err).not.toContain('cannot read Actions')
   })
 })

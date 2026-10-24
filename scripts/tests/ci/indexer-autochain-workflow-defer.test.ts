@@ -31,7 +31,9 @@ const READ = 'GH_TOKEN="$VARIABLE_READ_PAT" bash scripts/ci/autochain-read-enabl
 const PRECLAIM_TOKEN_CHECK =
   '[ -n "$DISPATCH_PAT" ] || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT is not provisioned (empty token) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }'
 const PRECLAIM_PROBE =
-  'GH_TOKEN="$DISPATCH_PAT" gh api "repos/$GITHUB_REPOSITORY/actions/workflows/indexer-backfill.yml" --jq .state >/dev/null || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT cannot read Actions (expired, revoked or wrong scope) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }'
+  'STATE=$(GH_TOKEN="$DISPATCH_PAT" gh api "repos/$GITHUB_REPOSITORY/actions/workflows/indexer-backfill.yml" --jq .state) || { echo "::error::BACKFILL_AUTOCHAIN_DISPATCH_PAT cannot read Actions (expired, revoked or wrong scope) -- refusing before the claim. See docs/internal/runbooks/backfill-autochain-handover.md section 6.3."; exit 1; }'
+const PRECLAIM_ACTIVE =
+  '[ "$STATE" = active ] || { echo "::error::indexer-backfill.yml is not active (state: $STATE) -- refusing before the claim, which a dispatch would burn on a 422. Enable the workflow, then resume."; exit 1; }'
 const DA = "env.DISPATCH_ALLOWED == 'true'"
 
 describe('triggers and gates', () => {
@@ -237,7 +239,12 @@ describe('authoritative and pre-claim reads (G2, V1)', () => {
     const pre = byId('preclaim')
     const claim = byId('claim')
     expect(pre.if).toBe(claim.if)
-    expect(commands(pre.run!)).toEqual([PRECLAIM_TOKEN_CHECK, PRECLAIM_PROBE, READ_CMD])
+    expect(commands(pre.run!)).toEqual([
+      PRECLAIM_TOKEN_CHECK,
+      PRECLAIM_PROBE,
+      PRECLAIM_ACTIVE,
+      READ_CMD,
+    ])
     expect(pre.env!.VARIABLE_READ_PAT).toContain('secrets.BACKFILL_VARIABLE_READ_PAT')
     expect(idx(byId('window'))).toBeLessThan(idx(pre))
     expect(idx(pre)).toBe(idx(claim) - 1)
