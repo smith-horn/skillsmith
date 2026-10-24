@@ -346,9 +346,6 @@ function newState(
   warnings: SwapWarning[]
 ): SwapState {
   const opId = options.opId ?? randomBytes(16).toString('hex')
-  // A seam opId names files (`<opId>.<kind>`, `.tmp-<opId>`); a '.' or '/' would
-  // make `isFullDeviceLeftover` ambiguous or escape the area.
-  if (!/^[A-Za-z0-9_-]+$/.test(opId)) throw new TypeError(`invalid opId seam: ${opId}`)
   let stateRootReal: string
   try {
     stateRootReal = fs.realpathSync.native(input.stateRoot)
@@ -394,6 +391,12 @@ export async function swapInPlace(
   input: SwapInput,
   options: SwapOptions = {}
 ): Promise<SwapResult> {
+  // A seam opId names files (`<opId>.<kind>`, `.tmp-<opId>`); a '.' or '/' would
+  // make `isFullDeviceLeftover` ambiguous or escape the area. Checked before
+  // anything is written, the skills root and staging root included.
+  if (options.opId !== undefined && !/^[A-Za-z0-9_-]+$/.test(options.opId)) {
+    throw new TypeError(`invalid opId seam: ${JSON.stringify(options.opId)}`)
+  }
   const warnings: SwapWarning[] = []
   // UD22: an absent root (and missing parents) is made before R is bound.
   const sink = options.trace

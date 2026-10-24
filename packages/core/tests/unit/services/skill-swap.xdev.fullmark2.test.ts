@@ -403,18 +403,19 @@ describe('the opId seam (governance round 6)', () => {
     async (opId) => {
       const fx = xdevFixture(FILES)
       const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-      await expect(runSpied(p, ALL_DELETES, { opId })).rejects.toThrow(TypeError)
-      // The binding makes the staging root; no op directory is made in it.
       const st = path.join(fx.skillsDir, '.skillsmith-staging')
-      const ops = fs.existsSync(st)
-        ? fs.readdirSync(st, { withFileTypes: true }).filter((e) => e.isDirectory())
-        : []
-      expect(ops).toEqual([])
-      // Presence control: the same plan with a valid seam opId runs.
+      expect(fs.existsSync(st)).toBe(false)
+      const refused = runSpied(p, ALL_DELETES, { opId })
+      await expect(refused).rejects.toThrow(TypeError)
+      await expect(refused).rejects.toThrow(`invalid opId seam: ${JSON.stringify(opId)}`)
+      // Nothing was written, not even the staging root.
+      expect(fs.existsSync(st)).toBe(false)
+      // Presence control: a valid seam opId with upper case, digits, '-' and '_' commits.
       const ok = await runSpied(plan(fx, [modify('SKILL.md', '# v2\n')]), ALL_DELETES, {
-        opId: 'seam-ok_1',
+        opId: 'Seam-OK_9',
       })
       expect(ok.result.status).toBe('committed')
+      expect(fs.existsSync(st)).toBe(true)
     }
   )
 })
