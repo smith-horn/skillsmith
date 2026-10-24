@@ -8,7 +8,7 @@ import {
   type SchemaEntry,
   type SafeParseLike,
 } from './input-schema-parity.cases.js'
-import { EXTRA_CASES } from './input-schema-parity.cases.extras.js'
+import { EXTRA_CASES, SYNTHETIC_ENTRIES } from './input-schema-parity.cases.extras.js'
 import { safeParseOrError } from '../../src/validation.js'
 
 export interface RecordedIssue {
@@ -61,6 +61,9 @@ function badValuesFor(value: unknown): Array<[string, unknown]> {
     ]
   return []
 }
+
+/** The 44 tool schemas plus the synthetic shapes. */
+export const ALL_ENTRIES: SchemaEntry[] = [...SCHEMA_ENTRIES, ...SYNTHETIC_ENTRIES]
 
 /** Derive every `<label> -> input` case for one schema entry. */
 export function deriveCases(entry: SchemaEntry): Array<[string, unknown]> {
@@ -127,7 +130,7 @@ export function run(schema: SafeParseLike, input: unknown): Outcome {
 /** Every case for every schema, keyed `<schema>/<case label>`. */
 export function recordAll(): Fixture {
   const out: Fixture = {}
-  for (const entry of SCHEMA_ENTRIES) {
+  for (const entry of ALL_ENTRIES) {
     for (const [label, input] of deriveCases(entry)) {
       out[`${entry.name}/${label}`] = run(entry.schema, input)
     }

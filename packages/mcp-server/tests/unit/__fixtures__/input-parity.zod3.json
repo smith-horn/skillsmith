@@ -7060,5 +7060,85 @@
         "message": "Expected boolean, received string"
       }
     ]
+  },
+  "synthetic_explicit_safe_int_bounds/valid": { "success": true, "issues": [], "data": { "n": 1 } },
+  "synthetic_explicit_safe_int_bounds/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "synthetic_explicit_safe_int_bounds/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "synthetic_explicit_safe_int_bounds/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "synthetic_explicit_safe_int_bounds/empty-object": {
+    "success": false,
+    "issues": [{ "path": "n", "code": "invalid_type", "message": "Required" }]
+  },
+  "synthetic_explicit_safe_int_bounds/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "n": 1 }
+  },
+  "synthetic_explicit_safe_int_bounds/missing:n": {
+    "success": false,
+    "issues": [{ "path": "n", "code": "invalid_type", "message": "Required" }]
+  },
+  "synthetic_explicit_safe_int_bounds/wrong-type:n": {
+    "success": false,
+    "issues": [
+      { "path": "n", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "synthetic_explicit_safe_int_bounds/bad:n:negative": {
+    "success": true,
+    "issues": [],
+    "data": { "n": -1 }
+  },
+  "synthetic_explicit_safe_int_bounds/bad:n:fractional": {
+    "success": false,
+    "issues": [
+      { "path": "n", "code": "invalid_type", "message": "Expected integer, received float" }
+    ]
+  },
+  "synthetic_explicit_safe_int_bounds/bad:n:unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "n",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 9007199254740991"
+      }
+    ]
+  },
+  "synthetic_explicit_safe_int_bounds/bad:n:huge": {
+    "success": true,
+    "issues": [],
+    "data": { "n": 1000000000 }
+  },
+  "synthetic_explicit_safe_int_bounds/extra:neg-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "n",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to -9007199254740991"
+      }
+    ]
+  },
+  "synthetic_explicit_safe_int_bounds/extra:pos-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "n",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 9007199254740991"
+      }
+    ]
   }
 }

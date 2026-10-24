@@ -168,6 +168,22 @@ function dropRedundantSafeIntBound(issues: LegacyIssue[]): LegacyIssue[] {
   })
 }
 
+/**
+ * An explicit `.max(Number.MAX_SAFE_INTEGER)` (or `.min(-MAX_SAFE_INTEGER)`) on an unsafe integer
+ * makes zod 4 emit the same bound twice, which the filter above keeps (neither has a different-bound
+ * sibling). zod 3 emitted it once. Collapse issues that agree on code, path and both bounds.
+ */
+function dropDuplicateBounds(issues: LegacyIssue[]): LegacyIssue[] {
+  const seen = new Set<string>()
+  return issues.filter((issue) => {
+    if (issue.code !== 'too_big' && issue.code !== 'too_small') return true
+    const key = JSON.stringify([issue.code, issue.path.join('.'), issue.minimum, issue.maximum])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 /** Drop-in for `schema.safeParse(args)` whose failures carry zod 3's codes and messages. */
 export function legacySafeParse<S extends z.ZodType>(
   schema: S,
@@ -178,7 +194,10 @@ export function legacySafeParse<S extends z.ZodType>(
   const translated = result.error.issues.map(
     (issue) => ({ ...issue, code: legacyCode(issue as unknown as Raw, args) }) as LegacyIssue
   )
-  return { success: false, error: { issues: dropRedundantSafeIntBound(translated) } }
+  return {
+    success: false,
+    error: { issues: dropDuplicateBounds(dropRedundantSafeIntBound(translated)) },
+  }
 }
 
 /** Drop-in for `schema.parse(args)`: throws a `ZodError` whose issues carry zod 3's codes and messages. */

@@ -368,10 +368,10 @@ for (const name of names) {
 // SMI-5718: zod-to-json-schema is not a doc-retrieval-mcp-declared
 // dependency — it is a transitive dependency of @modelcontextprotocol/sdk,
 // resolved solely via the ROOT-hoisted node_modules (not nested under this
-// package). The SDK imports it when the server module loads (shared/protocol.js),
-// so a missing or corrupt copy still stops the server; checked explicitly here
-// because the declared-deps ∪ nested-node_modules scan above never sees it.
-// jsonSchemaOf() no longer calls it itself (SMI-7168).
+// package). The SDK imports it when the server loads, via shared/protocol.js ->
+// server/zod-json-schema-compat.js, so a missing or corrupt copy still stops the
+// server; checked explicitly because the declared-deps ∪ nested-node_modules scan
+// above never sees it. jsonSchemaOf() no longer calls it itself (SMI-7168).
 const ztjsState = classify("zod-to-json-schema", { rootOnly: true });
 if (ztjsState) {
   console.log("FAIL zod-to-json-schema " + ztjsState);

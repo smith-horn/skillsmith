@@ -18,7 +18,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { SCHEMA_ENTRIES } from './input-schema-parity.cases.js'
-import { deriveCases, run, zodMajorOf, type Fixture } from './input-schema-parity.helpers.js'
+import {
+  ALL_ENTRIES,
+  deriveCases,
+  run,
+  zodMajorOf,
+  type Fixture,
+} from './input-schema-parity.helpers.js'
 import { expectedOnV4, V4_VERDICT_OVERRIDES } from './input-schema-parity.allowlist.js'
 import { teamWorkspaceInputSchema } from '../../src/tools/team-workspace.js'
 import { safeParseOrError } from '../../src/validation.js'
@@ -30,7 +36,7 @@ const fixture = JSON.parse(
 const major = zodMajorOf(SCHEMA_ENTRIES[0].schema)
 
 function mismatchesFor(schemaName: string): string[] {
-  const entry = SCHEMA_ENTRIES.find((e) => e.name === schemaName)!
+  const entry = ALL_ENTRIES.find((e) => e.name === schemaName)!
   const out: string[] = []
   for (const [label, input] of deriveCases(entry)) {
     const key = `${schemaName}/${label}`
@@ -46,10 +52,10 @@ function mismatchesFor(schemaName: string): string[] {
 
 describe(`input validation parity (running on zod ${major}, baseline zod 3)`, () => {
   it('the fixture covers exactly the schemas and cases the table derives', () => {
-    const derived = SCHEMA_ENTRIES.flatMap((e) => deriveCases(e).map(([l]) => `${e.name}/${l}`))
+    const derived = ALL_ENTRIES.flatMap((e) => deriveCases(e).map(([l]) => `${e.name}/${l}`))
     expect(new Set(derived).size).toBe(derived.length)
     expect(derived.sort()).toEqual(Object.keys(fixture).sort())
-    expect(SCHEMA_ENTRIES).toHaveLength(44)
+    expect(ALL_ENTRIES).toHaveLength(45)
     expect(derived.length).toBeGreaterThan(900)
   })
 
@@ -71,7 +77,7 @@ describe(`input validation parity (running on zod ${major}, baseline zod 3)`, ()
     )
   })
 
-  it.each(SCHEMA_ENTRIES.map((e) => e.name))('%s matches the baseline', (name) => {
+  it.each(ALL_ENTRIES.map((e) => e.name))('%s matches the baseline', (name) => {
     expect(mismatchesFor(name)).toEqual([])
   })
 
