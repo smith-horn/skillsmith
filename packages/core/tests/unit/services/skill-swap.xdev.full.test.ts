@@ -155,6 +155,12 @@ describe('T-F1: ENOSPC at the partial copy own sidecar', () => {
 })
 
 const BLOCK = 4096n
+/**
+ * `bfree` the stubs report: far more than any test needs. Only `bavail` is
+ * the caller's to use (`bfree` counts root-reserved blocks too), so a check
+ * that read `bfree` would see room where there is none and stop refusing.
+ */
+const RESERVED_ROOM = 1n << 40n
 
 /** `statfs` of the backup area with `bsize` 4096, `free` bytes and `ffree` inodes; counts the calls. */
 function stubStatfs(
@@ -167,7 +173,7 @@ function stubStatfs(
     const s = (await orig(...a)) as fs.BigIntStatsFs
     if (a[0] !== areaOf(fx)) return s
     hit.asked++
-    return { ...s, bsize: BLOCK, bavail: free / BLOCK, ...inodes }
+    return { ...s, bsize: BLOCK, bavail: free / BLOCK, bfree: RESERVED_ROOM, ...inodes }
   })
   return hit
 }
@@ -315,7 +321,14 @@ function simulatedDevice(fx: Fixture, size: bigint): void {
     const s = (await orig(...a)) as fs.BigIntStatsFs
     if (a[0] !== area) return s
     const left = size > used() ? size - used() : 0n
-    return { ...s, bsize: BLOCK, bavail: left / BLOCK, files: 1_000_000n, ffree: 1_000_000n }
+    return {
+      ...s,
+      bsize: BLOCK,
+      bavail: left / BLOCK,
+      bfree: RESERVED_ROOM,
+      files: 1_000_000n,
+      ffree: 1_000_000n,
+    }
   })
   stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
     const creates = (Number(a[1]) & fs.constants.O_CREAT) !== 0
