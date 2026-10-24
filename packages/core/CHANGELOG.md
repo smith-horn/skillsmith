@@ -12,9 +12,10 @@ All notable changes to `@skillsmith/core` are documented here.
   never removed: the operation's staging folder is parked whole, with a park intent first, and
   the update names both the backup and the extra copy. The same path serves abort cleanup's and
   the undo's keeps. A cross-device move that stops on ENOSPC or EDQUOT, at any stage including
-  the sync after the final rename, records the cause and the exact leftovers in the update's kept
-  `record.json`, for the next update's record scan and doctor's resume to read; the block and
-  inode estimate is only a first-attempt filter. The park now syncs
+  the sync after the final rename, records the cause, stage, area, opId and destination in the
+  update's kept `record.json`; its leftovers are the backup-area entries named for that opId,
+  found when the record is read by the next update's record scan or doctor's resume. The block
+  and inode estimate is only a first-attempt filter. The park now syncs
   `.skillsmith-parked` and its parent before its rename (a failure moves nothing), and the
   update syncs the landing folder and then the staging folder after it; a park that can't be
   synced is reported held. A sidecar rewrite syncs the

@@ -1,19 +1,20 @@
 /**
- * SMI-6531 (A1 step 4c review round 3, owner decision): the full-device
+ * SMI-6531 (A1 step 4c review rounds 3-4, owner decisions): the full-device
  * marker. When a cross-device move (`skill-swap.xdev.ts`) stops on `ENOSPC` or
  * `EDQUOT` at any point (the copy, a partial keep, the sidecar rewrite, the
  * final rename, or the area sync after it), this run's own `record.json`
- * records the cause, the stage and the exact leftovers on the full device.
- * Doctor's resume (step 6) reads it. The record is in OP, on the skills root's
- * device, not the full one, and it is kept by every stop that can reach here
- * (step 12's publish, the undo's keeps, abort cleanup's keeps after step 6's
- * record), so the next update of this skill is refused by step 3's record scan
+ * records `fullDevice: { cause, stage, area, opId, dest }`. Doctor's resume
+ * (step 6) reads it. The record is in OP, on the skills root's device, not the
+ * full one, and it is kept by every stop that can reach here (step 12's
+ * publish, the undo's keeps, abort cleanup's keeps after step 6's record), so
+ * the next update of this skill is refused by step 3's record scan
  * (implementation-order step 5) until doctor finishes it.
  *
- * Replaced the round-2 area-scan cap (UD42 as first decided), which matched
- * names only: a complete copy renamed to `<area>/<opId>` whose area sync then
- * failed escaped it (GPT-5.6-Sol round 3), and it named a prune that cannot
- * see copy temps (governance round 3).
+ * **Leftovers are derived, not listed** (round 4). The marker names no paths
+ * beyond `dest`: whatever the move left is every entry of `area` that
+ * `isFullDeviceLeftover(name, opId)` matches, read when the record is read.
+ * Round 3 listed the paths at stop time, which missed a partial's sidecar and
+ * recorded a failed lookup as an empty list (GPT-5.6-Sol round 4).
  *
  * **The rewrite.** `record.json` already exists, so the metadata publish's
  * `link` (which refuses an existing name) cannot replace it, and an unlink
@@ -21,18 +22,22 @@
  * swapped op must never have. So: the new record is written to
  * `record.json.tmp` and synced; `record.json` is checked to still be the file
  * this run linked there (identity); the temp is renamed over it, which never
- * leaves the name empty; OP is synced. A crash before the rename leaves the
- * old record (valid, without the marker) beside the temp, and step 3 reads
- * only `record.json`. A swap of `record.json` between the identity check and
- * the rename is the §3.0 item 9 residual (Node has no `renameat2`). This
- * rename-over is the one exception to the metadata link rule (owner decision,
- * round 3). If the identity check finds `record.json` replaced, nothing is
- * renamed and the temp is left: it is then the only copy of this run's record,
- * marker included, so it is evidence for doctor, not metadata to unlink.
+ * leaves the name empty; OP is synced. This rename-over is the one exception
+ * to the metadata link rule (owner decision, round 3). A swap of `record.json`
+ * between the identity check and the rename is the §3.0 item 9 residual (Node
+ * has no `renameat2`).
  *
- * If the marker cannot be written (no record this run owns, or the rewrite
- * fails), the original stop still stands: its detail gains a sentence saying
- * the marker was not recorded and why. Nothing else changes.
+ * Two states it can leave beside a `record.json` (doctor's, step 6):
+ *  - the identity check finds `record.json` replaced: nothing is renamed and
+ *    the temp is left, the only copy of this run's record, marker included;
+ *  - a crash or failure after the temp's sync and before the rename: a
+ *    verifying `record.json` (without the marker) beside a different-inode
+ *    `record.json.tmp` that carries it.
+ *
+ * If the marker cannot be written, the original stop still stands: its detail
+ * gains a sentence saying the marker was not recorded and why. If the rename
+ * over `record.json` succeeded and only OP's sync failed, it says the marker
+ * was recorded but may not survive a power loss.
  *
  * @module @skillsmith/core/services/skill-swap.fullmark
  */
@@ -49,49 +54,62 @@ import {
   writeNewFile,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { present } from './skill-swap.sidecar.js'
+import type { PublishKind } from './skill-swap.sidecar.js'
 import { computeRecordSha256 } from './skill-swap.staging.js'
-import type {
-  FullDeviceLeftover,
-  FullDeviceMarker,
-  FullDeviceStage,
-  SwapRecord,
-} from './skill-swap.types.js'
+import type { FullDeviceMarker, FullDeviceStage, SwapRecord } from './skill-swap.types.js'
 
 /** What one cross-device move has done so far, for the marker. */
 export interface MoveProgress {
   stage: FullDeviceStage
-  /** Every copy temp this move kept as `partial-copy`. */
-  partials: Array<{ path: string; sourceUnchanged: boolean }>
+}
+
+/**
+ * The kinds `destFor` can name in the area (`<opId>.<kind>`); the backup is
+ * `<opId>` itself. `satisfies` makes a new `PublishKind` a compile error here
+ * until it is listed, so the predicate cannot silently miss its leftovers.
+ */
+const KEPT_KIND_TABLE = {
+  undone: true,
+  conflict: true,
+  'failed-build': true,
+  'edited-new': true,
+  'unrecorded-new': true,
+  'partial-copy': true,
+} satisfies Record<Exclude<PublishKind, 'backup'>, true>
+const KEPT_KINDS: ReadonlySet<string> = new Set(Object.keys(KEPT_KIND_TABLE))
+
+/**
+ * True when `name`, an entry of a backup area, is one a cross-device move of
+ * operation `opId` can make there:
+ *  - a tree: `<opId>` (the backup) or `<opId>.<kind>`, with `destFor`'s `.<k>`
+ *    suffix (`k` a positive integer) when the name was taken;
+ *  - its copy temp, `.tmp-` plus either of those;
+ *  - any of those plus `.json` (a sidecar) or `.json.tmp` (a sidecar temp).
+ * Never another opId's, a prefix-sharing one included. Pure: no fs.
+ */
+export function isFullDeviceLeftover(name: string, opId: string): boolean {
+  let n = name
+  if (n.endsWith('.json.tmp')) n = n.slice(0, -'.json.tmp'.length)
+  else if (n.endsWith('.json')) n = n.slice(0, -'.json'.length)
+  if (n.startsWith('.tmp-')) n = n.slice('.tmp-'.length)
+  if (n === opId) return true
+  if (opId.length === 0 || !n.startsWith(`${opId}.`)) return false
+  const parts = n.slice(opId.length + 1).split('.')
+  if (parts.length > 2 || !KEPT_KINDS.has(parts[0]!)) return false
+  return parts.length === 1 || /^[1-9][0-9]*$/.test(parts[1]!)
 }
 
 /** `ENOSPC` or `EDQUOT` from a failure, its cause, or its cause's cause; else null. */
 export function fullDeviceCause(err: unknown): 'ENOSPC' | 'EDQUOT' | null {
+  // Depth 3: a stop (0) whose cause is a keep's failure (1) whose cause is a
+  // directory sync's errno (2): a copy that failed for another reason, then a
+  // partial keep whose area sync filled the device (xdev's `failedCopy`).
   for (let e: unknown = err, i = 0; e !== undefined && e !== null && i < 3; i++) {
     const c = codeOf(e)
     if (c === 'ENOSPC' || c === 'EDQUOT') return c
     e = (e as { cause?: unknown }).cause
   }
   return null
-}
-
-/** The leftovers on the full device, as they are now. */
-async function leftoversOf(
-  st: SwapState,
-  temp: string,
-  dest: string,
-  progress: MoveProgress
-): Promise<FullDeviceLeftover[]> {
-  const out: FullDeviceLeftover[] = []
-  if (await present(temp)) out.push({ kind: 'copy-temp', path: temp })
-  for (const p of progress.partials) {
-    if (await present(p.path)) out.push({ kind: 'partial-copy', ...p })
-  }
-  if (st.published?.dest === dest && (await present(dest))) out.push({ kind: 'backup', path: dest })
-  if (await present(`${dest}.json.tmp`)) {
-    out.push({ kind: 'sidecar-temp', path: `${dest}.json.tmp` })
-  }
-  return out
 }
 
 /** Rewrites this run's `record.json` with `marker` (see the module comment). */
@@ -102,7 +120,6 @@ async function rewriteRecord(st: SwapState, marker: FullDeviceMarker): Promise<v
     throw new SwapFault('staging-unsafe', 'this run holds no record.json to mark')
   }
   const { recordSha256: _old, ...rest } = st.record
-  void _old
   const body: Omit<SwapRecord, 'recordSha256'> = { ...rest, fullDevice: marker }
   const record: SwapRecord = { ...body, recordSha256: computeRecordSha256(body) }
   const tmp = `${final}.tmp`
@@ -115,18 +132,21 @@ async function rewriteRecord(st: SwapState, marker: FullDeviceMarker): Promise<v
   st.owned.set(final, st.owned.get(tmp)!)
   st.owned.delete(tmp)
   st.record = record
-  await syncDir(st, st.opDir)
+  try {
+    await syncDir(st, st.opDir)
+  } catch (err) {
+    throw new SwapFault('marker-unsynced', messageOf(err), err)
+  }
 }
 
 /**
- * The stop to throw for `err`, a failure of the move into `dest` through
- * `temp`. A full-device stop is marked in the record first; any other failure
- * is returned unchanged.
+ * The stop to throw for `err`, a failure of the move into `dest`. A
+ * full-device stop is marked in the record first; any other failure is
+ * returned unchanged.
  */
 export async function markIfFullDevice(
   st: SwapState,
   err: unknown,
-  temp: string,
   dest: string,
   progress: MoveProgress
 ): Promise<unknown> {
@@ -136,14 +156,18 @@ export async function markIfFullDevice(
     cause,
     stage: progress.stage,
     area: path.dirname(dest),
-    leftovers: await leftoversOf(st, temp, dest, progress).catch(() => []),
+    opId: st.opId,
+    dest,
   }
   try {
     await rewriteRecord(st, marker)
     return err
   } catch (markErr) {
     const why = markErr instanceof SwapFault ? markErr.detail : messageOf(markErr)
-    const note = `; the full-device marker was not recorded in record.json (${why})`
+    const note =
+      markErr instanceof SwapFault && markErr.reason === 'marker-unsynced'
+        ? `; the full-device marker was recorded in record.json, but ${st.opDir} could not be synced (${why}), so it may not survive a power loss`
+        : `; the full-device marker was not recorded in record.json (${why})`
     if (err instanceof SwapFault) return new SwapFault(err.reason, `${err.detail}${note}`, err)
     return new SwapFault('write-failed', `${messageOf(err)}${note}`, err)
   }

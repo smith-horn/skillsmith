@@ -5,8 +5,9 @@
  * `skillsmith doctor backups --prune`, before anything is written.
  *
  * What stops a retry from piling up full-device copies is not here: a
- * full-device stop keeps this op's `record.json` and marks it with the exact
- * leftovers (`skill-swap.fullmark.ts`, round 3), so step 3's record scan
+ * full-device stop keeps this op's `record.json` and marks it with the cause,
+ * stage, area, opId and dest (`skill-swap.fullmark.ts`, rounds 3-4; the
+ * leftovers are derived from the opId), so step 3's record scan
  * refuses the next update of this skill until doctor resumes it. Round 2's
  * area scan, which recognised leftovers by name, is deleted (a complete copy
  * renamed to `<area>/<opId>` whose area sync then failed escaped it).

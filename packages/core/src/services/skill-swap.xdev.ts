@@ -26,8 +26,9 @@
  *     failure is `copy-failed`, a mismatch `mismatch`).
  *     **Any** stop on `ENOSPC` or `EDQUOT`, at any stage of steps 2-5 (the
  *     copy, a partial keep, the sidecar rewrite, the final rename, the area
- *     sync after it), first records the full-device marker, the cause and the
- *     exact leftovers, in this op's kept `record.json`
+ *     sync after it), first records the full-device marker (cause, stage,
+ *     area, opId, dest; the leftovers are derived from the opId), in this op's
+ *     kept `record.json`
  *     (`skill-swap.fullmark.ts`); that kept record is what refuses the next
  *     update until doctor resumes this one. For `ENOSPC`, `sourceUnchanged` is computed: true when `src`
  *     still hashes to its sidecar's `treeHash`. For any other copy failure it
@@ -146,7 +147,6 @@ async function keepPartial(
     sidecarOf(st, 'partial-copy', treeHashOf(temp), now, { sourceUnchanged, partialCause })
   )
   await renameChecked(st, temp, dest)
-  progress.partials.push({ path: dest, sourceUnchanged })
   await syncDir(st, st.areaPath)
   progress.stage = was
   return dest
@@ -167,10 +167,12 @@ async function failedCopy(
   }
   const full = r.errno === 'ENOSPC' || r.errno === 'EDQUOT'
   let kept: string
+  let keepErr: unknown = undefined
   try {
     const at = await keepPartial(st, temp, c.tempId, m, full ? 'enospc' : 'copy-failed', progress)
     kept = at === null ? 'no copy temp was made' : `the partial copy is kept at ${at}`
   } catch (err) {
+    keepErr = err
     kept = `the partial copy is left at ${temp} (${codeOf(err) ?? 'keep failed'})`
   }
   if (full) {
@@ -180,11 +182,14 @@ async function failedCopy(
       { code: r.errno }
     )
   }
+  // The keep's own failure is this stop's cause, so a full device there is
+  // seen by `fullDeviceCause` (governance round 4).
   throw new SwapFault(
     'write-failed',
     `the cross-device copy of ${m.src} failed (${r.reason} at ${r.path}${
       r.errno === null ? '' : `, ${r.errno}`
-    }); ${kept}`
+    }); ${kept}`,
+    keepErr
   )
 }
 
@@ -224,11 +229,11 @@ async function copyVerified(
 export async function moveAcross(st: SwapState, m: Move): Promise<void> {
   await spaceFirst(st, m.src, m.record)
   const temp = path.join(st.areaPath, `.tmp-${path.basename(m.dest)}`)
-  const progress: MoveProgress = { stage: 'copy', partials: [] }
+  const progress: MoveProgress = { stage: 'copy' }
   try {
     await moveVerified(st, m, temp, progress)
   } catch (err) {
-    throw await markIfFullDevice(st, err, temp, m.dest, progress)
+    throw await markIfFullDevice(st, err, m.dest, progress)
   }
 }
 

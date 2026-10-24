@@ -3,7 +3,8 @@
  * marker. A cross-device move that stops on `ENOSPC` or `EDQUOT`, at any stage
  * (the copy, a partial keep, the sidecar rewrite, the final rename, the area
  * sync after it), records in this op's kept `record.json` the cause, the
- * stage and the exact leftovers on the full device; the record survives the
+ * stage, area, opId and dest (round 4: the leftovers are derived, every area
+ * entry `isFullDeviceLeftover(name, opId)` matches); the record survives the
  * stop (step 3's record scan, implementation-order step 5, then refuses the
  * next update). A stop that is not a full device records no marker. Replaces
  * round 2's area-scan cap, which matched names and missed a complete copy at
@@ -17,6 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { FullDeviceMarker, SwapResult } from '../../../src/services/skill-swap.js'
+import { isFullDeviceLeftover } from '../../../src/services/skill-swap.fullmark.js'
 import { ALL_DELETES, runSpied } from './skill-swap.abort.helpers.js'
 import { abortAt } from './skill-swap.abort.triggers.js'
 import { areaOf, modify, OP_ID, plan, readRecord, useTmpCleanup } from './skill-swap.helpers.js'
@@ -97,6 +99,26 @@ function markerOf(fx: Fixture): FullDeviceMarker | undefined {
   return recordOf(fx).fullDevice
 }
 
+/** The marker round 4 records: no path list, the opId and the tree's dest. */
+const markerFor = (fx: Fixture, cause: string, stage: string, to = dest(fx)) => ({
+  cause,
+  stage,
+  area: areaOf(fx),
+  opId: OP_ID,
+  dest: to,
+})
+
+/**
+ * The derived leftovers, checked against a real `readdir` of the area: every
+ * entry there is this op's (the fixture's area holds no other op), the
+ * predicate matches every one of them, and they are exactly `want`.
+ */
+function expectDerived(fx: Fixture, want: string[]): void {
+  const names = fs.readdirSync(areaOf(fx)).sort()
+  expect(names.filter((n) => isFullDeviceLeftover(n, OP_ID))).toEqual(names)
+  expect(names).toEqual([...want].sort())
+}
+
 describe('the full-device marker, at each stop point', () => {
   for (const code of ['ENOSPC', 'EDQUOT'] as const) {
     it(`${code} during the copy: the partial copy named, stage copy, the record kept`, async () => {
@@ -109,12 +131,8 @@ describe('the full-device marker, at each stop point', () => {
       const kept = partials(areaOf(fx))
       expect(kept).toHaveLength(1)
       expect(sidecarOf(kept[0]!)).toMatchObject({ partialCause: 'enospc', sourceUnchanged: true })
-      expect(markerOf(fx)).toEqual({
-        cause: code,
-        stage: 'copy',
-        area: areaOf(fx),
-        leftovers: [{ kind: 'partial-copy', path: kept[0], sourceUnchanged: true }],
-      })
+      expect(markerOf(fx)).toEqual(markerFor(fx, code, 'copy'))
+      expectDerived(fx, [`${OP_ID}.json`, `${OP_ID}.partial-copy`, `${OP_ID}.partial-copy.json`])
       expect(treeDeletesX(fx, run.events)).toEqual([])
     })
 
@@ -134,12 +152,8 @@ describe('the full-device marker, at each stop point', () => {
       }
       expect(f.fired()).toBe(1)
       stoppedAtPublish(fx, run.result)
-      expect(markerOf(fx)).toEqual({
-        cause: code,
-        stage: 'final-sync',
-        area: areaOf(fx),
-        leftovers: [{ kind: 'backup', path: dest(fx) }],
-      })
+      expect(markerOf(fx)).toEqual(markerFor(fx, code, 'final-sync'))
+      expectDerived(fx, [OP_ID, `${OP_ID}.json`])
       expect(fs.existsSync(temp(fx))).toBe(false)
     })
   }
@@ -153,12 +167,8 @@ describe('the full-device marker, at each stop point', () => {
     expect(copy.fired).toBe(1)
     expect(side.fired).toBe(1)
     stoppedAtPublish(fx, run.result)
-    expect(markerOf(fx)).toEqual({
-      cause: 'ENOSPC',
-      stage: 'partial-keep',
-      area: areaOf(fx),
-      leftovers: [{ kind: 'copy-temp', path: temp(fx) }],
-    })
+    expect(markerOf(fx)).toEqual(markerFor(fx, 'ENOSPC', 'partial-keep'))
+    expectDerived(fx, [`${OP_ID}.json`, `.tmp-${OP_ID}`])
   })
 
   it('a mismatch whose keep hits ENOSPC: the copy temp named, stage partial-keep', async () => {
@@ -175,11 +185,8 @@ describe('the full-device marker, at each stop point', () => {
     })
     expect(side.fired).toBe(1)
     stoppedAtPublish(fx, run.result)
-    expect(markerOf(fx)).toMatchObject({
-      cause: 'ENOSPC',
-      stage: 'partial-keep',
-      leftovers: [{ kind: 'copy-temp', path: temp(fx) }],
-    })
+    expect(markerOf(fx)).toEqual(markerFor(fx, 'ENOSPC', 'partial-keep'))
+    expectDerived(fx, [`${OP_ID}.json`, `.tmp-${OP_ID}`])
   })
 
   it('ENOSPC in the sidecar rewrite (the area sync after its temp): the copy temp and the sidecar temp named', async () => {
@@ -203,15 +210,8 @@ describe('the full-device marker, at each stop point', () => {
     }
     expect(f.fired()).toBe(1)
     stoppedAtPublish(fx, run.result)
-    expect(markerOf(fx)).toEqual({
-      cause: 'ENOSPC',
-      stage: 'sidecar-rewrite',
-      area: areaOf(fx),
-      leftovers: [
-        { kind: 'copy-temp', path: temp(fx) },
-        { kind: 'sidecar-temp', path: sideTmp },
-      ],
-    })
+    expect(markerOf(fx)).toEqual(markerFor(fx, 'ENOSPC', 'sidecar-rewrite'))
+    expectDerived(fx, [`${OP_ID}.json`, `${OP_ID}.json.tmp`, `.tmp-${OP_ID}`])
   })
 
   it('ENOSPC at the final rename: the verified copy temp named, stage final-rename', async () => {
@@ -228,12 +228,8 @@ describe('the full-device marker, at each stop point', () => {
     const run = await runSpied(p, ALL_DELETES)
     expect(hit.fired).toBe(1)
     stoppedAtPublish(fx, run.result)
-    expect(markerOf(fx)).toEqual({
-      cause: 'ENOSPC',
-      stage: 'final-rename',
-      area: areaOf(fx),
-      leftovers: [{ kind: 'copy-temp', path: temp(fx) }],
-    })
+    expect(markerOf(fx)).toEqual(markerFor(fx, 'ENOSPC', 'final-rename'))
+    expectDerived(fx, [`${OP_ID}.json`, `.tmp-${OP_ID}`])
   })
 })
 
@@ -304,8 +300,9 @@ describe('the record that carries the marker is kept by every stop that can reac
       reason: 'write-failed',
       recordPath: path.join(fx.opDir, 'record.json'),
     })
-    expect(markerOf(fx)).toMatchObject({ cause: 'ENOSPC', stage: 'copy' })
-    expect(markerOf(fx)?.leftovers).toEqual([expect.objectContaining({ kind: 'partial-copy' })])
+    expect(markerOf(fx)).toEqual(
+      markerFor(fx, 'ENOSPC', 'copy', path.join(areaOf(fx), `${OP_ID}.undone`))
+    )
   })
 
   it('abort cleanup after step 6 (a record published): staged left, the record kept and marked', async () => {
@@ -329,7 +326,9 @@ describe('the record that carries the marker is kept by every stop that can reac
       const run = await runSpied(p, ALL_DELETES, t.options)
       expect(hit.fired).toBe(1)
       expect(run.result).toMatchObject({ status: 'refused', staged: 'left' })
-      expect(markerOf(fx)).toMatchObject({ cause: 'ENOSPC', stage: 'copy' })
+      expect(markerOf(fx)).toEqual(
+        markerFor(fx, 'ENOSPC', 'copy', path.join(areaOf(fx), `${OP_ID}.edited-new`))
+      )
     } finally {
       t.restore()
     }
@@ -377,7 +376,7 @@ describe('the marker rewrite: identity check and sync order', () => {
     // The temp stays: it is now the only copy of this run's record, with the
     // marker, so nothing removes it (doctor reads it as evidence).
     const kept = readRecord(recTmp)
-    expect(kept.fullDevice).toMatchObject({ cause: 'ENOSPC', stage: 'copy' })
+    expect(kept.fullDevice).toEqual(markerFor(fx, 'ENOSPC', 'copy'))
     expect(kept.opId).toBe(OP_ID)
   })
 

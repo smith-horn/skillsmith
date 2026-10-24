@@ -228,7 +228,18 @@ export function computeRecordSha256(record: Omit<SwapRecord, 'recordSha256'>): s
     preEntry: record.preEntry,
     postEntry: record.postEntry,
     backupDest: record.backupDest,
-    ...(record.fullDevice === undefined ? {} : { fullDevice: record.fullDevice }),
+    // Explicit key order, like every other field (governance round 4).
+    ...(record.fullDevice === undefined
+      ? {}
+      : {
+          fullDevice: {
+            cause: record.fullDevice.cause,
+            stage: record.fullDevice.stage,
+            area: record.fullDevice.area,
+            opId: record.fullDevice.opId,
+            dest: record.fullDevice.dest,
+          },
+        }),
   }
   const idOrder = (i: RecordIdentity): RecordIdentity => ({
     dev: i.dev,
