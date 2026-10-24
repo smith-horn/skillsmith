@@ -117,6 +117,23 @@ describe('the dispatch credential is the PAT, never GITHUB_TOKEN', () => {
     )
   })
 
+  it('8. a failed dispatch (gh exits non-zero) is red and never reports success', () => {
+    // A green step after a failed `gh workflow run` would be the silent stop again: no next run,
+    // no alert. Pins that nothing in the step swallows the dispatch's exit status (e.g. `|| true`).
+    const failingGh = 'echo "gh token=$GH_TOKEN argv=$*" >> "$MARK"; echo "HTTP 403" >&2; exit 1\n'
+    const r = runStepScript(dispatchStep.run!, {
+      env: { GH_TOKEN: 'pat-sentinel', VARIABLE_READ_PAT: 'read-sentinel' },
+      stubs: { ...readStub, ...timeoutStub, 'bin/gh': failingGh },
+    })
+    expect(r.status, r.err).not.toBe(0)
+    expect(r.marks[0], 'the enable read ran first').toBe('read')
+    expect(
+      r.marks.filter((m) => m.startsWith('gh ')),
+      'exactly one dispatch attempt'
+    ).toHaveLength(1)
+    expect(r.err).not.toContain('Re-dispatched indexer-backfill.yml')
+  })
+
   it('the first command of the dispatch step is the shared token check', () => {
     expect(commands(dispatchStep.run!)[0]).toBe(DISPATCH_TOKEN_CHECK)
   })
