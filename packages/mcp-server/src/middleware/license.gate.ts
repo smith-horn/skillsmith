@@ -148,9 +148,8 @@ export function createProfileIncompleteResponse(): {
 // response. Note: checkAndTrack runs before the handler (quota IS decremented even
 // for profile_incomplete errors, because the QuotaMiddleware has no split check/track
 // API). A future improvement (SMI-4403) could add a checkOnly + track-on-success path.
-// SMI-5037: parameterise over the schema type `S` (see validation.ts).
-// `TypeOf<S>` derives the handler input from the schema. SMI-7168: the repo now
-// runs a single zod major (4.x); the dual-major drift this once survived is gone.
+// The schema type `S` is the type parameter (see validation.ts); `TypeOf<S>` derives the handler
+// input from it. Validation runs first, through `safeParseOrError`.
 export async function withLicenseAndQuota<S extends ZodTypeAny>(
   toolName: string,
   args: Record<string, unknown> | undefined,

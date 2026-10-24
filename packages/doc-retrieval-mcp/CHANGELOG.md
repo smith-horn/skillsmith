@@ -5,6 +5,14 @@ Internal MCP server (SMI-4417) wrapping `@ruvector/core` for semantic doc retrie
 ## [Unreleased]
 
 ### Changed
+- SMI-7168 — `zod` moves from 3.25.76 to 4.6.7 (GHSA-mrhx-c7xc-m3w5, memory exhaustion when
+  validating oversized constrained collections). `jsonSchemaOf()` now converts with
+  `z.toJSONSchema` (draft-7, input mode, with an override that keeps `additionalProperties: false`
+  on every object) instead of the MCP SDK's zod compat layer, and takes a `z.ZodObject`. It still
+  fails closed on anything that is not a top-level zod 4 object schema, and on a schema that
+  will not convert. `tools/list` output is unchanged: `server.schema-contract.test.ts` compares it
+  with a fixture captured on zod 3, and `server.test.ts` adds cases for non-object input, a nested
+  object and a union branch.
 - SMI-6274 (ADR-139) — documentation-only: `findMainRepoRoot()`'s header comment now names
   `@skillsmith/core`'s new `findWorkspaceRoot()`, which deliberately uses the opposite `.git`
   predicate (path existence, not `isDirectory()`) for a different purpose (workspace-scoped

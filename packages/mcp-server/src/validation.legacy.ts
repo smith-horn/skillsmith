@@ -141,19 +141,28 @@ function legacyCode(issue: Raw, args: unknown): string {
 }
 
 /**
- * zod 4 reports an unsafe integer against `.int().max(n)` twice: once for the
- * safe-integer bound and once for `n`. zod 3 reported only `n`. Drop the
- * safe-integer one when a sibling `too_big` already covers the same path.
+ * zod 4 reports an unsafe integer against `.int().min(n)` / `.int().max(n)` twice: once for the
+ * safe-integer bound (+/- Number.MAX_SAFE_INTEGER) and once for `n`. zod 3 reported only `n`.
+ * Drop the safe-integer one when a sibling issue of the same code already covers the same path.
+ * Both directions are measured (positive and negative unsafe integers).
  */
 function dropRedundantSafeIntBound(issues: LegacyIssue[]): LegacyIssue[] {
+  const limitOf = (issue: LegacyIssue): unknown =>
+    issue.code === 'too_big'
+      ? issue.maximum
+      : issue.code === 'too_small'
+        ? issue.minimum
+        : undefined
+  const isSafeIntBound = (issue: LegacyIssue): boolean =>
+    Math.abs(Number(limitOf(issue))) === Number.MAX_SAFE_INTEGER
   return issues.filter((issue) => {
-    if (issue.code !== 'too_big' || issue.maximum !== Number.MAX_SAFE_INTEGER) return true
+    if (!isSafeIntBound(issue)) return true
     const key = issue.path.join('.')
     return !issues.some(
       (other) =>
         other !== issue &&
-        other.code === 'too_big' &&
-        other.maximum !== Number.MAX_SAFE_INTEGER &&
+        other.code === issue.code &&
+        !isSafeIntBound(other) &&
         other.path.join('.') === key
     )
   })

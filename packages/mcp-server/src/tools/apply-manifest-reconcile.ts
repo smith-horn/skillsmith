@@ -85,28 +85,28 @@ export const applyManifestReconcileInputSchema = z
   .superRefine((value, ctx) => {
     if (['mark_local', 'relink', 'drop_entry'].includes(value.action) && !value.name) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['name'],
         message: `'name' is required when action === '${value.action}'`,
       })
     }
     if (value.action === 'relink' && (!value.id || !value.source)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['id'],
         message: "relink requires BOTH 'id' and 'source'",
       })
     }
     if (value.action !== 'relink' && (value.id !== undefined || value.source !== undefined)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['id'],
         message: "'id'/'source' are only valid when action === 'relink'",
       })
     }
     if (value.action === 'revert' && !value.name && !value.ledgerEntryId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['ledgerEntryId'],
         message: "revert requires either 'ledgerEntryId' or 'name'",
       })

@@ -15,7 +15,13 @@ import { applyNamespaceRename } from '../../src/tools/apply-namespace-rename.js'
 import { applyRecommendedEditTool as applyRecommendedEdit } from '../../src/tools/apply-recommended-edit.js'
 import { skillInventoryAudit } from '../../src/tools/skill-inventory-audit.js'
 import { executeSkillRecoverSource } from '../../src/tools/skill-recover-source.js'
-import { analyzeInputSchema } from '../../src/tools/analyze.js'
+import { analyzeInputSchema, executeAnalyze } from '../../src/tools/analyze.js'
+import { executeCompare } from '../../src/tools/compare.js'
+import { executePublish } from '../../src/tools/publish.js'
+import { executeRecommend } from '../../src/tools/recommend.js'
+import { executeValidate } from '../../src/tools/validate.js'
+import { executeSuggest } from '../../src/tools/suggest.js'
+import { executeSkillDiff } from '../../src/tools/skill-diff.js'
 
 const text = (value: unknown): string => JSON.stringify(value)
 
@@ -60,6 +66,63 @@ describe('issue.message call sites keep zod 3 wording', () => {
     await expect(executeSkillRecoverSource({ only: 'x' }, {} as never)).rejects.toThrow(
       'Invalid skill_recover_source input: only: Expected array, received string'
     )
+  })
+})
+
+describe('direct .parse call sites, each through its real exported tool', () => {
+  // These tools validate with `legacyParse` before doing anything else, and throw the ZodError.
+  // zod 3 worded a wrong-typed value `Expected <type>, received <type>`; zod 4 says
+  // `Invalid input: expected ...`. A site reverted to a bare `.parse(` would show the latter.
+  const ctx = {} as never
+  const cases: Array<[string, () => Promise<unknown>, RegExp]> = [
+    [
+      'skill_analyze',
+      () => executeAnalyze({ max_files: 'x' } as never),
+      /Expected number, received string/,
+    ],
+    [
+      'skill_compare',
+      () => executeCompare({ skill_a: 1, skill_b: 'b' } as never, ctx),
+      /Expected string, received number/,
+    ],
+    [
+      'skill_publish',
+      () => executePublish({ skill_path: 1 } as never),
+      /Expected string, received number/,
+    ],
+    [
+      'skill_recommend',
+      () => executeRecommend({ limit: 'x' } as never, ctx),
+      /Expected number, received string/,
+    ],
+    [
+      'skill_validate',
+      () => executeValidate({ skill_path: 1 } as never),
+      /Expected string, received number/,
+    ],
+    [
+      'skill_suggest',
+      () => executeSuggest({ project_path: 1 } as never, ctx),
+      /Expected string, received number/,
+    ],
+    [
+      'skill_diff',
+      () => executeSkillDiff({ skillId: 1, oldContent: 'o', newContent: 'n' } as never, ctx),
+      /Expected string, received number/,
+    ],
+  ]
+
+  it.each(cases)('%s throws with zod 3 wording', async (_name, call, wording) => {
+    let thrown: unknown
+    try {
+      await call()
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(z.ZodError)
+    const message = (thrown as Error).message
+    expect(message).toMatch(wording)
+    expect(message).not.toMatch(/Invalid input: expected/)
   })
 })
 

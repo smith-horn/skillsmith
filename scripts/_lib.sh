@@ -1428,8 +1428,8 @@ repair_worktrees_node_modules() {
 # Why: workspace-pinned deps live under packages/<pkg>/node_modules in the
 # main repo. Without per-package symlinks, Node module resolution from the
 # worktree's package walks up to the hoisted root node_modules, which can
-# carry a DIFFERENT version (e.g. zod@4.x at root vs zod@3.25.76 in
-# packages/mcp-server). The wrong version surfaces as type errors when
+# carry a DIFFERENT version (any dependency a workspace pins differently
+# from the copy hoisted to root). The wrong version surfaces as type errors when
 # pre-commit Phase 2 (typecheck) runs from the worktree.
 #
 # Idempotent: refreshes an existing symlink, skips a real directory.

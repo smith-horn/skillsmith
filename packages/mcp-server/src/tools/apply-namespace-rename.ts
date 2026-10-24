@@ -89,14 +89,14 @@ export const applyNamespaceRenameInputSchema = z
   .superRefine((value, ctx) => {
     if (value.action === 'custom' && !value.customName) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['customName'],
         message: 'customName is required when action === "custom"',
       })
     }
     if (value.action !== 'custom' && value.customName !== undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['customName'],
         message: 'customName is only valid when action === "custom"',
       })

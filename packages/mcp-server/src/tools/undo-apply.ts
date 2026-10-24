@@ -60,7 +60,7 @@ export const undoApplyInputSchema = z
   .superRefine((value, ctx) => {
     if (value.count !== undefined && value.suggestion_id !== undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['suggestion_id'],
         message: 'count and suggestion_id are mutually exclusive',
       })

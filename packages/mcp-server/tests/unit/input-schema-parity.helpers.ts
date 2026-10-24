@@ -8,6 +8,7 @@ import {
   type SchemaEntry,
   type SafeParseLike,
 } from './input-schema-parity.cases.js'
+import { EXTRA_CASES } from './input-schema-parity.cases.extras.js'
 import { safeParseOrError } from '../../src/validation.js'
 
 export interface RecordedIssue {
@@ -87,7 +88,9 @@ export function deriveCases(entry: SchemaEntry): Array<[string, unknown]> {
   } else {
     cases.push(['number', 12345])
   }
-  for (const extra of entry.extras ?? []) cases.push([`extra:${extra.label}`, extra.input])
+  for (const extra of [...(entry.extras ?? []), ...(EXTRA_CASES[entry.name] ?? [])]) {
+    cases.push([`extra:${extra.label}`, extra.input])
+  }
   return cases
 }
 

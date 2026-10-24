@@ -58,12 +58,10 @@ export type SafeParseResult<T> = { ok: true; data: T } | { ok: false; response: 
  * @param toolName  Canonical registered MCP tool name for client correlation.
  * @returns `{ ok: true, data }` on success, `{ ok: false, response }` on failure.
  */
-// SMI-5037: parameterise over the schema type `S` (not the output type `T`)
-// and derive the output via `TypeOf<S>`. `ZodType<Output, Def, Input>` lost its
-// middle `Def` slot in zod 4, so a hard-coded three-arg `ZodType<…>` annotation
-// does not compile there. SMI-7168: the repo now runs a single zod major (4.x),
-// so the node_modules drift between a locked v3 and a hoisted v4 that this once
-// survived no longer exists; the signature is kept because it compiles unchanged.
+// The schema type `S` is the type parameter, and the output is derived via `TypeOf<S>`: zod 4's
+// `ZodType` no longer takes the middle `Def` slot, so a hard-coded three-argument `ZodType<...>`
+// annotation does not compile. A parse failure is normalised by `legacySafeParse`, so the
+// envelope always carries zod 3's issue codes and messages (see validation.legacy.ts).
 export function safeParseOrError<S extends ZodTypeAny>(
   schema: S,
   args: unknown,

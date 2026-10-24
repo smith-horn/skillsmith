@@ -12,8 +12,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   stricter. `undo_apply`'s `count` rejects an integer above 2^53-1. `team_workspace` and
   `share_skill` check `workspaceId` against RFC 9562, so a string shaped like a uuid but with no
   valid version or variant digit (for example `12345678-1234-1234-1234-123456789012`) is rejected;
-  ids from the database (`gen_random_uuid()`, version 4) are unaffected. Every other input
-  validates as before.
+  ids from the database (`gen_random_uuid()`, version 4) are unaffected. Across the roughly 900
+  inputs recorded on zod 3 for the parity test, no other pass or fail verdict changed.
 - **Internal**: SMI-7168 -- the `ValidationError` response and the error text of the tools that
   read `issue.message` themselves keep zod 3's `code` and `message` strings (for example
   `invalid_enum_value` with `Invalid enum value. Expected 'a' | 'b', received 'zzz'`, and

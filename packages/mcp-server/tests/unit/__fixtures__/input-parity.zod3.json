@@ -4152,6 +4152,16 @@
       { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
     ]
   },
+  "audit_export/extra:limit-neg-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "limit",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
+    ]
+  },
   "audit_query/valid": {
     "success": true,
     "issues": [],
@@ -4499,6 +4509,16 @@
     "success": false,
     "issues": [
       { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "audit_query/extra:limit-neg-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "limit",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
     ]
   },
   "siem_export/valid": {
@@ -5600,6 +5620,26 @@
       }
     ]
   },
+  "skill_diff/extra:old-risk-neg-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 0"
+      }
+    ]
+  },
+  "skill_diff/extra:new-risk-neg-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 0"
+      }
+    ]
+  },
   "index_local/valid": {
     "success": true,
     "issues": [],
@@ -6151,6 +6191,10 @@
         "message": "count and suggestion_id are mutually exclusive"
       }
     ]
+  },
+  "undo_apply/extra:count-neg-unsafe-int": {
+    "success": false,
+    "issues": [{ "path": "count", "code": "too_small", "message": "Number must be greater than 0" }]
   },
   "apply_manifest_reconcile/valid": {
     "success": true,
