@@ -5,7 +5,10 @@
  * `issue.message` themselves, each through its real exported tool function.
  * All of them reject before touching the filesystem or the network.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { z } from 'zod'
 import { legacyParse, legacySafeParse } from '../../src/validation.legacy.js'
 import { installSkill } from '../../src/tools/install.js'
@@ -24,6 +27,18 @@ import { executeSuggest } from '../../src/tools/suggest.js'
 import { executeSkillDiff } from '../../src/tools/skill-diff.js'
 
 const text = (value: unknown): string => JSON.stringify(value)
+
+// SMI-6343 / Check 65: these cases feed invalid input, so no tool reaches a
+// manifest write, but HOME points at a throwaway directory in case one ever does.
+const sandboxHome = mkdtempSync(join(tmpdir(), 'smi-7168-home-'))
+const realHome = process.env.HOME
+beforeAll(() => {
+  process.env.HOME = sandboxHome
+})
+afterAll(() => {
+  process.env.HOME = realHome
+  rmSync(sandboxHome, { recursive: true, force: true })
+})
 
 describe('issue.message call sites keep zod 3 wording', () => {
   it('install_skill: a missing required field', async () => {

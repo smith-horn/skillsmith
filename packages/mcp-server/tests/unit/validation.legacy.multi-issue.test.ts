@@ -6,7 +6,10 @@
  * BEFORE the migration. The shared envelope's multi-issue output is covered by the per-case
  * exact comparison in input-schema-parity.test.ts (for example `share_skill/empty-object`).
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { installSkill } from '../../src/tools/install.js'
 import { undoApply } from '../../src/tools/undo-apply.js'
 import { applyManifestReconcile } from '../../src/tools/apply-manifest-reconcile.js'
@@ -16,6 +19,18 @@ import { skillInventoryAudit } from '../../src/tools/skill-inventory-audit.js'
 import { executeSkillRecoverSource } from '../../src/tools/skill-recover-source.js'
 
 const errorOf = (result: unknown): string => (result as { error: string }).error
+
+// SMI-6343 / Check 65: these cases feed invalid input, so no tool reaches a
+// manifest write, but HOME points at a throwaway directory in case one ever does.
+const sandboxHome = mkdtempSync(join(tmpdir(), 'smi-7168-home-'))
+const realHome = process.env.HOME
+beforeAll(() => {
+  process.env.HOME = sandboxHome
+})
+afterAll(() => {
+  process.env.HOME = realHome
+  rmSync(sandboxHome, { recursive: true, force: true })
+})
 
 describe('multi-issue formatters keep every issue, in order, in zod 3 wording', () => {
   it('install_skill (two issues)', async () => {

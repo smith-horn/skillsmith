@@ -8,7 +8,10 @@
  * modules, so ESM bindings are covered) and each tool must call the helper with ITS schema and the
  * raw input. A site reverted to `schema.parse(input)` never touches the spy and fails on any zod.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 vi.mock('../../src/validation.legacy.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/validation.legacy.js')>()
@@ -60,6 +63,18 @@ const ctx = {} as never
 beforeEach(() => {
   vi.mocked(legacyParse).mockClear()
   vi.mocked(legacySafeParse).mockClear()
+})
+
+// SMI-6343 / Check 65: these cases feed invalid input, so no tool reaches a
+// manifest write, but HOME points at a throwaway directory in case one ever does.
+const sandboxHome = mkdtempSync(join(tmpdir(), 'smi-7168-home-'))
+const realHome = process.env.HOME
+beforeAll(() => {
+  process.env.HOME = sandboxHome
+})
+afterAll(() => {
+  process.env.HOME = realHome
+  rmSync(sandboxHome, { recursive: true, force: true })
 })
 
 describe('sites that used schema.parse(input) call legacyParse with their own schema', () => {
