@@ -35,7 +35,10 @@
  *    `record.json.tmp` that carries it.
  *
  * If the marker cannot be written, the original stop still stands: its detail
- * gains a sentence saying the marker was not recorded and why. If the rename
+ * gains a sentence saying the marker was not recorded, why, and the `dest` it
+ * would have named. A failed build's keep (abort cleanup step 5) always takes
+ * this branch: no `postTree`, so no record was ever written, and that sentence
+ * is the only description of what the move left (round 5). If the rename
  * over `record.json` succeeded and only OP's sync failed, it says the marker
  * was recorded but may not survive a power loss.
  *
@@ -78,25 +81,35 @@ const KEPT_KIND_TABLE = {
 } satisfies Record<Exclude<PublishKind, 'backup'>, true>
 const KEPT_KINDS: ReadonlySet<string> = new Set(Object.keys(KEPT_KIND_TABLE))
 
-/**
- * True when `name`, an entry of a backup area, is one a cross-device move of
- * operation `opId` can make there:
- *  - a tree: `<opId>` (the backup) or `<opId>.<kind>`, with `destFor`'s `.<k>`
- *    suffix (`k` a positive integer) when the name was taken;
- *  - its copy temp, `.tmp-` plus either of those;
- *  - any of those plus `.json` (a sidecar) or `.json.tmp` (a sidecar temp).
- * Never another opId's, a prefix-sharing one included. Pure: no fs.
- */
-export function isFullDeviceLeftover(name: string, opId: string): boolean {
-  let n = name
-  if (n.endsWith('.json.tmp')) n = n.slice(0, -'.json.tmp'.length)
-  else if (n.endsWith('.json')) n = n.slice(0, -'.json'.length)
-  if (n.startsWith('.tmp-')) n = n.slice('.tmp-'.length)
-  if (n === opId) return true
-  if (opId.length === 0 || !n.startsWith(`${opId}.`)) return false
-  const parts = n.slice(opId.length + 1).split('.')
+/** True when `b` is a tree name a move makes: `<opId>`, or `<opId>.<kind>` with an optional `.<k>`. */
+function isBase(b: string, opId: string): boolean {
+  if (b === opId) return true
+  if (!b.startsWith(`${opId}.`)) return false
+  const parts = b.slice(opId.length + 1).split('.')
   if (parts.length > 2 || !KEPT_KINDS.has(parts[0]!)) return false
   return parts.length === 1 || /^[1-9][0-9]*$/.test(parts[1]!)
+}
+
+/**
+ * True when `name`, an entry of a backup area, is one a cross-device move of
+ * operation `opId` makes there (round 5: the producers' grammar, exactly):
+ *  - a tree, `base`: `<opId>` (the backup) or `<opId>.<kind>`, with
+ *    `destFor`'s `.<k>` suffix (`k` a positive integer, no leading zero) when
+ *    the name was taken;
+ *  - its copy temp, `.tmp-` + `base`;
+ *  - its sidecar, `base` + `.json`, and the sidecar's temp, `base` + `.json.tmp`.
+ * Never `.tmp-` with a `.json` suffix (no producer makes one), never another
+ * opId's name (a prefix-sharing one included), and nothing for an empty opId.
+ * Pure: no fs. A name says nothing about ownership: doctor binds and rechecks
+ * each entry's identity, and never unlinks a `.json.tmp` it cannot prove is
+ * this op's metadata.
+ */
+export function isFullDeviceLeftover(name: string, opId: string): boolean {
+  if (opId.length === 0) return false
+  if (name.startsWith('.tmp-')) return isBase(name.slice('.tmp-'.length), opId)
+  if (name.endsWith('.json.tmp')) return isBase(name.slice(0, -'.json.tmp'.length), opId)
+  if (name.endsWith('.json')) return isBase(name.slice(0, -'.json'.length), opId)
+  return isBase(name, opId)
 }
 
 /** `ENOSPC` or `EDQUOT` from a failure, its cause, or its cause's cause; else null. */
@@ -167,7 +180,7 @@ export async function markIfFullDevice(
     const note =
       markErr instanceof SwapFault && markErr.reason === 'marker-unsynced'
         ? `; the full-device marker was recorded in record.json, but ${st.opDir} could not be synced (${why}), so it may not survive a power loss`
-        : `; the full-device marker was not recorded in record.json (${why})`
+        : `; the full-device marker was not recorded in record.json (${why}); it would have named ${dest}`
     if (err instanceof SwapFault) return new SwapFault(err.reason, `${err.detail}${note}`, err)
     return new SwapFault('write-failed', `${messageOf(err)}${note}`, err)
   }

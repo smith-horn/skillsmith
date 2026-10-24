@@ -2,35 +2,49 @@
  * SMI-6531 (A1 step 4c review round 4, owner decision): the full-device
  * marker names no paths; its leftovers are every entry of its `area` that
  * `isFullDeviceLeftover(name, opId)` matches. This file holds:
- *  - the predicate's case table, positives from every name a move can make
- *    (`destFor`'s `<opId>.<kind>[.<k>]`, the backup's `<opId>`, the copy temp
- *    `.tmp-<base>`, and each with `.json` / `.json.tmp`) and negatives that
- *    include prefix-sharing opIds;
+ *  - the predicate's case table: positives from the producers' grammar (a
+ *    base, `destFor`'s `<opId>.<kind>[.<k>]` or the backup's `<opId>`; its
+ *    copy temp `.tmp-<base>`; its sidecar `<base>.json` and that sidecar's
+ *    temp `<base>.json.tmp`), negatives that include prefix-sharing opIds and
+ *    `.tmp-` combined with `.json` (round 5), and an empty opId;
  *  - the stops round 4's reviews found uncovered: a copy that fails for
  *    another reason followed by a keep that fills the device (the keep's error
  *    is now the stop's cause, governance Major 1), which also needs
  *    `fullDeviceCause`'s third level (a sync's errno inside a keep's failure,
  *    Sol's depth mutation); an ENOSPC raised inside a write, after its file
  *    exists; a first mismatch kept, then ENOSPC on the second copy;
+ *  - round 5: ENOSPC at the sidecar rewrite's link, after the old sidecar is
+ *    unlinked (the new sidecar is left as `<dest>.json.tmp`, no `<dest>.json`
+ *    beside it); a failed build kept across devices that fills the device (no
+ *    record exists, so the note names the keep's `dest`);
  *  - the two notes for a marker that is written but not synced, or not
  *    written; and `recordSha256` over a marker built in another key order.
  *
  * Each derived set is checked against a real `readdir` of the area.
  */
 import fs from 'node:fs'
-import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { computeRecordSha256 } from '../../../src/services/skill-swap.js'
 import type { SwapRecord, SwapResult } from '../../../src/services/skill-swap.js'
 import { isFullDeviceLeftover } from '../../../src/services/skill-swap.fullmark.js'
-import { ALL_DELETES, runSpied } from './skill-swap.abort.helpers.js'
-import { areaOf, modify, OP_ID, plan, readRecord, useTmpCleanup } from './skill-swap.helpers.js'
+import { ALL_DELETES, refusedOf, runSpied } from './skill-swap.abort.helpers.js'
+import {
+  areaOf,
+  hashOf,
+  modify,
+  OP_ID,
+  plan,
+  readRecord,
+  useTmpCleanup,
+} from './skill-swap.helpers.js'
 import type { Fixture } from './skill-swap.helpers.js'
 import {
   errnoError,
   failDirSync,
+  isCreateUnder,
   useOtherDeviceCleanup,
+  useStubs,
   xdevFixture,
 } from './skill-swap.xdev.helpers.js'
 
@@ -39,23 +53,7 @@ useOtherDeviceCleanup()
 
 const FILES = { 'SKILL.md': '# v1\n', 'a.txt': 'a\n', 'sub/b.txt': 'b\n', 'sub/c.txt': 'c\n' }
 type AnyFn = (...a: unknown[]) => unknown
-const restores: Array<() => void> = []
-afterEach(() => {
-  for (const r of restores.splice(0).reverse()) r()
-  // `failDirSync` republishes `fs/promises` to ESM when it restores, and when it
-  // is stacked on a `stub` of `open` it republishes that stub; republish the
-  // real one so the next test's directory syncs see it.
-  syncBuiltinESMExports()
-})
-
-function stub(obj: object, name: string, impl: (orig: AnyFn) => AnyFn): void {
-  const t = obj as Record<string, AnyFn>
-  const orig = t[name]!
-  t[name] = impl(orig.bind(obj) as AnyFn)
-  restores.push(() => {
-    t[name] = orig
-  })
-}
+const stub = useStubs()
 
 const OP = OP_ID
 const temp = (fx: Fixture) => path.join(areaOf(fx), `.tmp-${OP}`)
@@ -67,7 +65,7 @@ function failCopyCreate(fx: Fixture, code: string, nth = 2): { fired: number } {
   const hit = { fired: 0 }
   let creates = 0
   stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
-    if (String(a[0]).startsWith(`${temp(fx)}/`) && ++creates === nth) {
+    if (isCreateUnder(a, temp(fx)) && ++creates === nth) {
       hit.fired++
       throw errnoError(code)
     }
@@ -98,7 +96,7 @@ function expectDerived(fx: Fixture, want: string[]): void {
   expect(names).toEqual([...want].sort())
 }
 
-describe('isFullDeviceLeftover: every name a move makes for its opId, and nothing else', () => {
+describe('isFullDeviceLeftover: a base, .tmp-<base>, <base>.json or <base>.json.tmp for its opId, and no other shape', () => {
   const OTHER = `${OP.slice(0, 31)}b`
   const POSITIVE = [
     OP,
@@ -140,6 +138,13 @@ describe('isFullDeviceLeftover: every name a move makes for its opId, and nothin
     `${OP}.partial-copy.1.2`,
     `${OP}.partial-copy.x`,
     `${OP}..partial-copy`,
+    // `.tmp-` is never combined with `.json`: no producer makes that name.
+    `.tmp-${OP}.json`,
+    `.tmp-${OP}.json.tmp`,
+    `.tmp-${OP}.partial-copy.2.json`,
+    `.tmp-${OP}.undone.json`,
+    `.tmp-.tmp-${OP}`,
+    `${OP}.json.tmp.json`,
     '.skillsmith-parked',
     '',
   ]
@@ -147,9 +152,11 @@ describe('isFullDeviceLeftover: every name a move makes for its opId, and nothin
   for (const n of NEGATIVE) {
     it(`does not match ${JSON.stringify(n)}`, () => expect(isFullDeviceLeftover(n, OP)).toBe(false))
   }
-  it('an empty opId matches nothing', () => {
-    expect(isFullDeviceLeftover('.partial-copy', '')).toBe(false)
-  })
+  for (const n of ['', '.json', '.json.tmp', '.tmp-', '.partial-copy', '.tmp-.json', OP]) {
+    it(`an empty opId matches nothing: ${JSON.stringify(n)}`, () => {
+      expect(isFullDeviceLeftover(n, '')).toBe(false)
+    })
+  }
 })
 
 describe('round 4: stops the stop-time listing missed', () => {
@@ -226,6 +233,75 @@ describe('round 4: stops the stop-time listing missed', () => {
       `${OP}.partial-copy.1`,
       `${OP}.partial-copy.1.json`,
     ])
+  })
+})
+
+describe('round 5: the sidecar rewrite link, and a failed-build keep', () => {
+  it('ENOSPC at the rewrite link, after the old sidecar is unlinked: the new sidecar left as <dest>.json.tmp, stage sidecar-rewrite', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const side = `${dest(fx)}.json`
+    let armed = false
+    let fired = 0
+    stub(fs.promises, 'link', (orig) => async (...a: unknown[]) => {
+      if (armed && a[1] === side) {
+        fired++
+        throw errnoError('ENOSPC')
+      }
+      return orig(...a)
+    })
+    const run = await runSpied(p, ALL_DELETES, {
+      hooks: {
+        afterSidecar: () => fs.appendFileSync(path.join(fx.opDir, 'old', 'a.txt'), 'late\n'),
+        afterSidecarUnlink: () => void (armed = true),
+      },
+    })
+    expect(armed).toBe(true)
+    expect(fired).toBe(1)
+    committedAtPublish(run.result)
+    expect(recordOf(fx).fullDevice).toEqual(marker(fx, 'ENOSPC', 'sidecar-rewrite'))
+    expectDerived(fx, [`.tmp-${OP}`, `${OP}.json.tmp`])
+    // No `<dest>.json` beside it: the temp IS the sidecar, the rewritten one
+    // (this op's, for the verified copy), not unlinkable metadata.
+    expect(JSON.parse(fs.readFileSync(`${side}.tmp`, 'utf8'))).toMatchObject({
+      opId: OP,
+      kind: 'backup',
+      treeHash: hashOf(temp(fx)),
+    })
+  })
+
+  it('a failed build kept across devices fills the device: no record to mark, and the note names the keep dest', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const keepTemp = path.join(areaOf(fx), `.tmp-${OP}.failed-build`)
+    let creates = 0
+    let fired = 0
+    stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
+      if (isCreateUnder(a, keepTemp) && ++creates === 2) {
+        fired++
+        throw errnoError('ENOSPC')
+      }
+      return orig(...a)
+    })
+    const run = await runSpied(p, ALL_DELETES, {
+      hooks: {
+        afterCopy: () => {
+          throw new Error('forced build failure')
+        },
+      },
+    })
+    expect(fired).toBe(1)
+    const r = refusedOf(run.result)
+    expect(r).toMatchObject({ staged: 'left', detail: 'forced build failure' })
+    // A failed build has no postTree, so no record was ever written: the stop's
+    // own warning is the only description of what the move left.
+    expect(fs.existsSync(path.join(fx.opDir, 'record.json'))).toBe(false)
+    const w = r.warnings.find((x) => x.code === 'removal-not-done')
+    expect(w?.detail).toContain(
+      '; the full-device marker was not recorded in record.json (this run holds no record.json to mark); ' +
+        `it would have named ${path.join(areaOf(fx), `${OP}.failed-build`)}`
+    )
+    expectDerived(fx, [`${OP}.failed-build.json`, `${OP}.partial-copy`, `${OP}.partial-copy.json`])
   })
 })
 

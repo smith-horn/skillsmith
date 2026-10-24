@@ -120,3 +120,41 @@ export function failDirSync(
     },
   }
 }
+
+type AnyFn = (...a: unknown[]) => unknown
+
+/**
+ * Register once per suite file: returns `stub(obj, name, impl)`, which replaces
+ * `obj[name]` with `impl(orig)` until the test ends. The restores run in reverse
+ * and then republish the builtin ESM exports, so a named `fs/promises` import
+ * (`syncDirectory`'s `open`) never keeps a stub that `failDirSync` published
+ * while it was stacked on one.
+ */
+export function useStubs(): (obj: object, name: string, impl: (orig: AnyFn) => AnyFn) => void {
+  const restores: Array<() => void> = []
+  afterEach(() => {
+    for (const r of restores.splice(0).reverse()) r()
+    syncBuiltinESMExports()
+  })
+  return (obj, name, impl) => {
+    const t = obj as Record<string, AnyFn>
+    const orig = t[name]!
+    t[name] = impl(orig.bind(obj) as AnyFn)
+    restores.push(() => {
+      t[name] = orig
+    })
+  }
+}
+
+/**
+ * Whether open-call args `a` create a file under `dir`: a directory sync opens
+ * with `'r'` and never counts, so a `failDirSync` stacked on a create counter
+ * cannot shift its Nth create.
+ */
+export function isCreateUnder(a: unknown[], dir: string): boolean {
+  return (
+    String(a[0]).startsWith(`${dir}/`) &&
+    typeof a[1] === 'number' &&
+    (a[1] & fs.constants.O_CREAT) !== 0
+  )
+}

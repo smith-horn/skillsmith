@@ -16,7 +16,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { FullDeviceMarker, SwapResult } from '../../../src/services/skill-swap.js'
 import { isFullDeviceLeftover } from '../../../src/services/skill-swap.fullmark.js'
 import { ALL_DELETES, runSpied } from './skill-swap.abort.helpers.js'
@@ -26,10 +26,12 @@ import type { Fixture } from './skill-swap.helpers.js'
 import {
   errnoError,
   failDirSync,
+  isCreateUnder,
   partials,
   sidecarOf,
   treeDeletesX,
   useOtherDeviceCleanup,
+  useStubs,
   xdevFixture,
 } from './skill-swap.xdev.helpers.js'
 
@@ -37,20 +39,7 @@ useTmpCleanup()
 useOtherDeviceCleanup()
 
 const FILES = { 'SKILL.md': '# v1\n', 'a.txt': 'a\n', 'sub/b.txt': 'b\n', 'sub/c.txt': 'c\n' }
-type AnyFn = (...a: unknown[]) => unknown
-const restores: Array<() => void> = []
-afterEach(() => {
-  for (const r of restores.splice(0).reverse()) r()
-})
-
-function stub(obj: object, name: string, impl: (orig: AnyFn) => AnyFn): void {
-  const t = obj as Record<string, AnyFn>
-  const orig = t[name]!
-  t[name] = impl(orig.bind(obj) as AnyFn)
-  restores.push(() => {
-    t[name] = orig
-  })
-}
+const stub = useStubs()
 
 const counter = () => ({ fired: 0 })
 const recordOf = (fx: Fixture) => readRecord(path.join(fx.opDir, 'record.json'))
@@ -62,7 +51,7 @@ function failCopyCreate(fx: Fixture, code: string, nth = 2) {
   const hit = counter()
   let creates = 0
   stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
-    if (String(a[0]).startsWith(`${temp(fx)}/`) && ++creates === nth) {
+    if (isCreateUnder(a, temp(fx)) && ++creates === nth) {
       hit.fired++
       throw errnoError(code)
     }
@@ -287,7 +276,7 @@ describe('the record that carries the marker is kept by every stop that can reac
     const hit = counter()
     let creates = 0
     stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
-      if (String(a[0]).startsWith(`${undoneTemp}/`) && ++creates === 2) {
+      if (isCreateUnder(a, undoneTemp) && ++creates === 2) {
         hit.fired++
         throw errnoError('ENOSPC')
       }
@@ -316,7 +305,7 @@ describe('the record that carries the marker is kept by every stop that can reac
     const hit = counter()
     let creates = 0
     stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
-      if (String(a[0]).startsWith(`${editedTemp}/`) && ++creates === 2) {
+      if (isCreateUnder(a, editedTemp) && ++creates === 2) {
         hit.fired++
         throw errnoError('ENOSPC')
       }
