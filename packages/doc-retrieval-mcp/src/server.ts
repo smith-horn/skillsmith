@@ -2,10 +2,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-// SMI-5718: use the SDK's own v3/v4-aware compat layer instead of hand-reaching
-// into zod internals — see jsonSchemaOf() below for the incident this replaces.
-import { normalizeObjectSchema } from '@modelcontextprotocol/sdk/server/zod-compat.js'
-import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js'
 import { z } from 'zod'
 import { pathToFileURL } from 'node:url'
 import { probeEmbeddingCapability } from '@skillsmith/core/embeddings/probe'
@@ -114,61 +110,69 @@ function toolError(message: string): CallToolResult {
   }
 }
 
-// SMI-5718: this used to be a hand-rolled converter that reached directly
-// into zod v3-only internals (`_def.shape` as a callable thunk). When the
-// pinned `zod@3.25.76` dependency went missing (SMI-5452 bind-mount npm
-// race) and resolution fell through to a hoisted zod v4, that internal
-// shape no longer existed and the call threw an opaque
-// `TypeError: schema._def.shape is not a function` on `tools/list`.
-// `@modelcontextprotocol/sdk` (already a dependency here) ships its own
-// actively-maintained v3/v4 compat layer, used internally by its own
-// `McpServer.registerTool()` — this now uses the exact same call
-// convention (`normalizeObjectSchema` + `toJsonSchemaCompat`, same options)
-// so this file's hand-registered tools produce schema output consistent
-// with what the SDK's own high-level API would produce.
-export function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
-  // `as never`: normalizeObjectSchema's generic signature triggers TS2589
-  // ("Type instantiation is excessively deep and possibly infinite") against
-  // zod's own recursive types when called with this file's concrete
-  // SearchArgs/ReindexArgs/StatusArgs shapes (verified via `tsc --noEmit`).
-  // normalizeObjectSchema duck-types its argument at runtime regardless of
-  // the static type, so the cast does not weaken the runtime check below.
-  const obj = normalizeObjectSchema(schema as never)
-  if (!obj) {
-    // normalizeObjectSchema returns undefined for anything it can't
-    // recognize as a v3/v4 object schema or a raw shape — including the
-    // exact zod-version-drift shape this issue is about (a schema whose
-    // `_def`/`_zod` internals don't match either major). Fail loud here,
-    // not just in the try/catch below, so no unrecognized-schema case
-    // silently degrades to an unbounded free-form object — that silent
-    // degradation is exactly the kind of masked failure this issue exists
-    // to eliminate.
+// SMI-5718 replaced a hand-rolled converter that reached into zod v3-only
+// internals (`_def.shape` as a callable thunk). When the pinned zod went
+// missing (SMI-5452 bind-mount npm race) and resolution fell through to a
+// different zod major, that internal shape no longer existed and `tools/list`
+// threw an opaque `TypeError: schema._def.shape is not a function`.
+//
+// SMI-7168: the repo now runs a single zod major (4.x), so this converts with
+// zod's own `z.toJSONSchema` instead of the MCP SDK's v3/v4 compat layer. Two
+// options carry the wire contract (pinned by server.schema-contract.test.ts):
+//   - `io: 'input'` describes what a CLIENT sends. `io: 'output'` would mark a
+//     defaulted field (`mode`) as required, which is false for callers.
+//   - zod 4 omits `additionalProperties` in input mode, where zod 3 emitted
+//     `false`. The override restores it for every object that did not set it,
+//     so a closed argument object stays closed on the wire.
+// The two fail-loud branches below stay: an unrecognised schema (a zod 3
+// instance, i.e. major drift) and a recognised schema that will not convert
+// must never degrade to an unbounded free-form object.
+function isZodObjectSchema(schema: unknown): boolean {
+  const internals = (schema as { _zod?: { def?: { type?: unknown } } } | null | undefined)?._zod
+  return internals?.def?.type === 'object'
+}
+
+type JsonSchemaOverride = NonNullable<NonNullable<Parameters<typeof z.toJSONSchema>[1]>['override']>
+
+const closeObjects: JsonSchemaOverride = (ctx) => {
+  if (
+    ctx.zodSchema._zod.def.type === 'object' &&
+    ctx.jsonSchema.additionalProperties === undefined
+  ) {
+    ctx.jsonSchema.additionalProperties = false
+  }
+}
+
+const REMEDIATION =
+  'Run:\n\n' +
+  '    From the MAIN checkout, not this worktree if you are in one:\n' +
+  '    docker compose --profile dev up -d\n' +
+  '    docker exec skillsmith-dev-1 sh -c "sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod && npm install"\n\n'
+
+// The parameter is narrowed to object schemas: tool arguments are always an object, and the
+// runtime guard below enforces it for callers that cast around the type.
+export function jsonSchemaOf(schema: z.ZodObject): Record<string, unknown> {
+  if (!isZodObjectSchema(schema)) {
     throw new Error(
-      '[doc-retrieval] jsonSchemaOf: schema not recognized as a zod v3/v4 object schema ' +
-        '— possible zod version drift. Run:\n\n' +
-        '    From the MAIN checkout, not this worktree if you are in one:\n' +
-        '    docker compose --profile dev up -d\n' +
-        '    docker exec skillsmith-dev-1 sh -c "sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod && npm install"\n\n' +
-        '(packages/doc-retrieval-mcp pins zod@3.25.76 — this fires when a hoisted ' +
-        'different-major zod resolves instead. See CLAUDE.md > Troubleshooting.)'
+      '[doc-retrieval] jsonSchemaOf: schema not recognized as a zod v4 object schema ' +
+        '— possible zod version drift. ' +
+        REMEDIATION +
+        '(packages/doc-retrieval-mcp declares zod 4.x — this fires when a zod 3 install ' +
+        'resolves instead. See CLAUDE.md > Troubleshooting.)'
     )
   }
   try {
-    return toJsonSchemaCompat(obj, { strictUnions: true, pipeStrategy: 'input' }) as Record<
-      string,
-      unknown
-    >
+    return z.toJSONSchema(schema, {
+      target: 'draft-7',
+      io: 'input',
+      override: closeObjects,
+    }) as Record<string, unknown>
   } catch (err) {
-    // A recognized schema that still fails conversion — e.g. a
-    // zod-to-json-schema internal error. Fail loud with a diagnosable
-    // message instead of letting a native error propagate unlabeled.
     throw new Error(
       '[doc-retrieval] jsonSchemaOf: failed to convert a recognized zod schema to ' +
-        'JSON Schema. Run:\n\n' +
-        '    From the MAIN checkout, not this worktree if you are in one:\n' +
-        '    docker compose --profile dev up -d\n' +
-        '    docker exec skillsmith-dev-1 sh -c "sh scripts/lib/node-modules-mount-gate.sh && rm -rf /app/packages/doc-retrieval-mcp/node_modules/zod && npm install"\n\n' +
-        '(possible zod version drift, or a zod-to-json-schema conversion bug — ' +
+        'JSON Schema. ' +
+        REMEDIATION +
+        '(possible zod version drift, or a type JSON Schema cannot represent — ' +
         `original error: ${err instanceof Error ? err.message : String(err)})`
     )
   }

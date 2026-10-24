@@ -4,6 +4,10 @@ All notable changes to `@smith-horn/enterprise` are documented here.
 
 ## [Unreleased]
 
+- **Security**: SMI-7168 -- `zod` moves from 4.2.1 to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5
+  (memory exhaustion when validating oversized constrained collections). Same major, so no code
+  change.
+
 ## v0.3.12
 
 - **Cadence**: Mechanical cadence alignment (no changes since v0.3.11).

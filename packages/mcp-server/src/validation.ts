@@ -22,6 +22,7 @@
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ZodTypeAny, TypeOf } from 'zod'
+import { legacySafeParse } from './validation.legacy.js'
 
 /**
  * Discriminated result of a `safeParseOrError` call.
@@ -58,17 +59,18 @@ export type SafeParseResult<T> = { ok: true; data: T } | { ok: false; response: 
  * @returns `{ ok: true, data }` on success, `{ ok: false, response }` on failure.
  */
 // SMI-5037: parameterise over the schema type `S` (not the output type `T`)
-// and derive the output via `TypeOf<S>`. `ZodType<Output, Def, Input>` was
-// reorganised between zod v3 and v4 (the middle `Def` slot was removed), so a
-// hard-coded three-arg `ZodType<…>` annotation only compiles against one major.
-// `ZodTypeAny` + `TypeOf` are stable across both v3 and v4, so this signature
-// survives node_modules drift between the locked v3 (CI) and a hoisted v4 (dev).
+// and derive the output via `TypeOf<S>`. `ZodType<Output, Def, Input>` lost its
+// middle `Def` slot in zod 4, so a hard-coded three-arg `ZodType<…>` annotation
+// does not compile there. SMI-7168: the repo now runs a single zod major (4.x),
+// so the node_modules drift between a locked v3 and a hoisted v4 that this once
+// survived no longer exists; the signature is kept because it compiles unchanged.
 export function safeParseOrError<S extends ZodTypeAny>(
   schema: S,
   args: unknown,
   toolName: string
 ): SafeParseResult<TypeOf<S>> {
-  const parsed = schema.safeParse(args)
+  // SMI-7168: zod 4 parse, zod 3 error vocabulary (see validation.legacy.ts).
+  const parsed = legacySafeParse(schema, args)
   if (parsed.success) {
     return { ok: true, data: parsed.data }
   }

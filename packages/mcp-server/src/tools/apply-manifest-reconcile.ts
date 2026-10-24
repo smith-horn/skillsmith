@@ -62,6 +62,7 @@ import type {
   ApplyManifestReconcileInput,
   ApplyManifestReconcileResponse,
 } from './apply-manifest-reconcile.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 // SMI-5982-style enum derivation (mirrors install.types.ts / uninstall.ts) —
 // derives from the same source of truth `resolveClientId` validates
@@ -181,7 +182,7 @@ async function applyManifestReconcileImpl(
   input: unknown,
   _context?: ToolContext
 ): Promise<ApplyManifestReconcileResponse> {
-  const parsed = applyManifestReconcileInputSchema.safeParse(input)
+  const parsed = legacySafeParse(applyManifestReconcileInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

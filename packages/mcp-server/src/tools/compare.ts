@@ -47,6 +47,7 @@ export type {
   SkillSummary,
   SkillDifference,
 } from './compare.types.js'
+import { legacyParse } from '../validation.legacy.js'
 export { compareInputSchema, compareToolSchema } from './compare.types.js'
 
 /**
@@ -75,7 +76,7 @@ async function executeCompareImpl(
   const startTime = performance.now()
 
   // Validate input with Zod
-  const validated = compareInputSchema.parse(input)
+  const validated = legacyParse(compareInputSchema, input)
   const { skill_a, skill_b } = validated
 
   // Validate skill ID formats

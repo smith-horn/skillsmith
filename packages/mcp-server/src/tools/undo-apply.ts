@@ -49,6 +49,7 @@ import {
   type SessionAppliedChangeset,
 } from './apply-session.helpers.js'
 import type { UndoApplyResponse, UndoneChangeset } from './undo-apply.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 export const undoApplyInputSchema = z
   .object({
@@ -224,7 +225,7 @@ async function restoreChangeset(entry: SessionAppliedChangeset): Promise<Restore
 }
 
 async function undoApplyImpl(input: unknown): Promise<UndoApplyResponse> {
-  const parsed = undoApplyInputSchema.safeParse(input)
+  const parsed = legacySafeParse(undoApplyInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

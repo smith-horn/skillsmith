@@ -1,0 +1,2175 @@
+[
+  {
+    "name": "search",
+    "description": "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked installable skills with trust badges, NOT general programming guidance. Results are installable-only by default (pass installable_only:false to also include discovery-only entries that cannot be installed). Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, installable_only, limit, compatibility (IDE/LLM). Matching is keyword-based, not semantic — use a short single-topic query; on empty results, check the response suggestion field for what to try next.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query — matched literally/lexically (not semantically); use a short single-topic term (e.g. 'testing') rather than a multi-concept phrase for best results"
+        },
+        "category": {
+          "type": "string",
+          "description": "Filter by skill category",
+          "enum": [
+            "development",
+            "testing",
+            "documentation",
+            "devops",
+            "database",
+            "security",
+            "productivity",
+            "integration",
+            "ai-ml",
+            "other"
+          ]
+        },
+        "trust_tier": {
+          "type": "string",
+          "description": "Filter by trust tier level (verified, curated, community, experimental, unknown)",
+          "enum": [
+            "verified",
+            "curated",
+            "community",
+            "experimental",
+            "unknown"
+          ]
+        },
+        "min_score": {
+          "type": "number",
+          "description": "Minimum quality score (0-100)",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "safe_only": {
+          "type": "boolean",
+          "description": "Only show skills that passed security scan"
+        },
+        "installable_only": {
+          "type": "boolean",
+          "description": "When true (default), return only installable skills — excludes discovery-only registry entries that install_skill cannot resolve. Pass false to opt back in to discovery-only entries."
+        },
+        "max_risk": {
+          "type": "number",
+          "description": "Maximum risk score (0-100, lower is safer)",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "compatible_with": {
+          "type": "object",
+          "description": "Rank by IDE and/or LLM compatibility (deprioritizes, never excludes)",
+          "properties": {
+            "ides": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "IDE slugs (e.g. [\"cursor\", \"claude-code\"])"
+            },
+            "llms": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "LLM slugs (e.g. [\"claude\", \"gpt-4o\"])"
+            }
+          }
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum results to return (default 10). Out-of-range values are clamped, not rejected.",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": []
+    },
+    "title": "Search Skills",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "trustTier": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "repository": {
+                "type": "string"
+              },
+              "installable": {
+                "type": "boolean"
+              },
+              "security": {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "riskScore": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "findingsCount": {
+                    "type": "number"
+                  },
+                  "scannedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "scanCoverageIncomplete": {
+                    "type": "boolean"
+                  },
+                  "scanCoverageNote": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "registry"
+                ]
+              },
+              "installHint": {
+                "type": "string"
+              },
+              "compatibility": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "license": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "description",
+              "author",
+              "category",
+              "trustTier",
+              "score"
+            ]
+          }
+        },
+        "total": {
+          "type": "number"
+        },
+        "query": {
+          "type": "string"
+        },
+        "filters": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "string"
+            },
+            "trustTier": {
+              "type": "string"
+            },
+            "minScore": {
+              "type": "number"
+            },
+            "safeOnly": {
+              "type": "boolean"
+            },
+            "maxRiskScore": {
+              "type": "number"
+            },
+            "compatibleWith": {
+              "type": "object",
+              "properties": {
+                "ides": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "llms": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "compatibilityDeprioritized": {
+          "type": "number"
+        },
+        "discoveryOnlyHidden": {
+          "type": "number"
+        },
+        "suggestion": {
+          "type": "string"
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "searchMs": {
+              "type": "number"
+            },
+            "totalMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "searchMs",
+            "totalMs"
+          ]
+        }
+      },
+      "required": [
+        "results",
+        "total",
+        "query",
+        "filters",
+        "timing"
+      ]
+    }
+  },
+  {
+    "name": "get_skill",
+    "description": "[Skillsmith — Evaluate stage] Fetch full details for a specific Skillsmith-registry skill by ID. Use when the user wants details/info/description of a known skill — e.g. 'what does microsoft/playwright-cli do?', 'show me details for getsentry/commit', 'describe the vercel-labs/vercel-react-best-practices skill'. Returns name, description, trust tier, quality score, dependencies, compatibility, repository URL, install count, and an `also_installed` array of co-installed skills. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The skill ID exactly as returned by `search` (e.g., \"getsentry/commit\" or UUID). Do not guess the author segment — use a search result."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "title": "Get Skill Details",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "skill": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "author": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "installable": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "trustTier": {
+              "type": "string"
+            },
+            "score": {
+              "type": "number"
+            },
+            "scoreBreakdown": {
+              "type": "object",
+              "properties": {
+                "quality": {
+                  "type": "number"
+                },
+                "popularity": {
+                  "type": "number"
+                },
+                "maintenance": {
+                  "type": "number"
+                },
+                "security": {
+                  "type": "number"
+                },
+                "documentation": {
+                  "type": "number"
+                }
+              }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "installCommand": {
+              "type": "string"
+            },
+            "security": {
+              "type": "object",
+              "properties": {
+                "passed": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "riskScore": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "findingsCount": {
+                  "type": "number"
+                },
+                "scannedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "scanCoverageIncomplete": {
+                  "type": "boolean"
+                },
+                "scanCoverageNote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "license": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "author",
+            "category",
+            "trustTier",
+            "score",
+            "tags",
+            "createdAt",
+            "updatedAt"
+          ]
+        },
+        "installCommand": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "totalMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "totalMs"
+          ]
+        },
+        "also_installed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "skillId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "installCount": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "skillId",
+              "name",
+              "installCount"
+            ]
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "number"
+              },
+              "skill_id": {
+                "type": "string"
+              },
+              "dep_type": {
+                "type": "string"
+              },
+              "dep_target": {
+                "type": "string"
+              },
+              "dep_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dep_source": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "metadata": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "updated_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "skill_id",
+              "dep_type",
+              "dep_target",
+              "dep_version",
+              "dep_source"
+            ]
+          }
+        }
+      },
+      "required": [
+        "skill",
+        "installCommand",
+        "timing"
+      ]
+    }
+  },
+  {
+    "name": "install_skill",
+    "description": "[Skillsmith — Install stage] Install an agent skill (SKILL.md format) from the Skillsmith registry or a GitHub repository to the local Claude Code skills directory (~/.claude/skills/) — or runtime-equivalent path when SKILLSMITH_CLIENT is set (cursor, copilot, windsurf). Use when the user asks to install/add/get a specific skill — e.g. 'install playwright-cli', 'add getsentry/commit', 'use Skillsmith to install the testing skill'. Performs Skillsmith security scan and content optimization (decomposition, subagent generation) before installation. Returns install path and Skillsmith optimization summary. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string",
+          "description": "Skill ID (owner/repo/skill) or GitHub URL"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Force reinstall if skill already exists"
+        },
+        "skipScan": {
+          "type": "boolean",
+          "description": "Skip security scan (not recommended)"
+        },
+        "skipOptimize": {
+          "type": "boolean",
+          "description": "Skip Skillsmith optimization (decomposition, subagent generation)"
+        },
+        "conflictAction": {
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "merge",
+            "cancel"
+          ],
+          "description": "Action when local modifications detected: overwrite (backup + replace), merge (three-way), or cancel"
+        },
+        "confirmed": {
+          "type": "boolean",
+          "description": "Confirm install despite security warnings. Required for any registry skill whose trust tier is not official, verified, curated, community or local (for example unverified)."
+        },
+        "client": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "cursor",
+            "copilot",
+            "windsurf",
+            "agents",
+            "opencode",
+            "hermes",
+            "grok",
+            "antigravity"
+          ],
+          "description": "Target agent (default: SKILLSMITH_CLIENT env or claude-code). Codex users pass agents."
+        },
+        "alsoLink": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "cursor",
+              "copilot",
+              "windsurf",
+              "agents",
+              "opencode",
+              "hermes",
+              "grok",
+              "antigravity"
+            ]
+          },
+          "description": "Additional clients to fan-out into (default: copy; pair with symlink for POSIX symlinks)"
+        },
+        "symlink": {
+          "type": "boolean",
+          "description": "Use relative symlinks instead of file copies for alsoLink targets (POSIX only; falls back to copy on Windows EPERM)"
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Absolute path to the calling client's actual project/workspace root, used to resolve project-scoped companion-agent output (e.g. Antigravity) correctly. Optional for flat, absolute-path clients (unused). REQUIRED for directory-package clients (Antigravity) — this MCP server's own process.cwd() is fixed at server launch and does not track the calling editor/agent's real project, so the install fails closed with a clear error if omitted rather than silently writing to the wrong directory."
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "workspace"
+          ],
+          "description": "Install scope (ADR-139): \"workspace\" resolves against the nearest ancestor workspace marker or .git root (walked from cwd when provided), creating the client's workspace skills directory if none exists yet; defaults to SKILLSMITH_SCOPE env, then the per-client config default, then auto-detecting an EXISTING workspace directory, then global."
+        }
+      },
+      "required": [
+        "skillId"
+      ]
+    },
+    "title": "Install Skill",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "uninstall_skill",
+    "description": "[Skillsmith — Retire stage] Uninstall an agent skill from the local Claude Code skills directory (~/.claude/skills/) or runtime-equivalent path. Use when the user asks to uninstall/remove/delete a specific skill — e.g. 'uninstall playwright-cli', 'remove getsentry/commit', 'use Skillsmith to delete the testing skill'. Optional `force` flag overrides protection on locally-modified skills. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillName": {
+          "type": "string",
+          "description": "Name of the skill to uninstall"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Force removal even if skill has been modified"
+        },
+        "client": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "cursor",
+            "copilot",
+            "windsurf",
+            "agents",
+            "opencode",
+            "hermes",
+            "grok",
+            "antigravity"
+          ],
+          "description": "Target agent (default: SKILLSMITH_CLIENT env or claude-code)"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "workspace"
+          ],
+          "description": "Uninstall scope (ADR-139): \"workspace\" targets the nearest ancestor workspace marker/.git root's skills directory (walked from cwd when provided); defaults to SKILLSMITH_SCOPE env, then the per-client config default, then auto-detecting an EXISTING workspace directory, then global."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Absolute path to the calling client's actual project/workspace root, used as the ancestor-walk starting point for workspace scope resolution. Optional."
+        }
+      },
+      "required": [
+        "skillName"
+      ]
+    },
+    "title": "Uninstall Skill",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "skill_recommend",
+    "description": "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations or 'what skills should I use' — e.g. 'recommend skills for my React project'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering. Returns ranked Skillsmith candidates with description + security, NOT general programming advice. Narrate security per item: absent = never scanned (say so, imply neither safe nor unsafe); passed:null = scanned, no verdict yet; passed:true/false = real verdict — state it, and flag false or high riskScore explicitly rather than recommending install uncritically. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime. candidates_considered:0 does NOT mean a backend problem — check the response's suggestion field for next steps.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "installed_skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Currently installed skill IDs (e.g., [\"getsentry/commit\", \"microsoft/playwright-cli\"]). If empty, auto-detects from ~/.claude/skills/"
+        },
+        "project_context": {
+          "type": "string",
+          "description": "Optional project description for context-aware recommendations (e.g., \"React frontend with Jest testing\")"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum recommendations to return (default 5, max 50)",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 5
+        },
+        "detect_overlap": {
+          "type": "boolean",
+          "description": "Enable overlap detection to filter similar skills (default true)",
+          "default": true
+        },
+        "min_similarity": {
+          "type": "number",
+          "description": "Minimum similarity threshold (0-1, default 0.3)",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.3
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "code-quality",
+            "testing",
+            "documentation",
+            "workflow",
+            "security",
+            "development-partner"
+          ],
+          "description": "SMI-1631: Filter by skill role (code-quality, testing, documentation, workflow, security, development-partner). Skills matching the role get a +30 score boost."
+        },
+        "installable_only": {
+          "type": "boolean",
+          "description": "SMI-5178: When true (default), return only installable skills. Pass false to include discovery-only entries that cannot be installed.",
+          "default": true
+        }
+      },
+      "required": []
+    },
+    "title": "Recommend Skills",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_validate",
+    "description": "[Skillsmith — Install stage] Validate a SKILL.md file or skill directory against the Skillsmith specification before installing or publishing. Use when the user wants to check/validate a skill's structure — e.g. 'validate my skill at ./my-skill', 'check if this skill is valid', 'use Skillsmith to validate this SKILL.md'. Checks YAML frontmatter, required fields, file structure, and security-pattern signatures. For end-to-end skill authoring including scaffolding/publishing, use the CLI `skillsmith author` commands. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skill_path": {
+          "type": "string",
+          "description": "Path to SKILL.md file or skill directory containing SKILL.md"
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "Enable strict validation mode (default false). Strict mode treats warnings as errors.",
+          "default": false
+        }
+      },
+      "required": [
+        "skill_path"
+      ]
+    },
+    "title": "Validate Skill",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "error",
+                  "warning"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "message",
+              "severity"
+            ]
+          }
+        },
+        "metadata": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "totalMs": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "totalMs"
+          ]
+        }
+      },
+      "required": [
+        "valid",
+        "errors",
+        "metadata",
+        "path",
+        "timing"
+      ]
+    }
+  },
+  {
+    "name": "skill_compare",
+    "description": "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare getsentry/commit and microsoft/playwright-cli', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is a registry for sharing, scanning, and tracking agent skills across any MCP-capable runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skill_a": {
+          "type": "string",
+          "description": "First skill ID to compare (e.g., \"getsentry/commit\")"
+        },
+        "skill_b": {
+          "type": "string",
+          "description": "Second skill ID to compare (e.g., \"microsoft/playwright-cli\")"
+        }
+      },
+      "required": [
+        "skill_a",
+        "skill_b"
+      ]
+    },
+    "title": "Compare Skills",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_suggest",
+    "description": "Proactively suggest relevant skills based on current context (files, commands, errors, project structure). Counts against your monthly API quota (Community: 100/mo — see www.skillsmith.app/pricing).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project_path": {
+          "type": "string",
+          "description": "Root path of the project to analyze"
+        },
+        "current_file": {
+          "type": "string",
+          "description": "Current file being edited (e.g., \"src/App.test.tsx\")"
+        },
+        "recent_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Recent terminal commands (last 5, e.g., [\"npm test\", \"git commit\"])"
+        },
+        "error_message": {
+          "type": "string",
+          "description": "Recent error message if any"
+        },
+        "installed_skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Currently installed skill IDs (for filtering)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum suggestions to return (default 3, max 10)",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Session identifier (optional, for informational purposes — default: \"default\")",
+          "default": "default"
+        }
+      },
+      "required": [
+        "project_path"
+      ]
+    },
+    "title": "Suggest Skills",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "index_local",
+    "description": "Index local skills from ~/.claude/skills/ directory. Returns count and details of indexed skills.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "Force re-indexing even if cache is valid (default: false)"
+        },
+        "skillsDir": {
+          "type": "string",
+          "description": "Custom skills directory path (defaults to ~/.claude/skills/)"
+        }
+      },
+      "required": []
+    },
+    "title": "Index Local Skills",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_publish",
+    "description": "Prepare a skill for publishing. Validates the skill, generates a checksum, creates a publish manifest, and optionally checks for project-specific references. Can also create a GitHub repository for registry discovery.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skill_path": {
+          "type": "string",
+          "description": "Path to the skill directory (must contain SKILL.md)"
+        },
+        "check_references": {
+          "type": "boolean",
+          "description": "Run reference check before publishing (default: true)",
+          "default": true
+        },
+        "reference_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "maxItems": 20,
+          "description": "Additional regex patterns to check (regex strings, max 200 chars each, max 20 patterns)"
+        },
+        "create_repo": {
+          "type": "boolean",
+          "description": "Create GitHub repository (requires gh CLI — will pre-flight check)",
+          "default": false
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ],
+          "description": "GitHub visibility if creating repo (default: 'public')",
+          "default": "public"
+        },
+        "add_topic": {
+          "type": "boolean",
+          "description": "Add claude-skill topic for registry discovery",
+          "default": false
+        }
+      },
+      "required": [
+        "skill_path"
+      ]
+    },
+    "title": "Prepare Skill for Publishing",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_updates",
+    "description": "Check installed skills for available updates by comparing locally-recorded content hashes against the current registry state. Requires Individual tier or higher. Returns a list of skills with their installed vs. latest hash and whether an update is available.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Specific skill IDs to check. Omit to check all tracked skills."
+        }
+      },
+      "required": []
+    },
+    "title": "Check Skill Updates",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_diff",
+    "description": "Show a section-level diff between two versions of an installed skill. Returns added, removed, and modified headings along with a change type (major/minor/patch) and update recommendation. Requires Individual tier or higher (version_tracking feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string",
+          "description": "Registry skill identifier (e.g. \"author/skill-name\")"
+        },
+        "oldContent": {
+          "type": "string",
+          "description": "Previous SKILL.md content"
+        },
+        "newContent": {
+          "type": "string",
+          "description": "Updated SKILL.md content"
+        },
+        "oldRiskScore": {
+          "type": "number",
+          "description": "Risk score of the old version (0–100)"
+        },
+        "newRiskScore": {
+          "type": "number",
+          "description": "Risk score of the new version (0–100)"
+        },
+        "hasLocalModifications": {
+          "type": "boolean",
+          "description": "Whether the installed skill has local edits"
+        },
+        "trustTier": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "community",
+            "experimental"
+          ],
+          "description": "Registry trust tier"
+        }
+      },
+      "required": [
+        "skillId",
+        "oldContent",
+        "newContent"
+      ]
+    },
+    "title": "Diff Skill Versions",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_audit",
+    "description": "Check installed skills for known security advisories. Requires Team tier or higher (skill_security_audit feature). The advisory system is in early access — the Skillsmith team publishes advisories as security issues are identified. Run `skillsmith sync` to fetch the latest advisories.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Specific skill IDs to audit (omit to return all skills with active advisories)."
+        }
+      },
+      "required": []
+    },
+    "title": "Audit Skill Security Advisories",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_pack_audit",
+    "description": "Audit a skill pack directory for (a) version drift — bundled SKILL.md versions vs. the Skillsmith registry cache — and (b) trigger-quality issues — generic trigger words in skill names/descriptions and generic pack namespaces that misfire Claude's skill-trigger heuristic (SMI-4124). Response is additive: new triggerQuality and namespaceQuality fields appear when check_trigger_quality is true (default); existing fields (skills, driftCount, etc.) are unchanged. Requires Individual tier or higher.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pack_path": {
+          "type": "string",
+          "description": "Absolute path to the skill pack root directory (must contain a skills/ subdirectory)."
+        },
+        "check_trigger_quality": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true (default), also flag generic trigger words and generic pack namespaces with rename suggestions. Set false for version-drift-only audits (legacy response shape — triggerQuality and namespaceQuality fields omitted)."
+        }
+      },
+      "required": [
+        "pack_path"
+      ]
+    },
+    "title": "Audit Skill Pack",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_outdated",
+    "description": "Check installed skills for available updates and dependency satisfaction status. Reads the local manifest, hashes each installed SKILL.md, and compares against the latest registry state. Community tier — no license required.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "include_deps": {
+          "type": "boolean",
+          "description": "Include dependency satisfaction status (default: true)"
+        }
+      },
+      "required": []
+    },
+    "title": "Check Outdated Skills",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_rescan",
+    "description": "Re-scan installed skills with the latest security patterns. Detects issues like SSRF instructions, prompt injection, data exfiltration, and other threats that may not have been caught when the skill was originally installed. Run without arguments to scan all installed skills, or specify a skill name to scan one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillName": {
+          "type": "string",
+          "description": "Specific skill directory name to rescan (omit to rescan all installed skills)."
+        }
+      },
+      "required": []
+    },
+    "title": "Rescan Installed Skills",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "audit_export",
+    "description": "Export audit log events for a given time range. Requires Enterprise tier (audit_logging feature). Returns structured audit events in JSON format.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "startDate": {
+          "type": "string",
+          "description": "ISO 8601 start date (defaults to 24h ago)"
+        },
+        "endDate": {
+          "type": "string",
+          "description": "ISO 8601 end date (defaults to now)"
+        },
+        "eventType": {
+          "type": "string",
+          "description": "Filter by event type"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max events to return (default 100, max 1000)"
+        }
+      }
+    },
+    "title": "Export Audit Logs",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "audit_query",
+    "description": "Query audit logs with filters (actor, resource, event type, result, date range). Requires Enterprise tier (audit_logging feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "actor": {
+          "type": "string",
+          "description": "Filter by actor (user ID or email)"
+        },
+        "resource": {
+          "type": "string",
+          "description": "Filter by resource name"
+        },
+        "eventType": {
+          "type": "string",
+          "description": "Filter by event type"
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failure",
+            "warning"
+          ],
+          "description": "Filter by result"
+        },
+        "startDate": {
+          "type": "string",
+          "description": "ISO 8601 start date"
+        },
+        "endDate": {
+          "type": "string",
+          "description": "ISO 8601 end date"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max results (default 100, max 1000)"
+        }
+      }
+    },
+    "title": "Query Audit Logs",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "siem_export",
+    "description": "Export audit events for SIEM ingestion (CloudWatch, Splunk, Datadog). Requires Enterprise tier (siem_export feature). SIEM destination is configured via environment variables, not tool arguments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "startDate": {
+          "type": "string",
+          "description": "ISO 8601 start date (defaults to 1h ago)"
+        },
+        "endDate": {
+          "type": "string",
+          "description": "ISO 8601 end date (defaults to now)"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "syslog",
+            "cef"
+          ],
+          "description": "Export format (default json)"
+        }
+      }
+    },
+    "title": "Export SIEM Events",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "team_workspace",
+    "description": "Manage team workspaces (create, list, get, delete). Requires Team tier license.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "get",
+            "delete"
+          ],
+          "description": "Workspace operation to perform"
+        },
+        "name": {
+          "type": "string",
+          "description": "Workspace name (required for create)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Workspace description (optional for create)"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID (required for get/delete)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Manage Team Workspace",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "share_skill",
+    "description": "Add, remove, or list skills in a team workspace. Requires Team tier license.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "remove",
+            "list"
+          ],
+          "description": "Sharing operation to perform"
+        },
+        "workspaceId": {
+          "type": "string",
+          "description": "Workspace ID to share skill with"
+        },
+        "skillId": {
+          "type": "string",
+          "description": "Skill ID in author/name format (required for add/remove)"
+        }
+      },
+      "required": [
+        "action",
+        "workspaceId"
+      ]
+    },
+    "title": "Share Skill with Team",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "publish_private",
+    "description": "Mark a skill as private on this machine: hides it from local community-search results. This is a local-only setting today -- it does not sync or share the skill with your teammates. For a real shared team registry, see the Enterprise-tier private_registry_publish tool. Requires Team tier license.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string",
+          "description": "Skill ID in author/name format"
+        }
+      },
+      "required": [
+        "skillId"
+      ]
+    },
+    "title": "Mark Skill Private",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "team_analytics_dashboard",
+    "description": "View team usage analytics: per-user tool usage counts, top tools, and daily trend. Requires Team tier (usage_analytics feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "string",
+          "enum": [
+            "7d",
+            "30d",
+            "90d"
+          ],
+          "description": "Time period (default 30d)"
+        }
+      }
+    },
+    "title": "View Team Analytics Dashboard",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "team_usage_report",
+    "description": "Generate a weekly/monthly usage summary with period-over-period comparison. Requires Team tier (usage_analytics feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "string",
+          "enum": [
+            "7d",
+            "30d",
+            "90d"
+          ],
+          "description": "Time period (default 30d)"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "detailed"
+          ],
+          "description": "Report format (default summary)"
+        }
+      }
+    },
+    "title": "View Team Usage Report",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "analytics_dashboard",
+    "description": "Enterprise analytics dashboard: recommendation accuracy, skill usage trends, team-wide aggregation. Requires Enterprise tier (advanced_analytics feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "string",
+          "enum": [
+            "7d",
+            "30d",
+            "90d"
+          ],
+          "description": "Time period (default 30d)"
+        },
+        "includeRecommendations": {
+          "type": "boolean",
+          "description": "Include recommendation accuracy metrics (default false)"
+        }
+      }
+    },
+    "title": "View Analytics Dashboard",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "usage_report",
+    "description": "Comprehensive enterprise usage report with all metrics. Requires Enterprise tier (advanced_analytics feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "period": {
+          "type": "string",
+          "enum": [
+            "7d",
+            "30d",
+            "90d"
+          ],
+          "description": "Time period (default 30d)"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "detailed",
+            "csv"
+          ],
+          "description": "Report format (default summary)"
+        }
+      }
+    },
+    "title": "View Usage Report",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "configure_sso",
+    "description": "Configure SSO/SAML integration for your organization. Actions: set (store IdP config), test (connection test), remove (clear config), claim_domain (issue a DNS TXT verification token), verify_domain (check the TXT record). Requires Enterprise tier (sso_saml feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "set",
+            "test",
+            "remove",
+            "claim_domain",
+            "verify_domain"
+          ],
+          "description": "SSO operation: set, test, remove, claim_domain, or verify_domain"
+        },
+        "idpMetadataUrl": {
+          "type": "string",
+          "description": "IdP metadata URL (required for set)"
+        },
+        "idpEntityId": {
+          "type": "string",
+          "description": "IdP entity ID (optional, extracted from metadata)"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "saml",
+            "oidc"
+          ],
+          "description": "SSO protocol (default: saml)"
+        },
+        "domain": {
+          "type": "string",
+          "description": "Domain to claim, verify, or register (required for set/claim_domain/verify_domain)"
+        },
+        "memberDisposition": {
+          "type": "string",
+          "enum": [
+            "convert_to_manual"
+          ],
+          "description": "How to handle existing SSO-provisioned members on remove (default: convert_to_manual)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Configure SSO",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "sso_settings",
+    "description": "View current SSO/SAML configuration for your organization. Requires Enterprise tier (sso_saml feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "includeMetadata": {
+          "type": "boolean",
+          "description": "Include full IdP metadata in response (default: false)"
+        }
+      }
+    },
+    "title": "View SSO Settings",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "private_registry_publish",
+    "description": "Publish a skill to your organization's private registry. Requires Enterprise tier (private_registry feature). Skills are scoped to your team's registry namespace and published versions are immutable. A published version is not installable by teammates until a team admin approves it — see private_registry_manage action \"submissions\" to check its status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string",
+          "description": "Skill ID in author/name format"
+        },
+        "version": {
+          "type": "string",
+          "description": "Semver version to publish"
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Packaged skill files as a { path: text } map; must include \"SKILL.md\" (max 2 MB total)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional skill description"
+        }
+      },
+      "required": [
+        "skillId",
+        "version",
+        "content"
+      ]
+    },
+    "title": "Publish to Private Registry",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "private_registry_manage",
+    "description": "Manage skills in your private registry (list, get, install, deprecate, undeprecate, namespace, submissions, approve, reject). Requires Enterprise tier (private_registry feature). Published versions require a team admin to approve them via \"approve\" before other members can install them (see \"submissions\" to check status).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get",
+            "deprecate",
+            "undeprecate",
+            "namespace",
+            "install",
+            "submissions",
+            "approve",
+            "reject"
+          ],
+          "description": "Registry operation to perform. \"namespace\" returns your team's registry namespace (the required skill_id prefix) without attempting a publish. \"install\" downloads the skill and writes it to your skills directory. \"submissions\" lists review-gate items awaiting or already given a decision — metadata only, not installable, unlike \"list\" which only ever returns installable, approved versions. \"approve\"/\"reject\" record an admin's decision on one pending (skillId, version) — self-approval and non-admin callers are rejected by the server."
+        },
+        "skillId": {
+          "type": "string",
+          "description": "Skill ID in author/name format (get/deprecate/undeprecate/install/approve/reject)"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version filter; required for approve/reject; \"install\" defaults to the most recently published"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Reinstall over an existing install"
+        },
+        "includeDeprecated": {
+          "type": "boolean",
+          "description": "Action \"list\" only: include deprecated versions (default hides them). No effect on \"get\"/\"install\", which always exclude deprecated versions, even by exact version."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected"
+          ],
+          "description": "Filter for action \"submissions\"; omit for everything visible to you"
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional reviewer note for action \"approve\"/\"reject\" (max 1000 chars)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Manage Private Registry",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "rbac_manage",
+    "description": "Inspect and configure team role permissions: list_roles, get_role, set_role_permission, reset_role_permission. Roles are fixed (owner, admin, member) — owners always hold every permission and cannot be narrowed. Configurable permissions: registry:approve, registry:deprecate, team:manage_rbac, team:manage_sso. Requires the team:manage_rbac permission and Enterprise tier (rbac feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list_roles",
+            "get_role",
+            "set_role_permission",
+            "reset_role_permission"
+          ],
+          "description": "RBAC permission operation"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "member"
+          ],
+          "description": "Role to inspect or configure (required except for list_roles)"
+        },
+        "permission": {
+          "type": "string",
+          "enum": [
+            "registry:approve",
+            "registry:deprecate",
+            "team:manage_rbac",
+            "team:manage_sso"
+          ],
+          "description": "Permission to configure (required for set/reset_role_permission)"
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny"
+          ],
+          "description": "Override effect (required for set_role_permission)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Manage RBAC Roles",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "rbac_assign_role",
+    "description": "Assign or revoke a team member's role, or list current members and their roles. Roles are fixed: admin or member (owner is managed separately and can never be changed here). Requires the team:manage_rbac permission and Enterprise tier (rbac feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "assign",
+            "revoke",
+            "list_assignments"
+          ],
+          "description": "Assignment operation"
+        },
+        "memberId": {
+          "type": "string",
+          "description": "team_members.id from list_assignments (required for assign/revoke)"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "member"
+          ],
+          "description": "Role to assign, or the role to revoke (required for assign/revoke)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Assign RBAC Role",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "rbac_create_policy",
+    "description": "Bulk-write or clear permission overrides: create expands resources x actions into \"resource:action\" permission grants for one role, delete clears them, list shows the overrides currently set. Valid expansions: registry:approve, registry:deprecate, team:manage_rbac, team:manage_sso. Requires the team:manage_rbac permission and Enterprise tier (rbac feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "delete"
+          ],
+          "description": "Policy operation"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display-only label; not persisted"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "member"
+          ],
+          "description": "Role the policy applies to (required for create/delete)"
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny"
+          ],
+          "description": "Policy effect (required for create)"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Resource segments, e.g. [\"registry\"] (required for create/delete)"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Action segments, e.g. [\"approve\"] (required for create/delete)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Create RBAC Policy",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "webhook_configure",
+    "description": "Configure webhooks for skill lifecycle events (skill.install, skill.publish, etc.). Webhooks are signed with HMAC-SHA256. Requires Enterprise tier (custom_integrations feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "get",
+            "delete",
+            "test",
+            "rotate_secret"
+          ],
+          "description": "Webhook operation"
+        },
+        "url": {
+          "type": "string",
+          "description": "Webhook URL (required for create)"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Event types (required for create)"
+        },
+        "webhookId": {
+          "type": "string",
+          "description": "Webhook ID (required for get/delete/test/rotate_secret)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Webhook description"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Configure Webhook",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "api_key_manage",
+    "description": "Manage API keys for programmatic access. Keys are shown once on creation. Stored as SHA-256 hashes. Requires Enterprise tier (custom_integrations feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "list",
+            "revoke",
+            "get"
+          ],
+          "description": "API key operation"
+        },
+        "name": {
+          "type": "string",
+          "description": "Key name (required for create)"
+        },
+        "keyId": {
+          "type": "string",
+          "description": "Key ID (required for revoke/get)"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Permission scopes"
+        },
+        "expiresIn": {
+          "type": "string",
+          "enum": [
+            "30d",
+            "90d",
+            "365d",
+            "never"
+          ],
+          "description": "Expiration period (default: 90d)"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Manage API Keys",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "compliance_report",
+    "description": "Generate compliance reports: SOC2 (markdown), CycloneDX (JSON SBOM), or raw JSON. Scoped to local skill inventory. Requires Team tier or higher (compliance_reports feature).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "soc2",
+            "cyclonedx",
+            "json"
+          ],
+          "description": "Report format: soc2, cyclonedx, or json"
+        },
+        "period": {
+          "type": "string",
+          "enum": [
+            "30d",
+            "90d",
+            "365d"
+          ],
+          "description": "Reporting period (default: 90d)"
+        },
+        "includeUserActivity": {
+          "type": "boolean",
+          "description": "Include user activity summary (default: true)"
+        },
+        "backfillDependencies": {
+          "type": "boolean",
+          "description": "cyclonedx format only. Opt-in inline dependency extraction when skill_dependencies is empty (default: false, emits a pending-rescan placeholder instead). better-sqlite3 only."
+        }
+      },
+      "required": [
+        "format"
+      ]
+    },
+    "title": "Generate Compliance Report",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "inventory_push",
+    "description": "[Skillsmith — Sync stage] Push this machine's installed-skill inventory to your Skillsmith account so it appears on the web dashboard. Read-only monitoring — no local skill files are modified. Requires `skillsmith login`; respects the local SKILLSMITH_INVENTORY_DISABLE flag and your account's server-side consent setting.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "title": "Push Skill Inventory",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "skill_inventory_audit",
+    "description": "[Skillsmith — Maintain stage] Audit your installed AI coding clients' skill inventories (Claude Code, Cursor, Copilot, and every other Skillsmith-supported client) — plus Claude Code's own commands, agents, and CLAUDE.md trigger rules — for local namespace collisions. Returns rename + prose-edit suggestions keyed by a fresh `auditId`. Never modifies your skills, commands, agents, or CLAUDE.md — it only writes its own audit artifacts under `~/.skillsmith/audits/<auditId>/`. Feed the returned suggestions into `apply_namespace_rename` / `apply_recommended_edit`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "deep": {
+          "type": "boolean",
+          "description": "Run the deep (semantic) collision pass. Defaults to false."
+        },
+        "homeDir": {
+          "type": "string",
+          "description": "Override the inventory root. Must resolve under os.homedir() or os.tmpdir(); arbitrary paths are rejected."
+        },
+        "projectDir": {
+          "type": "string",
+          "description": "Project directory whose CLAUDE.md rules are included in the scan."
+        },
+        "applyExclusions": {
+          "type": "boolean",
+          "description": "Apply the configured exclusion list to the scan. Defaults to true."
+        }
+      },
+      "required": []
+    },
+    "title": "Audit Skill Namespace Inventory",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "apply_namespace_rename",
+    "description": "[Skillsmith — Maintain stage] Apply a rename suggestion from a prior local namespace-collision audit (`skill_inventory_audit`), or revert one already applied. MUTATES `~/.claude` (renames a skill/command/agent file) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false, direction }) so the agent can show the change before committing. `action: 'apply'` uses the suggested name; `'custom'` uses `customName`; `'skip'` records a no-op; `'revert'` undoes a previously applied rename for the same auditId + collisionId — this is the durable, cross-session undo path (a fresh MCP server process, e.g. a new session, can still revert a rename applied by an earlier process, since the ledger persists to disk).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "auditId": {
+          "type": "string",
+          "description": "auditId from a prior skill_inventory_audit response."
+        },
+        "collisionId": {
+          "type": "string",
+          "description": "collisionId of the RenameSuggestion to apply or revert."
+        },
+        "action": {
+          "type": "string",
+          "description": "'apply' uses the suggested name; 'custom' uses customName; 'skip' is a no-op; 'revert' undoes a previously applied apply/custom rename for the same auditId + collisionId.",
+          "enum": [
+            "apply",
+            "custom",
+            "skip",
+            "revert"
+          ]
+        },
+        "customName": {
+          "type": "string",
+          "description": "Required when action === 'custom'; forbidden otherwise (including revert)."
+        },
+        "confirmed": {
+          "type": "boolean",
+          "description": "When true, performs the file rename (or revert). When omitted/false, returns a non-mutating preview. Defaults to false."
+        }
+      },
+      "required": [
+        "auditId",
+        "collisionId",
+        "action"
+      ]
+    },
+    "title": "Apply Namespace Rename",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "undo_apply",
+    "description": "[Skillsmith — Maintain stage] Undo the most recent apply_namespace_rename / apply_recommended_edit changeset(s) made in THIS server session. Session-scoped: restarting the MCP server clears the undo history — for a namespace rename applied in a PRIOR session, use the durable, cross-session revert instead: apply_namespace_rename({ auditId, collisionId, action: 'revert' }) (SMI-5671). Restores from the apply tool's own pre-mutation backup and refuses (never throws) if the target was modified since the apply, the backup is missing, or the restore target falls outside the confined skill roots. Pass `count` to undo the N most-recent changesets (default 1), or `suggestion_id` to undo one specific changeset — mutually exclusive.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number",
+          "description": "Number of most-recent session applies to undo, most-recent-first. Defaults to 1. Mutually exclusive with suggestion_id."
+        },
+        "suggestion_id": {
+          "type": "string",
+          "description": "Undo one specific changeset by its collisionId. Mutually exclusive with count."
+        }
+      },
+      "required": []
+    },
+    "title": "Undo Apply",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "apply_manifest_reconcile",
+    "description": "[Skillsmith — Maintain stage] Repair a corrupted or ambiguous ~/.skillsmith/manifest.json entry through a supported path — MUTATES the manifest (with a pre-mutation backup and a durable, revertible ledger entry). Use after skill_outdated reports 'identity-mismatch' or 'local-drift', or after skill_recover_source found low/no confidence. Actions: 'mark_local' (stop tracking this entry against the registry — writes source:'unknown' + provenance:'local'); 'relink' (assert an explicit, registry-validated id/source pair — requires BOTH; never infers an identity); 'drop_entry' (hard-remove an entry whose installPath no longer resolves); 'verify' (re-check on-disk content against the registry's current content hash for one entry or, by default, every entry — writes verifiedAt only on a match); 'revert' (durable, cross-session undo of a prior reconcile on ONE entry, by ledgerEntryId or by name — survives an unrelated skill install happening in between).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "mark_local",
+            "relink",
+            "drop_entry",
+            "verify",
+            "revert"
+          ],
+          "description": "'mark_local' | 'relink' | 'drop_entry' | 'verify' | 'revert' — see tool description for each action's effect."
+        },
+        "name": {
+          "type": "string",
+          "description": "Skill name (manifest entry, not a full id). Required for mark_local/relink/drop_entry. Optional for verify (omit to batch-verify every entry) and revert (omit when passing ledgerEntryId)."
+        },
+        "client": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "cursor",
+            "copilot",
+            "windsurf",
+            "agents",
+            "opencode",
+            "hermes",
+            "grok",
+            "antigravity"
+          ],
+          "description": "Target client (ADR-139). Defaults to the canonical client (claude-code)."
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "workspace"
+          ],
+          "description": "Explicit install scope (ADR-139). Defaults to auto-detecting an EXISTING workspace directory, else global."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Absolute path to the calling client's actual project root, used as the ancestor-walk starting point for workspace scope resolution."
+        },
+        "id": {
+          "type": "string",
+          "description": "relink only, required together with 'source': registry skill id (author/name)."
+        },
+        "source": {
+          "type": "string",
+          "description": "relink only, required together with 'id': the source reference to record (e.g. github:owner/repo)."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Optional human-readable reason, recorded in the revert ledger."
+        },
+        "ledgerEntryId": {
+          "type": "string",
+          "description": "revert only: precise ledger entry id (mrc_...) from a prior mutating action response. Preferred over name when known."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "title": "Reconcile Manifest Entry",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "apply_recommended_edit",
+    "description": "[Skillsmith — Maintain stage] Apply a recommended prose edit from a prior `skill_inventory_audit`. MUTATES `~/.claude` (rewrites a SKILL.md / CLAUDE.md snippet) — but ONLY when `confirmed: true`. Without `confirmed`, returns a non-mutating preview ({ preview: true, before, after, applied: false }). Gated on APPLY_TEMPLATE_REGISTRY: only registered when at least one apply-eligible template is enabled.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "auditId": {
+          "type": "string",
+          "description": "auditId from a prior skill_inventory_audit response."
+        },
+        "collisionId": {
+          "type": "string",
+          "description": "collisionId of the RecommendedEdit to apply."
+        },
+        "confirmed": {
+          "type": "boolean",
+          "description": "When true, performs the prose edit. When omitted/false, returns a non-mutating preview. Defaults to false."
+        }
+      },
+      "required": [
+        "auditId",
+        "collisionId"
+      ]
+    },
+    "title": "Apply Recommended Edit",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "skill_recover_source",
+    "description": "[Skillsmith — Maintain stage] Recover the canonical GitHub source of locally-installed skills (SMI-5407). Read-only — never mutates ~/.skillsmith/manifest.json. Returns { skills, summary } where each skill entry reports confidence (exact/high/medium/low), method, and the recovered source URL. Feed exact/high results into `sklx audit sources --apply` to backfill the manifest.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "homeDir": {
+          "type": "string",
+          "description": "Override the skills root parent. Must resolve under os.homedir() or os.tmpdir(); arbitrary paths (e.g. /etc) are rejected."
+        },
+        "only": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Restrict recovery to these skill directory basenames."
+        },
+        "embedding": {
+          "type": "boolean",
+          "description": "Enable embedding tiebreak tier (off by default)."
+        },
+        "catalogHint": {
+          "type": "boolean",
+          "description": "Enable catalog / author hint tier (off by default)."
+        }
+      },
+      "required": []
+    },
+    "title": "Recover Skill Source",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  }
+]

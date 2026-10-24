@@ -1,0 +1,7020 @@
+{
+  "analyze/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "src",
+      "max_files": 100,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "analyze/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "analyze/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "analyze/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": { "path": ".", "max_files": 1000, "include_dev_deps": true }
+  },
+  "analyze/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "src",
+      "max_files": 100,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/missing:path": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": ".",
+      "max_files": 100,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/wrong-type:path": {
+    "success": false,
+    "issues": [
+      { "path": "path", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "analyze/bad:path:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "",
+      "max_files": 100,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/bad:path:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "zzz-not-an-option",
+      "max_files": 100,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/missing:max_files": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "src",
+      "max_files": 1000,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/wrong-type:max_files": {
+    "success": false,
+    "issues": [
+      { "path": "max_files", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "analyze/bad:max_files:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "max_files",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
+    ]
+  },
+  "analyze/bad:max_files:fractional": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "src",
+      "max_files": 1.5,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": false
+    }
+  },
+  "analyze/bad:max_files:unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "max_files",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 10000"
+      }
+    ]
+  },
+  "analyze/bad:max_files:huge": {
+    "success": false,
+    "issues": [
+      {
+        "path": "max_files",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 10000"
+      }
+    ]
+  },
+  "analyze/missing:exclude_dirs": {
+    "success": true,
+    "issues": [],
+    "data": { "path": "src", "max_files": 100, "include_dev_deps": false }
+  },
+  "analyze/wrong-type:exclude_dirs": {
+    "success": false,
+    "issues": [
+      {
+        "path": "exclude_dirs",
+        "code": "invalid_type",
+        "message": "Expected array, received string"
+      }
+    ]
+  },
+  "analyze/bad:exclude_dirs:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "exclude_dirs.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "analyze/bad:exclude_dirs:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": { "path": "src", "max_files": 100, "exclude_dirs": [""], "include_dev_deps": false }
+  },
+  "analyze/missing:include_dev_deps": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "path": "src",
+      "max_files": 100,
+      "exclude_dirs": ["node_modules"],
+      "include_dev_deps": true
+    }
+  },
+  "analyze/wrong-type:include_dev_deps": {
+    "success": false,
+    "issues": [
+      {
+        "path": "include_dev_deps",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "outdated/valid": { "success": true, "issues": [], "data": { "include_deps": false } },
+  "outdated/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "outdated/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "outdated/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "outdated/empty-object": { "success": true, "issues": [], "data": { "include_deps": true } },
+  "outdated/unknown-key": { "success": true, "issues": [], "data": { "include_deps": false } },
+  "outdated/missing:include_deps": {
+    "success": true,
+    "issues": [],
+    "data": { "include_deps": true }
+  },
+  "outdated/wrong-type:include_deps": {
+    "success": false,
+    "issues": [
+      {
+        "path": "include_deps",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "team_analytics_dashboard/valid": { "success": true, "issues": [], "data": { "period": "7d" } },
+  "team_analytics_dashboard/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "team_analytics_dashboard/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "team_analytics_dashboard/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "team_analytics_dashboard/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d" }
+  },
+  "team_analytics_dashboard/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "7d" }
+  },
+  "team_analytics_dashboard/missing:period": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d" }
+  },
+  "team_analytics_dashboard/wrong-type:period": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_type",
+        "message": "Expected '7d' | '30d' | '90d', received number"
+      }
+    ]
+  },
+  "team_analytics_dashboard/bad:period:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received ''"
+      }
+    ]
+  },
+  "team_analytics_dashboard/bad:period:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "team_usage_report/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "7d", "format": "detailed" }
+  },
+  "team_usage_report/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "team_usage_report/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "team_usage_report/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "team_usage_report/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "summary" }
+  },
+  "team_usage_report/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "7d", "format": "detailed" }
+  },
+  "team_usage_report/missing:period": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "detailed" }
+  },
+  "team_usage_report/wrong-type:period": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_type",
+        "message": "Expected '7d' | '30d' | '90d', received number"
+      }
+    ]
+  },
+  "team_usage_report/bad:period:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received ''"
+      }
+    ]
+  },
+  "team_usage_report/bad:period:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "team_usage_report/missing:format": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "7d", "format": "summary" }
+  },
+  "team_usage_report/wrong-type:format": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_type",
+        "message": "Expected 'summary' | 'detailed', received number"
+      }
+    ]
+  },
+  "team_usage_report/bad:format:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'summary' | 'detailed', received ''"
+      }
+    ]
+  },
+  "team_usage_report/bad:format:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'summary' | 'detailed', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "analytics_dashboard/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "90d", "includeRecommendations": true }
+  },
+  "analytics_dashboard/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "analytics_dashboard/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "analytics_dashboard/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "analytics_dashboard/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "includeRecommendations": false }
+  },
+  "analytics_dashboard/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "90d", "includeRecommendations": true }
+  },
+  "analytics_dashboard/missing:period": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "includeRecommendations": true }
+  },
+  "analytics_dashboard/wrong-type:period": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_type",
+        "message": "Expected '7d' | '30d' | '90d', received number"
+      }
+    ]
+  },
+  "analytics_dashboard/bad:period:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received ''"
+      }
+    ]
+  },
+  "analytics_dashboard/bad:period:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "analytics_dashboard/missing:includeRecommendations": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "90d", "includeRecommendations": false }
+  },
+  "analytics_dashboard/wrong-type:includeRecommendations": {
+    "success": false,
+    "issues": [
+      {
+        "path": "includeRecommendations",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "usage_report/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "csv" }
+  },
+  "usage_report/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "usage_report/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "usage_report/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "usage_report/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "summary" }
+  },
+  "usage_report/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "csv" }
+  },
+  "usage_report/missing:period": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "csv" }
+  },
+  "usage_report/wrong-type:period": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_type",
+        "message": "Expected '7d' | '30d' | '90d', received number"
+      }
+    ]
+  },
+  "usage_report/bad:period:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received ''"
+      }
+    ]
+  },
+  "usage_report/bad:period:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '7d' | '30d' | '90d', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "usage_report/missing:format": {
+    "success": true,
+    "issues": [],
+    "data": { "period": "30d", "format": "summary" }
+  },
+  "usage_report/wrong-type:format": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_type",
+        "message": "Expected 'summary' | 'detailed' | 'csv', received number"
+      }
+    ]
+  },
+  "usage_report/bad:format:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'summary' | 'detailed' | 'csv', received ''"
+      }
+    ]
+  },
+  "usage_report/bad:format:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'summary' | 'detailed' | 'csv', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "publish/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "reference_patterns": ["a.*"],
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "publish/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "publish/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "publish/empty-object": {
+    "success": false,
+    "issues": [{ "path": "skill_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "publish/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "reference_patterns": ["a.*"],
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/missing:skill_path": {
+    "success": false,
+    "issues": [{ "path": "skill_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "publish/wrong-type:skill_path": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skill_path",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "publish/bad:skill_path:empty-string": {
+    "success": false,
+    "issues": [{ "path": "skill_path", "code": "too_small", "message": "skill_path is required" }]
+  },
+  "publish/bad:skill_path:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "zzz-not-an-option",
+      "check_references": false,
+      "reference_patterns": ["a.*"],
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/missing:check_references": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": true,
+      "reference_patterns": ["a.*"],
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/wrong-type:check_references": {
+    "success": false,
+    "issues": [
+      {
+        "path": "check_references",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "publish/missing:reference_patterns": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/wrong-type:reference_patterns": {
+    "success": false,
+    "issues": [
+      {
+        "path": "reference_patterns",
+        "code": "invalid_type",
+        "message": "Expected array, received string"
+      }
+    ]
+  },
+  "publish/bad:reference_patterns:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "reference_patterns.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "publish/bad:reference_patterns:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "reference_patterns": [""],
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/missing:create_repo": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "reference_patterns": ["a.*"],
+      "create_repo": false,
+      "visibility": "private",
+      "add_topic": true
+    }
+  },
+  "publish/wrong-type:create_repo": {
+    "success": false,
+    "issues": [
+      {
+        "path": "create_repo",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "publish/missing:visibility": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "reference_patterns": ["a.*"],
+      "create_repo": true,
+      "visibility": "public",
+      "add_topic": true
+    }
+  },
+  "publish/wrong-type:visibility": {
+    "success": false,
+    "issues": [
+      {
+        "path": "visibility",
+        "code": "invalid_type",
+        "message": "Expected 'public' | 'private', received number"
+      }
+    ]
+  },
+  "publish/bad:visibility:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "visibility",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'public' | 'private', received ''"
+      }
+    ]
+  },
+  "publish/bad:visibility:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "visibility",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'public' | 'private', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "publish/missing:add_topic": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skill_path": "/x/skill",
+      "check_references": false,
+      "reference_patterns": ["a.*"],
+      "create_repo": true,
+      "visibility": "private",
+      "add_topic": false
+    }
+  },
+  "publish/wrong-type:add_topic": {
+    "success": false,
+    "issues": [
+      {
+        "path": "add_topic",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "get_skill/valid": { "success": true, "issues": [], "data": { "id": "author/name" } },
+  "get_skill/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "get_skill/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "get_skill/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "get_skill/empty-object": {
+    "success": false,
+    "issues": [{ "path": "id", "code": "invalid_type", "message": "Required" }]
+  },
+  "get_skill/unknown-key": { "success": true, "issues": [], "data": { "id": "author/name" } },
+  "get_skill/missing:id": {
+    "success": false,
+    "issues": [{ "path": "id", "code": "invalid_type", "message": "Required" }]
+  },
+  "get_skill/wrong-type:id": {
+    "success": false,
+    "issues": [
+      { "path": "id", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "get_skill/bad:id:empty-string": {
+    "success": false,
+    "issues": [{ "path": "id", "code": "too_small", "message": "Skill ID is required" }]
+  },
+  "get_skill/bad:id:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "id": "zzz-not-an-option" }
+  },
+  "team_workspace/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "ws",
+      "description": "d",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "team_workspace/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "team_workspace/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "team_workspace/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "team_workspace/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "ws",
+      "description": "d",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "team_workspace/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'create' | 'list' | 'get' | 'delete', received number"
+      }
+    ]
+  },
+  "team_workspace/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'get' | 'delete', received ''"
+      }
+    ]
+  },
+  "team_workspace/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'get' | 'delete', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "team_workspace/missing:name": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "description": "d",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/wrong-type:name": {
+    "success": false,
+    "issues": [
+      { "path": "name", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "team_workspace/bad:name:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "name",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "team_workspace/bad:name:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "zzz-not-an-option",
+      "description": "d",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/missing:description": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "ws",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/wrong-type:description": {
+    "success": false,
+    "issues": [
+      {
+        "path": "description",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "team_workspace/bad:description:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "ws",
+      "description": "",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/bad:description:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "ws",
+      "description": "zzz-not-an-option",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  },
+  "team_workspace/missing:workspaceId": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "name": "ws", "description": "d" }
+  },
+  "team_workspace/wrong-type:workspaceId": {
+    "success": false,
+    "issues": [
+      {
+        "path": "workspaceId",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "team_workspace/bad:workspaceId:empty-string": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "team_workspace/bad:workspaceId:not-an-option": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "team_workspace/extra:uuid-v4": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "550e8400-e29b-41d4-a716-446655440000" }
+  },
+  "team_workspace/extra:uuid-nil-one": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "00000000-0000-0000-0000-000000000001" }
+  },
+  "team_workspace/extra:uuid-nil": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "00000000-0000-0000-0000-000000000000" }
+  },
+  "team_workspace/extra:uuid-max": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "ffffffff-ffff-ffff-ffff-ffffffffffff" }
+  },
+  "team_workspace/extra:uuid-v1": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "1b4e28ba-2fa1-11d2-883f-0016d3cca427" }
+  },
+  "team_workspace/extra:uuid-shaped-not-rfc": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "12345678-1234-1234-1234-123456789012" }
+  },
+  "team_workspace/extra:uuid-upper": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "get", "workspaceId": "550E8400-E29B-41D4-A716-446655440000" }
+  },
+  "team_workspace/extra:uuid-braced": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "team_workspace/extra:uuid-empty": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "share_skill/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "add",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000",
+      "skillId": "a/b"
+    }
+  },
+  "share_skill/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "share_skill/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "share_skill/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "share_skill/empty-object": {
+    "success": false,
+    "issues": [
+      { "path": "action", "code": "invalid_type", "message": "Required" },
+      { "path": "workspaceId", "code": "invalid_type", "message": "Required" }
+    ]
+  },
+  "share_skill/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "add",
+      "workspaceId": "550e8400-e29b-41d4-a716-446655440000",
+      "skillId": "a/b"
+    }
+  },
+  "share_skill/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "share_skill/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'add' | 'remove' | 'list', received number"
+      }
+    ]
+  },
+  "share_skill/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'add' | 'remove' | 'list', received ''"
+      }
+    ]
+  },
+  "share_skill/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'add' | 'remove' | 'list', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "share_skill/missing:workspaceId": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_type", "message": "Required" }]
+  },
+  "share_skill/wrong-type:workspaceId": {
+    "success": false,
+    "issues": [
+      {
+        "path": "workspaceId",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "share_skill/bad:workspaceId:empty-string": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "share_skill/bad:workspaceId:not-an-option": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "share_skill/missing:skillId": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "add", "workspaceId": "550e8400-e29b-41d4-a716-446655440000" }
+  },
+  "share_skill/wrong-type:skillId": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "share_skill/bad:skillId:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "share_skill/bad:skillId:not-an-option": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "share_skill/extra:uuid-v4": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "550e8400-e29b-41d4-a716-446655440000" }
+  },
+  "share_skill/extra:uuid-nil-one": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "00000000-0000-0000-0000-000000000001" }
+  },
+  "share_skill/extra:uuid-nil": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "00000000-0000-0000-0000-000000000000" }
+  },
+  "share_skill/extra:uuid-max": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "ffffffff-ffff-ffff-ffff-ffffffffffff" }
+  },
+  "share_skill/extra:uuid-v1": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "1b4e28ba-2fa1-11d2-883f-0016d3cca427" }
+  },
+  "share_skill/extra:uuid-shaped-not-rfc": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "12345678-1234-1234-1234-123456789012" }
+  },
+  "share_skill/extra:uuid-upper": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "list", "workspaceId": "550E8400-E29B-41D4-A716-446655440000" }
+  },
+  "share_skill/extra:uuid-braced": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "share_skill/extra:uuid-empty": {
+    "success": false,
+    "issues": [{ "path": "workspaceId", "code": "invalid_string", "message": "Invalid uuid" }]
+  },
+  "share_skill/extra:skillId-two-slashes": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "share_skill/extra:skillId-no-slash": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "configure_sso/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "configure_sso/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "configure_sso/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "configure_sso/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "configure_sso/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "configure_sso/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'set' | 'test' | 'remove' | 'claim_domain' | 'verify_domain', received number"
+      }
+    ]
+  },
+  "configure_sso/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'set' | 'test' | 'remove' | 'claim_domain' | 'verify_domain', received ''"
+      }
+    ]
+  },
+  "configure_sso/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'set' | 'test' | 'remove' | 'claim_domain' | 'verify_domain', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "configure_sso/missing:idpMetadataUrl": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/wrong-type:idpMetadataUrl": {
+    "success": false,
+    "issues": [
+      {
+        "path": "idpMetadataUrl",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "configure_sso/bad:idpMetadataUrl:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "idpMetadataUrl", "code": "invalid_string", "message": "Must be a valid URL" }
+    ]
+  },
+  "configure_sso/bad:idpMetadataUrl:not-an-option": {
+    "success": false,
+    "issues": [
+      { "path": "idpMetadataUrl", "code": "invalid_string", "message": "Must be a valid URL" }
+    ]
+  },
+  "configure_sso/missing:idpEntityId": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "protocol": "oidc",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/wrong-type:idpEntityId": {
+    "success": false,
+    "issues": [
+      {
+        "path": "idpEntityId",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "configure_sso/bad:idpEntityId:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "",
+      "protocol": "oidc",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/bad:idpEntityId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "zzz-not-an-option",
+      "protocol": "oidc",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/missing:protocol": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "saml",
+      "domain": "example.com",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/wrong-type:protocol": {
+    "success": false,
+    "issues": [
+      {
+        "path": "protocol",
+        "code": "invalid_type",
+        "message": "Expected 'saml' | 'oidc', received number"
+      }
+    ]
+  },
+  "configure_sso/bad:protocol:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "protocol",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'saml' | 'oidc', received ''"
+      }
+    ]
+  },
+  "configure_sso/bad:protocol:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "protocol",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'saml' | 'oidc', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "configure_sso/missing:domain": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/wrong-type:domain": {
+    "success": false,
+    "issues": [
+      { "path": "domain", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "configure_sso/bad:domain:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "domain": "",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/bad:domain:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "domain": "zzz-not-an-option",
+      "memberDisposition": "convert_to_manual"
+    }
+  },
+  "configure_sso/missing:memberDisposition": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set",
+      "idpMetadataUrl": "https://idp.example.com/m",
+      "idpEntityId": "e",
+      "protocol": "oidc",
+      "domain": "example.com"
+    }
+  },
+  "configure_sso/wrong-type:memberDisposition": {
+    "success": false,
+    "issues": [
+      {
+        "path": "memberDisposition",
+        "code": "invalid_type",
+        "message": "Expected 'convert_to_manual', received number"
+      }
+    ]
+  },
+  "configure_sso/bad:memberDisposition:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "memberDisposition",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'convert_to_manual', received ''"
+      }
+    ]
+  },
+  "configure_sso/bad:memberDisposition:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "memberDisposition",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'convert_to_manual', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "configure_sso/extra:url-https": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "set", "idpMetadataUrl": "https://example.com/x", "protocol": "saml" }
+  },
+  "configure_sso/extra:url-mailto": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "set", "idpMetadataUrl": "mailto:a@b.co", "protocol": "saml" }
+  },
+  "configure_sso/extra:url-javascript": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "set", "idpMetadataUrl": "javascript:alert(1)", "protocol": "saml" }
+  },
+  "configure_sso/extra:url-relative": {
+    "success": false,
+    "issues": [
+      { "path": "idpMetadataUrl", "code": "invalid_string", "message": "Must be a valid URL" }
+    ]
+  },
+  "configure_sso/extra:url-spaces": {
+    "success": false,
+    "issues": [
+      { "path": "idpMetadataUrl", "code": "invalid_string", "message": "Must be a valid URL" }
+    ]
+  },
+  "configure_sso/extra:url-empty": {
+    "success": false,
+    "issues": [
+      { "path": "idpMetadataUrl", "code": "invalid_string", "message": "Must be a valid URL" }
+    ]
+  },
+  "sso_settings/valid": { "success": true, "issues": [], "data": { "includeMetadata": true } },
+  "sso_settings/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "sso_settings/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "sso_settings/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "sso_settings/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": { "includeMetadata": false }
+  },
+  "sso_settings/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "includeMetadata": true }
+  },
+  "sso_settings/missing:includeMetadata": {
+    "success": true,
+    "issues": [],
+    "data": { "includeMetadata": false }
+  },
+  "sso_settings/wrong-type:includeMetadata": {
+    "success": false,
+    "issues": [
+      {
+        "path": "includeMetadata",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "compliance_report/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "format": "soc2",
+      "period": "30d",
+      "includeUserActivity": false,
+      "backfillDependencies": true
+    }
+  },
+  "compliance_report/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "compliance_report/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "compliance_report/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "compliance_report/empty-object": {
+    "success": false,
+    "issues": [{ "path": "format", "code": "invalid_type", "message": "Required" }]
+  },
+  "compliance_report/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "format": "soc2",
+      "period": "30d",
+      "includeUserActivity": false,
+      "backfillDependencies": true
+    }
+  },
+  "compliance_report/missing:format": {
+    "success": false,
+    "issues": [{ "path": "format", "code": "invalid_type", "message": "Required" }]
+  },
+  "compliance_report/wrong-type:format": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_type",
+        "message": "Expected 'soc2' | 'cyclonedx' | 'json', received number"
+      }
+    ]
+  },
+  "compliance_report/bad:format:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'soc2' | 'cyclonedx' | 'json', received ''"
+      }
+    ]
+  },
+  "compliance_report/bad:format:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'soc2' | 'cyclonedx' | 'json', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "compliance_report/missing:period": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "format": "soc2",
+      "period": "90d",
+      "includeUserActivity": false,
+      "backfillDependencies": true
+    }
+  },
+  "compliance_report/wrong-type:period": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_type",
+        "message": "Expected '30d' | '90d' | '365d', received number"
+      }
+    ]
+  },
+  "compliance_report/bad:period:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '30d' | '90d' | '365d', received ''"
+      }
+    ]
+  },
+  "compliance_report/bad:period:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "period",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '30d' | '90d' | '365d', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "compliance_report/missing:includeUserActivity": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "format": "soc2",
+      "period": "30d",
+      "includeUserActivity": true,
+      "backfillDependencies": true
+    }
+  },
+  "compliance_report/wrong-type:includeUserActivity": {
+    "success": false,
+    "issues": [
+      {
+        "path": "includeUserActivity",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "compliance_report/missing:backfillDependencies": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "format": "soc2",
+      "period": "30d",
+      "includeUserActivity": false,
+      "backfillDependencies": false
+    }
+  },
+  "compliance_report/wrong-type:backfillDependencies": {
+    "success": false,
+    "issues": [
+      {
+        "path": "backfillDependencies",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "uninstall/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillName": "x",
+      "force": true,
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/abs"
+    }
+  },
+  "uninstall/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "uninstall/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "uninstall/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "uninstall/empty-object": {
+    "success": false,
+    "issues": [{ "path": "skillName", "code": "invalid_type", "message": "Required" }]
+  },
+  "uninstall/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillName": "x",
+      "force": true,
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/abs"
+    }
+  },
+  "uninstall/missing:skillName": {
+    "success": false,
+    "issues": [{ "path": "skillName", "code": "invalid_type", "message": "Required" }]
+  },
+  "uninstall/wrong-type:skillName": {
+    "success": false,
+    "issues": [
+      { "path": "skillName", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "uninstall/bad:skillName:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillName",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "uninstall/bad:skillName:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillName": "zzz-not-an-option",
+      "force": true,
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/abs"
+    }
+  },
+  "uninstall/missing:force": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillName": "x",
+      "force": false,
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/abs"
+    }
+  },
+  "uninstall/wrong-type:force": {
+    "success": false,
+    "issues": [
+      { "path": "force", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "uninstall/missing:client": {
+    "success": true,
+    "issues": [],
+    "data": { "skillName": "x", "force": true, "scope": "global", "cwd": "/abs" }
+  },
+  "uninstall/wrong-type:client": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_type",
+        "message": "Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received number"
+      }
+    ]
+  },
+  "uninstall/bad:client:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received ''"
+      }
+    ]
+  },
+  "uninstall/bad:client:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "uninstall/missing:scope": {
+    "success": true,
+    "issues": [],
+    "data": { "skillName": "x", "force": true, "client": "claude-code", "cwd": "/abs" }
+  },
+  "uninstall/wrong-type:scope": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_type",
+        "message": "Expected 'global' | 'workspace', received number"
+      }
+    ]
+  },
+  "uninstall/bad:scope:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'global' | 'workspace', received ''"
+      }
+    ]
+  },
+  "uninstall/bad:scope:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'global' | 'workspace', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "uninstall/missing:cwd": {
+    "success": true,
+    "issues": [],
+    "data": { "skillName": "x", "force": true, "client": "claude-code", "scope": "global" }
+  },
+  "uninstall/wrong-type:cwd": {
+    "success": false,
+    "issues": [
+      { "path": "cwd", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "uninstall/bad:cwd:empty-string": {
+    "success": false,
+    "issues": [{ "path": "cwd", "code": "too_small", "message": "cwd must not be empty" }]
+  },
+  "uninstall/bad:cwd:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillName": "x",
+      "force": true,
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "zzz-not-an-option"
+    }
+  },
+  "webhook_configure/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": ["a"],
+      "webhookId": "w",
+      "description": "d"
+    }
+  },
+  "webhook_configure/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "webhook_configure/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "webhook_configure/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "webhook_configure/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "webhook_configure/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": ["a"],
+      "webhookId": "w",
+      "description": "d"
+    }
+  },
+  "webhook_configure/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "webhook_configure/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'create' | 'list' | 'get' | 'delete' | 'test' | 'rotate_secret', received number"
+      }
+    ]
+  },
+  "webhook_configure/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'get' | 'delete' | 'test' | 'rotate_secret', received ''"
+      }
+    ]
+  },
+  "webhook_configure/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'get' | 'delete' | 'test' | 'rotate_secret', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "webhook_configure/missing:url": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "events": ["a"], "webhookId": "w", "description": "d" }
+  },
+  "webhook_configure/wrong-type:url": {
+    "success": false,
+    "issues": [
+      { "path": "url", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "webhook_configure/bad:url:empty-string": {
+    "success": false,
+    "issues": [{ "path": "url", "code": "invalid_string", "message": "Must be a valid URL" }]
+  },
+  "webhook_configure/bad:url:not-an-option": {
+    "success": false,
+    "issues": [{ "path": "url", "code": "invalid_string", "message": "Must be a valid URL" }]
+  },
+  "webhook_configure/missing:events": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "url": "https://e.com/h", "webhookId": "w", "description": "d" }
+  },
+  "webhook_configure/wrong-type:events": {
+    "success": false,
+    "issues": [
+      { "path": "events", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "webhook_configure/bad:events:bad-item": {
+    "success": false,
+    "issues": [
+      { "path": "events.0", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "webhook_configure/bad:events:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": [""],
+      "webhookId": "w",
+      "description": "d"
+    }
+  },
+  "webhook_configure/missing:webhookId": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "url": "https://e.com/h", "events": ["a"], "description": "d" }
+  },
+  "webhook_configure/wrong-type:webhookId": {
+    "success": false,
+    "issues": [
+      { "path": "webhookId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "webhook_configure/bad:webhookId:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": ["a"],
+      "webhookId": "",
+      "description": "d"
+    }
+  },
+  "webhook_configure/bad:webhookId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": ["a"],
+      "webhookId": "zzz-not-an-option",
+      "description": "d"
+    }
+  },
+  "webhook_configure/missing:description": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "url": "https://e.com/h", "events": ["a"], "webhookId": "w" }
+  },
+  "webhook_configure/wrong-type:description": {
+    "success": false,
+    "issues": [
+      {
+        "path": "description",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "webhook_configure/bad:description:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": ["a"],
+      "webhookId": "w",
+      "description": ""
+    }
+  },
+  "webhook_configure/bad:description:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "url": "https://e.com/h",
+      "events": ["a"],
+      "webhookId": "w",
+      "description": "zzz-not-an-option"
+    }
+  },
+  "webhook_configure/extra:url-https": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "url": "https://example.com/x" }
+  },
+  "webhook_configure/extra:url-mailto": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "url": "mailto:a@b.co" }
+  },
+  "webhook_configure/extra:url-javascript": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "url": "javascript:alert(1)" }
+  },
+  "webhook_configure/extra:url-relative": {
+    "success": false,
+    "issues": [{ "path": "url", "code": "invalid_string", "message": "Must be a valid URL" }]
+  },
+  "webhook_configure/extra:url-spaces": {
+    "success": false,
+    "issues": [{ "path": "url", "code": "invalid_string", "message": "Must be a valid URL" }]
+  },
+  "webhook_configure/extra:url-empty": {
+    "success": false,
+    "issues": [{ "path": "url", "code": "invalid_string", "message": "Must be a valid URL" }]
+  },
+  "api_key_manage/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "k",
+      "keyId": "i",
+      "permissions": ["p"],
+      "expiresIn": "30d"
+    }
+  },
+  "api_key_manage/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "api_key_manage/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "api_key_manage/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "api_key_manage/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "api_key_manage/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "k",
+      "keyId": "i",
+      "permissions": ["p"],
+      "expiresIn": "30d"
+    }
+  },
+  "api_key_manage/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "api_key_manage/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'create' | 'list' | 'revoke' | 'get', received number"
+      }
+    ]
+  },
+  "api_key_manage/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'revoke' | 'get', received ''"
+      }
+    ]
+  },
+  "api_key_manage/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'revoke' | 'get', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "api_key_manage/missing:name": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "keyId": "i", "permissions": ["p"], "expiresIn": "30d" }
+  },
+  "api_key_manage/wrong-type:name": {
+    "success": false,
+    "issues": [
+      { "path": "name", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "api_key_manage/bad:name:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "name",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "api_key_manage/bad:name:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "zzz-not-an-option",
+      "keyId": "i",
+      "permissions": ["p"],
+      "expiresIn": "30d"
+    }
+  },
+  "api_key_manage/missing:keyId": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "name": "k", "permissions": ["p"], "expiresIn": "30d" }
+  },
+  "api_key_manage/wrong-type:keyId": {
+    "success": false,
+    "issues": [
+      { "path": "keyId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "api_key_manage/bad:keyId:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "k",
+      "keyId": "",
+      "permissions": ["p"],
+      "expiresIn": "30d"
+    }
+  },
+  "api_key_manage/bad:keyId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "k",
+      "keyId": "zzz-not-an-option",
+      "permissions": ["p"],
+      "expiresIn": "30d"
+    }
+  },
+  "api_key_manage/missing:permissions": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "name": "k", "keyId": "i", "expiresIn": "30d" }
+  },
+  "api_key_manage/wrong-type:permissions": {
+    "success": false,
+    "issues": [
+      {
+        "path": "permissions",
+        "code": "invalid_type",
+        "message": "Expected array, received string"
+      }
+    ]
+  },
+  "api_key_manage/bad:permissions:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "permissions.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "api_key_manage/bad:permissions:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "k",
+      "keyId": "i",
+      "permissions": [""],
+      "expiresIn": "30d"
+    }
+  },
+  "api_key_manage/missing:expiresIn": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "k",
+      "keyId": "i",
+      "permissions": ["p"],
+      "expiresIn": "90d"
+    }
+  },
+  "api_key_manage/wrong-type:expiresIn": {
+    "success": false,
+    "issues": [
+      {
+        "path": "expiresIn",
+        "code": "invalid_type",
+        "message": "Expected '30d' | '90d' | '365d' | 'never', received number"
+      }
+    ]
+  },
+  "api_key_manage/bad:expiresIn:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "expiresIn",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '30d' | '90d' | '365d' | 'never', received ''"
+      }
+    ]
+  },
+  "api_key_manage/bad:expiresIn:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "expiresIn",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected '30d' | '90d' | '365d' | 'never', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "validate/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_path": "/x", "strict": true }
+  },
+  "validate/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "validate/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "validate/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "validate/empty-object": {
+    "success": false,
+    "issues": [{ "path": "skill_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "validate/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_path": "/x", "strict": true }
+  },
+  "validate/missing:skill_path": {
+    "success": false,
+    "issues": [{ "path": "skill_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "validate/wrong-type:skill_path": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skill_path",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "validate/bad:skill_path:empty-string": {
+    "success": false,
+    "issues": [{ "path": "skill_path", "code": "too_small", "message": "skill_path is required" }]
+  },
+  "validate/bad:skill_path:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_path": "zzz-not-an-option", "strict": true }
+  },
+  "validate/missing:strict": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_path": "/x", "strict": false }
+  },
+  "validate/wrong-type:strict": {
+    "success": false,
+    "issues": [
+      { "path": "strict", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "install/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "install/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "install/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "install/empty-object": {
+    "success": false,
+    "issues": [{ "path": "skillId", "code": "invalid_type", "message": "Required" }]
+  },
+  "install/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/missing:skillId": {
+    "success": false,
+    "issues": [{ "path": "skillId", "code": "invalid_type", "message": "Required" }]
+  },
+  "install/wrong-type:skillId": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "install/bad:skillId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "install/bad:skillId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "zzz-not-an-option",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/missing:force": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": false,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:force": {
+    "success": false,
+    "issues": [
+      { "path": "force", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "install/missing:skipScan": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": false,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:skipScan": {
+    "success": false,
+    "issues": [
+      { "path": "skipScan", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "install/missing:skipOptimize": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": false,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:skipOptimize": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skipOptimize",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "install/missing:conflictAction": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:conflictAction": {
+    "success": false,
+    "issues": [
+      {
+        "path": "conflictAction",
+        "code": "invalid_type",
+        "message": "Expected 'overwrite' | 'merge' | 'cancel', received number"
+      }
+    ]
+  },
+  "install/bad:conflictAction:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "conflictAction",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'overwrite' | 'merge' | 'cancel', received ''"
+      }
+    ]
+  },
+  "install/bad:conflictAction:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "conflictAction",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'overwrite' | 'merge' | 'cancel', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "install/missing:confirmed": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": false,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:confirmed": {
+    "success": false,
+    "issues": [
+      {
+        "path": "confirmed",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "install/missing:client": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:client": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_type",
+        "message": "Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received number"
+      }
+    ]
+  },
+  "install/bad:client:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received ''"
+      }
+    ]
+  },
+  "install/bad:client:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "install/missing:alsoLink": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": [],
+      "symlink": true,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:alsoLink": {
+    "success": false,
+    "issues": [
+      { "path": "alsoLink", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "install/bad:alsoLink:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "alsoLink.0",
+        "code": "invalid_type",
+        "message": "Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received number"
+      }
+    ]
+  },
+  "install/bad:alsoLink:empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "alsoLink.0",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received ''"
+      }
+    ]
+  },
+  "install/missing:symlink": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": false,
+      "cwd": "/abs",
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:symlink": {
+    "success": false,
+    "issues": [
+      { "path": "symlink", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "install/missing:cwd": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "scope": "workspace"
+    }
+  },
+  "install/wrong-type:cwd": {
+    "success": false,
+    "issues": [
+      { "path": "cwd", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "install/bad:cwd:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "cwd", "code": "too_small", "message": "cwd must not be empty" },
+      { "path": "cwd", "code": "custom", "message": "cwd must be an absolute path" }
+    ]
+  },
+  "install/bad:cwd:not-an-option": {
+    "success": false,
+    "issues": [{ "path": "cwd", "code": "custom", "message": "cwd must be an absolute path" }]
+  },
+  "install/missing:scope": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "force": true,
+      "skipScan": true,
+      "skipOptimize": true,
+      "conflictAction": "merge",
+      "confirmed": true,
+      "client": "claude-code",
+      "alsoLink": ["cursor"],
+      "symlink": true,
+      "cwd": "/abs"
+    }
+  },
+  "install/wrong-type:scope": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_type",
+        "message": "Expected 'global' | 'workspace', received number"
+      }
+    ]
+  },
+  "install/bad:scope:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'global' | 'workspace', received ''"
+      }
+    ]
+  },
+  "install/bad:scope:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'global' | 'workspace', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "install/extra:cwd-relative": {
+    "success": false,
+    "issues": [{ "path": "cwd", "code": "custom", "message": "cwd must be an absolute path" }]
+  },
+  "install/extra:cwd-empty": {
+    "success": false,
+    "issues": [
+      { "path": "cwd", "code": "too_small", "message": "cwd must not be empty" },
+      { "path": "cwd", "code": "custom", "message": "cwd must be an absolute path" }
+    ]
+  },
+  "install/extra:skillId-513-chars": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillId",
+        "code": "too_big",
+        "message": "skillId exceeds maximum length of 512 chars"
+      }
+    ]
+  },
+  "install/extra:skillId-512-chars": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "force": false,
+      "skipScan": false,
+      "skipOptimize": false,
+      "confirmed": false,
+      "alsoLink": [],
+      "symlink": false
+    }
+  },
+  "install/extra:alsoLink-bad-client": {
+    "success": false,
+    "issues": [
+      {
+        "path": "alsoLink.0",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received 'not-a-client'"
+      }
+    ]
+  },
+  "skill_pack_audit/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "pack_path": "/p", "check_trigger_quality": false }
+  },
+  "skill_pack_audit/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_pack_audit/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_pack_audit/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_pack_audit/empty-object": {
+    "success": false,
+    "issues": [{ "path": "pack_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_pack_audit/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "pack_path": "/p", "check_trigger_quality": false }
+  },
+  "skill_pack_audit/missing:pack_path": {
+    "success": false,
+    "issues": [{ "path": "pack_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_pack_audit/wrong-type:pack_path": {
+    "success": false,
+    "issues": [
+      { "path": "pack_path", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "skill_pack_audit/bad:pack_path:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "pack_path",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_pack_audit/bad:pack_path:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "pack_path": "zzz-not-an-option", "check_trigger_quality": false }
+  },
+  "skill_pack_audit/missing:check_trigger_quality": {
+    "success": true,
+    "issues": [],
+    "data": { "pack_path": "/p", "check_trigger_quality": true }
+  },
+  "skill_pack_audit/wrong-type:check_trigger_quality": {
+    "success": false,
+    "issues": [
+      {
+        "path": "check_trigger_quality",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "skill_content/valid": { "success": true, "issues": [], "data": { "SKILL.md": "x" } },
+  "skill_content/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_content/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_content/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_content/empty-object": { "success": true, "issues": [], "data": {} },
+  "skill_content/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "__unknown_key__",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "skill_content/missing:SKILL.md": { "success": true, "issues": [], "data": {} },
+  "skill_content/wrong-type:SKILL.md": {
+    "success": false,
+    "issues": [
+      { "path": "SKILL.md", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "skill_content/bad:SKILL.md:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "SKILL.md": "" }
+  },
+  "skill_content/bad:SKILL.md:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "SKILL.md": "zzz-not-an-option" }
+  },
+  "private_registry_publish/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "version": "1.2.3",
+      "content": { "SKILL.md": "x" },
+      "description": "d"
+    }
+  },
+  "private_registry_publish/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_publish/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "private_registry_publish/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "private_registry_publish/empty-object": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Required" },
+      { "path": "version", "code": "invalid_type", "message": "Required" },
+      { "path": "content", "code": "invalid_type", "message": "Required" }
+    ]
+  },
+  "private_registry_publish/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "version": "1.2.3",
+      "content": { "SKILL.md": "x" },
+      "description": "d"
+    }
+  },
+  "private_registry_publish/missing:skillId": {
+    "success": false,
+    "issues": [{ "path": "skillId", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_publish/wrong-type:skillId": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "private_registry_publish/bad:skillId:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" },
+      {
+        "path": "skillId",
+        "code": "custom",
+        "message": "skillId segments must not be empty, \".\", or \"..\""
+      }
+    ]
+  },
+  "private_registry_publish/bad:skillId:not-an-option": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "private_registry_publish/missing:version": {
+    "success": false,
+    "issues": [{ "path": "version", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_publish/wrong-type:version": {
+    "success": false,
+    "issues": [
+      { "path": "version", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "private_registry_publish/bad:version:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "version", "code": "invalid_string", "message": "Must be a valid semver version" }
+    ]
+  },
+  "private_registry_publish/bad:version:not-an-option": {
+    "success": false,
+    "issues": [
+      { "path": "version", "code": "invalid_string", "message": "Must be a valid semver version" }
+    ]
+  },
+  "private_registry_publish/missing:content": {
+    "success": false,
+    "issues": [{ "path": "content", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_publish/wrong-type:content": {
+    "success": false,
+    "issues": [
+      { "path": "content", "code": "invalid_type", "message": "Expected object, received number" }
+    ]
+  },
+  "private_registry_publish/missing:description": {
+    "success": true,
+    "issues": [],
+    "data": { "skillId": "a/b", "version": "1.2.3", "content": { "SKILL.md": "x" } }
+  },
+  "private_registry_publish/wrong-type:description": {
+    "success": false,
+    "issues": [
+      {
+        "path": "description",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "private_registry_publish/bad:description:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "version": "1.2.3",
+      "content": { "SKILL.md": "x" },
+      "description": ""
+    }
+  },
+  "private_registry_publish/bad:description:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "version": "1.2.3",
+      "content": { "SKILL.md": "x" },
+      "description": "zzz-not-an-option"
+    }
+  },
+  "private_registry_publish/extra:skillId-dot-segment": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillId",
+        "code": "custom",
+        "message": "skillId segments must not be empty, \".\", or \"..\""
+      }
+    ]
+  },
+  "private_registry_publish/extra:skillId-dotdot-segment": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillId",
+        "code": "custom",
+        "message": "skillId segments must not be empty, \".\", or \"..\""
+      }
+    ]
+  },
+  "private_registry_publish/extra:version-prerelease": {
+    "success": true,
+    "issues": [],
+    "data": { "skillId": "a/b", "version": "1.2.3-rc.1", "content": {} }
+  },
+  "private_registry_publish/extra:version-not-semver": {
+    "success": false,
+    "issues": [
+      { "path": "version", "code": "invalid_string", "message": "Must be a valid semver version" }
+    ]
+  },
+  "private_registry_publish/extra:content-non-string-value": {
+    "success": false,
+    "issues": [
+      { "path": "content.f", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "private_registry_manage/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_manage/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "private_registry_manage/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "private_registry_manage/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_manage/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "private_registry_manage/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'list' | 'get' | 'deprecate' | 'undeprecate' | 'namespace' | 'install' | 'submissions' | 'approve' | 'reject', received number"
+      }
+    ]
+  },
+  "private_registry_manage/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'list' | 'get' | 'deprecate' | 'undeprecate' | 'namespace' | 'install' | 'submissions' | 'approve' | 'reject', received ''"
+      }
+    ]
+  },
+  "private_registry_manage/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'list' | 'get' | 'deprecate' | 'undeprecate' | 'namespace' | 'install' | 'submissions' | 'approve' | 'reject', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "private_registry_manage/missing:skillId": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/wrong-type:skillId": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "private_registry_manage/bad:skillId:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" },
+      {
+        "path": "skillId",
+        "code": "custom",
+        "message": "skillId segments must not be empty, \".\", or \"..\""
+      }
+    ]
+  },
+  "private_registry_manage/bad:skillId:not-an-option": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "private_registry_manage/missing:version": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/wrong-type:version": {
+    "success": false,
+    "issues": [
+      { "path": "version", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "private_registry_manage/bad:version:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/bad:version:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "zzz-not-an-option",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/missing:force": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/wrong-type:force": {
+    "success": false,
+    "issues": [
+      { "path": "force", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "private_registry_manage/missing:includeDeprecated": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "status": "pending",
+      "note": "n"
+    }
+  },
+  "private_registry_manage/wrong-type:includeDeprecated": {
+    "success": false,
+    "issues": [
+      {
+        "path": "includeDeprecated",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "private_registry_manage/missing:status": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "note": "n"
+    }
+  },
+  "private_registry_manage/wrong-type:status": {
+    "success": false,
+    "issues": [
+      {
+        "path": "status",
+        "code": "invalid_type",
+        "message": "Expected 'pending' | 'approved' | 'rejected', received number"
+      }
+    ]
+  },
+  "private_registry_manage/bad:status:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "status",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'pending' | 'approved' | 'rejected', received ''"
+      }
+    ]
+  },
+  "private_registry_manage/bad:status:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "status",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'pending' | 'approved' | 'rejected', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "private_registry_manage/missing:note": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending"
+    }
+  },
+  "private_registry_manage/wrong-type:note": {
+    "success": false,
+    "issues": [
+      { "path": "note", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "private_registry_manage/bad:note:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": ""
+    }
+  },
+  "private_registry_manage/bad:note:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "get",
+      "skillId": "a/b",
+      "version": "1.0.0",
+      "force": true,
+      "includeDeprecated": true,
+      "status": "pending",
+      "note": "zzz-not-an-option"
+    }
+  },
+  "private_registry_manage/extra:skillId-dot-segment": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillId",
+        "code": "custom",
+        "message": "skillId segments must not be empty, \".\", or \"..\""
+      }
+    ]
+  },
+  "rbac_manage/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set_role_permission",
+      "role": "admin",
+      "permission": "registry:approve",
+      "effect": "allow"
+    }
+  },
+  "rbac_manage/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_manage/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "rbac_manage/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "rbac_manage/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_manage/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "set_role_permission",
+      "role": "admin",
+      "permission": "registry:approve",
+      "effect": "allow"
+    }
+  },
+  "rbac_manage/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_manage/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'list_roles' | 'get_role' | 'set_role_permission' | 'reset_role_permission', received number"
+      }
+    ]
+  },
+  "rbac_manage/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'list_roles' | 'get_role' | 'set_role_permission' | 'reset_role_permission', received ''"
+      }
+    ]
+  },
+  "rbac_manage/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'list_roles' | 'get_role' | 'set_role_permission' | 'reset_role_permission', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_manage/missing:role": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "set_role_permission", "permission": "registry:approve", "effect": "allow" }
+  },
+  "rbac_manage/wrong-type:role": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_type",
+        "message": "Expected 'admin' | 'member', received number"
+      }
+    ]
+  },
+  "rbac_manage/bad:role:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'admin' | 'member', received ''"
+      }
+    ]
+  },
+  "rbac_manage/bad:role:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'admin' | 'member', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_manage/missing:permission": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "set_role_permission", "role": "admin", "effect": "allow" }
+  },
+  "rbac_manage/wrong-type:permission": {
+    "success": false,
+    "issues": [
+      {
+        "path": "permission",
+        "code": "invalid_type",
+        "message": "Expected 'registry:approve' | 'registry:deprecate' | 'team:manage_rbac' | 'team:manage_sso', received number"
+      }
+    ]
+  },
+  "rbac_manage/bad:permission:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "permission",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'registry:approve' | 'registry:deprecate' | 'team:manage_rbac' | 'team:manage_sso', received ''"
+      }
+    ]
+  },
+  "rbac_manage/bad:permission:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "permission",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'registry:approve' | 'registry:deprecate' | 'team:manage_rbac' | 'team:manage_sso', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_manage/missing:effect": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "set_role_permission", "role": "admin", "permission": "registry:approve" }
+  },
+  "rbac_manage/wrong-type:effect": {
+    "success": false,
+    "issues": [
+      {
+        "path": "effect",
+        "code": "invalid_type",
+        "message": "Expected 'allow' | 'deny', received number"
+      }
+    ]
+  },
+  "rbac_manage/bad:effect:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "effect",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'allow' | 'deny', received ''"
+      }
+    ]
+  },
+  "rbac_manage/bad:effect:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "effect",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'allow' | 'deny', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_assign_role/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "assign", "memberId": "m", "role": "member" }
+  },
+  "rbac_assign_role/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_assign_role/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "rbac_assign_role/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "rbac_assign_role/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_assign_role/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "assign", "memberId": "m", "role": "member" }
+  },
+  "rbac_assign_role/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_assign_role/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'assign' | 'revoke' | 'list_assignments', received number"
+      }
+    ]
+  },
+  "rbac_assign_role/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'assign' | 'revoke' | 'list_assignments', received ''"
+      }
+    ]
+  },
+  "rbac_assign_role/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'assign' | 'revoke' | 'list_assignments', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_assign_role/missing:memberId": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "assign", "role": "member" }
+  },
+  "rbac_assign_role/wrong-type:memberId": {
+    "success": false,
+    "issues": [
+      { "path": "memberId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "rbac_assign_role/bad:memberId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "memberId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "rbac_assign_role/bad:memberId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "assign", "memberId": "zzz-not-an-option", "role": "member" }
+  },
+  "rbac_assign_role/missing:role": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "assign", "memberId": "m" }
+  },
+  "rbac_assign_role/wrong-type:role": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_type",
+        "message": "Expected 'admin' | 'member', received number"
+      }
+    ]
+  },
+  "rbac_assign_role/bad:role:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'admin' | 'member', received ''"
+      }
+    ]
+  },
+  "rbac_assign_role/bad:role:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'admin' | 'member', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_create_policy/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "n",
+      "role": "admin",
+      "effect": "deny",
+      "resources": ["r"],
+      "actions": ["a"]
+    }
+  },
+  "rbac_create_policy/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_create_policy/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "rbac_create_policy/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "rbac_create_policy/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_create_policy/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "n",
+      "role": "admin",
+      "effect": "deny",
+      "resources": ["r"],
+      "actions": ["a"]
+    }
+  },
+  "rbac_create_policy/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "rbac_create_policy/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'create' | 'list' | 'delete', received number"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'delete', received ''"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'create' | 'list' | 'delete', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_create_policy/missing:name": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "role": "admin",
+      "effect": "deny",
+      "resources": ["r"],
+      "actions": ["a"]
+    }
+  },
+  "rbac_create_policy/wrong-type:name": {
+    "success": false,
+    "issues": [
+      { "path": "name", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "rbac_create_policy/bad:name:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "name",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:name:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "zzz-not-an-option",
+      "role": "admin",
+      "effect": "deny",
+      "resources": ["r"],
+      "actions": ["a"]
+    }
+  },
+  "rbac_create_policy/missing:role": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "n",
+      "effect": "deny",
+      "resources": ["r"],
+      "actions": ["a"]
+    }
+  },
+  "rbac_create_policy/wrong-type:role": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_type",
+        "message": "Expected 'admin' | 'member', received number"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:role:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'admin' | 'member', received ''"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:role:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'admin' | 'member', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_create_policy/missing:effect": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "n",
+      "role": "admin",
+      "resources": ["r"],
+      "actions": ["a"]
+    }
+  },
+  "rbac_create_policy/wrong-type:effect": {
+    "success": false,
+    "issues": [
+      {
+        "path": "effect",
+        "code": "invalid_type",
+        "message": "Expected 'allow' | 'deny', received number"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:effect:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "effect",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'allow' | 'deny', received ''"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:effect:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "effect",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'allow' | 'deny', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "rbac_create_policy/missing:resources": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "create", "name": "n", "role": "admin", "effect": "deny", "actions": ["a"] }
+  },
+  "rbac_create_policy/wrong-type:resources": {
+    "success": false,
+    "issues": [
+      { "path": "resources", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "rbac_create_policy/bad:resources:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "resources.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "rbac_create_policy/bad:resources:empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "resources.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "rbac_create_policy/missing:actions": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "create",
+      "name": "n",
+      "role": "admin",
+      "effect": "deny",
+      "resources": ["r"]
+    }
+  },
+  "rbac_create_policy/wrong-type:actions": {
+    "success": false,
+    "issues": [
+      { "path": "actions", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "rbac_create_policy/bad:actions:bad-item": {
+    "success": false,
+    "issues": [
+      { "path": "actions.0", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "rbac_create_policy/bad:actions:empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "actions.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "rbac_create_policy/extra:resources-empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "resources.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "audit_export/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "endDate": "2026-01-02", "eventType": "e", "limit": 10 }
+  },
+  "audit_export/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "audit_export/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "audit_export/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "audit_export/empty-object": { "success": true, "issues": [], "data": {} },
+  "audit_export/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "endDate": "2026-01-02", "eventType": "e", "limit": 10 }
+  },
+  "audit_export/missing:startDate": {
+    "success": true,
+    "issues": [],
+    "data": { "endDate": "2026-01-02", "eventType": "e", "limit": 10 }
+  },
+  "audit_export/wrong-type:startDate": {
+    "success": false,
+    "issues": [
+      { "path": "startDate", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_export/bad:startDate:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "", "endDate": "2026-01-02", "eventType": "e", "limit": 10 }
+  },
+  "audit_export/bad:startDate:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "startDate": "zzz-not-an-option",
+      "endDate": "2026-01-02",
+      "eventType": "e",
+      "limit": 10
+    }
+  },
+  "audit_export/missing:endDate": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "eventType": "e", "limit": 10 }
+  },
+  "audit_export/wrong-type:endDate": {
+    "success": false,
+    "issues": [
+      { "path": "endDate", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_export/bad:endDate:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "endDate": "", "eventType": "e", "limit": 10 }
+  },
+  "audit_export/bad:endDate:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "startDate": "2026-01-01",
+      "endDate": "zzz-not-an-option",
+      "eventType": "e",
+      "limit": 10
+    }
+  },
+  "audit_export/missing:eventType": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "endDate": "2026-01-02", "limit": 10 }
+  },
+  "audit_export/wrong-type:eventType": {
+    "success": false,
+    "issues": [
+      { "path": "eventType", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_export/bad:eventType:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "endDate": "2026-01-02", "eventType": "", "limit": 10 }
+  },
+  "audit_export/bad:eventType:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "startDate": "2026-01-01",
+      "endDate": "2026-01-02",
+      "eventType": "zzz-not-an-option",
+      "limit": 10
+    }
+  },
+  "audit_export/missing:limit": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "2026-01-01", "endDate": "2026-01-02", "eventType": "e" }
+  },
+  "audit_export/wrong-type:limit": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "audit_export/bad:limit:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "limit",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
+    ]
+  },
+  "audit_export/bad:limit:fractional": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "invalid_type", "message": "Expected integer, received float" }
+    ]
+  },
+  "audit_export/bad:limit:unsafe-int": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "audit_export/bad:limit:huge": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "audit_export/extra:limit-unsafe-int": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "audit_export/extra:limit-1000": { "success": true, "issues": [], "data": { "limit": 1000 } },
+  "audit_export/extra:limit-1001": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "audit_query/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "audit_query/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "audit_query/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "audit_query/empty-object": { "success": true, "issues": [], "data": {} },
+  "audit_query/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/missing:actor": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/wrong-type:actor": {
+    "success": false,
+    "issues": [
+      { "path": "actor", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_query/bad:actor:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/bad:actor:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "zzz-not-an-option",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/missing:resource": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/wrong-type:resource": {
+    "success": false,
+    "issues": [
+      { "path": "resource", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_query/bad:resource:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/bad:resource:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "zzz-not-an-option",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/missing:eventType": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/wrong-type:eventType": {
+    "success": false,
+    "issues": [
+      { "path": "eventType", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_query/bad:eventType:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/bad:eventType:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "zzz-not-an-option",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/missing:result": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "startDate": "s",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/wrong-type:result": {
+    "success": false,
+    "issues": [
+      {
+        "path": "result",
+        "code": "invalid_type",
+        "message": "Expected 'success' | 'failure' | 'warning', received number"
+      }
+    ]
+  },
+  "audit_query/bad:result:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "result",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'success' | 'failure' | 'warning', received ''"
+      }
+    ]
+  },
+  "audit_query/bad:result:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "result",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'success' | 'failure' | 'warning', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "audit_query/missing:startDate": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/wrong-type:startDate": {
+    "success": false,
+    "issues": [
+      { "path": "startDate", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_query/bad:startDate:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/bad:startDate:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "zzz-not-an-option",
+      "endDate": "e",
+      "limit": 10
+    }
+  },
+  "audit_query/missing:endDate": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "limit": 10
+    }
+  },
+  "audit_query/wrong-type:endDate": {
+    "success": false,
+    "issues": [
+      { "path": "endDate", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "audit_query/bad:endDate:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "",
+      "limit": 10
+    }
+  },
+  "audit_query/bad:endDate:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "zzz-not-an-option",
+      "limit": 10
+    }
+  },
+  "audit_query/missing:limit": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "actor": "a",
+      "resource": "r",
+      "eventType": "e",
+      "result": "success",
+      "startDate": "s",
+      "endDate": "e"
+    }
+  },
+  "audit_query/wrong-type:limit": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "audit_query/bad:limit:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "limit",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
+    ]
+  },
+  "audit_query/bad:limit:fractional": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "invalid_type", "message": "Expected integer, received float" }
+    ]
+  },
+  "audit_query/bad:limit:unsafe-int": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "audit_query/bad:limit:huge": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 1000" }
+    ]
+  },
+  "siem_export/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "s", "endDate": "e", "format": "cef" }
+  },
+  "siem_export/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "siem_export/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "siem_export/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "siem_export/empty-object": { "success": true, "issues": [], "data": {} },
+  "siem_export/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "s", "endDate": "e", "format": "cef" }
+  },
+  "siem_export/missing:startDate": {
+    "success": true,
+    "issues": [],
+    "data": { "endDate": "e", "format": "cef" }
+  },
+  "siem_export/wrong-type:startDate": {
+    "success": false,
+    "issues": [
+      { "path": "startDate", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "siem_export/bad:startDate:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "", "endDate": "e", "format": "cef" }
+  },
+  "siem_export/bad:startDate:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "zzz-not-an-option", "endDate": "e", "format": "cef" }
+  },
+  "siem_export/missing:endDate": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "s", "format": "cef" }
+  },
+  "siem_export/wrong-type:endDate": {
+    "success": false,
+    "issues": [
+      { "path": "endDate", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "siem_export/bad:endDate:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "s", "endDate": "", "format": "cef" }
+  },
+  "siem_export/bad:endDate:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "s", "endDate": "zzz-not-an-option", "format": "cef" }
+  },
+  "siem_export/missing:format": {
+    "success": true,
+    "issues": [],
+    "data": { "startDate": "s", "endDate": "e" }
+  },
+  "siem_export/wrong-type:format": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_type",
+        "message": "Expected 'json' | 'syslog' | 'cef', received number"
+      }
+    ]
+  },
+  "siem_export/bad:format:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'json' | 'syslog' | 'cef', received ''"
+      }
+    ]
+  },
+  "siem_export/bad:format:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "format",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'json' | 'syslog' | 'cef', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "suggest/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "suggest/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "suggest/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "suggest/empty-object": {
+    "success": false,
+    "issues": [{ "path": "project_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "suggest/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/missing:project_path": {
+    "success": false,
+    "issues": [{ "path": "project_path", "code": "invalid_type", "message": "Required" }]
+  },
+  "suggest/wrong-type:project_path": {
+    "success": false,
+    "issues": [
+      {
+        "path": "project_path",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "suggest/bad:project_path:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "project_path",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "suggest/bad:project_path:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "zzz-not-an-option",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/missing:current_file": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/wrong-type:current_file": {
+    "success": false,
+    "issues": [
+      {
+        "path": "current_file",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "suggest/bad:current_file:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/bad:current_file:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "zzz-not-an-option",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/missing:recent_commands": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": [],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/wrong-type:recent_commands": {
+    "success": false,
+    "issues": [
+      {
+        "path": "recent_commands",
+        "code": "invalid_type",
+        "message": "Expected array, received string"
+      }
+    ]
+  },
+  "suggest/bad:recent_commands:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "recent_commands.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "suggest/bad:recent_commands:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": [""],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/missing:error_message": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/wrong-type:error_message": {
+    "success": false,
+    "issues": [
+      {
+        "path": "error_message",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "suggest/bad:error_message:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/bad:error_message:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "zzz-not-an-option",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/missing:installed_skills": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": [],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/wrong-type:installed_skills": {
+    "success": false,
+    "issues": [
+      {
+        "path": "installed_skills",
+        "code": "invalid_type",
+        "message": "Expected array, received string"
+      }
+    ]
+  },
+  "suggest/bad:installed_skills:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "installed_skills.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "suggest/bad:installed_skills:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": [""],
+      "limit": 5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/missing:limit": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 3,
+      "session_id": "sid"
+    }
+  },
+  "suggest/wrong-type:limit": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "suggest/bad:limit:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "limit",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
+    ]
+  },
+  "suggest/bad:limit:fractional": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 1.5,
+      "session_id": "sid"
+    }
+  },
+  "suggest/bad:limit:unsafe-int": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 10" }
+    ]
+  },
+  "suggest/bad:limit:huge": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 10" }
+    ]
+  },
+  "suggest/missing:session_id": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "default"
+    }
+  },
+  "suggest/wrong-type:session_id": {
+    "success": false,
+    "issues": [
+      {
+        "path": "session_id",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "suggest/bad:session_id:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": ""
+    }
+  },
+  "suggest/bad:session_id:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "project_path": "/p",
+      "current_file": "f",
+      "recent_commands": ["c"],
+      "error_message": "e",
+      "installed_skills": ["s"],
+      "limit": 5,
+      "session_id": "zzz-not-an-option"
+    }
+  },
+  "suggest/extra:recent_commands-11": {
+    "success": false,
+    "issues": [
+      {
+        "path": "recent_commands",
+        "code": "too_big",
+        "message": "Array must contain at most 10 element(s)"
+      }
+    ]
+  },
+  "skill_updates/valid": { "success": true, "issues": [], "data": { "skillIds": ["a/b"] } },
+  "skill_updates/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_updates/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_updates/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_updates/empty-object": { "success": true, "issues": [], "data": {} },
+  "skill_updates/unknown-key": { "success": true, "issues": [], "data": { "skillIds": ["a/b"] } },
+  "skill_updates/missing:skillIds": { "success": true, "issues": [], "data": {} },
+  "skill_updates/wrong-type:skillIds": {
+    "success": false,
+    "issues": [
+      { "path": "skillIds", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "skill_updates/bad:skillIds:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillIds.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "skill_updates/bad:skillIds:empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillIds.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "compare/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_a": "a/b", "skill_b": "c/d" }
+  },
+  "compare/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "compare/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "compare/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "compare/empty-object": {
+    "success": false,
+    "issues": [
+      { "path": "skill_a", "code": "invalid_type", "message": "Required" },
+      { "path": "skill_b", "code": "invalid_type", "message": "Required" }
+    ]
+  },
+  "compare/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_a": "a/b", "skill_b": "c/d" }
+  },
+  "compare/missing:skill_a": {
+    "success": false,
+    "issues": [{ "path": "skill_a", "code": "invalid_type", "message": "Required" }]
+  },
+  "compare/wrong-type:skill_a": {
+    "success": false,
+    "issues": [
+      { "path": "skill_a", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "compare/bad:skill_a:empty-string": {
+    "success": false,
+    "issues": [{ "path": "skill_a", "code": "too_small", "message": "skill_a is required" }]
+  },
+  "compare/bad:skill_a:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_a": "zzz-not-an-option", "skill_b": "c/d" }
+  },
+  "compare/missing:skill_b": {
+    "success": false,
+    "issues": [{ "path": "skill_b", "code": "invalid_type", "message": "Required" }]
+  },
+  "compare/wrong-type:skill_b": {
+    "success": false,
+    "issues": [
+      { "path": "skill_b", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "compare/bad:skill_b:empty-string": {
+    "success": false,
+    "issues": [{ "path": "skill_b", "code": "too_small", "message": "skill_b is required" }]
+  },
+  "compare/bad:skill_b:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "skill_a": "a/b", "skill_b": "zzz-not-an-option" }
+  },
+  "skill_audit/valid": { "success": true, "issues": [], "data": { "skillIds": ["a/b"] } },
+  "skill_audit/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_audit/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_audit/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_audit/empty-object": { "success": true, "issues": [], "data": {} },
+  "skill_audit/unknown-key": { "success": true, "issues": [], "data": { "skillIds": ["a/b"] } },
+  "skill_audit/missing:skillIds": { "success": true, "issues": [], "data": {} },
+  "skill_audit/wrong-type:skillIds": {
+    "success": false,
+    "issues": [
+      { "path": "skillIds", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "skill_audit/bad:skillIds:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillIds.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "skill_audit/bad:skillIds:empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillIds.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_rescan/valid": { "success": true, "issues": [], "data": { "skillName": "x" } },
+  "skill_rescan/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_rescan/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_rescan/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_rescan/empty-object": { "success": true, "issues": [], "data": {} },
+  "skill_rescan/unknown-key": { "success": true, "issues": [], "data": { "skillName": "x" } },
+  "skill_rescan/missing:skillName": { "success": true, "issues": [], "data": {} },
+  "skill_rescan/wrong-type:skillName": {
+    "success": false,
+    "issues": [
+      { "path": "skillName", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "skill_rescan/bad:skillName:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillName",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_rescan/bad:skillName:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "skillName": "zzz-not-an-option" }
+  },
+  "publish_private/valid": { "success": true, "issues": [], "data": { "skillId": "a/b" } },
+  "publish_private/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "publish_private/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "publish_private/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "publish_private/empty-object": {
+    "success": false,
+    "issues": [{ "path": "skillId", "code": "invalid_type", "message": "Required" }]
+  },
+  "publish_private/unknown-key": { "success": true, "issues": [], "data": { "skillId": "a/b" } },
+  "publish_private/missing:skillId": {
+    "success": false,
+    "issues": [{ "path": "skillId", "code": "invalid_type", "message": "Required" }]
+  },
+  "publish_private/wrong-type:skillId": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "publish_private/bad:skillId:empty-string": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "publish_private/bad:skillId:not-an-option": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_string", "message": "Must be author/name format" }
+    ]
+  },
+  "skill_diff/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_diff/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_diff/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_diff/empty-object": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Required" },
+      { "path": "oldContent", "code": "invalid_type", "message": "Required" },
+      { "path": "newContent", "code": "invalid_type", "message": "Required" }
+    ]
+  },
+  "skill_diff/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/missing:skillId": {
+    "success": false,
+    "issues": [{ "path": "skillId", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_diff/wrong-type:skillId": {
+    "success": false,
+    "issues": [
+      { "path": "skillId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "skill_diff/bad:skillId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "skillId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_diff/bad:skillId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "zzz-not-an-option",
+      "oldContent": "o",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/missing:oldContent": {
+    "success": false,
+    "issues": [{ "path": "oldContent", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_diff/wrong-type:oldContent": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldContent",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "skill_diff/bad:oldContent:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldContent",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_diff/bad:oldContent:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "zzz-not-an-option",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/missing:newContent": {
+    "success": false,
+    "issues": [{ "path": "newContent", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_diff/wrong-type:newContent": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newContent",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "skill_diff/bad:newContent:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newContent",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_diff/bad:newContent:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "zzz-not-an-option",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/missing:oldRiskScore": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/wrong-type:oldRiskScore": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "invalid_type",
+        "message": "Expected number, received string"
+      }
+    ]
+  },
+  "skill_diff/bad:oldRiskScore:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 0"
+      }
+    ]
+  },
+  "skill_diff/bad:oldRiskScore:fractional": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "invalid_type",
+        "message": "Expected integer, received float"
+      }
+    ]
+  },
+  "skill_diff/bad:oldRiskScore:unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 100"
+      }
+    ]
+  },
+  "skill_diff/bad:oldRiskScore:huge": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 100"
+      }
+    ]
+  },
+  "skill_diff/missing:newRiskScore": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "hasLocalModifications": true,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/wrong-type:newRiskScore": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "invalid_type",
+        "message": "Expected number, received string"
+      }
+    ]
+  },
+  "skill_diff/bad:newRiskScore:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 0"
+      }
+    ]
+  },
+  "skill_diff/bad:newRiskScore:fractional": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "invalid_type",
+        "message": "Expected integer, received float"
+      }
+    ]
+  },
+  "skill_diff/bad:newRiskScore:unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 100"
+      }
+    ]
+  },
+  "skill_diff/bad:newRiskScore:huge": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 100"
+      }
+    ]
+  },
+  "skill_diff/missing:hasLocalModifications": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": false,
+      "trustTier": "verified"
+    }
+  },
+  "skill_diff/wrong-type:hasLocalModifications": {
+    "success": false,
+    "issues": [
+      {
+        "path": "hasLocalModifications",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "skill_diff/missing:trustTier": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "oldRiskScore": 1,
+      "newRiskScore": 2,
+      "hasLocalModifications": true,
+      "trustTier": "community"
+    }
+  },
+  "skill_diff/wrong-type:trustTier": {
+    "success": false,
+    "issues": [
+      {
+        "path": "trustTier",
+        "code": "invalid_type",
+        "message": "Expected 'verified' | 'community' | 'experimental', received number"
+      }
+    ]
+  },
+  "skill_diff/bad:trustTier:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "trustTier",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'verified' | 'community' | 'experimental', received ''"
+      }
+    ]
+  },
+  "skill_diff/bad:trustTier:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "trustTier",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'verified' | 'community' | 'experimental', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "skill_diff/extra:risk-unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "oldRiskScore",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 100"
+      }
+    ]
+  },
+  "skill_diff/extra:risk-100": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "skillId": "a/b",
+      "oldContent": "o",
+      "newContent": "n",
+      "newRiskScore": 100,
+      "hasLocalModifications": false,
+      "trustTier": "community"
+    }
+  },
+  "skill_diff/extra:risk-101": {
+    "success": false,
+    "issues": [
+      {
+        "path": "newRiskScore",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 100"
+      }
+    ]
+  },
+  "index_local/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "force": true, "skillsDir": "/d" }
+  },
+  "index_local/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "index_local/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "index_local/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "index_local/empty-object": { "success": true, "issues": [], "data": { "force": false } },
+  "index_local/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": { "force": true, "skillsDir": "/d" }
+  },
+  "index_local/missing:force": {
+    "success": true,
+    "issues": [],
+    "data": { "force": false, "skillsDir": "/d" }
+  },
+  "index_local/wrong-type:force": {
+    "success": false,
+    "issues": [
+      { "path": "force", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "index_local/missing:skillsDir": { "success": true, "issues": [], "data": { "force": true } },
+  "index_local/wrong-type:skillsDir": {
+    "success": false,
+    "issues": [
+      { "path": "skillsDir", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "index_local/bad:skillsDir:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": { "force": true, "skillsDir": "" }
+  },
+  "index_local/bad:skillsDir:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "force": true, "skillsDir": "zzz-not-an-option" }
+  },
+  "skill_role/valid": { "success": true, "issues": [], "data": "testing" },
+  "skill_role/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_role/null": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "invalid_type",
+        "message": "Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received null"
+      }
+    ]
+  },
+  "skill_role/string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received 'x'"
+      }
+    ]
+  },
+  "skill_role/empty-object": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "invalid_type",
+        "message": "Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received object"
+      }
+    ]
+  },
+  "skill_role/number": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "invalid_type",
+        "message": "Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received number"
+      }
+    ]
+  },
+  "skill_role/not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "recommend/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "recommend/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "recommend/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "recommend/empty-object": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": [],
+      "limit": 5,
+      "detect_overlap": true,
+      "min_similarity": 0.3,
+      "installable_only": true
+    }
+  },
+  "recommend/unknown-key": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/missing:installed_skills": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": [],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/wrong-type:installed_skills": {
+    "success": false,
+    "issues": [
+      {
+        "path": "installed_skills",
+        "code": "invalid_type",
+        "message": "Expected array, received string"
+      }
+    ]
+  },
+  "recommend/bad:installed_skills:bad-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "installed_skills.0",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "recommend/bad:installed_skills:empty-string-item": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": [""],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/missing:project_context": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/wrong-type:project_context": {
+    "success": false,
+    "issues": [
+      {
+        "path": "project_context",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "recommend/bad:project_context:empty-string": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/bad:project_context:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "zzz-not-an-option",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/missing:limit": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/wrong-type:limit": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "recommend/bad:limit:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "limit",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 1"
+      }
+    ]
+  },
+  "recommend/bad:limit:fractional": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 1.5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/bad:limit:unsafe-int": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 50" }
+    ]
+  },
+  "recommend/bad:limit:huge": {
+    "success": false,
+    "issues": [
+      { "path": "limit", "code": "too_big", "message": "Number must be less than or equal to 50" }
+    ]
+  },
+  "recommend/missing:detect_overlap": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": true,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/wrong-type:detect_overlap": {
+    "success": false,
+    "issues": [
+      {
+        "path": "detect_overlap",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "recommend/missing:min_similarity": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.3,
+      "role": "testing",
+      "installable_only": false
+    }
+  },
+  "recommend/wrong-type:min_similarity": {
+    "success": false,
+    "issues": [
+      {
+        "path": "min_similarity",
+        "code": "invalid_type",
+        "message": "Expected number, received string"
+      }
+    ]
+  },
+  "recommend/bad:min_similarity:negative": {
+    "success": false,
+    "issues": [
+      {
+        "path": "min_similarity",
+        "code": "too_small",
+        "message": "Number must be greater than or equal to 0"
+      }
+    ]
+  },
+  "recommend/bad:min_similarity:fractional": {
+    "success": false,
+    "issues": [
+      {
+        "path": "min_similarity",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 1"
+      }
+    ]
+  },
+  "recommend/bad:min_similarity:unsafe-int": {
+    "success": false,
+    "issues": [
+      {
+        "path": "min_similarity",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 1"
+      }
+    ]
+  },
+  "recommend/bad:min_similarity:huge": {
+    "success": false,
+    "issues": [
+      {
+        "path": "min_similarity",
+        "code": "too_big",
+        "message": "Number must be less than or equal to 1"
+      }
+    ]
+  },
+  "recommend/missing:role": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "installable_only": false
+    }
+  },
+  "recommend/wrong-type:role": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_type",
+        "message": "Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received number"
+      }
+    ]
+  },
+  "recommend/bad:role:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received ''"
+      }
+    ]
+  },
+  "recommend/bad:role:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "role",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'code-quality' | 'testing' | 'documentation' | 'workflow' | 'security' | 'development-partner', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "recommend/missing:installable_only": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "installed_skills": ["a"],
+      "project_context": "c",
+      "limit": 5,
+      "detect_overlap": false,
+      "min_similarity": 0.5,
+      "role": "testing",
+      "installable_only": true
+    }
+  },
+  "recommend/wrong-type:installable_only": {
+    "success": false,
+    "issues": [
+      {
+        "path": "installable_only",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "undo_apply/valid": { "success": true, "issues": [], "data": { "count": 1 } },
+  "undo_apply/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "undo_apply/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "undo_apply/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "undo_apply/empty-object": { "success": true, "issues": [], "data": {} },
+  "undo_apply/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: '__unknown_key__'"
+      }
+    ]
+  },
+  "undo_apply/missing:count": { "success": true, "issues": [], "data": {} },
+  "undo_apply/wrong-type:count": {
+    "success": false,
+    "issues": [
+      { "path": "count", "code": "invalid_type", "message": "Expected number, received string" }
+    ]
+  },
+  "undo_apply/bad:count:negative": {
+    "success": false,
+    "issues": [{ "path": "count", "code": "too_small", "message": "Number must be greater than 0" }]
+  },
+  "undo_apply/bad:count:fractional": {
+    "success": false,
+    "issues": [
+      { "path": "count", "code": "invalid_type", "message": "Expected integer, received float" }
+    ]
+  },
+  "undo_apply/bad:count:unsafe-int": {
+    "success": true,
+    "issues": [],
+    "data": { "count": 1152921504606847000 }
+  },
+  "undo_apply/bad:count:huge": { "success": true, "issues": [], "data": { "count": 1000000000 } },
+  "undo_apply/extra:suggestion_id-only": {
+    "success": true,
+    "issues": [],
+    "data": { "suggestion_id": "x" }
+  },
+  "undo_apply/extra:both-mutually-exclusive": {
+    "success": false,
+    "issues": [
+      {
+        "path": "suggestion_id",
+        "code": "custom",
+        "message": "count and suggestion_id are mutually exclusive"
+      }
+    ]
+  },
+  "undo_apply/extra:count-zero": {
+    "success": false,
+    "issues": [{ "path": "count", "code": "too_small", "message": "Number must be greater than 0" }]
+  },
+  "undo_apply/extra:count-unsafe-int": {
+    "success": true,
+    "issues": [],
+    "data": { "count": 1152921504606847000 }
+  },
+  "undo_apply/extra:count-fractional": {
+    "success": false,
+    "issues": [
+      { "path": "count", "code": "invalid_type", "message": "Expected integer, received float" }
+    ]
+  },
+  "undo_apply/extra:unknown-key-and-both": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: 'extra'"
+      },
+      {
+        "path": "suggestion_id",
+        "code": "custom",
+        "message": "count and suggestion_id are mutually exclusive"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/valid": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "n",
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/c",
+      "reason": "r"
+    }
+  },
+  "apply_manifest_reconcile/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_manifest_reconcile/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "apply_manifest_reconcile/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "apply_manifest_reconcile/empty-object": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_manifest_reconcile/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: '__unknown_key__'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_manifest_reconcile/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'mark_local' | 'relink' | 'drop_entry' | 'verify' | 'revert', received number"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'mark_local' | 'relink' | 'drop_entry' | 'verify' | 'revert', received ''"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'mark_local' | 'relink' | 'drop_entry' | 'verify' | 'revert', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/missing:name": {
+    "success": false,
+    "issues": [
+      {
+        "path": "name",
+        "code": "custom",
+        "message": "'name' is required when action === 'mark_local'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/wrong-type:name": {
+    "success": false,
+    "issues": [
+      { "path": "name", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "apply_manifest_reconcile/bad:name:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "name",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      },
+      {
+        "path": "name",
+        "code": "custom",
+        "message": "'name' is required when action === 'mark_local'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:name:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "zzz-not-an-option",
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/c",
+      "reason": "r"
+    }
+  },
+  "apply_manifest_reconcile/missing:client": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "mark_local", "name": "n", "scope": "global", "cwd": "/c", "reason": "r" }
+  },
+  "apply_manifest_reconcile/wrong-type:client": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_type",
+        "message": "Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received number"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:client:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received ''"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:client:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "client",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'claude-code' | 'cursor' | 'copilot' | 'windsurf' | 'agents' | 'opencode' | 'hermes' | 'grok' | 'antigravity', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/missing:scope": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "n",
+      "client": "claude-code",
+      "cwd": "/c",
+      "reason": "r"
+    }
+  },
+  "apply_manifest_reconcile/wrong-type:scope": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_type",
+        "message": "Expected 'global' | 'workspace', received number"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:scope:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'global' | 'workspace', received ''"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:scope:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "scope",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'global' | 'workspace', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/missing:cwd": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "n",
+      "client": "claude-code",
+      "scope": "global",
+      "reason": "r"
+    }
+  },
+  "apply_manifest_reconcile/wrong-type:cwd": {
+    "success": false,
+    "issues": [
+      { "path": "cwd", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "apply_manifest_reconcile/bad:cwd:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "cwd",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:cwd:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "n",
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "zzz-not-an-option",
+      "reason": "r"
+    }
+  },
+  "apply_manifest_reconcile/missing:reason": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "n",
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/c"
+    }
+  },
+  "apply_manifest_reconcile/wrong-type:reason": {
+    "success": false,
+    "issues": [
+      { "path": "reason", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "apply_manifest_reconcile/bad:reason:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "reason",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/bad:reason:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "action": "mark_local",
+      "name": "n",
+      "client": "claude-code",
+      "scope": "global",
+      "cwd": "/c",
+      "reason": "zzz-not-an-option"
+    }
+  },
+  "apply_manifest_reconcile/extra:relink-missing-source": {
+    "success": false,
+    "issues": [
+      { "path": "id", "code": "custom", "message": "relink requires BOTH 'id' and 'source'" }
+    ]
+  },
+  "apply_manifest_reconcile/extra:relink-complete": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "relink", "name": "n", "id": "i", "source": "s" }
+  },
+  "apply_manifest_reconcile/extra:id-on-non-relink": {
+    "success": false,
+    "issues": [
+      {
+        "path": "id",
+        "code": "custom",
+        "message": "'id'/'source' are only valid when action === 'relink'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/extra:revert-bare": {
+    "success": false,
+    "issues": [
+      {
+        "path": "ledgerEntryId",
+        "code": "custom",
+        "message": "revert requires either 'ledgerEntryId' or 'name'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/extra:revert-ledger": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "revert", "ledgerEntryId": "l" }
+  },
+  "apply_manifest_reconcile/extra:verify-bare": {
+    "success": true,
+    "issues": [],
+    "data": { "action": "verify" }
+  },
+  "apply_manifest_reconcile/extra:drop-entry-no-name": {
+    "success": false,
+    "issues": [
+      {
+        "path": "name",
+        "code": "custom",
+        "message": "'name' is required when action === 'drop_entry'"
+      }
+    ]
+  },
+  "apply_manifest_reconcile/extra:unknown-key-and-missing-name": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: 'extra'"
+      },
+      {
+        "path": "name",
+        "code": "custom",
+        "message": "'name' is required when action === 'mark_local'"
+      }
+    ]
+  },
+  "apply_namespace_rename/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "a", "collisionId": "c", "action": "apply", "confirmed": true }
+  },
+  "apply_namespace_rename/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_namespace_rename/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "apply_namespace_rename/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "apply_namespace_rename/empty-object": {
+    "success": false,
+    "issues": [
+      { "path": "auditId", "code": "invalid_type", "message": "Required" },
+      { "path": "collisionId", "code": "invalid_type", "message": "Required" },
+      { "path": "action", "code": "invalid_type", "message": "Required" }
+    ]
+  },
+  "apply_namespace_rename/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: '__unknown_key__'"
+      }
+    ]
+  },
+  "apply_namespace_rename/missing:auditId": {
+    "success": false,
+    "issues": [{ "path": "auditId", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_namespace_rename/wrong-type:auditId": {
+    "success": false,
+    "issues": [
+      { "path": "auditId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "apply_namespace_rename/bad:auditId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "auditId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "apply_namespace_rename/bad:auditId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "auditId": "zzz-not-an-option",
+      "collisionId": "c",
+      "action": "apply",
+      "confirmed": true
+    }
+  },
+  "apply_namespace_rename/missing:collisionId": {
+    "success": false,
+    "issues": [{ "path": "collisionId", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_namespace_rename/wrong-type:collisionId": {
+    "success": false,
+    "issues": [
+      {
+        "path": "collisionId",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "apply_namespace_rename/bad:collisionId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "collisionId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "apply_namespace_rename/bad:collisionId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": {
+      "auditId": "a",
+      "collisionId": "zzz-not-an-option",
+      "action": "apply",
+      "confirmed": true
+    }
+  },
+  "apply_namespace_rename/missing:action": {
+    "success": false,
+    "issues": [{ "path": "action", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_namespace_rename/wrong-type:action": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_type",
+        "message": "Expected 'apply' | 'custom' | 'skip' | 'revert', received number"
+      }
+    ]
+  },
+  "apply_namespace_rename/bad:action:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'apply' | 'custom' | 'skip' | 'revert', received ''"
+      }
+    ]
+  },
+  "apply_namespace_rename/bad:action:not-an-option": {
+    "success": false,
+    "issues": [
+      {
+        "path": "action",
+        "code": "invalid_enum_value",
+        "message": "Invalid enum value. Expected 'apply' | 'custom' | 'skip' | 'revert', received 'zzz-not-an-option'"
+      }
+    ]
+  },
+  "apply_namespace_rename/missing:confirmed": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "a", "collisionId": "c", "action": "apply" }
+  },
+  "apply_namespace_rename/wrong-type:confirmed": {
+    "success": false,
+    "issues": [
+      {
+        "path": "confirmed",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "apply_namespace_rename/extra:custom-without-name": {
+    "success": false,
+    "issues": [
+      {
+        "path": "customName",
+        "code": "custom",
+        "message": "customName is required when action === \"custom\""
+      }
+    ]
+  },
+  "apply_namespace_rename/extra:custom-with-name": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "a", "collisionId": "c", "action": "custom", "customName": "n" }
+  },
+  "apply_namespace_rename/extra:apply-with-custom-name": {
+    "success": false,
+    "issues": [
+      {
+        "path": "customName",
+        "code": "custom",
+        "message": "customName is only valid when action === \"custom\""
+      }
+    ]
+  },
+  "apply_namespace_rename/extra:unknown-key-and-custom-without-name": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: 'extra'"
+      },
+      {
+        "path": "customName",
+        "code": "custom",
+        "message": "customName is required when action === \"custom\""
+      }
+    ]
+  },
+  "skill_recover_source/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "only": ["a"], "embedding": true, "catalogHint": false }
+  },
+  "skill_recover_source/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_recover_source/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_recover_source/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_recover_source/empty-object": { "success": true, "issues": [], "data": {} },
+  "skill_recover_source/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: '__unknown_key__'"
+      }
+    ]
+  },
+  "skill_recover_source/missing:only": {
+    "success": true,
+    "issues": [],
+    "data": { "embedding": true, "catalogHint": false }
+  },
+  "skill_recover_source/wrong-type:only": {
+    "success": false,
+    "issues": [
+      { "path": "only", "code": "invalid_type", "message": "Expected array, received string" }
+    ]
+  },
+  "skill_recover_source/bad:only:bad-item": {
+    "success": false,
+    "issues": [
+      { "path": "only.0", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "skill_recover_source/bad:only:empty-string-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "only.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_recover_source/missing:embedding": {
+    "success": true,
+    "issues": [],
+    "data": { "only": ["a"], "catalogHint": false }
+  },
+  "skill_recover_source/wrong-type:embedding": {
+    "success": false,
+    "issues": [
+      {
+        "path": "embedding",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "skill_recover_source/missing:catalogHint": {
+    "success": true,
+    "issues": [],
+    "data": { "only": ["a"], "embedding": true }
+  },
+  "skill_recover_source/wrong-type:catalogHint": {
+    "success": false,
+    "issues": [
+      {
+        "path": "catalogHint",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "skill_recover_source/extra:homeDir-outside-allowed-roots": {
+    "success": false,
+    "issues": [
+      {
+        "path": "homeDir",
+        "code": "custom",
+        "message": "homeDir must resolve under os.homedir() or os.tmpdir(); arbitrary filesystem paths are rejected"
+      }
+    ]
+  },
+  "skill_recover_source/extra:homeDir-empty": {
+    "success": false,
+    "issues": [
+      {
+        "path": "homeDir",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      },
+      {
+        "path": "homeDir",
+        "code": "custom",
+        "message": "homeDir must resolve under os.homedir() or os.tmpdir(); arbitrary filesystem paths are rejected"
+      }
+    ]
+  },
+  "skill_recover_source/extra:only-empty-item": {
+    "success": false,
+    "issues": [
+      {
+        "path": "only.0",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_inventory_audit/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "deep": true, "projectDir": "/p", "applyExclusions": false }
+  },
+  "skill_inventory_audit/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "skill_inventory_audit/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "skill_inventory_audit/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "skill_inventory_audit/empty-object": { "success": true, "issues": [], "data": {} },
+  "skill_inventory_audit/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: '__unknown_key__'"
+      }
+    ]
+  },
+  "skill_inventory_audit/missing:deep": {
+    "success": true,
+    "issues": [],
+    "data": { "projectDir": "/p", "applyExclusions": false }
+  },
+  "skill_inventory_audit/wrong-type:deep": {
+    "success": false,
+    "issues": [
+      { "path": "deep", "code": "invalid_type", "message": "Expected boolean, received string" }
+    ]
+  },
+  "skill_inventory_audit/missing:projectDir": {
+    "success": true,
+    "issues": [],
+    "data": { "deep": true, "applyExclusions": false }
+  },
+  "skill_inventory_audit/wrong-type:projectDir": {
+    "success": false,
+    "issues": [
+      {
+        "path": "projectDir",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "skill_inventory_audit/bad:projectDir:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "projectDir",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "skill_inventory_audit/bad:projectDir:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "deep": true, "projectDir": "zzz-not-an-option", "applyExclusions": false }
+  },
+  "skill_inventory_audit/missing:applyExclusions": {
+    "success": true,
+    "issues": [],
+    "data": { "deep": true, "projectDir": "/p" }
+  },
+  "skill_inventory_audit/wrong-type:applyExclusions": {
+    "success": false,
+    "issues": [
+      {
+        "path": "applyExclusions",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  },
+  "skill_inventory_audit/extra:homeDir-outside-allowed-roots": {
+    "success": false,
+    "issues": [
+      {
+        "path": "homeDir",
+        "code": "custom",
+        "message": "homeDir must resolve under os.homedir() or os.tmpdir(); arbitrary filesystem paths are rejected"
+      }
+    ]
+  },
+  "skill_inventory_audit/extra:homeDir-empty": {
+    "success": false,
+    "issues": [
+      {
+        "path": "homeDir",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      },
+      {
+        "path": "homeDir",
+        "code": "custom",
+        "message": "homeDir must resolve under os.homedir() or os.tmpdir(); arbitrary filesystem paths are rejected"
+      }
+    ]
+  },
+  "apply_recommended_edit/valid": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "a", "collisionId": "c", "confirmed": true }
+  },
+  "apply_recommended_edit/undefined": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_recommended_edit/null": {
+    "success": false,
+    "issues": [{ "path": "", "code": "invalid_type", "message": "Expected object, received null" }]
+  },
+  "apply_recommended_edit/string": {
+    "success": false,
+    "issues": [
+      { "path": "", "code": "invalid_type", "message": "Expected object, received string" }
+    ]
+  },
+  "apply_recommended_edit/empty-object": {
+    "success": false,
+    "issues": [
+      { "path": "auditId", "code": "invalid_type", "message": "Required" },
+      { "path": "collisionId", "code": "invalid_type", "message": "Required" }
+    ]
+  },
+  "apply_recommended_edit/unknown-key": {
+    "success": false,
+    "issues": [
+      {
+        "path": "",
+        "code": "unrecognized_keys",
+        "message": "Unrecognized key(s) in object: '__unknown_key__'"
+      }
+    ]
+  },
+  "apply_recommended_edit/missing:auditId": {
+    "success": false,
+    "issues": [{ "path": "auditId", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_recommended_edit/wrong-type:auditId": {
+    "success": false,
+    "issues": [
+      { "path": "auditId", "code": "invalid_type", "message": "Expected string, received number" }
+    ]
+  },
+  "apply_recommended_edit/bad:auditId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "auditId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "apply_recommended_edit/bad:auditId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "zzz-not-an-option", "collisionId": "c", "confirmed": true }
+  },
+  "apply_recommended_edit/missing:collisionId": {
+    "success": false,
+    "issues": [{ "path": "collisionId", "code": "invalid_type", "message": "Required" }]
+  },
+  "apply_recommended_edit/wrong-type:collisionId": {
+    "success": false,
+    "issues": [
+      {
+        "path": "collisionId",
+        "code": "invalid_type",
+        "message": "Expected string, received number"
+      }
+    ]
+  },
+  "apply_recommended_edit/bad:collisionId:empty-string": {
+    "success": false,
+    "issues": [
+      {
+        "path": "collisionId",
+        "code": "too_small",
+        "message": "String must contain at least 1 character(s)"
+      }
+    ]
+  },
+  "apply_recommended_edit/bad:collisionId:not-an-option": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "a", "collisionId": "zzz-not-an-option", "confirmed": true }
+  },
+  "apply_recommended_edit/missing:confirmed": {
+    "success": true,
+    "issues": [],
+    "data": { "auditId": "a", "collisionId": "c" }
+  },
+  "apply_recommended_edit/wrong-type:confirmed": {
+    "success": false,
+    "issues": [
+      {
+        "path": "confirmed",
+        "code": "invalid_type",
+        "message": "Expected boolean, received string"
+      }
+    ]
+  }
+}
