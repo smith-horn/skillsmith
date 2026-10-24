@@ -346,6 +346,9 @@ function newState(
   warnings: SwapWarning[]
 ): SwapState {
   const opId = options.opId ?? randomBytes(16).toString('hex')
+  // A seam opId names files (`<opId>.<kind>`, `.tmp-<opId>`); a '.' or '/' would
+  // make `isFullDeviceLeftover` ambiguous or escape the area.
+  if (!/^[A-Za-z0-9_-]+$/.test(opId)) throw new TypeError(`invalid opId seam: ${opId}`)
   let stateRootReal: string
   try {
     stateRootReal = fs.realpathSync.native(input.stateRoot)

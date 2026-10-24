@@ -396,3 +396,25 @@ describe('recordSha256 over the marker (governance round 4)', () => {
     expect(computeRecordSha256(differs)).not.toBe(computeRecordSha256(inOrder))
   })
 })
+
+describe('the opId seam (governance round 6)', () => {
+  it.each(['a.b', 'a/b', '', '..'])(
+    'refuses %j before anything is written: a dot or slash would make leftovers ambiguous',
+    async (opId) => {
+      const fx = xdevFixture(FILES)
+      const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+      await expect(runSpied(p, ALL_DELETES, { opId })).rejects.toThrow(TypeError)
+      // The binding makes the staging root; no op directory is made in it.
+      const st = path.join(fx.skillsDir, '.skillsmith-staging')
+      const ops = fs.existsSync(st)
+        ? fs.readdirSync(st, { withFileTypes: true }).filter((e) => e.isDirectory())
+        : []
+      expect(ops).toEqual([])
+      // Presence control: the same plan with a valid seam opId runs.
+      const ok = await runSpied(plan(fx, [modify('SKILL.md', '# v2\n')]), ALL_DELETES, {
+        opId: 'seam-ok_1',
+      })
+      expect(ok.result.status).toBe('committed')
+    }
+  )
+})
