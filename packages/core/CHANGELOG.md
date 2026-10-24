@@ -4,23 +4,22 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
-- **Added**: SMI-6531 A1 step 4c -- `swapInPlace` now backs up across devices when the state root
-  is on another filesystem. It first estimates the space the copy needs and refuses with
-  `state-root-full` (naming `skillsmith doctor backups --prune`) when it clearly won't fit. It copies the old folder into a
-  temp, verifies the copy against the source by tree hash, keeps a copy that doesn't match as
-  `partial-copy` and copies once more, then moves the verified copy into place. The source is
-  never removed: the operation's staging folder is parked whole, with a park intent first, and
-  the update names both the backup and the extra copy. The same path serves abort cleanup's and
-  the undo's keeps. A cross-device move that stops on ENOSPC or EDQUOT, at any stage including
-  the sync after the final rename, records the cause, stage, area, opId and destination in the
-  update's kept `record.json`. The next update's record scan refuses while that record exists;
-  only doctor derives the leftovers, as the backup-area entries named for that opId. The block
-  and inode estimate is only a first-attempt filter. The park now syncs
-  `.skillsmith-parked` and its parent before its rename (a failure moves nothing), and the
-  update syncs the landing folder and then the staging folder after it; a park that can't be
-  synced is reported held. A sidecar rewrite syncs the
-  backup area before each unlink, and any failure after the update record is removed is reported
-  as a removal not done, with the `doctor recovery --clean-staging` command. No caller uses
+- **Added**: SMI-6531 A1 step 4c -- `swapInPlace` now backs up across devices when the state root is
+  on another filesystem. It first estimates the space the copy needs and refuses with
+  `state-root-full` (naming `skillsmith doctor backups --prune`) when it clearly won't fit. It
+  copies the old folder into a temp, verifies the copy against the source by tree hash, keeps a copy
+  that doesn't match as `partial-copy` and copies once more, then moves the verified copy into
+  place. The source is never removed: the operation's staging folder is parked whole, with a park
+  intent first, and the update names both the backup and the extra copy. The same path serves abort
+  cleanup's and the undo's keeps. A cross-device move that stops on ENOSPC or EDQUOT, at any stage
+  including the sync after the final rename, records the cause, stage, area, opId and destination in
+  the update's kept `record.json`. The next update's record scan refuses while that record exists;
+  only doctor derives the leftovers, as the backup-area entries named for that opId. The block and
+  inode estimate is only a first-attempt filter. The park now syncs `.skillsmith-parked` and its
+  parent before its rename (a failure moves nothing), and the update syncs the landing folder and
+  then the staging folder after it; a park that can't be synced is reported held. A sidecar rewrite
+  syncs the backup area before each unlink, and any failure after the update record is removed is
+  reported as a removal not done, with the `doctor recovery --clean-staging` command. No caller uses
   `swapInPlace` yet.
 
 - **Security**: SMI-7168 -- `zod` moves from 4.2.1 to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5
