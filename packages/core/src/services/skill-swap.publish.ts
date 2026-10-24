@@ -63,9 +63,6 @@ import {
 import type { PublishKind } from './skill-swap.sidecar.js'
 import { moveAcross } from './skill-swap.xdev.js'
 
-export { rootKeyOf, warnForeignChange } from './skill-swap.sidecar.js'
-export type { PublishKind } from './skill-swap.sidecar.js'
-
 const HASH_OPTIONAL: ReadonlySet<PublishKind> = new Set(['failed-build', 'unrecorded-new'])
 
 /** One path component: not empty, not `.`/`..`, no separator or NUL. */

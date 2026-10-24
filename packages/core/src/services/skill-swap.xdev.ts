@@ -80,8 +80,6 @@ import { deviceOf, spaceFirst } from './skill-swap.space.js'
 import { markIfFullDevice } from './skill-swap.fullmark.js'
 import type { MoveProgress } from './skill-swap.fullmark.js'
 
-export { PRUNE_COMMAND, SPACE_MARGIN_BYTES } from './skill-swap.space.js'
-
 /** One cross-device move: the tree, its fixed `dest`, and the sidecar already published there. */
 export interface Move {
   src: string

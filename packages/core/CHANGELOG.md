@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- removes six unused re-exports left by step 4c's file splits:
+  `rootKeyOf`, `warnForeignChange` and `PublishKind` from `skill-swap.publish.ts`, `NotDone` from
+  `skill-swap.abort.ts`, and `PRUNE_COMMAND` and `SPACE_MARGIN_BYTES` from `skill-swap.xdev.ts`.
+  Every caller already imports them from the module that defines them. No behaviour change.
+
 - **Added**: SMI-6531 A1 step 4c -- `swapInPlace` now backs up across devices when the state root is
   on another filesystem. It first estimates the space the copy needs and refuses with
   `state-root-full` (naming `skillsmith doctor backups --prune`) when it clearly won't fit. It
