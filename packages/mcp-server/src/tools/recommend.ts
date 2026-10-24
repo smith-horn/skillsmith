@@ -52,6 +52,7 @@ export {
   type RecommendResponse,
   type SkillRecommendation,
 } from './recommend.types.js'
+import { legacyParse } from '../validation.legacy.js'
 
 // Re-export formatting utilities (SMI-2741)
 export { formatRecommendations, mergeAndDeduplicateRecommendations } from './recommend.format.js'
@@ -107,7 +108,7 @@ async function executeRecommendImpl(
   const startTime = performance.now()
 
   // Validate input with Zod
-  const validated = recommendInputSchema.parse(input)
+  const validated = legacyParse(recommendInputSchema, input)
   let { installed_skills } = validated
   const { project_context, limit, detect_overlap, min_similarity, role, installable_only } =
     validated

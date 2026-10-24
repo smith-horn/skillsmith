@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { classifyChange, computeUpdateRisk } from '@skillsmith/core'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import type { ToolContext } from '../context.js'
+import { legacyParse } from '../validation.legacy.js'
 
 // ============================================================================
 // Input / Output types
@@ -235,7 +236,7 @@ async function executeSkillDiffImpl(
   input: SkillDiffInput,
   _context: ToolContext
 ): Promise<SkillDiffResponse> {
-  const validated = skillDiffInputSchema.parse(input)
+  const validated = legacyParse(skillDiffInputSchema, input)
   const {
     skillId,
     oldContent,

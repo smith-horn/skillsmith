@@ -65,6 +65,7 @@ import {
 } from './install.namespace-gate.js'
 import { describeThrown, type CandidateSkill } from '../audit/install-preflight.js'
 import * as path from 'path'
+import { legacySafeParse } from '../validation.legacy.js'
 
 export { extractSkillName } from './install.namespace-gate.js'
 
@@ -108,7 +109,7 @@ async function installSkillImpl(input: unknown, _context?: ToolContext): Promise
   // signature, this runs at every call site (tool-dispatch, runFirstTimeSetup,
   // integration tests). Validation failures return a structured InstallResult
   // instead of throwing, preserving the MCP application-level error envelope.
-  const parsed = installInputSchema.safeParse(input)
+  const parsed = legacySafeParse(installInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

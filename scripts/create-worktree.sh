@@ -622,7 +622,8 @@ The worktree has been left intact. Fix with:
     # lint-staged, eslint, prettier, and check-file-length.mjs (SMI-4377).
     # Hook discovery (Layer 1) is handled by the committed .husky/_/ tree.
     # SMI-4381 also symlinks per-package node_modules so workspace-pinned
-    # deps (e.g. zod@3.25.76 in packages/mcp-server) resolve correctly when
+    # deps (any version a workspace pins differently from the hoisted root
+    # copy) resolve correctly when
     # tsc runs from the worktree path inside Docker — without these, Node
     # walks up to the hoisted root node_modules and finds the wrong version.
     info "Step 4d: Symlinking node_modules from main repo (SMI-4377 + SMI-4381)..."

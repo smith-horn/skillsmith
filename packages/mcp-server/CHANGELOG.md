@@ -4,6 +4,25 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Security**: SMI-7168 -- `zod` moves from 3.25.76 to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5
+  (memory exhaustion when validating oversized constrained collections). The root `body-parser`
+  override floor moves to `^2.4.0`, which fixes GHSA-27r3-jxmh-p828 (denial of service through
+  trailing bytes after a compressed body) in the copy that `express` pulls in.
+- **Changed**: SMI-7168 -- two inputs that zod 3 accepted are now rejected, because zod 4 is
+  stricter. `undo_apply`'s `count` rejects an integer above 2^53-1. `team_workspace` and
+  `share_skill` check `workspaceId` against RFC 9562, so a string shaped like a uuid but with no
+  valid version or variant digit (for example `12345678-1234-1234-1234-123456789012`) is rejected;
+  ids from the database (`gen_random_uuid()`, version 4) are unaffected. Across the roughly 900
+  inputs recorded on zod 3 for the parity test, no other pass or fail verdict changed.
+- **Internal**: SMI-7168 -- the `ValidationError` response and the error text of the tools that
+  read `issue.message` themselves keep zod 3's `code` and `message` strings (for example
+  `invalid_enum_value` with `Invalid enum value. Expected 'a' | 'b', received 'zzz'`, and
+  `Required`), although zod 4 words them differently. `validation.legacy.ts` supplies them: a
+  per-parse error map for the messages, so messages written in a schema still win, and a
+  translation of the code afterwards. `tools/list` output is unchanged: every tool's `inputSchema`
+  is a hand-written JSON schema, pinned byte for byte against a snapshot taken on zod 3. A second
+  test records how each input schema validates about 900 inputs on zod 3 and requires zod 4 to
+  produce the same codes and messages.
 - **Fixed**: SMI-6531 -- `apply_namespace_rename` and `apply_recommended_edit` register a
   successful apply for `undo_apply` even when its journal write fails. Before, a failed journal
   append also skipped the undo registration. With `@skillsmith/core`'s new journal lock, a stuck

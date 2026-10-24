@@ -44,6 +44,7 @@ import {
   detectClaudeMdModification,
   validateDependencies,
 } from './validate.helpers.js'
+import { legacyParse } from '../validation.legacy.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export type { ValidateInput, ValidateResponse, ValidationError } from './validate.types.js'
@@ -77,7 +78,7 @@ async function executeValidateImpl(
   const startTime = performance.now()
 
   // Validate input with Zod
-  const validated = validateInputSchema.parse(input)
+  const validated = legacyParse(validateInputSchema, input)
   const { skill_path, strict } = validated
 
   // Security: Check for path traversal in input path

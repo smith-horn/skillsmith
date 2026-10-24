@@ -34,6 +34,7 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 
 import { journalApplyError, journalApplySuccess } from './apply-journal.helpers.js'
 import type { ApplyRecommendedEditResponse } from './apply-recommended-edit.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 /**
  * Zod input schema. `auditId` + `collisionId` are FKs into
@@ -92,7 +93,7 @@ export const applyRecommendedEditToolSchema = {
  * shape.
  */
 async function applyRecommendedEditToolImpl(input: unknown): Promise<ApplyRecommendedEditResponse> {
-  const parsed = applyRecommendedEditInputSchema.safeParse(input)
+  const parsed = legacySafeParse(applyRecommendedEditInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {

@@ -271,7 +271,7 @@ describe('executeTeamWorkspace', () => {
 
   it('returns error for nonexistent workspace', async () => {
     const result = await executeTeamWorkspace(
-      { action: 'get', workspaceId: '00000000-0000-0000-0000-000000000099' },
+      { action: 'get', workspaceId: '00000000-0000-4000-8000-000000000099' },
       makeContext()
     )
     expect(result.success).toBe(false)
@@ -293,7 +293,7 @@ describe('executeTeamWorkspace', () => {
 
   it('returns error deleting nonexistent workspace', async () => {
     const result = await executeTeamWorkspace(
-      { action: 'delete', workspaceId: '00000000-0000-0000-0000-000000000099' },
+      { action: 'delete', workspaceId: '00000000-0000-4000-8000-000000000099' },
       makeContext()
     )
     expect(result.success).toBe(false)

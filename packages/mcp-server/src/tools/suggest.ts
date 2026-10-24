@@ -34,6 +34,7 @@ import type { ToolContext } from '../context.js'
 import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
 import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
 import { hasPathTraversal } from './validate.helpers.js'
+import { legacyParse } from '../validation.legacy.js'
 
 /**
  * Zod schema for suggest tool input validation
@@ -240,7 +241,7 @@ async function executeSuggestImpl(
   const startTime = performance.now()
 
   // Validate input
-  const validated = suggestInputSchema.parse(input)
+  const validated = legacyParse(suggestInputSchema, input)
   const { project_path, current_file, recent_commands, error_message, installed_skills, limit } =
     validated
 

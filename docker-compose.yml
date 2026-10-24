@@ -47,9 +47,9 @@ services:
       # has NO packages/*/node_modules directories at all (gitignored build
       # artifacts). Only /app/node_modules was previously protected, so any
       # package whose dependency needs a NESTED copy (a version conflict
-      # with whatever's hoisted to root -- e.g. @skillsmith/mcp-server pins
-      # zod@3.25.76 while @skillsmith/core pins zod@4.2.1, so npm nests a
-      # separate zod@3.25.76 under packages/mcp-server/node_modules per
+      # with whatever's hoisted to root -- e.g. a workspace that pins a
+      # different version of a dependency than the copy hoisted to root, so
+      # npm nests a separate copy under packages/<pkg>/node_modules per
       # package-lock.json) had that nested copy silently erased on every
       # non-worktree container start, even though `npm ci` at image-build
       # time installed it correctly. TypeScript/Node module resolution then

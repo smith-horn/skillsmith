@@ -461,16 +461,15 @@ describe('apply_namespace_rename — action: revert', () => {
  * Resolve the underlying ZodObject shape regardless of how the INSTALLED Zod
  * models `z.object(...).strict().superRefine(...)`.
  *
- * zod 3.x (what `packages/mcp-server` pins today — `zod@3.25.76`, and what
- * `npm ci` therefore resolves in CI) wraps it in a `ZodEffects`, so the shape
- * is reachable only via `.innerType()`. zod 4.x returns the `ZodObject`
- * directly, where `.innerType()` does not exist and `.shape` does. The root
- * workspace hoists `zod@4.2.1` while this package nests `3.25.76`, so which
- * one a given tool resolves depends on the requiring file's directory (see
- * CLAUDE.md's SMI-6006 note) — pinning this guardrail to either internal has
- * now broken the build once in each direction. Probing for both keeps
- * SMI-5671's actual invariant (JSON Schema enum === Zod enum) enforced across
- * either resolution instead of turning a Zod bump into a build break.
+ * zod 4.x (what every workspace pins since SMI-7168) returns the `ZodObject`
+ * directly from `z.object(...).strict().superRefine(...)`, so the shape is
+ * `.shape`. zod 3.x wrapped it in a `ZodEffects`, reachable only via
+ * `.innerType()`. That wrapper no longer exists in this repo's dependency
+ * tree, but the probe for both stays: it costs one line, and pinning this
+ * guardrail to one zod internal has broken the build once in each direction
+ * (SMI-5671, SMI-6006). It keeps SMI-5671's actual invariant (JSON Schema
+ * enum === Zod enum) enforced instead of turning a Zod bump into a build
+ * break.
  */
 function resolveObjectShape(schema: unknown): { action: { options: readonly string[] } } {
   const candidate = schema as {

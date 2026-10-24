@@ -24,9 +24,8 @@
 #      the hoisted copy (the SMI-5452 hazard — the trigger for the SMI-5718
 #      incident this launcher exists to guard against), a missing package,
 #      an unbuilt @skillsmith/* workspace dep, or a missing/corrupt
-#      root-hoisted zod-to-json-schema (a new transitive dependency the
-#      SMI-5718 code hardening makes load-bearing — see the plan's "New
-#      transitive-dependency exposure" section).
+#      root-hoisted zod-to-json-schema (an @modelcontextprotocol/sdk
+#      transitive that the SDK imports when the server loads).
 #
 #      SMI-6618: an empty nested dir for a package this runtime never loads
 #      (a Tier-B mount source, SMI-6050) is expected state, not corruption,
@@ -369,9 +368,10 @@ for (const name of names) {
 // SMI-5718: zod-to-json-schema is not a doc-retrieval-mcp-declared
 // dependency — it is a transitive dependency of @modelcontextprotocol/sdk,
 // resolved solely via the ROOT-hoisted node_modules (not nested under this
-// package). jsonSchemaOf()s v3 conversion path now depends on it being
-// resolvable, so it is checked explicitly here rather than relying on the
-// declared-deps ∪ nested-node_modules scan above (which would never see it).
+// package). The SDK imports it when the server loads, via shared/protocol.js ->
+// server/zod-json-schema-compat.js, so a missing or corrupt copy still stops the
+// server; checked explicitly because the declared-deps ∪ nested-node_modules scan
+// above never sees it. jsonSchemaOf() no longer calls it itself (SMI-7168).
 const ztjsState = classify("zod-to-json-schema", { rootOnly: true });
 if (ztjsState) {
   console.log("FAIL zod-to-json-schema " + ztjsState);

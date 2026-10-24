@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Security**: SMI-7168 -- `zod` moves from 4.2.1 to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5
+  (memory exhaustion when validating oversized constrained collections). Same major, so no code
+  change.
+
 - **Added**: SMI-6531 A1 step 4b -- `swapInPlace` now cleans up after an abort before the swap, and
   removes nothing. An unchanged staged copy is parked whole with its op directory. Before the
   park it writes a durable `park-intent.json`, which a later `doctor` step will use to finish a

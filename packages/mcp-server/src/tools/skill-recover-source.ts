@@ -36,6 +36,7 @@ import { withTelemetry } from '@skillsmith/core/telemetry'
 import { hashContent } from './install.conflict-helpers.js'
 import type { ToolContext } from '../context.js'
 import type { SkillRecoverSourceResponse } from './skill-recover-source.types.js'
+import { legacySafeParse } from '../validation.legacy.js'
 
 // ============================================================================
 // homeDir refinement (mirrors skill-inventory-audit.ts:165)
@@ -219,7 +220,7 @@ async function skillRecoverSourceImpl(
   input: unknown,
   context: ToolContext
 ): Promise<SkillRecoverSourceResponse> {
-  const parsed = skillRecoverSourceInputSchema.safeParse(input)
+  const parsed = legacySafeParse(skillRecoverSourceInputSchema, input)
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {
