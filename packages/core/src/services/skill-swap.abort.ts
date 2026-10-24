@@ -87,7 +87,6 @@ import type {
 } from './skill-swap.types.js'
 
 export type Refused = Extract<SwapResult, { status: 'refused' }>
-export type { NotDone } from './skill-swap.park-op.js'
 export { say } from './skill-swap.park-op.js'
 type Kept = { kind: AbortKeptKind; path: string } | undefined
 
