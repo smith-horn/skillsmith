@@ -4,20 +4,12 @@
  * E32-E35, E38). It runs after the sidecar is published and `rename(src,
  * dest)` failed `EXDEV`, so nothing has moved:
  *
- *  1. **Space first** (`skill-swap.space.ts`), before anything is written,
- *     each refusing `state-root-full` and naming
- *     `skillsmith doctor backups --prune`:
- *      - the hard rule (round 2, owner decision): the area already holds a
- *        copy a full device left behind (a `partial-copy` recorded `enospc`,
- *        or one whose sidecar is missing or unreadable, or a `.tmp-` copy
- *        temp). So at most one such copy per area, however wrong the
- *        estimate below is (E35's ratchet: one more partial per retry);
- *      - the estimate, a first-attempt filter only: fewer free bytes than the
- *        copy's estimated allocation, or fewer free inodes than its entries.
- *        It does not promise the copy fits (directory indexes and extent
- *        metadata are not counted, GPT-5.6-Sol round 2); a copy that still
- *        fills the device ends `ENOSPC` (step 4), and the hard rule stops
- *        the next attempt.
+ *  1. **Space first** (`skill-swap.space.ts`): fewer free bytes than the
+ *     copy's estimated allocation, or fewer free inodes than its entries,
+ *     refuse `state-root-full` naming `skillsmith doctor backups --prune`,
+ *     before anything is written. A first-attempt filter only: it does not
+ *     promise the copy fits (directory indexes and extent metadata are not
+ *     counted, GPT-5.6-Sol round 2).
  *  2. **Copy.** `check`; the copy temp `<area>/.tmp-<basename(dest)>` is made
  *     by the no-follow copy's own plain `mkdir` (an existing entry there is
  *     `backup-unsafe`, untouched), its identity bound and the area synced
@@ -31,7 +23,13 @@
  *  4. **A failed copy** (`ENOSPC` included) keeps whatever temp it made as
  *     `partial-copy` and stops `write-failed`, naming the full device for
  *     `ENOSPC` or `EDQUOT` (its sidecar `partialCause: 'enospc'`; any other
- *     failure is `copy-failed`, a mismatch `mismatch`). For `ENOSPC`, `sourceUnchanged` is computed: true when `src`
+ *     failure is `copy-failed`, a mismatch `mismatch`).
+ *     **Any** stop on `ENOSPC` or `EDQUOT`, at any stage of steps 2-5 (the
+ *     copy, a partial keep, the sidecar rewrite, the final rename, the area
+ *     sync after it), first records the full-device marker, the cause and the
+ *     exact leftovers, in this op's kept `record.json`
+ *     (`skill-swap.fullmark.ts`); that kept record is what refuses the next
+ *     update until doctor resumes this one. For `ENOSPC`, `sourceUnchanged` is computed: true when `src`
  *     still hashes to its sidecar's `treeHash`. For any other copy failure it
  *     is false, as for a mismatch. If the keep itself fails (the partial's
  *     sidecar cannot be written on a full device), the temp is left at its
@@ -77,7 +75,9 @@ import {
   writeSidecar,
 } from './skill-swap.sidecar.js'
 import type { PartialCause, PublishKind, Sidecar } from './skill-swap.sidecar.js'
-import { deviceOf, refuseAfterFullDevice, spaceFirst } from './skill-swap.space.js'
+import { deviceOf, spaceFirst } from './skill-swap.space.js'
+import { markIfFullDevice } from './skill-swap.fullmark.js'
+import type { MoveProgress } from './skill-swap.fullmark.js'
 
 export { PRUNE_COMMAND, SPACE_MARGIN_BYTES } from './skill-swap.space.js'
 
@@ -128,7 +128,8 @@ async function keepPartial(
   temp: string,
   tempId: BoundIdentity | null,
   m: Move,
-  partialCause: PartialCause
+  partialCause: PartialCause,
+  progress: MoveProgress
 ): Promise<string | null> {
   const now = bindIdentity(temp)
   if (tempId === null || !now.ok || !sameIdentity(tempId, now)) return null
@@ -137,18 +138,28 @@ async function keepPartial(
   const sourceUnchanged =
     s !== null && s.ok && m.sidecar.treeHash !== null && s.hash === m.sidecar.treeHash
   const dest = await destFor(st, 'partial-copy')
+  const was = progress.stage
+  progress.stage = 'partial-keep'
   await writeSidecar(
     st,
     dest,
     sidecarOf(st, 'partial-copy', treeHashOf(temp), now, { sourceUnchanged, partialCause })
   )
   await renameChecked(st, temp, dest)
+  progress.partials.push({ path: dest, sourceUnchanged })
   await syncDir(st, st.areaPath)
+  progress.stage = was
   return dest
 }
 
 /** Step 4: a copy that failed. Keeps what it can, then throws the stop. */
-async function failedCopy(st: SwapState, m: Move, temp: string, c: Copied): Promise<never> {
+async function failedCopy(
+  st: SwapState,
+  m: Move,
+  temp: string,
+  c: Copied,
+  progress: MoveProgress
+): Promise<never> {
   const r = c.result
   if (r.ok) throw new Error('unreachable')
   if (r.reason === 'dest-exists') {
@@ -157,7 +168,7 @@ async function failedCopy(st: SwapState, m: Move, temp: string, c: Copied): Prom
   const full = r.errno === 'ENOSPC' || r.errno === 'EDQUOT'
   let kept: string
   try {
-    const at = await keepPartial(st, temp, c.tempId, m, full ? 'enospc' : 'copy-failed')
+    const at = await keepPartial(st, temp, c.tempId, m, full ? 'enospc' : 'copy-failed', progress)
     kept = at === null ? 'no copy temp was made' : `the partial copy is kept at ${at}`
   } catch (err) {
     kept = `the partial copy is left at ${temp} (${codeOf(err) ?? 'keep failed'})`
@@ -165,7 +176,8 @@ async function failedCopy(st: SwapState, m: Move, temp: string, c: Copied): Prom
   if (full) {
     throw new SwapFault(
       'write-failed',
-      `no space is left on ${deviceOf(st)} (${r.errno} at ${r.path}) while copying ${m.src}; ${kept}`
+      `no space is left on ${deviceOf(st)} (${r.errno} at ${r.path}) while copying ${m.src}; ${kept}`,
+      { code: r.errno }
     )
   }
   throw new SwapFault(
@@ -177,10 +189,15 @@ async function failedCopy(st: SwapState, m: Move, temp: string, c: Copied): Prom
 }
 
 /** Steps 2-3: copy until the temp equals the source, at most twice. Returns the temp's hash. */
-async function copyVerified(st: SwapState, m: Move, temp: string): Promise<string> {
+async function copyVerified(
+  st: SwapState,
+  m: Move,
+  temp: string,
+  progress: MoveProgress
+): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     const c = await copyToTemp(st, m.src, temp)
-    if (!c.result.ok) return failedCopy(st, m, temp, c)
+    if (!c.result.ok) return failedCopy(st, m, temp, c, progress)
     trace(st, { op: 'copy', path: m.src, dest: temp })
     await hook(st, 'afterBackupCopy')
     const t = treeHashOf(temp)
@@ -188,7 +205,7 @@ async function copyVerified(st: SwapState, m: Move, temp: string): Promise<strin
     const equal = t.ok && s.ok ? t.hash === s.hash : null
     trace(st, { op: 'compare', path: temp, equal })
     if (equal === true && t.ok) return t.hash
-    const kept = await keepPartial(st, temp, c.tempId, m, 'mismatch')
+    const kept = await keepPartial(st, temp, c.tempId, m, 'mismatch', progress)
     if (attempt === 2) {
       throw new SwapFault(
         'write-failed',
@@ -199,26 +216,47 @@ async function copyVerified(st: SwapState, m: Move, temp: string): Promise<strin
   }
 }
 
-/** `publishTree` step 4 (see the module comment). Throws `SwapFault` or `SkillWriteStop`. */
+/**
+ * `publishTree` step 4 (see the module comment). Throws `SwapFault` or
+ * `SkillWriteStop`; a stop on a full device first records the full-device
+ * marker in this run's `record.json` (`skill-swap.fullmark.ts`).
+ */
 export async function moveAcross(st: SwapState, m: Move): Promise<void> {
-  await refuseAfterFullDevice(st)
   await spaceFirst(st, m.src, m.record)
   const temp = path.join(st.areaPath, `.tmp-${path.basename(m.dest)}`)
-  const hash = await copyVerified(st, m, temp)
+  const progress: MoveProgress = { stage: 'copy', partials: [] }
+  try {
+    await moveVerified(st, m, temp, progress)
+  } catch (err) {
+    throw await markIfFullDevice(st, err, temp, m.dest, progress)
+  }
+}
+
+/** Steps 2-6: copy, verify, rewrite the sidecar if needed, rename to `dest`, sync. */
+async function moveVerified(
+  st: SwapState,
+  m: Move,
+  temp: string,
+  progress: MoveProgress
+): Promise<void> {
+  const hash = await copyVerified(st, m, temp, progress)
   await hook(st, 'afterBackupVerify')
   if (hash !== m.sidecar.treeHash) {
     const body: Sidecar = { ...m.sidecar, treeHash: hash }
     delete body.treeHashError
     if (m.kind === 'backup' && hash !== st.input.preTree) warnForeignChange(st, m.dest)
+    progress.stage = 'sidecar-rewrite'
     await rewriteSidecar(st, m.dest, body)
   }
   check(st)
   if (await present(m.dest)) {
     throw new SwapFault('backup-unsafe', `${m.dest} appeared before the copy was moved there`)
   }
+  progress.stage = 'final-rename'
   await renameChecked(st, temp, m.dest)
   st.published = { src: m.src, dest: m.dest, kind: m.kind }
   st.moveSources.set(path.basename(m.src), { identity: m.srcId, dest: m.dest })
+  progress.stage = 'final-sync'
   await syncDir(st, st.areaPath)
   await hook(st, 'afterBackupMove')
 }

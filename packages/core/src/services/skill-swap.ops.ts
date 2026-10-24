@@ -39,6 +39,7 @@ import {
   UNDONE_DIR,
 } from './skill-swap.types.js'
 import type {
+  SwapRecord,
   SwapHookPoint,
   SwapIncomplete,
   SwapInput,
@@ -104,6 +105,8 @@ export interface SwapState {
   backupDest: string
   /** True once step 13 unlinked `record.json`: a result must not name it after that. */
   recordRemoved: boolean
+  /** What `record.json` holds, once this run published it (a full-device stop rewrites it). */
+  record: SwapRecord | null
   /**
    * The identity of every file `writeNewFile` created, by path: the metadata
    * (`owner.json`, `record.json`) and their temps, the sidecar temp, and every

@@ -234,9 +234,11 @@ function tracePreMove(st: SwapState, r: ParkResult): void {
 
 /**
  * After a park that moved OP: syncs the landing directory (`<opId>`), then ST.
- * Returns null when both synced, else the first failure (ST is then not tried;
- * the tree stays reachable either way, since the rename's halves persist
- * together and the port synced their directories' ancestry before the move).
+ * Returns null when both synced, else the first failure (ST is then not
+ * synced by this run). The tree stays reachable after a failure only until
+ * something syncs ST: the rename's halves persist together only while both
+ * are pending, so another writer's later sync of ST can make OP's removal
+ * durable before its new name in `<opId>` is (UD41's accepted residual).
  */
 async function syncPark(
   st: SwapState,

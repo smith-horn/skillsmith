@@ -379,7 +379,44 @@ export interface SwapRecord {
   preEntry: unknown
   postEntry: unknown
   backupDest: string
+  /**
+   * Present only once a cross-device move stopped on a full device (round 3,
+   * UD42): what it left on that device, for doctor's resume.
+   */
+  fullDevice?: FullDeviceMarker
   recordSha256: string
+}
+
+/** Where a cross-device move was when the full device stopped it. */
+export type FullDeviceStage =
+  | 'copy'
+  | 'partial-keep'
+  | 'sidecar-rewrite'
+  | 'final-rename'
+  | 'final-sync'
+
+/** One thing a full-device stop left in the backup area. */
+export type FullDeviceLeftover =
+  /** `<area>/.tmp-<name>`: the copy temp, at its name (doctor recovery P2/P3 resumes it). */
+  | { kind: 'copy-temp'; path: string }
+  /** A copy temp kept as `partial-copy`; `sourceUnchanged` decides how prune may take it. */
+  | { kind: 'partial-copy'; path: string; sourceUnchanged: boolean }
+  /** The verified copy, already renamed to the backup's name; the area sync after it failed. */
+  | { kind: 'backup'; path: string }
+  /** A sidecar rewrite's temp, `<dest>.json.tmp` (metadata). */
+  | { kind: 'sidecar-temp'; path: string }
+
+/**
+ * `record.json`'s full-device marker (round 3, owner decision): the cause, the
+ * stage, and the exact leftovers on the full device. Written into this op's
+ * own record, which is on the skills-root device, not the full one.
+ */
+export interface FullDeviceMarker {
+  cause: 'ENOSPC' | 'EDQUOT'
+  stage: FullDeviceStage
+  /** The backup area (the full device's directory the leftovers are in). */
+  area: string
+  leftovers: FullDeviceLeftover[]
 }
 
 export const RECORD_FILE = 'record.json'

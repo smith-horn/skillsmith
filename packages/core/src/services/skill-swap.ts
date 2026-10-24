@@ -375,6 +375,7 @@ function newState(
     areaPath,
     backupDest: path.join(areaPath, opId),
     recordRemoved: false,
+    record: null,
     owned: new Map(),
     phase: 'staging',
     step: 'audit',

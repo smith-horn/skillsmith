@@ -228,6 +228,7 @@ export function computeRecordSha256(record: Omit<SwapRecord, 'recordSha256'>): s
     preEntry: record.preEntry,
     postEntry: record.postEntry,
     backupDest: record.backupDest,
+    ...(record.fullDevice === undefined ? {} : { fullDevice: record.fullDevice }),
   }
   const idOrder = (i: RecordIdentity): RecordIdentity => ({
     dev: i.dev,
@@ -274,6 +275,7 @@ export async function writeRecord(st: SwapState): Promise<void> {
   }
   const record: SwapRecord = { ...body, recordSha256: computeRecordSha256(body) }
   await publishJson(st, opPaths(st).record, record)
+  st.record = record
 }
 
 /** `skillsmith doctor recovery --clean-staging <opId>`: what a left op dir is cleaned with. */

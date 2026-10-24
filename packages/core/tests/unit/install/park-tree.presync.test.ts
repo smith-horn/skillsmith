@@ -5,7 +5,9 @@
  * parent (which holds `.skillsmith-parked`'s), through directory descriptors,
  * after the op directory is made and before `rename(2)`. A failure there stops
  * `park-failed` with nothing moved and leaves what a failed rename leaves: the
- * op directory, empty, in the parked area.
+ * op directory as it was (empty when this park made it). Round 3 runs each
+ * case from three starting states: fresh, the parked area already there with
+ * a new op dir, and both already there (`opDirCreated: false`).
  *
  * Every fs call is observed on the `node:fs` default object, which the park
  * looks up at call time; each stub counts that it fired.
@@ -67,57 +69,87 @@ const fixture = () => {
   return f
 }
 
-describe('the park syncs its destination ancestry before the rename', () => {
-  it('fsyncs .skillsmith-parked, then the parent, then renames; and reports both', () => {
-    const f = fixture()
-    const events = recordSyncs()
-    const r = park(f.parent, 'tree', { guardHash: guardOf(f.origin) })
-    expect(r.status).toBe('parked')
-    const parked = path.join(f.parent, PARKED)
-    expect(events.slice(0, 3)).toEqual([
-      `fsync ${parked}`,
-      `fsync ${f.parent}`,
-      `rename ${f.origin}`,
-    ])
-    expect(r.preMoveSynced).toEqual([parked, f.parent])
-    expect(r.opDirCreated).toBe(true)
-  })
+type Pre = 'fresh' | 'parked area exists, op dir new' | 'both exist'
+const OP = 'op-presync'
 
-  for (const which of ['.skillsmith-parked', 'the parent'] as const) {
-    it(`a failed fsync of ${which}: stopped/park-failed with its errno, nothing moved, the empty op dir left`, () => {
+/**
+ * Round 3 (governance mutation M1: syncing only when the op dir was created
+ * passed every test): the destination's starting state, made by an earlier
+ * park of a sibling tree. `both exist` reuses this test's opId, so the op dir
+ * is already there with the sibling's copy in it.
+ */
+function arrange(f: ReturnType<typeof fixture>, pre: Pre): void {
+  if (pre === 'fresh') return
+  fs.mkdirSync(path.join(f.parent, 'other'))
+  fs.writeFileSync(path.join(f.parent, 'other', 'o.txt'), 'other')
+  const opId = pre === 'both exist' ? OP : 'op-earlier'
+  const r = park(f.parent, 'other', { guardHash: guardOf(path.join(f.parent, 'other')), opId })
+  expect(r.status).toBe('parked')
+}
+
+const PRES: Pre[] = ['fresh', 'parked area exists, op dir new', 'both exist']
+
+describe('the park syncs its destination ancestry before the rename', () => {
+  for (const pre of PRES) {
+    it(`${pre}: fsyncs .skillsmith-parked, then the parent, then renames; reports both and opDirCreated`, () => {
       const f = fixture()
+      arrange(f, pre)
+      const events = recordSyncs()
+      const r = park(f.parent, 'tree', { guardHash: guardOf(f.origin), opId: OP })
+      expect(r.status).toBe('parked')
       const parked = path.join(f.parent, PARKED)
-      const target = which === 'the parent' ? f.parent : parked
-      const fds = new Map<number, string>()
-      let fired = 0
-      let renamed = 0
-      stub('openSync', (orig) => (...a: unknown[]) => {
-        const fd = orig(...a) as number
-        fds.set(fd, String(a[0]))
-        return fd
-      })
-      stub('fsyncSync', (orig) => (...a: unknown[]) => {
-        if (fds.get(Number(a[0])) === target) {
-          fired++
-          throw errnoError('EIO')
-        }
-        return orig(...a)
-      })
-      stub('renameSync', (orig) => (...a: unknown[]) => {
-        renamed++
-        return orig(...a)
-      })
-      const before = fs.readFileSync(path.join(f.origin, 'sub', 'f.txt'), 'utf8')
-      const r = park(f.parent, 'tree', { guardHash: guardOf(f.origin), opId: 'op-presync' })
-      expect(fired).toBe(1)
-      expect(r).toMatchObject({ status: 'stopped', reason: 'park-failed', errno: 'EIO' })
-      expect(String(r.detail)).toContain(`${target} could not be synced before the move`)
-      expect(r.preMoveSynced).toEqual(which === 'the parent' ? [parked] : [])
-      expect(renamed).toBe(0)
-      expect(exists(f.origin)).toBe(true)
-      expect(fs.readFileSync(path.join(f.origin, 'sub', 'f.txt'), 'utf8')).toBe(before)
-      expect(fs.readdirSync(path.join(parked, 'op-presync'))).toEqual([])
+      expect(events.slice(0, 3)).toEqual([
+        `fsync ${parked}`,
+        `fsync ${f.parent}`,
+        `rename ${f.origin}`,
+      ])
+      expect(r.preMoveSynced).toEqual([parked, f.parent])
+      expect(r.opDirCreated).toBe(pre !== 'both exist')
+      expect(exists(f.origin)).toBe(false)
+      expect(path.dirname(String(r.path))).toBe(path.join(parked, OP))
     })
+
+    for (const which of ['.skillsmith-parked', 'the parent'] as const) {
+      it(`${pre}, a failed fsync of ${which}: stopped/park-failed with its errno, nothing moved`, () => {
+        const f = fixture()
+        arrange(f, pre)
+        const parked = path.join(f.parent, PARKED)
+        const target = which === 'the parent' ? f.parent : parked
+        const opDir = path.join(parked, OP)
+        const before = fs.existsSync(opDir) ? fs.readdirSync(opDir).sort() : []
+        const fds = new Map<number, string>()
+        let fired = 0
+        let renamed = 0
+        stub('openSync', (orig) => (...a: unknown[]) => {
+          const fd = orig(...a) as number
+          fds.set(fd, String(a[0]))
+          return fd
+        })
+        stub('fsyncSync', (orig) => (...a: unknown[]) => {
+          if (fds.get(Number(a[0])) === target) {
+            fired++
+            throw errnoError('EIO')
+          }
+          return orig(...a)
+        })
+        stub('renameSync', (orig) => (...a: unknown[]) => {
+          renamed++
+          return orig(...a)
+        })
+        const bytes = fs.readFileSync(path.join(f.origin, 'sub', 'f.txt'), 'utf8')
+        const r = park(f.parent, 'tree', { guardHash: guardOf(f.origin), opId: OP })
+        expect(fired).toBe(1)
+        expect(r).toMatchObject({ status: 'stopped', reason: 'park-failed', errno: 'EIO' })
+        expect(String(r.detail)).toContain(`${target} could not be synced before the move`)
+        expect(r.preMoveSynced).toEqual(which === 'the parent' ? [parked] : [])
+        expect(r.opDirCreated).toBe(pre !== 'both exist')
+        expect(renamed).toBe(0)
+        expect(exists(f.origin)).toBe(true)
+        expect(fs.readFileSync(path.join(f.origin, 'sub', 'f.txt'), 'utf8')).toBe(bytes)
+        // The op dir holds exactly what it held before: nothing of this tree moved into it.
+        expect(fs.readdirSync(opDir).sort()).toEqual(before)
+      })
+    }
   }
 
   it('control: a failed rename leaves the same state (the empty op dir), so the sync failure matches it', () => {

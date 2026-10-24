@@ -61,11 +61,11 @@ export interface Sidecar {
   /** `partial-copy` only: the copy's source still hashed to its own sidecar's `treeHash`. */
   sourceUnchanged?: boolean
   /**
-   * `partial-copy` only (round 2): why the copy was kept. `enospc` (the device
-   * filled, `ENOSPC` or `EDQUOT`) blocks every later cross-device copy into the
-   * area until it is pruned (`skill-swap.space.ts`); `mismatch` (the source
-   * changed while it was copied) and `copy-failed` (any other copy error) do
-   * not.
+   * `partial-copy` only (round 2): why the copy was kept, carried with the tree
+   * so doctor and prune can say so: `enospc` (the device filled, `ENOSPC` or
+   * `EDQUOT`; the op's kept `record.json` also names it in its full-device
+   * marker, round 3), `mismatch` (the source changed while it was copied), or
+   * `copy-failed` (any other copy error). Nothing blocks on it any more.
    */
   partialCause?: PartialCause
 }
