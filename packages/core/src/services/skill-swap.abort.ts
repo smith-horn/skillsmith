@@ -1,5 +1,5 @@
 /**
- * SMI-6531 (A1 step 4b): abort cleanup, for every abort before rename 1 (A1
+ * SMI-6531 (A1 steps 4b, 4c): abort cleanup, for every abort before rename 1 (A1
  * plan §3.3 "Abort cleanup", UD15-UD17 as revised by UD28; UD25, UD32). It
  * removes nothing: a completed, unchanged staged tree is parked with its op
  * dir, and a changed or partial one is kept through `publishTree`.
@@ -8,11 +8,12 @@
  *     after a step-2 `busy`); an abort at steps 3-6 already holds it.
  *  2. `check`. A failure stops with no mutation; OP and any record stay.
  *  3. N still has `buildIdentity` and is a directory. Otherwise OP stays.
- *  4-6 below check OP with ONE rule (`opDiffers`): OP holds exactly an
- *     expected set of names, each with the identity this run bound for it
- *     (dev, ino, birthtime and file type). An entry not in the set ends
- *     `left` with `kept/op-not-empty`; an expected entry missing, or present
- *     with another identity, ends `left` with `kept/identity-changed`.
+ *  4-6 below check OP with ONE rule (`opDiffers`, `skill-swap.park-op.ts`):
+ *     OP holds exactly an expected set of names, each with the identity this
+ *     run bound for it (dev, ino, birthtime and file type). An entry not in
+ *     the set ends `left` with `kept/op-not-empty`; an expected entry missing,
+ *     or present with another identity, ends `left` with
+ *     `kept/identity-changed`.
  *  4. Before anything is published or unlinked, the set is N (with
  *     `buildIdentity`, when the build made it) and every metadata file this
  *     run created in OP and still holds (`st.owned`): `owner.json`, and
@@ -20,19 +21,17 @@
  *  5. A failed build (no `postTree`): `check`, keep N as `failed-build`. A
  *     completed build: hash N; different is `edited-new`, unreadable
  *     `unrecorded-new` (`check`, then `publishTree`); equal stays to be parked.
+ *     Across devices (4c) a keep copies N and leaves the verified N in OP
+ *     (`st.moveSources`), so N is parked as well: a kept tree's source.
  *  6. Metadata, then the park. Unlink `record.json` if this run published it
  *     (sync OP); if N is to be parked, write `park-intent.json` durably;
  *     unlink `record.json.tmp`, `owner.json.tmp` and `owner.json` where this
  *     run wrote them. Then, before the gate, the set is exactly `new`
  *     (`buildIdentity`) and `park-intent.json` (its own binding), both present,
  *     when N is to be parked; otherwise it is empty, and OP is `rmdir`ed (sync
- *     ST). To park: `check`, the clock gate with its probes in ST, OP's guard
- *     hash and identity (`gateAndBind`, the late-bound order), the same exact
- *     set again (a change made before the hash is inside the hash, so it must
- *     be caught here; a change made after the hash fails the park's own guard
- *     recheck), `check`, and park OP from ST (`parkTreeIndexed(ST, opId, …)`,
- *     caller `abort-cleanup`, kind `abort-new`), landing at
- *     `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`.
+ *     ST). To park: `parkOpFromStaging` (`skill-swap.park-op.ts`, shared with
+ *     step 13 across devices), caller `abort-cleanup`, kind `abort-new`,
+ *     landing at `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`.
  *  7. The report: `staged` is `parked` (with `parkedPath`), `kept` (with
  *     `keptAs`), `held` (with `parkedPath`), `left` (with `opDir` and the
  *     `--clean-staging` command; `keptAs` too when a keep finished and a later
@@ -43,39 +42,27 @@
  *     writes no line from this module; only the busy second wait announces
  *     itself, once, before it polls (`skill-swap.abort.wait.ts`).
  *
- * Residual (UD18's identical-serialization class, UD40): a byte-identical
- * swap of `new` (or of anything inside it), or of `park-intent.json` with the
- * same bytes and the same mode, made after the last entry check and before the
- * park's rename passes the park's guard hash, which covers bytes and modes but
- * not inodes. The substitute is parked in the original's place. It lands in
- * the parked area whole and nothing is deleted; the original, wherever the
- * swapper put it, is untouched. A replacement with another mode changes the
- * hash and the park refuses it. Node has no directory-handle rename that would
- * close the window.
+ * Residual (UD18's identical-serialization class, UD40): see
+ * `skill-swap.park-op.ts`. A byte-identical substitute is parked whole in the
+ * original's place; nothing is deleted.
  *
  * Every unlink is `unlinkOwned` (the file this run wrote, verified) and every
  * mutation runs `check` first. The guard hash comes from `gateAndBind`, which
  * uses the hash function the park recomputes with.
  *
- * Not here: the cross-device keep (4c) and doctor's acceptance of the intent
- * (step 6). The exit code is step 7's: every abort result is `refused`.
+ * Not here: doctor's acceptance of the intent (step 6). The exit code is step
+ * 7's: every abort result is `refused`.
  *
  * @module @skillsmith/core/services/skill-swap.abort
  */
-import fs from 'node:fs'
 import path from 'node:path'
-import { parkTreeIndexed } from '../install/park-call.js'
-import { gateAndBind } from '../install/park-clock-gate.js'
-import type { ParkResult } from '../install/park-result.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { S_IFDIR } from '../install/park-tree.perms.js'
-import { PARKED_INDEX_FILE } from '../install/parked-index.js'
 import { treeHashOf } from './skill-tree.js'
 import { SkillWriteStop } from './skill-write-lock.types.js'
 import { writeParkIntent } from './skill-swap.intent.js'
 import {
-  check,
   hook,
   messageOf,
   opPaths,
@@ -87,7 +74,9 @@ import {
   unlinkOwned,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { publishTree, rootKeyOf } from './skill-swap.publish.js'
+import { checkTraced, opDiffers, parkOpFromStaging, say } from './skill-swap.park-op.js'
+import type { Expected, NotDone } from './skill-swap.park-op.js'
+import { publishTree } from './skill-swap.publish.js'
 import { cleanStagingHint } from './skill-swap.staging.js'
 import { NEW_DIR, PARK_INTENT_FILE } from './skill-swap.types.js'
 import type {
@@ -95,13 +84,11 @@ import type {
   AbortStaged,
   SwapRefuseReason,
   SwapResult,
-  SwapWarning,
 } from './skill-swap.types.js'
 
 export type Refused = Extract<SwapResult, { status: 'refused' }>
-export type NotDone = Omit<Extract<SwapWarning, { code: 'removal-not-done' }>, 'code' | 'path'> & {
-  path?: string
-}
+export type { NotDone } from './skill-swap.park-op.js'
+export { say } from './skill-swap.park-op.js'
 type Kept = { kind: AbortKeptKind; path: string } | undefined
 
 /** The reason word and detail of a failure. An unexpected error is `write-failed`. */
@@ -109,12 +96,6 @@ export function describe(err: unknown): { reason: string; detail: string } {
   if (err instanceof SwapFault) return { reason: err.reason, detail: err.detail }
   if (err instanceof SkillWriteStop) return { reason: err.code, detail: err.detail }
   return { reason: 'write-failed', detail: messageOf(err) }
-}
-
-/** One line on the injected sink, or stderr. */
-export function say(st: SwapState, line: string): void {
-  if (st.options.stderr !== undefined) st.options.stderr(line)
-  else process.stderr.write(`${line}\n`)
 }
 
 /** The result, plus the `removal-not-done` warning when one is given. */
@@ -177,50 +158,10 @@ function leftWith(
   })
 }
 
-function checkTraced(st: SwapState): void {
-  check(st)
-  trace(st, { op: 'check' })
-}
-
 /** The metadata names this run wrote into OP (unlinked by step 6 when still its own). */
 function ownedMeta(st: SwapState): string[] {
   const p = opPaths(st)
   return [p.owner, `${p.owner}.tmp`, `${p.record}.tmp`].filter((f) => st.owned.has(f))
-}
-
-/** What OP must hold at one point of cleanup: each name and the identity this run bound for it. */
-type Expected = ReadonlyMap<string, BoundIdentity>
-
-/**
- * The one rule for OP's entries: OP holds exactly `expected`, each name with
- * the identity this run bound for it (dev, ino, birthtime, file type). An
- * entry not expected is `kept/op-not-empty`; an expected entry that is
- * missing, or present with another identity, is `kept/identity-changed`.
- * Returns null when OP is exactly as expected.
- */
-async function opDiffers(st: SwapState, expected: Expected): Promise<NotDone | null> {
-  const names = (await fs.promises.readdir(st.opDir)).sort()
-  const extra = names.filter((n) => !expected.has(n))
-  if (extra.length > 0) {
-    return {
-      status: 'kept',
-      reason: 'op-not-empty',
-      detail: `${st.opDir} holds ${extra.join(', ')}, which this update did not write`,
-    }
-  }
-  for (const [name, id] of [...expected].sort(([a], [b]) => a.localeCompare(b))) {
-    const now = bindIdentity(path.join(st.opDir, name))
-    if (!now.ok || !sameIdentity(id, now)) {
-      return {
-        status: 'kept',
-        reason: 'identity-changed',
-        detail: now.ok
-          ? `${path.join(st.opDir, name)} is not the entry this update made`
-          : `${path.join(st.opDir, name)} is missing (${now.errno ?? 'unknown'})`,
-      }
-    }
-  }
-  return null
 }
 
 /** Every file this run created directly in OP and still holds (`st.owned`), by name. */
@@ -255,7 +196,9 @@ export async function runCleanup(
     const differs = await opDiffers(st, expected)
     if (differs !== null) return leftWith(st, reason, detail, undefined, differs)
     if (built) keptAs = await keepIfNeeded(st, newDir)
-    return await metadataThenPark(st, reason, detail, keptAs, built && keptAs === undefined)
+    // Parked: an unchanged N, or a kept N's verified source left in OP across devices (4c).
+    const parkN = built && (keptAs === undefined || st.moveSources.has(NEW_DIR))
+    return await metadataThenPark(st, reason, detail, keptAs, parkN)
   } catch (err) {
     rethrowLockOrder(err)
     const stop = describe(err)
@@ -364,7 +307,7 @@ async function metadataThenPark(
   return parkOp(st, reason, detail, keptAs, expected)
 }
 
-/** Step 6's park of OP from ST, in the late-bound order. */
+/** Step 6's park of OP from ST (`parkOpFromStaging`), and its report. */
 async function parkOp(
   st: SwapState,
   reason: SwapRefuseReason,
@@ -372,76 +315,21 @@ async function parkOp(
   keptAs: Kept,
   expected: Expected
 ): Promise<Refused> {
-  const ST = st.binding.stagingDir
   const kept = keptAs === undefined ? {} : { keptAs }
-  const left = (notDone: NotDone): Refused => leftWith(st, reason, detail, keptAs, notDone)
-  checkTraced(st)
-  const g = await gateAndBind({ probeDir: ST, parentAbs: ST, name: st.opId, opId: st.opId })
-  if (!g.ok) {
-    const probe = 'leftProbe' in g && g.leftProbe !== null ? ` (probe left at ${g.leftProbe})` : ''
-    return left({
-      status: 'stopped',
-      reason: g.reason,
-      ...(g.errno === null ? {} : { errno: g.errno }),
-      detail: `${g.detail}${probe}`,
+  const o = await parkOpFromStaging(st, { caller: 'abort-cleanup', kind: 'abort-new', expected })
+  if (o.status === 'parked') {
+    return refused(st, reason, detail, { staged: 'parked', parkedPath: o.parkedPath, ...kept })
+  }
+  if (o.status === 'held') {
+    sayNotDone(st, { ...o.notDone, path: st.opDir })
+    return refused(st, reason, detail, {
+      staged: 'held',
+      parkedPath: o.notDone.parkedPath,
+      ...kept,
+      notDone: o.notDone,
     })
   }
-  if (st.op === null || !sameIdentity(st.op.identity, g.expectIdentity)) {
-    return left({ status: 'kept', reason: 'identity-changed', detail: `${st.opDir} changed` })
-  }
-  // A change made before the hash is inside it: the same exact set, checked again.
-  const differs = await opDiffers(st, expected)
-  if (differs !== null) return left(differs)
-  trace(st, { op: 'guard', path: st.opDir, hash: g.guardHash })
-  await hook(st, 'beforePark')
-  checkTraced(st)
-  const park = st.options.park ?? parkTreeIndexed
-  const r: ParkResult = await park(ST, st.opId, {
-    client: st.input.client,
-    caller: 'abort-cleanup',
-    kind: 'abort-new',
-    opId: st.opId,
-    guardHash: g.guardHash,
-    expectIdentity: g.expectIdentity,
-    maxBirthtimeNs: g.maxBirthtimeNs,
-    rootKey: rootKeyOf(st.binding.root),
-    indexPath: path.join(st.stateRootReal, PARKED_INDEX_FILE),
-  })
-  const moved = r.status === 'parked' || r.status === 'held'
-  trace(st, { op: 'park', path: st.opDir, status: r.status, dest: moved ? r.path : null })
-  await hook(st, 'afterPark')
-  if (moved && (r.sidecarError !== undefined || r.indexError !== undefined)) {
-    st.warnings.push({
-      code: 'park-metadata-failed',
-      path: String(r.path),
-      ...(r.sidecarError === undefined ? {} : { sidecarError: r.sidecarError }),
-      ...(r.indexError === undefined ? {} : { indexError: r.indexError }),
-    })
-  }
-  if (r.status === 'parked') {
-    return refused(st, reason, detail, { staged: 'parked', parkedPath: String(r.path), ...kept })
-  }
-  const errno = r.errno === null ? {} : { errno: r.errno }
-  const why = r.detail === null ? {} : { detail: r.detail }
-  if (r.status === 'held') {
-    const parkedPath = String(r.heldPath ?? r.path)
-    const notDone: NotDone = {
-      status: 'held',
-      reason: r.reason ?? 'held',
-      parkedPath,
-      ...errno,
-      ...why,
-    }
-    sayNotDone(st, { ...notDone, path: st.opDir })
-    return refused(st, reason, detail, { staged: 'held', parkedPath, ...kept, notDone })
-  }
-  // `kept` or `stopped` (`removed` is prune's, never a park's): OP stays.
-  return left({
-    status: r.status === 'kept' ? 'kept' : 'stopped',
-    reason: r.reason ?? r.status,
-    ...errno,
-    ...why,
-  })
+  return leftWith(st, reason, detail, keptAs, o.notDone)
 }
 
 /** An abort at steps 3-6: lock 1 is already held. */

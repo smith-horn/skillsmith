@@ -9,6 +9,15 @@
  * rename fails for any reason, nothing moves and nothing is deleted (ADR-166
  * D-4). A directory, a regular file and a symlink move the same way (UD30).
  *
+ * Before the rename (SMI-6531 step 4c review round 2) it `fsync`s
+ * `.skillsmith-parked` and the parent, so the op directory and the parked area
+ * it may just have created are on disk before the tree is removed from the
+ * parent. A sync failure stops `park-failed` with nothing moved. Every result
+ * from that point on carries `preMoveSynced` (the directories synced, in
+ * order) and `opDirCreated`. After the rename the park syncs nothing more; a
+ * caller that needs the move itself durable syncs the op directory and the
+ * parent (`services/skill-swap.park-op.ts`).
+ *
  * THREAT MODEL (ADR-166 D-0): safe against accidental concurrent writers (a
  * second session, an editor, a sync tool); not against an adversary with write
  * access to the parent racing the final rename(2). Closing that window needs
@@ -36,7 +45,12 @@ import type {
 } from './park-result.js'
 import { S_IFDIR, S_IFLNK, S_IFMT, S_IFREG } from './park-tree.perms.js'
 import { bindIdentity, sameIdentity } from './park-tree.identity.js'
-import { ensureParkedRoot, prepareOpDir, recheckDestination } from './park-tree.destination.js'
+import {
+  ensureParkedRoot,
+  prepareOpDir,
+  recheckDestination,
+  syncDirSync,
+} from './park-tree.destination.js'
 import type { ParkedRootResult } from './park-tree.destination.js'
 import { pathTreeRecord } from './park-tree.verify.js'
 import { finishAfterRename, preMoveGuard } from './park-tree.postmove.js'
@@ -218,6 +232,35 @@ function parkIntoArea(a: {
   })
   if (!op.ok) return op.result
 
+  // The destination's ancestry made durable BEFORE the rename (step 4c review
+  // round 2, owner decision): `.skillsmith-parked` holds the op directory's
+  // entry and the parent holds `.skillsmith-parked`'s. Once these are on disk,
+  // the rename changes only two entries, the new name in the op directory and
+  // the removal from the parent, so a crash cannot leave the tree removed from
+  // the parent inside a directory that never reached disk. The caller syncs
+  // those two entries after the rename. Residual (owner decision, UD41): if
+  // that op-directory sync fails and someone else later syncs the parent, the
+  // removal can persist without the new name, the window every rename has
+  // before its destination sync.
+  // A failure stops `park-failed` with nothing moved, leaving what a failed
+  // rename leaves: the op directory, empty, in the parked area.
+  const preMoveSynced: string[] = []
+  for (const dir of [area.parkedRoot, path.dirname(area.parkedRoot)]) {
+    const errno = syncDirSync(dir)
+    if (errno !== null) {
+      return {
+        ...stoppedAtOrigin(errno),
+        detail: `${dir} could not be synced before the move, so nothing was moved`,
+        opDirCreated: op.created,
+        preMoveSynced,
+      }
+    }
+    preMoveSynced.push(dir)
+  }
+  // Every result from here on says what the park made durable before its
+  // rename, so a caller can trace it (A1 plan T-P5).
+  const pre = { opDirCreated: op.created, preMoveSynced }
+
   const destPath = path.join(op.opDir, `${name}-${randSuffix()}`)
 
   const destChanged = recheckDestination({
@@ -228,16 +271,17 @@ function parkIntoArea(a: {
     originPath,
     observedTreeHash,
   })
-  if (destChanged !== null) return destChanged
+  if (destChanged !== null) return { ...destChanged, ...pre }
 
   // The source re-check: UD24's rule, the identity checked immediately before
   // the destructive step. A MITIGATION, NOT A CLOSURE: a window remains between
   // this lstat and rename(2), accepted under ADR-166 D-0.
   if (boundIdentity !== null) {
     const atRename = bindIdentity(originPath)
-    if (!atRename.ok) return stoppedAtOrigin(atRename.errno)
+    if (!atRename.ok) return { ...stoppedAtOrigin(atRename.errno), ...pre }
     if (!sameIdentity(boundIdentity, atRename)) {
       return {
+        ...pre,
         status: 'kept',
         reason: 'identity-changed',
         // A live substitution and a caller's wrong expectIdentity must not look
@@ -254,10 +298,10 @@ function parkIntoArea(a: {
   } catch (err) {
     // rename(2) is atomic: on failure nothing moved. Never fall back to a
     // delete, never retarget elsewhere (ADR-166 D-4).
-    return stoppedAtOrigin(errCode(err))
+    return { ...stoppedAtOrigin(errCode(err)), ...pre }
   }
 
-  return finishAfterRename({
+  const finished = finishAfterRename({
     destPath,
     originPath,
     name,
@@ -271,6 +315,7 @@ function parkIntoArea(a: {
     opIdentity: op.opIdentity,
     skillsmithVersion,
   })
+  return { ...finished, ...pre }
 }
 
 /** The barrel's VERSION, or an Error saying it was unavailable and nothing moved. */

@@ -39,6 +39,7 @@ import {
   UNDONE_DIR,
 } from './skill-swap.types.js'
 import type {
+  SwapRecord,
   SwapHookPoint,
   SwapIncomplete,
   SwapInput,
@@ -84,6 +85,13 @@ export interface SwapState {
    * kept (`skill-swap.abort.ts`).
    */
   published: { src: string; dest: string; kind: string } | null
+  /**
+   * Across devices (4c): every tree `publishTree` copied and verified, by its
+   * name in OP. The verified source stays in OP, which is then parked whole
+   * (UD28); `identity` is the source's as bound for its sidecar, `dest` the
+   * verified copy's path.
+   */
+  moveSources: Map<string, { identity: BoundIdentity; dest: string }>
   /** What `owner.json` says, once this run published it (the park intent copies it). */
   owner: { pid: number; host: string; uid: number } | null
   newIdentity: BoundIdentity | null
@@ -97,6 +105,8 @@ export interface SwapState {
   backupDest: string
   /** True once step 13 unlinked `record.json`: a result must not name it after that. */
   recordRemoved: boolean
+  /** What `record.json` holds, once this run published it (a full-device stop rewrites it). */
+  record: SwapRecord | null
   /**
    * The identity of every file `writeNewFile` created, by path: the metadata
    * (`owner.json`, `record.json`) and their temps, the sidecar temp, and every

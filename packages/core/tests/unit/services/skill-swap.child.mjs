@@ -6,7 +6,8 @@
  *   node --import tsx skill-swap.child.mjs kill <config.json>
  *     Plans and runs `swapInPlace` from the config ({ skillsDir, stateRoot,
  *     dirName, opId, writeSet: [{ rel, kind, text }], killAt }) and SIGKILLs
- *     itself at hook `killAt`. If it ever gets past that, it prints the result.
+ *     itself at hook `killAt` (or inside the park, `killFs`; or mid cross-device
+ *     copy, `killMidCopy`). If it ever gets past that, it prints the result.
  *
  *   node --import tsx skill-swap.child.mjs hold <skillsDir> <markerDir> [go]
  *     Takes lock 1 on <skillsDir>, writes <markerDir>/held, and stays inside
@@ -75,6 +76,13 @@ if (cfg.abortAt === 'build') {
     throw new Error('forced build failure')
   })
 }
+// SMI-6531 step 4c round 1: `editAfterSidecar` edits the old folder once its
+// backup sidecar is published, so the cross-device copy rewrites the sidecar.
+if (cfg.editAfterSidecar) {
+  on('afterSidecar', () =>
+    appendFileSync(join(opDir, 'old', 'a.txt'), 'edited after the sidecar\n')
+  )
+}
 if (cfg.editN) {
   on('afterBuild', () => appendFileSync(join(opDir, 'new', 'a.txt'), 'edited in N\n'))
 }
@@ -106,6 +114,21 @@ if (cfg.killFs === 'parkSidecarAfter') {
     return out
   }
 }
+// SMI-6531 step 4c (T-X8): `killMidCopy` kills inside the cross-device copy,
+// after its first entry; `deleteLog` appends the path of every fs delete call
+// (sync, callback and promise) to that file before it runs, so a killed run
+// can still be checked for a delete of a tree entry.
+if (cfg.deleteLog) {
+  const log = (p) => appendFileSync(cfg.deleteLog, `${String(p)}\n`)
+  for (const n of ['unlinkSync', 'rmdirSync', 'rmSync', 'unlink', 'rmdir', 'rm']) {
+    const orig = fs[n]
+    fs[n] = (...a) => (log(a[0]), orig(...a))
+  }
+  for (const n of ['unlink', 'rmdir', 'rm']) {
+    const orig = fs.promises[n]
+    fs.promises[n] = (...a) => (log(a[0]), orig(...a))
+  }
+}
 const oldIdentity = bindIdentity(realDir)
 const pre = treeHashOf(realDir)
 const port = {
@@ -135,6 +158,7 @@ const result = await swapInPlace(
     appendJournal: async () => {},
     stderr: () => {},
     hooks,
+    ...(cfg.killMidCopy ? { duringBackupCopy: die } : {}),
   }
 )
 process.stdout.write(JSON.stringify(result) + '\n')

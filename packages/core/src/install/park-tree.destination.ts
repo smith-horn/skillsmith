@@ -137,7 +137,14 @@ export function ensureParkedRoot(parentAbs: string): ParkedRootResult {
 }
 
 export type OpDirResult =
-  | { ok: true; opDir: string; opIdentity: BoundIdentity; opReal: string | null }
+  | {
+      ok: true
+      opDir: string
+      opIdentity: BoundIdentity
+      opReal: string | null
+      /** True when this call's `mkdir` made the op directory (false: it existed). */
+      created: boolean
+    }
   | { ok: false; result: PartialParkResult }
 
 /**
@@ -174,9 +181,11 @@ export function prepareOpDir(a: {
     ok: false,
     result: { status: 'stopped', reason: 'park-failed', path: opDir, entry: a.name, errno },
   })
+  let created = false
   try {
     // The mode is a request only: EEXIST discards it, so it is checked below.
     fs.mkdirSync(opDir, { mode: 0o700, recursive: false })
+    created = true
   } catch (err) {
     if (errCode(err) !== 'EEXIST') return stopped(errCode(err))
   }
@@ -207,7 +216,40 @@ export function prepareOpDir(a: {
       return kept('op directory could not be resolved before the move', errCode(err))
     }
   }
-  return { ok: true, opDir, opIdentity: identityOf(od), opReal }
+  return { ok: true, opDir, opIdentity: identityOf(od), opReal, created }
+}
+
+/** Codes a filesystem returns when it cannot fsync a directory at all (as `install/dir-sync.ts`). */
+const DIR_SYNC_UNSUPPORTED = new Set(['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR', 'ENOSYS'])
+
+/**
+ * `fsync`s the directory `dir` through a directory descriptor, synchronously
+ * like the rest of the park. Returns null when it synced (or the platform or
+ * filesystem cannot sync a directory at all, which `install/dir-sync.ts`
+ * accepts the same way), else the errno.
+ */
+export function syncDirSync(dir: string): string | null {
+  if (process.platform === 'win32') return null
+  let fd: number
+  try {
+    fd = fs.openSync(dir, 'r')
+  } catch (err) {
+    const code = errCode(err)
+    return code !== null && DIR_SYNC_UNSUPPORTED.has(code) ? null : (code ?? 'EIO')
+  }
+  try {
+    fs.fsyncSync(fd)
+    return null
+  } catch (err) {
+    const code = errCode(err)
+    return code !== null && DIR_SYNC_UNSUPPORTED.has(code) ? null : (code ?? 'EIO')
+  } finally {
+    try {
+      fs.closeSync(fd)
+    } catch {
+      // The sync's own outcome stands.
+    }
+  }
 }
 
 /**

@@ -106,10 +106,10 @@ describe('each caller parks with its own kind and gets its own held detail', () 
     })
   }
 
-  it('move-source names the backup and the extra copy, as the plan words it', () => {
+  it('move-source names the copy and the extra copy, neutrally (an update or an undo)', () => {
     const { r } = heldPark('move-source', 'move-source')
     expect(String(r.detail)).toContain(
-      `A write may have landed in the old folder while it was being backed up. The backup at ` +
+      `A write may have landed in the folder while it was being copied. The copy at ` +
         `'${BACKUP}' may not have it; the extra copy is at '${String(r.heldPath)}'.`
     )
   })

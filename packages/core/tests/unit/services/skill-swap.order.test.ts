@@ -2,7 +2,8 @@
  * SMI-6531 (A1 step 4a): T-P4 (same-device half) and T-X2 (swap half).
  *
  * T-P4: the traced syscalls contain the plan's sequence in order. The
- * cross-device copy and the park of OP are step 4c's half. `mkdir ST, sync R`
+ * cross-device copy and the park of OP are step 4c's half
+ * (`skill-swap.xdev.test.ts`). `mkdir ST, sync R`
  * belongs to `bindSkillsRoot` (step 2's tests, `skill-write-lock.dirsync`).
  *
  * T-X2: a SIGKILL between the renames leaves the path absent, O and N
