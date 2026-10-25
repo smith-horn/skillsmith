@@ -230,7 +230,7 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
     kind: 'unreadable',
     record: { opId, path: file, why, ...(errno === undefined ? {} : { errno }) },
   })
-  let text: string
+  let bytes: Buffer
   let handle: fs.promises.FileHandle
   try {
     // `O_NONBLOCK`: opening a FIFO would otherwise wait for a writer forever,
@@ -248,34 +248,53 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
     if (!(await handle.stat()).isFile()) return unreadable('not-a-file')
     // A bounded read, not `readFile`: that reads to EOF, so a record that grew
     // after a size check would still be read whole, under lock 1.
-    const bytes = await readAtMost(handle, MAX_RECORD_BYTES + 1)
-    if (bytes.length > MAX_RECORD_BYTES) return unreadable('too-large')
-    text = bytes.toString('utf8')
+    bytes = await readAtMost(handle, MAX_RECORD_BYTES + 1)
   } catch (err) {
     return unreadable('open-failed', errnoOf(err))
   } finally {
     await handle.close().catch(() => undefined)
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return unreadable('not-json')
-  }
-  if (!isSwapRecord(parsed)) return unreadable('malformed')
-  const { recordSha256, ...body } = parsed
-  if (computeRecordSha256(body) !== recordSha256) return unreadable('hash-mismatch')
-  if (parsed.opId !== opId) return unreadable('foreign-op-dir')
-  if (parsed.target.skillsDir !== root) return unreadable('foreign-root')
+  const v = verifyRecordBytes(bytes, root, opId)
+  if (!v.ok) return unreadable(v.why)
   return {
     kind: 'pending',
     record: {
       opId,
       path: file,
-      comparedPath: parsed.target.comparedPath,
-      realDir: parsed.target.realDir,
+      comparedPath: v.record.target.comparedPath,
+      realDir: v.record.target.realDir,
     },
   }
+}
+
+/** Why bytes that were read are not this root's record (every reason after the read). */
+export type RecordBytesWhy = Exclude<UnreadableRecordWhy, 'open-failed' | 'not-a-file'>
+
+/**
+ * Every check the scan makes after reading a record's bytes: the size cap,
+ * JSON, the schema-1 shape, the hash recomputed from the parsed body, the op
+ * dir's name and the root. Step 5 and the full-device rewrite run it on the
+ * exact bytes they then write, so a record they publish is one the scan
+ * accepts (owner decision 2026-10-25, retro of PR #3162).
+ */
+export function verifyRecordBytes(
+  bytes: Buffer,
+  root: string,
+  opId: string
+): { ok: true; record: SwapRecord } | { ok: false; why: RecordBytesWhy } {
+  if (bytes.length > MAX_RECORD_BYTES) return { ok: false, why: 'too-large' }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(bytes.toString('utf8'))
+  } catch {
+    return { ok: false, why: 'not-json' }
+  }
+  if (!isSwapRecord(parsed)) return { ok: false, why: 'malformed' }
+  const { recordSha256, ...body } = parsed
+  if (computeRecordSha256(body) !== recordSha256) return { ok: false, why: 'hash-mismatch' }
+  if (parsed.opId !== opId) return { ok: false, why: 'foreign-op-dir' }
+  if (parsed.target.skillsDir !== root) return { ok: false, why: 'foreign-root' }
+  return { ok: true, record: parsed }
 }
 
 /**

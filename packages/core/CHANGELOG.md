@@ -7,12 +7,13 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-6531 -- PR #3162 retro: the update probe's record check now returns the path that
   failed, so a staging folder that can't be listed is reported against that folder, not the skill.
   The probe also asks the check when a skill folder's own presence check fails, so a crashed update
-  reads `recovery-pending` there too, as the write does. `swapInPlace` checks, before writing its
-  record, that the record reads back as one the scan accepts, and refuses with `write-failed` if
-  not: JSON drops an entry it can't serialize (`undefined`, a function, a symbol) and throws on a
-  cycle or a `BigInt`, and a record missing an entry would block every skill in the root (`null`
-  means no entry). A value JSON changes inside an entry, such as a nested `undefined`, is recorded
-  as JSON writes it (UD47). Neither the probe nor
+  reads `recovery-pending` there too, as the write does. `swapInPlace` now serializes its record
+  once and runs the record scan's own checks on those exact bytes before writing them, and the
+  full-device marker's rewrite does the same: a record that would be refused (an entry JSON drops,
+  a record over 1 MiB, an entry whose JSON changes between calls) or that can't be serialized (a
+  cycle, a `BigInt`) is `write-failed` instead, since the scan would read it as unreadable and
+  block every skill in the root (`null` means no entry). A value JSON changes inside an entry, such
+  as a nested `undefined`, is recorded as JSON writes it (UD47). Neither the probe nor
   `swapInPlace` has a caller yet.
 
 - **Added**: SMI-6531 A1 step 5 -- the record scan. Before every update, under the skills root's

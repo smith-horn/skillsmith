@@ -18,6 +18,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { FullDeviceMarker, SwapResult } from '../../../src/services/skill-swap.js'
+import { computeRecordSha256 } from '../../../src/services/skill-swap.js'
+import { jsonBytes } from '../../../src/services/skill-swap.staging.js'
+import { MAX_RECORD_BYTES, scanStagingRecords } from '../../../src/services/skill-swap.records.js'
 import { isFullDeviceLeftover } from '../../../src/services/skill-swap.fullmark.js'
 import { ALL_DELETES, runSpied } from './skill-swap.abort.helpers.js'
 import { abortAt } from './skill-swap.abort.triggers.js'
@@ -394,5 +397,48 @@ describe('the marker rewrite: identity check and sync order', () => {
     expect(trace.indexOf(links[0]!)).toBeLessThan(ren)
     expect(trace.filter((t) => t.op === 'unlink' && t.path === rec)).toEqual([])
     expect(markerOf(fx)).toMatchObject({ cause: 'ENOSPC' })
+  })
+})
+
+describe('the marker rewrite is sealed like step 5', () => {
+  async function fullStop(pad: number) {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    p.input = { ...p.input, preEntry: { pad: 'x'.repeat(pad) } }
+    const copy = failCopyCreate(fx, 'ENOSPC')
+    const run = await runSpied(p, ALL_DELETES)
+    expect(copy.fired).toBe(1)
+    return { fx, run, size: fs.statSync(path.join(fx.opDir, 'record.json')).size }
+  }
+
+  it('a marked record over the cap is not written: the stop stands, says so, and the step-5 record stays readable', async () => {
+    // Measure the marker's byte overhead on a small record.
+    const small = await fullStop(10)
+    stoppedAtPublish(small.fx, small.run.result)
+    const marked = recordOf(small.fx)
+    expect(marked.fullDevice).toBeDefined()
+    const { recordSha256: _h, fullDevice: _m, ...rest } = marked
+    const unmarked = jsonBytes({ ...rest, recordSha256: computeRecordSha256(rest) }).length
+    const overhead = small.size - unmarked
+    expect(overhead).toBeGreaterThan(0)
+
+    // Pad so the unmarked record is exactly the cap and the marked one is over it.
+    const big = await fullStop(10 + (MAX_RECORD_BYTES - unmarked))
+    // Same path lengths, so the only difference between the runs is the pad.
+    expect(big.fx.skillsDir.length).toBe(small.fx.skillsDir.length)
+    expect(big.fx.stateRoot.length).toBe(small.fx.stateRoot.length)
+    expect(big.size).toBe(MAX_RECORD_BYTES)
+    expect(big.size + overhead).toBeGreaterThan(MAX_RECORD_BYTES)
+
+    const r = stoppedAtPublish(big.fx, big.run.result)
+    expect(r.incomplete?.detail).toContain(
+      '; the full-device marker was not recorded in record.json'
+    )
+    expect(r.incomplete?.detail).toContain('(too-large)')
+    expect(recordOf(big.fx)).not.toHaveProperty('fullDevice')
+    expect(fs.existsSync(path.join(big.fx.opDir, 'record.json.tmp'))).toBe(false)
+    const scan = await scanStagingRecords(fs.realpathSync(big.fx.skillsDir), big.fx.staging)
+    expect(scan).toMatchObject({ ok: true, unreadable: [] })
+    expect(scan.ok && scan.pending.map((x) => x.opId)).toEqual([OP_ID])
   })
 })

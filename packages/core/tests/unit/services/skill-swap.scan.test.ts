@@ -9,7 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { scanStagingRecords } from '../../../src/services/skill-swap.records.js'
+import { MAX_RECORD_BYTES, scanStagingRecords } from '../../../src/services/skill-swap.records.js'
 import type { SwapOptions } from '../../../src/services/skill-swap.js'
 import {
   deletesOf,
@@ -384,9 +384,9 @@ cycle.self = cycle
  * the record would not read back; it throws on the last two.
  */
 const UNSERIALIZABLE: Array<[string, unknown, string]> = [
-  ['undefined', undefined, "wouldn't read back"],
-  ['a function', () => 1, "wouldn't read back"],
-  ['a symbol', Symbol('entry'), "wouldn't read back"],
+  ['undefined', undefined, 'would be read as unreadable (malformed)'],
+  ['a function', () => 1, 'would be read as unreadable (malformed)'],
+  ['a symbol', Symbol('entry'), 'would be read as unreadable (malformed)'],
   ['a cycle', cycle, "can't be serialized"],
   ['a BigInt', { n: 1n }, "can't be serialized"],
 ]
@@ -423,6 +423,41 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
       }
     )
   }
+
+  /** A refused step-5 seal: no record or temp in ST, the build parked, another skill commits. */
+  async function sealRefused(entry: unknown, why: string) {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
+    const p = plan(fx, [modify('SKILL.md', '# next\n')])
+    p.input = { ...p.input, preEntry: entry }
+    const run = await runSpied(p, ALL_DELETES, { opId: opIdN('c') })
+    const r = refusedOf(run.result)
+    expect(r.reason).toBe('write-failed')
+    expect(r.detail).toContain(`would be read as unreadable (${why})`)
+    expect(r.staged).toBe('parked')
+    expect(listTree(fx.staging).filter((n) => /record\.json(\.tmp)?$/.test(n))).toEqual([])
+    expect(
+      run.events.some((e) => 'op' in e && e.op === 'create' && /record\.json/.test(e.path))
+    ).toBe(false)
+    expect((await attempt(other, opIdN('d'))).result.status).toBe('committed')
+    const scan = await scanStagingRecords(fs.realpathSync(fx.skillsDir), fx.staging)
+    expect(scan).toMatchObject({ ok: true, unreadable: [] })
+  }
+
+  it('an entry that pushes the record over MAX_RECORD_BYTES is refused (too-large); a smaller one commits', async () => {
+    await sealRefused({ pad: 'x'.repeat(MAX_RECORD_BYTES) }, 'too-large')
+    // Control: a pad that keeps the record under the cap commits.
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = plan(fx, [modify('SKILL.md', '# next\n')])
+    p.input = { ...p.input, preEntry: { pad: 'x'.repeat(MAX_RECORD_BYTES - 50_000) } }
+    expect((await run(p, { opId: opIdN('c') })).result.status).toBe('committed')
+  })
+
+  it('an entry whose toJSON changes between calls is refused: the hash made from one call does not match the bytes from another', async () => {
+    let calls = 0
+    await sealRefused({ toJSON: () => ({ n: ++calls }) }, 'hash-mismatch')
+    expect(calls).toBeGreaterThan(1)
+  })
 
   it('control: null entries commit; a kept record with them is read back as pending', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })

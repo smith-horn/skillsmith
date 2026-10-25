@@ -49,7 +49,7 @@ import type {
   SwapRecord,
   SwapRefuseReason,
 } from './skill-swap.types.js'
-import { computeRecordSha256, isSwapRecord } from './skill-swap.records.js'
+import { computeRecordSha256, MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.records.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
 
 /** The bigint identity as `record.json` stores it (decimal strings). */
@@ -100,8 +100,22 @@ export async function publishJson(
   value: unknown,
   afterTemp?: SwapHookPoint
 ): Promise<void> {
+  await publishBytes(st, final, jsonBytes(value), afterTemp)
+}
+
+/** The bytes `publishJson` writes for `value`. */
+export const jsonBytes = (value: unknown): Buffer =>
+  Buffer.from(JSON.stringify(value, null, 2) + '\n')
+
+/** `publishJson` for bytes already serialized (and, for a record, verified). */
+export async function publishBytes(
+  st: SwapState,
+  final: string,
+  bytes: Buffer,
+  afterTemp?: SwapHookPoint
+): Promise<void> {
   const tmp = `${final}.tmp`
-  await writeNewFile(st, tmp, Buffer.from(JSON.stringify(value, null, 2) + '\n'), 0o600)
+  await writeNewFile(st, tmp, bytes, 0o600)
   if (afterTemp !== undefined) await hook(st, afterTemp)
   try {
     await linkChecked(st, tmp, final)
@@ -205,32 +219,38 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
 }
 
 /**
- * The record must read back as one the record scan accepts, or publishing it
- * would block every write in the root (`recovery-record-unreadable`). JSON
- * drops an entry it can't serialize (`undefined`, a function, a symbol), and
- * throws on a cycle or a `BigInt`; either is `write-failed` here, before the
- * temp exists. A value JSON changes inside an entry (a nested `undefined`, a
- * `NaN`) still reads back: entries come from the manifest, which is JSON on
- * disk, so it can't hold one (UD47, an accepted residual; retro of PR #3162).
+ * Serializes the record once and runs the scan's own checks on those exact
+ * bytes (`verifyRecordBytes`), so the bytes written are a record the scan
+ * accepts; otherwise publishing it would block every write in the root
+ * (`recovery-record-unreadable`). A serialization that throws (a cycle, a
+ * `BigInt`) or bytes the scan would refuse (an entry JSON drops, a record over
+ * `MAX_RECORD_BYTES`, an entry whose JSON changes between calls) is
+ * `write-failed`, before the temp exists. The record returned is the one
+ * parsed from those bytes, plain data, so a later rewrite serializes it the
+ * same way. A value JSON changes inside an entry (a nested `undefined`, a
+ * `NaN`) is recorded as JSON writes it (UD47, an accepted residual).
  */
-function readableRecord(body: Omit<SwapRecord, 'recordSha256'>): SwapRecord {
-  let record: SwapRecord
-  let text: string | undefined
+export function sealRecord(
+  body: Omit<SwapRecord, 'recordSha256'>,
+  root: string,
+  opId: string
+): { bytes: Buffer; record: SwapRecord } {
+  let bytes: Buffer
   try {
     // The hash serializes the body too, so it is inside the guard.
-    record = { ...body, recordSha256: computeRecordSha256(body) }
-    text = JSON.stringify(record)
+    bytes = jsonBytes({ ...body, recordSha256: computeRecordSha256(body) })
   } catch (err) {
     throw new SwapFault('write-failed', `the record can't be serialized (${messageOf(err)})`, err)
   }
-  if (text === undefined || !isSwapRecord(JSON.parse(text))) {
+  const v = verifyRecordBytes(bytes, root, opId)
+  if (!v.ok) {
     throw new SwapFault(
       'write-failed',
-      "the record wouldn't read back as valid: preEntry and postEntry must be JSON values " +
-        '(null for no entry)'
+      `the record would be read as unreadable (${v.why}): preEntry and postEntry must be ` +
+        `JSON values (null for no entry), and the record at most ${MAX_RECORD_BYTES} bytes`
     )
   }
-  return record
+  return { bytes, record: v.record }
 }
 
 /** Step 5: `record.json`, published through its temp under lock 1. */
@@ -263,9 +283,9 @@ export async function writeRecord(st: SwapState): Promise<void> {
     postEntry: input.postEntry,
     backupDest: st.backupDest,
   }
-  const record = readableRecord(body)
-  await publishJson(st, opPaths(st).record, record)
-  st.record = record
+  const sealed = sealRecord(body, st.binding.root, st.opId)
+  await publishBytes(st, opPaths(st).record, sealed.bytes)
+  st.record = sealed.record
 }
 
 /** `skillsmith doctor recovery --clean-staging <opId>`: what a left op dir is cleaned with. */
