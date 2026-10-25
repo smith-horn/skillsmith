@@ -9,7 +9,7 @@
  * renderSummary() turns a report into the job-page Markdown. It never throws: Quality
  * Checks is a required job, and its verdict belongs to the audit step alone.
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 const isCount = (v) => Number.isInteger(v) && v >= 0
@@ -130,6 +130,16 @@ function buildCli(env) {
   )
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href && process.argv[2] === 'build') {
+// Compare real paths: Node resolves the main module's symlinks, process.argv[1] does not,
+// so a plain comparison silently skips the CLI when the script is reached via a symlink.
+function isMain() {
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? '')).href
+  } catch {
+    return false
+  }
+}
+
+if (isMain() && process.argv[2] === 'build') {
   buildCli(process.env)
 }

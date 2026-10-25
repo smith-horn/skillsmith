@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeFixtureTempDir } from './_lib/git-fixture-env'
@@ -95,6 +95,27 @@ describe('ci-code-review.sh', () => {
     expect(r.status).toBe(1)
     expect(r.report.summary_found).toBe(false)
     expect(r.report.summary).toBeNull()
+  })
+
+  it('T12: the report is written when the module is reached through a symlinked path', () => {
+    const real = join(__dirname, '..', 'lib')
+    const link = join(dir, 'lib-link')
+    symlinkSync(real, link)
+    writeFileSync(join(dir, 'log.txt'), 'log\n')
+    const out = join(dir, 'via-link.json')
+    const r = spawnSync('node', [join(link, 'audit-report.mjs'), 'build'], {
+      env: {
+        ...process.env,
+        AUDIT_EXIT_CODE: '0',
+        TEMP_OUTPUT: join(dir, 'log.txt'),
+        SUMMARY_FILE: join(dir, 'absent.json'),
+        OUTPUT_FILE: out,
+      },
+      encoding: 'utf8',
+    })
+    expect(r.status).toBe(0)
+    expect(existsSync(out)).toBe(true)
+    expect(JSON.parse(readFileSync(out, 'utf8')).exit_code).toBe(0)
   })
 
   it('T10: a counts file of the wrong shape is not trusted', () => {
