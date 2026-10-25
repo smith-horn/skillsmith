@@ -8,7 +8,8 @@
  * no `record.json` never blocks anything (a crash before step 5).
  *
  * A record counts only when it verifies as a record of this root (owner
- * decisions 2026-10-24): opened no-follow as a regular file, valid JSON with
+ * decisions 2026-10-24): opened no-follow as a regular file of at most
+ * `MAX_RECORD_BYTES`, valid JSON with
  * exactly the schema-1 keys, a `recordSha256` that matches its body, an
  * `opId` equal to its op dir's name, and a `target.skillsDir` equal to this
  * root. Anything else is **unreadable**: it can't be trusted to name the
@@ -32,7 +33,10 @@ import { RECORD_FILE } from './skill-swap.types.js'
 export type UnreadableRecordWhy =
   /** `open` or `read` failed (the errno says why; `ELOOP` for a symlink). */
   | 'open-failed'
+  /** A directory, FIFO, socket or device: never read. */
   | 'not-a-file'
+  /** Larger than `MAX_RECORD_BYTES`: never read. */
+  | 'too-large'
   | 'not-json'
   /** Not exactly the schema-1 keys and types. */
   | 'malformed'
@@ -62,6 +66,9 @@ export type RecordScan =
   | { ok: true; pending: PendingRecord[]; unreadable: UnreadableRecord[] }
   /** ST could not be listed, or an entry could not be inspected: nothing can be concluded. */
   | { ok: false; path: string; errno: string }
+
+/** Far above any record step 5 writes (its manifest entries are small). */
+export const MAX_RECORD_BYTES = 1024 * 1024
 
 const errnoOf = (err: unknown): string => {
   const code = (err as NodeJS.ErrnoException | null)?.code
@@ -163,14 +170,21 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
   let text: string
   let handle: fs.promises.FileHandle
   try {
-    handle = await fs.promises.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+    // `O_NONBLOCK`: opening a FIFO would otherwise wait for a writer forever,
+    // under lock 1. It changes nothing for a regular file.
+    handle = await fs.promises.open(
+      file,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
+    )
   } catch (err) {
     // No record: a crash before step 5, which never blocks (§3.3).
     if (errnoOf(err) === 'ENOENT') return { kind: 'none' }
     return unreadable('open-failed', errnoOf(err))
   }
   try {
-    if (!(await handle.stat()).isFile()) return unreadable('not-a-file')
+    const info = await handle.stat()
+    if (!info.isFile()) return unreadable('not-a-file')
+    if (info.size > MAX_RECORD_BYTES) return unreadable('too-large')
     text = await handle.readFile('utf8')
   } catch (err) {
     return unreadable('open-failed', errnoOf(err))

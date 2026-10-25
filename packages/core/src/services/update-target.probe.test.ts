@@ -32,7 +32,7 @@ import { createHash } from 'crypto'
 import { execFileSync } from 'child_process'
 
 import { probeUpdateTarget, defaultRecoveryPendingChecker } from './update-target.probe.js'
-import { stagingRecordsUnreadable } from './update-target.probe.recovery.js'
+import { unreadableStagingRecords } from './update-target.probe.recovery.js'
 import { computeRecordSha256 } from './skill-swap.js'
 import type { SwapRecord } from './skill-swap.js'
 import { hasRecordedLocalEdit } from './skill-identity-classification.js'
@@ -1029,33 +1029,89 @@ describe('defaultRecoveryPendingChecker — on A1 record scan (SMI-6531 step 5)'
   })
 })
 
-describe('stagingRecordsUnreadable (row 0b)', () => {
-  it('false with no staging at all', async () => {
-    expect(await stagingRecordsUnreadable(root)).toBe(false)
+describe('unreadableStagingRecords (row 0b)', () => {
+  it('{ ok: true, opIds: [] } with no staging at all', async () => {
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [] })
   })
 
-  it('false with only verified records', async () => {
+  it('{ ok: true, opIds: [] } with only verified records', async () => {
     putRecord('1'.repeat(32), path.join(root, 'a'))
     putRecord('2'.repeat(32), path.join(root, 'b'))
-    expect(await stagingRecordsUnreadable(root)).toBe(false)
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [] })
   })
 
-  it('true with one unreadable record beside verified ones', async () => {
+  it('names the unreadable record beside verified ones', async () => {
     putRecord('1'.repeat(32), path.join(root, 'a'))
-    expect(await stagingRecordsUnreadable(root)).toBe(false)
-    const badOp = path.join(root, '.skillsmith-staging', '9'.repeat(32))
-    fs.mkdirSync(badOp)
-    fs.writeFileSync(path.join(badOp, 'record.json'), '{not json')
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [] })
+    const badOp = '9'.repeat(32)
+    fs.mkdirSync(path.join(root, '.skillsmith-staging', badOp))
+    fs.writeFileSync(path.join(root, '.skillsmith-staging', badOp, 'record.json'), '{not json')
     putRecord('2'.repeat(32), path.join(root, 'b'))
-    expect(await stagingRecordsUnreadable(root)).toBe(true)
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [badOp] })
   })
 
-  it('true when the staging cannot be listed', async () => {
+  it('{ ok: false } with the errno when the staging cannot be listed', async () => {
     breakStaging()
-    expect(await stagingRecordsUnreadable(root)).toBe(true)
+    const r = await unreadableStagingRecords(root)
+    expect(r).toMatchObject({ ok: false, error: { errno: 'ENOTDIR' } })
   })
 
-  it('false when the skills root does not exist (no staging, no records)', async () => {
-    expect(await stagingRecordsUnreadable(path.join(root, 'no-such-root'))).toBe(false)
+  it('{ ok: true, opIds: [] } when the skills root does not exist', async () => {
+    expect(await unreadableStagingRecords(path.join(root, 'no-such-root'))).toEqual({
+      ok: true,
+      opIds: [],
+    })
+  })
+
+  it('{ ok: false } when the root cannot be resolved for another reason (a symlink loop)', async () => {
+    const a = path.join(root, 'loop-a')
+    const b = path.join(root, 'loop-b')
+    fs.symlinkSync(b, a)
+    fs.symlinkSync(a, b)
+    expect(await unreadableStagingRecords(a)).toMatchObject({
+      ok: false,
+      error: { errno: 'ELOOP' },
+    })
+  })
+})
+
+describe('defaultRecoveryPendingChecker: errors name their cause', () => {
+  it('the thrown message names the staging path and the errno', async () => {
+    breakStaging()
+    const staging = path.join(root, '.skillsmith-staging')
+    await expect(
+      defaultRecoveryPendingChecker({ skillsDir: root, dir: path.join(root, 'x'), dirName: 'x' })
+    ).rejects.toThrow(new RegExp(`${staging.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*ENOTDIR`))
+  })
+
+  it('a realpath(dir) error other than ENOENT/ENOTDIR (ELOOP) rejects, not "not named"', async () => {
+    // The probe's own presence check fails on a symlink loop before the
+    // checker is asked, so the checker is tested directly.
+    const a = path.join(root, 'dir-loop-a')
+    const b = path.join(root, 'dir-loop-b')
+    fs.symlinkSync(b, a)
+    fs.symlinkSync(a, b)
+    putRecord('1'.repeat(32), path.join(root, 'other'))
+    await expect(
+      defaultRecoveryPendingChecker({ skillsDir: root, dir: a, dirName: 'dir-loop-a' })
+    ).rejects.toMatchObject({ code: 'ELOOP' })
+    // The probe on the same folder never reads it as eligible.
+    const outcome = await probeUpdateTarget({
+      dir: a,
+      skillsDir: root,
+      dirName: 'dir-loop-a',
+      writeSet: [],
+      sleep: async () => {},
+    })
+    expect(outcome.kind).toBe('probe-failed')
+  })
+
+  it('a ENOTDIR under dir (a file where a parent should be) is still matched by path, not rejected', async () => {
+    fs.writeFileSync(path.join(root, 'a-file'), 'x')
+    const dir = path.join(root, 'a-file', 'child')
+    putRecord('1'.repeat(32), dir)
+    expect(await defaultRecoveryPendingChecker({ skillsDir: root, dir, dirName: 'child' })).toBe(
+      true
+    )
   })
 })

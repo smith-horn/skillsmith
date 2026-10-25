@@ -67,19 +67,27 @@ export async function crashIncomplete(fx: Fixture, opId: string = OP_ID) {
   return { p, opId, opDir: opDirOf(fx, opId) }
 }
 
+export interface SnapOpts {
+  /** Entries to leave out (and everything under them). */
+  skip?: (abs: string) => boolean
+  /**
+   * Compare entries, not directory bookkeeping: a directory's mtime and link
+   * count are left out, and a directory with nothing left in it is dropped, so
+   * a directory made only to hold skipped entries does not show.
+   */
+  prune?: boolean
+}
+
 /**
  * Every entry under `p` (links never followed): type, mode, inode, link count,
  * mtime, and the bytes of a file or the text of a link. `absent` for a missing
  * path. Compare before and after to prove nothing there changed.
  */
-export function deepSnapshot(p: string): string {
-  const out: string[] = []
-  const walk = (abs: string, rel: string): void => {
+export function deepSnapshot(p: string, opts: SnapOpts = {}): string {
+  const walk = (abs: string, rel: string): string[] => {
+    if (opts.skip?.(abs) === true) return []
     const s = fs.lstatSync(abs, { bigint: true, throwIfNoEntry: false })
-    if (s === undefined) {
-      out.push(`${rel}: absent`)
-      return
-    }
+    if (s === undefined) return [`${rel}: absent`]
     const kind = s.isSymbolicLink()
       ? 'link'
       : s.isDirectory()
@@ -92,27 +100,69 @@ export function deepSnapshot(p: string): string {
     if (kind === 'file')
       body = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex')
     const mode = (s.mode & 0o7777n).toString(8)
-    out.push(
-      `${rel}: ${kind} mode=${mode} ino=${s.ino} nlink=${s.nlink} mtime=${s.mtimeNs} ${body}`
-    )
-    if (kind === 'dir')
-      for (const n of fs.readdirSync(abs).sort()) walk(path.join(abs, n), `${rel}/${n}`)
+    const kids =
+      kind === 'dir'
+        ? fs
+            .readdirSync(abs)
+            .sort()
+            .flatMap((n) => walk(path.join(abs, n), `${rel}/${n}`))
+        : []
+    if (opts.prune === true && kind === 'dir') {
+      return kids.length === 0 && rel !== ''
+        ? []
+        : [`${rel}: dir mode=${mode} ino=${s.ino}`, ...kids]
+    }
+    return [
+      `${rel}: ${kind} mode=${mode} ino=${s.ino} nlink=${s.nlink} mtime=${s.mtimeNs} ${body}`,
+      ...kids,
+    ]
   }
-  walk(p, '')
-  return out.join('\n')
+  return walk(p, '').join('\n')
 }
 
-/** What a refused run must leave alone: the skill, a crashed op dir, the backup area, the manifest. */
+const manifestOf = (p: Planned): string =>
+  JSON.stringify({ entry: p.manifest.entry, writes: p.manifest.writes, cas: p.manifest.casCalls })
+
+/** The skill, a crashed op dir, the skill's backup area and its manifest: what a crash left. */
 export function frozen(fx: Fixture, crashed: { p: Planned; opDir: string }) {
   return {
     skill: deepSnapshot(fx.realDir),
     opDir: deepSnapshot(crashed.opDir),
     area: deepSnapshot(areaOf(fx)),
-    manifest: JSON.stringify({
-      entry: crashed.p.manifest.entry,
-      writes: crashed.p.manifest.writes,
-      cas: crashed.p.manifest.casCalls,
+    manifest: manifestOf(crashed.p),
+  }
+}
+
+/**
+ * T-R1's snapshot, for runs that must change nothing but their own leftovers:
+ * all of staging, the whole state root (the backup area and the parked index
+ * included), the skill folder and the manifest. Excluded are only the refused
+ * runs' own op dirs (`ST/<id>`), their parked copies
+ * (`ST/.skillsmith-parked/<id>`), their clock-gate probes, any kept copy in
+ * the state root (a name starting with `<id>`) and the parked index file.
+ */
+export function frozenWide(fx: Fixture, crashed: { p: Planned }, refusedOpIds: string[]) {
+  const staging = fx.staging
+  const own = (rel: string): boolean =>
+    refusedOpIds.some(
+      (id) =>
+        rel === id ||
+        rel === `.skillsmith-parked/${id}` ||
+        rel.startsWith(`.skillsmith-probe-${id}`)
+    )
+  return {
+    skill: deepSnapshot(fx.realDir),
+    staging: deepSnapshot(staging, {
+      prune: true,
+      skip: (abs) => own(path.relative(staging, abs)),
     }),
+    state: deepSnapshot(fx.stateRoot, {
+      prune: true,
+      skip: (abs) =>
+        path.basename(abs) === 'parked-index.jsonl' ||
+        refusedOpIds.some((id) => path.basename(abs).startsWith(id)),
+    }),
+    manifest: manifestOf(crashed.p),
   }
 }
 

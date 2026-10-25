@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { probeUpdateTarget } from '../../../src/services/update-target.probe.js'
-import { stagingRecordsUnreadable } from '../../../src/services/update-target.probe.recovery.js'
+import { unreadableStagingRecords } from '../../../src/services/update-target.probe.recovery.js'
 import {
   hashOf,
   makeFixture,
@@ -91,12 +91,12 @@ describe('the dry run and the write agree', () => {
     expect(fs.readFileSync(recordPath, 'utf8')).toBe(recordBefore)
   })
 
-  it('a corrupted record blocks the whole root: row 0b is true and the write refuses recovery-record-unreadable', async () => {
+  it('a corrupted record blocks the whole root: row 0b names the record and the write refuses recovery-record-unreadable', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const other = secondSkill(fx)
     const recordPath = await crashFirst(fx)
     // Control: with the record intact nothing in the root is unreadable.
-    expect(await stagingRecordsUnreadable(fx.skillsDir)).toBe(false)
+    expect(await unreadableStagingRecords(fx.skillsDir)).toEqual({ ok: true, opIds: [] })
 
     fs.writeFileSync(recordPath, '{ corrupted by a bad disk')
 
@@ -104,7 +104,7 @@ describe('the dry run and the write agree', () => {
     const refused = await run(plan(other, [modify('SKILL.md', '# other v2\n')]), {
       opId: SECOND_OP,
     })
-    expect(await stagingRecordsUnreadable(fx.skillsDir)).toBe(true)
+    expect(await unreadableStagingRecords(fx.skillsDir)).toEqual({ ok: true, opIds: [OP_ID] })
     expect(refused.result).toMatchObject({
       status: 'refused',
       reason: 'recovery-record-unreadable',

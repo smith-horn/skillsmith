@@ -36,10 +36,17 @@ export async function refuseIfRecorded(st: SwapState): Promise<void> {
  * For a step-1 failure, under lock 1: the `recovery-*` refusal that replaces
  * the build's reason, or null. A listing failure keeps the build's reason.
  */
-export async function recordedReason(st: SwapState): Promise<SwapFault | null> {
+export async function recordedReason(
+  st: SwapState
+): Promise<{ reason: RecoveryReason; detail: string } | null> {
   const fault = await recordedRefusal(st)
-  return fault !== null && fault.reason.startsWith('recovery-') ? fault : null
+  if (fault === null || !isRecoveryReason(fault.reason)) return null
+  return { reason: fault.reason, detail: fault.detail }
 }
+
+type RecoveryReason = 'recovery-pending' | 'recovery-record-unreadable'
+const isRecoveryReason = (r: string): r is RecoveryReason =>
+  r === 'recovery-pending' || r === 'recovery-record-unreadable'
 
 /** The scan's refusal, or null when nothing blocks this write. Sets `st.blockedBy`. */
 async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {

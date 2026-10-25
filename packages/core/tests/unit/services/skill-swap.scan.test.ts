@@ -16,13 +16,22 @@ import {
   ALL_DELETES,
   treeDeletes,
 } from './skill-swap.abort.helpers.js'
-import { hashOf, makeFixture, OP_ID, plan, modify, useTmpCleanup } from './skill-swap.helpers.js'
+import {
+  areaOf,
+  hashOf,
+  makeFixture,
+  OP_ID,
+  plan,
+  modify,
+  useTmpCleanup,
+} from './skill-swap.helpers.js'
 import {
   attempt,
   crashIncomplete,
   crashStopped,
   deepSnapshot,
   frozen,
+  frozenWide,
   opDirOf,
   opIdN,
   otherSkill,
@@ -44,8 +53,9 @@ describe('T-R1 (swap half): a crash-kept record blocks its skill and changes not
       const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
       const crashed = await crash(fx)
       const before = frozen(fx, crashed)
-
       const OP2 = opIdN('c')
+      const wideBefore = frozenWide(fx, crashed, [OP2])
+
       const p2 = plan(fx, [modify('SKILL.md', '# next\n')])
       const fx2 = { ...fx, opDir: opDirOf(fx, OP2) }
       const run2 = await runSpied(p2, ALL_DELETES, { opId: OP2 })
@@ -56,6 +66,7 @@ describe('T-R1 (swap half): a crash-kept record blocks its skill and changes not
       // (`runSpied` feeds the trace into `events`.)
       expect(run2.events).toContainEqual({ op: 'record-scan', path: fx.staging })
       // Nothing the crash left was touched, by snapshot and by spy.
+      expect(frozenWide(fx, crashed, [OP2])).toEqual(wideBefore)
       expect(frozen(fx, crashed)).toEqual(before)
       expect(treeDeletes(fx2, run2.events)).toEqual([])
       const touched = deletesOf(run2.events).filter(
@@ -97,6 +108,61 @@ describe('T-R1 (swap half): a crash-kept record blocks its skill and changes not
     expect(r.trace).toContainEqual({ op: 'record-scan', path: fx.staging })
     expect(fs.existsSync(path.join(lone, 'record.json'))).toBe(false)
     expect(deepSnapshot(lone)).toEqual(before)
+  })
+})
+
+describe('T-R1 (swap half): a step-1 failure with a built N meets the record scan too', () => {
+  // The plan goes stale (the live folder edited after it), so the build's check of the copy
+  // against preTree fails with changed-since-plan: N is complete but postTree is not set.
+  function stalePlan(fx: ReturnType<typeof makeFixture>) {
+    const p = plan(fx, [modify('SKILL.md', '# next\n')])
+    fs.appendFileSync(path.join(fx.realDir, 'SKILL.md'), 'edited after planning\n')
+    return p
+  }
+  async function staleRun(
+    fx: ReturnType<typeof makeFixture>,
+    p: ReturnType<typeof plan>,
+    opId: string
+  ) {
+    const fx2 = { ...fx, opDir: opDirOf(fx, opId) }
+    const r = await runSpied(p, ALL_DELETES, { opId })
+    return { p, fx2, ...r }
+  }
+
+  it('with a pending record: refused recovery-pending, its own partial build kept, the crash untouched', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const crashed = await crashStopped(fx)
+    const OP2 = opIdN('c')
+    const stale = stalePlan(fx)
+    const wideBefore = frozenWide(fx, crashed, [OP2])
+
+    const run = await staleRun(fx, stale, OP2)
+
+    const r = refusedOf(run.result)
+    const kept = path.join(areaOf(fx), `${OP2}.failed-build`)
+    expect(r).toMatchObject({
+      reason: 'recovery-pending',
+      blockedBy: [OP_ID],
+      staged: 'kept',
+      keptAs: { kind: 'failed-build', path: kept },
+    })
+    // The failed build itself was kept whole, and it is a complete copy of the edited folder.
+    expect(fs.readFileSync(path.join(kept, 'SKILL.md'), 'utf8')).toContain('edited after planning')
+    expect(run.events).toContainEqual({ op: 'record-scan', path: fx.staging })
+    expect(frozenWide(fx, crashed, [OP2])).toEqual(wideBefore)
+    expect(treeDeletes(run.fx2, run.events)).toEqual([])
+  })
+
+  it('control: the same stale-plan failure with no record keeps its own reason and has no blockedBy', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const run = await staleRun(fx, stalePlan(fx), opIdN('c'))
+
+    const r = refusedOf(run.result)
+    expect(r).toMatchObject({ reason: 'changed-since-plan', staged: 'kept' })
+    expect(r.keptAs?.kind).toBe('failed-build')
+    expect(r.blockedBy).toBeUndefined()
+    // The scan ran and found nothing to report.
+    expect(run.events).toContainEqual({ op: 'record-scan', path: fx.staging })
   })
 })
 

@@ -14,9 +14,11 @@
  *    same match as the write's step 3. It throws, so the probe reports
  *    `probe-failed`, when the root can't be resolved or its staging can't be
  *    listed: a check that could not run never reads as "not named".
- *  - `stagingRecordsUnreadable` (row 0b, for whoever builds the run's
- *    `plan`): true when any record in the root's staging is unreadable, or
- *    the staging can't be read at all.
+ *  - `unreadableStagingRecords` (row 0b, for whoever builds the run's
+ *    `plan`): the opIds of the root's unreadable records, which block every
+ *    skill in it and are what `doctor recovery --park <opId>` takes. A
+ *    staging that can't be listed is not 0b: like the write (`staging-unsafe`)
+ *    and row 3's checker, it is a `probe-failed` error.
  *
  * `RecoveryPendingChecker` is imported from `update-target.probe.types.ts`,
  * NOT from `update-target.probe.ts`: this module and `probe.ts` never import
@@ -29,7 +31,7 @@ import path from 'node:path'
 import { recordsNaming, scanStagingRecords } from './skill-swap.records.js'
 import type { RecordScan } from './skill-swap.records.js'
 import { STAGING_DIR_NAME } from './skill-write-lock.types.js'
-import type { RecoveryPendingChecker } from './update-target.probe.types.js'
+import type { ProbeError, RecoveryPendingChecker } from './update-target.probe.types.js'
 
 /** The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds the root. */
 async function scanRoot(skillsDir: string): Promise<RecordScan> {
@@ -41,30 +43,41 @@ async function scanRoot(skillsDir: string): Promise<RecordScan> {
 export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ skillsDir, dir }) => {
   const scan = await scanRoot(skillsDir)
   if (!scan.ok) {
-    throw Object.assign(new Error(`the update records in ${scan.path} could not be listed`), {
-      code: scan.errno,
-    })
+    throw Object.assign(new Error(listingFailure(skillsDir, scan)), { code: scan.errno })
   }
   let realDir = dir
   try {
     realDir = await fs.promises.realpath(dir)
-  } catch {
+  } catch (err) {
     // A missing folder (a crash between the renames) is matched by its path.
+    const code = (err as NodeJS.ErrnoException | null)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err
   }
   return recordsNaming(scan.pending, { realDir, comparedPath: dir }).length > 0
 }
 
+const listingFailure = (skillsDir: string, scan: { path: string; errno: string }): string =>
+  `the update records in ${path.join(skillsDir, STAGING_DIR_NAME)} could not be listed ` +
+  `(${scan.path}: ${scan.errno})`
+
 /**
- * Row 0b: true when `skillsDir`'s staging holds an unreadable record, or
- * can't be read. Fails closed: an error resolving the root or listing its
- * staging is true, never "nothing to block".
+ * Row 0b: the opIds of `skillsDir`'s unreadable records (empty when none, or
+ * when the root doesn't exist). `ok: false` when the root can't be resolved
+ * or its staging can't be listed: the caller reports `probe-failed`, never
+ * "nothing to block".
  */
-export async function stagingRecordsUnreadable(skillsDir: string): Promise<boolean> {
+export async function unreadableStagingRecords(
+  skillsDir: string
+): Promise<{ ok: true; opIds: string[] } | { ok: false; error: ProbeError }> {
+  let scan: Awaited<ReturnType<typeof scanRoot>>
   try {
-    const scan = await scanRoot(skillsDir)
-    return !scan.ok || scan.unreadable.length > 0
+    scan = await scanRoot(skillsDir)
   } catch (err) {
+    const errno = (err as NodeJS.ErrnoException | null)?.code
     // A root that doesn't exist has no staging and no records.
-    return (err as NodeJS.ErrnoException | null)?.code !== 'ENOENT'
+    if (errno === 'ENOENT') return { ok: true, opIds: [] }
+    return { ok: false, error: { path: skillsDir, errno: errno ?? 'UNKNOWN' } }
   }
+  if (!scan.ok) return { ok: false, error: { path: scan.path, errno: scan.errno } }
+  return { ok: true, opIds: scan.unreadable.map((r) => r.opId) }
 }

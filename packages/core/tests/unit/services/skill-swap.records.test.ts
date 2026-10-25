@@ -8,6 +8,7 @@
  * real writer (a `swapInPlace` run that keeps its record) so the scan is
  * proven to accept what the writer writes.
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -15,6 +16,7 @@ import { computeRecordSha256 } from '../../../src/services/skill-swap.js'
 import type { SwapRecord } from '../../../src/services/skill-swap.js'
 import {
   isSwapRecord,
+  MAX_RECORD_BYTES,
   recordsNaming,
   scanStagingRecords,
 } from '../../../src/services/skill-swap.records.js'
@@ -178,6 +180,39 @@ describe('scanStagingRecords: a record that cannot be trusted is unreadable', ()
     expect(scan.unreadable).toEqual([
       { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'not-a-file' },
     ])
+  })
+
+  it('record.json a FIFO: not-a-file, and the scan returns promptly (no wait for a writer)', async () => {
+    const { scan, st } = await scanBeside((_root, st) => {
+      fs.mkdirSync(path.join(st, BAD))
+      execFileSync('mkfifo', [path.join(st, BAD, 'record.json')])
+    })
+    expect(scan.unreadable).toEqual([
+      { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'not-a-file' },
+    ])
+  }, 5000)
+
+  it('a record file over MAX_RECORD_BYTES: too-large, though its JSON is valid', async () => {
+    const { scan, st } = await scanBeside((root, st) => {
+      const text = textOf(bodyOf(root, BAD))
+      // Valid JSON padded past the cap with trailing whitespace.
+      put(st, BAD, text + ' '.repeat(MAX_RECORD_BYTES + 1 - text.length))
+      expect(fs.statSync(path.join(st, BAD, 'record.json')).size).toBeGreaterThan(MAX_RECORD_BYTES)
+      expect(() =>
+        JSON.parse(fs.readFileSync(path.join(st, BAD, 'record.json'), 'utf8'))
+      ).not.toThrow()
+    })
+    expect(scan.unreadable).toEqual([
+      { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'too-large' },
+    ])
+  })
+
+  it('a valid record padded to exactly MAX_RECORD_BYTES is still read (the cap is inclusive)', async () => {
+    const { root, st } = layout()
+    const text = textOf(bodyOf(root, GOOD))
+    put(st, GOOD, text + ' '.repeat(MAX_RECORD_BYTES - text.length))
+    expect(fs.statSync(path.join(st, GOOD, 'record.json')).size).toBe(MAX_RECORD_BYTES)
+    expect(pendingIds(await scanStagingRecords(root, st))).toEqual([GOOD])
   })
 
   it.each([

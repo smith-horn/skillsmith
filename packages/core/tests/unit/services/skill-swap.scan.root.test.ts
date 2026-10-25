@@ -4,6 +4,7 @@
  * build), a record from another root, and where the scan sits in the order.
  * T-R1 and T-R3 are in `skill-swap.scan.test.ts`.
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -70,6 +71,14 @@ const CORRUPTIONS: Array<[string, Corrupt]> = [
     },
   ],
   [
+    'a FIFO (opening it must not block)',
+    (_fx, opDir) => {
+      fs.unlinkSync(record(opDir))
+      execFileSync('mkfifo', [record(opDir)])
+      return OP_ID
+    },
+  ],
+  [
     'not JSON',
     (_fx, opDir) => {
       fs.writeFileSync(record(opDir), 'not json at all')
@@ -122,7 +131,7 @@ describe('T-R2 (swap half): an unreadable record blocks every write in its root'
       }
       expect(hashOf(other.realDir)).toBe(otherBefore)
       expect(frozen(fx, crashed)).toEqual(before)
-    })
+    }, 10_000) // a FIFO that blocked the scan would hang here, so the bound is explicit
   }
 })
 

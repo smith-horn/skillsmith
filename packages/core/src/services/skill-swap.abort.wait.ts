@@ -65,7 +65,7 @@ export async function abortBeforeLock(
       st.ctx = ctx
       const recorded = await recordedReason(st)
       if (recorded === null) return runCleanup(st, reason, detail)
-      return runCleanup(st, recorded.reason as SwapRefuseReason, recorded.detail)
+      return runCleanup(st, recorded.reason, recorded.detail)
     },
     st.options.lockTimeoutMs === undefined ? {} : { timeoutMs: st.options.lockTimeoutMs }
   )
