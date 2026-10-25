@@ -242,7 +242,7 @@ jobs:
         # incident. FAIL-SOFT: a failed write is a warning, never red; the detector then pages.
         # Every value arrives through env: and is JSON-encoded by jq; no ${{ }} inside the script.
         if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'link' && inputs.verify_only == false && env.DISPATCH_ALLOWED == 'true')
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error -- fail-soft ledger write; a missing row is paged by the silent-stop detector (SMI-7167, ADR-183)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -1101,7 +1101,7 @@ jobs:
         # row: a failed write is a warning; the detector then pages. The script body is byte-identical
         # to `Record link start`'s (pinned by a structural test).
         if: always() && (github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'link' && inputs.verify_only == false && env.DISPATCH_ALLOWED == 'true'))
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error -- fail-soft ledger write; a missing row is paged by the silent-stop detector (SMI-7167, ADR-183)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

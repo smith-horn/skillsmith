@@ -46,8 +46,11 @@ interface Case {
 }
 
 const DISPATCH_GAP = '      - name: Gap\n        run: echo gap\n\n'
+// The link steps carry audit:standards Check 21's exemption marker on their continue-on-error line.
+const LINK_COE =
+  '        continue-on-error: true # audit:allow-continue-on-error -- fail-soft ledger write; a missing row is paged by the silent-stop detector (SMI-7167, ADR-183)'
 const noCoe = (t: string, next: string) =>
-  mutate(t, `        continue-on-error: true\n        env:\n${next}`, `        env:\n${next}`)
+  mutate(t, `${LINK_COE}\n        env:\n${next}`, `        env:\n${next}`)
 const STARTENV = `          SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           LEDGER_EVENT: indexer_backfill_autochain_link_`
