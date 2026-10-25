@@ -435,6 +435,7 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
     const rb = stripComments(readFileSync(p, 'utf8'))
     // the rollback carries the original body verbatim: no planner setting, the original header
     expect(header(rb, FNS.candidates)).toEqual(header(sql, FNS.candidates))
+    expect(body(rb, FNS.candidates)).toEqual(body(sql, FNS.candidates))
     expect(rb).not.toMatch(/enable_nestloop/)
   })
 })

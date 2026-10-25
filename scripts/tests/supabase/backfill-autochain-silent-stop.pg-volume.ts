@@ -18,6 +18,7 @@ import {
   CANDIDATES,
   cand,
   dispatchedRow,
+  fixtureSql,
   inTxn,
   perfMigrationSql,
   perfRollbackSql,
@@ -25,8 +26,8 @@ import {
   type Ctx,
 } from './backfill-autochain-silent-stop.test-helpers.ts'
 
-/** Dispatched runs, each with a green link_finished, spread over the last ~146 days. */
-const VOLUME = 15000
+/** Dispatched runs, each with a green link_finished, spread over ~389 days (the 1-year window keeps ~37,500). At 15,000 the body WITHOUT enable_nestloop = off still finished in 3.4 s; at 40,000 it takes 23.5 s, so this budget pins the setting behaviourally, not just by its string (governance 2026-10-25). */
+const VOLUME = 40000
 const BUDGET = '10s'
 
 const seedVolume = (n: number): string[] => [
@@ -63,7 +64,7 @@ export function registerVolumeTests(ctx: Ctx): void {
         ...seedVolume(VOLUME),
         // The two real incidents hidden in the volume: an unlinked run and an unresolved prepare.
         dispatchedRow('424242', '13 hours'),
-        preparedRow('ac-99999999', '1', '31 minutes'), // outside the seeded ac-1 .. ac-15000 tokens
+        preparedRow('ac-99999999', '1', '31 minutes'), // outside the seeded ac-1 .. ac-40000 tokens
         'ANALYZE audit_logs;',
         CANDIDATES,
       ])
@@ -76,23 +77,45 @@ export function registerVolumeTests(ctx: Ctx): void {
     it('the paired rollback restores the 20261025000000 body, and the perf migration re-applies after it', async () => {
       const cfg =
         "SELECT 'cfg=' || array_to_string(proconfig, ',') FROM pg_proc WHERE oid = 'public.backfill_autochain_silent_stop_candidates()'::regprocedure;"
-      const down = await ctx.ctl().send(perfRollbackSql())
-      expect(down.stderr, down.stderr).not.toMatch(/ERROR/)
-      const afterDown = await inTxn(ctx.ctl(), [
-        cfg,
-        dispatchedRow('424242', '13 hours'),
-        CANDIDATES,
-      ])
-      // The old body: no planner setting, same answer on a small ledger.
-      expect(afterDown.lines).toEqual([
-        'cfg=search_path=public, pg_temp',
-        cand('A', '424242', 'no_link', '-01:00:00'),
-      ])
-      const up = await ctx.ctl().send(perfMigrationSql())
-      expect(up.stderr, up.stderr).not.toMatch(/ERROR/)
-      expect(up.stderr).toMatch(/SMI-7167 candidates perf smoke: passed/)
-      const afterUp = await inTxn(ctx.ctl(), [cfg])
-      expect(afterUp.lines).toEqual(['cfg=search_path=public, pg_temp,enable_nestloop=off'])
+      try {
+        const down = await ctx.ctl().send(perfRollbackSql())
+        expect(down.stderr, down.stderr).not.toMatch(/ERROR/)
+        const afterDown = await inTxn(ctx.ctl(), [
+          cfg,
+          dispatchedRow('424242', '13 hours'),
+          CANDIDATES,
+        ])
+        // The old body: no planner setting, same answer on a small ledger.
+        expect(afterDown.lines).toEqual([
+          'cfg=search_path=public, pg_temp',
+          cand('A', '424242', 'no_link', '-01:00:00'),
+        ])
+        const up = await ctx.ctl().send(perfMigrationSql())
+        expect(up.stderr, up.stderr).not.toMatch(/ERROR/)
+        expect(up.stderr).toMatch(
+          /SMI-7167 candidates perf smoke: passed \(0 open candidate\(s\)\)/
+        )
+        const afterUp = await inTxn(ctx.ctl(), [cfg])
+        expect(afterUp.lines).toEqual(['cfg=search_path=public, pg_temp,enable_nestloop=off'])
+      } finally {
+        // Leave the latest body installed whatever failed above (beforeEach would heal it, but a
+        // failure here must not depend on test order).
+        await ctx.ctl().send(perfMigrationSql())
+      }
+    })
+
+    it("the perf migration's own smoke runs the new body: it counts an open candidate seeded before it", async () => {
+      // Committed seed (the migration has its own BEGIN/COMMIT), cleared by fixtureSql afterwards.
+      await ctx.ctl().send(dispatchedRow('424242', '13 hours'))
+      try {
+        const up = await ctx.ctl().send(perfMigrationSql())
+        expect(up.stderr, up.stderr).not.toMatch(/ERROR/)
+        expect(up.stderr).toMatch(
+          /SMI-7167 candidates perf smoke: passed \(1 open candidate\(s\)\)/
+        )
+      } finally {
+        await ctx.ctl().send(fixtureSql())
+      }
     })
   })
 }
