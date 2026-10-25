@@ -193,6 +193,33 @@ const CASES: Case[] = [
     ],
   },
   {
+    // PR-16 (cross-family gate, PR #3168): a fail-soft dispatch would let a failed dispatch end in a
+    // green job, so link_finish would record success and close the incident with the chain stopped.
+    name: 'the dispatch step itself is fail-hard (no continue-on-error key at all)',
+    holds: (d) =>
+      sid(d, 'dispatch').id === 'dispatch' && !('continue-on-error' in sid(d, 'dispatch')),
+    mutations: [
+      [
+        'dispatch made fail-soft',
+        (t) =>
+          mutate(
+            t,
+            '        id: dispatch\n',
+            '        id: dispatch\n        continue-on-error: true # audit:allow-continue-on-error -- mutation\n'
+          ),
+      ],
+      [
+        'dispatch fail-soft with false (key present)',
+        (t) =>
+          mutate(
+            t,
+            '        id: dispatch\n',
+            '        id: dispatch\n        continue-on-error: false\n'
+          ),
+      ],
+    ],
+  },
+  {
     name: 'prepared is at idx(dispatch)-1',
     holds: (d) =>
       indexOfId(d, 'prepared') >= 0 && indexOfId(d, 'prepared') === indexOfId(d, 'dispatch') - 1,
