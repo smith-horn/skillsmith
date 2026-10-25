@@ -384,9 +384,21 @@ cycle.self = cycle
  * the record would not read back; it throws on the last two.
  */
 const UNSERIALIZABLE: Array<[string, unknown, string]> = [
-  ['undefined', undefined, 'would be read as unreadable (malformed)'],
-  ['a function', () => 1, 'would be read as unreadable (malformed)'],
-  ['a symbol', Symbol('entry'), 'would be read as unreadable (malformed)'],
+  [
+    'undefined',
+    undefined,
+    'would be read as unreadable (malformed): preEntry and postEntry must be JSON values',
+  ],
+  [
+    'a function',
+    () => 1,
+    'would be read as unreadable (malformed): preEntry and postEntry must be JSON values',
+  ],
+  [
+    'a symbol',
+    Symbol('entry'),
+    'would be read as unreadable (malformed): preEntry and postEntry must be JSON values',
+  ],
   ['a cycle', cycle, "can't be serialized"],
   ['a BigInt', { n: 1n }, "can't be serialized"],
 ]
@@ -425,7 +437,7 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
   }
 
   /** A refused step-5 seal: no record or temp in ST, the build parked, another skill commits. */
-  async function sealRefused(entry: unknown, why: string) {
+  async function sealRefused(entry: unknown, why: string, hint: string) {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
     const p = plan(fx, [modify('SKILL.md', '# next\n')])
@@ -433,7 +445,7 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
     const run = await runSpied(p, ALL_DELETES, { opId: opIdN('c') })
     const r = refusedOf(run.result)
     expect(r.reason).toBe('write-failed')
-    expect(r.detail).toContain(`would be read as unreadable (${why})`)
+    expect(r.detail).toContain(`would be read as unreadable (${why}): ${hint}`)
     expect(r.staged).toBe('parked')
     expect(listTree(fx.staging).filter((n) => /record\.json(\.tmp)?$/.test(n))).toEqual([])
     expect(
@@ -445,7 +457,11 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
   }
 
   it('an entry that pushes the record over MAX_RECORD_BYTES is refused (too-large); a smaller one commits', async () => {
-    await sealRefused({ pad: 'x'.repeat(MAX_RECORD_BYTES) }, 'too-large')
+    await sealRefused(
+      { pad: 'x'.repeat(MAX_RECORD_BYTES) },
+      'too-large',
+      `the record must be at most ${MAX_RECORD_BYTES} bytes`
+    )
     // Control: a pad that keeps the record under the cap commits.
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const p = plan(fx, [modify('SKILL.md', '# next\n')])
@@ -455,7 +471,11 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
 
   it('an entry whose toJSON changes between calls is refused: the hash made from one call does not match the bytes from another', async () => {
     let calls = 0
-    await sealRefused({ toJSON: () => ({ n: ++calls }) }, 'hash-mismatch')
+    await sealRefused(
+      { toJSON: () => ({ n: ++calls }) },
+      'hash-mismatch',
+      'an entry serialized differently between calls'
+    )
     expect(calls).toBeGreaterThan(1)
   })
 

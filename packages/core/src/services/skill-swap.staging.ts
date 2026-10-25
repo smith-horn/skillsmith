@@ -220,10 +220,13 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
 }
 
 /** What a seal refusal says to do, by the scan's reason. */
-const SEAL_HINT: Partial<Record<RecordBytesWhy, string>> = {
-  malformed: 'preEntry and postEntry must be JSON values (null for no entry)',
+const SEAL_HINT: Record<RecordBytesWhy, string> = {
   'too-large': `the record must be at most ${MAX_RECORD_BYTES} bytes`,
+  'not-json': 'the record did not serialize as JSON',
+  malformed: 'preEntry and postEntry must be JSON values (null for no entry)',
   'hash-mismatch': 'an entry serialized differently between calls',
+  'foreign-op-dir': "the record's opId is not its op dir's name",
+  'foreign-root': "the record's target.skillsDir is not this root",
 }
 
 /**
@@ -254,7 +257,7 @@ export function sealRecord(
   if (!v.ok) {
     throw new SwapFault(
       'write-failed',
-      `the record would be read as unreadable (${v.why}): ${SEAL_HINT[v.why] ?? 'see its reason'}`
+      `the record would be read as unreadable (${v.why}): ${SEAL_HINT[v.why]}`
     )
   }
   return { bytes, record: v.record }
