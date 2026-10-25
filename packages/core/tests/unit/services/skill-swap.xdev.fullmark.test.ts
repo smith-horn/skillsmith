@@ -422,12 +422,14 @@ describe('the marker rewrite is sealed like step 5', () => {
     const overhead = small.size - unmarked
     expect(overhead).toBeGreaterThan(0)
 
-    // Pad so the unmarked record is exactly the cap and the marked one is over it.
-    const big = await fullStop(10 + (MAX_RECORD_BYTES - unmarked))
-    // Same path lengths, so the only difference between the runs is the pad.
+    // Pad so the unmarked record is half the marker's size under the cap: it
+    // fits and the marked one does not, with room for identity strings (inode
+    // numbers) a digit longer or shorter than the small run's.
+    const big = await fullStop(10 + (MAX_RECORD_BYTES - unmarked) - Math.floor(overhead / 2))
+    // Same path lengths, so the runs differ only in the pad and their identities.
     expect(big.fx.skillsDir.length).toBe(small.fx.skillsDir.length)
     expect(big.fx.stateRoot.length).toBe(small.fx.stateRoot.length)
-    expect(big.size).toBe(MAX_RECORD_BYTES)
+    expect(big.size).toBeLessThanOrEqual(MAX_RECORD_BYTES)
     expect(big.size + overhead).toBeGreaterThan(MAX_RECORD_BYTES)
 
     const r = stoppedAtPublish(big.fx, big.run.result)

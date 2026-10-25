@@ -50,6 +50,7 @@ import type {
   SwapRefuseReason,
 } from './skill-swap.types.js'
 import { computeRecordSha256, MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.records.js'
+import type { RecordBytesWhy } from './skill-swap.records.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
 
 /** The bigint identity as `record.json` stores it (decimal strings). */
@@ -218,6 +219,13 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
   await hook(st, 'afterBuild')
 }
 
+/** What a seal refusal says to do, by the scan's reason. */
+const SEAL_HINT: Partial<Record<RecordBytesWhy, string>> = {
+  malformed: 'preEntry and postEntry must be JSON values (null for no entry)',
+  'too-large': `the record must be at most ${MAX_RECORD_BYTES} bytes`,
+  'hash-mismatch': 'an entry serialized differently between calls',
+}
+
 /**
  * Serializes the record once and runs the scan's own checks on those exact
  * bytes (`verifyRecordBytes`), so the bytes written are a record the scan
@@ -246,8 +254,7 @@ export function sealRecord(
   if (!v.ok) {
     throw new SwapFault(
       'write-failed',
-      `the record would be read as unreadable (${v.why}): preEntry and postEntry must be ` +
-        `JSON values (null for no entry), and the record at most ${MAX_RECORD_BYTES} bytes`
+      `the record would be read as unreadable (${v.why}): ${SEAL_HINT[v.why] ?? 'see its reason'}`
     )
   }
   return { bytes, record: v.record }
