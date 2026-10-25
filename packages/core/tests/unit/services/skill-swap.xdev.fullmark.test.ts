@@ -446,28 +446,35 @@ describe('the marker rewrite is sealed like step 5', () => {
 })
 
 describe('the marker rewrite starts from the record step 5 sealed (PR #3164 and #3170 retros)', () => {
+  type Counts = { pre: number; post: number }
+
   /**
-   * How many times step 5's seal serializes one entry, measured with
-   * `sealRecord` on a real record body rather than assumed, so the threshold
-   * below follows the seal if it is refactored.
+   * How many times step 5's seal serializes each entry, measured with
+   * `sealRecord` on a real record body rather than assumed, so the thresholds
+   * below follow the seal if it is refactored.
    */
-  async function sealCallsPerEntry(): Promise<number> {
+  async function sealCallsPerEntry(): Promise<Counts> {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     failCopyCreate(fx, 'ENOSPC')
     stoppedAtPublish(fx, (await runSpied(p, ALL_DELETES)).result)
     const { recordSha256: _h, fullDevice: _m, ...body } = recordOf(fx)
-    let n = 0
+    const n: Counts = { pre: 0, post: 0 }
     // Counts each serialization but always serializes the same, so the seal accepts it.
-    const stable = {
+    const stable = (k: keyof Counts) => ({
       toJSON: () => {
-        n++
+        n[k]++
         return 'same'
       },
+    })
+    const counted: Omit<SwapRecord, 'recordSha256'> = {
+      ...body,
+      preEntry: stable('pre'),
+      postEntry: stable('post'),
     }
-    const counted: Omit<SwapRecord, 'recordSha256'> = { ...body, preEntry: stable }
     sealRecord(counted, fs.realpathSync(fx.skillsDir), OP_ID)
-    expect(n).toBeGreaterThan(0)
+    expect(n.pre).toBeGreaterThan(0)
+    expect(n.post).toBeGreaterThan(0)
     return n
   }
 
@@ -475,11 +482,11 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 and 
     const sealCalls = await sealCallsPerEntry()
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    const calls = { pre: 0, post: 0 }
+    const calls: Counts = { pre: 0, post: 0 }
     // 'early' for step 5's own serializations and 'late' for any after them,
     // wherever they happen: no hook, so no window for a rewrite to slip into.
-    const changing = (k: 'pre' | 'post') => ({
-      toJSON: () => ({ n: ++calls[k] > sealCalls ? 'late' : 'early' }),
+    const changing = (k: keyof Counts) => ({
+      toJSON: () => ({ n: ++calls[k] > sealCalls[k] ? 'late' : 'early' }),
     })
     // Both entries, so a rewrite that took either from the live input would show it.
     p.input = { ...p.input, preEntry: changing('pre'), postEntry: changing('post') }
@@ -490,8 +497,8 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 and 
     const rec = recordOf(fx)
     // Paired: the rewrite ran, and step 5's seal used up its 'early' calls.
     expect(rec.fullDevice).toEqual(markerFor(fx, 'ENOSPC', 'copy'))
-    expect(calls.pre).toBeGreaterThanOrEqual(sealCalls)
-    expect(calls.post).toBeGreaterThanOrEqual(sealCalls)
+    expect(calls.pre).toBeGreaterThanOrEqual(sealCalls.pre)
+    expect(calls.post).toBeGreaterThanOrEqual(sealCalls.post)
     expect(rec.preEntry).toEqual({ n: 'early' })
     expect(rec.postEntry).toEqual({ n: 'early' })
   })
