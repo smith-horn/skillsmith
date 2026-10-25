@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Convenience wrapper — delegates to @skillsmith/cli.
+// SMI-7164 CI evidence (temporary, reverted in this PR): touches a package so Code Review runs.
 //
 // Resolve the CLI's OWN `bin` entry from its package.json rather than
 // hardcoding a dist path. The CLI's output layout is not stable across
