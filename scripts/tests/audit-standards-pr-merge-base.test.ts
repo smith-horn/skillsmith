@@ -25,6 +25,13 @@ const mod = (await import('../lib/audit-pr-merge-base.mjs')) as {
     fail: Reporter
     warn: Reporter
   }) => void
+  runCheck78FromEnv: (a: {
+    env?: Record<string, string | undefined>
+    timeoutMs?: number
+    pass: Reporter
+    fail: Reporter
+    warn: Reporter
+  }) => boolean
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -227,4 +234,50 @@ describe('Check 78: the full audit runs the registered entry (X4)', () => {
     expect(body).toBe("await CHECK_REGISTRY.get('pr-merge-base')()")
     expect(src).toContain("['pr-merge-base', async () => runCheck78FromEnv({ pass, fail, warn })]")
   })
+
+  // The source test above cannot see an early exit or throw before the block. This runs the
+  // real full audit on this checkout and asserts Check 78 executed, whatever other checks report.
+  it('the full audit reaches Check 78 and runs it', () => {
+    const r = spawnSync('node', [AUDIT], {
+      cwd: join(__dirname, '..', '..'),
+      env: { ...process.env, GITHUB_BASE_REF: '', GITHUB_HEAD_REF: '' },
+      encoding: 'utf8',
+    })
+    // Raw output: colour codes sit around these strings, never inside them, and only
+    // pass() prints the not-applicable verdict.
+    const out = r.stdout
+    const header = out.indexOf('Check 78: PR merge-base resolves (SMI-7164)')
+    const verdict = out.indexOf('Check 78: not a PR run: not applicable')
+    expect(header, out.slice(-2000)).toBeGreaterThan(-1)
+    expect(verdict).toBeGreaterThan(header)
+    expect(out.indexOf('Summary', verdict)).toBeGreaterThan(verdict)
+  }, 120_000)
+})
+
+describe('Check 78: a hung git warns through the real git call', () => {
+  it('times out a git that never returns, and warns rather than passing', () => {
+    const bin = makeFixtureTempDir('smi7164-hung-git-')
+    writeFileSync(join(bin, 'git'), '#!/bin/sh\nsleep 5\n', { mode: 0o755 })
+    const savedPath = process.env.PATH
+    process.env.PATH = `${bin}:${savedPath ?? ''}`
+    const c = { pass: [] as string[], fail: [] as string[], warn: [] as string[] }
+    try {
+      const ok = mod.runCheck78FromEnv({
+        env: { GITHUB_BASE_REF: 'main' },
+        timeoutMs: 300,
+        pass: (m) => c.pass.push(m),
+        fail: (m) => c.fail.push(m),
+        warn: (m) => c.warn.push(m),
+      })
+      expect(ok).toBe(true)
+    } finally {
+      process.env.PATH = savedPath
+      rmSync(bin, { recursive: true, force: true })
+    }
+    expect(c.pass).toEqual([])
+    expect(c.fail).toEqual([])
+    expect(c.warn).toHaveLength(1)
+    expect(c.warn[0]).toContain('Check 78: could not run git:')
+    expect(c.warn[0]).toContain('ETIMEDOUT')
+  }, 30_000)
 })

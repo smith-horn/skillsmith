@@ -2153,7 +2153,9 @@ jobs:
         env:
           # SMI-7164: with full history Check 54 now evaluates here, so it needs
           # the PR body for its [skip-changelog-check] opt-out, same as
-          # quality-checks. Passed through env, never interpolated into run:.
+          # quality-checks. This also enables the PR-body opt-outs of Checks
+          # 58, 60, 63 and 65 here; Checks 54 and 58 echo the reason paragraph
+          # into the log. Passed through env, never interpolated into run:.
           PR_BODY: ${{ github.event.pull_request.body }}
         run: bash scripts/ci-code-review.sh audit-report.json
 

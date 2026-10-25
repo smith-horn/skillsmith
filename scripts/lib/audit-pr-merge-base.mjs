@@ -67,11 +67,25 @@ export function runCheck78({ baseRef, execFile, pass, fail, warn }) {
   pass(`Check 78: PR merge-base resolves (${mergeBase.slice(0, 12)})`)
 }
 
-const defaultGit = (args) =>
-  execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+// The timeout bounds a hung git (a lock, a stuck network filesystem). A kill carries no
+// numeric status, so runCheck78 warns rather than passing.
+export const GIT_TIMEOUT_MS = 30_000
+const makeGit = (timeoutMs) => (args) =>
+  execFileSync('git', args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
+  })
 
 /** The audit's single entry point. Returns false when it failed, for `--only` exit status. */
-export function runCheck78FromEnv({ env = process.env, execFile = defaultGit, pass, fail, warn }) {
+export function runCheck78FromEnv({
+  env = process.env,
+  timeoutMs = GIT_TIMEOUT_MS,
+  execFile = makeGit(timeoutMs),
+  pass,
+  fail,
+  warn,
+}) {
   let failed = false
   runCheck78({
     baseRef: env.GITHUB_BASE_REF,
