@@ -735,9 +735,10 @@ describe('Check 77: audit wiring (runCheck77)', () => {
   // SMI-7164 R2c (control, wiring half): the known-diff case keeps the git-crypt remedy.
   it('keeps the unlock-git-crypt fix when an encrypted file is in a known diff', () => {
     const c = drive({ isEncrypted: (f) => f === BAD, diffFiles: ['supabase/migrations/' + BAD] })
-    expect(c.fix).toEqual([
-      'Unlock git-crypt (or run this check where the key is available) and re-run',
-    ])
+    // The property: this fault is the missing key, so the remedy names the key, not the checkout.
+    expect(c.fix).toHaveLength(1)
+    expect(c.fix[0]).toContain('Unlock git-crypt')
+    expect(c.fix[0]).not.toContain('fetch-depth')
   })
 
   it('still scans readable files when the encrypted one is not in the diff', () => {

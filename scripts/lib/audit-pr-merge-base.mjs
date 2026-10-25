@@ -44,12 +44,20 @@ export function runCheck78({ baseRef, execFile, pass, fail, warn }) {
   try {
     mergeBase = String(execFile(['merge-base', `origin/${baseRef}`, 'HEAD'])).trim()
   } catch (err) {
-    // A non-zero exit carries a numeric status; a spawn failure (git missing) does not.
+    // A non-zero exit carries a numeric status; a spawn failure (git missing) or a
+    // timeout kill does not.
     if (typeof err?.status !== 'number') {
       warn(`Check 78: could not run git: ${err?.message ?? String(err)}`)
       return
     }
-    const why = gitErrorLine(err.stderr) || gitErrorLine(err.message) || 'git exited non-zero'
+    // merge-base exits 1 with no output when the fetched history holds no common
+    // ancestor (a depth-1 clone plus a depth-1 fetch of the base tip does this).
+    const why =
+      gitErrorLine(err.stderr) ||
+      (err.status === 1
+        ? 'no common ancestor in the fetched history: git merge-base exited 1'
+        : gitErrorLine(err.message)) ||
+      'git exited non-zero'
     fail(
       `Check 78: PR merge-base unresolvable: Checks 45, 50, 51, 54 and 77 cannot compute this PR's diff (${why}; shallow=${shallowFlag(execFile)})`,
       FIX

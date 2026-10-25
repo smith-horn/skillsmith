@@ -72,13 +72,24 @@ describe('Check 78: verdict logic (R4a)', () => {
     expect(c.fix[0]).toContain('Locally: git fetch origin <base>')
   })
 
-  it('falls back to the error message when stderr is empty (shape E exits 1 silently)', () => {
+  it('names a missing common ancestor when merge-base exits 1 silently (shape E)', () => {
     const c = drive('main', (args) => {
       if (args[0] === 'rev-parse') return 'true\n'
       throw gitExit(1, '', 'Command failed: git merge-base origin/main HEAD')
     })
     expect(c.fail).toHaveLength(1)
-    expect(c.fail[0]).toContain('(Command failed: git merge-base origin/main HEAD; shallow=true)')
+    expect(c.fail[0]).toContain(
+      '(no common ancestor in the fetched history: git merge-base exited 1; shallow=true)'
+    )
+  })
+
+  it('falls back to the error message for any other silent non-zero exit', () => {
+    const c = drive('main', (args) => {
+      if (args[0] === 'rev-parse') return 'false\n'
+      throw gitExit(129, '', 'Command failed: git merge-base origin/main HEAD')
+    })
+    expect(c.fail).toHaveLength(1)
+    expect(c.fail[0]).toContain('(Command failed: git merge-base origin/main HEAD; shallow=false)')
     expect(c.fail[0]).not.toContain('()')
   })
 
@@ -188,6 +199,7 @@ describe('Check 78: real clone shapes through --only pr-merge-base (R4b, R4c)', 
       /^[0-9a-f]{40}$/
     )
     expectFail('E', 'true')
+    expect(audit(join(root, 'E')).stdout).toContain('no common ancestor in the fetched history')
   })
 
   it('R4c: reads the base from GITHUB_BASE_REF, not GITHUB_HEAD_REF', () => {
