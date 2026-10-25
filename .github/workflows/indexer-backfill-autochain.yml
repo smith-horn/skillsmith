@@ -189,8 +189,9 @@ jobs:
     name: Recover campaign state and re-dispatch
     if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    # Independent of the completed dispatch's own (up to 330-min) budget.
-    timeout-minutes: 10
+    # Independent of the completed dispatch's own (up to 330-min) budget. SMI-7167: 15, not 10, to fit
+    # the ledger steps' worst case (about 4.5 min) on top of a chain-mode link's cooldown and checks.
+    timeout-minutes: 15
     permissions:
       # SMI-7161: read only. Every GITHUB_TOKEN use in this job is a read; the one dispatch
       # authenticates with BACKFILL_AUTOCHAIN_DISPATCH_PAT. If an edit points the dispatch back at
@@ -231,6 +232,49 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
+      - name: Record link start
+        id: link_start
+        # SMI-7167 (ADR-183). FIRST step, inline (no Checkout has run), before every gate, so a
+        # link that stops on purpose is still recorded. With `Record link finish` (the last step) it
+        # lets the pg_cron silent-stop detector tell "no link ran" from "a link ran". Written for
+        # every workflow_run link, and for a manual mode=link run only when it can act
+        # (verify_only=false and DISPATCH_ALLOWED), so a manual link in driver mode cannot close an
+        # incident. FAIL-SOFT: a failed write is a warning, never red; the detector then pages.
+        # Every value arrives through env: and is JSON-encoded by jq; no ${{ }} inside the script.
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'link' && inputs.verify_only == false && env.DISPATCH_ALLOWED == 'true')
+        continue-on-error: true # audit:allow-continue-on-error -- fail-soft ledger write; a missing row is paged by the silent-stop detector (SMI-7167, ADR-183)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LEDGER_EVENT: indexer_backfill_autochain_link_started
+          LEDGER_COMPLETED_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.completed_run_id }}
+          LEDGER_COMPLETED_RUN_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || inputs.completed_run_attempt }}
+          LEDGER_COMPLETED_TITLE: ${{ github.event.workflow_run.display_title }}
+          LEDGER_EVENT_NAME: ${{ github.event_name }}
+          LEDGER_STATUS: ''
+        run: |
+          case "$LEDGER_COMPLETED_RUN_ID" in
+            ''|0*|*[!0-9]*) echo "::warning::Not recording $LEDGER_EVENT: completed run id '$LEDGER_COMPLETED_RUN_ID' is not a positive integer."; exit 0 ;;
+          esac
+          if [ "${#LEDGER_COMPLETED_RUN_ID}" -gt 19 ]; then echo "::warning::Not recording $LEDGER_EVENT: completed run id is longer than 19 digits."; exit 0; fi
+          BODY=$(jq -n --arg et "$LEDGER_EVENT" --arg rid "$LEDGER_COMPLETED_RUN_ID" \
+            --arg att "$LEDGER_COMPLETED_RUN_ATTEMPT" --arg title "$LEDGER_COMPLETED_TITLE" \
+            --arg lrid "$GITHUB_RUN_ID" --arg latt "$GITHUB_RUN_ATTEMPT" --arg ev "$LEDGER_EVENT_NAME" \
+            --arg st "$LEDGER_STATUS" \
+            '{event_type:$et, actor:"system", action:"backfill_autochain_link", resource:$rid, result:"success",
+              metadata:({completed_run_id:$rid, completed_run_attempt:$att, completed_title:$title,
+                         link_run_id:$lrid, link_run_attempt:$latt, event:$ev}
+                        + (if $st == "" then {} else {status:$st} end))}') || { echo "::warning::Not recording $LEDGER_EVENT: could not build the row."; exit 0; }
+          HTTP="000"
+          if CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" -H "Prefer: return=minimal" \
+            -d "$BODY" "$SUPABASE_URL/rest/v1/audit_logs"); then HTTP="$CODE"; fi
+          case "$HTTP" in
+            2??) echo "Recorded $LEDGER_EVENT for completed run $LEDGER_COMPLETED_RUN_ID (HTTP $HTTP)." ;;
+            *) echo "::warning::Could not record $LEDGER_EVENT for completed run $LEDGER_COMPLETED_RUN_ID (HTTP $HTTP); the silent-stop detector will page this run (SMI-7167)." ;;
+          esac
+
       - name: Validate dispatch inputs
         id: validate
         # SMI-7142. First step, inline (no Checkout has run). Red on a malformed
@@ -850,6 +894,22 @@ jobs:
 
       # ---------------------------------------------------------------- dispatch
 
+      - name: Record dispatch prepared
+        id: prepared
+        # SMI-7167 (ADR-183). The dispatch step's EXACT condition, immediately before it. FAIL
+        # CLOSED: if the intent cannot be recorded this step is red and the dispatch (implicit
+        # success()) is skipped -- an unwatched dispatch is what the ledger exists to prevent. A
+        # separate step, so the dispatch step keeps its SMI-7112 R3-1 adjacency (the enable read is
+        # the command immediately before the dispatch).
+        if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true' && (env.IS_RESUME != 'true' || steps.claim.outputs.claimed == 'true')
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LEDGER_SUPABASE_ENV: ${{ steps.recover.outputs.supabase_env }}
+          LEDGER_IS_RESUME: ${{ env.IS_RESUME }}
+          LEDGER_RESUME_FROM: ${{ steps.recover.outputs.resume_from }}
+        run: bash scripts/ci/autochain-ledger.sh prepared
+
       - name: Dispatch next chunk
         id: dispatch
         if: env.skip != 'true' && env.DISPATCH_ALLOWED == 'true' && steps.recover.outputs.skip == 'false' && steps.recheck.outputs.non_terminal == '0' && steps.fence.outcome == 'success' && steps.window.outputs.window_open == 'true' && (env.IS_RESUME != 'true' || steps.claim.outputs.claimed == 'true')
@@ -894,6 +954,23 @@ jobs:
             -f token_source="$TOKEN_SOURCE" \
             -f dispatch_token="ac-$GITHUB_RUN_ID"
           echo "Re-dispatched indexer-backfill.yml, resume_from=$RESUME_FROM, supabase_env=$SUPABASE_ENV, dispatch_token=ac-$GITHUB_RUN_ID"
+
+      - name: Record dispatch resolved
+        id: ledger_resolve
+        # SMI-7167 (ADR-183). Runs whenever `prepared` was attempted (even after it went red, since
+        # its write may have committed). Looks the run up by its exact token and records the real
+        # run id (outcome dispatched) or not_dispatched; records nothing when ambiguous, and the
+        # detector pages that. continue-on-error: it must never change the job's result.
+        if: always() && steps.prepared.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LEDGER_SUPABASE_ENV: ${{ steps.recover.outputs.supabase_env }}
+          LEDGER_SINCE: ${{ steps.prepared.outputs.since }}
+          LEDGER_DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
+        run: bash scripts/ci/autochain-ledger.sh resolved
 
       - name: Reconcile this claim after the dispatch (resume)
         id: self_reconcile
@@ -974,6 +1051,9 @@ jobs:
         env:
           COMPLETED_RUN_ID: ${{ steps.target.outputs.completed_run_id || env.COMPLETED_RUN_ID }}
           SELF_RECONCILE_FAILED: ${{ steps.self_reconcile.outcome == 'failure' }}
+          # SMI-7167: set when the ledger's resolve step found the run this link dispatched (for
+          # example a dispatch step that timed out after GitHub accepted it).
+          DISPATCHED_RUN_ID: ${{ steps.ledger_resolve.outputs.dispatched_run_id }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         # Inline, not scripts/ci/autochain-alert.sh: a failure before Checkout must
@@ -982,6 +1062,8 @@ jobs:
         run: |
           if [ "$SELF_RECONCILE_FAILED" = "true" ]; then
             MSG="The backfill autochain DID dispatch the next chunk, but reconciling its deferral marker failed afterwards and the dedicated alert could not be delivered. Do not re-dispatch: check the marker and the dispatched indexer-backfill run, per docs/internal/runbooks/backfill-autochain-handover.md section 8.3."
+          elif [ -n "$DISPATCHED_RUN_ID" ]; then
+            MSG="The backfill autochain failed while handling run ${COMPLETED_RUN_ID:-<none: resume (schedule or pg_cron)>}, but it DID dispatch indexer-backfill run $DISPATCHED_RUN_ID (found by its dispatch token). Do not re-dispatch: see the run for the failing step."
           else
             MSG="The backfill autochain failed while handling run ${COMPLETED_RUN_ID:-<none: resume (schedule or pg_cron)>}. It did not dispatch the next chunk; see the run for the failing step."
           fi
@@ -1009,3 +1091,45 @@ jobs:
             echo "::error::alert-notify returned $HTTP -- email was NOT sent."
             exit 1
           fi
+
+      - name: Record link finish
+        id: link_finish
+        # SMI-7167 (ADR-183). LAST step, inline (Checkout may not have run), always(), same writers as
+        # `Record link start`. Records job.status: success means this link did its job (dispatched,
+        # deferred, or stopped on purpose); anything else, or no row at all, means it did not. The
+        # detector closes an incident ONLY on a success row for the run. FAIL-SOFT, like the start
+        # row: a failed write is a warning; the detector then pages. The script body is byte-identical
+        # to `Record link start`'s (pinned by a structural test).
+        if: always() && (github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'link' && inputs.verify_only == false && env.DISPATCH_ALLOWED == 'true'))
+        continue-on-error: true # audit:allow-continue-on-error -- fail-soft ledger write; a missing row is paged by the silent-stop detector (SMI-7167, ADR-183)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LEDGER_EVENT: indexer_backfill_autochain_link_finished
+          LEDGER_COMPLETED_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.completed_run_id }}
+          LEDGER_COMPLETED_RUN_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || inputs.completed_run_attempt }}
+          LEDGER_COMPLETED_TITLE: ${{ github.event.workflow_run.display_title }}
+          LEDGER_EVENT_NAME: ${{ github.event_name }}
+          LEDGER_STATUS: ${{ job.status }}
+        run: |
+          case "$LEDGER_COMPLETED_RUN_ID" in
+            ''|0*|*[!0-9]*) echo "::warning::Not recording $LEDGER_EVENT: completed run id '$LEDGER_COMPLETED_RUN_ID' is not a positive integer."; exit 0 ;;
+          esac
+          if [ "${#LEDGER_COMPLETED_RUN_ID}" -gt 19 ]; then echo "::warning::Not recording $LEDGER_EVENT: completed run id is longer than 19 digits."; exit 0; fi
+          BODY=$(jq -n --arg et "$LEDGER_EVENT" --arg rid "$LEDGER_COMPLETED_RUN_ID" \
+            --arg att "$LEDGER_COMPLETED_RUN_ATTEMPT" --arg title "$LEDGER_COMPLETED_TITLE" \
+            --arg lrid "$GITHUB_RUN_ID" --arg latt "$GITHUB_RUN_ATTEMPT" --arg ev "$LEDGER_EVENT_NAME" \
+            --arg st "$LEDGER_STATUS" \
+            '{event_type:$et, actor:"system", action:"backfill_autochain_link", resource:$rid, result:"success",
+              metadata:({completed_run_id:$rid, completed_run_attempt:$att, completed_title:$title,
+                         link_run_id:$lrid, link_run_attempt:$latt, event:$ev}
+                        + (if $st == "" then {} else {status:$st} end))}') || { echo "::warning::Not recording $LEDGER_EVENT: could not build the row."; exit 0; }
+          HTTP="000"
+          if CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" -H "Prefer: return=minimal" \
+            -d "$BODY" "$SUPABASE_URL/rest/v1/audit_logs"); then HTTP="$CODE"; fi
+          case "$HTTP" in
+            2??) echo "Recorded $LEDGER_EVENT for completed run $LEDGER_COMPLETED_RUN_ID (HTTP $HTTP)." ;;
+            *) echo "::warning::Could not record $LEDGER_EVENT for completed run $LEDGER_COMPLETED_RUN_ID (HTTP $HTTP); the silent-stop detector will page this run (SMI-7167)." ;;
+          esac
