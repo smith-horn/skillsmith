@@ -347,7 +347,8 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
   try {
     pending = await checkRecoveryPending({ skillsDir, dir, dirName })
   } catch (err) {
-    return { kind: 'probe-failed', error: sanitizeError(dir, err) }
+    // The folder's own failure first, as below.
+    return { kind: 'probe-failed', error: presenceError ?? sanitizeError(dir, err) }
   }
   if (pending === true) return { kind: 'recovery-pending' }
   // The folder's own failure first; else the staging's, by the path that failed.

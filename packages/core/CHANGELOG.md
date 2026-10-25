@@ -8,9 +8,10 @@ All notable changes to `@skillsmith/core` are documented here.
   failed, so a staging folder that can't be listed is reported against that folder, not the skill.
   The probe also asks the check when a skill folder's own presence check fails, so a crashed update
   reads `recovery-pending` there too, as the write does. `swapInPlace` refuses a `preEntry` or
-  `postEntry` of `undefined` with `write-failed` before writing its record: JSON drops the key, and
-  the scan would then read the record as malformed and block every skill in the root (`null` means
-  no entry). No caller uses either yet.
+  `postEntry` that JSON can't serialize (`undefined`, a function, a symbol) with `write-failed`
+  before writing its record: JSON drops the key, and the scan would then read the record as
+  malformed and block every skill in the root (`null` means no entry). Neither the probe nor
+  `swapInPlace` has a caller yet.
 
 - **Added**: SMI-6531 A1 step 5 -- the record scan. Before every update, under the skills root's
   write lock, `swapInPlace` reads the record each unfinished update left in

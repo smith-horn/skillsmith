@@ -1170,4 +1170,23 @@ describe('probeUpdateTarget — a presence error is still checked against the re
 
     expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'EACCES' } })
   })
+
+  it('a presence error wins over a checker that rejects, too', async () => {
+    const dir = mkSkill('eacces-and-throwing-checker')
+    eaccesInjections.lstat.add(dir)
+    const checkRecoveryPending = vi.fn(async () => {
+      throw Object.assign(new Error('checker broke'), { code: 'EIO' })
+    })
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'eacces-and-throwing-checker',
+      writeSet: [],
+      checkRecoveryPending,
+    })
+
+    expect(checkRecoveryPending).toHaveBeenCalledTimes(1)
+    expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'EACCES' } })
+  })
 })

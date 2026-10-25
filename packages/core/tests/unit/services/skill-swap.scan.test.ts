@@ -376,32 +376,44 @@ describe('frozenWide: what the T-R1 snapshot sees', () => {
   })
 })
 
-describe('T-R1 (swap half): a record never holds an undefined entry (retro of PR #3162)', () => {
-  for (const key of ['preEntry', 'postEntry'] as const) {
-    it(`${key}: undefined refuses write-failed before step 5 publishes; the root is not blocked`, async () => {
-      const fx = makeFixture({ 'SKILL.md': '# v1\n' })
-      const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
-      const p = plan(fx, [modify('SKILL.md', '# next\n')])
-      p.input = { ...p.input, [key]: undefined }
-      const OP2 = opIdN('c')
-      const run = await runSpied(p, ALL_DELETES, { opId: OP2 })
+/** Values JSON can't serialize: each would drop its key from the record (measured). */
+const UNSERIALIZABLE: Array<[string, unknown]> = [
+  ['undefined', undefined],
+  ['a function', () => 1],
+  ['a symbol', Symbol('entry')],
+]
 
-      const r = refusedOf(run.result)
-      expect(r.reason).toBe('write-failed')
-      expect(r.detail).toContain('undefined')
-      // Abort cleanup ran like any step-5 failure: the complete build is parked.
-      expect(r.staged).toBe('parked')
-      expect(listTree(fx.staging).filter((n) => n.endsWith('record.json'))).toEqual([])
-      expect(
-        run.events.some((e) => 'op' in e && e.op === 'create' && e.path.endsWith('record.json.tmp'))
-      ).toBe(false)
-      expect(hashOf(fx.realDir)).toBe(p.input.preTree)
-      // The root is not blocked: a second skill commits, and the scan reads nothing unreadable.
-      const o = await attempt(other, opIdN('d'))
-      expect(o.result.status).toBe('committed')
-      const scan = await scanStagingRecords(fs.realpathSync(fx.skillsDir), fx.staging)
-      expect(scan).toMatchObject({ ok: true, unreadable: [] })
-    })
+describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of PR #3162)', () => {
+  for (const key of ['preEntry', 'postEntry'] as const) {
+    it.each(UNSERIALIZABLE)(
+      `${key}: %s refuses write-failed before step 5 publishes; the root is not blocked`,
+      async (_label, value) => {
+        const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+        const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
+        const p = plan(fx, [modify('SKILL.md', '# next\n')])
+        p.input = { ...p.input, [key]: value }
+        const OP2 = opIdN('c')
+        const run = await runSpied(p, ALL_DELETES, { opId: OP2 })
+
+        const r = refusedOf(run.result)
+        expect(r.reason).toBe('write-failed')
+        expect(r.detail).toContain('undefined')
+        // Abort cleanup ran like any step-5 failure: the complete build is parked.
+        expect(r.staged).toBe('parked')
+        expect(listTree(fx.staging).filter((n) => n.endsWith('record.json'))).toEqual([])
+        expect(
+          run.events.some(
+            (e) => 'op' in e && e.op === 'create' && e.path.endsWith('record.json.tmp')
+          )
+        ).toBe(false)
+        expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+        // The root is not blocked: a second skill commits, and the scan reads nothing unreadable.
+        const o = await attempt(other, opIdN('d'))
+        expect(o.result.status).toBe('committed')
+        const scan = await scanStagingRecords(fs.realpathSync(fx.skillsDir), fx.staging)
+        expect(scan).toMatchObject({ ok: true, unreadable: [] })
+      }
+    )
   }
 
   it('control: null entries commit; a kept record with them is read back as pending', async () => {
