@@ -56,6 +56,8 @@ import {
 } from './audit-host-volume-fs-guard-helpers.mjs'
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import { getCheck77DiffFiles, runCheck77 } from './lib/audit-check77.mjs'
+import { runCheck78FromEnv } from './lib/audit-pr-merge-base.mjs'
+import { logUntrusted } from './lib/untrusted-log.mjs'
 import {
   loadGeneratorInputs as loadWeakPasswordLexiconInputs,
   generateAll as generateWeakPasswordLexicon,
@@ -161,6 +163,9 @@ const CHECK_REGISTRY = new Map([
     // Same implementation as scripts/check-dependency-registry.mjs.
     async () => runDependencyRegistryCli() === 0,
   ],
+  // SMI-7164: Check 78 (PR merge-base resolves). The full audit's Check 78 block calls
+  // this same entry, so `--only pr-merge-base` subprocess tests exercise what CI runs.
+  ['pr-merge-base', async () => runCheck78FromEnv({ pass, fail, warn })],
 ])
 
 const cliArgs = parseArgs({
@@ -4882,7 +4887,8 @@ console.log('(content, not placement — see Check 43 for heading order)')
     const after = PR_BODY.slice(idx + SKIP_MARKER.length)
     const reasonParagraph = after.split(/\n\s*\n/)[0].trim()
     console.log('::group::Acknowledgement reason')
-    console.log(reasonParagraph || '(no reason paragraph found immediately after the marker)')
+    // SMI-7164: the paragraph is PR-body text, so workflow commands in it must not run.
+    logUntrusted(reasonParagraph || '(no reason paragraph found immediately after the marker)')
     console.log('::endgroup::')
   }
 
@@ -5082,7 +5088,8 @@ console.log(
     const after = PR_BODY.slice(idx + SKIP_MARKER.length)
     const reasonParagraph = after.split(/\n\s*\n/)[0].trim()
     console.log('::group::Acknowledgement reason')
-    console.log(reasonParagraph || '(no reason paragraph found immediately after the marker)')
+    // SMI-7164: the paragraph is PR-body text, so workflow commands in it must not run.
+    logUntrusted(reasonParagraph || '(no reason paragraph found immediately after the marker)')
     console.log('::endgroup::')
   }
 
@@ -6418,8 +6425,10 @@ runDependencyRegistryCheck({ pass, warn, fail })
 // call returns 42501. FAILS (not warns). Scope: migrations newer than
 // CHECK77_CUTOFF_TS, never the exempt backfill. The scope, pass/fail and INCONCLUSIVE
 // logic lives in runCheck77() in scripts/lib/audit-check77.mjs (I/O injected, unit-tested).
-// Locked trees (no git-crypt key) fail INCONCLUSIVE only when an encrypted
-// in-scope file is in this PR's diff; otherwise "not checked" is stated and passes.
+// Locked trees (no git-crypt key) fail INCONCLUSIVE when an encrypted in-scope file
+// is in this PR's diff, or when the diff could not be computed at all (then every
+// encrypted in-scope file counts as hidden, and the fix names the checkout, see
+// Check 78); otherwise "not checked" is stated and passes.
 console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)${RESET}`)
 {
   const MIG_DIR = 'supabase/migrations'
@@ -6445,6 +6454,14 @@ console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)$
     })
   }
 }
+
+// Check 78: in a pull_request run, `git merge-base origin/<base> HEAD` resolves (SMI-7164).
+// Checks 45, 50, 51, 54 and 77 compute the PR's diff from it, and degrade quietly when it
+// fails, so this check fails loudly instead and names the checkout. Not applicable when
+// GITHUB_BASE_REF is unset (local runs, pushes to main). No opt-out: the remedy is the
+// checkout config. Logic in scripts/lib/audit-pr-merge-base.mjs.
+console.log(`\n${BOLD}Check 78: PR merge-base resolves (SMI-7164)${RESET}`)
+await CHECK_REGISTRY.get('pr-merge-base')()
 
 // Summary
 console.log('\n' + '━'.repeat(50))
