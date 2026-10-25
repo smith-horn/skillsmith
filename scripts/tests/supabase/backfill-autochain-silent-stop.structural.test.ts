@@ -410,7 +410,7 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
       [
         "a.ckpt + interval '30 minutes', a.created_at + interval '12 hours'",
         "p.created_at + interval '30 minutes' <= now()",
-        "now() - interval '1 year'",
+        "a.created_at >= now() - interval '1 year'",
         "c.created_at >= u.created_at - interval '1 day'",
         "'^[1-9][0-9]{0,18}$'",
         "'^ac-[1-9][0-9]{0,18}$'",
@@ -422,6 +422,20 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
       all(mutate(b, /a\.created_at \+ interval '12 hours'/g, "a.created_at + interval '6 hours'"))
     ).toBe(false)
     expect(/::\s*(bigint|numeric|int)/i.test(b)).toBe(false)
+    // the window is inclusive (gate, PR #3172): a strict > would drop a row exactly 1 year old
+    expect(
+      all(
+        mutate(
+          b,
+          "a.created_at >= now() - interval '1 year'",
+          "a.created_at > now() - interval '1 year'"
+        )
+      )
+    ).toBe(false)
+    // DISTINCT ON ties break on audit_logs.id (gate, PR #3172)
+    const ties = (t: string) => (t.match(/l\.created_at, l\.id\n/g) ?? []).length === 2
+    expect(ties(b)).toBe(true)
+    expect(ties(mutate(b, /l\.created_at, l\.id\n/g, 'l.created_at\n'))).toBe(false)
   })
 
   it('re-asserts D3 and touches no table; its paired rollback restores the 20261025000000 body', () => {

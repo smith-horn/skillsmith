@@ -104,6 +104,45 @@ export function registerVolumeTests(ctx: Ctx): void {
       }
     })
 
+    // Cross-family gate, PR #3172. Rows seeded in one transaction share now(), so equal intervals give
+    // equal created_at: a true tie, broken only by audit_logs.id.
+    it('a created_at tie on the resolved rows naming one run is broken by the lower audit_logs.id', async () => {
+      const r = await inTxn(ctx.ctl(), [
+        dispatchedRow('424242', '13 hours', { supabase_env: 'second' }),
+        dispatchedRow('424242', '13 hours', { supabase_env: 'first' }),
+        "UPDATE audit_logs SET id = 'tie-b' WHERE metadata->>'supabase_env' = 'second';",
+        "UPDATE audit_logs SET id = 'tie-a' WHERE metadata->>'supabase_env' = 'first';",
+        "SELECT 'env=' || supabase_env FROM public.backfill_autochain_silent_stop_candidates();",
+      ])
+      expect(r.lines).toEqual(['env=first'])
+      const flipped = await inTxn(ctx.ctl(), [
+        dispatchedRow('424242', '13 hours', { supabase_env: 'second' }),
+        dispatchedRow('424242', '13 hours', { supabase_env: 'first' }),
+        "UPDATE audit_logs SET id = 'tie-a' WHERE metadata->>'supabase_env' = 'second';",
+        "UPDATE audit_logs SET id = 'tie-b' WHERE metadata->>'supabase_env' = 'first';",
+        "SELECT 'env=' || supabase_env FROM public.backfill_autochain_silent_stop_candidates();",
+      ])
+      expect(flipped.lines).toEqual(['env=second'])
+    })
+
+    it('a created_at tie on the prepared rows for one token and attempt is broken by the lower audit_logs.id', async () => {
+      const seed = (lowId: string, highId: string) => [
+        preparedRow('ac-555', '1', '31 minutes', { link_run_id: '1111' }),
+        preparedRow('ac-555', '1', '31 minutes', { link_run_id: '2222' }),
+        `UPDATE audit_logs SET id = '${lowId}' WHERE metadata->>'link_run_id' = '1111';`,
+        `UPDATE audit_logs SET id = '${highId}' WHERE metadata->>'link_run_id' = '2222';`,
+        "SELECT 'link=' || link_run_id FROM public.backfill_autochain_silent_stop_candidates();",
+      ]
+      expect((await inTxn(ctx.ctl(), seed('tie-a', 'tie-b'))).lines).toEqual(['link=1111'])
+      expect((await inTxn(ctx.ctl(), seed('tie-b', 'tie-a'))).lines).toEqual(['link=2222'])
+    })
+
+    it('the 1-year window is inclusive: a resolved row exactly 1 year old is still a candidate', async () => {
+      const r = await inTxn(ctx.ctl(), [dispatchedRow('424242', '1 year'), CANDIDATES])
+      expect(r.lines).toHaveLength(1)
+      expect(r.lines[0]).toMatch(/^c=A\|424242\|no_link\|/)
+    })
+
     it("the perf migration's own smoke runs the new body: it counts an open candidate seeded before it", async () => {
       // Committed seed (the migration has its own BEGIN/COMMIT), cleared by fixtureSql afterwards.
       await ctx.ctl().send(dispatchedRow('424242', '13 hours'))
