@@ -17,9 +17,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { FullDeviceMarker, SwapResult } from '../../../src/services/skill-swap.js'
+import type { FullDeviceMarker, SwapRecord, SwapResult } from '../../../src/services/skill-swap.js'
 import { computeRecordSha256 } from '../../../src/services/skill-swap.js'
-import { jsonBytes } from '../../../src/services/skill-swap.staging.js'
+import { jsonBytes, sealRecord } from '../../../src/services/skill-swap.staging.js'
 import { MAX_RECORD_BYTES, scanStagingRecords } from '../../../src/services/skill-swap.records.js'
 import { isFullDeviceLeftover } from '../../../src/services/skill-swap.fullmark.js'
 import { ALL_DELETES, runSpied } from './skill-swap.abort.helpers.js'
@@ -445,38 +445,53 @@ describe('the marker rewrite is sealed like step 5', () => {
   })
 })
 
-describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retro)', () => {
-  it('an entry whose JSON changes after step 5 is rewritten as step 5 sealed it', async () => {
+describe('the marker rewrite starts from the record step 5 sealed (PR #3164 and #3170 retros)', () => {
+  /**
+   * How many times step 5's seal serializes one entry, measured with
+   * `sealRecord` on a real record body rather than assumed, so the threshold
+   * below follows the seal if it is refactored.
+   */
+  async function sealCallsPerEntry(): Promise<number> {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
-    let sealed = false
-    let hookCalls = 0
-    // What the record on disk held when the hook ran: recorded, not asserted
-    // there, since a throwing hook would turn into a swap failure.
-    let atHook: { marked: boolean; pre: unknown; post: unknown } | null = null
-    // 'early' until step 5 has published its record, 'late' for any later serialization.
-    const changing = () => ({ toJSON: () => ({ n: sealed ? 'late' : 'early' }) })
-    // Both entries, so a rewrite that took either from the live input would show it.
-    p.input = { ...p.input, preEntry: changing(), postEntry: changing() }
-    const copy = failCopyCreate(fx, 'ENOSPC')
-    const run = await runSpied(p, ALL_DELETES, {
-      hooks: {
-        afterRecord: () => {
-          hookCalls++
-          const r = recordOf(fx)
-          atHook = { marked: r.fullDevice !== undefined, pre: r.preEntry, post: r.postEntry }
-          sealed = true
-        },
+    failCopyCreate(fx, 'ENOSPC')
+    stoppedAtPublish(fx, (await runSpied(p, ALL_DELETES)).result)
+    const { recordSha256: _h, fullDevice: _m, ...body } = recordOf(fx)
+    let n = 0
+    // Counts each serialization but always serializes the same, so the seal accepts it.
+    const stable = {
+      toJSON: () => {
+        n++
+        return 'same'
       },
+    }
+    const counted: Omit<SwapRecord, 'recordSha256'> = { ...body, preEntry: stable }
+    sealRecord(counted, fs.realpathSync(fx.skillsDir), OP_ID)
+    expect(n).toBeGreaterThan(0)
+    return n
+  }
+
+  it('an entry whose JSON changes after step 5 is rewritten as step 5 sealed it', async () => {
+    const sealCalls = await sealCallsPerEntry()
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const calls = { pre: 0, post: 0 }
+    // 'early' for step 5's own serializations and 'late' for any after them,
+    // wherever they happen: no hook, so no window for a rewrite to slip into.
+    const changing = (k: 'pre' | 'post') => ({
+      toJSON: () => ({ n: ++calls[k] > sealCalls ? 'late' : 'early' }),
     })
-    // Paired: the flip happened once, between step 5's record and the marker
-    // rewrite, so a rewrite from the live input would read 'late'.
-    expect(hookCalls).toBe(1)
-    expect(atHook).toEqual({ marked: false, pre: { n: 'early' }, post: { n: 'early' } })
+    // Both entries, so a rewrite that took either from the live input would show it.
+    p.input = { ...p.input, preEntry: changing('pre'), postEntry: changing('post') }
+    const copy = failCopyCreate(fx, 'ENOSPC')
+    const run = await runSpied(p, ALL_DELETES)
     expect(copy.fired).toBe(1)
     stoppedAtPublish(fx, run.result)
     const rec = recordOf(fx)
+    // Paired: the rewrite ran, and step 5's seal used up its 'early' calls.
     expect(rec.fullDevice).toEqual(markerFor(fx, 'ENOSPC', 'copy'))
+    expect(calls.pre).toBeGreaterThanOrEqual(sealCalls)
+    expect(calls.post).toBeGreaterThanOrEqual(sealCalls)
     expect(rec.preEntry).toEqual({ n: 'early' })
     expect(rec.postEntry).toEqual({ n: 'early' })
   })
