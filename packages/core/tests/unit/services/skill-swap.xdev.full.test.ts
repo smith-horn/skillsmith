@@ -351,7 +351,7 @@ describe('T-F1: no ratchet', () => {
     const files: Record<string, string> = { 'SKILL.md': '# v1\n' }
     for (let i = 0; i < 24; i++) files[`d${i % 3}/f${i}.txt`] = `file ${i}\n`
     const fx = xdevFixture(files)
-    // Room for the three attempts' sidecars, far less than one copy.
+    // Room for the first attempt's sidecar (only it writes one), far less than one copy.
     const used = simulatedDevice(fx, 10n * BLOCK)
     const firstOp = '1'.repeat(32)
     const first = await runSpied(plan(fx, [modify('SKILL.md', '# v2\n')]), ALL_DELETES, {

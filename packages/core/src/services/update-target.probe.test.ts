@@ -422,10 +422,10 @@ describe('probeUpdateTarget — retry rule (§4.2)', () => {
       sleep: async () => {},
     })
 
-    expect(a.kind).toBe('probe-failed')
-    expect(b.kind).toBe('probe-failed')
-    if (a.kind === 'probe-failed') expect(a.error.errno).toBe('ENOTDIR')
-    if (b.kind === 'probe-failed') expect(b.error.errno).toBe('ENOTDIR')
+    // The error names the path that failed (the staging), not the skill folder.
+    const staging = path.join(root, '.skillsmith-staging')
+    expect(a).toEqual({ kind: 'probe-failed', error: { path: staging, errno: 'ENOTDIR' } })
+    expect(b).toEqual({ kind: 'probe-failed', error: { path: staging, errno: 'ENOTDIR' } })
   })
 
   it('the DEFAULT checker also says NO when no staging record names the dir', async () => {
@@ -951,7 +951,7 @@ describe('probeUpdateTarget — ok outcome contents', () => {
 })
 
 describe('defaultRecoveryPendingChecker — on A1 record scan (SMI-6531 step 5)', () => {
-  const ask = (dir: string): Promise<boolean> =>
+  const ask = (dir: string): ReturnType<typeof defaultRecoveryPendingChecker> =>
     defaultRecoveryPendingChecker({ skillsDir: root, dir, dirName: path.basename(dir) })
 
   it('returns false when .skillsmith-staging/ is absent', async () => {
@@ -1012,9 +1012,9 @@ describe('defaultRecoveryPendingChecker — on A1 record scan (SMI-6531 step 5)'
     expect(await ask(dir)).toBe(false)
   })
 
-  it('skips reserved staging subdirectories (.kept, .trash, .quarantine) even holding a verified record', async () => {
+  it('skips every dot-named staging entry (the rule is the dot prefix: .kept, .trash, .quarantine, .parked) even holding a verified record', async () => {
     const dir = path.join(root, 'reappearing')
-    for (const reserved of ['.kept', '.trash', '.quarantine']) {
+    for (const reserved of ['.kept', '.trash', '.quarantine', '.parked']) {
       putRecord(reserved, dir)
     }
     expect(await ask(dir)).toBe(false)
@@ -1023,9 +1023,11 @@ describe('defaultRecoveryPendingChecker — on A1 record scan (SMI-6531 step 5)'
     expect(await ask(dir)).toBe(true)
   })
 
-  it('throws, with the errno, when the staging cannot be listed', async () => {
+  it('resolves { error } naming the staging path and errno when the staging cannot be listed', async () => {
     breakStaging()
-    await expect(ask(path.join(root, 'x'))).rejects.toMatchObject({ code: 'ENOTDIR' })
+    expect(await ask(path.join(root, 'x'))).toEqual({
+      error: { path: path.join(root, '.skillsmith-staging'), errno: 'ENOTDIR' },
+    })
   })
 })
 
@@ -1075,27 +1077,28 @@ describe('unreadableStagingRecords (row 0b)', () => {
   })
 })
 
-describe('defaultRecoveryPendingChecker: errors name their cause', () => {
-  it('the thrown message names the staging path and the errno', async () => {
-    breakStaging()
-    const staging = path.join(root, '.skillsmith-staging')
-    await expect(
-      defaultRecoveryPendingChecker({ skillsDir: root, dir: path.join(root, 'x'), dirName: 'x' })
-    ).rejects.toThrow(new RegExp(`${staging.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*ENOTDIR`))
+describe('defaultRecoveryPendingChecker: errors name the path that failed', () => {
+  it('an unresolvable skills root resolves { error: { path: skillsDir } }', async () => {
+    const a = path.join(root, 'root-loop-a')
+    const b = path.join(root, 'root-loop-b')
+    fs.symlinkSync(b, a)
+    fs.symlinkSync(a, b)
+    expect(
+      await defaultRecoveryPendingChecker({ skillsDir: a, dir: path.join(a, 'x'), dirName: 'x' })
+    ).toEqual({ error: { path: a, errno: 'ELOOP' } })
   })
 
-  it('a realpath(dir) error other than ENOENT/ENOTDIR (ELOOP) rejects, not "not named"', async () => {
-    // The probe's own presence check fails on a symlink loop before the
-    // checker is asked, so the checker is tested directly.
+  it('a realpath(dir) error other than ENOENT/ENOTDIR (ELOOP) resolves { error: { path: dir } }, not false', async () => {
+    // The probe's presence check also fails on a symlink loop; it is the
+    // checker's own answer that is pinned here, and the probe's outcome below.
     const a = path.join(root, 'dir-loop-a')
     const b = path.join(root, 'dir-loop-b')
     fs.symlinkSync(b, a)
     fs.symlinkSync(a, b)
     putRecord('1'.repeat(32), path.join(root, 'other'))
-    await expect(
-      defaultRecoveryPendingChecker({ skillsDir: root, dir: a, dirName: 'dir-loop-a' })
-    ).rejects.toMatchObject({ code: 'ELOOP' })
-    // The probe on the same folder never reads it as eligible.
+    expect(
+      await defaultRecoveryPendingChecker({ skillsDir: root, dir: a, dirName: 'dir-loop-a' })
+    ).toEqual({ error: { path: a, errno: 'ELOOP' } })
     const outcome = await probeUpdateTarget({
       dir: a,
       skillsDir: root,
@@ -1106,12 +1109,65 @@ describe('defaultRecoveryPendingChecker: errors name their cause', () => {
     expect(outcome.kind).toBe('probe-failed')
   })
 
-  it('a ENOTDIR under dir (a file where a parent should be) is still matched by path, not rejected', async () => {
+  it('a ENOTDIR under dir (a file where a parent should be) is still matched by path, not an error', async () => {
     fs.writeFileSync(path.join(root, 'a-file'), 'x')
     const dir = path.join(root, 'a-file', 'child')
     putRecord('1'.repeat(32), dir)
     expect(await defaultRecoveryPendingChecker({ skillsDir: root, dir, dirName: 'child' })).toBe(
       true
     )
+  })
+})
+
+describe('probeUpdateTarget — a presence error is still checked against the records', () => {
+  it('EACCES on the folder, named by a verified record: recovery-pending, and the checker was asked', async () => {
+    const dir = mkSkill('eacces-named')
+    putRecord('1'.repeat(32), dir)
+    eaccesInjections.lstat.add(dir)
+    const checkRecoveryPending = vi.fn(defaultRecoveryPendingChecker)
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'eacces-named',
+      writeSet: [],
+      checkRecoveryPending,
+    })
+
+    expect(checkRecoveryPending).toHaveBeenCalledTimes(1)
+    expect(outcome).toEqual({ kind: 'recovery-pending' })
+  })
+
+  it('paired control: the same EACCES with no record is probe-failed with that error, the checker still asked', async () => {
+    const dir = mkSkill('eacces-unnamed')
+    putRecord('1'.repeat(32), path.join(root, 'some-other-skill'))
+    eaccesInjections.lstat.add(dir)
+    const checkRecoveryPending = vi.fn(defaultRecoveryPendingChecker)
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'eacces-unnamed',
+      writeSet: [],
+      checkRecoveryPending,
+    })
+
+    expect(checkRecoveryPending).toHaveBeenCalledTimes(1)
+    expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'EACCES' } })
+  })
+
+  it('a presence error wins over a checker { error }: the folder own failure is reported', async () => {
+    const dir = mkSkill('eacces-and-broken-staging')
+    eaccesInjections.lstat.add(dir)
+    breakStaging()
+
+    const outcome = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'eacces-and-broken-staging',
+      writeSet: [],
+    })
+
+    expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'EACCES' } })
   })
 })

@@ -9,6 +9,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { scanStagingRecords } from '../../../src/services/skill-swap.records.js'
+import type { SwapOptions } from '../../../src/services/skill-swap.js'
 import {
   deletesOf,
   refusedOf,
@@ -19,7 +21,9 @@ import {
 import {
   areaOf,
   hashOf,
+  listTree,
   makeFixture,
+  run,
   OP_ID,
   plan,
   modify,
@@ -122,10 +126,11 @@ describe('T-R1 (swap half): a step-1 failure with a built N meets the record sca
   async function staleRun(
     fx: ReturnType<typeof makeFixture>,
     p: ReturnType<typeof plan>,
-    opId: string
+    opId: string,
+    options: SwapOptions = {}
   ) {
     const fx2 = { ...fx, opDir: opDirOf(fx, opId) }
-    const r = await runSpied(p, ALL_DELETES, { opId })
+    const r = await runSpied(p, ALL_DELETES, { ...options, opId })
     return { p, fx2, ...r }
   }
 
@@ -163,6 +168,58 @@ describe('T-R1 (swap half): a step-1 failure with a built N meets the record sca
     expect(r.blockedBy).toBeUndefined()
     // The scan ran and found nothing to report.
     expect(run.events).toContainEqual({ op: 'record-scan', path: fx.staging })
+  })
+
+  it('(UD45 branch) with an UNREADABLE record in ST: refused recovery-record-unreadable naming it', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const seed = otherSkill(fx, 'seed-skill', { 'SKILL.md': '# seed\n' })
+    expect((await attempt(seed, opIdN('d'))).result.status).toBe('committed') // makes ST
+    const bad = opIdN('f')
+    plantRecordText(fx, bad, '{ not json')
+
+    const run = await staleRun(fx, stalePlan(fx), opIdN('c'))
+
+    expect(refusedOf(run.result)).toMatchObject({
+      reason: 'recovery-record-unreadable',
+      blockedBy: [bad],
+      staged: 'kept',
+    })
+    expect(run.events).toContainEqual({ op: 'record-scan', path: fx.staging })
+    expect(treeDeletes(run.fx2, run.events)).toEqual([])
+  })
+
+  it('(UD45 branch) with a staging that cannot be listed: keeps the build reason, no blockedBy; the stub fired', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const seed = otherSkill(fx, 'seed-skill', { 'SKILL.md': '# seed\n' })
+    expect((await attempt(seed, opIdN('d'))).result.status).toBe('committed') // makes ST
+    const stale = stalePlan(fx)
+    const orig = fs.promises.readdir
+    const hits: string[] = []
+    const stub = (async (...args: unknown[]) => {
+      if (args[0] === fx.staging) {
+        hits.push(String(args[0]))
+        const e = new Error('EACCES: permission denied') as NodeJS.ErrnoException
+        e.code = 'EACCES'
+        throw e
+      }
+      return (orig as unknown as (...a: unknown[]) => Promise<unknown>)(...args)
+    }) as unknown as typeof fs.promises.readdir
+    try {
+      // Installed once the build has made N, so only the abort path's scan meets it.
+      const run = await staleRun(fx, stale, opIdN('c'), {
+        hooks: {
+          afterCopy: () => {
+            fs.promises.readdir = stub
+          },
+        },
+      })
+      const r = refusedOf(run.result)
+      expect(hits.length).toBeGreaterThan(0)
+      expect(r.reason).toBe('changed-since-plan')
+      expect(r.blockedBy).toBeUndefined()
+    } finally {
+      fs.promises.readdir = orig
+    }
   })
 })
 
@@ -316,5 +373,54 @@ describe('frozenWide: what the T-R1 snapshot sees', () => {
     // Seen: another op's index line changed.
     fs.writeFileSync(index, `{"opId":"${OP_ID}","n":9}\n{"opId":"${mine}","n":2}\n`)
     expect(frozenWide(fx, { p }, [mine]).index).not.toEqual(before.index)
+  })
+})
+
+describe('T-R1 (swap half): a record never holds an undefined entry (retro of PR #3162)', () => {
+  for (const key of ['preEntry', 'postEntry'] as const) {
+    it(`${key}: undefined refuses write-failed before step 5 publishes; the root is not blocked`, async () => {
+      const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+      const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
+      const p = plan(fx, [modify('SKILL.md', '# next\n')])
+      p.input = { ...p.input, [key]: undefined }
+      const OP2 = opIdN('c')
+      const run = await runSpied(p, ALL_DELETES, { opId: OP2 })
+
+      const r = refusedOf(run.result)
+      expect(r.reason).toBe('write-failed')
+      expect(r.detail).toContain('undefined')
+      // Abort cleanup ran like any step-5 failure: the complete build is parked.
+      expect(r.staged).toBe('parked')
+      expect(listTree(fx.staging).filter((n) => n.endsWith('record.json'))).toEqual([])
+      expect(
+        run.events.some((e) => 'op' in e && e.op === 'create' && e.path.endsWith('record.json.tmp'))
+      ).toBe(false)
+      expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+      // The root is not blocked: a second skill commits, and the scan reads nothing unreadable.
+      const o = await attempt(other, opIdN('d'))
+      expect(o.result.status).toBe('committed')
+      const scan = await scanStagingRecords(fs.realpathSync(fx.skillsDir), fx.staging)
+      expect(scan).toMatchObject({ ok: true, unreadable: [] })
+    })
+  }
+
+  it('control: null entries commit; a kept record with them is read back as pending', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
+    expect((await attempt(other, opIdN('d'), {})).result.status).toBe('committed')
+    const p = plan(fx, [modify('SKILL.md', '# next\n')])
+    p.input = { ...p.input, preEntry: null, postEntry: null }
+    expect((await run(p, { opId: opIdN('c') })).result.status).toBe('committed')
+
+    // The same entries with a forced stop keep the record, which the scan accepts.
+    const fx2 = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p2 = plan(fx2, [modify('SKILL.md', '# next\n')])
+    p2.input = { ...p2.input, preEntry: null, postEntry: null }
+    p2.manifest.preCommitError = new Error('manifest lock lost')
+    const stopped = await run(p2, { opId: opIdN('e') })
+    expect(stopped.result.status).toBe('stopped')
+    const scan = await scanStagingRecords(fs.realpathSync(fx2.skillsDir), fx2.staging)
+    expect(scan).toMatchObject({ ok: true, unreadable: [] })
+    expect(scan.ok && scan.pending.map((r) => r.opId)).toEqual([opIdN('e')])
   })
 })

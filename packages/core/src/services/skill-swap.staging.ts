@@ -260,6 +260,15 @@ export async function writeRecord(st: SwapState): Promise<void> {
     throw new SwapFault('write-failed', 'the record was requested before the build finished')
   }
   const { input } = st
+  // JSON drops a key whose value is undefined, and the record scan then reads
+  // the record as malformed, which blocks every write in the root. `null` is
+  // the value for "no entry" (retro of PR #3162).
+  if (input.preEntry === undefined || input.postEntry === undefined) {
+    throw new SwapFault(
+      'write-failed',
+      'preEntry and postEntry must be JSON values (null for no entry), not undefined'
+    )
+  }
   const body: Omit<SwapRecord, 'recordSha256'> = {
     schema: 1,
     opId: st.opId,

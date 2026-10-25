@@ -36,14 +36,16 @@ export interface ProbeError {
   errno: string
 }
 
-/** Asked when a tracked folder is missing on every retry attempt: does a
- * `.skillsmith-staging/` record name it? See `update-target.probe.ts`'s
- * fileoverview. */
+/** Asked for every tracked folder (present, missing, or one whose presence
+ * check failed): does a verified `.skillsmith-staging/` record name it?
+ * `{ error }` when that can't be decided (the staging can't be listed), so the
+ * probe reports `probe-failed` naming the path that failed. A rejection is
+ * also `probe-failed`. See `update-target.probe.ts`'s fileoverview. */
 export type RecoveryPendingChecker = (input: {
   skillsDir: string
   dir: string
   dirName: string
-}) => Promise<boolean>
+}) => Promise<boolean | { error: ProbeError }>
 
 /** `err.code`, sanitized to a bounded, known-shape errno string. */
 export function errnoOf(err: unknown): string {
