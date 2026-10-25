@@ -444,3 +444,29 @@ describe('the marker rewrite is sealed like step 5', () => {
     expect(scan.ok && scan.pending.map((x) => x.opId)).toEqual([OP_ID])
   })
 })
+
+describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retro)', () => {
+  it('an entry whose JSON changes after step 5 is rewritten as step 5 sealed it', async () => {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    let sealed = false
+    // 'early' until step 5 has published its record, 'late' for any later serialization.
+    const changing = () => ({ toJSON: () => ({ n: sealed ? 'late' : 'early' }) })
+    // Both entries, so a rewrite that took either from the live input would show it.
+    p.input = { ...p.input, preEntry: changing(), postEntry: changing() }
+    const copy = failCopyCreate(fx, 'ENOSPC')
+    const run = await runSpied(p, ALL_DELETES, {
+      hooks: {
+        afterRecord: () => {
+          sealed = true
+        },
+      },
+    })
+    expect(copy.fired).toBe(1)
+    stoppedAtPublish(fx, run.result)
+    const rec = recordOf(fx)
+    expect(rec.fullDevice).toEqual(markerFor(fx, 'ENOSPC', 'copy'))
+    expect(rec.preEntry).toEqual({ n: 'early' })
+    expect(rec.postEntry).toEqual({ n: 'early' })
+  })
+})

@@ -29,10 +29,13 @@
  *     intended path avoids ever surfacing where an attacker-planted symlink
  *     actually pointed.
  *   - No secrets are read onto this path in the first place: it is always
- *     one of `dir`, `skillMdPath`, a `writeSet` member joined onto `dir`, or
+ *     one of `dir`, `skillMdPath`, a `writeSet` member joined onto `dir`,
  *     (F3: an absolute write-set entry, refused before `path.join` so it is
  *     never silently re-rooted under `dir`) the caller-supplied absolute path
- *     itself — filesystem paths the caller already owns, never file content.
+ *     itself, or, from the record check, `skillsDir`, its staging folder or a
+ *     staging entry, named under `skillsDir` as given, never under where a
+ *     symlinked root resolves — filesystem paths the caller already owns,
+ *     never file content.
  *
  * METADATA vs READ/HASH ERRORS (§4.2's own boundary, disambiguated here —
  * see this module's `## Ambiguity notes` in the fileoverview of the test
@@ -53,7 +56,8 @@
  *
  * `.skillsmith-staging/` RECORD CHECK: a tracked folder named by a verified
  * `.skillsmith-staging/` record is `recovery-pending` (§4.3 row 3), whether
- * it is present or missing (§4.2: not plain-missing). The default check
+ * it is present, missing (§4.2: not plain-missing), or failed its presence
+ * check. The default check
  * (`defaultRecoveryPendingChecker`, on A1's record scan, the same one the
  * write's step 3 uses) lives in `update-target.probe.recovery.ts`,
  * re-exported from here; this module owns the injectable seam

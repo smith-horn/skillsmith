@@ -1190,3 +1190,54 @@ describe('probeUpdateTarget — a presence error is still checked against the re
     expect(outcome).toEqual({ kind: 'probe-failed', error: { path: dir, errno: 'EACCES' } })
   })
 })
+
+describe('the record check names paths under the skills root as given (PR #3164 retro)', () => {
+  it('a symlinked skillsDir: a staging failure is reported under the link, never its target', async () => {
+    const target = path.join(root, 'real-target-dir')
+    const link = path.join(root, 'skills-link')
+    fs.mkdirSync(target)
+    fs.symlinkSync(target, link)
+    fs.writeFileSync(path.join(target, '.skillsmith-staging'), 'not a directory')
+    const dir = path.join(link, 'some-skill')
+    const want = { path: path.join(link, '.skillsmith-staging'), errno: 'ENOTDIR' }
+
+    expect(
+      await defaultRecoveryPendingChecker({ skillsDir: link, dir, dirName: 'some-skill' })
+    ).toEqual({ error: want })
+    expect(await unreadableStagingRecords(link)).toEqual({ ok: false, error: want })
+    // Paired: the same failure through the target itself names the target.
+    expect(await unreadableStagingRecords(target)).toEqual({
+      ok: false,
+      error: { path: path.join(target, '.skillsmith-staging'), errno: 'ENOTDIR' },
+    })
+  })
+
+  it('a symlinked skillsDir: an entry the scan cannot lstat is named under the link, staging folder included', async () => {
+    const target = path.join(root, 'real-target-dir')
+    const link = path.join(root, 'skills-link')
+    fs.mkdirSync(path.join(target, '.skillsmith-staging', 'op-entry'), { recursive: true })
+    fs.symlinkSync(target, link)
+    const entry = path.join(target, '.skillsmith-staging', 'op-entry')
+    // The scan lstats through node:fs, which the module mock above does not cover.
+    const orig = fs.promises.lstat.bind(fs.promises)
+    let fired = 0
+    const spy = vi.spyOn(fs.promises, 'lstat').mockImplementation((async (
+      ...a: Parameters<typeof fs.promises.lstat>
+    ) => {
+      if (a[0] === entry) {
+        fired++
+        throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+      }
+      return orig(...a)
+    }) as typeof fs.promises.lstat)
+    try {
+      expect(await unreadableStagingRecords(link)).toEqual({
+        ok: false,
+        error: { path: path.join(link, '.skillsmith-staging', 'op-entry'), errno: 'EACCES' },
+      })
+      expect(fired).toBe(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
