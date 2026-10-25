@@ -14,11 +14,11 @@
  *    probe resolves it as: directory/ancestor/git-walk `lstat` = metadata =
  *    `probe-failed`; a write-set MEMBER's own `lstat` (part of reading that
  *    specific file) = `unreadable`, grouped with its `readFile` outcome.
- * 2. §4.2's `.skillsmith-staging/` `recovery-pending` check depends on a
- *    `record.json` schema A1 (`skill-write-lock.ts`, `skill-swap.ts`) has
- *    not landed yet in this tree — confirmed absent. `defaultRecoveryPendingChecker`
- *    is a placeholder, injectable and swappable, the same status as
- *    `temporaryManifestEvidenceResolver`.
+ * 2. §4.2's `.skillsmith-staging/` `recovery-pending` check runs on A1's
+ *    record scan (SMI-6531 step 5, `skill-swap.records.ts`): the default
+ *    checker is true for a VERIFIED record naming the folder, present or
+ *    missing, and throws (so the probe says `probe-failed`) when the staging
+ *    can't be listed. `unreadableStagingRecords` is row 0b.
  * 3. §4.2 doesn't say what happens when `dir` exists but is not a directory
  *    (e.g. a stray file at that path). This probe treats it as an immediate
  *    metadata error (`probe-failed`, `ENOTDIR`), not "missing" — retrying
@@ -32,6 +32,9 @@ import { createHash } from 'crypto'
 import { execFileSync } from 'child_process'
 
 import { probeUpdateTarget, defaultRecoveryPendingChecker } from './update-target.probe.js'
+import { unreadableStagingRecords } from './update-target.probe.recovery.js'
+import { computeRecordSha256 } from './skill-swap.js'
+import type { SwapRecord } from './skill-swap.js'
 import { hasRecordedLocalEdit } from './skill-identity-classification.js'
 import { hashContent } from './skill-installation.helpers.js'
 
@@ -98,6 +101,49 @@ function mkSkill(rel: string, skillMd = 'body'): string {
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, 'SKILL.md'), skillMd)
   return dir
+}
+
+/**
+ * Writes `<root>/.skillsmith-staging/<opId>/record.json`: a record that
+ * verifies as this root's (its hash computed here), naming `realDir` and
+ * `comparedPath`.
+ */
+function putRecord(opId: string, realDir: string, comparedPath: string = realDir): string {
+  const identity = { dev: '1', ino: '2', birthtimeNs: '3', fmt: 'f' }
+  const body: Omit<SwapRecord, 'recordSha256'> = {
+    schema: 1,
+    opId,
+    pid: 1234,
+    host: 'host-a',
+    uid: 1000,
+    target: {
+      comparedPath,
+      realDir,
+      skillsDir: root,
+      manifestPath: path.join(root, 'manifest.json'),
+      manifestKey: path.basename(realDir),
+      client: 'claude-code',
+    },
+    rootIdentity: identity,
+    opDirIdentity: identity,
+    oldIdentity: identity,
+    newIdentity: identity,
+    preTree: 'pre',
+    postTree: 'post',
+    preEntry: null,
+    postEntry: null,
+    backupDest: path.join(root, 'backup', opId),
+  }
+  const opDir = path.join(root, '.skillsmith-staging', opId)
+  fs.mkdirSync(opDir, { recursive: true })
+  const file = path.join(opDir, 'record.json')
+  fs.writeFileSync(file, JSON.stringify({ ...body, recordSha256: computeRecordSha256(body) }))
+  return file
+}
+
+/** Makes `<root>/.skillsmith-staging` a plain file, so listing it fails (ENOTDIR). */
+function breakStaging(): void {
+  fs.writeFileSync(path.join(root, '.skillsmith-staging'), 'not a directory')
 }
 
 beforeEach(() => {
@@ -314,16 +360,12 @@ describe('probeUpdateTarget — retry rule (§4.2)', () => {
     // Breaking that `??` arm would leave the recovery check dead — a missing
     // folder mid-swap would report `probe-failed` instead of
     // `recovery-pending` — and every existing test would still pass, because
-    // each supplies its own checker. Found when the placeholder was split into
-    // its own module: the move was provably behaviour-preserving, but it
-    // surfaced that nothing pinned the wiring it moved across.
+    // each supplies its own checker.
     //
-    // So this one deliberately injects NOTHING and writes a real staging
+    // So this one deliberately injects NOTHING and writes a verified staging
     // record on disk, exercising the default end to end.
     const dir = path.join(root, 'mid-swap-default')
-    const opDir = path.join(root, '.skillsmith-staging', 'op-1')
-    fs.mkdirSync(opDir, { recursive: true })
-    fs.writeFileSync(path.join(opDir, 'record.json'), JSON.stringify({ target: dir }))
+    putRecord('1'.repeat(32), dir)
 
     const outcome = await probeUpdateTarget({
       dir,
@@ -335,6 +377,55 @@ describe('probeUpdateTarget — retry rule (§4.2)', () => {
     })
 
     expect(outcome).toEqual({ kind: 'recovery-pending' })
+  })
+
+  it('a PRESENT folder named by a verified record is recovery-pending too (a crash after rename 2), the default checker', async () => {
+    const dir = mkSkill('crashed-after-rename-2')
+    const other = mkSkill('unrelated-skill')
+    putRecord('2'.repeat(32), dir)
+
+    const named = await probeUpdateTarget({
+      dir,
+      skillsDir: root,
+      dirName: 'crashed-after-rename-2',
+      writeSet: [],
+    })
+    // Control, same root and same record: another present folder is probed as usual.
+    const unrelated = await probeUpdateTarget({
+      dir: other,
+      skillsDir: root,
+      dirName: 'unrelated-skill',
+      writeSet: [],
+    })
+
+    expect(named).toEqual({ kind: 'recovery-pending' })
+    expect(unrelated.kind).toBe('ok')
+  })
+
+  it('the default checker that cannot list the staging fails closed: probe-failed for a present and a missing folder', async () => {
+    const present = mkSkill('present-staging-broken')
+    const missing = path.join(root, 'missing-staging-broken')
+    breakStaging()
+
+    const a = await probeUpdateTarget({
+      dir: present,
+      skillsDir: root,
+      dirName: 'present-staging-broken',
+      writeSet: [],
+      sleep: async () => {},
+    })
+    const b = await probeUpdateTarget({
+      dir: missing,
+      skillsDir: root,
+      dirName: 'missing-staging-broken',
+      writeSet: [],
+      sleep: async () => {},
+    })
+
+    expect(a.kind).toBe('probe-failed')
+    expect(b.kind).toBe('probe-failed')
+    if (a.kind === 'probe-failed') expect(a.error.errno).toBe('ENOTDIR')
+    if (b.kind === 'probe-failed') expect(b.error.errno).toBe('ENOTDIR')
   })
 
   it('the DEFAULT checker also says NO when no staging record names the dir', async () => {
@@ -859,62 +950,168 @@ describe('probeUpdateTarget — ok outcome contents', () => {
   })
 })
 
-describe('defaultRecoveryPendingChecker — placeholder, see fileoverview', () => {
+describe('defaultRecoveryPendingChecker — on A1 record scan (SMI-6531 step 5)', () => {
+  const ask = (dir: string): Promise<boolean> =>
+    defaultRecoveryPendingChecker({ skillsDir: root, dir, dirName: path.basename(dir) })
+
   it('returns false when .skillsmith-staging/ is absent', async () => {
-    expect(
-      await defaultRecoveryPendingChecker({
-        skillsDir: root,
-        dir: path.join(root, 'x'),
-        dirName: 'x',
-      })
-    ).toBe(false)
+    expect(await ask(path.join(root, 'x'))).toBe(false)
   })
 
-  it('returns true when an op dir record names the dirName', async () => {
-    const stagingOp = path.join(root, '.skillsmith-staging', 'op-1')
-    fs.mkdirSync(stagingOp, { recursive: true })
-    fs.writeFileSync(
-      path.join(stagingOp, 'record.json'),
-      JSON.stringify({ dirName: 'reappearing', client: 'claude-code' })
-    )
-    expect(
-      await defaultRecoveryPendingChecker({
-        skillsDir: root,
-        dir: path.join(root, 'reappearing'),
-        dirName: 'reappearing',
-      })
-    ).toBe(true)
+  it('true for a present folder named by a verified record: by realDir and by comparedPath', async () => {
+    const byReal = mkSkill('by-real')
+    const byCompared = mkSkill('by-compared')
+    putRecord('1'.repeat(32), byReal, path.join(root, 'elsewhere-a'))
+    putRecord('2'.repeat(32), path.join(root, 'elsewhere-b'), byCompared)
+    expect(await ask(byReal)).toBe(true)
+    expect(await ask(byCompared)).toBe(true)
   })
 
-  it('returns false for an unrelated record, and never throws on a corrupt one', async () => {
-    const stagingOp = path.join(root, '.skillsmith-staging', 'op-2')
-    fs.mkdirSync(stagingOp, { recursive: true })
-    fs.writeFileSync(path.join(stagingOp, 'record.json'), JSON.stringify({ dirName: 'other' }))
+  it('true for a MISSING folder named by a verified record: by realDir and by comparedPath', async () => {
+    const byReal = path.join(root, 'gone-by-real')
+    const byCompared = path.join(root, 'gone-by-compared')
+    putRecord('1'.repeat(32), byReal, path.join(root, 'elsewhere-a'))
+    putRecord('2'.repeat(32), path.join(root, 'elsewhere-b'), byCompared)
+    expect(fs.existsSync(byReal) || fs.existsSync(byCompared)).toBe(false)
+    expect(await ask(byReal)).toBe(true)
+    expect(await ask(byCompared)).toBe(true)
+  })
+
+  it("true for a symlinked folder whose TARGET a record names (the record's realDir)", async () => {
+    const target = mkSkill('link-target')
+    const link = path.join(root, 'linked-skill')
+    fs.symlinkSync(target, link, 'dir')
+    putRecord('1'.repeat(32), target, path.join(root, 'elsewhere'))
+    expect(await ask(link)).toBe(true)
+  })
+
+  it('false for a record naming another folder, and for a prefix-sharing name; true for the exact name', async () => {
+    const skill = mkSkill('skill')
+    putRecord('1'.repeat(32), path.join(root, 'skill2'))
+    putRecord('2'.repeat(32), path.join(root, 'skil'))
+    expect(await ask(skill)).toBe(false)
+    // Control: the same staging does name skill2.
+    expect(await ask(path.join(root, 'skill2'))).toBe(true)
+  })
+
+  it('false for an unrelated record, and never throws on a corrupt one beside it', async () => {
+    putRecord('1'.repeat(32), path.join(root, 'other'))
     const corruptOp = path.join(root, '.skillsmith-staging', 'op-3')
     fs.mkdirSync(corruptOp, { recursive: true })
     fs.writeFileSync(path.join(corruptOp, 'record.json'), '{not json')
-
-    expect(
-      await defaultRecoveryPendingChecker({
-        skillsDir: root,
-        dir: path.join(root, 'reappearing'),
-        dirName: 'reappearing',
-      })
-    ).toBe(false)
+    expect(await ask(path.join(root, 'reappearing'))).toBe(false)
+    // Control: the scan did read the staging, it is the named folder that decides.
+    expect(await ask(path.join(root, 'other'))).toBe(true)
   })
 
-  it('skips reserved staging subdirectories (.kept, .trash, .quarantine)', async () => {
+  it('a record that does not verify names nothing: a hand-written { target: dir } is not a record', async () => {
+    const dir = path.join(root, 'fake-named')
+    const opDir = path.join(root, '.skillsmith-staging', 'op-1')
+    fs.mkdirSync(opDir, { recursive: true })
+    fs.writeFileSync(path.join(opDir, 'record.json'), JSON.stringify({ target: dir }))
+    expect(await ask(dir)).toBe(false)
+  })
+
+  it('skips reserved staging subdirectories (.kept, .trash, .quarantine) even holding a verified record', async () => {
+    const dir = path.join(root, 'reappearing')
     for (const reserved of ['.kept', '.trash', '.quarantine']) {
-      const dir = path.join(root, '.skillsmith-staging', reserved)
-      fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(path.join(dir, 'record.json'), JSON.stringify({ dirName: 'reappearing' }))
+      putRecord(reserved, dir)
     }
-    expect(
-      await defaultRecoveryPendingChecker({
-        skillsDir: root,
-        dir: path.join(root, 'reappearing'),
-        dirName: 'reappearing',
-      })
-    ).toBe(false)
+    expect(await ask(dir)).toBe(false)
+    // Control: the same record under a plain op name does name it.
+    putRecord('3'.repeat(32), dir)
+    expect(await ask(dir)).toBe(true)
+  })
+
+  it('throws, with the errno, when the staging cannot be listed', async () => {
+    breakStaging()
+    await expect(ask(path.join(root, 'x'))).rejects.toMatchObject({ code: 'ENOTDIR' })
+  })
+})
+
+describe('unreadableStagingRecords (row 0b)', () => {
+  it('{ ok: true, opIds: [] } with no staging at all', async () => {
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [] })
+  })
+
+  it('{ ok: true, opIds: [] } with only verified records', async () => {
+    putRecord('1'.repeat(32), path.join(root, 'a'))
+    putRecord('2'.repeat(32), path.join(root, 'b'))
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [] })
+  })
+
+  it('names the unreadable record beside verified ones', async () => {
+    putRecord('1'.repeat(32), path.join(root, 'a'))
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [] })
+    const badOp = '9'.repeat(32)
+    fs.mkdirSync(path.join(root, '.skillsmith-staging', badOp))
+    fs.writeFileSync(path.join(root, '.skillsmith-staging', badOp, 'record.json'), '{not json')
+    putRecord('2'.repeat(32), path.join(root, 'b'))
+    expect(await unreadableStagingRecords(root)).toEqual({ ok: true, opIds: [badOp] })
+  })
+
+  it('{ ok: false } with the errno when the staging cannot be listed', async () => {
+    breakStaging()
+    const r = await unreadableStagingRecords(root)
+    expect(r).toMatchObject({ ok: false, error: { errno: 'ENOTDIR' } })
+  })
+
+  it('{ ok: true, opIds: [] } when the skills root does not exist', async () => {
+    expect(await unreadableStagingRecords(path.join(root, 'no-such-root'))).toEqual({
+      ok: true,
+      opIds: [],
+    })
+  })
+
+  it('{ ok: false } when the root cannot be resolved for another reason (a symlink loop)', async () => {
+    const a = path.join(root, 'loop-a')
+    const b = path.join(root, 'loop-b')
+    fs.symlinkSync(b, a)
+    fs.symlinkSync(a, b)
+    expect(await unreadableStagingRecords(a)).toMatchObject({
+      ok: false,
+      error: { errno: 'ELOOP' },
+    })
+  })
+})
+
+describe('defaultRecoveryPendingChecker: errors name their cause', () => {
+  it('the thrown message names the staging path and the errno', async () => {
+    breakStaging()
+    const staging = path.join(root, '.skillsmith-staging')
+    await expect(
+      defaultRecoveryPendingChecker({ skillsDir: root, dir: path.join(root, 'x'), dirName: 'x' })
+    ).rejects.toThrow(new RegExp(`${staging.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*ENOTDIR`))
+  })
+
+  it('a realpath(dir) error other than ENOENT/ENOTDIR (ELOOP) rejects, not "not named"', async () => {
+    // The probe's own presence check fails on a symlink loop before the
+    // checker is asked, so the checker is tested directly.
+    const a = path.join(root, 'dir-loop-a')
+    const b = path.join(root, 'dir-loop-b')
+    fs.symlinkSync(b, a)
+    fs.symlinkSync(a, b)
+    putRecord('1'.repeat(32), path.join(root, 'other'))
+    await expect(
+      defaultRecoveryPendingChecker({ skillsDir: root, dir: a, dirName: 'dir-loop-a' })
+    ).rejects.toMatchObject({ code: 'ELOOP' })
+    // The probe on the same folder never reads it as eligible.
+    const outcome = await probeUpdateTarget({
+      dir: a,
+      skillsDir: root,
+      dirName: 'dir-loop-a',
+      writeSet: [],
+      sleep: async () => {},
+    })
+    expect(outcome.kind).toBe('probe-failed')
+  })
+
+  it('a ENOTDIR under dir (a file where a parent should be) is still matched by path, not rejected', async () => {
+    fs.writeFileSync(path.join(root, 'a-file'), 'x')
+    const dir = path.join(root, 'a-file', 'child')
+    putRecord('1'.repeat(32), dir)
+    expect(await defaultRecoveryPendingChecker({ skillsDir: root, dir, dirName: 'child' })).toBe(
+      true
+    )
   })
 })

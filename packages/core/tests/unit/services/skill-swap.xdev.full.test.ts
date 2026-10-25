@@ -296,8 +296,9 @@ describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
  * what is left after the blocks the area's entries allocate (each file and
  * directory rounded up to a block), and any file create under the area that
  * would not fit fails `ENOSPC`. So every attempt consumes what it writes.
+ * Returns the bytes the area allocates now.
  */
-function simulatedDevice(fx: Fixture, size: bigint): void {
+function simulatedDevice(fx: Fixture, size: bigint): () => bigint {
   const area = areaOf(fx)
   const used = (): bigint => {
     let n = 0n
@@ -337,24 +338,43 @@ function simulatedDevice(fx: Fixture, size: bigint): void {
     }
     return orig(...a)
   })
+  return used
 }
 
+/**
+ * The plan's T-F1 row: the first attempt's kept record refuses every later
+ * attempt through step 3's record scan (implementation-order step 5), so a
+ * device too small for the copy is never filled by retries.
+ */
 describe('T-F1: no ratchet', () => {
-  it('on a simulated full device, three refused attempts add no partial copy and no temp', async () => {
+  it('on a simulated full device, the kept record refuses later attempts, which add nothing', async () => {
     const files: Record<string, string> = { 'SKILL.md': '# v1\n' }
     for (let i = 0; i < 24; i++) files[`d${i % 3}/f${i}.txt`] = `file ${i}\n`
     const fx = xdevFixture(files)
     // Room for the three attempts' sidecars, far less than one copy.
-    simulatedDevice(fx, 10n * BLOCK)
-    const kept: number[] = []
-    for (const [i, version] of ['# v2\n', '# v3\n', '# v4\n'].entries()) {
+    const used = simulatedDevice(fx, 10n * BLOCK)
+    const firstOp = '1'.repeat(32)
+    const first = await runSpied(plan(fx, [modify('SKILL.md', '# v2\n')]), ALL_DELETES, {
+      opId: firstOp,
+    })
+    const kept = committedOf(first.result)
+    expect(kept.incomplete?.reason).toBe('state-root-full')
+    const recordPath = kept.recordPath ?? ''
+    const names = areaNames(areaOf(fx))
+    expect(names.filter((n) => n.startsWith('.tmp-') || n.includes('.partial-copy'))).toEqual([])
+    const bytes = used()
+    for (const [i, version] of ['# v3\n', '# v4\n'].entries()) {
       const p = plan(fx, [modify('SKILL.md', version)])
-      const run = await runSpied(p, ALL_DELETES, { opId: String(i + 1).repeat(32) })
-      expect(committedOf(run.result).incomplete?.reason).toBe('state-root-full')
-      const names = areaNames(areaOf(fx))
-      kept.push(names.filter((n) => n.startsWith('.tmp-') || n.includes('.partial-copy')).length)
+      const run = await runSpied(p, ALL_DELETES, { opId: String(i + 2).repeat(32) })
+      expect(run.result).toMatchObject({
+        status: 'refused',
+        reason: 'recovery-pending',
+        blockedBy: [firstOp],
+      })
+      expect(areaNames(areaOf(fx))).toEqual(names)
+      expect(used()).toBe(bytes)
+      expect(readRecord(recordPath).opId).toBe(firstOp)
     }
-    expect(kept).toEqual([0, 0, 0])
   })
 })
 

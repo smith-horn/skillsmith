@@ -151,6 +151,8 @@ export type TraceOp =
   | { op: 'guard'; path: string; hash: string }
   /** The park call returned. */
   | { op: 'park'; path: string; status: string; dest: string | null }
+  /** Step 3 listed ST and judged every record in it (read-only). */
+  | { op: 'record-scan'; path: string }
 
 /** @internal Test seams; none is part of the contract. */
 export interface SwapOptions {
@@ -247,6 +249,10 @@ export type SwapRefuseReason =
   | 'backup-unsafe'
   | 'root-unsafe'
   | 'busy'
+  /** Step 3: a verified record of an unfinished update names this skill (R1). */
+  | 'recovery-pending'
+  /** Step 3: a record in this root's staging can't be verified; every write in the root refuses. */
+  | 'recovery-record-unreadable'
 
 /**
  * Why a run stopped after rename 1 (`stopped`), or after the commit
@@ -319,6 +325,8 @@ export type SwapResult =
       parkedPath?: string
       /** When a tree went through `publishTree`: its kind and its path in the backup area. */
       keptAs?: { kind: AbortKeptKind; path: string }
+      /** For the two `recovery-*` reasons: the opIds of the records that block this write. */
+      blockedBy?: string[]
       detail: string
       warnings: SwapWarning[]
       gitignoreHint?: string

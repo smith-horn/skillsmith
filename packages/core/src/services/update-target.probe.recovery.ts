@@ -1,96 +1,83 @@
 /**
- * @fileoverview PLACEHOLDER — `.skillsmith-staging/` recovery-record check
- * for the update eligibility gate (SMI-6532, A2 §4.2).
+ * @fileoverview The `.skillsmith-staging/` record check for the update
+ * eligibility gate (SMI-6532, A2 §4.2, §4.3 rows 0b and 3), on A1's record
+ * scan (SMI-6531 step 5, `skill-swap.records.ts`).
  * @module @skillsmith/core/services/update-target.probe.recovery
- * @see docs/internal/implementation/update-safety-and-source-resolution.md §4.2
+ * @see docs/internal/implementation/update-safety-and-source-resolution.md §3.3 step 3, §4.2
  *
- * `.skillsmith-staging/` RECORD CHECK — DOCUMENTED AMBIGUITY. §4.2 says a
- * missing tracked folder named by a `.skillsmith-staging/` record is
- * `recovery-pending`, not plain-missing. A1's staging writer
- * (`skill-write-lock.ts`, `skill-swap.ts`) and its `record.json` schema do
- * not exist in this tree yet (confirmed: no `skill-write-lock*`/
- * `skill-swap*` file exists under `packages/core/src/services/` as of this
- * writing). `defaultRecoveryPendingChecker` below is therefore the SAME
- * kind of placeholder as `temporaryManifestEvidenceResolver`
- * (`update-target.evidence.ts`) — injectable via `ProbeInput.
- * checkRecoveryPending` (declared in `./update-target.probe.ts`), with a
- * best-effort default scan, swapped out once A1's real record shape lands.
- * This is flagged back to the requester as an open ambiguity, not silently
- * guessed at as settled fact.
+ * The probe and the write use the same scan, so a dry run blocks exactly the
+ * skills the write would refuse (owner decision 2026-10-24, replacing the
+ * placeholder this file held until A1's `record.json` existed):
  *
- * WHY THIS IS ITS OWN FILE, NOT PART OF `update-target.probe.ts`: this
- * placeholder's whole purpose is to be replaced WHOLESALE, as a single
- * unit, the moment A1's real `record.json` schema lands — not edited
- * incrementally alongside the rest of the probe. A thing destined to be
- * swapped out entire belongs in its own file, so that swap is a clean file
- * replacement (plus updating the one import in `update-target.probe.ts`),
- * never a diff threaded through code that has nothing to do with A1.
+ *  - `defaultRecoveryPendingChecker` (row 3): true when a verified record of
+ *    this root names the target's `realpath` or the target path itself, the
+ *    same match as the write's step 3. It throws, so the probe reports
+ *    `probe-failed`, when the root can't be resolved or its staging can't be
+ *    listed: a check that could not run never reads as "not named".
+ *  - `unreadableStagingRecords` (row 0b, for whoever builds the run's
+ *    `plan`): the opIds of the root's unreadable records, which block every
+ *    skill in it and are what `doctor recovery --park <opId>` takes. A
+ *    staging that can't be listed is not 0b: like the write (`staging-unsafe`)
+ *    and row 3's checker, it is a `probe-failed` error.
  *
  * `RecoveryPendingChecker` is imported from `update-target.probe.types.ts`,
- * NOT from `update-target.probe.ts` — this module and `probe.ts` never
- * import from each other (see `update-target.probe.types.ts`'s own
- * fileoverview for why that appearance, even as a type-only import that
- * erases before any runtime cycle could exist, was worth removing).
+ * NOT from `update-target.probe.ts`: this module and `probe.ts` never import
+ * from each other (see `update-target.probe.types.ts`'s fileoverview).
  */
 
-import * as fs from 'fs/promises'
-import * as path from 'path'
+import fs from 'node:fs'
+import path from 'node:path'
 
-import type { RecoveryPendingChecker } from './update-target.probe.types.js'
+import { recordsNaming, scanStagingRecords } from './skill-swap.records.js'
+import type { RecordScan } from './skill-swap.records.js'
+import { STAGING_DIR_NAME } from './skill-write-lock.types.js'
+import type { ProbeError, RecoveryPendingChecker } from './update-target.probe.types.js'
 
-const STAGING_DIRNAME = '.skillsmith-staging'
-const STAGING_RESERVED = new Set(['.kept', '.trash', '.quarantine'])
-
-/**
- * PLACEHOLDER — see this module's fileoverview `.skillsmith-staging/`
- * section. Best-effort scan: read every non-reserved entry directly under
- * `<skillsDir>/.skillsmith-staging/`, parse its `record.json`, and treat the
- * directory as named if any string VALUE anywhere in the parsed record
- * equals `dir` or `dirName`.
- *
- * Fails SAFE, not permissive: any error reading `.skillsmith-staging/`
- * itself, or one op dir's `record.json`, is treated as "not named" (false)
- * — the caller then reports plain `probe-failed` (still blocking) rather
- * than ever reaching a permissive `ok`.
- */
-export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({
-  skillsDir,
-  dir,
-  dirName,
-}) => {
-  const stagingDir = path.join(skillsDir, STAGING_DIRNAME)
-  let entries: import('fs').Dirent[]
-  try {
-    entries = await fs.readdir(stagingDir, { withFileTypes: true })
-  } catch {
-    return false
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    if (entry.name.startsWith('.') || STAGING_RESERVED.has(entry.name)) continue
-    const recordPath = path.join(stagingDir, entry.name, 'record.json')
-    let raw: string
-    try {
-      raw = await fs.readFile(recordPath, 'utf-8')
-    } catch {
-      continue
-    }
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      continue
-    }
-    if (recordNames(parsed, dir, dirName)) return true
-  }
-  return false
+/** The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds the root. */
+async function scanRoot(skillsDir: string): Promise<RecordScan> {
+  const root = await fs.promises.realpath(path.resolve(skillsDir))
+  return scanStagingRecords(root, path.join(root, STAGING_DIR_NAME))
 }
 
-function recordNames(value: unknown, dir: string, dirName: string): boolean {
-  if (typeof value === 'string') return value === dir || value === dirName
-  if (Array.isArray(value)) return value.some((v) => recordNames(v, dir, dirName))
-  if (value !== null && typeof value === 'object') {
-    return Object.values(value).some((v) => recordNames(v, dir, dirName))
+/** Row 3: does a verified record of this root name `dir`? Throws when that can't be decided. */
+export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ skillsDir, dir }) => {
+  const scan = await scanRoot(skillsDir)
+  if (!scan.ok) {
+    throw Object.assign(new Error(listingFailure(skillsDir, scan)), { code: scan.errno })
   }
-  return false
+  let realDir = dir
+  try {
+    realDir = await fs.promises.realpath(dir)
+  } catch (err) {
+    // A missing folder (a crash between the renames) is matched by its path.
+    const code = (err as NodeJS.ErrnoException | null)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err
+  }
+  return recordsNaming(scan.pending, { realDir, comparedPath: dir }).length > 0
+}
+
+const listingFailure = (skillsDir: string, scan: { path: string; errno: string }): string =>
+  `the update records in ${path.join(skillsDir, STAGING_DIR_NAME)} could not be listed ` +
+  `(${scan.path}: ${scan.errno})`
+
+/**
+ * Row 0b: the opIds of `skillsDir`'s unreadable records (empty when none, or
+ * when the root doesn't exist). `ok: false` when the root can't be resolved
+ * or its staging can't be listed: the caller reports `probe-failed`, never
+ * "nothing to block".
+ */
+export async function unreadableStagingRecords(
+  skillsDir: string
+): Promise<{ ok: true; opIds: string[] } | { ok: false; error: ProbeError }> {
+  let scan: Awaited<ReturnType<typeof scanRoot>>
+  try {
+    scan = await scanRoot(skillsDir)
+  } catch (err) {
+    const errno = (err as NodeJS.ErrnoException | null)?.code
+    // A root that doesn't exist has no staging and no records.
+    if (errno === 'ENOENT') return { ok: true, opIds: [] }
+    return { ok: false, error: { path: skillsDir, errno: errno ?? 'UNKNOWN' } }
+  }
+  if (!scan.ok) return { ok: false, error: { path: scan.path, errno: scan.errno } }
+  return { ok: true, opIds: scan.unreadable.map((r) => r.opId) }
 }

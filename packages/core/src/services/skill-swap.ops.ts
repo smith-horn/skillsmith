@@ -115,6 +115,8 @@ export interface SwapState {
    * `linkChecked` is the same inode, so its new path is bound too.
    */
   owned: Map<string, BoundIdentity>
+  /** Set by step 3's refusal: the opIds of the records that block this write. */
+  blockedBy: string[] | null
   /** `staging` → `locked` (lock 1 held) → `swapped` (rename 1 ran) → `committed` (manifest written). */
   phase: 'staging' | 'locked' | 'swapped' | 'committed'
   step: PostCommitStep

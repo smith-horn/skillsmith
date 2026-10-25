@@ -5,7 +5,7 @@
  *  1. Outside any lock: bind R and ST, make OP, write `owner.json`, build
  *     `new/` (`skill-swap.staging.ts`).
  *  2. Lock 1 (`withSkillWriteLock`, label `skill update`); `check`.
- *  3. The record scan: SMI-6531 step 5 (below).
+ *  3. The record scan (`skill-swap.scan.ts`): `recovery-record-unreadable`, `recovery-pending`.
  *  4. Re-verify the target, its tree hash and the manifest CAS.
  *  5. `record.json`.
  *  6-8. Rename 1 (`realDir` → `OP/old`), rename 2 (`OP/new` → `realDir`),
@@ -32,7 +32,7 @@
  * Before step 1, `ensureSkillsRoot` makes an absent root and its missing
  * parents (UD22); a refusal there is `refused` / `root-unsafe`.
  *
- * Owned elsewhere: the record scan (step 5) and doctor (step 6).
+ * Owned elsewhere: doctor (implementation-order step 6).
  *
  * @module @skillsmith/core/services/skill-swap
  */
@@ -67,6 +67,7 @@ import { finishOp } from './skill-swap.finish.js'
 import { abortUnderLock, describe, noneResult } from './skill-swap.abort.js'
 import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
 import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
+import { refuseIfRecorded } from './skill-swap.scan.js'
 import { undoSwap } from './skill-swap.undo.js'
 import { changedPaths } from './skill-swap.writeset.js'
 import type {
@@ -91,6 +92,8 @@ const REFUSE_REASONS: ReadonlySet<string> = new Set<SwapRefuseReason>([
   'backup-unsafe',
   'root-unsafe',
   'busy',
+  'recovery-pending',
+  'recovery-record-unreadable',
 ])
 
 const STOP_REASONS: ReadonlySet<string> = new Set<SwapStopReason>([
@@ -325,8 +328,7 @@ async function swapAndCommit(st: SwapState): Promise<SwapResult> {
 async function underLock(st: SwapState): Promise<SwapResult> {
   st.phase = 'locked'
   try {
-    // Step 3, the record scan of `ST/*/record.json` (`recovery-pending`,
-    // `recovery-record-unreadable`): SMI-6531 step 5 of the implementation order.
+    await refuseIfRecorded(st)
     await reverify(st)
     await assertBackupNameFree(st)
     await writeRecord(st)
@@ -377,6 +379,7 @@ function newState(
     recordRemoved: false,
     record: null,
     owned: new Map(),
+    blockedBy: null,
     phase: 'staging',
     step: 'audit',
   }

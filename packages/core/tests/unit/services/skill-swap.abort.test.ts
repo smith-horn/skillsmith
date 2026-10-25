@@ -25,7 +25,7 @@ import {
   treeDeletes,
 } from './skill-swap.abort.helpers.js'
 import type { Event } from './skill-swap.abort.helpers.js'
-import { ABORT_KINDS, abortAt, REASON } from './skill-swap.abort.triggers.js'
+import { ABORT_KINDS, abortAt, PLANTED_OP_ID, REASON } from './skill-swap.abort.triggers.js'
 import type { AbortKind } from './skill-swap.abort.triggers.js'
 import { hashOf, makeFixture, modify, OP_ID, plan, useTmpCleanup } from './skill-swap.helpers.js'
 import type { Fixture } from './skill-swap.helpers.js'
@@ -92,9 +92,14 @@ function assertParked(fx: Fixture, kind: AbortKind, run: Awaited<ReturnType<type
   expect(contentOf(path.join(copy, 'new'))).toEqual(run.built.content)
   expect(hashOf(path.join(copy, 'new'))).toBe(run.built.hash)
   expect(fs.lstatSync(path.join(copy, 'new'), { bigint: true }).ino).toBe(run.built.ino)
-  // The op dir and any record are gone from staging.
+  // The op dir and any record are gone from staging; step 3's planted op dir is not ours to remove.
   expect(fs.existsSync(fx.opDir)).toBe(false)
-  expect(fs.readdirSync(fx.staging)).toEqual(['.skillsmith-parked'])
+  expect(fs.readdirSync(fx.staging).sort()).toEqual(
+    kind === 'step3' ? [PLANTED_OP_ID, '.skillsmith-parked'].sort() : ['.skillsmith-parked']
+  )
+  if (kind === 'step3') {
+    expect(fs.existsSync(path.join(fx.staging, PLANTED_OP_ID, 'record.json'))).toBe(true)
+  }
   // The sidecar and the index line.
   const sidecar = JSON.parse(fs.readFileSync(`${copy}.json`, 'utf8'))
   expect(sidecar).toMatchObject({

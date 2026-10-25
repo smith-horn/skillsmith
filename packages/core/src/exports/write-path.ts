@@ -57,6 +57,16 @@ export {
   type SwapWriteEntry,
   type TraceOp,
 } from '../services/skill-swap.js'
+// SMI-6531 A1 step 5: the record scan of `.skillsmith-staging/` (plan §3.3 step 3, R1).
+export {
+  isSwapRecord,
+  recordsNaming,
+  scanStagingRecords,
+  type PendingRecord,
+  type RecordScan,
+  type UnreadableRecord,
+  type UnreadableRecordWhy,
+} from '../services/skill-swap.records.js'
 // SMI-6531 A1 step 4a: the absent-root rule (UD22), run by `swapInPlace` before R is bound.
 export {
   ensureSkillsRoot,
