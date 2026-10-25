@@ -14,7 +14,7 @@ type Violation = {
   message: string
   fix: string
 }
-type Scope = { status: string; scanned: number; reason: string }
+type Scope = { status: string; scanned: number; reason: string; diffKnown?: boolean }
 
 const mod = (await import('../lib/audit-check77.mjs')) as {
   CHECK77_CUTOFF_TS: string
@@ -566,6 +566,28 @@ describe('Check 77: scan scope classifier', () => {
     expect(r.reason).toContain('could not be determined')
   })
 
+  // SMI-7164 R2a: the classifier says the diff itself was unknown, so the wiring can name the right remedy.
+  it('marks an unknown-diff INCONCLUSIVE as diffKnown: false', () => {
+    const r = classifyScanScope({
+      inScopeFiles: inScope,
+      encryptedFiles: [inScope[0]],
+      diffFiles: null,
+    })
+    expect(r.status).toBe('inconclusive')
+    expect(r.diffKnown).toBe(false)
+  })
+
+  // SMI-7164 R2c (control, classifier half): a known diff with an encrypted file in it is not "diff unknown".
+  it('does not mark a known-diff INCONCLUSIVE as diffKnown: false', () => {
+    const r = classifyScanScope({
+      inScopeFiles: inScope,
+      encryptedFiles: [inScope[1]],
+      diffFiles: ['supabase/migrations/' + inScope[1]],
+    })
+    expect(r.status).toBe('inconclusive')
+    expect(r.diffKnown).not.toBe(false)
+  })
+
   it('scans normally with an unknown diff when nothing is encrypted', () => {
     const r = classifyScanScope({ inScopeFiles: inScope, encryptedFiles: [], diffFiles: null })
     expect(r).toMatchObject({ status: 'pass', scanned: 2 })
@@ -637,6 +659,7 @@ describe('Check 77: audit wiring (runCheck77)', () => {
     const calls = {
       pass: [] as string[],
       fail: [] as string[],
+      fix: [] as Array<string | undefined>,
       note: [] as string[],
       read: [] as string[],
     }
@@ -646,7 +669,7 @@ describe('Check 77: audit wiring (runCheck77)', () => {
       isEncrypted: () => false,
       diffFiles: [],
       pass: (m) => calls.pass.push(m),
-      fail: (m) => calls.fail.push(m),
+      fail: (m, hint) => (calls.fail.push(m), calls.fix.push(hint)),
       note: (l) => calls.note.push(l),
       ...over,
     })
@@ -692,6 +715,29 @@ describe('Check 77: audit wiring (runCheck77)', () => {
     const c = drive({ isEncrypted: (f) => f === BAD, diffFiles: null })
     expect(c.fail).toHaveLength(1)
     expect(c.fail[0]).toContain('could not be determined')
+  })
+
+  // SMI-7164 R2b (property): an unknown diff and an encrypted file in a known diff are different
+  // faults with different fixes, so the same path must not hand both the same remedy.
+  it('names a different fix for an unknown diff than for an encrypted file in a known diff', () => {
+    const unknown = drive({ isEncrypted: (f) => f === BAD, diffFiles: null })
+    const known = drive({
+      isEncrypted: (f) => f === BAD,
+      diffFiles: ['supabase/migrations/' + BAD],
+    })
+    expect(unknown.fail).toHaveLength(1)
+    expect(known.fail).toHaveLength(1)
+    expect(unknown.fix[0]).not.toEqual(known.fix[0])
+    expect(unknown.fix[0]).toContain('fetch-depth: 0')
+    expect(unknown.fix[0]).toContain('Check 78')
+  })
+
+  // SMI-7164 R2c (control, wiring half): the known-diff case keeps the git-crypt remedy.
+  it('keeps the unlock-git-crypt fix when an encrypted file is in a known diff', () => {
+    const c = drive({ isEncrypted: (f) => f === BAD, diffFiles: ['supabase/migrations/' + BAD] })
+    expect(c.fix).toEqual([
+      'Unlock git-crypt (or run this check where the key is available) and re-run',
+    ])
   })
 
   it('still scans readable files when the encrypted one is not in the diff', () => {

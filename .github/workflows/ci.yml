@@ -2132,6 +2132,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # SMI-7164: same fix as quality-checks (SMI-4764 Wave 4). A depth-1
+          # checkout has no origin/main, so git merge-base fails and Checks
+          # 45/50/51/54/77 skip or fail INCONCLUSIVE on every code PR. Check 78
+          # fails this job loudly if the checkout regresses.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -2144,6 +2150,11 @@ jobs:
 
       - name: Run automated code review
         id: code-review
+        env:
+          # SMI-7164: with full history Check 54 now evaluates here, so it needs
+          # the PR body for its [skip-changelog-check] opt-out, same as
+          # quality-checks. Passed through env, never interpolated into run:.
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: bash scripts/ci-code-review.sh audit-report.json
 
       - name: Upload audit report

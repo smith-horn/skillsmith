@@ -117,7 +117,9 @@ export function isCheck77InScope(fileName, opts = {}) {
  *   'inconclusive' - an encrypted in-scope file is in the PR diff (fail closed)
  *   'not-checked'  - nothing readable to scan and nothing in the diff is hidden (pass, said honestly)
  *   'pass'         - scan the readable in-scope files
- * diffFiles === null means the PR diff could not be determined.
+ * diffFiles === null means the PR diff could not be determined. Then every encrypted
+ * in-scope file counts as hidden, and the result carries diffKnown: false so the
+ * wiring can name the checkout as the fault rather than the missing key (SMI-7164).
  */
 export function classifyScanScope({ inScopeFiles, encryptedFiles, diffFiles }) {
   const encrypted = encryptedFiles.map(baseName)
@@ -127,6 +129,7 @@ export function classifyScanScope({ inScopeFiles, encryptedFiles, diffFiles }) {
     return {
       status: 'inconclusive',
       scanned: 0,
+      ...(diffFiles === null ? { diffKnown: false } : {}),
       reason:
         diffFiles === null
           ? `INCONCLUSIVE: tree locked (git-crypt) and the PR diff could not be determined: ${hiddenInDiff.join(', ')}`
@@ -432,6 +435,14 @@ export function getCheck77DiffFiles({ execFile, baseRef, migDir = 'supabase/migr
   }
 }
 
+const FIX_LOCKED = 'Unlock git-crypt (or run this check where the key is available) and re-run'
+// An unknown diff is a checkout fault. Unlocking would make the check scan every file and
+// pass, which hides the broken checkout instead of fixing it (SMI-7164).
+const FIX_DIFF_UNKNOWN =
+  "This job could not compute the PR's diff (see Check 78). In CI: set fetch-depth: 0 on actions/checkout. " +
+  'Locally: git fetch origin <base>; in a worktree container git may be unusable (SMI-6332). ' +
+  'Unlocking git-crypt makes this check scan every file but hides a broken checkout.'
+
 /**
  * Scope classification -> pass / fail / INCONCLUSIVE for Check 77. `migrationFiles` are
  * names inside `migDir`; `readFile(name)` is never called for an encrypted file.
@@ -454,10 +465,7 @@ export function runCheck77({
   const encrypted = inScope.filter((f) => isEncrypted(f))
   const scope = classifyScanScope({ inScopeFiles: inScope, encryptedFiles: encrypted, diffFiles })
   if (scope.status === 'inconclusive') {
-    fail(
-      `Check 77: ${scope.reason}`,
-      'Unlock git-crypt (or run this check where the key is available) and re-run'
-    )
+    fail(`Check 77: ${scope.reason}`, scope.diffKnown === false ? FIX_DIFF_UNKNOWN : FIX_LOCKED)
     return
   }
   if (scope.status === 'not-checked') {
