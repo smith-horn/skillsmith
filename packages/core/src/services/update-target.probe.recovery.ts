@@ -13,14 +13,16 @@
  *    this root names the target's `realpath` or the target path itself, the
  *    same match as the write's step 3. It returns `{ error }`, naming the
  *    path that failed, when the root can't be resolved, its staging can't be
- *    listed or a staging entry can't be `lstat`ed, and the probe reports
- *    `probe-failed`: a check that could not run never reads as "not named".
+ *    listed or a staging entry can't be `lstat`ed other than as missing, and
+ *    the probe reports `probe-failed`: a check that could not run never
+ *    reads as "not named".
  *  - `unreadableStagingRecords` (row 0b, for whoever builds the run's
  *    `plan`): the opIds of the root's unreadable records, which block every
  *    skill in it and are what `doctor recovery --park <opId>` takes. A
  *    staging that can't be listed, or a staging entry that can't be
- *    `lstat`ed, is not 0b: like the write (`staging-unsafe`) and row 3's
- *    checker, it is a `probe-failed` error.
+ *    `lstat`ed other than as missing, is not 0b: like the write
+ *    (`staging-unsafe`) and row 3's checker, it is a `probe-failed` error.
+ *    An entry gone since the listing is skipped, as the write skips it.
  *
  * `RecoveryPendingChecker` is imported from `update-target.probe.types.ts`,
  * NOT from `update-target.probe.ts`: this module and `probe.ts` never import
@@ -61,8 +63,8 @@ async function scanRoot(
 /**
  * Row 3: does a verified record of this root name `dir`? `{ error }`, naming
  * the path that failed, when that can't be decided: the root can't be
- * resolved, its staging can't be listed, a staging entry can't be `lstat`ed,
- * or `dir`'s realpath fails other than as missing.
+ * resolved, its staging can't be listed, or a staging entry's `lstat` or
+ * `dir`'s realpath fails other than as missing.
  */
 export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ skillsDir, dir }) => {
   let scanned: Awaited<ReturnType<typeof scanRoot>>
@@ -87,8 +89,9 @@ export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ sk
 /**
  * Row 0b: the opIds of `skillsDir`'s unreadable records (empty when none, or
  * when the root doesn't exist). `ok: false` when the root can't be resolved,
- * its staging can't be listed or a staging entry can't be `lstat`ed: the
- * caller reports `probe-failed`, never "nothing to block".
+ * its staging can't be listed or a staging entry can't be `lstat`ed other
+ * than as missing: the caller reports `probe-failed`, never "nothing to
+ * block".
  */
 export async function unreadableStagingRecords(
   skillsDir: string

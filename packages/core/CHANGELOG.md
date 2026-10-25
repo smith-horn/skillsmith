@@ -4,9 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
-- **Changed**: SMI-6531 -- PR #3165 retro: the update probe's record-check docs name every error
-  case (a staging entry that can't be inspected with `lstat` included), and the full-device marker
-  test checks that its trigger fired. No behaviour change.
+- **Changed**: SMI-6531 -- PR #3165 and #3170 retros: the update probe's record-check docs name
+  every error case (a staging entry whose `lstat` fails other than as missing included; one gone
+  since the listing is skipped), and the full-device marker test checks that its trigger fired. No
+  behaviour change.
 
 - **Fixed**: SMI-6531 -- PR #3164 retro: when the skills root is a symlink, the update probe's
   record check now reports a staging failure under the root as given, not under where the link
