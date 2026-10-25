@@ -3,6 +3,8 @@
  * each as swap options that make the transaction abort there, plus a capture
  * of what the build left in N.
  *
+ *  - `step3`: a verified record naming this skill placed in ST after the
+ *    build (outside lock 1), so the record scan refuses (`recovery-pending`).
  *  - `step4`: the live folder edited after the build, so step 4's re-hash
  *    refuses (`changed-since-plan`, no record).
  *  - `step5`: the record's temp cannot be created (`ENOSPC` from its `open`),
@@ -10,8 +12,8 @@
  *  - `step6`: the live folder replaced before step 6's `lstat`, so step 6
  *    refuses (`target-changed`) with `record.json` published.
  *
- * A step-3 refusal (the record scan) is SMI-6531 step 5's; it reaches the same
- * cleanup from under lock 1, as these do. The `busy` abort that gets lock 1 on
+ * The step-3 refusal (the record scan) reaches the same cleanup from under lock
+ * 1, as the others do; its planted op dir stays in ST. The `busy` abort that gets lock 1 on
  * its second wait is T-X15's (`skill-swap.abort.busy.test.ts`).
  */
 import fs from 'node:fs'
@@ -22,10 +24,14 @@ import type { SwapHookPoint, SwapOptions } from '../../../src/services/skill-swa
 import { contentOf } from './skill-swap.abort.helpers.js'
 import { hashOf } from './skill-swap.helpers.js'
 import type { Fixture } from './skill-swap.helpers.js'
+import { opIdN, plantRecord } from './skill-swap.scan.helpers.js'
 
-export type AbortKind = 'step4' | 'step5' | 'step6'
-export const ABORT_KINDS: AbortKind[] = ['step4', 'step5', 'step6']
+export type AbortKind = 'step3' | 'step4' | 'step5' | 'step6'
+export const ABORT_KINDS: AbortKind[] = ['step3', 'step4', 'step5', 'step6']
+/** The op dir `step3` plants in ST: a verified record naming the fixture's skill. */
+export const PLANTED_OP_ID = opIdN('b')
 export const REASON: Record<AbortKind, string> = {
+  step3: 'recovery-pending',
   step4: 'changed-since-plan',
   step5: 'write-failed',
   step6: 'target-changed',
@@ -63,6 +69,7 @@ export function abortAt(
     built.ino = fs.lstatSync(newDir, { bigint: true }).ino
     const op = bindIdentity(fx.opDir)
     if (op.ok) built.op = op
+    if (kind === 'step3') plantRecord(fx, PLANTED_OP_ID)
     if (kind === 'step4') fs.appendFileSync(path.join(fx.realDir, 'SKILL.md'), 'live edit\n')
   })
   let restore = (): void => undefined

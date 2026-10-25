@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 A1 step 5 -- the record scan. Before every update, under the skills root's
+  write lock, `swapInPlace` reads the record each unfinished update left in
+  `.skillsmith-staging/`. A record that names the skill refuses the update with `recovery-pending`;
+  other skills in the root are unaffected. A record that can't be verified (unreadable, not valid
+  JSON, the wrong shape, a hash that doesn't match, in the wrong op folder, or naming another skills
+  root) refuses every update in that root with `recovery-record-unreadable`, naming
+  `skillsmith doctor recovery --park <opId>`. Both refusals carry the blocking opIds as `blockedBy`.
+  The scan changes nothing; the refused update's own staged copy is cleaned up as any other abort.
+  The update probe now uses the same scan: a folder a record names is `recovery-pending` whether
+  it exists or not, a staging folder that can't be listed is `probe-failed`, and
+  `stagingRecordsUnreadable` answers the unreadable-record check for a whole root. No caller uses
+  `swapInPlace` yet.
+
 - **Changed**: SMI-6531 -- removes six unused re-exports left by step 4c's file splits:
   `rootKeyOf`, `warnForeignChange` and `PublishKind` from `skill-swap.publish.ts`, `NotDone` from
   `skill-swap.abort.ts`, and `PRUNE_COMMAND` and `SPACE_MARGIN_BYTES` from `skill-swap.xdev.ts`.

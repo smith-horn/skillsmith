@@ -117,6 +117,7 @@ export function refused(
     cleanStagingHint: left ? cleanStagingHint(st.opId) : null,
     ...(o.parkedPath === undefined ? {} : { parkedPath: o.parkedPath }),
     ...(o.keptAs === undefined ? {} : { keptAs: o.keptAs }),
+    ...(st.blockedBy === null ? {} : { blockedBy: st.blockedBy }),
     detail,
     warnings: st.warnings,
   }

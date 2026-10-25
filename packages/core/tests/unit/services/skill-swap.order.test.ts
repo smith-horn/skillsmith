@@ -7,9 +7,12 @@
  * belongs to `bindSkillsRoot` (step 2's tests, `skill-write-lock.dirsync`).
  *
  * T-X2: a SIGKILL between the renames leaves the path absent, O and N
- * complete, and a parseable, verifying `record.json`. The rest of T-X2 is
- * later steps': the next `update` refusing `recovery-pending` is the record
- * scan (step 5), and `doctor recovery --apply` / `--undo` are step 6.
+ * complete, and a parseable, verifying `record.json`. The next `swapInPlace`
+ * of that skill can't build from an absent folder, so step 1 fails; its abort
+ * cleanup runs the record scan under lock 1 and refuses `recovery-pending`
+ * naming the killed op, touching none of it (step 5). Another skill in the
+ * root commits past the record. The rest of T-X2 is step 6's:
+ * `doctor recovery --apply` / `--undo`.
  */
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -32,6 +35,8 @@ import {
   tmp,
   useTmpCleanup,
 } from './skill-swap.helpers.js'
+import { refusedOf } from './skill-swap.abort.helpers.js'
+import { attempt, deepSnapshot, opIdN, otherSkill } from './skill-swap.scan.helpers.js'
 
 useTmpCleanup()
 
@@ -65,6 +70,7 @@ describe('T-P4: sync order (one device)', () => {
       { op: 'fsync', path: path.join(N, 'SKILL.md') },
       { op: 'dirsync', path: N },
       { op: 'dirsync', path: OP },
+      { op: 'record-scan', path: ST },
       { op: 'create', path: `${rec}.tmp` },
       { op: 'fsync', path: `${rec}.tmp` },
       { op: 'link', path: `${rec}.tmp`, dest: rec },
@@ -147,11 +153,14 @@ describe('T-P4: sync order (one device)', () => {
 describe('T-X2: a kill between the renames (swap half)', () => {
   for (const killAt of ['afterRename1', 'afterRename1Syncs'] as const) {
     it(
-      `SIGKILL at ${killAt}: the path is absent, O and N are complete, record.json verifies`,
-      () => {
+      `SIGKILL at ${killAt}: the path is absent, O and N are complete, record.json verifies, the next update of the skill refuses recovery-pending, another skill commits`,
+      async () => {
         const fx = makeFixture({ 'SKILL.md': '# v1\n', 'scripts/run.sh': 'echo 1\n' })
         const preTree = hashOf(fx.realDir)
         const before = recordOf(fx.realDir)
+        // Planned while the folder is still there: its identity is the one rename 1 moves to O.
+        const next = plan(fx, [modify('SKILL.md', '# v3\n')])
+        const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
         const cfgPath = path.join(tmp('skill-swap-cfg-'), 'cfg.json')
         fs.writeFileSync(
           cfgPath,
@@ -186,6 +195,34 @@ describe('T-X2: a kill between the renames (swap half)', () => {
         const n = path.join(fx.opDir, 'new')
         expect(hashOf(n)).toBe(rec.postTree)
         expect(changedPaths(before, recordOf(n))).toEqual(['SKILL.md', 'scripts/new.sh'])
+
+        // The next update of this skill refuses and touches none of it.
+        const frozen = {
+          old: deepSnapshot(path.join(fx.opDir, 'old')),
+          new: deepSnapshot(n),
+          record: deepSnapshot(path.join(fx.opDir, 'record.json')),
+          owner: deepSnapshot(path.join(fx.opDir, 'owner.json')),
+        }
+        const again = await run(next, { opId: opIdN('b') })
+        expect(refusedOf(again.result)).toMatchObject({
+          reason: 'recovery-pending',
+          blockedBy: [OP_ID],
+        })
+        expect(again.trace).toContainEqual({ op: 'record-scan', path: fx.staging })
+        expect(fs.existsSync(fx.realDir)).toBe(false)
+        expect(next.manifest.writes).toBe(0)
+        expect({
+          old: deepSnapshot(path.join(fx.opDir, 'old')),
+          new: deepSnapshot(n),
+          record: deepSnapshot(path.join(fx.opDir, 'record.json')),
+          owner: deepSnapshot(path.join(fx.opDir, 'owner.json')),
+        }).toEqual(frozen)
+
+        // Paired: the scan does run for another skill, sees the killed record, and passes it.
+        const o = await attempt(other, opIdN('c'))
+        expect(o.result.status).toBe('committed')
+        expect(o.trace).toContainEqual({ op: 'record-scan', path: fx.staging })
+        expect(fs.existsSync(path.join(fx.opDir, 'record.json'))).toBe(true)
       },
       CHILD_TEST_TIMEOUT_MS
     )

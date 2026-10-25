@@ -51,14 +51,13 @@
  * for real; the retry COUNT itself must not be faked (SMI-6598) — the tests
  * in `update-target.probe.test.ts` pin exactly 3 attempts.
  *
- * `.skillsmith-staging/` RECORD CHECK: §4.2 says a missing tracked folder
- * named by a `.skillsmith-staging/` record is `recovery-pending`, not
- * plain-missing. The default implementation of that check
- * (`defaultRecoveryPendingChecker`, a documented A1-placeholder — see its
- * own module, `update-target.probe.recovery.ts`, for the full ambiguity
- * writeup) lives in a sibling file, re-exported from here; this module only
- * owns the injectable seam (`ProbeInput.checkRecoveryPending`) and the call
- * site that invokes it.
+ * `.skillsmith-staging/` RECORD CHECK: a tracked folder named by a verified
+ * `.skillsmith-staging/` record is `recovery-pending` (§4.3 row 3), whether
+ * it is present or missing (§4.2: not plain-missing). The default check
+ * (`defaultRecoveryPendingChecker`, on A1's record scan, the same one the
+ * write's step 3 uses) lives in `update-target.probe.recovery.ts`,
+ * re-exported from here; this module owns the injectable seam
+ * (`ProbeInput.checkRecoveryPending`) and the call site that invokes it.
  *
  * GIT-ANCESTOR DETECTION IS A DELIBERATE DEVIATION FROM THE PLAN.
  * `update-safety-and-source-resolution.md` §4.2 says "Git detection reuses
@@ -337,20 +336,20 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
     if (attempt < attempts) await sleep(delayMs)
   }
 
+  // Row 3 (§4.3) for a present folder as well as a missing one: a crash after
+  // rename 2 leaves the new folder in place with its record still in staging,
+  // and the write's step 3 refuses it (SMI-6531 step 5). Either checker can
+  // reject (the default one when the staging can't be listed): that fails
+  // CLOSED into `probe-failed`, never an unhandled rejection.
+  let pending: boolean
+  try {
+    pending = await checkRecoveryPending({ skillsDir, dir, dirName })
+  } catch (err) {
+    return { kind: 'probe-failed', error: sanitizeError(dir, err) }
+  }
+  if (pending) return { kind: 'recovery-pending' }
+
   if (missing) {
-    // The default checker never throws (it fails safe to `false`
-    // internally), but an INJECTED `checkRecoveryPending` (`ProbeInput`) is
-    // caller-supplied and can reject — the only uncaught surface left in
-    // this probe. Contain it the same way every other failure mode here is
-    // contained: a seam crash fails CLOSED into `probe-failed`, never
-    // propagates past this function as an unhandled rejection.
-    let pending: boolean
-    try {
-      pending = await checkRecoveryPending({ skillsDir, dir, dirName })
-    } catch (err) {
-      return { kind: 'probe-failed', error: sanitizeError(dir, err) }
-    }
-    if (pending) return { kind: 'recovery-pending' }
     // `path: dir` here names an entry that, for the dangling-symlink case
     // (F1), DOES still exist on disk — `dir` is the symlink itself, which
     // `readdir`/`ls` on its parent would still list. The ENOENT describes

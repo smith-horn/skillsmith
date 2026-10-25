@@ -3,7 +3,8 @@
  * cleanup" step 1, UD16), when the abort did not already hold it.
  *
  *  - A step-1 failure (`abortBeforeLock`) takes lock 1 with one normal wait
- *    (§3.2: `lockTimeoutMs`, default 30 s), then runs cleanup.
+ *    (§3.2: `lockTimeoutMs`, default 30 s), runs step 3's record scan (a
+ *    `recovery-*` refusal replaces the build's reason; T-X2), then cleanup.
  *  - After a step-2 `busy` (`abortAfterBusy`), the update waits once more:
  *    `withSkillWriteLock` with `timeoutMs: 0` every 50 ms for up to 30 s more.
  *    Between polls it holds no lock and no `.reclaim` claim, creates nothing
@@ -26,6 +27,7 @@ import type { SkillWriteResult, SkillWriteStop } from './skill-write-lock.types.
 import { noneResult, refused, runCleanup, say } from './skill-swap.abort.js'
 import type { Refused } from './skill-swap.abort.js'
 import { hook } from './skill-swap.ops.js'
+import { recordedReason } from './skill-swap.scan.js'
 import type { SwapState } from './skill-swap.ops.js'
 import type { SwapRefuseReason, SwapResult } from './skill-swap.types.js'
 
@@ -61,7 +63,9 @@ export async function abortBeforeLock(
     LABEL,
     async (ctx) => {
       st.ctx = ctx
-      return runCleanup(st, reason, detail)
+      const recorded = await recordedReason(st)
+      if (recorded === null) return runCleanup(st, reason, detail)
+      return runCleanup(st, recorded.reason as SwapRefuseReason, recorded.detail)
     },
     st.options.lockTimeoutMs === undefined ? {} : { timeoutMs: st.options.lockTimeoutMs }
   )
