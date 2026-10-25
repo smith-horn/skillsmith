@@ -1211,4 +1211,33 @@ describe('the record check names paths under the skills root as given (PR #3164 
       error: { path: path.join(target, '.skillsmith-staging'), errno: 'ENOTDIR' },
     })
   })
+
+  it('a symlinked skillsDir: an entry the scan cannot lstat is named under the link, staging folder included', async () => {
+    const target = path.join(root, 'real-target-dir')
+    const link = path.join(root, 'skills-link')
+    fs.mkdirSync(path.join(target, '.skillsmith-staging', 'op-entry'), { recursive: true })
+    fs.symlinkSync(target, link)
+    const entry = path.join(target, '.skillsmith-staging', 'op-entry')
+    // The scan lstats through node:fs, which the module mock above does not cover.
+    const orig = fs.promises.lstat.bind(fs.promises)
+    let fired = 0
+    const spy = vi.spyOn(fs.promises, 'lstat').mockImplementation((async (
+      ...a: Parameters<typeof fs.promises.lstat>
+    ) => {
+      if (a[0] === entry) {
+        fired++
+        throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+      }
+      return orig(...a)
+    }) as typeof fs.promises.lstat)
+    try {
+      expect(await unreadableStagingRecords(link)).toEqual({
+        ok: false,
+        error: { path: path.join(link, '.skillsmith-staging', 'op-entry'), errno: 'EACCES' },
+      })
+      expect(fired).toBe(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })

@@ -38,7 +38,7 @@ import type { ProbeError, RecoveryPendingChecker } from './update-target.probe.t
 /**
  * The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds
  * the root. `asGiven` maps a path the scan names back under `skillsDir` as the
- * caller gave it: a failure must never name where a symlinked root points
+ * caller gave it (resolved lexically, `path.resolve`, never through links): a failure must never name where a symlinked root points
  * (`update-target.probe.ts`'s fileoverview), and the scan's paths are under the
  * resolved root.
  */
@@ -50,7 +50,8 @@ async function scanRoot(
   const scan = await scanStagingRecords(root, path.join(root, STAGING_DIR_NAME))
   const asGiven = (p: string): string => {
     const rel = path.relative(root, p)
-    return rel.startsWith('..') || path.isAbsolute(rel) ? given : path.join(given, rel)
+    const outside = rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)
+    return outside ? given : path.join(given, rel)
   }
   return { scan, asGiven }
 }
@@ -66,7 +67,7 @@ export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ sk
   try {
     scanned = await scanRoot(skillsDir)
   } catch (err) {
-    return { error: { path: skillsDir, errno: errnoOf(err) } }
+    return { error: { path: path.resolve(skillsDir), errno: errnoOf(err) } }
   }
   const { scan, asGiven } = scanned
   if (!scan.ok) return { error: { path: asGiven(scan.path), errno: scan.errno } }
@@ -97,7 +98,7 @@ export async function unreadableStagingRecords(
     const errno = errnoOf(err)
     // A root that doesn't exist has no staging and no records.
     if (errno === 'ENOENT') return { ok: true, opIds: [] }
-    return { ok: false, error: { path: skillsDir, errno } }
+    return { ok: false, error: { path: path.resolve(skillsDir), errno } }
   }
   const { scan, asGiven } = scanned
   if (!scan.ok) return { ok: false, error: { path: asGiven(scan.path), errno: scan.errno } }

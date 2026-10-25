@@ -451,7 +451,9 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retr
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     let sealed = false
     // 'early' until step 5 has published its record, 'late' for any later serialization.
-    p.input = { ...p.input, preEntry: { toJSON: () => ({ n: sealed ? 'late' : 'early' }) } }
+    const changing = () => ({ toJSON: () => ({ n: sealed ? 'late' : 'early' }) })
+    // Both entries, so a rewrite that took either from the live input would show it.
+    p.input = { ...p.input, preEntry: changing(), postEntry: changing() }
     const copy = failCopyCreate(fx, 'ENOSPC')
     const run = await runSpied(p, ALL_DELETES, {
       hooks: {
@@ -465,5 +467,6 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retr
     const rec = recordOf(fx)
     expect(rec.fullDevice).toEqual(markerFor(fx, 'ENOSPC', 'copy'))
     expect(rec.preEntry).toEqual({ n: 'early' })
+    expect(rec.postEntry).toEqual({ n: 'early' })
   })
 })
