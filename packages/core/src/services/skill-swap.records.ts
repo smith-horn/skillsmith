@@ -31,11 +31,11 @@ import { RECORD_FILE } from './skill-swap.types.js'
 
 /** Why a record is unreadable. Each one blocks the whole skills root. */
 export type UnreadableRecordWhy =
-  /** `open` or `read` failed (the errno says why; `ELOOP` for a symlink). */
+  /** `open` or `read` failed (the errno says why: `ELOOP` for a symlink, `ENXIO` for a socket). */
   | 'open-failed'
-  /** A directory, FIFO, socket or device: never read. */
+  /** A directory, FIFO or device: never read. */
   | 'not-a-file'
-  /** Larger than `MAX_RECORD_BYTES`: never read. */
+  /** More than `MAX_RECORD_BYTES`, however long it was when the read began. */
   | 'too-large'
   | 'not-json'
   /** Not exactly the schema-1 keys and types. */
@@ -156,6 +156,18 @@ export function isSwapRecord(v: unknown): v is SwapRecord {
   )
 }
 
+/** Up to `limit` bytes from the start of `handle`, stopping early at EOF. */
+async function readAtMost(handle: fs.promises.FileHandle, limit: number): Promise<Buffer> {
+  const buf = Buffer.alloc(limit)
+  let got = 0
+  while (got < limit) {
+    const { bytesRead } = await handle.read(buf, got, limit - got, got)
+    if (bytesRead === 0) break
+    got += bytesRead
+  }
+  return buf.subarray(0, got)
+}
+
 type Verdict =
   | { kind: 'none' }
   | { kind: 'pending'; record: PendingRecord }
@@ -182,10 +194,12 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
     return unreadable('open-failed', errnoOf(err))
   }
   try {
-    const info = await handle.stat()
-    if (!info.isFile()) return unreadable('not-a-file')
-    if (info.size > MAX_RECORD_BYTES) return unreadable('too-large')
-    text = await handle.readFile('utf8')
+    if (!(await handle.stat()).isFile()) return unreadable('not-a-file')
+    // A bounded read, not `readFile`: that reads to EOF, so a record that grew
+    // after a size check would still be read whole, under lock 1.
+    const bytes = await readAtMost(handle, MAX_RECORD_BYTES + 1)
+    if (bytes.length > MAX_RECORD_BYTES) return unreadable('too-large')
+    text = bytes.toString('utf8')
   } catch (err) {
     return unreadable('open-failed', errnoOf(err))
   } finally {

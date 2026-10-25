@@ -207,6 +207,32 @@ describe('scanStagingRecords: a record that cannot be trusted is unreadable', ()
     ])
   })
 
+  it('a record that grew after its size was taken is still too-large (the read itself is bounded)', async () => {
+    const { root, st } = layout()
+    const text = textOf(bodyOf(root, BAD))
+    put(st, BAD, text + ' '.repeat(MAX_RECORD_BYTES + 1 - text.length))
+    put(st, GOOD, textOf(bodyOf(root, GOOD)))
+    // Every handle's stat reports the size the file had before it grew.
+    const probe = await fs.promises.open(path.join(st, GOOD, 'record.json'), 'r')
+    const proto = Object.getPrototypeOf(probe) as { stat: (...a: unknown[]) => Promise<fs.Stats> }
+    await probe.close()
+    const orig = proto.stat
+    let fired = 0
+    vi.spyOn(proto, 'stat').mockImplementation(async function (this: unknown, ...a: unknown[]) {
+      const s = await orig.apply(this, a)
+      if (s.size > MAX_RECORD_BYTES) fired++
+      return Object.assign(Object.create(Object.getPrototypeOf(s)), s, { size: text.length })
+    })
+    const scan = await scanStagingRecords(root, st)
+    expect(scan).toMatchObject({
+      ok: true,
+      unreadable: [{ opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'too-large' }],
+    })
+    expect(pendingIds(scan)).toEqual([GOOD])
+    // Paired: the stub did hide BAD's real size from the scan.
+    expect(fired).toBeGreaterThanOrEqual(1)
+  })
+
   it('a valid record padded to exactly MAX_RECORD_BYTES is still read (the cap is inclusive)', async () => {
     const { root, st } = layout()
     const text = textOf(bodyOf(root, GOOD))

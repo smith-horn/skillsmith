@@ -18,7 +18,7 @@
  *    record scan (SMI-6531 step 5, `skill-swap.records.ts`): the default
  *    checker is true for a VERIFIED record naming the folder, present or
  *    missing, and throws (so the probe says `probe-failed`) when the staging
- *    can't be listed. `stagingRecordsUnreadable` is row 0b.
+ *    can't be listed. `unreadableStagingRecords` is row 0b.
  * 3. §4.2 doesn't say what happens when `dir` exists but is not a directory
  *    (e.g. a stray file at that path). This probe treats it as an immediate
  *    metadata error (`probe-failed`, `ENOTDIR`), not "missing" — retrying

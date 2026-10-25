@@ -72,8 +72,9 @@ export interface SnapOpts {
   skip?: (abs: string) => boolean
   /**
    * Compare entries, not directory bookkeeping: a directory's mtime and link
-   * count are left out, and a directory with nothing left in it is dropped, so
-   * a directory made only to hold skipped entries does not show.
+   * count are left out, and a directory whose every entry was skipped (or so
+   * dropped) is dropped too, so a directory made only to hold skipped entries
+   * does not show. An empty directory still shows.
    */
   prune?: boolean
 }
@@ -84,8 +85,9 @@ export interface SnapOpts {
  * path. Compare before and after to prove nothing there changed.
  */
 export function deepSnapshot(p: string, opts: SnapOpts = {}): string {
-  const walk = (abs: string, rel: string): string[] => {
-    if (opts.skip?.(abs) === true) return []
+  /** null: skipped, or (pruned) a directory holding only skipped entries. */
+  const walk = (abs: string, rel: string): string[] | null => {
+    if (opts.skip?.(abs) === true) return null
     const s = fs.lstatSync(abs, { bigint: true, throwIfNoEntry: false })
     if (s === undefined) return [`${rel}: absent`]
     const kind = s.isSymbolicLink()
@@ -100,24 +102,24 @@ export function deepSnapshot(p: string, opts: SnapOpts = {}): string {
     if (kind === 'file')
       body = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex')
     const mode = (s.mode & 0o7777n).toString(8)
-    const kids =
+    const walked =
       kind === 'dir'
         ? fs
             .readdirSync(abs)
             .sort()
-            .flatMap((n) => walk(path.join(abs, n), `${rel}/${n}`))
+            .map((n) => walk(path.join(abs, n), `${rel}/${n}`))
         : []
+    const kids = walked.flatMap((k) => k ?? [])
     if (opts.prune === true && kind === 'dir') {
-      return kids.length === 0 && rel !== ''
-        ? []
-        : [`${rel}: dir mode=${mode} ino=${s.ino}`, ...kids]
+      const onlySkipped = walked.length > 0 && walked.every((k) => k === null)
+      return onlySkipped && rel !== '' ? null : [`${rel}: dir mode=${mode} ino=${s.ino}`, ...kids]
     }
     return [
       `${rel}: ${kind} mode=${mode} ino=${s.ino} nlink=${s.nlink} mtime=${s.mtimeNs} ${body}`,
       ...kids,
     ]
   }
-  return walk(p, '').join('\n')
+  return (walk(p, '') ?? []).join('\n')
 }
 
 const manifestOf = (p: Planned): string =>
@@ -139,7 +141,8 @@ export function frozen(fx: Fixture, crashed: { p: Planned; opDir: string }) {
  * included), the skill folder and the manifest. Excluded are only the refused
  * runs' own op dirs (`ST/<id>`), their parked copies
  * (`ST/.skillsmith-parked/<id>`), their clock-gate probes, any kept copy in
- * the state root (a name starting with `<id>`) and the parked index file.
+ * the state root (a name starting with `<id>`) and their own lines of the
+ * parked index, which is compared line by line without them.
  */
 export function frozenWide(fx: Fixture, crashed: { p: Planned }, refusedOpIds: string[]) {
   const staging = fx.staging
@@ -162,8 +165,22 @@ export function frozenWide(fx: Fixture, crashed: { p: Planned }, refusedOpIds: s
         path.basename(abs) === 'parked-index.jsonl' ||
         refusedOpIds.some((id) => path.basename(abs).startsWith(id)),
     }),
+    index: othersIndexLines(fx, refusedOpIds),
     manifest: manifestOf(crashed.p),
   }
+}
+
+/**
+ * The parked index without the refused runs' own lines (each line carries its
+ * `opId`). No file reads as no lines: the refused run's park may create it.
+ */
+function othersIndexLines(fx: Fixture, refusedOpIds: string[]): string[] {
+  const file = path.join(fx.stateRoot, 'parked-index.jsonl')
+  if (!fs.existsSync(file)) return []
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((l) => l !== '' && !refusedOpIds.some((id) => l.includes(id)))
 }
 
 const ID = { dev: '1', ino: '1', birthtimeNs: '1', fmt: '1' }

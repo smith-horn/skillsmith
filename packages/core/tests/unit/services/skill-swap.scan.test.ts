@@ -129,7 +129,7 @@ describe('T-R1 (swap half): a step-1 failure with a built N meets the record sca
     return { p, fx2, ...r }
   }
 
-  it('with a pending record: refused recovery-pending, its own partial build kept, the crash untouched', async () => {
+  it('with a pending record: refused recovery-pending, its own failed build kept, the crash untouched', async () => {
     const fx = makeFixture({ 'SKILL.md': '# v1\n' })
     const crashed = await crashStopped(fx)
     const OP2 = opIdN('c')
@@ -289,5 +289,32 @@ describe('T-R3 (swap half): a staging that cannot be listed', () => {
   it('control: the same run with a working listing commits', async () => {
     const { r } = await withListingFailing(false)
     expect(r.result.status).toBe('committed')
+  })
+})
+
+/** The T-R1 snapshot itself: what it sees and what it leaves out (governance round 2). */
+describe('frozenWide: what the T-R1 snapshot sees', () => {
+  it('sees an empty directory removed and another op index line changed; not a dir of only skipped entries, or own lines', () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const mine = opIdN('d')
+    const index = path.join(fx.stateRoot, 'parked-index.jsonl')
+    fs.mkdirSync(path.join(fx.staging, 'empty-dir'), { recursive: true })
+    fs.writeFileSync(index, `{"opId":"${OP_ID}","n":1}\n`)
+    const before = frozenWide(fx, { p }, [mine])
+
+    // Left out: a directory holding only this run's own park, and its own index line.
+    fs.mkdirSync(path.join(fx.staging, '.skillsmith-parked', mine), { recursive: true })
+    fs.appendFileSync(index, `{"opId":"${mine}","n":2}\n`)
+    expect(frozenWide(fx, { p }, [mine])).toEqual(before)
+
+    // Seen: an empty directory removed.
+    fs.rmdirSync(path.join(fx.staging, 'empty-dir'))
+    expect(frozenWide(fx, { p }, [mine]).staging).not.toEqual(before.staging)
+    fs.mkdirSync(path.join(fx.staging, 'empty-dir'))
+
+    // Seen: another op's index line changed.
+    fs.writeFileSync(index, `{"opId":"${OP_ID}","n":9}\n{"opId":"${mine}","n":2}\n`)
+    expect(frozenWide(fx, { p }, [mine]).index).not.toEqual(before.index)
   })
 })
