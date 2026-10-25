@@ -25,6 +25,7 @@ export interface Step {
   env?: Record<string, string>
   run?: string
   uses?: string
+  'continue-on-error'?: boolean
 }
 
 export interface WorkflowDoc {
