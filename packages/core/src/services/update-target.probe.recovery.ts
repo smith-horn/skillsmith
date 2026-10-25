@@ -12,9 +12,9 @@
  *  - `defaultRecoveryPendingChecker` (row 3): true when a verified record of
  *    this root names the target's `realpath` or the target path itself, the
  *    same match as the write's step 3. It returns `{ error }`, naming the
- *    path that failed, when the root can't be resolved or its staging can't
- *    be listed, and the probe reports `probe-failed`: a check that could not
- *    run never reads as "not named".
+ *    path that failed, when the root can't be resolved, its staging can't be
+ *    listed or a staging entry can't be `lstat`ed, and the probe reports
+ *    `probe-failed`: a check that could not run never reads as "not named".
  *  - `unreadableStagingRecords` (row 0b, for whoever builds the run's
  *    `plan`): the opIds of the root's unreadable records, which block every
  *    skill in it and are what `doctor recovery --park <opId>` takes. A
@@ -38,9 +38,10 @@ import type { ProbeError, RecoveryPendingChecker } from './update-target.probe.t
 /**
  * The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds
  * the root. `asGiven` maps a path the scan names back under `skillsDir` as the
- * caller gave it (resolved lexically, `path.resolve`, never through links): a failure must never name where a symlinked root points
- * (`update-target.probe.ts`'s fileoverview), and the scan's paths are under the
- * resolved root.
+ * caller gave it (resolved lexically, `path.resolve`, never through links):
+ * a failure must never name where a symlinked root points
+ * (`update-target.probe.ts`'s fileoverview), and the scan's paths are under
+ * the resolved root.
  */
 async function scanRoot(
   skillsDir: string
@@ -59,8 +60,8 @@ async function scanRoot(
 /**
  * Row 3: does a verified record of this root name `dir`? `{ error }`, naming
  * the path that failed, when that can't be decided: the root can't be
- * resolved, its staging can't be listed, or `dir`'s realpath fails other than
- * as missing.
+ * resolved, its staging can't be listed, a staging entry can't be `lstat`ed,
+ * or `dir`'s realpath fails other than as missing.
  */
 export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ skillsDir, dir }) => {
   let scanned: Awaited<ReturnType<typeof scanRoot>>
@@ -84,9 +85,9 @@ export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ sk
 
 /**
  * Row 0b: the opIds of `skillsDir`'s unreadable records (empty when none, or
- * when the root doesn't exist). `ok: false` when the root can't be resolved
- * or its staging can't be listed: the caller reports `probe-failed`, never
- * "nothing to block".
+ * when the root doesn't exist). `ok: false` when the root can't be resolved,
+ * its staging can't be listed or a staging entry can't be `lstat`ed: the
+ * caller reports `probe-failed`, never "nothing to block".
  */
 export async function unreadableStagingRecords(
   skillsDir: string

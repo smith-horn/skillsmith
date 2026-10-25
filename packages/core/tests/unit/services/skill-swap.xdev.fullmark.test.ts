@@ -450,6 +450,7 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retr
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     let sealed = false
+    let hookCalls = 0
     // 'early' until step 5 has published its record, 'late' for any later serialization.
     const changing = () => ({ toJSON: () => ({ n: sealed ? 'late' : 'early' }) })
     // Both entries, so a rewrite that took either from the live input would show it.
@@ -458,10 +459,13 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retr
     const run = await runSpied(p, ALL_DELETES, {
       hooks: {
         afterRecord: () => {
+          hookCalls++
           sealed = true
         },
       },
     })
+    // Paired: the flip happened, so a rewrite from the live input would read 'late'.
+    expect(hookCalls).toBe(1)
     expect(copy.fired).toBe(1)
     stoppedAtPublish(fx, run.result)
     const rec = recordOf(fx)
