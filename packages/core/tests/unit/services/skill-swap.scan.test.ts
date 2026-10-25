@@ -381,7 +381,8 @@ cycle.self = cycle
 
 /**
  * Entries the record can't carry: JSON drops the first three (measured), so
- * the record would not read back; it throws on the last two.
+ * the scan would read the record as unreadable (malformed); it throws on the
+ * last two.
  */
 const UNSERIALIZABLE: Array<[string, unknown, string]> = [
   [

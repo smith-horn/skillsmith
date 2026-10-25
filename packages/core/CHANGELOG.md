@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- PR #3164 retro: when the skills root is a symlink, the update probe's
+  record check now reports a staging failure under the root as given, not under where the link
+  points, as the probe's error rules require. A test pins that the full-device marker's rewrite
+  starts from the record step 5 sealed. No caller uses the probe or `swapInPlace` yet.
+
 - **Fixed**: SMI-6531 -- PR #3162 retro: the update probe's record check now returns the path that
   failed, so a staging folder that can't be listed is reported against that folder, not the skill.
   The probe also asks the check when a skill folder's own presence check fails, so a crashed update
