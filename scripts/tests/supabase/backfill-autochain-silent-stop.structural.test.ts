@@ -357,3 +357,84 @@ describe.skipIf(locked)('SMI-7167 -- backfill autochain silent-stop migration (P
     ).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------------------------------
+// 20261025000001: the candidates() perf migration (CI's only coverage of it; the live-PG suite proves
+// the semantics and the time bound, and CI skips that suite).
+// ---------------------------------------------------------------------------------------------------
+const PERF = '20261025000001_backfill_autochain_silent_stop_candidates_perf.sql'
+const PERF_ROLLBACK =
+  'supabase/rollbacks/20261025000001_backfill_autochain_silent_stop_candidates_perf_down.sql'
+const perfRaw = readMigrationText(PERF)
+const perf = stripComments(perfRaw ?? '')
+
+describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-free)', () => {
+  const h = (t: string) => header(t, FNS.candidates)
+
+  it('redefines ONLY candidates(), keeping INVOKER, STABLE and search_path, adding enable_nestloop = off (known-negatives)', () => {
+    const created = [...perf.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map(
+      (m) => m[1]
+    )
+    expect(created).toEqual([FNS.candidates])
+    const ok = (t: string) =>
+      /SECURITY INVOKER/.test(h(t)) &&
+      /\bSTABLE\b/.test(h(t)) &&
+      /SET search_path = public, pg_temp/.test(h(t)) &&
+      /SET enable_nestloop = off/.test(h(t))
+    expect(ok(perf)).toBe(true)
+    expect(ok(mutate(perf, 'SET enable_nestloop = off', ''))).toBe(false)
+    expect(ok(mutate(perf, 'SECURITY INVOKER', 'SECURITY DEFINER'))).toBe(false)
+  })
+
+  it('checkpoints are read only for unresolved runs, after the anti-joins (known-negative: from dispatched)', () => {
+    const b = body(perf, FNS.candidates)
+    const ckpt = (t: string) =>
+      /ckpt AS MATERIALIZED \(\s*SELECT u\.rid, max\(c\.created_at\) AS at\s*FROM unresolved_a u\s*JOIN public\.audit_logs c/.test(
+        t
+      )
+    expect(ckpt(b)).toBe(true)
+    expect(
+      ckpt(
+        mutate(
+          b,
+          'FROM unresolved_a u\n    JOIN public.audit_logs c',
+          'FROM dispatched u\n    JOIN public.audit_logs c'
+        )
+      )
+    ).toBe(false)
+  })
+
+  it('keeps every deadline, window and shape check of 20261025000000 (known-negative: one interval changed)', () => {
+    const b = body(perf, FNS.candidates)
+    const all = (t: string) =>
+      [
+        "a.ckpt + interval '30 minutes', a.created_at + interval '12 hours'",
+        "p.created_at + interval '30 minutes' <= now()",
+        "now() - interval '1 year'",
+        "c.created_at >= u.created_at - interval '1 day'",
+        "'^[1-9][0-9]{0,18}$'",
+        "'^ac-[1-9][0-9]{0,18}$'",
+        "'^[1-9][0-9]{0,4}$'",
+        "coalesce(c.metadata->>'dry_run', 'false') <> 'true'",
+      ].every((s) => t.includes(s))
+    expect(all(b)).toBe(true)
+    expect(
+      all(mutate(b, /a\.created_at \+ interval '12 hours'/g, "a.created_at + interval '6 hours'"))
+    ).toBe(false)
+    expect(/::\s*(bigint|numeric|int)/i.test(b)).toBe(false)
+  })
+
+  it('re-asserts D3 and touches no table; its paired rollback restores the 20261025000000 body', () => {
+    expect(revokesAll3(perf, FNS.candidates)).toBe(true)
+    expect(perf).toMatch(
+      new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${FNS.candidates}\\(\\) TO service_role;`)
+    )
+    expect(perf).not.toMatch(/CREATE TABLE|ALTER TABLE|DROP TABLE|CREATE INDEX|cron\.schedule/i)
+    const p = join(process.cwd(), PERF_ROLLBACK)
+    expect(existsSync(p), `${PERF_ROLLBACK} exists`).toBe(true)
+    const rb = stripComments(readFileSync(p, 'utf8'))
+    // the rollback carries the original body verbatim: no planner setting, the original header
+    expect(header(rb, FNS.candidates)).toEqual(header(sql, FNS.candidates))
+    expect(rb).not.toMatch(/enable_nestloop/)
+  })
+})

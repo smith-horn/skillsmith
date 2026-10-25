@@ -119,6 +119,13 @@ export function migrationForHarness(): string {
 
 export const rollbackSql = (): string => readFile('supabase/rollbacks', ROLLBACK)
 
+/** SMI-7167 follow-up: the candidates() perf migration and its paired rollback. */
+export const PERF_MIGRATION = '20261025000001_backfill_autochain_silent_stop_candidates_perf.sql'
+export const PERF_ROLLBACK =
+  '20261025000001_backfill_autochain_silent_stop_candidates_perf_down.sql'
+export const perfMigrationSql = (): string => readFile('supabase/migrations', PERF_MIGRATION)
+export const perfRollbackSql = (): string => readFile('supabase/rollbacks', PERF_ROLLBACK)
+
 // ============================================================================
 // Schema
 // ============================================================================
