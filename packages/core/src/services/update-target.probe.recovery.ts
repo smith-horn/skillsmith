@@ -35,10 +35,24 @@ import { STAGING_DIR_NAME } from './skill-write-lock.types.js'
 import { errnoOf } from './update-target.probe.types.js'
 import type { ProbeError, RecoveryPendingChecker } from './update-target.probe.types.js'
 
-/** The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds the root. */
-async function scanRoot(skillsDir: string): Promise<RecordScan> {
-  const root = await fs.promises.realpath(path.resolve(skillsDir))
-  return scanStagingRecords(root, path.join(root, STAGING_DIR_NAME))
+/**
+ * The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds
+ * the root. `asGiven` maps a path the scan names back under `skillsDir` as the
+ * caller gave it: a failure must never name where a symlinked root points
+ * (`update-target.probe.ts`'s fileoverview), and the scan's paths are under the
+ * resolved root.
+ */
+async function scanRoot(
+  skillsDir: string
+): Promise<{ scan: RecordScan; asGiven: (p: string) => string }> {
+  const given = path.resolve(skillsDir)
+  const root = await fs.promises.realpath(given)
+  const scan = await scanStagingRecords(root, path.join(root, STAGING_DIR_NAME))
+  const asGiven = (p: string): string => {
+    const rel = path.relative(root, p)
+    return rel.startsWith('..') || path.isAbsolute(rel) ? given : path.join(given, rel)
+  }
+  return { scan, asGiven }
 }
 
 /**
@@ -48,13 +62,14 @@ async function scanRoot(skillsDir: string): Promise<RecordScan> {
  * as missing.
  */
 export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ skillsDir, dir }) => {
-  let scan: RecordScan
+  let scanned: Awaited<ReturnType<typeof scanRoot>>
   try {
-    scan = await scanRoot(skillsDir)
+    scanned = await scanRoot(skillsDir)
   } catch (err) {
     return { error: { path: skillsDir, errno: errnoOf(err) } }
   }
-  if (!scan.ok) return { error: { path: scan.path, errno: scan.errno } }
+  const { scan, asGiven } = scanned
+  if (!scan.ok) return { error: { path: asGiven(scan.path), errno: scan.errno } }
   let realDir = dir
   try {
     realDir = await fs.promises.realpath(dir)
@@ -75,15 +90,16 @@ export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ sk
 export async function unreadableStagingRecords(
   skillsDir: string
 ): Promise<{ ok: true; opIds: string[] } | { ok: false; error: ProbeError }> {
-  let scan: RecordScan
+  let scanned: Awaited<ReturnType<typeof scanRoot>>
   try {
-    scan = await scanRoot(skillsDir)
+    scanned = await scanRoot(skillsDir)
   } catch (err) {
     const errno = errnoOf(err)
     // A root that doesn't exist has no staging and no records.
     if (errno === 'ENOENT') return { ok: true, opIds: [] }
     return { ok: false, error: { path: skillsDir, errno } }
   }
-  if (!scan.ok) return { ok: false, error: { path: scan.path, errno: scan.errno } }
+  const { scan, asGiven } = scanned
+  if (!scan.ok) return { ok: false, error: { path: asGiven(scan.path), errno: scan.errno } }
   return { ok: true, opIds: scan.unreadable.map((r) => r.opId) }
 }
