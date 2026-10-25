@@ -451,6 +451,9 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retr
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     let sealed = false
     let hookCalls = 0
+    // What the record on disk held when the hook ran: recorded, not asserted
+    // there, since a throwing hook would turn into a swap failure.
+    let atHook: { marked: boolean; pre: unknown; post: unknown } | null = null
     // 'early' until step 5 has published its record, 'late' for any later serialization.
     const changing = () => ({ toJSON: () => ({ n: sealed ? 'late' : 'early' }) })
     // Both entries, so a rewrite that took either from the live input would show it.
@@ -460,12 +463,16 @@ describe('the marker rewrite starts from the record step 5 sealed (PR #3164 retr
       hooks: {
         afterRecord: () => {
           hookCalls++
+          const r = recordOf(fx)
+          atHook = { marked: r.fullDevice !== undefined, pre: r.preEntry, post: r.postEntry }
           sealed = true
         },
       },
     })
-    // Paired: the flip happened, so a rewrite from the live input would read 'late'.
+    // Paired: the flip happened once, between step 5's record and the marker
+    // rewrite, so a rewrite from the live input would read 'late'.
     expect(hookCalls).toBe(1)
+    expect(atHook).toEqual({ marked: false, pre: { n: 'early' }, post: { n: 'early' } })
     expect(copy.fired).toBe(1)
     stoppedAtPublish(fx, run.result)
     const rec = recordOf(fx)

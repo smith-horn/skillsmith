@@ -18,8 +18,9 @@
  *  - `unreadableStagingRecords` (row 0b, for whoever builds the run's
  *    `plan`): the opIds of the root's unreadable records, which block every
  *    skill in it and are what `doctor recovery --park <opId>` takes. A
- *    staging that can't be listed is not 0b: like the write (`staging-unsafe`)
- *    and row 3's checker, it is a `probe-failed` error.
+ *    staging that can't be listed, or a staging entry that can't be
+ *    `lstat`ed, is not 0b: like the write (`staging-unsafe`) and row 3's
+ *    checker, it is a `probe-failed` error.
  *
  * `RecoveryPendingChecker` is imported from `update-target.probe.types.ts`,
  * NOT from `update-target.probe.ts`: this module and `probe.ts` never import
