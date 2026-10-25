@@ -21,6 +21,9 @@ const { parseCiYmlJobs } = (await import('../audit-standards-helpers.mjs')) as {
 }
 
 type Step = Record<string, string> & { with?: Record<string, string> }
+// Keys may be quoted in YAML ("continue-on-error": true is valid), so every key regex
+// below accepts an optional ' or ". Flow-style mappings are not parsed; they make the
+// instrument checks fail, which fails closed.
 const stripComment = (v: string) => v.replace(/\s+#.*$/, '').trim()
 
 /** Steps of a job body: `      - key: value` starts a step; 8-space keys; 10-space `with:` keys. */
@@ -29,7 +32,7 @@ function parseSteps(body: string): Step[] {
   let cur: Step | null = null
   let inWith = false
   for (const line of body.split('\n')) {
-    const start = line.match(/^ {6}- ([a-z-]+):\s*(.*)$/)
+    const start = line.match(/^ {6}- ["']?([a-z-]+)["']?:\s*(.*)$/)
     if (start) {
       cur = { [start[1]]: stripComment(start[2]) }
       steps.push(cur)
@@ -37,7 +40,7 @@ function parseSteps(body: string): Step[] {
       continue
     }
     if (!cur) continue
-    const key = line.match(/^ {8}([a-z-]+):\s*(.*)$/)
+    const key = line.match(/^ {8}["']?([a-z-]+)["']?:\s*(.*)$/)
     if (key) {
       inWith = key[1] === 'with'
       if (inWith) cur.with = {}
@@ -45,7 +48,7 @@ function parseSteps(body: string): Step[] {
       else cur[key[1]] = key[1] === 'run' ? key[2].trim() : stripComment(key[2])
       continue
     }
-    const sub = line.match(/^ {10}([a-z-]+):\s*(.*)$/)
+    const sub = line.match(/^ {10}["']?([a-z-]+)["']?:\s*(.*)$/)
     if (inWith && sub && cur.with) cur.with[sub[1]] = stripComment(sub[2])
   }
   return steps
@@ -74,10 +77,23 @@ describe('ci.yml: Quality Checks audit wiring (SMI-7174)', () => {
   it('the quality-checks job itself cannot swallow a failure: no job-level continue-on-error', () => {
     const jobKeys = (qc?.body ?? '')
       .split('\n')
-      .map((l) => l.match(/^ {4}([a-z-]+):/)?.[1])
+      .map((l) => l.match(/^ {4}["']?([a-z-]+)["']?:/)?.[1])
       .filter(Boolean)
     expect(jobKeys).toContain('steps') // instrument check: job-level keys are read
     expect(jobKeys).not.toContain('continue-on-error')
+  })
+
+  // GitHub reports a SKIPPED required job as success, so a widened skip path is the same
+  // hole as continue-on-error. Pin the job's own if: and needs: (SMI-7174 review).
+  it('the quality-checks job runs on every code change: if: and needs: unchanged', () => {
+    const jobVal = (k: string) =>
+      (qc?.body ?? '')
+        .split('\n')
+        .map((l) => l.match(new RegExp(`^ {4}["']?${k}["']?:\\s*(.*)$`))?.[1])
+        .filter((v): v is string => v !== undefined)
+        .map(stripComment)
+    expect(jobVal('if')).toEqual(["needs.detect-changes.outputs.code == 'true'"])
+    expect(jobVal('needs')).toEqual(['[classify, detect-changes]'])
   })
 
   it('the audit step can fail the job: no continue-on-error, no || in its command', () => {

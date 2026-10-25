@@ -150,6 +150,22 @@ describe('audit-summary CLI (T11)', () => {
     expect(r.stdout).toContain('Could not render the summary: boom')
   })
 
+  it('T14: exits 0 even when every write to stdout throws', () => {
+    writeFileSync(
+      join(dir, 'nowrite.mjs'),
+      [
+        "const boom = () => { throw Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }) }",
+        'console.log = boom',
+        'process.stdout.write = boom',
+      ].join('\n') + '\n'
+    )
+    writeFileSync(join(dir, 'y.json'), report())
+    const r = spawnSync('node', ['--import', join(dir, 'nowrite.mjs'), CLI, join(dir, 'y.json')], {
+      encoding: 'utf8',
+    })
+    expect(r.status).toBe(0)
+  })
+
   // A copy of the real CLI beside a broken or missing renderer module.
   it.each([
     ['broken (syntax error)', 'export const = ;\n'],
