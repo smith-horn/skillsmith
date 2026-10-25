@@ -155,7 +155,13 @@ describe('Validate dispatch inputs (executed)', () => {
   const v = byName('Validate dispatch inputs')
 
   it('is the first step, runs only for workflow_dispatch and reads every input through env', () => {
-    expect(idx(v)).toBe(0)
+    // SMI-7167: the only step allowed before it is the fail-soft ledger write `Record link start`
+    // (ADR-183), which must run before every gate and validates its own run id. Nothing else may
+    // act on the inputs first.
+    const ledger = byName('Record link start')
+    expect(idx(ledger)).toBe(0)
+    expect(ledger['continue-on-error']).toBe(true)
+    expect(idx(v)).toBe(1)
     expect(v.id).toBe('validate')
     expect(v.if).toBe("github.event_name == 'workflow_dispatch'")
     for (const k of [
