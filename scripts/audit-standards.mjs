@@ -57,6 +57,7 @@ import {
 import { isGitCryptEncrypted } from './ci/check-supply-chain-pins.mjs'
 import { getCheck77DiffFiles, runCheck77 } from './lib/audit-check77.mjs'
 import { runCheck78FromEnv } from './lib/audit-pr-merge-base.mjs'
+import { logUntrusted } from './lib/untrusted-log.mjs'
 import {
   loadGeneratorInputs as loadWeakPasswordLexiconInputs,
   generateAll as generateWeakPasswordLexicon,
@@ -4886,7 +4887,8 @@ console.log('(content, not placement — see Check 43 for heading order)')
     const after = PR_BODY.slice(idx + SKIP_MARKER.length)
     const reasonParagraph = after.split(/\n\s*\n/)[0].trim()
     console.log('::group::Acknowledgement reason')
-    console.log(reasonParagraph || '(no reason paragraph found immediately after the marker)')
+    // SMI-7164: the paragraph is PR-body text, so workflow commands in it must not run.
+    logUntrusted(reasonParagraph || '(no reason paragraph found immediately after the marker)')
     console.log('::endgroup::')
   }
 
@@ -5086,7 +5088,8 @@ console.log(
     const after = PR_BODY.slice(idx + SKIP_MARKER.length)
     const reasonParagraph = after.split(/\n\s*\n/)[0].trim()
     console.log('::group::Acknowledgement reason')
-    console.log(reasonParagraph || '(no reason paragraph found immediately after the marker)')
+    // SMI-7164: the paragraph is PR-body text, so workflow commands in it must not run.
+    logUntrusted(reasonParagraph || '(no reason paragraph found immediately after the marker)')
     console.log('::endgroup::')
   }
 

@@ -234,24 +234,64 @@ describe('Check 78: the full audit runs the registered entry (X4)', () => {
     expect(body).toBe("await CHECK_REGISTRY.get('pr-merge-base')()")
     expect(src).toContain("['pr-merge-base', async () => runCheck78FromEnv({ pass, fail, warn })]")
   })
+})
 
-  // The source test above cannot see an early exit or throw before the block. This runs the
-  // real full audit on this checkout and asserts Check 78 executed, whatever other checks report.
-  it('the full audit reaches Check 78 and runs it', () => {
-    const r = spawnSync('node', [AUDIT], {
+// The source test above cannot see an early exit or throw before the block. These run the real
+// full audit on this checkout, once as a local run and once as a PR run, and assert Check 78
+// executed on both paths, whatever other checks report. Raw output is searched: colour codes
+// sit around these strings, never inside them.
+describe('Check 78: the real full audit reaches and runs it (both paths)', () => {
+  const HEADER = 'Check 78: PR merge-base resolves (SMI-7164)'
+  // Forged workflow commands after each opt-out marker (SMI-7164: Checks 54 and 58 echo the
+  // reason paragraph into the log).
+  const PR_BODY =
+    '[skip-changelog-check]\n::error::forged-by-check-54-reason\n\n' +
+    '[skip-version-coherence-check]\n::error::forged-by-check-58-reason\n'
+  const runAudit = (baseRef: string) =>
+    spawnSync('node', [AUDIT], {
       cwd: join(__dirname, '..', '..'),
-      env: { ...process.env, GITHUB_BASE_REF: '', GITHUB_HEAD_REF: '' },
+      env: { ...process.env, GITHUB_BASE_REF: baseRef, GITHUB_HEAD_REF: '', PR_BODY },
       encoding: 'utf8',
-    })
-    // Raw output: colour codes sit around these strings, never inside them, and only
-    // pass() prints the not-applicable verdict.
-    const out = r.stdout
-    const header = out.indexOf('Check 78: PR merge-base resolves (SMI-7164)')
-    const verdict = out.indexOf('Check 78: not a PR run: not applicable')
-    expect(header, out.slice(-2000)).toBeGreaterThan(-1)
+    }).stdout
+  let local = ''
+  let pr = ''
+  beforeAll(() => {
+    local = runAudit('')
+    pr = runAudit('main')
+  }, 240_000)
+
+  it('local run: reaches Check 78 and prints not applicable before the Summary', () => {
+    const header = local.indexOf(HEADER)
+    const verdict = local.indexOf('Check 78: not a PR run: not applicable')
+    expect(header, local.slice(-2000)).toBeGreaterThan(-1)
     expect(verdict).toBeGreaterThan(header)
-    expect(out.indexOf('Summary', verdict)).toBeGreaterThan(verdict)
-  }, 120_000)
+    expect(local.indexOf('Summary', verdict)).toBeGreaterThan(verdict)
+  })
+
+  it('PR run: reaches Check 78 and gives a merge-base verdict, never not-applicable', () => {
+    const header = pr.indexOf(HEADER)
+    expect(header, pr.slice(-2000)).toBeGreaterThan(-1)
+    const after = pr.slice(header + HEADER.length)
+    // Either verdict is fine here: CI's Test (root) job is a depth-1 checkout, and git may be
+    // unusable in a worktree container. What must not happen is Check 78 being skipped.
+    expect(after).toMatch(/Check 78: PR merge-base (resolves \([0-9a-f]{12}\)|unresolvable: )/)
+    expect(after).not.toContain('Check 78: not a PR run')
+  })
+
+  it.each(['forged-by-check-54-reason', 'forged-by-check-58-reason'])(
+    'prints %s only inside a stop-commands window',
+    (marker) => {
+      const lines = local.split('\n')
+      const at = lines.indexOf(`::error::${marker}`)
+      expect(at, `${marker} not printed at all`).toBeGreaterThan(-1)
+      let start = at - 1
+      while (start >= 0 && !/^::stop-commands::[0-9a-f]{32}$/.test(lines[start])) start--
+      expect(start, `no stop-commands line before ${marker}`).toBeGreaterThan(-1)
+      const token = lines[start].slice('::stop-commands::'.length)
+      const resume = lines.indexOf(`::${token}::`, start + 1)
+      expect(resume).toBeGreaterThan(at)
+    }
+  )
 })
 
 describe('Check 78: a hung git warns through the real git call', () => {
