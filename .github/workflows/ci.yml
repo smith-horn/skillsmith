@@ -1227,6 +1227,7 @@ jobs:
         run: npm run -w packages/vscode-extension typecheck:e2e
 
       - name: Run standards audit
+        id: audit
         env:
           # SMI-5680 H1: feeds Check 54's [skip-changelog-check] opt-out
           # marker detection. Zero-cost — github.event.pull_request.body is
@@ -1234,7 +1235,31 @@ jobs:
           # trigger, see the on: block above); no new permission grant or API
           # call needed. Mirrors concurrency-audit-pr.yml's PR_BODY wiring.
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: npm run audit:standards
+        # SMI-7174: runs audit:standards and writes audit-report.json (the
+        # SMI-1826 report, formerly the Code Review job's). The script exits
+        # with the audit's own exit code, so this step's verdict is unchanged.
+        # Never add continue-on-error here: this step IS the job's verdict.
+        run: bash scripts/ci-code-review.sh audit-report.json
+
+      # SMI-7174: report-only steps. Both are continue-on-error, so an artifact
+      # outage or a summary bug can't fail this required job; the verdict is
+      # steps.audit alone. Skipped when an earlier step failed and the audit
+      # never ran.
+      - name: Upload audit report
+        if: always() && steps.audit.outcome != 'skipped'
+        continue-on-error: true # audit:allow-continue-on-error -- report only; the verdict is steps.audit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: audit-report
+          path: audit-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Add audit summary to job
+        if: always() && steps.audit.outcome != 'skipped'
+        continue-on-error: true # audit:allow-continue-on-error -- report only; the verdict is steps.audit
+        # tee: the table also lands in the log, where gh run view --log can read it.
+        run: node scripts/ci/audit-summary.mjs audit-report.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   # SMI-6897: typecheck supabase/functions/** with `deno check`, in the runtime
   # that actually runs those files. Nothing else covers this tree -- tsc compiles
@@ -2113,81 +2138,6 @@ jobs:
             echo "| Files Generated | $FILE_COUNT |" >> $GITHUB_STEP_SUMMARY
           else
             echo "Build Failed - dist/ directory not created" >> $GITHUB_STEP_SUMMARY
-          fi
-
-  # SMI-1826: Automated Code Review
-  # Runs standards audit after lint and test pass, uploads report as artifact
-  # SMI-2195: Skip code review for non-code changes (docs, config)
-  code-review:
-    name: Code Review
-    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [quality-checks, test, classify]
-    # audit:allow-continue-on-error — non-blocking initially while we stabilize
-    continue-on-error: true
-    # Only run for code changes - skip for docs/config
-    if: needs.classify.outputs.tier == 'code'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # SMI-7164: same fix as quality-checks (SMI-4764 Wave 4). A depth-1
-          # checkout has no origin/main, so git merge-base fails and Checks
-          # 45/50/51/54/77 skip or fail INCONCLUSIVE on every code PR. Check 78
-          # fails this job loudly if the checkout regresses.
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run automated code review
-        id: code-review
-        env:
-          # SMI-7164: with full history Check 54 now evaluates here, so it needs
-          # the PR body for its [skip-changelog-check] opt-out, same as
-          # quality-checks. This also enables the PR-body opt-outs of Checks
-          # 58, 60, 63 and 65 here; Checks 54 and 58 echo the reason paragraph
-          # into the log. Passed through env, never interpolated into run:.
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: bash scripts/ci-code-review.sh audit-report.json
-
-      - name: Upload audit report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
-        with:
-          name: code-review-report
-          path: audit-report.json
-          retention-days: 7
-
-      - name: Add review summary to job
-        if: always()
-        run: |
-          echo "## Code Review Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f audit-report.json ]; then
-            PASSED=$(jq -r '.summary.passed' audit-report.json)
-            WARNINGS=$(jq -r '.summary.warnings' audit-report.json)
-            FAILED=$(jq -r '.summary.failed' audit-report.json)
-            SCORE=$(jq -r '.summary.compliance_score' audit-report.json)
-            STATUS=$(jq -r '.status' audit-report.json)
-
-            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Status | ${STATUS} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Compliance Score | ${SCORE}% |" >> $GITHUB_STEP_SUMMARY
-            echo "| Passed | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Warnings | ${WARNINGS} |" >> $GITHUB_STEP_SUMMARY
-            echo "| Failed | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "Audit report not generated" >> $GITHUB_STEP_SUMMARY
           fi
 
   build:
