@@ -23,7 +23,6 @@
  *
  * @module @skillsmith/core/services/skill-swap.staging
  */
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
@@ -36,6 +35,7 @@ import {
   hook,
   opPaths,
   linkChecked,
+  messageOf,
   SwapFault,
   syncDir,
   trace,
@@ -49,6 +49,7 @@ import type {
   SwapRecord,
   SwapRefuseReason,
 } from './skill-swap.types.js'
+import { computeRecordSha256, isSwapRecord } from './skill-swap.records.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
 
 /** The bigint identity as `record.json` stores it (decimal strings). */
@@ -203,55 +204,33 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
   await hook(st, 'afterBuild')
 }
 
-/** sha256 of the record's JSON without `recordSha256`, in the record's fixed key order. */
-export function computeRecordSha256(record: Omit<SwapRecord, 'recordSha256'>): string {
-  const ordered: Omit<SwapRecord, 'recordSha256'> = {
-    schema: record.schema,
-    opId: record.opId,
-    pid: record.pid,
-    host: record.host,
-    uid: record.uid,
-    target: {
-      comparedPath: record.target.comparedPath,
-      realDir: record.target.realDir,
-      skillsDir: record.target.skillsDir,
-      manifestPath: record.target.manifestPath,
-      manifestKey: record.target.manifestKey,
-      client: record.target.client,
-    },
-    rootIdentity: record.rootIdentity,
-    opDirIdentity: record.opDirIdentity,
-    oldIdentity: record.oldIdentity,
-    newIdentity: record.newIdentity,
-    preTree: record.preTree,
-    postTree: record.postTree,
-    preEntry: record.preEntry,
-    postEntry: record.postEntry,
-    backupDest: record.backupDest,
-    // Explicit key order, like every other field (governance round 4).
-    ...(record.fullDevice === undefined
-      ? {}
-      : {
-          fullDevice: {
-            cause: record.fullDevice.cause,
-            stage: record.fullDevice.stage,
-            area: record.fullDevice.area,
-            opId: record.fullDevice.opId,
-            dest: record.fullDevice.dest,
-          },
-        }),
+/**
+ * The record must read back as one the record scan accepts, or publishing it
+ * would block every write in the root (`recovery-record-unreadable`). JSON
+ * drops an entry it can't serialize (`undefined`, a function, a symbol), and
+ * throws on a cycle or a `BigInt`; either is `write-failed` here, before the
+ * temp exists. A value JSON changes inside an entry (a nested `undefined`, a
+ * `NaN`) still reads back: entries come from the manifest, which is JSON on
+ * disk, so it can't hold one (UD47, an accepted residual; retro of PR #3162).
+ */
+function readableRecord(body: Omit<SwapRecord, 'recordSha256'>): SwapRecord {
+  let record: SwapRecord
+  let text: string | undefined
+  try {
+    // The hash serializes the body too, so it is inside the guard.
+    record = { ...body, recordSha256: computeRecordSha256(body) }
+    text = JSON.stringify(record)
+  } catch (err) {
+    throw new SwapFault('write-failed', `the record can't be serialized (${messageOf(err)})`, err)
   }
-  const idOrder = (i: RecordIdentity): RecordIdentity => ({
-    dev: i.dev,
-    ino: i.ino,
-    birthtimeNs: i.birthtimeNs,
-    fmt: i.fmt,
-  })
-  ordered.rootIdentity = idOrder(ordered.rootIdentity)
-  ordered.opDirIdentity = idOrder(ordered.opDirIdentity)
-  ordered.oldIdentity = idOrder(ordered.oldIdentity)
-  ordered.newIdentity = idOrder(ordered.newIdentity)
-  return crypto.createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+  if (text === undefined || !isSwapRecord(JSON.parse(text))) {
+    throw new SwapFault(
+      'write-failed',
+      "the record wouldn't read back as valid: preEntry and postEntry must be JSON values " +
+        '(null for no entry)'
+    )
+  }
+  return record
 }
 
 /** Step 5: `record.json`, published through its temp under lock 1. */
@@ -260,19 +239,6 @@ export async function writeRecord(st: SwapState): Promise<void> {
     throw new SwapFault('write-failed', 'the record was requested before the build finished')
   }
   const { input } = st
-  // JSON drops a key whose value doesn't serialize (undefined, a function, a
-  // symbol, a toJSON returning undefined), and the record scan then reads the
-  // record as malformed, which blocks every write in the root. `null` is the
-  // value for "no entry" (retro of PR #3162).
-  if (
-    JSON.stringify(input.preEntry) === undefined ||
-    JSON.stringify(input.postEntry) === undefined
-  ) {
-    throw new SwapFault(
-      'write-failed',
-      'preEntry and postEntry must be JSON values (null for no entry), not undefined'
-    )
-  }
   const body: Omit<SwapRecord, 'recordSha256'> = {
     schema: 1,
     opId: st.opId,
@@ -297,7 +263,7 @@ export async function writeRecord(st: SwapState): Promise<void> {
     postEntry: input.postEntry,
     backupDest: st.backupDest,
   }
-  const record: SwapRecord = { ...body, recordSha256: computeRecordSha256(body) }
+  const record = readableRecord(body)
   await publishJson(st, opPaths(st).record, record)
   st.record = record
 }

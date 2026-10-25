@@ -81,7 +81,7 @@ import type {
 } from './skill-swap.types.js'
 
 export * from './skill-swap.types.js'
-export { computeRecordSha256 } from './skill-swap.staging.js'
+export { computeRecordSha256 } from './skill-swap.records.js'
 
 const REFUSE_REASONS: ReadonlySet<string> = new Set<SwapRefuseReason>([
   'changed-since-plan',

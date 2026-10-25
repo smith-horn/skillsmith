@@ -23,11 +23,62 @@
  *
  * @module @skillsmith/core/services/skill-swap.records
  */
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { computeRecordSha256 } from './skill-swap.staging.js'
-import type { FullDeviceStage, SwapRecord } from './skill-swap.types.js'
+import type { FullDeviceStage, RecordIdentity, SwapRecord } from './skill-swap.types.js'
 import { RECORD_FILE } from './skill-swap.types.js'
+
+/** sha256 of the record's JSON without `recordSha256`, in the record's fixed key order. */
+export function computeRecordSha256(record: Omit<SwapRecord, 'recordSha256'>): string {
+  const ordered: Omit<SwapRecord, 'recordSha256'> = {
+    schema: record.schema,
+    opId: record.opId,
+    pid: record.pid,
+    host: record.host,
+    uid: record.uid,
+    target: {
+      comparedPath: record.target.comparedPath,
+      realDir: record.target.realDir,
+      skillsDir: record.target.skillsDir,
+      manifestPath: record.target.manifestPath,
+      manifestKey: record.target.manifestKey,
+      client: record.target.client,
+    },
+    rootIdentity: record.rootIdentity,
+    opDirIdentity: record.opDirIdentity,
+    oldIdentity: record.oldIdentity,
+    newIdentity: record.newIdentity,
+    preTree: record.preTree,
+    postTree: record.postTree,
+    preEntry: record.preEntry,
+    postEntry: record.postEntry,
+    backupDest: record.backupDest,
+    // Explicit key order, like every other field (governance round 4).
+    ...(record.fullDevice === undefined
+      ? {}
+      : {
+          fullDevice: {
+            cause: record.fullDevice.cause,
+            stage: record.fullDevice.stage,
+            area: record.fullDevice.area,
+            opId: record.fullDevice.opId,
+            dest: record.fullDevice.dest,
+          },
+        }),
+  }
+  const idOrder = (i: RecordIdentity): RecordIdentity => ({
+    dev: i.dev,
+    ino: i.ino,
+    birthtimeNs: i.birthtimeNs,
+    fmt: i.fmt,
+  })
+  ordered.rootIdentity = idOrder(ordered.rootIdentity)
+  ordered.opDirIdentity = idOrder(ordered.opDirIdentity)
+  ordered.oldIdentity = idOrder(ordered.oldIdentity)
+  ordered.newIdentity = idOrder(ordered.newIdentity)
+  return crypto.createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+}
 
 /** Why a record is unreadable. Each one blocks the whole skills root. */
 export type UnreadableRecordWhy =

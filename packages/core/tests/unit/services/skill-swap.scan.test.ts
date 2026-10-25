@@ -376,18 +376,26 @@ describe('frozenWide: what the T-R1 snapshot sees', () => {
   })
 })
 
-/** Values JSON can't serialize: each would drop its key from the record (measured). */
-const UNSERIALIZABLE: Array<[string, unknown]> = [
-  ['undefined', undefined],
-  ['a function', () => 1],
-  ['a symbol', Symbol('entry')],
+const cycle: Record<string, unknown> = {}
+cycle.self = cycle
+
+/**
+ * Entries the record can't carry: JSON drops the first three (measured), so
+ * the record would not read back; it throws on the last two.
+ */
+const UNSERIALIZABLE: Array<[string, unknown, string]> = [
+  ['undefined', undefined, "wouldn't read back"],
+  ['a function', () => 1, "wouldn't read back"],
+  ['a symbol', Symbol('entry'), "wouldn't read back"],
+  ['a cycle', cycle, "can't be serialized"],
+  ['a BigInt', { n: 1n }, "can't be serialized"],
 ]
 
 describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of PR #3162)', () => {
   for (const key of ['preEntry', 'postEntry'] as const) {
     it.each(UNSERIALIZABLE)(
       `${key}: %s refuses write-failed before step 5 publishes; the root is not blocked`,
-      async (_label, value) => {
+      async (_label, value, detail) => {
         const fx = makeFixture({ 'SKILL.md': '# v1\n' })
         const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
         const p = plan(fx, [modify('SKILL.md', '# next\n')])
@@ -397,7 +405,7 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
 
         const r = refusedOf(run.result)
         expect(r.reason).toBe('write-failed')
-        expect(r.detail).toContain('undefined')
+        expect(r.detail).toContain(detail)
         // Abort cleanup ran like any step-5 failure: the complete build is parked.
         expect(r.staged).toBe('parked')
         expect(listTree(fx.staging).filter((n) => n.endsWith('record.json'))).toEqual([])
@@ -434,5 +442,21 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
     const scan = await scanStagingRecords(fs.realpathSync(fx2.skillsDir), fx2.staging)
     expect(scan).toMatchObject({ ok: true, unreadable: [] })
     expect(scan.ok && scan.pending.map((r) => r.opId)).toEqual([opIdN('e')])
+  })
+
+  it('a value JSON changes inside an entry still reads back, as JSON wrote it (UD47, accepted)', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = plan(fx, [modify('SKILL.md', '# next\n')])
+    p.input = { ...p.input, preEntry: { version: undefined, size: Number.NaN } }
+    p.manifest.preCommitError = new Error('manifest lock lost')
+    const stopped = await run(p, { opId: opIdN('f') })
+    expect(stopped.result.status).toBe('stopped')
+    const scan = await scanStagingRecords(fs.realpathSync(fx.skillsDir), fx.staging)
+    expect(scan).toMatchObject({ ok: true, unreadable: [] })
+    expect(scan.ok && scan.pending.map((r) => r.opId)).toEqual([opIdN('f')])
+    const rec = JSON.parse(
+      fs.readFileSync(path.join(opDirOf(fx, opIdN('f')), 'record.json'), 'utf8')
+    ) as { preEntry: unknown }
+    expect(rec.preEntry).toEqual({ size: null })
   })
 })

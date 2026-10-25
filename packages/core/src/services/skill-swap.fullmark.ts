@@ -59,7 +59,7 @@ import {
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import type { PublishKind } from './skill-swap.sidecar.js'
-import { computeRecordSha256 } from './skill-swap.staging.js'
+import { computeRecordSha256 } from './skill-swap.records.js'
 import type { FullDeviceMarker, FullDeviceStage, SwapRecord } from './skill-swap.types.js'
 
 /** What one cross-device move has done so far, for the marker. */
