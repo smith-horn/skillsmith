@@ -23,7 +23,6 @@
  *
  * @module @skillsmith/core/services/skill-swap.staging
  */
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
@@ -36,6 +35,7 @@ import {
   hook,
   opPaths,
   linkChecked,
+  messageOf,
   SwapFault,
   syncDir,
   trace,
@@ -49,6 +49,8 @@ import type {
   SwapRecord,
   SwapRefuseReason,
 } from './skill-swap.types.js'
+import { computeRecordSha256, MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.records.js'
+import type { RecordBytesWhy } from './skill-swap.records.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
 
 /** The bigint identity as `record.json` stores it (decimal strings). */
@@ -99,8 +101,22 @@ export async function publishJson(
   value: unknown,
   afterTemp?: SwapHookPoint
 ): Promise<void> {
+  await publishBytes(st, final, jsonBytes(value), afterTemp)
+}
+
+/** The bytes `publishJson` writes for `value`. */
+export const jsonBytes = (value: unknown): Buffer =>
+  Buffer.from(JSON.stringify(value, null, 2) + '\n')
+
+/** `publishJson` for bytes already serialized (and, for a record, verified). */
+export async function publishBytes(
+  st: SwapState,
+  final: string,
+  bytes: Buffer,
+  afterTemp?: SwapHookPoint
+): Promise<void> {
   const tmp = `${final}.tmp`
-  await writeNewFile(st, tmp, Buffer.from(JSON.stringify(value, null, 2) + '\n'), 0o600)
+  await writeNewFile(st, tmp, bytes, 0o600)
   if (afterTemp !== undefined) await hook(st, afterTemp)
   try {
     await linkChecked(st, tmp, final)
@@ -203,55 +219,48 @@ export async function buildNewFolder(st: SwapState): Promise<void> {
   await hook(st, 'afterBuild')
 }
 
-/** sha256 of the record's JSON without `recordSha256`, in the record's fixed key order. */
-export function computeRecordSha256(record: Omit<SwapRecord, 'recordSha256'>): string {
-  const ordered: Omit<SwapRecord, 'recordSha256'> = {
-    schema: record.schema,
-    opId: record.opId,
-    pid: record.pid,
-    host: record.host,
-    uid: record.uid,
-    target: {
-      comparedPath: record.target.comparedPath,
-      realDir: record.target.realDir,
-      skillsDir: record.target.skillsDir,
-      manifestPath: record.target.manifestPath,
-      manifestKey: record.target.manifestKey,
-      client: record.target.client,
-    },
-    rootIdentity: record.rootIdentity,
-    opDirIdentity: record.opDirIdentity,
-    oldIdentity: record.oldIdentity,
-    newIdentity: record.newIdentity,
-    preTree: record.preTree,
-    postTree: record.postTree,
-    preEntry: record.preEntry,
-    postEntry: record.postEntry,
-    backupDest: record.backupDest,
-    // Explicit key order, like every other field (governance round 4).
-    ...(record.fullDevice === undefined
-      ? {}
-      : {
-          fullDevice: {
-            cause: record.fullDevice.cause,
-            stage: record.fullDevice.stage,
-            area: record.fullDevice.area,
-            opId: record.fullDevice.opId,
-            dest: record.fullDevice.dest,
-          },
-        }),
+/** What a seal refusal says to do, by the scan's reason. */
+const SEAL_HINT: Record<RecordBytesWhy, string> = {
+  'too-large': `the record must be at most ${MAX_RECORD_BYTES} bytes`,
+  'not-json': 'the record did not serialize as JSON',
+  malformed: 'preEntry and postEntry must be JSON values (null for no entry)',
+  'hash-mismatch': 'an entry serialized differently between calls',
+  'foreign-op-dir': "the record's opId is not its op dir's name",
+  'foreign-root': "the record's target.skillsDir is not this root",
+}
+
+/**
+ * Serializes the record once and runs the scan's own checks on those exact
+ * bytes (`verifyRecordBytes`), so the bytes written are a record the scan
+ * accepts; otherwise publishing it would block every write in the root
+ * (`recovery-record-unreadable`). A serialization that throws (a cycle, a
+ * `BigInt`) or bytes the scan would refuse (an entry JSON drops, a record over
+ * `MAX_RECORD_BYTES`, an entry whose JSON changes between calls) is
+ * `write-failed`, before the temp exists. The record returned is the one
+ * parsed from those bytes, plain data, so a later rewrite serializes it the
+ * same way. A value JSON changes inside an entry (a nested `undefined`, a
+ * `NaN`) is recorded as JSON writes it (UD47, an accepted residual).
+ */
+export function sealRecord(
+  body: Omit<SwapRecord, 'recordSha256'>,
+  root: string,
+  opId: string
+): { bytes: Buffer; record: SwapRecord } {
+  let bytes: Buffer
+  try {
+    // The hash serializes the body too, so it is inside the guard.
+    bytes = jsonBytes({ ...body, recordSha256: computeRecordSha256(body) })
+  } catch (err) {
+    throw new SwapFault('write-failed', `the record can't be serialized (${messageOf(err)})`, err)
   }
-  const idOrder = (i: RecordIdentity): RecordIdentity => ({
-    dev: i.dev,
-    ino: i.ino,
-    birthtimeNs: i.birthtimeNs,
-    fmt: i.fmt,
-  })
-  ordered.rootIdentity = idOrder(ordered.rootIdentity)
-  ordered.opDirIdentity = idOrder(ordered.opDirIdentity)
-  ordered.oldIdentity = idOrder(ordered.oldIdentity)
-  ordered.newIdentity = idOrder(ordered.newIdentity)
-  return crypto.createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
+  const v = verifyRecordBytes(bytes, root, opId)
+  if (!v.ok) {
+    throw new SwapFault(
+      'write-failed',
+      `the record would be read as unreadable (${v.why}): ${SEAL_HINT[v.why]}`
+    )
+  }
+  return { bytes, record: v.record }
 }
 
 /** Step 5: `record.json`, published through its temp under lock 1. */
@@ -284,9 +293,9 @@ export async function writeRecord(st: SwapState): Promise<void> {
     postEntry: input.postEntry,
     backupDest: st.backupDest,
   }
-  const record: SwapRecord = { ...body, recordSha256: computeRecordSha256(body) }
-  await publishJson(st, opPaths(st).record, record)
-  st.record = record
+  const sealed = sealRecord(body, st.binding.root, st.opId)
+  await publishBytes(st, opPaths(st).record, sealed.bytes)
+  st.record = sealed.record
 }
 
 /** `skillsmith doctor recovery --clean-staging <opId>`: what a left op dir is cleaned with. */

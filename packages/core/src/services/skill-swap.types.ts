@@ -50,7 +50,7 @@ export interface SwapInput {
   /** The §3.4 tree hash of `realDir` at plan time. */
   preTree: string
   writeSet: ReadonlyArray<SwapWriteEntry>
-  /** Opaque here; recorded in `record.json`. */
+  /** Opaque here; recorded in `record.json`. A JSON value (`null` for no entry): never undefined, a function or a symbol. */
   preEntry: unknown
   postEntry: unknown
   manifest: ManifestPort

@@ -59,7 +59,7 @@ import {
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import type { PublishKind } from './skill-swap.sidecar.js'
-import { computeRecordSha256 } from './skill-swap.staging.js'
+import { sealRecord } from './skill-swap.staging.js'
 import type { FullDeviceMarker, FullDeviceStage, SwapRecord } from './skill-swap.types.js'
 
 /** What one cross-device move has done so far, for the marker. */
@@ -135,9 +135,10 @@ async function rewriteRecord(st: SwapState, marker: FullDeviceMarker): Promise<v
   }
   const { recordSha256: _old, ...rest } = st.record
   const body: Omit<SwapRecord, 'recordSha256'> = { ...rest, fullDevice: marker }
-  const record: SwapRecord = { ...body, recordSha256: computeRecordSha256(body) }
+  // The same seal as step 5: the bytes written are a record the scan accepts.
+  const { bytes, record } = sealRecord(body, st.binding.root, st.opId)
   const tmp = `${final}.tmp`
-  await writeNewFile(st, tmp, Buffer.from(JSON.stringify(record, null, 2) + '\n'), 0o600)
+  await writeNewFile(st, tmp, bytes, 0o600)
   const now = await lstatOrNull(final)
   if (now === null || !sameIdentity(bound, identityOf(now))) {
     throw new SwapFault('staging-unsafe', `${final} is not the record this run wrote`)

@@ -94,8 +94,7 @@ import {
 
 /** Re-exported so `update-target.probe.ts` remains the one public import
  * point for this probe's whole surface — the implementation lives in
- * `update-target.probe.recovery.ts` (a documented A1-placeholder; see that
- * module's fileoverview). */
+ * `update-target.probe.recovery.ts`, on A1's record scan. */
 export { defaultRecoveryPendingChecker }
 
 /** Re-exported for the same reason: `ProbeError` and `RecoveryPendingChecker`
@@ -177,7 +176,7 @@ export interface ProbeInput {
   dir: string
   /** Absolute skills-root directory `dir` lives under — the git walk's upper bound. */
   skillsDir: string
-  /** Basename of `dir` — used to build the `.skillsmith-staging/` lookup. */
+  /** Basename of `dir`, passed to an injected `checkRecoveryPending`; the default one matches by path. */
   dirName: string
   /** Relative POSIX paths this update will touch. SKILL.md is probed regardless of whether it's listed here. */
   writeSet: readonly string[]
@@ -323,6 +322,7 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
   const skillMdPath = path.join(dir, 'SKILL.md')
 
   let missing = false
+  let presenceError: ProbeError | null = null
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const presence = await checkPresence(dir, skillMdPath)
     if (presence.status === 'present') {
@@ -330,24 +330,30 @@ export async function probeUpdateTarget(input: ProbeInput): Promise<ProbeOutcome
       break
     }
     if (presence.status === 'error') {
-      return { kind: 'probe-failed', error: presence.error }
+      presenceError = presence.error
+      break
     }
     missing = true
     if (attempt < attempts) await sleep(delayMs)
   }
 
-  // Row 3 (§4.3) for a present folder as well as a missing one: a crash after
-  // rename 2 leaves the new folder in place with its record still in staging,
-  // and the write's step 3 refuses it (SMI-6531 step 5). Either checker can
-  // reject (the default one when the staging can't be listed): that fails
-  // CLOSED into `probe-failed`, never an unhandled rejection.
-  let pending: boolean
+  // Row 3 (§4.3) for every folder, present, missing, or one whose presence
+  // check failed: a crash after rename 2 leaves the new folder in place with
+  // its record still in staging, and the write refuses `recovery-pending` in
+  // each of those states (SMI-6531 step 5; its step-1 cleanup scans too). A
+  // checker that can't decide returns `{ error }`, and a rejection is caught:
+  // both fail CLOSED into `probe-failed`, never an unhandled rejection.
+  let pending: boolean | { error: ProbeError }
   try {
     pending = await checkRecoveryPending({ skillsDir, dir, dirName })
   } catch (err) {
-    return { kind: 'probe-failed', error: sanitizeError(dir, err) }
+    // The folder's own failure first, as below.
+    return { kind: 'probe-failed', error: presenceError ?? sanitizeError(dir, err) }
   }
-  if (pending) return { kind: 'recovery-pending' }
+  if (pending === true) return { kind: 'recovery-pending' }
+  // The folder's own failure first; else the staging's, by the path that failed.
+  if (presenceError !== null) return { kind: 'probe-failed', error: presenceError }
+  if (pending !== false) return { kind: 'probe-failed', error: pending.error }
 
   if (missing) {
     // `path: dir` here names an entry that, for the dangling-symlink case

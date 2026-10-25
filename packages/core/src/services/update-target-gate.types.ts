@@ -30,11 +30,11 @@
  *     presupposes an already-loaded `manifest: SkillManifest` (§4.1: "one
  *     strict snapshot for the whole run") — if the manifest itself failed to
  *     load, no `ManifestEvidence` could ever have been produced to hand this
- *     function, so that failure cannot be encoded THROUGH `evidence`. The
- *     probe's own `defaultRecoveryPendingChecker` (`update-target.probe.
- *     recovery.ts`) fails an unreadable staging record SILENTLY to `false`
- *     (documented placeholder gap) and `ProbeOutcome` has no variant for it
- *     either, so `probe` cannot carry it. `plan` is the only remaining seam.
+ *     function, so that failure cannot be encoded THROUGH `evidence`. An
+ *     unreadable staging record blocks the whole root, not one target, and
+ *     `ProbeOutcome` has no variant for it, so `probe` cannot carry it.
+ *     `plan` is the only remaining seam; `unreadableStagingRecords`
+ *     (`update-target.probe.recovery.ts`, on A1's record scan) produces it.
  *   - Row 10 (UD22 several-keys ownership): needs to know whether ANOTHER
  *     manifest key owns this target's real directory. `ManifestEvidence` is
  *     scoped to ONE key's own lookup and never cross-references the rest of
@@ -44,8 +44,8 @@
  *     visibility, which only whoever builds `plan` has.
  *
  * All three are placeholder fields ("A1 fills it in", same status as
- * `temporaryManifestEvidenceResolver` and `defaultRecoveryPendingChecker")
- * with safe, inert defaults a step-5 caller can supply today without lying:
+ * `temporaryManifestEvidenceResolver`; row 0b's producer now exists, but no
+ * caller builds `plan` from it yet) with safe, inert defaults a step-5 caller can supply today without lying:
  * `false`/`null`/`'ok'`/`[]` all mean "nothing known to block this target,"
  * never "positively confirmed clean." See this module's field-level comments.
  *
@@ -107,8 +107,10 @@ export interface UpdateTargetPlan {
   readonly manifestUnreadable: boolean
   /** Row 0b: true when an unreadable `.skillsmith-staging/` record exists
    * ANYWHERE under this target's skills root (not necessarily naming this
-   * target — see row 3 for that narrower, already-probe-covered case).
-   * Default `false`. */
+   * target — see row 3 for that narrower, already-probe-covered case): set it
+   * from `unreadableStagingRecords`' non-empty `opIds`. Its `ok: false` (a
+   * staging that can't be listed) is not 0b; the probe reports that target
+   * `probe-failed`. Default `false`. */
   readonly recoveryRecordUnreadable: boolean
   /** Row 10 (UD22): set when whole-manifest analysis found that another key
    * owns this target's real directory, naming that owner for remediation.

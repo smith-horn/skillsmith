@@ -11,9 +11,10 @@
  *
  *  - `defaultRecoveryPendingChecker` (row 3): true when a verified record of
  *    this root names the target's `realpath` or the target path itself, the
- *    same match as the write's step 3. It throws, so the probe reports
- *    `probe-failed`, when the root can't be resolved or its staging can't be
- *    listed: a check that could not run never reads as "not named".
+ *    same match as the write's step 3. It returns `{ error }`, naming the
+ *    path that failed, when the root can't be resolved or its staging can't
+ *    be listed, and the probe reports `probe-failed`: a check that could not
+ *    run never reads as "not named".
  *  - `unreadableStagingRecords` (row 0b, for whoever builds the run's
  *    `plan`): the opIds of the root's unreadable records, which block every
  *    skill in it and are what `doctor recovery --park <opId>` takes. A
@@ -31,6 +32,7 @@ import path from 'node:path'
 import { recordsNaming, scanStagingRecords } from './skill-swap.records.js'
 import type { RecordScan } from './skill-swap.records.js'
 import { STAGING_DIR_NAME } from './skill-write-lock.types.js'
+import { errnoOf } from './update-target.probe.types.js'
 import type { ProbeError, RecoveryPendingChecker } from './update-target.probe.types.js'
 
 /** The scan of `skillsDir`'s staging, resolved the way `bindSkillsRoot` binds the root. */
@@ -39,26 +41,30 @@ async function scanRoot(skillsDir: string): Promise<RecordScan> {
   return scanStagingRecords(root, path.join(root, STAGING_DIR_NAME))
 }
 
-/** Row 3: does a verified record of this root name `dir`? Throws when that can't be decided. */
+/**
+ * Row 3: does a verified record of this root name `dir`? `{ error }`, naming
+ * the path that failed, when that can't be decided: the root can't be
+ * resolved, its staging can't be listed, or `dir`'s realpath fails other than
+ * as missing.
+ */
 export const defaultRecoveryPendingChecker: RecoveryPendingChecker = async ({ skillsDir, dir }) => {
-  const scan = await scanRoot(skillsDir)
-  if (!scan.ok) {
-    throw Object.assign(new Error(listingFailure(skillsDir, scan)), { code: scan.errno })
+  let scan: RecordScan
+  try {
+    scan = await scanRoot(skillsDir)
+  } catch (err) {
+    return { error: { path: skillsDir, errno: errnoOf(err) } }
   }
+  if (!scan.ok) return { error: { path: scan.path, errno: scan.errno } }
   let realDir = dir
   try {
     realDir = await fs.promises.realpath(dir)
   } catch (err) {
     // A missing folder (a crash between the renames) is matched by its path.
-    const code = (err as NodeJS.ErrnoException | null)?.code
-    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err
+    const code = errnoOf(err)
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') return { error: { path: dir, errno: code } }
   }
   return recordsNaming(scan.pending, { realDir, comparedPath: dir }).length > 0
 }
-
-const listingFailure = (skillsDir: string, scan: { path: string; errno: string }): string =>
-  `the update records in ${path.join(skillsDir, STAGING_DIR_NAME)} could not be listed ` +
-  `(${scan.path}: ${scan.errno})`
 
 /**
  * Row 0b: the opIds of `skillsDir`'s unreadable records (empty when none, or
@@ -69,14 +75,14 @@ const listingFailure = (skillsDir: string, scan: { path: string; errno: string }
 export async function unreadableStagingRecords(
   skillsDir: string
 ): Promise<{ ok: true; opIds: string[] } | { ok: false; error: ProbeError }> {
-  let scan: Awaited<ReturnType<typeof scanRoot>>
+  let scan: RecordScan
   try {
     scan = await scanRoot(skillsDir)
   } catch (err) {
-    const errno = (err as NodeJS.ErrnoException | null)?.code
+    const errno = errnoOf(err)
     // A root that doesn't exist has no staging and no records.
     if (errno === 'ENOENT') return { ok: true, opIds: [] }
-    return { ok: false, error: { path: skillsDir, errno: errno ?? 'UNKNOWN' } }
+    return { ok: false, error: { path: skillsDir, errno } }
   }
   if (!scan.ok) return { ok: false, error: { path: scan.path, errno: scan.errno } }
   return { ok: true, opIds: scan.unreadable.map((r) => r.opId) }

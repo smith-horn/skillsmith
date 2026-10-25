@@ -5,7 +5,8 @@
  *  1. Outside any lock: bind R and ST, make OP, write `owner.json`, build
  *     `new/` (`skill-swap.staging.ts`).
  *  2. Lock 1 (`withSkillWriteLock`, label `skill update`); `check`.
- *  3. The record scan (`skill-swap.scan.ts`): `recovery-record-unreadable`, `recovery-pending`.
+ *  3. The record scan (`skill-swap.scan.ts`): `staging-unsafe`, `recovery-record-unreadable`,
+ *     `recovery-pending`.
  *  4. Re-verify the target, its tree hash and the manifest CAS.
  *  5. `record.json`.
  *  6-8. Rename 1 (`realDir` → `OP/old`), rename 2 (`OP/new` → `realDir`),
@@ -80,7 +81,7 @@ import type {
 } from './skill-swap.types.js'
 
 export * from './skill-swap.types.js'
-export { computeRecordSha256 } from './skill-swap.staging.js'
+export { computeRecordSha256 } from './skill-swap.records.js'
 
 const REFUSE_REASONS: ReadonlySet<string> = new Set<SwapRefuseReason>([
   'changed-since-plan',
