@@ -70,6 +70,16 @@ describe('ci.yml: Quality Checks audit wiring (SMI-7174)', () => {
     expect(s?.run).toBe('bash scripts/ci-code-review.sh audit-report.json')
   })
 
+  // Job-level keys sit at four spaces, outside every step; parseSteps never sees them.
+  it('the quality-checks job itself cannot swallow a failure: no job-level continue-on-error', () => {
+    const jobKeys = (qc?.body ?? '')
+      .split('\n')
+      .map((l) => l.match(/^ {4}([a-z-]+):/)?.[1])
+      .filter(Boolean)
+    expect(jobKeys).toContain('steps') // instrument check: job-level keys are read
+    expect(jobKeys).not.toContain('continue-on-error')
+  })
+
   it('the audit step can fail the job: no continue-on-error, no || in its command', () => {
     const s = step('Run standards audit')
     expect(s).toBeDefined()

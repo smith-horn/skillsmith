@@ -10,7 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeFixtureTempDir } from './_lib/git-fixture-env'
@@ -148,5 +148,22 @@ describe('audit-summary CLI (T11)', () => {
     })
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('Could not render the summary: boom')
+  })
+
+  // A copy of the real CLI beside a broken or missing renderer module.
+  it.each([
+    ['broken (syntax error)', 'export const = ;\n'],
+    ['missing', null],
+  ])('T13: exits 0 when the renderer module is %s', (_label, body) => {
+    const root = join(dir, `t13-${body === null ? 'missing' : 'broken'}`)
+    mkdirSync(join(root, 'ci'), { recursive: true })
+    mkdirSync(join(root, 'lib'), { recursive: true })
+    copyFileSync(CLI, join(root, 'ci', 'audit-summary.mjs'))
+    if (body !== null) writeFileSync(join(root, 'lib', 'audit-report.mjs'), body)
+    const r = spawnSync('node', [join(root, 'ci', 'audit-summary.mjs'), join(dir, 'none.json')], {
+      encoding: 'utf8',
+    })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('Could not render the summary')
   })
 })
