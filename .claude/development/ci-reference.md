@@ -189,7 +189,7 @@ Two CI jobs run on the host runner instead of inside the Docker image: `quality-
 ### Pattern (must match exactly)
 
 ```yaml
-quality-checks:                              # also code-review
+quality-checks:                              # code-review: same, minus the unlock (see below)
   name: Quality Checks
   # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
   needs: [classify, detect-changes]          # NO docker-build
@@ -206,6 +206,8 @@ quality-checks:                              # also code-review
     - run: npm ci --ignore-scripts            # skips native postinstall
     - run: npm run lint                       # then format:check / typecheck / audit:standards
 ```
+
+`code-review` checks out with `fetch-depth: 0` too (SMI-7164), and, like `quality-checks`, passes `PR_BODY` to its audit step, but it never unlocks git-crypt. So it audits a locked tree: Check 77 fails it, by design, on any PR whose diff touches an in-scope migration. Whether the job should unlock, stay as a locked-tree canary or be retired is SMI-7174. It also `needs` the package `test` job, so it runs only on PRs that touch a package. `audit:standards` Check 78 fails either job if its checkout can't resolve the PR's merge-base.
 
 Convention precedent: `release-cadence.yml:84` and the `package-validation` job in `ci.yml`. New carve-out jobs MUST match the same `setup-node` SHA, `cache: 'npm'`, and `--ignore-scripts` flag.
 
