@@ -192,14 +192,110 @@ async function syncOrReject(dir: string): Promise<void> {
 const JOURNAL_LOCK_LABEL = 'the journal lock (lock 5)'
 
 async function doAppend(input: JournalRecordInput): Promise<JournalRecord> {
-  const filePath = getJournalFilePath()
+  return underJournalLock(getJournalFilePath(), (filePath, madeDirs) =>
+    appendLocked(input, filePath, madeDirs)
+  )
+}
+
+/** Makes the journal directory, then runs `fn` under lock 5 for `filePath`. */
+async function underJournalLock<T>(
+  filePath: string,
+  fn: (filePath: string, madeDirs: string[]) => Promise<T>
+): Promise<T> {
   const journalDir = dirname(filePath)
   // The lock file lives in the journal directory, so the directory is made
   // first; the syncs of what this mkdir made run under the lock.
   const madeDirs = createdDirectories(await mkdir(journalDir, { recursive: true }), journalDir)
-  return withFileLock(filePath, JOURNAL_LOCK_LABEL, () => appendLocked(input, filePath, madeDirs), {
-    rank: '5',
-  })
+  return withFileLock(filePath, JOURNAL_LOCK_LABEL, () => fn(filePath, madeDirs), { rank: '5' })
+}
+
+/** What `appendJournalRecordOnce` did. */
+export type AppendOnceOutcome =
+  | { outcome: 'appended'; record: JournalRecord; file: string }
+  /** A parseable line already names this `tool` and `suggestion_id`; nothing was written. */
+  | { outcome: 'present'; file: string }
+  /**
+   * The journal ends mid-line, without its newline, or with a last line that
+   * names no chain head: nothing was written.
+   */
+  | { outcome: 'torn-tail'; file: string }
+
+/** Every parseable line of `raw` that is an object naming `tool` and `id`. */
+function holdsRecordFor(raw: string, tool: string, id: string): boolean {
+  for (const line of raw.split('\n')) {
+    if (line.trim() === '') continue
+    try {
+      const v: unknown = JSON.parse(line)
+      if (typeof v !== 'object' || v === null) continue
+      const r = v as { tool?: unknown; suggestion_id?: unknown }
+      if (r.tool === tool && r.suggestion_id === id) return true
+    } catch {
+      // An unparseable line (a torn tail, a corrupt middle) names nothing.
+    }
+  }
+  return false
+}
+
+/** True when the journal's last line is unparseable or the file does not end with a newline. */
+function tornTail(raw: string): boolean {
+  if (raw === '') return false
+  if (!raw.endsWith('\n')) return true
+  const lines = raw.split('\n').filter((l) => l.trim() !== '')
+  if (lines.length === 0) return false
+  try {
+    JSON.parse(lines[lines.length - 1]!)
+    return false
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Doctor's audit append for an `incomplete: audit` update (SMI-6531 step 6a-ii,
+ * A1 plan step 6). Under lock 5 it reads the journal and scans **every**
+ * parseable line (not only the verified chain, which stops at a break) for a
+ * record with this `tool` and `suggestion_id`; appends only if there is none;
+ * and syncs the journal directory either way, since an earlier append can have
+ * created the file and then failed that sync. A torn tail is `torn-tail`, not a
+ * throw: the caller reports the record as not recorded (owner decision
+ * 2026-10-26). `file` is a test seam (default `getJournalFilePath()`).
+ */
+export function appendJournalRecordOnce(
+  input: JournalRecordInput,
+  options: { file?: string } = {}
+): Promise<AppendOnceOutcome> {
+  const filePath = options.file ?? getJournalFilePath()
+  const task = writeQueue.then(() =>
+    underJournalLock(filePath, async (file, madeDirs): Promise<AppendOnceOutcome> => {
+      let raw = ''
+      try {
+        raw = await readFile(file, 'utf-8')
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      }
+      if (holdsRecordFor(raw, input.tool, input.suggestion_id ?? '')) {
+        for (const made of madeDirs) await syncOrReject(dirname(made))
+        await syncOrReject(dirname(file))
+        return { outcome: 'present', file }
+      }
+      if (tornTail(raw)) return { outcome: 'torn-tail', file }
+      let record: JournalRecord
+      try {
+        record = await appendLocked(input, file, madeDirs)
+      } catch (err) {
+        // A last line that parses but names no chain head: as unappendable as a torn one.
+        if (isCorruptTailError(err)) return { outcome: 'torn-tail', file }
+        throw err
+      }
+      await syncOrReject(dirname(file))
+      return { outcome: 'appended', record, file }
+    })
+  )
+  writeQueue = task.then(
+    () => undefined,
+    () => undefined
+  )
+  return task
 }
 
 async function appendLocked(

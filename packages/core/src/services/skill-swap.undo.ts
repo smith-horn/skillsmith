@@ -90,8 +90,8 @@ async function recreateEntry(
   st.warnings.push({ code: 'conflict-kept', path: kept })
 }
 
-/** Undo step 2: O back at the path. */
-async function restoreOld(st: SwapState, oldDir: string, realDir: string): Promise<void> {
+/** Undo step 2: O back at the path (claim-publish; doctor's UN1 and S2x reuse it). */
+export async function restoreOld(st: SwapState, oldDir: string, realDir: string): Promise<void> {
   const root = st.binding.root
   check(st)
   const o = await fs.promises.lstat(oldDir, { bigint: true })
@@ -120,17 +120,25 @@ async function restoreOld(st: SwapState, oldDir: string, realDir: string): Promi
   await syncDir(st, st.opDir)
 }
 
-/** Runs undo steps 1-4. Throws on any failure (the caller reports `stopped`). */
-export async function undoSwap(st: SwapState): Promise<UndoOutcome> {
-  const { oldDir, undoneDir } = opPaths(st)
-  const { realDir } = st.input
+/** Undo step 1: the folder at the path set aside as `OP/undone`; sync OP, then R. */
+export async function undoAside(st: SwapState): Promise<void> {
   await hook(st, 'beforeUndoAside')
-  await renameChecked(st, realDir, undoneDir)
+  await renameChecked(st, st.input.realDir, opPaths(st).undoneDir)
   await hook(st, 'afterUndoAside')
   await syncDir(st, st.opDir)
   await syncDir(st, st.binding.root)
   await hook(st, 'beforeRestore')
+}
 
+/**
+ * Runs undo steps 1-4. Throws on any failure (the caller reports `stopped`).
+ * Doctor runs the same steps one at a time, from the state a kill left
+ * (`undoAside`, `restoreOld` or its existing-claim form, then the keep).
+ */
+export async function undoSwap(st: SwapState): Promise<UndoOutcome> {
+  const { oldDir, undoneDir } = opPaths(st)
+  const { realDir } = st.input
+  await undoAside(st)
   await restoreOld(st, oldDir, realDir)
 
   const h = treeHashOf(undoneDir)

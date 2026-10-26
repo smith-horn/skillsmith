@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { digestOf } from '../../../../src/services/skill-recovery.digest.js'
 import { reportOp } from '../../../../src/services/skill-recovery.listing.js'
 import { ClassifierReader } from '../../../../src/services/skill-recovery.reader.js'
-import { makeFixture, tmp, useTmpCleanup } from '../skill-swap.helpers.js'
+import { areaOf, makeFixture, tmp, useTmpCleanup } from '../skill-swap.helpers.js'
 import { opIdN, otherSkill } from '../skill-swap.scan.helpers.js'
 import {
   destOf,
@@ -210,10 +210,19 @@ describe('the digest covers everything the classifier read', () => {
     expect(await digestOfOp(st)).not.toBe(before)
     fs.writeFileSync(rec, bytes)
     expect(await digestOfOp(st)).toBe(before)
-    // The control: bytes of a file nothing reads do not matter.
+    // The control: bytes of a file nothing reads do not matter (another op's
+    // entry in the backup area, which the `areaForOp` rule never lists).
+    const other = path.join(areaOf(st.fx), `${'b'.repeat(32)}.json`)
+    fs.mkdirSync(path.dirname(other), { recursive: true })
+    fs.writeFileSync(other, 'another operation, never read for this one\n')
+    const withOther = await digestOfOp(st)
+    fs.writeFileSync(other, 'changed, and still never read\n')
+    expect(await digestOfOp(st)).toBe(withOther)
+    // 6a-ii: owner.json IS read for a recorded op (doctor adopts it by identity
+    // and bytes before unlinking it), so its bytes are in the digest.
     expect(fs.existsSync(owner)).toBe(true)
-    fs.writeFileSync(owner, 'changed, and never parsed for a recorded op\n')
-    expect(await digestOfOp(st)).toBe(before)
+    fs.writeFileSync(owner, 'changed in place\n')
+    expect(await digestOfOp(st)).not.toBe(withOther)
   })
 
   it('byte hash alone: same inode, same length, other bytes, the plan held constant, the digest differs', () => {

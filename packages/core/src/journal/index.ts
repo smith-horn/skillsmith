@@ -27,7 +27,9 @@ export {
 
 export {
   appendJournalRecord,
+  appendJournalRecordOnce,
   computeRecordHash,
+  type AppendOnceOutcome,
   isCorruptTailError,
   type JournalCorruptTailError,
 } from './writer.js'

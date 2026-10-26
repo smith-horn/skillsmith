@@ -99,6 +99,8 @@ function keptKindOf(
   const res = f.roles[role]
   if (res.kind === 'kept') return res.keep.kind
   if (res.kind === 'source' && res.started !== null) return res.started.kind
+  // A staged tree that cannot be hashed is kept as `unrecorded-new` (PLAN:1400-1402).
+  if (res.kind === 'source' && role === 'N' && res.obs.hash === null) return 'unrecorded-new'
   if (res.kind === 'source') return res.obs.hash === f.record.postTree ? matches : differs
   return differs
 }

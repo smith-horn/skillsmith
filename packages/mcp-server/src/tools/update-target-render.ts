@@ -107,6 +107,6 @@ export const UPDATE_TARGET_TEXT: Record<UpdateTargetReason | UpdateResultCode, s
   'recovery-conflict': 'The recovery record conflicts with the current state',
   'recovery-identity-changed': 'The recovered target identity has changed',
   'recovery-ambiguous': 'The recovery record is ambiguous and needs review',
-  'recovery-moved': 'The recovered target has moved and needs relinking',
+  'recovery-moved': 'The recovery record belongs to a moved root or operation folder',
   'write-failed': 'Writing the update to disk failed',
 }

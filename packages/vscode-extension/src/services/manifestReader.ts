@@ -172,7 +172,7 @@ export const UPDATE_TARGET_TEXT: Record<UpdateTargetReason | UpdateResultCode, s
   'recovery-conflict': 'The recovery record conflicts with the current state',
   'recovery-identity-changed': 'The recovered target identity has changed',
   'recovery-ambiguous': 'The recovery record is ambiguous and needs review',
-  'recovery-moved': 'The recovered target has moved and needs relinking',
+  'recovery-moved': 'The recovery record belongs to a moved root or operation folder',
   'write-failed': 'Writing the update to disk failed',
 }
 
@@ -223,9 +223,9 @@ export const UPDATE_REMEDIATION_KIND: Record<
   'staging-collision': 'move-aside',
   'backup-unsafe': 'move-aside',
   'recovery-conflict': 'doctor',
-  'recovery-identity-changed': 'reconcile',
+  'recovery-identity-changed': 'doctor',
   'recovery-ambiguous': 'doctor',
-  'recovery-moved': 'reconcile',
+  'recovery-moved': 'doctor',
   'write-failed': 'fix-permissions',
 }
 

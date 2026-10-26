@@ -178,6 +178,8 @@ export interface KeepGroup {
     /** Parses as this op's sidecar for `dest`. */
     thisOps: boolean
     treeHash: string | null
+    /** The identity the temp names for its tree (Q10: a provable temp names the source's). */
+    identity: RecordIdentity | null
     sameInodeAsSidecar: boolean
     /** An empty regular file with one link (Q10's other provable case). */
     emptySingleLink: boolean

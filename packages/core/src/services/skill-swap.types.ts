@@ -116,6 +116,32 @@ export type SwapHookPoint =
   | 'afterParkSync'
   /** After a step-2 `busy`: the second wait has announced itself and is about to poll. */
   | 'secondWaitStart'
+  /** In `publishTree`, after the keep's rename, before the area sync. */
+  | 'afterPublishRename'
+  /** In `publishTree`, after the area sync that follows the rename, before OP's. */
+  | 'afterPublishAreaSync'
+  /** In `publishTree`, after OP's sync: the keep is done. */
+  | 'afterPublishOpSync'
+  /** Doctor (6a-ii): after the claim's mkdir and sync of R, before the rename into it (sync). */
+  | 'afterClaim'
+  /** Doctor: after a tree is renamed to the skill path and R and OP synced. */
+  | 'afterInstall'
+  /** Doctor: after the audit record is appended (or found), before the keeps. */
+  | 'afterAudit'
+  /** Doctor: after a provable sidecar temp is unlinked, before the area sync. */
+  | 'afterTempUnlink'
+  /** Doctor's sidecar rewrite: after the area sync that makes the new temp durable. */
+  | 'afterRewriteTempSync'
+  /** Doctor's sidecar rewrite: after the temp is linked at `<dest>.json`. */
+  | 'afterRewriteLink'
+  /** Doctor's sidecar rewrite: after the area sync that follows the link. */
+  | 'afterRewriteLinkSync'
+  /** Doctor's sidecar rewrite: after the temp is unlinked, before the last area sync. */
+  | 'afterRewriteTempUnlink'
+  /** Doctor: every tree is installed or kept; before the metadata files are unlinked. */
+  | 'beforeMetadataCleanup'
+  /** Doctor: after `record.json` (the last metadata file) is unlinked and OP synced. */
+  | 'afterRecoveredOpSync'
 
 /** One traced mutation or sync, in the order it happened (T-P4). Recorded after it succeeds. */
 export type TraceOp =
