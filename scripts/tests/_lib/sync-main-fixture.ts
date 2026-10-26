@@ -227,7 +227,7 @@ if [ "$sub" = merge-base ] && [ "$mode" = merge-base-fails ]; then
 fi
 if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   case "$mode" in
-    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head)
+    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head | switch-before-move-then-away-and-back)
       "$real" symbolic-ref HEAD refs/heads/feature/x ;;
     edit-unrelated-before-move) printf 'edited by another session\\n' >>unrelated.txt ;;
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
@@ -238,6 +238,10 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   "$real" "$@" || st=$?
   [ "$mode" = switch-before-move-then-commit ] && "$real" commit -q --allow-empty -m 'later commit'
   [ "$mode" = switch-before-move-overwrite-orig-head ] && "$real" update-ref ORIG_HEAD HEAD
+  if [ "$mode" = switch-before-move-then-away-and-back ]; then
+    target=\${args[\${#args[@]}-1]}
+    "$real" reset -q --soft HEAD^ && "$real" merge -q --ff-only "$target"
+  fi
   exit "$st"
 fi
 exec "$real" "$@"

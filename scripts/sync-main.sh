@@ -58,19 +58,14 @@ refuse() {
 # Render up to 5 NUL-separated paths from a file as one line, each once.
 # Newlines and tabs in a path are shown as \n and \t so it stays on one line.
 render_paths() {
-  local file=$1 out='' n=0 p s dup
-  local seen=()
+  local file=$1 out='' n=0 p
   while IFS= read -r -d '' p; do
-    dup=0
-    for s in ${seen[@]+"${seen[@]}"}; do [ "$s" != "$p" ] || dup=1; done
-    [ "$dup" -eq 0 ] || continue
-    seen+=("$p")
     n=$((n + 1))
     [ "$n" -le 5 ] || continue
     p=${p//$'\n'/\\n}
     p=${p//$'\t'/\\t}
     out="${out:+$out, }$p"
-  done <"$file"
+  done < <(LC_ALL=C sort -zu "$file")
   [ "$n" -le 5 ] || out="$out (and $((n - 5)) more)"
   printf '%s' "$out"
 }
@@ -95,6 +90,7 @@ for arg in "$@"; do
 done
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync-main.XXXXXX")
+tmp=$(cd "$tmp" && pwd -P) # absolute: the script cds to the top level below
 trap 'rm -rf "$tmp"' EXIT
 
 # --- Change 1: never move HEAD off the branch it found --------------------
@@ -111,6 +107,14 @@ if [ "$head_ref" != refs/heads/main ]; then
 fi
 
 # Every path set below is repo-root-relative, so run from the top level.
+# Pin any relative git location variable first, or the cd would retarget it.
+for var in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY; do
+  val=${!var-}
+  case "$val" in
+    '' | /*) ;;
+    *) export "$var=$PWD/$val" ;;
+  esac
+done
 cd "$(git rev-parse --show-toplevel)"
 
 # --- Change 2: preconditions before the fetch -----------------------------
@@ -252,6 +256,7 @@ if [ "$mode" != none ]; then
   fi
 
   # --- Change 5: no hook fires; neither move touches submodule checkouts ---
+  move_start=$(date +%s) # reflog entries this sync can own are no older
   move_status=0
   if [ "$mode" = ff ]; then
     git -c core.hooksPath=/dev/null merge --ff-only --no-autostash --no-overwrite-ignore -q "$REMOTE" \
@@ -273,22 +278,38 @@ if [ "$after_ref" != refs/heads/main ]; then
   elif [ "$(git rev-parse refs/heads/main)" = "$REMOTE" ]; then
     printf 'ERROR [branch-changed-after-sync]: main was synced to %s, then this checkout switched to %s.\n' "${REMOTE:0:12}" "$shown" >&2
   else
-    # The displaced value comes from the moved ref's own reflog entry for this
-    # move, never from ORIG_HEAD (any session can rewrite it) or LOCAL (the
-    # switched-to ref need not have started at main's commit).
+    # The displaced value comes from the moved ref's own reflog, read once so
+    # old and new come from one snapshot. Never ORIG_HEAD (any session can
+    # rewrite it) or LOCAL (the switched-to ref need not have started there).
+    # The entry counts as this sync's only if, since just before the move,
+    # exactly one entry moved the ref to REMOTE, it is the newest line, and its
+    # subject is this move's. Anything else (an away-and-back by another
+    # session, no reflog) is ambiguous, and no command is printed.
     if [ "$mode" = ff ]; then want="merge $REMOTE: Fast-forward"; else want="reset: moving to $REMOTE"; fi
-    old='' i=0
-    if [ -n "$after_ref" ]; then
-      while IFS=' ' read -r sha subject; do
-        if [ "$sha" = "$REMOTE" ] && [ "$subject" = "$want" ]; then
-          old=$(git rev-parse -q --verify "$after_ref@{$((i + 1))}" 2>/dev/null) || old=''
-          break
+    old='' cand='' cand_subject='' hits=0 last_new=''
+    log=''
+    [ -z "$after_ref" ] || log=$(git rev-parse --git-path "logs/$after_ref" 2>/dev/null) || log=''
+    if [ -n "$log" ] && [ -f "$log" ]; then
+      cp "$log" "$tmp/reflog"
+      while IFS=$'\t' read -r head subject || [ -n "$head" ]; do
+        e_old=${head%% *}
+        rest=${head#* }
+        e_new=${rest%% *}
+        e_ts=${head% *}
+        e_ts=${e_ts##* }
+        last_new=$e_new
+        case "$e_ts" in '' | *[!0-9]*) continue ;; esac
+        if [ "$e_ts" -ge "$move_start" ] && [ "$e_new" = "$REMOTE" ]; then
+          hits=$((hits + 1))
+          cand=$e_old cand_subject=$subject
         fi
-        i=$((i + 1))
-      done < <(git log -g --format='%H %gs' "$after_ref" -- 2>/dev/null || true)
+      done <"$tmp/reflog"
+      if [ "$hits" -eq 1 ] && [ "$cand_subject" = "$want" ] && [ "$last_new" = "$REMOTE" ]; then
+        old=$cand
+      fi
     fi
     printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move).\n' \
-      "$shown" "${old:-<unknown: no reflog entry>}" "$REMOTE" >&2
+      "$shown" "${old:-<unknown: no unambiguous reflog entry>}" "$REMOTE" >&2
     if [ -n "$old" ] && [ "$(git rev-parse -q --verify "$after_ref" 2>/dev/null)" = "$REMOTE" ]; then
       printf 'restore the ref (not the index or working tree): git update-ref %s %s %s\n' "$after_ref" "$old" "$REMOTE" >&2
     else
@@ -311,7 +332,7 @@ if [ "$move_status" -ne 0 ]; then
     xargs -0 git --literal-pathspecs diff -z --name-only --no-renames --cached -- <"$tmp/incoming" >>"$tmp/fp-named"
   fi
   if ! cmp -s "$tmp/fp-index.before" "$tmp/fp-index.after" || ! cmp -s "$tmp/fp-wt.before" "$tmp/fp-wt.after"; then
-    printf 'ERROR [partial-move]: these incoming paths changed during the attempted move (source unknown; a failing checkout filter such as git-crypt is one cause, another session'"'"'s edit is another): %s\n' \
+    printf 'ERROR [partial-move]: incoming paths changed during the attempted move (source unknown; a failing checkout filter such as git-crypt is one cause, another session'"'"'s edit is another). Incoming paths now differing from HEAD: %s\n' \
       "$(render_paths "$tmp/fp-named")" >&2
     printf 'HEAD and main still point at %s; the working tree needs attention.\n' "${LOCAL:0:12}" >&2
     printf 'next: inspect git status before changing anything; if every path above is unedited by any session, git restore --worktree -- <path> undoes this sync'"'"'s writes\n' >&2

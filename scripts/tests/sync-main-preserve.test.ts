@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -565,5 +565,64 @@ describe('SMI-6465 review round: a git error is never read as an answer', () => 
     expect(result.stderr).toContain('git merge-base --is-ancestor failed (exit 128)')
     expect(result.stderr).not.toContain('REFUSED')
     expect(snapshot(repo.local)).toBe(before)
+  })
+})
+
+describe('SMI-6465 confirmation round: restore ownership and relative locations', () => {
+  it('T40: a relative TMPDIR from a subdirectory still syncs and leaves no temp dir', () => {
+    const repo = makeRepo({ ...SEED, 'd/f.txt': 'f\n' })
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    write(repo.local, 'c.txt', 'my edit\n')
+    mkdirSync(join(repo.local, 'd', 't'))
+    const result = runSync(join(repo.local, 'd'), [], { ...GIT_ENV, TMPDIR: 't' })
+    expectSynced(repo, result)
+    expect(read(repo.local, 'c.txt')).toBe('my edit\n')
+    expect(readdirSync(join(repo.local, 'd', 't'))).toEqual([])
+  })
+
+  it('T41: relative GIT_DIR and GIT_WORK_TREE from outside the work tree still sync it', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    write(repo.local, 'c.txt', 'my edit\n')
+    const env = { ...GIT_ENV, GIT_DIR: 'local/.git', GIT_WORK_TREE: 'local' }
+    expectSynced(repo, runSync(repo.root, [], env))
+    expect(read(repo.local, 'c.txt')).toBe('my edit\n')
+  })
+
+  it('T42: another session moving the ref away and back prints no restore command', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    git(repo.local, 'branch', 'feature/x')
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-before-move-then-away-and-back'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(git(repo.local, 'rev-parse', 'feature/x')).toBe(git(repo.up, 'rev-parse', 'HEAD'))
+    expect(result.stderr).toContain('reconcile by hand')
+    expect(result.stderr).not.toContain('git update-ref')
+  })
+
+  it('T43: a matching reflog entry older than this sync is not taken as its own', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    git(repo.local, 'branch', 'feature/x')
+    const log = join(repo.local, '.git', 'logs', 'refs', 'heads', 'feature', 'x')
+    const stale = `${'1'.repeat(40)} ${remote} t <t@t> 1000000000 +0000\tmerge ${remote}: Fast-forward\n`
+    writeFileSync(log, readFileSync(log, 'utf8') + stale)
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-before-move'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+})
+
+describe('SMI-6465 confirmation round: each path is named once', () => {
+  it('T44: a path both staged and unstaged on an incoming path is named once in [overlap]', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    write(repo.local, 'a.txt', 'staged a\n')
+    git(repo.local, 'add', 'a.txt')
+    write(repo.local, 'a.txt', 'unstaged a\n')
+    const before = snapshot(repo.local)
+    const { cause } = refusedAfterFetch(repo, before, runSync(repo.local), 'overlap')
+    expect(cause.split('a.txt')).toHaveLength(2)
   })
 })
