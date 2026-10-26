@@ -389,6 +389,13 @@ export function evaluateRufloClassification(options) {
   const deny = parsed === undefined ? null : extractDeny(parsed, settingsPath, findings)
   if (deny !== null) {
     rufloDenies = deny.filter((e) => e.startsWith(RUFLO_PREFIX))
+    // Uniqueness over the whole ruflo set, before partitioning: Check 75 reads the
+    // array as a set, so a duplicated Wave 4 entry would otherwise pass both checks.
+    const seenDeny = new Set()
+    for (const e of rufloDenies) {
+      if (seenDeny.has(e)) findings.push(`duplicate deny entry "${e}" in ${settingsPath}`)
+      seenDeny.add(e)
+    }
     const core = rufloDenies.filter((e) => !mcpEntries.includes(e))
     coreCount = core.length
     compareToPinned(core, pinned, 'array', findings)
@@ -433,9 +440,13 @@ export function rufloClassificationReportLines(result) {
   if (result.findings.length === 0) {
     lines.push({
       severity: 'pass',
-      message:
-        `Check 79: ruflo deny array matches the pinned core list (${denom})` +
-        (result.docChecked ? `; doc block and ${result.rows} table rows agree` : ''),
+      // Without the doc this pass covers the array half only, and says so in the line
+      // the audit counts, not just in the info line after it.
+      message: result.docChecked
+        ? `Check 79: ruflo deny array matches the pinned core list (${denom}); ` +
+          `doc block and ${result.rows} table rows agree`
+        : `Check 79 (array half only): ruflo deny array matches the pinned core list ` +
+          `(${denom}); the doc half was NOT checked`,
     })
   }
   if (!result.docChecked) {

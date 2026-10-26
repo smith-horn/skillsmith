@@ -41,6 +41,14 @@ describe('Check 79: parser-edge red arms', () => {
     ])
   })
 
+  it('dup: a duplicated Wave 4 deny entry -> finding (PR #3176 gate)', () => {
+    const fx = base()
+    const wave4 = (fx.deny as string[]).find((e) => e.endsWith('terminal_execute'))!
+    ;(fx.deny as string[]).push(wave4)
+    applied('dup:wave4-duplicated')
+    expect(run(fx).findings).toEqual([`duplicate deny entry "${wave4}" in /fx/settings.json`])
+  })
+
   it('z2: a table row without a leading pipe -> rule F2', () => {
     const fx = base()
     fx.extraTableLines = ['`hooks_intelligence*` | all | none |']

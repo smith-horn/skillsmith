@@ -147,6 +147,10 @@ describe('Check 79: array and doc-block red arms', () => {
     )
     expect(lines[0].message).toContain('doc=not checked')
     expect(lines[0].message).not.toContain('table rows agree')
+    // The counted pass line itself says it covers the array half only (PR #3176 gate).
+    expect(lines[0].severity).toBe('pass')
+    expect(lines[0].message).toContain('(array half only)')
+    expect(lines[0].message).toContain('the doc half was NOT checked')
     const mutated = base()
     mutated.docPresent = false
     ;(mutated.deny as string[]).push(`${P}x_new`)
