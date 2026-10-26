@@ -1,5 +1,7 @@
 /**
- * SMI-7167 -- PG-FREE structural suite for 20261025000000_backfill_autochain_silent_stop.sql. It reads
+ * SMI-7167 -- PG-FREE structural suite for 20261025000000_backfill_autochain_silent_stop.sql AND the
+ * candidates() redefinition 20261025000001_backfill_autochain_silent_stop_candidates_perf.sql (with its
+ * paired rollback); the 20261025000001 block pins the body CURRENT on prod. It reads
  * migration text only and runs everywhere. Gate: git-crypt lock state (SMI-5984) -- a DECLARED lock
  * skips, an undeclared one throws.
  *
@@ -451,5 +453,161 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
     expect(header(rb, FNS.candidates)).toEqual(header(sql, FNS.candidates))
     expect(body(rb, FNS.candidates)).toEqual(body(sql, FNS.candidates))
     expect(rb).not.toMatch(/enable_nestloop/)
+    // and the original COMMENT ON text (retro on PR #3172, finding 5)
+    const comment = (t: string) =>
+      /COMMENT ON FUNCTION public\.backfill_autochain_silent_stop_candidates\(\) IS\s+'(?:[^']|'')*';/.exec(
+        t
+      )?.[0]
+    expect(comment(rb)).toBeDefined()
+    expect(comment(rb)).toEqual(comment(sql))
+    expect(comment(rb)).not.toEqual(comment(perf))
+  })
+
+  // Retro on PR #3172, finding 2: CI skips the live-PG suite, so these text pins are CI's only check of
+  // the body that is CURRENT on prod. Each predicate also has a known-negative removing what it pins.
+  it('the live body reads the five ledger types, the green status, both ack arms and both link sources, and writes nothing', () => {
+    const b = body(perf, FNS.candidates)
+    expect(ledgerEvents(b)).toEqual([...LEDGER_EVENTS].sort())
+    expect(ledgerEvents(mutate(b, "'indexer_backfill_autochain_link_started',", ''))).not.toEqual(
+      [...LEDGER_EVENTS].sort()
+    )
+    // Each CTE's own text: from `<name> AS MATERIALIZED (` to its closing `\n  ),`.
+    const cte = (t: string, name: string): string => {
+      const s = t.indexOf(`${name} AS MATERIALIZED (`)
+      if (s < 0) return ''
+      // A middle CTE ends at `\n  ),`; the last one (`prepared`) ends at `\n  )\n`.
+      const ends = [t.indexOf('\n  ),', s), t.indexOf('\n  )\n', s)].filter((i) => i >= 0)
+      return ends.length === 0 ? '' : t.slice(s, Math.min(...ends))
+    }
+    /** Replace `from` with `to` INSIDE one CTE only; throws when that CTE lacks `from`. */
+    const swapIn = (t: string, name: string, from: string, to: string): string => {
+      const c = cte(t, name)
+      if (!c.includes(from)) throw new Error(`swapIn: ${name} has no ${from}`)
+      // function-form replacements: a `$'` in `to` (the regex shapes end in `$'`) must stay literal
+      return t.replace(c, () => c.replace(from, () => to))
+    }
+    // Retro governance S1: every CTE's event type is pinned (a CTE reading the wrong event would
+    // otherwise pass), and `prepared`, the last CTE, is sliced and pinned too.
+    const eventPins: Array<[string, string, string]> = [
+      [
+        'green',
+        'indexer_backfill_autochain_link_finished',
+        'indexer_backfill_autochain_link_started',
+      ],
+      [
+        'ack_a',
+        'indexer_backfill_autochain_silent_stop_ack',
+        'indexer_backfill_autochain_link_started',
+      ],
+      [
+        'ack_b',
+        'indexer_backfill_autochain_silent_stop_ack',
+        'indexer_backfill_autochain_link_started',
+      ],
+      [
+        'dispatched',
+        'indexer_backfill_autochain_dispatch_resolved',
+        'indexer_backfill_autochain_dispatch_prepared',
+      ],
+      [
+        'prepared',
+        'indexer_backfill_autochain_dispatch_prepared',
+        'indexer_backfill_autochain_dispatch_resolved',
+      ],
+    ]
+    for (const [name, ev, wrong] of eventPins) {
+      const reads = (t: string) => cte(t, name).includes(`l.event_type = '${ev}'`)
+      expect(reads(b), `${name} reads ${ev}`).toBe(true)
+      expect(reads(swapIn(b, name, `'${ev}'`, `'${wrong}'`)), `${name}: known-negative`).toBe(false)
+    }
+    const preparedShapes = (t: string) =>
+      cte(t, 'prepared').includes("l.m->>'dispatch_token' ~ '^ac-[1-9][0-9]{0,18}$'") &&
+      cte(t, 'prepared').includes("l.m->>'link_run_attempt' ~ '^[1-9][0-9]{0,4}$'")
+    expect(preparedShapes(b)).toBe(true)
+    expect(preparedShapes(swapIn(b, 'prepared', "'^[1-9][0-9]{0,4}$'", "'^[0-9]+$'"))).toBe(false)
+    // Cross-family gate on PR #3175: every jsonb_typeof string check, in its own CTE. Without one, a
+    // malformed JSON number renders through ->> as the same digits and can close or open an incident.
+    const typeChecks: Array<[string, string]> = [
+      ['green', 'completed_run_id'],
+      ['finished_any', 'completed_run_id'],
+      ['started_any', 'completed_run_id'],
+      ['ack_a', 'key'],
+      ['ack_b', 'key'],
+      ['resolved_keys', 'dispatch_token'],
+      ['resolved_keys', 'link_run_attempt'],
+      ['dispatched', 'dispatched_run_id'],
+      ['prepared', 'dispatch_token'],
+      ['prepared', 'link_run_attempt'],
+    ]
+    for (const [name, field] of typeChecks) {
+      const check = `jsonb_typeof(l.m->'${field}') = 'string'`
+      const has = (t: string) => cte(t, name).includes(check)
+      expect(has(b), `${name} checks ${field} is a string`).toBe(true)
+      expect(has(swapIn(b, name, check, 'TRUE')), `${name}/${field}: known-negative`).toBe(false)
+    }
+    const pins: Array<[string, (t: string) => boolean]> = [
+      [
+        'green requires link_finished with status success',
+        (t) =>
+          cte(t, 'green').includes("'indexer_backfill_autochain_link_finished'") &&
+          cte(t, 'green').includes("l.m->>'status' = 'success'"),
+      ],
+      [
+        'finished_any reads link_finished',
+        (t) => cte(t, 'finished_any').includes("'indexer_backfill_autochain_link_finished'"),
+      ],
+      [
+        'started_any reads link_started',
+        (t) => cte(t, 'started_any').includes("'indexer_backfill_autochain_link_started'"),
+      ],
+      ['ack_a is arm A', (t) => cte(t, 'ack_a').includes("l.m->>'arm' = 'A'")],
+      ['ack_b is arm B', (t) => cte(t, 'ack_b').includes("l.m->>'arm' = 'B'")],
+      [
+        'resolved_keys reads dispatch_resolved',
+        (t) => cte(t, 'resolved_keys').includes("'indexer_backfill_autochain_dispatch_resolved'"),
+      ],
+      [
+        'dispatched requires outcome dispatched',
+        (t) => cte(t, 'dispatched').includes("l.m->>'outcome' = 'dispatched'"),
+      ],
+    ]
+    for (const [name, ok] of pins) expect(ok(b), name).toBe(true)
+    // known-negatives, one per pin (mutate throws if the edit matched nothing)
+    const killers: Array<(t: string) => string> = [
+      (t) => mutate(t, "\n      AND l.m->>'status' = 'success'", ''),
+      (t) =>
+        mutate(
+          t,
+          /(finished_any AS MATERIALIZED \(\s*SELECT DISTINCT l\.m->>'completed_run_id' AS rid\s*FROM ledger l\s*WHERE l\.event_type = )'indexer_backfill_autochain_link_finished'/,
+          "$1'indexer_backfill_autochain_link_started'"
+        ),
+      (t) =>
+        mutate(
+          t,
+          /(started_any AS MATERIALIZED \(\s*SELECT DISTINCT l\.m->>'completed_run_id' AS rid\s*FROM ledger l\s*WHERE l\.event_type = )'indexer_backfill_autochain_link_started'/,
+          "$1'indexer_backfill_autochain_link_finished'"
+        ),
+      (t) => mutate(t, "l.m->>'arm' = 'A'", "l.m->>'arm' = 'B'"),
+      (t) => mutate(t, "l.m->>'arm' = 'B'", "l.m->>'arm' = 'A'"),
+      (t) =>
+        mutate(
+          t,
+          /(resolved_keys AS MATERIALIZED \(\s*SELECT DISTINCT l\.m->>'dispatch_token' AS tok, l\.m->>'link_run_attempt' AS att\s*FROM ledger l\s*WHERE l\.event_type = )'indexer_backfill_autochain_dispatch_resolved'/,
+          "$1'indexer_backfill_autochain_dispatch_prepared'"
+        ),
+      (t) => mutate(t, "l.m->>'outcome' = 'dispatched'", "l.m->>'outcome' IS NOT NULL"),
+    ]
+    pins.forEach(([name, ok], i) =>
+      expect(ok(killers[i](b)), `${name}: known-negative`).toBe(false)
+    )
+    // read-only, and ids never cast
+    const writes = (t: string) =>
+      /\b(INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|TRUNCATE|PERFORM)\b/i.test(t)
+    expect(writes(b)).toBe(false)
+    expect(
+      writes(mutate(b, "SELECT 'A'::text,", "DELETE FROM public.audit_logs; SELECT 'A'::text,"))
+    ).toBe(true)
+    expect(numericCasts(b)).toEqual([])
+    expect(numericCasts(mutate(b, 'g.rid = d.rid', '(g.rid)::bigint = d.rid'))).not.toEqual([])
   })
 })
