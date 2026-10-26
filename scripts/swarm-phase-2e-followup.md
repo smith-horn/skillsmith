@@ -60,7 +60,7 @@ Store your progress after each issue:
 **File:** Create docs/guides/swarm-recovery.md
 **Task:**
 1. Document how to detect a stuck session
-2. Document memory retrieval: npx claude-flow memory list
+2. Document memory retrieval by key: npx claude-flow memory retrieve -k <key> (never memory list, SMI-7184)
 3. Document agent restart procedures
 4. Add troubleshooting FAQ
 5. Link from main README or CLAUDE.md
@@ -275,11 +275,9 @@ If a session dies mid-batch:
 # Check what's committed
 git log --oneline -5
 
-# Check memory for progress
-npx claude-flow memory list --namespace swarm
-
-# Resume from last known state
-npx claude-flow memory get swarm/batch1/status
+# Check memory for progress, then resume from the last known state
+# (read by key; memory list is denied, SMI-7184)
+npx claude-flow memory retrieve -k swarm/batch1/status
 ```
 
 ---
