@@ -29,6 +29,10 @@ import {
 /** Dispatched runs, each with a green link_finished, spread over ~389 days (the 1-year window keeps ~37,500). At 15,000 the body WITHOUT enable_nestloop = off still finished in 3.4 s; at 40,000 it takes 23.5 s, so this budget pins the setting behaviourally, not just by its string (governance 2026-10-25). */
 const VOLUME = 40000
 const BUDGET = '10s'
+/** Retro finding 3: the open-run and Arm B volumes. */
+const OPEN_A = 5000
+const PAIRS_B = 30000
+const OPEN_B = 500
 
 const seedVolume = (n: number): string[] => [
   `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
@@ -72,6 +76,41 @@ export function registerVolumeTests(ctx: Ctx): void {
         cand('A', '424242', 'no_link', '-01:00:00'),
         cand('B', 'ac-99999999:1', 'unresolved', '-00:01:00'),
       ])
+    })
+
+    // Retro on PR #3172, finding 3: the shapes the old plan made quadratic, seeded together -- many
+    // UNRESOLVED runs, each with a checkpoint (the checkpoint join), and many prepared/resolved pairs
+    // (Arm B's anti-join). Exact counts, inside the same statement budget.
+    it(`${OPEN_A} open Arm A runs with checkpoints and ${PAIRS_B} resolved Arm B pairs (+${OPEN_B} open) come back exactly, inside ${BUDGET}`, async () => {
+      const r = await inTxn(ctx.ctl(), [
+        `SET LOCAL statement_timeout = '${BUDGET}';`,
+        // Arm A: dispatched runs with no green finish, each with a checkpoint 31+ minutes old
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_dispatch_resolved', 'system', 'r', 'ac-a' || g, 'success',
+                jsonb_build_object('dispatch_token', 'ac-' || (700000 + g), 'link_run_attempt', '1',
+                                   'outcome', 'dispatched', 'dispatched_run_id', (600000000 + g)::text),
+                now() - interval '2 hours' - g * interval '1 second'
+         FROM generate_series(1, ${OPEN_A}) g;`,
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_checkpoint', 'system', 'c', NULL, 'success',
+                jsonb_build_object('run_id', (600000000 + g)::text, 'dry_run', false),
+                now() - interval '1 hour' - g * interval '1 second'
+         FROM generate_series(1, ${OPEN_A}) g;`,
+        // Arm B: resolved pairs (closed) and a tail of prepared rows with no resolved row (open)
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_dispatch_prepared', 'system', 'p', NULL, 'success',
+                jsonb_build_object('dispatch_token', 'ac-' || g, 'link_run_attempt', '1'),
+                now() - interval '1 hour' - g * interval '1 second'
+         FROM generate_series(1, ${PAIRS_B + OPEN_B}) g;`,
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_dispatch_resolved', 'system', 'r', NULL, 'success',
+                jsonb_build_object('dispatch_token', 'ac-' || g, 'link_run_attempt', '1', 'outcome', 'not_dispatched'),
+                now() - interval '1 hour' - g * interval '1 second' + interval '1 minute'
+         FROM generate_series(1, ${PAIRS_B}) g;`,
+        'ANALYZE audit_logs;',
+        "SELECT 'count=' || arm || ':' || count(*) FROM public.backfill_autochain_silent_stop_candidates() GROUP BY arm ORDER BY arm;",
+      ])
+      expect(r.lines).toEqual([`count=A:${OPEN_A}`, `count=B:${OPEN_B}`])
     })
 
     it('the paired rollback restores the 20261025000000 body, and the perf migration re-applies after it', async () => {
