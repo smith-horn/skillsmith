@@ -53,6 +53,15 @@ describe('triggers and gates', () => {
     expect(job.if).toContain("github.event.workflow_run.conclusion == 'success'")
   })
 
+  it('SMI-6887: the job `if` is pinned exactly, so a red backfill run never auto-chains', () => {
+    // A lock skip now ends green in indexer-backfill.yml instead of widening this gate.
+    // `toContain` above would still pass if a `|| ... == 'failure'` arm were added,
+    // which would auto-retry crashes, WAF blocks and App-token leaks.
+    expect(job.if).toBe(
+      "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'"
+    )
+  })
+
   it('DISPATCH_ALLOWED is true for schedule unless a kill switch is set', () => {
     expect(job.env.DISPATCH_ALLOWED).toContain("github.event_name == 'schedule'")
     expect(job.env.DISPATCH_ALLOWED).toContain("vars.BACKFILL_AUTOCHAIN_DISABLE != '1'")

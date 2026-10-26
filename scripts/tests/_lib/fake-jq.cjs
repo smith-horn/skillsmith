@@ -24,7 +24,9 @@
  * the "Evaluate Result Thresholds" step (indexer.yml) uses, so
  * `indexer-alert-gap.test.ts`'s `runThresholdEval` can exercise the real
  * extracted bash under real execution (SPARC §4.1 layer 3) rather than
- * only `bash -n`. An unrecognized filter throws loudly instead of silently
+ * only `bash -n`. SMI-6887 reuses it for `indexer-backfill.yml`'s "Verify PAT
+ * bucket and write step summary" step, whose filters are all `.path // default`
+ * (a string default included). An unrecognized filter throws loudly instead of silently
  * misbehaving, so any future drift between the step's jq calls and this
  * shim's coverage is caught by the test itself, not masked.
  */
@@ -90,6 +92,10 @@ function evalAlternatives(input, expr) {
       value = false
     } else if (/^-?\d+(\.\d+)?$/.test(term)) {
       value = Number(term)
+    } else if (/^"[^"\\]*"$/.test(term)) {
+      // SMI-6887: a plain string default, e.g. `.data.backfill.token_source // "unknown"`
+      // in indexer-backfill.yml's verify step.
+      value = term.slice(1, -1)
     } else {
       throw new Error(`fake-jq: unsupported literal term "${term}" in filter "${expr}"`)
     }

@@ -53,7 +53,7 @@ Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DI
 
 ## MCP Tools
 
-The live registry serves **353 tools** total (measured 2026-09-23 via `tools/list` against the running `skillsmith-ruflo-1` service, `@claude-flow/cli@3.42.4`) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
+The live registry serves **353 tools** total (measured 2026-09-23 via `tools/list` against the running `skillsmith-ruflo-1` service, `@claude-flow/cli@3.42.4`) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `memory_list`, `hooks_intelligence_attention` and `embeddings_search` are denied too (SMI-7184: their sql.js fallback rewrites `memory.db` unguarded when the bridge is down). `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
 
 | Tool | Purpose | Required input | Notes |
 |------|---------|-----------------|-------|
@@ -61,13 +61,13 @@ The live registry serves **353 tools** total (measured 2026-09-23 via `tools/lis
 | `mcp__ruflo__agent_spawn` | Spawn a Ruflo-tracked agent (cost attribution + memory persistence + swarm coordination) | `agentType` | `model` enum: `haiku`/`sonnet`/`opus`/`opus-4.7`/`inherit` |
 | `mcp__ruflo__coordination_orchestrate` | Orchestrate multi-agent coordination (vote/sync/load-balance) | `task` | `strategy` enum: `parallel`/`sequential`/`pipeline`/`broadcast` |
 | `mcp__ruflo__swarm_shutdown` | Shutdown a swarm and update persistent state | none — `swarmId`, `graceful` optional | |
-| `mcp__ruflo__memory_retrieve` | Read back a value previously stored via `memory_store`, by exact (namespace, key) | `key` | `namespace` optional, default `"default"` |
-| `mcp__ruflo__memory_list` | Enumerate stored memory entries without semantic search | none — `namespace`, `limit`, `offset` optional | |
-| `mcp__ruflo__memory_delete` | Remove a stored memory entry by exact (namespace, key) | `key` | `namespace` optional, default `"default"` |
-| `mcp__ruflo__memory_bridge_status` | Report memory bridge status — AgentDB vectors, SONA learning, intelligence patterns, connection health | none | |
+| `mcp__ruflo__memory_retrieve` | Read back a value previously stored via `memory_store`, by exact (namespace, key) | `key` | `namespace` optional, default `"default"`; on the sql.js fallback it rewrites `memory.db` under the store lock and refuses while WAL sidecars exist (SMI-7184) |
+| `mcp__ruflo__memory_list` | Enumerate stored memory entries without semantic search | none — `namespace`, `limit`, `offset` optional | **denied** in `.claude/settings.json`'s `permissions.deny` (SMI-7184) — its sql.js fallback rewrites `memory.db` when the bridge is down |
+| `mcp__ruflo__memory_delete` | Remove a stored memory entry by exact (namespace, key) | `key` | `namespace` optional, default `"default"`; on the sql.js fallback it rewrites `memory.db` under the store lock and refuses while WAL sidecars exist (SMI-7184) |
+| `mcp__ruflo__memory_bridge_status` | Report memory bridge status — AgentDB vectors, SONA learning, intelligence patterns, connection health | none | reaches the sql.js fallback, which rewrites `memory.db` when the bridge is down (SMI-7184) |
 | `mcp__ruflo__memory_store` | Persistent key-value store with vector embedding | `key`, `value` | **denied** in `.claude/settings.json`'s `permissions.deny` — present in the live registry (confirmed 2026-09-23) but not currently callable from this repo |
 
-**Retired names, not live tools**: `task_orchestrate`, `memory_usage`, and `swarm_destroy` do **not** exist in the live registry (SMI-5777) — `coordination_orchestrate`, `memory_retrieve`/`memory_list`/`memory_delete`, and `swarm_shutdown` above are their respective replacements. Full list: `tools/list` (353 tools).
+**Retired names, not live tools**: `task_orchestrate`, `memory_usage`, and `swarm_destroy` do **not** exist in the live registry (SMI-5777) — `coordination_orchestrate`, `memory_retrieve`/`memory_delete`, and `swarm_shutdown` above are their respective replacements. Full list: `tools/list` (353 tools).
 
 ## Specialist Agent Types
 

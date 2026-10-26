@@ -16,7 +16,8 @@ At session end, automatically saves:
 ### 2. Session Restoration
 ```javascript
 // Using MCP tools for memory operations (memory_usage has no action-dispatch form in v3 —
-// use the discrete tool for each action)
+// use the discrete tool for each action). Illustrative only: `session-state` is a
+// placeholder key that nothing in this repo writes; substitute a key you stored.
 mcp__ruflo__memory_retrieve({
   "key": "session-state",
   "namespace": "sessions"
@@ -55,14 +56,20 @@ npx -y ruflo@3.14.2 hooks session-restore --session-id "sess-123"
 
 ### 4. Privacy & Control
 ```javascript
-// List memory contents (no action-dispatch form in v3 — discrete tool per action)
-mcp__ruflo__memory_list({
+// Illustrative only: `session-state` in namespace `sessions` is a placeholder, and
+// nothing in this repo writes it. Substitute a key you stored yourself, because
+// memory_retrieve and memory_delete need an exact key and there is no way to list keys
+// (no action-dispatch form in v3 — discrete tool per action). memory_list is denied (SMI-7184: its sql.js fallback rewrites memory.db
+// unguarded). memory_retrieve and memory_delete also rewrite it in the fallback, but under
+// the store lock, and both refuse while WAL sidecars exist.
+mcp__ruflo__memory_retrieve({
+  "key": "session-state",
   "namespace": "sessions"
 })
 
 // Delete specific memory
 mcp__ruflo__memory_delete({
-  "key": "session-123",
+  "key": "session-state",
   "namespace": "sessions"
 })
 
