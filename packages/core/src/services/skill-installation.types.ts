@@ -272,7 +272,8 @@ export interface SkillManifestEntry {
   verifiedAt?: string
   /**
    * SMI-6531 A1 step 7a: SHA-256 of the upstream SKILL.md bytes an in-place
-   * update fetched. Written only by `updateInPlace`; absent on older entries.
+   * update fetched. Only the in-place update (A1 step 7b) will write it; no
+   * code writes it yet, and older entries lack it.
    */
   upstreamContentHash?: string
   /**

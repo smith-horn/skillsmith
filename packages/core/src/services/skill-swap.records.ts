@@ -23,62 +23,19 @@
  *
  * @module @skillsmith/core/services/skill-swap.records
  */
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { FullDeviceStage, RecordIdentity, SwapRecord } from './skill-swap.types.js'
+import { MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.record-schema.js'
 import { RECORD_FILE } from './skill-swap.types.js'
 
-/** sha256 of the record's JSON without `recordSha256`, in the record's fixed key order. */
-export function computeRecordSha256(record: Omit<SwapRecord, 'recordSha256'>): string {
-  const ordered: Omit<SwapRecord, 'recordSha256'> = {
-    schema: record.schema,
-    opId: record.opId,
-    pid: record.pid,
-    host: record.host,
-    uid: record.uid,
-    target: {
-      comparedPath: record.target.comparedPath,
-      realDir: record.target.realDir,
-      skillsDir: record.target.skillsDir,
-      manifestPath: record.target.manifestPath,
-      manifestKey: record.target.manifestKey,
-      client: record.target.client,
-    },
-    rootIdentity: record.rootIdentity,
-    opDirIdentity: record.opDirIdentity,
-    oldIdentity: record.oldIdentity,
-    newIdentity: record.newIdentity,
-    preTree: record.preTree,
-    postTree: record.postTree,
-    preEntry: record.preEntry,
-    postEntry: record.postEntry,
-    backupDest: record.backupDest,
-    // Explicit key order, like every other field (governance round 4).
-    ...(record.fullDevice === undefined
-      ? {}
-      : {
-          fullDevice: {
-            cause: record.fullDevice.cause,
-            stage: record.fullDevice.stage,
-            area: record.fullDevice.area,
-            opId: record.fullDevice.opId,
-            dest: record.fullDevice.dest,
-          },
-        }),
-  }
-  const idOrder = (i: RecordIdentity): RecordIdentity => ({
-    dev: i.dev,
-    ino: i.ino,
-    birthtimeNs: i.birthtimeNs,
-    fmt: i.fmt,
-  })
-  ordered.rootIdentity = idOrder(ordered.rootIdentity)
-  ordered.opDirIdentity = idOrder(ordered.opDirIdentity)
-  ordered.oldIdentity = idOrder(ordered.oldIdentity)
-  ordered.newIdentity = idOrder(ordered.newIdentity)
-  return crypto.createHash('sha256').update(JSON.stringify(ordered)).digest('hex')
-}
+export {
+  computeRecordSha256,
+  isSwapRecord,
+  MAX_RECORD_BYTES,
+  parseRecordBytes,
+  verifyRecordBytes,
+} from './skill-swap.record-schema.js'
+export type { RecordBytesWhy, RecordParseWhy } from './skill-swap.record-schema.js'
 
 /** Why a record is unreadable. Each one blocks the whole skills root. */
 export type UnreadableRecordWhy =
@@ -118,93 +75,9 @@ export type RecordScan =
   /** ST could not be listed, or an entry could not be inspected: nothing can be concluded. */
   | { ok: false; path: string; errno: string }
 
-/** Far above any record step 5 writes (its manifest entries are small). */
-export const MAX_RECORD_BYTES = 1024 * 1024
-
 const errnoOf = (err: unknown): string => {
   const code = (err as NodeJS.ErrnoException | null)?.code
   return typeof code === 'string' && code !== '' ? code : 'UNKNOWN'
-}
-
-const TOP_KEYS = [
-  'schema',
-  'opId',
-  'pid',
-  'host',
-  'uid',
-  'target',
-  'rootIdentity',
-  'opDirIdentity',
-  'oldIdentity',
-  'newIdentity',
-  'preTree',
-  'postTree',
-  'preEntry',
-  'postEntry',
-  'backupDest',
-  'recordSha256',
-] as const
-const TARGET_KEYS = [
-  'comparedPath',
-  'realDir',
-  'skillsDir',
-  'manifestPath',
-  'manifestKey',
-  'client',
-] as const
-const IDENTITY_KEYS = ['dev', 'ino', 'birthtimeNs', 'fmt'] as const
-const MARKER_KEYS = ['cause', 'stage', 'area', 'opId', 'dest'] as const
-const STAGES: ReadonlySet<string> = new Set<FullDeviceStage>([
-  'copy',
-  'partial-keep',
-  'sidecar-rewrite',
-  'final-rename',
-  'final-sync',
-])
-
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
-
-/** `v` has every one of `keys`, and no own key outside `keys` and `optional`. */
-function hasExactKeys(
-  v: Record<string, unknown>,
-  keys: readonly string[],
-  optional: readonly string[] = []
-): boolean {
-  const own = Object.keys(v)
-  return (
-    keys.every((k) => Object.hasOwn(v, k)) &&
-    own.every((k) => keys.includes(k) || optional.includes(k))
-  )
-}
-
-const allStrings = (v: Record<string, unknown>, keys: readonly string[]): boolean =>
-  keys.every((k) => typeof v[k] === 'string')
-
-/** The record's shape is exactly schema 1's (`SwapRecord`, `skill-swap.types.ts`). */
-export function isSwapRecord(v: unknown): v is SwapRecord {
-  if (!isObject(v) || !hasExactKeys(v, TOP_KEYS, ['fullDevice'])) return false
-  if (v.schema !== 1 || !Number.isInteger(v.pid) || !Number.isInteger(v.uid)) return false
-  if (!allStrings(v, ['opId', 'host', 'preTree', 'postTree', 'backupDest', 'recordSha256'])) {
-    return false
-  }
-  const t = v.target
-  if (!isObject(t) || !hasExactKeys(t, TARGET_KEYS) || !allStrings(t, TARGET_KEYS)) return false
-  for (const k of ['rootIdentity', 'opDirIdentity', 'oldIdentity', 'newIdentity'] as const) {
-    const id = v[k]
-    if (!isObject(id) || !hasExactKeys(id, IDENTITY_KEYS) || !allStrings(id, IDENTITY_KEYS)) {
-      return false
-    }
-  }
-  if (v.fullDevice === undefined) return true
-  const m = v.fullDevice
-  return (
-    isObject(m) &&
-    hasExactKeys(m, MARKER_KEYS) &&
-    allStrings(m, MARKER_KEYS) &&
-    (m.cause === 'ENOSPC' || m.cause === 'EDQUOT') &&
-    STAGES.has(m.stage as string)
-  )
 }
 
 /** Up to `limit` bytes from the start of `handle`, stopping early at EOF. */
@@ -224,13 +97,19 @@ type Verdict =
   | { kind: 'pending'; record: PendingRecord }
   | { kind: 'unreadable'; record: UnreadableRecord }
 
-/** One op dir's `record.json`, judged against `root` (see the module comment). */
-async function judge(root: string, opId: string, file: string): Promise<Verdict> {
-  const unreadable = (why: UnreadableRecordWhy, errno?: string): Verdict => ({
-    kind: 'unreadable',
-    record: { opId, path: file, why, ...(errno === undefined ? {} : { errno }) },
-  })
-  let bytes: Buffer
+/** The bytes of a record file, or why there are none (see `readRecordFile`). */
+export type RecordFileRead =
+  | { ok: true; bytes: Buffer }
+  /** No file: a crash before step 5, which never blocks (§3.3). */
+  | { ok: false; kind: 'none' }
+  | { ok: false; kind: 'unreadable'; why: 'open-failed' | 'not-a-file'; errno?: string }
+
+/**
+ * One bounded, no-follow read of a record file: opened `O_NOFOLLOW`, a regular
+ * file, at most `MAX_RECORD_BYTES + 1` bytes however long it was when the read
+ * began. The scan's `judge` and anything else that reads a record share it.
+ */
+export async function readRecordFile(file: string): Promise<RecordFileRead> {
   let handle: fs.promises.FileHandle
   try {
     // `O_NONBLOCK`: opening a FIFO would otherwise wait for a writer forever,
@@ -240,21 +119,32 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
     )
   } catch (err) {
-    // No record: a crash before step 5, which never blocks (§3.3).
-    if (errnoOf(err) === 'ENOENT') return { kind: 'none' }
-    return unreadable('open-failed', errnoOf(err))
+    if (errnoOf(err) === 'ENOENT') return { ok: false, kind: 'none' }
+    return { ok: false, kind: 'unreadable', why: 'open-failed', errno: errnoOf(err) }
   }
   try {
-    if (!(await handle.stat()).isFile()) return unreadable('not-a-file')
+    if (!(await handle.stat()).isFile()) return { ok: false, kind: 'unreadable', why: 'not-a-file' }
     // A bounded read, not `readFile`: that reads to EOF, so a record that grew
     // after a size check would still be read whole, under lock 1.
-    bytes = await readAtMost(handle, MAX_RECORD_BYTES + 1)
+    return { ok: true, bytes: await readAtMost(handle, MAX_RECORD_BYTES + 1) }
   } catch (err) {
-    return unreadable('open-failed', errnoOf(err))
+    return { ok: false, kind: 'unreadable', why: 'open-failed', errno: errnoOf(err) }
   } finally {
     await handle.close().catch(() => undefined)
   }
-  const v = verifyRecordBytes(bytes, root, opId)
+}
+
+/** One op dir's `record.json`, judged against `root` (see the module comment). */
+async function judge(root: string, opId: string, file: string): Promise<Verdict> {
+  const unreadable = (why: UnreadableRecordWhy, errno?: string): Verdict => ({
+    kind: 'unreadable',
+    record: { opId, path: file, why, ...(errno === undefined ? {} : { errno }) },
+  })
+  const read = await readRecordFile(file)
+  if (!read.ok) {
+    return read.kind === 'none' ? { kind: 'none' } : unreadable(read.why, read.errno)
+  }
+  const v = verifyRecordBytes(read.bytes, root, opId)
   if (!v.ok) return unreadable(v.why)
   return {
     kind: 'pending',
@@ -265,36 +155,6 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
       realDir: v.record.target.realDir,
     },
   }
-}
-
-/** Why bytes that were read are not this root's record (every reason after the read). */
-export type RecordBytesWhy = Exclude<UnreadableRecordWhy, 'open-failed' | 'not-a-file'>
-
-/**
- * Every check the scan makes after reading a record's bytes: the size cap,
- * JSON, the schema-1 shape, the hash recomputed from the parsed body, the op
- * dir's name and the root. Step 5 and the full-device rewrite run it on the
- * exact bytes they then write, so a record they publish is one the scan
- * accepts (owner decision 2026-10-25, retro of PR #3162).
- */
-export function verifyRecordBytes(
-  bytes: Buffer,
-  root: string,
-  opId: string
-): { ok: true; record: SwapRecord } | { ok: false; why: RecordBytesWhy } {
-  if (bytes.length > MAX_RECORD_BYTES) return { ok: false, why: 'too-large' }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(bytes.toString('utf8'))
-  } catch {
-    return { ok: false, why: 'not-json' }
-  }
-  if (!isSwapRecord(parsed)) return { ok: false, why: 'malformed' }
-  const { recordSha256, ...body } = parsed
-  if (computeRecordSha256(body) !== recordSha256) return { ok: false, why: 'hash-mismatch' }
-  if (parsed.opId !== opId) return { ok: false, why: 'foreign-op-dir' }
-  if (parsed.target.skillsDir !== root) return { ok: false, why: 'foreign-root' }
-  return { ok: true, record: parsed }
 }
 
 /**

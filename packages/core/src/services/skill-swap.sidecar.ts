@@ -11,7 +11,6 @@
  *
  * @module @skillsmith/core/services/skill-swap.sidecar
  */
-import crypto from 'node:crypto'
 import path from 'node:path'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { TreeHashResult } from './skill-tree.js'
@@ -72,9 +71,7 @@ export interface Sidecar {
 
 export type PartialCause = 'enospc' | 'mismatch' | 'copy-failed'
 
-/** First 16 hex characters of sha256 over R, the skills root's realpath (UD22). */
-export const rootKeyOf = (root: string): string =>
-  crypto.createHash('sha256').update(root).digest('hex').slice(0, 16)
+export { rootKeyOf } from './skill-swap.area.js'
 
 /** The sidecar of a tree kept as `kind`, hashed as `h`, with `id`. */
 export function sidecarOf(

@@ -193,6 +193,7 @@ export function validRecord(
 ): SwapRecord {
   const body: Omit<SwapRecord, 'recordSha256'> = {
     schema: 1,
+    op: 'update',
     opId,
     pid: process.pid,
     host: 'test-host',
@@ -204,6 +205,8 @@ export function validRecord(
       manifestPath: path.join(fx.stateRoot, 'manifest.json'),
       manifestKey: fx.dirName,
       client: 'claude-code',
+      scope: 'user',
+      dirName: fx.dirName,
     },
     rootIdentity: ID,
     opDirIdentity: ID,

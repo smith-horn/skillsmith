@@ -52,14 +52,7 @@ import {
   trace,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import {
-  destFor,
-  rootKeyOf,
-  sidecarOf,
-  taken,
-  warnForeignChange,
-  writeSidecar,
-} from './skill-swap.sidecar.js'
+import { destFor, sidecarOf, taken, warnForeignChange, writeSidecar } from './skill-swap.sidecar.js'
 import type { PublishKind } from './skill-swap.sidecar.js'
 import { moveAcross } from './skill-swap.xdev.js'
 
@@ -69,14 +62,7 @@ const HASH_OPTIONAL: ReadonlySet<PublishKind> = new Set(['failed-build', 'unreco
 const oneComponent = (s: string): boolean =>
   s !== '' && s !== '.' && s !== '..' && !s.includes('/') && !s.includes('\\') && !s.includes('\0')
 
-export function backupAreaPath(
-  stateRootReal: string,
-  client: string,
-  root: string,
-  dirName: string
-): string {
-  return path.join(stateRootReal, 'backups', 'update', client, rootKeyOf(root), dirName)
-}
+export { backupAreaPath } from './skill-swap.area.js'
 
 const unsafe = (p: string, detail: string): SwapFault =>
   new SwapFault('backup-unsafe', `${detail} (${p})`)

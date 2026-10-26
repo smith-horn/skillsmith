@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6a-i: `skillsmith doctor recovery` lists what a crashed update
+  left in each skills root, read-only. It takes `--root <dir>` (repeatable), `--state-root <dir>`
+  and `--json`. For each operation folder it prints the state the update stopped in, the
+  identities and hashes it compared, the backup path, and what each repair would do; it also
+  lists folders with no record, records it cannot read, and leftover clock-check probes. A root
+  with no staging folder is reported as having none and is never given one. `skillsmith doctor
+  locks` now also lists each skills root's write lock and its reclaim lock, and takes
+  `--root <dir>`. Neither command changes a file; `--release` still accepts only the state
+  root's own locks.
+
 - **Changed**: SMI-6531 -- A1 step 7a: the CLI's manifest entry type gains the optional
   `upstreamContentHash` and `fileHashes` fields that the in-place update will record. No behaviour
   change.

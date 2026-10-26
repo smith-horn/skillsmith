@@ -271,6 +271,7 @@ export async function writeRecord(st: SwapState): Promise<void> {
   const { input } = st
   const body: Omit<SwapRecord, 'recordSha256'> = {
     schema: 1,
+    op: 'update',
     opId: st.opId,
     pid: process.pid,
     host: os.hostname(),
@@ -282,6 +283,8 @@ export async function writeRecord(st: SwapState): Promise<void> {
       manifestPath: input.manifestPath,
       manifestKey: input.manifestKey,
       client: input.client,
+      scope: input.scope,
+      dirName: input.dirName,
     },
     rootIdentity: recordIdentity(st.binding.rootIdentity),
     opDirIdentity: recordIdentity(st.op.identity),

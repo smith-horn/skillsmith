@@ -16,11 +16,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const calls = vi.hoisted(() => ({
   release: [] as Array<{ path: string; opts: unknown }>,
   beforeRelease: null as (() => void) | null,
+  /** Root discovery's seams: every test reads temporary roots, never the real home. */
+  discovery: {} as Record<string, unknown>,
 }))
 vi.mock('@skillsmith/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@skillsmith/core')>()
   return {
     ...actual,
+    discoverRoots: (o: Parameters<typeof actual.discoverRoots>[0]) =>
+      actual.discoverRoots({ ...o, ...calls.discovery }),
     releaseLock: (path: string, opts: Parameters<typeof actual.releaseLock>[1]) => {
       calls.release.push({ path, opts })
       calls.beforeRelease?.()
@@ -30,6 +34,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
 })
 
 import { runDoctorLocks } from './doctor.js'
+import { hermeticDiscovery } from './doctor.test-helpers.js'
 
 let root = ''
 let lockPath = ''
@@ -43,6 +48,7 @@ beforeEach(() => {
   err = []
   calls.release = []
   calls.beforeRelease = null
+  calls.discovery = hermeticDiscovery(root)
   vi.spyOn(console, 'log').mockImplementation((...a) => void out.push(a.join(' ')))
   vi.spyOn(console, 'error').mockImplementation((...a) => void err.push(a.join(' ')))
   process.exitCode = undefined

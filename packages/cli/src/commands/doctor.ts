@@ -15,8 +15,14 @@
  * `realpath`, so the paths listed are the real files. `--release` accepts only
  * one of those, matched by the real path of its folder; with the unsafe flag
  * it releases only the claim it inspected, and refuses a lock it could not read
- * or compare. The skills-root write lock and
- * skills-root discovery join with A1 steps 2 and 6.
+ * or compare.
+ *
+ * The listing also covers every skills root doctor discovers (the nine client
+ * roots, the workspace roots from the current directory, every root the
+ * manifest names, and each `--root`; SMI-6531 step 6a-i): each root's
+ * `.skillsmith-writes.lock` and its `.reclaim`, with the same fields. Releasing
+ * one of those is a later step; `--release` still accepts only the state
+ * root's.
  * Exit status: 0 when listed or released; 1 when a release is refused, when the
  * arguments are invalid (an unlisted path, the unsafe flag without --release, a
  * state root that is not a directory), or on an unexpected filesystem error.
@@ -29,17 +35,25 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
+  discoverRoots,
   inspectLock,
   releaseLock,
+  rootLockEntries,
   stateRootLockPaths,
   unverifiedOwnerReason,
+  type DiscoverOptions,
   type LockInspection,
 } from '@skillsmith/core'
+import { collectRoot, doctorRecoveryAction } from './doctor.recovery.js'
 
 export interface DoctorLocksOptions {
   stateRoot?: string
   release?: string
   unsafeUnverifiedOwner?: boolean
+  /** `--root <dir>`, repeatable: an extra skills root whose write lock is listed. */
+  root?: string[]
+  /** @internal Test seam: overrides for root discovery (the nine paths, the home directory, `cwd`). */
+  discovery?: Partial<DiscoverOptions>
 }
 
 /** `path` with symlinks resolved, or `path` itself when nothing is there. */
@@ -97,6 +111,28 @@ export function describeLock(path: string, insp: LockInspection | null): string[
   return lines
 }
 
+/** The skills-root write locks: each discovered root's lock and reclaim lock that exists. */
+async function printRootLocks(options: DoctorLocksOptions): Promise<void> {
+  const found = await discoverRoots({
+    ...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
+    ...(options.root === undefined || options.root.length === 0 ? {} : { roots: options.root }),
+    ...options.discovery,
+  })
+  const entries = rootLockEntries(found.roots.map((r) => r.root))
+  const holding = new Set(entries.filter((e) => e.inspection !== null).map((e) => e.root))
+  for (const root of found.roots.map((r) => r.root)) {
+    if (!holding.has(root)) continue
+    console.log(chalk.bold(`Locks in skills root ${root}`))
+    for (const e of entries.filter((x) => x.root === root)) {
+      for (const line of describeLock(e.path, e.inspection)) console.log(line)
+    }
+  }
+  console.log(
+    `Scanned ${found.roots.length} skills root${found.roots.length === 1 ? '' : 's'}; ` +
+      `${holding.size} hold${holding.size === 1 ? 's' : ''} a write lock file.`
+  )
+}
+
 export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void> {
   const stateRoot = resolveStateRoot(options.stateRoot)
   const paths = stateRootLockPaths(stateRoot)
@@ -122,10 +158,11 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
       console.log(
         `${stateRoot} does not exist, so it holds no locks. Check --state-root if you expected one.`
       )
-      return
+    } else {
+      console.log(chalk.bold(`Locks under ${stateRoot}`))
+      for (const p of paths) for (const line of describeLock(p, inspectLock(p))) console.log(line)
     }
-    console.log(chalk.bold(`Locks under ${stateRoot}`))
-    for (const p of paths) for (const line of describeLock(p, inspectLock(p))) console.log(line)
+    await printRootLocks(options)
     return
   }
 
@@ -193,15 +230,28 @@ export const doctorLocksAction = withTelemetry(runDoctorLocks, {
   extractFramework: () => 'cli',
 })
 
-/** Create the `doctor` command (`doctor locks`). */
+/** Create the `doctor` command (`doctor locks`, `doctor recovery`). */
 export function createDoctorCommand(): Command {
   const doctor = new Command('doctor').description(
-    "Inspect and repair Skillsmith's own state (locks)"
+    "Inspect and repair Skillsmith's own state (locks, unfinished updates)"
   )
+  doctor
+    .command('recovery')
+    .description('List what a crashed update left in each skills root (read-only)')
+    .option('--root <dir>', 'Also scan this skills root (repeatable)', collectRoot, [] as string[])
+    .option('--state-root <dir>', 'State root to read instead of the discovered ones')
+    .option('--json', 'Print the listing as JSON')
+    .action(doctorRecoveryAction)
   doctor
     .command('locks')
     .description("List Skillsmith's lock files, or release a stuck one")
     .option('--state-root <dir>', 'State root to inspect (default: ~/.skillsmith)')
+    .option(
+      '--root <dir>',
+      "Also list this skills root's write lock (repeatable)",
+      collectRoot,
+      [] as string[]
+    )
     .option('--release <path>', 'Release this lock, if its owner is known to be gone')
     .option(
       '--unsafe-unverified-owner',

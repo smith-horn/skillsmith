@@ -119,6 +119,7 @@ describe('swapInPlace: the committed path', () => {
     expect(result.status).toBe('committed')
     expect(Object.keys(rec)).toEqual([
       'schema',
+      'op',
       'opId',
       'pid',
       'host',
@@ -137,6 +138,7 @@ describe('swapInPlace: the committed path', () => {
     ])
     expect(rec).toMatchObject({
       schema: 1,
+      op: 'update',
       opId: OP_ID,
       pid: process.pid,
       preTree: p.input.preTree,
@@ -150,6 +152,8 @@ describe('swapInPlace: the committed path', () => {
         skillsDir: fs.realpathSync(fx.skillsDir),
         manifestKey: fx.dirName,
         client: 'claude-code',
+        scope: 'user',
+        dirName: fx.dirName,
       },
     })
     expect((rec.oldIdentity as Record<string, unknown>).ino).toBe(p.oldIdentity.ino.toString())

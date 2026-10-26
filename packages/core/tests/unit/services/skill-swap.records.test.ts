@@ -48,6 +48,7 @@ function bodyOf(root: string, opId: string, dirName = 'skill', over: Partial<Bod
   const realDir = path.join(root, dirName)
   return {
     schema: 1,
+    op: 'update',
     opId,
     pid: 1234,
     host: 'host-a',
@@ -59,6 +60,8 @@ function bodyOf(root: string, opId: string, dirName = 'skill', over: Partial<Bod
       manifestPath: path.join(root, 'manifest.json'),
       manifestKey: dirName,
       client: 'claude-code',
+      scope: 'user',
+      dirName,
     },
     rootIdentity: { ...identity },
     opDirIdentity: { ...identity },

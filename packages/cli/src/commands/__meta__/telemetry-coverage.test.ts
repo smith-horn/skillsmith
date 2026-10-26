@@ -44,6 +44,8 @@ const CLI_DISPATCHER_MAP: Record<string, string[]> = {
   'search.action': ['searchAction'],
   // SMI-7143
   doctor: ['doctorLocksAction'],
+  // SMI-6531 step 6a-i
+  'doctor.recovery': ['doctorRecoveryAction'],
   // SMI-5128 batch A
   logout: ['logoutAction'],
   merge: ['mergeAction'],
