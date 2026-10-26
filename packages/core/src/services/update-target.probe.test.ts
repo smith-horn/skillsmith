@@ -112,6 +112,7 @@ function putRecord(opId: string, realDir: string, comparedPath: string = realDir
   const identity = { dev: '1', ino: '2', birthtimeNs: '3', fmt: 'f' }
   const body: Omit<SwapRecord, 'recordSha256'> = {
     schema: 1,
+    op: 'update',
     opId,
     pid: 1234,
     host: 'host-a',
@@ -123,6 +124,8 @@ function putRecord(opId: string, realDir: string, comparedPath: string = realDir
       manifestPath: path.join(root, 'manifest.json'),
       manifestKey: path.basename(realDir),
       client: 'claude-code',
+      scope: 'user',
+      dirName: path.basename(comparedPath),
     },
     rootIdentity: identity,
     opDirIdentity: identity,

@@ -357,6 +357,7 @@ describe('recordSha256 over the marker (governance round 4)', () => {
   it('is the same for a marker built in another key order, and differs when a value differs', () => {
     const base = {
       schema: 1,
+      op: 'update',
       opId: OP,
       pid: 1,
       host: 'h',
@@ -368,6 +369,8 @@ describe('recordSha256 over the marker (governance round 4)', () => {
         manifestPath: '/m',
         manifestKey: 'k',
         client: 'c',
+        scope: 'user',
+        dirName: 'k',
       },
       rootIdentity: { dev: '1', ino: '2', birthtimeNs: '3', fmt: '4' },
       opDirIdentity: { dev: '1', ino: '2', birthtimeNs: '3', fmt: '4' },

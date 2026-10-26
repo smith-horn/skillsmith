@@ -29,8 +29,8 @@ import { endedOnUnreadableClaim, withFileLock } from '../config/file-lock.js'
 import { LockOrderError } from '../config/lock-tracker.js'
 import { StuckLockError } from '../config/owned-lock.js'
 import { syncDirectory } from '../install/dir-sync.js'
-import { mkdirWithParentBits } from '../install/mkdir-parent-bits.js'
-import { modeUnsafeMessage } from '../install/mkdir-parent-bits.policy.js'
+import { mkdirWithParentBits, PARENT_BITS_MASK } from '../install/mkdir-parent-bits.js'
+import { judgeMode, modeUnsafeMessage } from '../install/mkdir-parent-bits.policy.js'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { stagingGitignoreHint } from './skill-write-lock.gitignore.js'
@@ -133,6 +133,75 @@ export async function bindSkillsRoot(skillsDir: string): Promise<SkillsRootBindi
     rootSync,
     stagingBits: made.bitsApplied,
     warnings: made.warnings,
+  }
+}
+
+/**
+ * Phase 1 for a reader that must change nothing (doctor's listing): the same
+ * binding as `bindSkillsRoot`, but ST is never made. Returns `null` when ST is
+ * absent (a root with no staging holds no operation). An existing ST must be a
+ * real directory (never a link) whose `realpath` is `<R>/.skillsmith-staging`
+ * and whose mode passes the policy `mkdirWithParentBits` applies to one that
+ * already exists (`mode-unsafe`). Throws `SkillWriteStop` (`root-unsafe`,
+ * `staging-unsafe`). It makes no directory, writes no file and syncs nothing.
+ */
+export async function bindSkillsRootReadOnly(skillsDir: string): Promise<SkillsRootBinding | null> {
+  const dir = path.resolve(skillsDir)
+  let root: string
+  let rootStat: fs.BigIntStats
+  try {
+    root = await fs.promises.realpath(dir)
+    rootStat = await fs.promises.lstat(root, { bigint: true })
+  } catch (err) {
+    throw stop('root-unsafe', dir, 'the skills root does not exist or cannot be resolved', err)
+  }
+  if (!rootStat.isDirectory()) throw stop('root-unsafe', root, 'the skills root is not a directory')
+  const stagingDir = path.join(root, STAGING_DIR_NAME)
+  let stagingStat: fs.BigIntStats
+  try {
+    stagingStat = await fs.promises.lstat(stagingDir, { bigint: true })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw stop('staging-unsafe', stagingDir, `${STAGING_DIR_NAME} cannot be inspected`, err)
+  }
+  if (stagingStat.isSymbolicLink() || !stagingStat.isDirectory()) {
+    throw stop('staging-unsafe', stagingDir, `${STAGING_DIR_NAME} is not a usable directory`)
+  }
+  let stagingReal: string
+  try {
+    stagingReal = await fs.promises.realpath(stagingDir)
+  } catch (err) {
+    throw stop('staging-unsafe', stagingDir, `${STAGING_DIR_NAME} cannot be resolved`, err)
+  }
+  if (stagingReal !== stagingDir) {
+    throw stop('staging-unsafe', stagingDir, `${STAGING_DIR_NAME} resolves to ${stagingReal}`)
+  }
+  const wanted = Number(rootStat.mode) & PARENT_BITS_MASK
+  const actual = Number(stagingStat.mode & 0o7777n)
+  const verdict = judgeMode(wanted, actual)
+  if (verdict.kind === 'unsafe') {
+    throw stop(
+      'staging-unsafe',
+      stagingDir,
+      modeUnsafeMessage({
+        subject: STAGING_DIR_NAME,
+        parent: 'the skills root',
+        wanted,
+        actual,
+        reasons: verdict.reasons,
+      })
+    )
+  }
+  return {
+    skillsDir: dir,
+    root,
+    rootIdentity: identityOf(rootStat),
+    stagingDir,
+    stagingIdentity: identityOf(stagingStat),
+    stagingCreated: false,
+    rootSync: null,
+    stagingBits: { state: 'not-applied', reason: 'existing-directory', errno: null, actual },
+    warnings: [],
   }
 }
 

@@ -80,14 +80,14 @@ const KEPT_KIND_TABLE = {
   'unrecorded-new': true,
   'partial-copy': true,
 } satisfies Record<Exclude<PublishKind, 'backup'>, true>
-const KEPT_KINDS: ReadonlySet<string> = new Set(Object.keys(KEPT_KIND_TABLE))
+export const KEPT_KINDS: ReadonlySet<string> = new Set(Object.keys(KEPT_KIND_TABLE))
 
 /** True when `b` is a tree name a move makes: `<opId>`, or `<opId>.<kind>` with an optional `.<k>`. */
-function isBase(b: string, opId: string): boolean {
+function isBase(b: string, opId: string, kinds: ReadonlySet<string>): boolean {
   if (b === opId) return true
   if (!b.startsWith(`${opId}.`)) return false
   const parts = b.slice(opId.length + 1).split('.')
-  if (parts.length > 2 || !KEPT_KINDS.has(parts[0]!)) return false
+  if (parts.length > 2 || !kinds.has(parts[0]!)) return false
   return parts.length === 1 || /^[1-9][0-9]*$/.test(parts[1]!)
 }
 
@@ -106,11 +106,21 @@ function isBase(b: string, opId: string): boolean {
  * this op's metadata.
  */
 export function isFullDeviceLeftover(name: string, opId: string): boolean {
+  return isAreaEntryOf(name, opId, KEPT_KINDS)
+}
+
+/**
+ * `isFullDeviceLeftover`'s grammar over a given set of kinds. Doctor lists an
+ * operation's entries with the kinds it recognizes, the producers' and its own
+ * (`skill-recovery.reader.ts`), so a keep of a kind no producer makes yet is
+ * still seen when it appears.
+ */
+export function isAreaEntryOf(name: string, opId: string, kinds: ReadonlySet<string>): boolean {
   if (opId.length === 0) return false
-  if (name.startsWith('.tmp-')) return isBase(name.slice('.tmp-'.length), opId)
-  if (name.endsWith('.json.tmp')) return isBase(name.slice(0, -'.json.tmp'.length), opId)
-  if (name.endsWith('.json')) return isBase(name.slice(0, -'.json'.length), opId)
-  return isBase(name, opId)
+  if (name.startsWith('.tmp-')) return isBase(name.slice('.tmp-'.length), opId, kinds)
+  if (name.endsWith('.json.tmp')) return isBase(name.slice(0, -'.json.tmp'.length), opId, kinds)
+  if (name.endsWith('.json')) return isBase(name.slice(0, -'.json'.length), opId, kinds)
+  return isBase(name, opId, kinds)
 }
 
 /** `ENOSPC` or `EDQUOT` from a failure, its cause, or its cause's cause; else null. */

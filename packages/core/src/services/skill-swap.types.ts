@@ -371,6 +371,8 @@ export interface RecordIdentity {
 /** `record.json` (plan §3.3 step 5), in its fixed key order. */
 export interface SwapRecord {
   schema: 1
+  /** The kind of operation; only the in-place update writes a record (A1 step 6a-i). */
+  op: 'update'
   opId: string
   pid: number
   host: string
@@ -382,6 +384,10 @@ export interface SwapRecord {
     manifestPath: string
     manifestKey: string
     client: string
+    /** The install scope (`global` or `workspace`), as the sidecars of this op's keeps carry it. */
+    scope: string
+    /** `basename(comparedPath)`: the skill folder's name, the last component of the backup area. */
+    dirName: string
   }
   rootIdentity: RecordIdentity
   opDirIdentity: RecordIdentity

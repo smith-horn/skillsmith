@@ -4,6 +4,27 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6a-i: the read-only half of `skillsmith doctor recovery`, in
+  core. It finds every skills root (the nine client roots, the workspace roots from the current
+  directory, every root the manifest names, and any extra `--root`), counting a root reached by
+  two paths once and creating nothing, not even a missing root or its staging folder. For each
+  operation folder an unfinished update left, it says what state the update stopped in (not
+  swapped, between the two renames, swapped, committed, mid-undo, an abandon begun, a record that
+  cannot be trusted, a root or folder that has moved, a copy where the original folder was, or
+  none of these), how far each kept copy got, and what each repair would do to the old folder, the
+  new folder and the manifest. No repair removes a folder: each ends installed, kept or untouched.
+  It also lists leftover clock-check probes and each root's write lock. A repair of an update
+  another user started is refused, whatever its state. Everything the listing
+  reads goes through one reader, and a hash of what it read is kept with the plan, so a later
+  step can tell that anything changed. Nothing runs a repair yet.
+
+- **Changed**: SMI-6531 -- A1 step 6a-i: the update record (`record.json`, schema 1) now also
+  names the kind of operation, the install scope and the skill folder's name, and a record
+  without them is unreadable. No record written by a released version exists. `swapInPlace` now
+  refuses an input whose state root is not the folder holding its manifest, or whose folder name
+  is not the name of its path, before it writes anything. The refusal a write gives for a record
+  naming another skills root now points to `skillsmith doctor recovery`, not to `--park`.
+
 - **Added**: SMI-6531 -- A1 step 7a: `createManifestPort`, the manifest commit the in-place update
   and doctor share. Under the manifest lock it classifies an entry as planned, updated or changed,
   and writes only that one entry, refusing with `ManifestEntryChanged` if it changed since the plan.

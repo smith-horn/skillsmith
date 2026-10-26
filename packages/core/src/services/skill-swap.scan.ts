@@ -21,6 +21,8 @@ import { SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { recordsNaming, scanStagingRecords } from './skill-swap.records.js'
 
+const DOCTOR_RECOVERY = 'skillsmith doctor recovery'
+
 const parkCommand = (opIds: readonly string[]): string =>
   opIds.length === 1
     ? `\`skillsmith doctor recovery --park ${opIds[0]}\``
@@ -62,10 +64,26 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
   if (scan.unreadable.length > 0) {
     const opIds = scan.unreadable.map((r) => r.opId)
     st.blockedBy = opIds
+    // A record that verifies but names another root or op dir (a copied or
+    // moved root) is `recovery-moved` to doctor, which lists it: parking it is
+    // not what its remedy is (§3.9). Every other kind is parked.
+    const isMoved = (why: string): boolean => why === 'foreign-root' || why === 'foreign-op-dir'
+    const parkIds = scan.unreadable.filter((r) => !isMoved(r.why)).map((r) => r.opId)
+    const movedIds = scan.unreadable.filter((r) => isMoved(r.why)).map((r) => r.opId)
+    const advice = [
+      ...(parkIds.length > 0 ? [`Run ${parkCommand(parkIds)}.`] : []),
+      ...(movedIds.length > 0
+        ? [
+            parkIds.length > 0
+              ? `Run \`${DOCTOR_RECOVERY}\` for ${movedIds.join(', ')}.`
+              : `Run \`${DOCTOR_RECOVERY}\`.`,
+          ]
+        : []),
+    ].join(' ')
     return new SwapFault(
       'recovery-record-unreadable',
       `A record of an unfinished update in ${root} can't be read, so no skill in that folder can ` +
-        `be changed until it is inspected. Run ${parkCommand(opIds)}.`
+        `be changed until it is inspected. ${advice}`
     )
   }
   const naming = recordsNaming(scan.pending, st.input)

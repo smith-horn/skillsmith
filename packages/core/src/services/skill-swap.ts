@@ -38,9 +38,7 @@
  *
  * @module @skillsmith/core/services/skill-swap
  */
-import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
-import path from 'node:path'
 import { appendJournalRecord } from '../journal/writer.js'
 import { getJournalSessionId } from '../journal/path.js'
 import { JOURNAL_SCHEMA_VERSION } from '../journal/types.js'
@@ -65,13 +63,14 @@ import {
   trace,
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { backupAreaPath, assertBackupNameFree, publishTree } from './skill-swap.publish.js'
+import { assertBackupNameFree, publishTree } from './skill-swap.publish.js'
 import { warnForeignChange } from './skill-swap.sidecar.js'
 import { finishOp } from './skill-swap.finish.js'
 import { abortUnderLock, describe, noneResult } from './skill-swap.abort.js'
 import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
 import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
 import { refuseIfRecorded } from './skill-swap.scan.js'
+import { assertSwapInput, newState } from './skill-swap.state.js'
 import { undoSwap } from './skill-swap.undo.js'
 import { warnIfLiveFolderChanged } from './skill-swap.writeset.js'
 import type {
@@ -347,50 +346,6 @@ async function underLock(st: SwapState): Promise<SwapResult> {
   }
 }
 
-function newState(
-  input: SwapInput,
-  options: SwapOptions,
-  binding: SkillsRootBinding,
-  warnings: SwapWarning[]
-): SwapState {
-  const opId = options.opId ?? randomBytes(16).toString('hex')
-  let stateRootReal: string
-  try {
-    stateRootReal = fs.realpathSync.native(input.stateRoot)
-  } catch {
-    stateRootReal = path.resolve(input.stateRoot)
-  }
-  const areaPath = backupAreaPath(stateRootReal, input.client, binding.root, input.dirName)
-  return {
-    input,
-    options,
-    opId,
-    binding,
-    warnings,
-    opDir: path.join(binding.stagingDir, opId),
-    ctx: null,
-    opCreated: false,
-    op: null,
-    area: null,
-    buildIdentity: null,
-    published: null,
-    moveSources: new Map(),
-    owner: null,
-    newIdentity: null,
-    postTree: null,
-    postRecord: null,
-    stateRootReal,
-    areaPath,
-    backupDest: path.join(areaPath, opId),
-    recordRemoved: false,
-    record: null,
-    owned: new Map(),
-    blockedBy: null,
-    phase: 'staging',
-    step: 'audit',
-  }
-}
-
 /**
  * Updates one skill folder in place (plan §3.3): on one device the backup is
  * a rename, across devices a verified copy whose source is parked with OP.
@@ -406,6 +361,7 @@ export async function swapInPlace(
   if (options.opId !== undefined && !/^[A-Za-z0-9_-]+$/.test(options.opId)) {
     throw new TypeError(`invalid opId seam: ${JSON.stringify(options.opId)}`)
   }
+  assertSwapInput(input)
   const warnings: SwapWarning[] = []
   // UD22: an absent root (and missing parents) is made before R is bound.
   const sink = options.trace

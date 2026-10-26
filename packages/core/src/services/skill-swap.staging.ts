@@ -132,7 +132,7 @@ export async function publishBytes(
 
 /** `owner.json`: `{ pid, host, uid, createdAt }`, written first (plan §3.3 "Staging"). */
 export async function writeOwner(st: SwapState): Promise<void> {
-  const owner = { pid: process.pid, host: os.hostname(), uid: process.getuid?.() ?? -1 }
+  const owner = { pid: process.pid, host: os.hostname(), uid: process.geteuid?.() ?? -1 }
   await publishJson(st, opPaths(st).owner, { ...owner, createdAt: new Date().toISOString() })
   st.owner = owner
 }
@@ -271,10 +271,11 @@ export async function writeRecord(st: SwapState): Promise<void> {
   const { input } = st
   const body: Omit<SwapRecord, 'recordSha256'> = {
     schema: 1,
+    op: 'update',
     opId: st.opId,
     pid: process.pid,
     host: os.hostname(),
-    uid: process.getuid?.() ?? -1,
+    uid: process.geteuid?.() ?? -1,
     target: {
       comparedPath: input.comparedPath,
       realDir: input.realDir,
@@ -282,6 +283,8 @@ export async function writeRecord(st: SwapState): Promise<void> {
       manifestPath: input.manifestPath,
       manifestKey: input.manifestKey,
       client: input.client,
+      scope: input.scope,
+      dirName: input.dirName,
     },
     rootIdentity: recordIdentity(st.binding.rootIdentity),
     opDirIdentity: recordIdentity(st.op.identity),

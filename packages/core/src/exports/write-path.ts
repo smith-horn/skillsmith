@@ -8,6 +8,7 @@
 // SMI-6531 A1 step 2: lock 1, the per-skills-root write lock (plan §3.2, §3.3).
 export {
   bindSkillsRoot,
+  bindSkillsRootReadOnly,
   checkSkillsRootBinding,
   SKILL_WRITE_LOCK_BASENAME,
   skillsRootLockPaths,
@@ -101,3 +102,39 @@ export {
 // The types of `SkillsRootBinding`'s `stagingBits` and `rootSync` fields.
 export type { BitsApplied } from '../install/mkdir-parent-bits.js'
 export type { DirSyncOutcome } from '../install/dir-sync.js'
+// SMI-6531 A1 step 6a-i: `doctor recovery`'s read-only core: discovery, the classifier, the plan table.
+export {
+  discoverRoots,
+  type DiscoveredRoot,
+  type Discovery,
+  type DiscoverOptions,
+  type SkippedRoot,
+} from '../services/skill-recovery.discover.js'
+export type { ClassifyContext } from '../services/skill-recovery.classify.js'
+export type { ReaderOptions } from '../services/skill-recovery.reader.js'
+export {
+  listRecovery,
+  listRoot,
+  reportOp,
+  type ListOptions,
+  type OpReport,
+  type RootReport,
+} from '../services/skill-recovery.listing.js'
+export {
+  classLabel,
+  planAction,
+  plansFor,
+  RECOVERY_ACTIONS,
+} from '../services/skill-recovery.plan.js'
+export { rootLockEntries, type RootLockEntry } from '../services/skill-recovery.locks.js'
+export type { ProbeFact } from '../services/skill-recovery.opdir.js'
+export type {
+  ActionPlan,
+  Disposition,
+  OpFacts,
+  PlanStep,
+  RecoveryAction,
+  RecoveryClass,
+  RecoveryRefuseReason,
+  RowState,
+} from '../services/skill-recovery.types.js'

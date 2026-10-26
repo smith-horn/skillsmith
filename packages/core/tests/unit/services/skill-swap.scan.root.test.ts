@@ -124,7 +124,15 @@ describe('T-R2 (swap half): an unreadable record blocks every write in its root'
           blockedBy: [bad],
           staged: 'parked',
         })
-        expect(refused.detail).toContain(`skillsmith doctor recovery --park ${bad}`)
+        if (label === 'copied into another op dir') {
+          // A record that verifies but names another op dir is `recovery-moved` to doctor (Q6):
+          // the advice is the listing, and parking it is not offered.
+          expect(refused.detail).toContain('Run `skillsmith doctor recovery`.')
+          expect(refused.detail).not.toContain('--park')
+        } else {
+          expect(refused.detail).toContain(`skillsmith doctor recovery --park ${bad}`)
+          expect(refused.detail).not.toContain('Run `skillsmith doctor recovery`.')
+        }
         expect(refused.detail).toContain(fx.skillsDir)
         expect(r.trace).toContainEqual({ op: 'record-scan', path: fx.staging })
         expect(r.p.manifest.writes).toBe(0)
