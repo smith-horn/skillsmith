@@ -148,35 +148,66 @@ describe('an unreadable record', () => {
     })
   }
 
-  const inconsistent: Array<[string, (b: Omit<SwapRecord, 'recordSha256'>) => void]> = [
-    ['an op that is not update', (b) => void ((b as { op: string }).op = 'install')],
-    ['a client that is not one path component', (b) => void (b.target.client = '../x')],
-    ['a scope that is not one path component', (b) => void (b.target.scope = 'a/b')],
-    ['a dirName that is not the name of comparedPath', (b) => void (b.target.dirName = 'other')],
-    ['a manifestPath that is not absolute', (b) => void (b.target.manifestPath = 'manifest.json')],
+  const inconsistent: Array<[string, (b: Omit<SwapRecord, 'recordSha256'>) => void, string]> = [
+    [
+      'an op that is not update',
+      (b) => void ((b as { op: string }).op = 'install'),
+      'its op is "install"',
+    ],
+    [
+      'a client that is not one path component',
+      (b) => void (b.target.client = '../x'),
+      'client "../x" is not a single path component',
+    ],
+    [
+      'a scope that is not one path component',
+      (b) => void (b.target.scope = 'a/b'),
+      'scope "a/b" is not a single path component',
+    ],
+    [
+      'a dirName that is not the name of comparedPath',
+      (b) => void (b.target.dirName = 'other'),
+      'dirName is not the name of comparedPath',
+    ],
+    [
+      'a manifestPath that is not absolute',
+      (b) => void (b.target.manifestPath = 'manifest.json'),
+      'manifestPath is not an absolute path',
+    ],
     [
       'a manifestPath not named manifest.json',
       (b) =>
         void (b.target.manifestPath = path.join(path.dirname(b.target.manifestPath), 'm.json')),
+      'manifestPath is not an absolute path to a manifest.json',
     ],
     [
       'a realDir not directly inside the root',
       (b) => void (b.target.realDir = path.join(b.target.realDir, 'sub')),
+      'realDir is not directly inside the skills root',
     ],
     [
       'a backupDest that is not the area plus the opId',
       (b) => void (b.backupDest = `${b.backupDest}x`),
+      'backupDest is not the backup area',
     ],
-    ['entries the manifest port rejects', (b) => void (b.postEntry = b.preEntry)],
+    [
+      'entries the manifest port rejects',
+      (b) => void (b.postEntry = b.preEntry),
+      'the manifest port rejects its preEntry and postEntry',
+    ],
   ]
-  for (const [label, mutate] of inconsistent) {
+  for (const [label, mutate, detail] of inconsistent) {
     it(`${label}: unreadable (inconsistent-record), the remedy --park`, async () => {
       const fx = file()
       const st = await s2(fx)
       expect((await opReport(st)).cls.kind).toBe('state')
       rewriteRecord(st, mutate)
       const op = await opReport(st)
-      expect(op.cls).toMatchObject({ kind: 'unreadable', why: 'inconsistent-record' })
+      expect(op.cls).toMatchObject({
+        kind: 'unreadable',
+        why: 'inconsistent-record',
+        detail: expect.stringContaining(detail),
+      })
     })
   }
 })
@@ -407,6 +438,37 @@ describe('AB, and a record.json.tmp beside the record', () => {
     const op = await opReport(st)
     expect(op.cls.kind).toBe('state')
     if (op.cls.kind === 'state') expect(op.cls.facts.fullDevice).toMatchObject({ cause: 'ENOSPC' })
+  })
+
+  it('the marker is carried from the one read of record.json.tmp, not read again', async () => {
+    const fx = file()
+    const st = await s2(fx)
+    const recPath = path.join(st.opDir, 'record.json')
+    const { recordSha256: _h, ...body } = JSON.parse(fs.readFileSync(recPath, 'utf8')) as SwapRecord
+    const marked = {
+      ...body,
+      fullDevice: { cause: 'EDQUOT', stage: 'copy', area: '/a', opId: st.opId, dest: '/a/x' },
+    } as Omit<SwapRecord, 'recordSha256'>
+    const tmpPath = path.join(st.opDir, 'record.json.tmp')
+    fs.writeFileSync(
+      tmpPath,
+      JSON.stringify({ ...marked, recordSha256: computeRecordSha256(marked) })
+    )
+    const reader = new ClassifierReader()
+    const cls = await classifyOp(
+      reader,
+      {
+        root: fs.realpathSync(fx.skillsDir),
+        stagingDir: fx.staging,
+        euid: process.geteuid?.() ?? 0,
+        journalFile: journalOf(fx),
+      },
+      st.opId
+    )
+    expect(cls.kind).toBe('state')
+    if (cls.kind === 'state') expect(cls.facts.fullDevice).toMatchObject({ cause: 'EDQUOT' })
+    const reads = reader.transcript().filter((e) => e.method === 'readFile' && e.key === tmpPath)
+    expect(reads).toHaveLength(1)
   })
 
   it('a record.json.tmp with a marker but another body leaves both and is unreadable', async () => {

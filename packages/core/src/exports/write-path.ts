@@ -110,6 +110,8 @@ export {
   type DiscoverOptions,
   type SkippedRoot,
 } from '../services/skill-recovery.discover.js'
+export type { ClassifyContext } from '../services/skill-recovery.classify.js'
+export type { ReaderOptions } from '../services/skill-recovery.reader.js'
 export {
   listRecovery,
   listRoot,

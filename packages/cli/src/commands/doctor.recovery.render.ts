@@ -105,7 +105,7 @@ function noteOf(cls: RecoveryClass): string[] {
 function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
-  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\``]
+  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\` (not available yet)`]
   for (const s of p.steps) {
     const d = s.disposition
     lines.push(`      ${s.tree}: ${d.kind === 'kept' ? `kept as ${d.as}` : d.kind}; ${s.note}`)

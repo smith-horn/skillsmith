@@ -131,6 +131,12 @@ async function printRootLocks(options: DoctorLocksOptions): Promise<void> {
     `Scanned ${found.roots.length} skills root${found.roots.length === 1 ? '' : 's'}; ` +
       `${holding.size} hold${holding.size === 1 ? 's' : ''} a write lock file.`
   )
+  for (const s of found.skipped.filter((x) => x.source === '--root')) {
+    console.error(
+      chalk.red(`--root ${s.path} could not be used (${s.errno}); nothing was created there.`)
+    )
+    process.exitCode = 1
+  }
 }
 
 export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void> {

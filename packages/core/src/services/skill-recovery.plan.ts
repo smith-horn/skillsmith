@@ -121,14 +121,26 @@ function commonNotes(f: OpFacts): string[] {
   return notes
 }
 
-function otherUser(action: RecoveryAction, f: OpFacts): ActionPlan | null {
-  return f.otherUid === null
-    ? null
-    : refuse(
-        action,
-        'recovery-other-user',
-        `the record was written by uid ${f.otherUid}, not this user: run doctor as that user`
-      )
+/**
+ * The uid of whoever started the update, when it is not the effective uid and
+ * the class says whose it is (a record's, or `owner.json`'s). Doctor acts only
+ * on updates the current user started (Q8), so this is checked before any
+ * class-specific handling.
+ */
+function foreignUid(cls: RecoveryClass): number | null {
+  switch (cls.kind) {
+    case 'state':
+    case 'identity-changed':
+    case 'ab':
+      return cls.facts.otherUid
+    case 'anything-else':
+      return cls.facts === null ? null : cls.facts.otherUid
+    case 'moved':
+    case 'no-record':
+      return cls.otherUid
+    default:
+      return null
+  }
 }
 
 /** `--apply` and `--undo` for a §3.3 row; null when the row says nothing about this action. */
@@ -137,8 +149,6 @@ function rowPlan(
   action: 'apply' | 'undo'
 ): ActionPlan {
   const f = cls.facts
-  const blocked = otherUser(action, f)
-  if (blocked !== null) return blocked
   const { state, postKeep } = cls
   const fixed = commonNotes(f)
   const nKind = keptKindOf('N', f, 'unused-new', 'edited-new')
@@ -364,6 +374,14 @@ function otherActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | 
 
 /** What `action` would do to `cls`: the steps and where each tree ends, or why it is not offered. */
 export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPlan {
+  const uid = foreignUid(cls)
+  if (uid !== null) {
+    return refuse(
+      action,
+      'recovery-other-user',
+      `the update was started by uid ${uid}, not this user: run doctor as that user`
+    )
+  }
   if (action === 'apply' || action === 'undo') {
     if (cls.kind === 'state') return rowPlan(cls, action)
     if (cls.kind === 'moved') {

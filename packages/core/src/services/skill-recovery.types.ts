@@ -256,6 +256,8 @@ export type RecoveryClass =
       entries: string[]
       hasParkIntent: boolean
       recordTmp: string | null
+      /** `owner.json`'s uid when it is not the effective uid: another user started this. */
+      otherUid: number | null
     }
   | {
       kind: 'unreadable'
@@ -266,7 +268,15 @@ export type RecoveryClass =
       detail?: string
     }
   | { kind: 'other-user'; opId: string; opDir: string; ownerUid: number | null; errno: string }
-  | { kind: 'moved'; opId: string; opDir: string; why: MovedWhy; detail: string }
+  | {
+      kind: 'moved'
+      opId: string
+      opDir: string
+      why: MovedWhy
+      detail: string
+      /** The record's uid when it is not the effective uid: another user started this. */
+      otherUid: number | null
+    }
   | {
       kind: 'identity-changed'
       opId: string

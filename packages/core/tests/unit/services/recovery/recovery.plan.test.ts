@@ -105,7 +105,7 @@ describe('the invariant: installed, kept or untouched, and nothing else', () => 
     classes.push(['empty', { kind: 'empty-op-dir', opId: 'x', opDir: '/x' }])
     classes.push([
       'moved',
-      { kind: 'moved', opId: 'x', opDir: '/x', why: 'foreign-root', detail: 'd' },
+      { kind: 'moved', opId: 'x', opDir: '/x', why: 'foreign-root', detail: 'd', otherUid: null },
     ])
     classes.push([
       'other-user',
@@ -329,7 +329,7 @@ describe('what every other class says', () => {
     for (const action of ['apply', 'undo'] as RecoveryAction[]) {
       const plan = planAction(theirs, action)
       expect(plan).toMatchObject({ offered: false, reason: 'recovery-other-user' })
-      expect(plan.offered ? '' : plan.detail).toContain(String(process.getuid?.()))
+      expect(plan.offered ? '' : plan.detail).toContain(String(process.geteuid?.()))
     }
   })
 
@@ -340,6 +340,7 @@ describe('what every other class says', () => {
       opDir: '/x',
       why: 'foreign-root',
       detail: '',
+      otherUid: null,
     }
     expect(planAction(moved, 'apply')).toMatchObject({ offered: false, reason: 'recovery-moved' })
     expect(planAction(moved, 'abandon').offered).toBe(true)
@@ -376,6 +377,7 @@ describe('what every other class says', () => {
       entries: ['new'],
       hasParkIntent: false,
       recordTmp: null,
+      otherUid: null,
     }
     expect(planAction(noRecord, 'clean-staging').offered).toBe(true)
     expect(planAction(noRecord, 'apply').offered).toBe(false)

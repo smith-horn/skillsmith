@@ -107,7 +107,7 @@ function analyzeRecordTmp(
   opDir: string,
   names: readonly string[],
   rec: SwapRecord
-): OpFacts['recordTmp'] {
+): { tmp: NonNullable<OpFacts['recordTmp']>; marker: OpFacts['fullDevice'] } | null {
   if (!names.includes(`${RECORD_FILE}.tmp`)) return null
   const tmp = path.join(opDir, `${RECORD_FILE}.tmp`)
   const a = r.stat(tmp)
@@ -120,13 +120,17 @@ function analyzeRecordTmp(
     const { recordSha256: _h, fullDevice: _m, ...rest } = x
     return canonicalJson(rest)
   }
+  // One read serves the facts and the marker: the marker is carried, not read again.
   return {
-    path: tmp,
-    sameInode,
-    hasMarker: parsed?.ok === true && parsed.record.fullDevice !== undefined,
-    bodyMatches: parsed?.ok === true && strip(parsed.record) === strip(rec),
-    emptySingleLink:
-      a.ok && a.type === 'file' && a.nlink === 1 && read.fact.ok && read.fact.size === 0,
+    marker: parsed?.ok === true ? (parsed.record.fullDevice ?? null) : null,
+    tmp: {
+      path: tmp,
+      sameInode,
+      hasMarker: parsed?.ok === true && parsed.record.fullDevice !== undefined,
+      bodyMatches: parsed?.ok === true && strip(parsed.record) === strip(rec),
+      emptySingleLink:
+        a.ok && a.type === 'file' && a.nlink === 1 && read.fact.ok && read.fact.size === 0,
+    },
   }
 }
 
@@ -232,7 +236,8 @@ async function classifyRecorded(
   const t: TreeObs = observeTree(r, tPath)
   const view = observeGroups(r, { opDir, opId, area, rec })
   const resolved = resolveRoles(r, opDir, rec, view.groups, accept)
-  const recordTmp = analyzeRecordTmp(r, opDir, names, rec)
+  const tmpRead = analyzeRecordTmp(r, opDir, names, rec)
+  const recordTmp = tmpRead === null ? null : tmpRead.tmp
   const journal = r.journalHasUpdate(opId, ctx.journalFile)
   const nSource = resolved.roles.N.kind === 'source' ? resolved.roles.N.obs : null
   const tS = tStateOf(t, rec, accept)
@@ -265,8 +270,7 @@ async function classifyRecorded(
   if (recordTmp !== null && !recordTmp.sameInode) {
     if (recordTmp.hasMarker && recordTmp.bodyMatches) {
       // A marker rewrite that crashed after the temp's sync: the op is marked with the temp's marker.
-      const parsed = parseMarker(r, recordTmp.path)
-      if (parsed !== null) facts.fullDevice = parsed
+      if (tmpRead !== null && tmpRead.marker !== null) facts.fullDevice = tmpRead.marker
     } else if (recordTmp.hasMarker) {
       return {
         kind: 'unreadable',
@@ -301,13 +305,6 @@ async function classifyRecorded(
   const row = matchRow(tS, resolved.roles, entry.state)
   if (row === null) return elseWith('no row of the state table matches the trees and the manifest')
   return { kind: 'state', ...base, ...row, facts }
-}
-
-/** The marker a `record.json.tmp` carries, from its own bytes (already recorded by the reader). */
-function parseMarker(r: ClassifierReader, tmp: string): OpFacts['fullDevice'] {
-  const read = r.readFile(tmp, MAX_RECORD_BYTES + 1)
-  const parsed = read.bytes === null ? null : parseRecordBytes(read.bytes)
-  return parsed?.ok === true ? (parsed.record.fullDevice ?? null) : null
 }
 
 /** What one operation directory of a staging dir is. */
@@ -355,7 +352,7 @@ export async function classifyOp(
   const read = r.readFile(path.join(opDir, RECORD_FILE), MAX_RECORD_BYTES + 1)
   if (!read.fact.ok) {
     const errno = read.fact.errno
-    if (errno === 'ENOENT') return noRecord(r, base, listed.names)
+    if (errno === 'ENOENT') return noRecord(r, ctx, base, listed.names)
     if (DENIED.has(errno)) return { kind: 'other-user', ...base, ownerUid: dir.uid, errno }
     if (errno === 'NOT_A_FILE') return { kind: 'unreadable', ...base, why: 'not-a-file' }
     return { kind: 'unreadable', ...base, why: 'open-failed', errno }
@@ -373,6 +370,7 @@ export async function classifyOp(
     ...base,
     why,
     detail,
+    otherUid: rec.uid !== ctx.euid ? rec.uid : null,
   })
   if (rec.opId !== opId) return moved('foreign-op-dir', `the record names operation ${rec.opId}`)
   if (rec.target.skillsDir !== ctx.root) {
@@ -395,6 +393,7 @@ export async function classifyOp(
 /** An op dir with no `record.json`: its owner (if any), its entries, whether a park intent is there. */
 function noRecord(
   r: ClassifierReader,
+  ctx: ClassifyContext,
   base: { opId: string; opDir: string },
   names: readonly string[]
 ): RecoveryClass {
@@ -420,6 +419,7 @@ function noRecord(
     owner,
     entries: [...names],
     hasParkIntent: names.includes(PARK_INTENT_FILE),
+    otherUid: owner !== null && owner.uid !== null && owner.uid !== ctx.euid ? owner.uid : null,
     recordTmp: names.includes(`${RECORD_FILE}.tmp`)
       ? path.join(base.opDir, `${RECORD_FILE}.tmp`)
       : null,

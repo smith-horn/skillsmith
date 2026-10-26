@@ -18,7 +18,15 @@ import { reportOp } from '../../../../src/services/skill-recovery.listing.js'
 import { ClassifierReader } from '../../../../src/services/skill-recovery.reader.js'
 import { makeFixture, tmp, useTmpCleanup } from '../skill-swap.helpers.js'
 import { opIdN, otherSkill } from '../skill-swap.scan.helpers.js'
-import { destOf, journalOf, keepTree, s2, setEntry, writeJournalLine } from './recovery.helpers.js'
+import {
+  destOf,
+  journalOf,
+  keepTree,
+  opReport,
+  s2,
+  setEntry,
+  writeJournalLine,
+} from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 
 useTmpCleanup()
@@ -70,11 +78,21 @@ export function walkImports(dir: string, entries: string[], stop: readonly strin
   return { fsImports, visited: [...visited].sort() }
 }
 
+/** Bare calls of the fs functions, and any `fs.` member access: what the classifier must not make. */
+export function directCalls(source: string): string[] {
+  const found: string[] = []
+  const bare =
+    /(?<![.\w])(readFileSync|readFile|readdirSync|readdir|lstatSync|lstat|statSync|stat|openSync|open|opendirSync|opendir|realpathSync|realpath|createReadStream|existsSync|access|accessSync)\s*\(|\bfs\s*\./g
+  for (const m of source.matchAll(bare)) found.push(m[0].replace(/\s+/g, ''))
+  return found
+}
+
 const CLASSIFIER = [
   'skill-recovery.opdir.ts',
   'skill-recovery.trees.ts',
   'skill-recovery.pstate.ts',
   'skill-recovery.classify.ts',
+  'skill-recovery.plan.ts',
 ]
 const READER = 'skill-recovery.reader.ts'
 
@@ -130,10 +148,31 @@ describe('the classifier has no filesystem access except through the reader', ()
   it('the classifier modules read no file other than through the reader (no direct fs-like calls)', () => {
     for (const m of CLASSIFIER) {
       const text = fs.readFileSync(path.join(SRC, m), 'utf8')
-      expect(text, m).not.toMatch(
-        /\b(readFileSync|readdirSync|lstatSync|statSync|openSync|existsSync)\b/
-      )
+      expect(directCalls(text), m).toEqual([])
     }
+  })
+
+  it("control: the direct-call check sees a bare call and an fs member call, and not the reader's own methods", () => {
+    const planted = [
+      'const a = readFileSync(p)',
+      'const b = readdir(p)',
+      'const c = opendir(p)',
+      'const d = realpath(p)',
+      'const e = createReadStream(p)',
+      'const f = fs.promises.readFile(p)',
+      'const g = lstatSync(p)',
+    ].join('\n')
+    expect(directCalls(planted)).toEqual([
+      'readFileSync(',
+      'readdir(',
+      'opendir(',
+      'realpath(',
+      'createReadStream(',
+      'fs.',
+      'lstatSync(',
+    ])
+    const viaReader = 'const x = r.readFile(p, 10); r.list(d, rule); r.stat(p); r.realpath(p)'
+    expect(directCalls(viaReader)).toEqual([])
   })
 })
 
@@ -154,7 +193,7 @@ describe('the digest covers everything the classifier read', () => {
     expect(await digestOfOp(st)).toBe(await digestOfOp(st))
   })
 
-  it('a file parsed by the classifier is in the digest by its bytes: same inode, same size, other bytes', async () => {
+  it('a corrupted record changes the digest (and the class); restoring its bytes restores it; an unparsed file does not matter', async () => {
     const st = await s2(makeFixture({ 'SKILL.md': '# v1\n' }))
     const before = await digestOfOp(st)
     const owner = path.join(st.opDir, 'owner.json')
@@ -175,6 +214,49 @@ describe('the digest covers everything the classifier read', () => {
     expect(fs.existsSync(owner)).toBe(true)
     fs.writeFileSync(owner, 'changed, and never parsed for a recorded op\n')
     expect(await digestOfOp(st)).toBe(before)
+  })
+
+  it('byte hash alone: same inode, same length, other bytes, the plan held constant, the digest differs', () => {
+    const dir = tmp('recovery-bytehash-')
+    const f = path.join(dir, 'parsed.json')
+    fs.writeFileSync(f, '{"a":"xxxx"}')
+    const ino = fs.statSync(f).ino
+    const digest = (): string => {
+      const r = new ClassifierReader()
+      r.readFile(f, 1024)
+      return digestOf(r.transcript(), 'one constant plan')
+    }
+    const before = digest()
+    fs.writeFileSync(f, '{"a":"xxxy"}')
+    expect(fs.statSync(f).ino).toBe(ino)
+    expect(fs.statSync(f).size).toBe(12)
+    expect(digest()).not.toBe(before)
+    fs.writeFileSync(f, '{"a":"xxxx"}')
+    expect(digest()).toBe(before)
+  })
+
+  it('a record with two members swapped is the same class and plans, and only the digest differs', async () => {
+    const st = await s2(makeFixture({ 'SKILL.md': '# v1\n' }))
+    const before = await opReport(st)
+    const rec = path.join(st.opDir, 'record.json')
+    const bytes = fs.readFileSync(rec)
+    const ino = fs.statSync(rec).ino
+    const obj = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>
+    const keys = Object.keys(obj)
+    const at = keys.indexOf('pid')
+    const swap = keys.indexOf('host')
+    ;[keys[at], keys[swap]] = [keys[swap]!, keys[at]!]
+    const reordered = Buffer.from(
+      JSON.stringify(Object.fromEntries(keys.map((k) => [k, obj[k]])), null, 2) + '\n'
+    )
+    expect(reordered.length).toBe(bytes.length)
+    expect(reordered.equals(bytes)).toBe(false)
+    fs.writeFileSync(rec, reordered)
+    expect(fs.statSync(rec).ino).toBe(ino)
+    const after = await opReport(st)
+    expect(after.cls).toEqual(before.cls)
+    expect(after.plans).toEqual(before.plans)
+    expect(after.digest).not.toBe(before.digest)
   })
 
   it('a tree hash is in the digest: an edit inside T changes it', async () => {
@@ -244,6 +326,59 @@ describe('the digest covers everything the classifier read', () => {
     const r = new ClassifierReader()
     r.readFile(extra, 1024)
     expect(digestOf(r.transcript(), 'plan')).not.toBe(digestOf(r.transcript(), 'another plan'))
+  })
+})
+
+describe("the journal fact is read like the reader's other files", () => {
+  const journal = (dir: string, text: string): string => {
+    const f = path.join(dir, 'journal.jsonl')
+    fs.writeFileSync(f, text)
+    return f
+  }
+  const line = (o: unknown): string => `${JSON.stringify(o)}\n`
+
+  it('a line that is valid JSON but not an object does not throw, and is not torn', () => {
+    const dir = tmp('recovery-journal-')
+    const update = { tool: 'update', suggestion_id: 'op' }
+    const f = journal(dir, `null\n42\n"s"\n[1]\n${JSON.stringify(update)}\nnull`)
+    expect(new ClassifierReader().journalHasUpdate('op', f)).toMatchObject({
+      ok: true,
+      present: true,
+      torn: false,
+    })
+    // Control: the same lines without the update line hold none, and a half line is torn.
+    const g = journal(dir, `null\n42\n${line({ tool: 'apply', suggestion_id: 'op' })}{"tool":"upd`)
+    expect(new ClassifierReader().journalHasUpdate('op', g)).toMatchObject({
+      ok: true,
+      present: false,
+      torn: true,
+    })
+  })
+
+  it('a journal over the cap is unknown, never absent; a link or a directory is not read', () => {
+    const dir = tmp('recovery-journal-')
+    const f = journal(dir, line({ tool: 'update', suggestion_id: 'op' }))
+    expect(new ClassifierReader({ journalCap: 8 }).journalHasUpdate('op', f)).toMatchObject({
+      ok: false,
+      errno: 'TOO_LARGE',
+    })
+    expect(new ClassifierReader().journalHasUpdate('op', f)).toMatchObject({
+      ok: true,
+      present: true,
+    })
+    fs.symlinkSync(f, path.join(dir, 'link.jsonl'))
+    expect(
+      new ClassifierReader().journalHasUpdate('op', path.join(dir, 'link.jsonl'))
+    ).toMatchObject({ ok: false, errno: 'ELOOP' })
+    fs.mkdirSync(path.join(dir, 'a-dir'))
+    expect(new ClassifierReader().journalHasUpdate('op', path.join(dir, 'a-dir'))).toMatchObject({
+      ok: false,
+      errno: 'NOT_A_FILE',
+    })
+    expect(new ClassifierReader().journalHasUpdate('op', path.join(dir, 'missing'))).toMatchObject({
+      ok: true,
+      present: false,
+    })
   })
 })
 

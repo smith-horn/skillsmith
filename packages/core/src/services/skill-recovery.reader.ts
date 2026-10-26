@@ -58,7 +58,12 @@ import type { RecordIdentity } from './skill-swap.types.js'
 /** `.skillsmith-probe-<opId>-<n>`: the clock gate's probe (UD25), made and removed under lock 1. */
 export const PROBE_NAME = /^\.skillsmith-probe-[A-Za-z0-9_-]+-[0-9]+$/
 
+/** The most of the audit journal the reader will read: past it the fact is unknown, not "absent". */
+export const JOURNAL_READ_CAP = 64 * 1024 * 1024
+
 export interface ReaderOptions {
+  /** @internal Test seam: replaces `JOURNAL_READ_CAP`. */
+  journalCap?: number
   /**
    * @internal Test seam: replaces what `stat` reports for a path (for instance
    * a stat that matches dev, ino and birthtime but not the file type).
@@ -271,7 +276,7 @@ export class ClassifierReader {
   journalHasUpdate(opId: string, file: string): JournalFact {
     let fact: JournalFact
     try {
-      const text = fs.readFileSync(file, 'utf8')
+      const text = this.readJournalText(file)
       const lines = text.split('\n')
       const last = lines.length - 1
       let present = false
@@ -279,8 +284,12 @@ export class ClassifierReader {
       lines.forEach((line, i) => {
         if (line === '') return
         try {
-          const rec = JSON.parse(line) as { tool?: unknown; suggestion_id?: unknown }
-          if (rec.tool === 'update' && rec.suggestion_id === opId) present = true
+          const rec: unknown = JSON.parse(line)
+          // A line that is valid JSON but not an object (`null`, a number) is not a record.
+          if (typeof rec === 'object' && rec !== null) {
+            const r = rec as { tool?: unknown; suggestion_id?: unknown }
+            if (r.tool === 'update' && r.suggestion_id === opId) present = true
+          }
         } catch {
           if (i === last) torn = true
         }
@@ -293,6 +302,35 @@ export class ClassifierReader {
           : { ok: false, errno: errnoOf(err), file }
     }
     return this.record('journalHasUpdate', `${file}\0${opId}`, fact)
+  }
+
+  /**
+   * The journal's text, read as the reader's other files are: `O_NOFOLLOW` and
+   * `O_NONBLOCK`, a regular file only, and at most the cap. Throws an error with
+   * a `code` (`NOT_A_FILE`, `TOO_LARGE`, or the errno) for `journalHasUpdate` to report.
+   */
+  private readJournalText(file: string): string {
+    const cap = this.options.journalCap ?? JOURNAL_READ_CAP
+    const fd = fs.openSync(
+      file,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0)
+    )
+    try {
+      const st = fs.fstatSync(fd, { bigint: true })
+      if (typeOf(st.mode) !== 'file')
+        throw Object.assign(new Error('not a file'), { code: 'NOT_A_FILE' })
+      if (st.size > BigInt(cap)) throw Object.assign(new Error('too large'), { code: 'TOO_LARGE' })
+      const buf = Buffer.alloc(Number(st.size))
+      let got = 0
+      while (got < buf.length) {
+        const n = fs.readSync(fd, buf, got, buf.length - got, got)
+        if (n === 0) break
+        got += n
+      }
+      return buf.subarray(0, got).toString('utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
   }
 
   /** `createManifestPort` accepts these entries (it refuses a pair that is not a plain object or not different). */

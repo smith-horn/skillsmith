@@ -36,7 +36,7 @@ export function parkIntentOf(st: SwapState, kind: ParkIntentKind = 'abort-new'):
   const owner = st.owner ?? {
     pid: process.pid,
     host: os.hostname(),
-    uid: process.getuid?.() ?? -1,
+    uid: process.geteuid?.() ?? -1,
   }
   return {
     schema: 1,

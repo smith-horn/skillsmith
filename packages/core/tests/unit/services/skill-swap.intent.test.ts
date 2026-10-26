@@ -119,7 +119,7 @@ describe('parkIntentOf', () => {
     expect(intent.owner).toEqual({
       pid: process.pid,
       host: os.hostname(),
-      uid: process.getuid?.() ?? -1,
+      uid: process.geteuid?.() ?? -1,
     })
     expect(isParkIntentFor(intent, OP, intent.opIdentity)).toBe(true)
   })

@@ -13,7 +13,8 @@ All notable changes to `@skillsmith/core` are documented here.
   cannot be trusted, a root or folder that has moved, a copy where the original folder was, or
   none of these), how far each kept copy got, and what each repair would do to the old folder, the
   new folder and the manifest. No repair removes a folder: each ends installed, kept or untouched.
-  It also lists leftover clock-check probes and each root's write lock. Everything the listing
+  It also lists leftover clock-check probes and each root's write lock. A repair of an update
+  another user started is refused, whatever its state. Everything the listing
   reads goes through one reader, and a hash of what it read is kept with the plan, so a later
   step can tell that anything changed. Nothing runs a repair yet.
 

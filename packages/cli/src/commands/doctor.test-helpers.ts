@@ -104,7 +104,7 @@ export function plantCrashedUpdate(base: string, opId = 'a'.repeat(32)): Planted
     opId,
     pid: process.pid,
     host: 'test-host',
-    uid: process.getuid?.() ?? -1,
+    uid: process.geteuid?.() ?? -1,
     target: {
       comparedPath: skillDir,
       realDir: skillDir,

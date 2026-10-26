@@ -70,8 +70,8 @@ describe('skillsmith doctor recovery', () => {
     expect(text).toContain(`${u.opId}  S2 swapped`)
     expect(text).toContain(`backup: ${u.backupDest}`)
     expect(text).toContain('manifest entry: pre')
-    expect(text).toContain(`skillsmith doctor recovery --apply ${u.opId}`)
-    expect(text).toContain(`skillsmith doctor recovery --undo ${u.opId}`)
+    expect(text).toContain(`skillsmith doctor recovery --apply ${u.opId}\` (not available yet)`)
+    expect(text).toContain(`skillsmith doctor recovery --undo ${u.opId}\` (not available yet)`)
     expect(text).toContain('O: kept as backup')
     expect(text).toContain('O: installed')
     // The identities and hashes it compared are printed.
@@ -209,6 +209,34 @@ describe('skillsmith doctor locks over the discovered roots', () => {
     expect(text).toContain(`${missing} does not exist`)
     expect(text).toContain('Locks in skills root')
     expect(process.exitCode).toBeUndefined()
+  })
+
+  it('a --root that does not exist is reported and exits 1, the listing still prints, nothing is created', async () => {
+    const state = path.join(base, 'state')
+    fs.mkdirSync(state)
+    const missing = path.join(base, 'no-such-root')
+
+    await runDoctorLocks({ stateRoot: state, root: [missing], discovery: calls.discovery })
+
+    expect(process.exitCode).toBe(1)
+    expect(err.join('\n')).toContain(
+      `--root ${missing} could not be used (ENOENT); nothing was created there.`
+    )
+    expect(fs.existsSync(missing)).toBe(false)
+    expect(out.join('\n')).toContain('Scanned 9 skills roots')
+  })
+
+  it('control: a --root that exists is scanned and the exit status stays 0', async () => {
+    const state = path.join(base, 'state')
+    fs.mkdirSync(state)
+    const extra = path.join(base, 'extra-root')
+    fs.mkdirSync(extra)
+
+    await runDoctorLocks({ stateRoot: state, root: [extra], discovery: calls.discovery })
+
+    expect(process.exitCode).toBeUndefined()
+    expect(err).toEqual([])
+    expect(out.join('\n')).toContain('Scanned 10 skills roots')
   })
 
   it('--release still accepts only a state-root lock, and a skills-root lock path is refused', async () => {
