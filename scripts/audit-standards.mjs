@@ -94,6 +94,10 @@ import {
   evaluateRufloMcpDenies,
   rufloMcpDeniesReportLines,
 } from './audit-ruflo-host-paths-helpers.mjs'
+import {
+  evaluateRufloClassification,
+  rufloClassificationReportLines,
+} from './audit-ruflo-classification-helpers.mjs'
 import { findMissingHuskyStubs } from './audit-husky-stub-coverage-helpers.mjs'
 import {
   listManifestHygieneTestFiles,
@@ -6462,6 +6466,32 @@ console.log(`\n${BOLD}Check 77: explicit API grants on new relations (SMI-7151)$
 // checkout config. Logic in scripts/lib/audit-pr-merge-base.mjs.
 console.log(`\n${BOLD}Check 78: PR merge-base resolves (SMI-7164)${RESET}`)
 await CHECK_REGISTRY.get('pr-merge-base')()
+
+// Check 79: the ruflo deny array, a pinned core list and the classification doc stay in
+// lockstep (SMI-6744 A5.3, D1/D2). Array half runs everywhere; the doc half (paste block
+// plus table rules A-F) runs only where docs/internal exists, and says so when it does not.
+// No opt-out: a deliberate change edits the pin, the array and the doc together.
+// Logic in scripts/audit-ruflo-classification-helpers.mjs; twin test
+// scripts/tests/audit-ruflo-classification.test.ts.
+console.log(
+  `\n${BOLD}Check 79: ruflo deny list and classification doc lockstep (SMI-6744 A5.3)${RESET}`
+)
+{
+  const reporters = {
+    pass,
+    warn,
+    fail,
+    info: (msg) => console.log(`  ${msg}`),
+  }
+  for (const line of rufloClassificationReportLines(
+    evaluateRufloClassification({
+      settingsPath: join('.claude', 'settings.json'),
+      docPath: join('docs', 'internal', 'architecture', 'ruflo-tool-classification.md'),
+    })
+  )) {
+    reporters[line.severity](line.message, line.fix)
+  }
+}
 
 // Summary
 console.log('\n' + '━'.repeat(50))
