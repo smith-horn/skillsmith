@@ -336,6 +336,32 @@ jobs:
           RESUME_FROM_INPUT: ${{ github.event.inputs.resume_from || 'latest' }}
           RUN_ID: ${{ github.run_id }}
         run: |
+          # SMI-6887: a lock skip is a successful no-op, not a PAT-isolation failure. When
+          # indexer_lock is held, the indexer prints exactly
+          # {"event":"lock_held_by_other_run","request_id":"<id>"} (handleLockSkip in
+          # scripts/indexer/run-lock-retry.ts), writes a skipped_lock audit row carrying this
+          # run's dispatch intent, and exits 0 before any GitHub call. End green so the
+          # autochain link runs and retries from that row (SMI-6246, capped at 5). Only that
+          # exact two-key shape passes; anything else, including a lock-skip line that also
+          # carries data or meta, falls through to the token_source check below.
+          if LOCK_SKIP_REQ=$(node -e '
+            let r
+            try { r = JSON.parse(process.env.RESPONSE ?? "") } catch { process.exit(1) }
+            const ok = r !== null && typeof r === "object" && !Array.isArray(r) &&
+              Object.keys(r).sort().join(",") === "event,request_id" &&
+              r.event === "lock_held_by_other_run" &&
+              typeof r.request_id === "string" && /^[A-Za-z0-9-]{1,64}$/.test(r.request_id)
+            if (!ok) process.exit(1)
+            process.stdout.write(r.request_id)'); then
+            echo "::notice::Lock held by another run (request_id=$LOCK_SKIP_REQ). This run did no work and made no GitHub calls; the autochain link retries it from its skipped_lock audit row."
+            {
+              echo "### Backfill Run Summary"
+              echo ""
+              echo "**Lock contention**: indexer_lock was held by another run (request_id=$LOCK_SKIP_REQ), so this dispatch did no work and made no GitHub calls. It recorded its dispatch intent in a skipped_lock audit row, and the autochain link retries it from there (SMI-6246, at most 5 consecutive times)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           # Extract backfill sub-object fields from the indexer response.
           # The indexer emits a .data.backfill sub-object in BACKFILL_MODE.
           FACETS_TOTAL=$(printf '%s' "$RESPONSE" | jq -r '.data.backfill.facets_total // 0')
