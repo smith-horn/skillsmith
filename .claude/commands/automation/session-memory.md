@@ -55,14 +55,18 @@ npx -y ruflo@3.14.2 hooks session-restore --session-id "sess-123"
 
 ### 4. Privacy & Control
 ```javascript
-// List memory contents (no action-dispatch form in v3 — discrete tool per action)
-mcp__ruflo__memory_list({
+// Read the session entry restored above (no action-dispatch form in v3 — discrete tool
+// per action). memory_list is denied (SMI-7184: its sql.js fallback rewrites memory.db
+// unguarded). memory_retrieve and memory_delete also rewrite it in the fallback, but under
+// the store lock, and both refuse while WAL sidecars exist.
+mcp__ruflo__memory_retrieve({
+  "key": "session-state",
   "namespace": "sessions"
 })
 
 // Delete specific memory
 mcp__ruflo__memory_delete({
-  "key": "session-123",
+  "key": "session-state",
   "namespace": "sessions"
 })
 

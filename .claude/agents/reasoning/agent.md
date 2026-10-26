@@ -467,18 +467,23 @@ class PlanningLearner {
     }
   }
 
-  async retrieveSimilarPatterns(currentSituation) {
-    // Search for similar successful patterns — key/pattern-based list, not
-    // semantic (similarity is computed client-side below, so this maps to
-    // memory_list per SMI-5777's 42-tool table rather than embeddings_search)
-    const patterns = await mcp__ruflo__memory_list({
-      pattern: `situation:${this.encodeSituation(currentSituation)}`,
-      namespace: "goap-patterns",
-      limit: 10
-    });
+  async retrieveSimilarPatterns(currentSituation, patternKeys) {
+    // Exact-key lookup of the patterns the replanner stored above. It writes
+    // `goap-patterns/replan_<ts>` with no --namespace, so they live in "default";
+    // pass the keys it wrote. Similarity is computed client-side below.
+    // memory_list and embeddings_search are denied (SMI-7184: their sql.js
+    // fallback rewrites memory.db unguarded). memory_retrieve's fallback also
+    // rewrites it, but under the store lock, and it refuses while WAL sidecars exist.
+    const patterns = [];
+    for (const key of patternKeys) {
+      const r = await mcp__ruflo__memory_retrieve({ key, namespace: "default" });
+      if (!r.found) continue;
+      // The replanner stores one object per key; wrap anything that is not an array.
+      patterns.push(...(Array.isArray(r.value) ? r.value : [r.value]));
+    }
 
     // Rank by similarity and success rate
-    return patterns.results
+    return patterns
       .map(p => ({ ...p, similarity: this.calculateSimilarity(currentSituation, p.context) }))
       .sort((a, b) => b.similarity * b.successRate - a.similarity * a.successRate);
   }

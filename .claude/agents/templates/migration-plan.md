@@ -467,12 +467,9 @@ capabilities:
 tools:
   allowed:
     - mcp__ruflo__memory_retrieve
-    - mcp__ruflo__memory_list
-    - mcp__ruflo__embeddings_search
     - mcp__ruflo__memory_delete
     - mcp__ruflo__memory_compress
     - mcp__ruflo__memory_export
-    - mcp__ruflo__memory_import
   restricted:
     - Write
     - Edit
