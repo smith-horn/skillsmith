@@ -1,10 +1,17 @@
 #!/bin/bash
-# CI Code Review Script (SMI-1826)
+# CI audit report script (SMI-1826; runs in the Quality Checks job since SMI-7174)
 #
-# Runs the standards audit and outputs results to JSON format for CI artifacts.
-# Exit codes:
+# Runs the standards audit, prints its output, and writes a JSON report.
+# Exit code: the audit's own exit code, unchanged.
 #   0 - Passed (no errors, warnings allowed)
-#   1 - Failed (errors found)
+#   non-zero - Failed
+#
+# Counts come from the audit itself, via the file it writes to AUDIT_SUMMARY_FILE, never
+# from log text: the log carries PR-description text (Checks 54 and 58 echo opt-out
+# reasons), which must not be able to forge or corrupt the counts (SMI-7174).
+#
+# Do not add --only here: Check 38 invariant B looks for audit flags only in the
+# workflow body, so a flag added in this script would be invisible to it.
 #
 # Usage: ./scripts/ci-code-review.sh [output-file]
 #   Default output: audit-report.json
@@ -12,14 +19,10 @@
 set -o pipefail
 
 # Environment Detection (SMI-1831)
-# This script runs in two contexts:
-#   1. GitHub Actions CI - Already inside a Docker container, use npm directly
-#   2. Local development - Must use docker exec per governance standards
-#
-# Detection priority:
-#   1. CI/GITHUB_ACTIONS env vars (explicit CI context)
-#   2. docker command not found (inside container without env vars)
-#   3. Default to docker exec (local development)
+#   1. CI/GITHUB_ACTIONS env vars: run npm directly (Quality Checks runs on the host runner)
+#   2. docker command not found (inside a container): run npm directly
+#   3. Otherwise local development: docker exec. The counts file is then written inside
+#      the container's tmp, not here, so the local report has summary_found: false.
 if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
   NPM_CMD="npm"
   echo "ℹ️  CI environment detected, using npm directly"
@@ -31,70 +34,24 @@ else
   echo "ℹ️  Local development detected, using docker exec"
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_FILE="${1:-audit-report.json}"
 TEMP_OUTPUT=$(mktemp)
+SUMMARY_DIR=$(mktemp -d)
+SUMMARY_FILE="$SUMMARY_DIR/audit-summary.json"
 
 echo "Running standards audit..."
 
-# Run the audit and capture output
-$NPM_CMD run audit:standards 2>&1 | tee "$TEMP_OUTPUT"
+AUDIT_SUMMARY_FILE="$SUMMARY_FILE" $NPM_CMD run audit:standards 2>&1 | tee "$TEMP_OUTPUT"
+# Capture on this line: every later command overwrites PIPESTATUS (SMI-7174).
 AUDIT_EXIT_CODE=${PIPESTATUS[0]}
 
-# Strip ANSI color codes for parsing
-CLEAN_OUTPUT=$(sed 's/\x1b\[[0-9;]*m//g' "$TEMP_OUTPUT")
+# Build the report. A failure here leaves no report; it never changes the exit code.
+AUDIT_EXIT_CODE="$AUDIT_EXIT_CODE" TEMP_OUTPUT="$TEMP_OUTPUT" SUMMARY_FILE="$SUMMARY_FILE" \
+  OUTPUT_FILE="$OUTPUT_FILE" node "$SCRIPT_DIR/lib/audit-report.mjs" build \
+  || echo "⚠ Could not write $OUTPUT_FILE; the audit's exit code is unaffected."
 
-# Parse results from output using portable grep/sed
-PASSED=$(echo "$CLEAN_OUTPUT" | grep -E '^Passed:' | sed 's/[^0-9]//g' || echo "0")
-WARNINGS=$(echo "$CLEAN_OUTPUT" | grep -E '^Warnings:' | sed 's/[^0-9]//g' || echo "0")
-FAILED=$(echo "$CLEAN_OUTPUT" | grep -E '^Failed:' | sed 's/[^0-9]//g' || echo "0")
-SCORE=$(echo "$CLEAN_OUTPUT" | grep -E 'Compliance Score:' | sed 's/[^0-9]//g' || echo "0")
-
-# Default to 0 if empty
-PASSED=${PASSED:-0}
-WARNINGS=${WARNINGS:-0}
-FAILED=${FAILED:-0}
-SCORE=${SCORE:-0}
-
-# Generate timestamp
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-# Determine status
-if [ "$AUDIT_EXIT_CODE" -eq 0 ]; then
-  STATUS="passed"
-else
-  STATUS="failed"
-fi
-
-# Escape output for JSON (replace special characters)
-# Using node for reliable JSON escaping
-ESCAPED_OUTPUT=$(node -e "
-  const fs = require('fs');
-  const content = fs.readFileSync('$TEMP_OUTPUT', 'utf8');
-  console.log(JSON.stringify(content));
-")
-
-# Generate JSON report
-cat > "$OUTPUT_FILE" << EOF
-{
-  "timestamp": "$TIMESTAMP",
-  "summary": {
-    "passed": $PASSED,
-    "warnings": $WARNINGS,
-    "failed": $FAILED,
-    "compliance_score": $SCORE
-  },
-  "status": "$STATUS",
-  "exit_code": $AUDIT_EXIT_CODE,
-  "output": $ESCAPED_OUTPUT
-}
-EOF
-
-# Cleanup
 rm -f "$TEMP_OUTPUT"
+rm -rf "$SUMMARY_DIR"
 
-echo ""
-echo "Report generated: $OUTPUT_FILE"
-echo "Summary: passed=$PASSED, warnings=$WARNINGS, failed=$FAILED, score=$SCORE%"
-
-# Exit with same code as audit
-exit $AUDIT_EXIT_CODE
+exit "$AUDIT_EXIT_CODE"

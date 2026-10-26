@@ -29,6 +29,13 @@ import {
 /** Dispatched runs, each with a green link_finished, spread over ~389 days (the 1-year window keeps ~37,500). At 15,000 the body WITHOUT enable_nestloop = off still finished in 3.4 s; at 40,000 it takes 23.5 s, so this budget pins the setting behaviourally, not just by its string (governance 2026-10-25). */
 const VOLUME = 40000
 const BUDGET = '10s'
+/** Retro finding 3: the open-run and Arm B volumes. */
+const OPEN_A = 5000
+const PAIRS_B = 30000
+const OPEN_B = 500
+const ACKED_A = 1000
+const GREEN_A = 1000
+const ACKED_B = 100
 
 const seedVolume = (n: number): string[] => [
   `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
@@ -71,6 +78,67 @@ export function registerVolumeTests(ctx: Ctx): void {
       expect(r.lines).toEqual([
         cand('A', '424242', 'no_link', '-01:00:00'),
         cand('B', 'ac-99999999:1', 'unresolved', '-00:01:00'),
+      ])
+    })
+
+    // Retro on PR #3172, finding 3: the shapes the old plan made quadratic, seeded together -- many
+    // UNRESOLVED runs, each with a checkpoint (the checkpoint join), and many prepared/resolved pairs
+    // (Arm B's anti-join). Exact counts, inside the same statement budget.
+    it(`${OPEN_A} open Arm A runs with checkpoints and ${PAIRS_B} resolved Arm B pairs (+${OPEN_B} open) come back exactly, inside ${BUDGET}`, async () => {
+      const r = await inTxn(ctx.ctl(), [
+        `SET LOCAL statement_timeout = '${BUDGET}';`,
+        // Arm A: dispatched runs with no green finish, each with a checkpoint 31+ minutes old
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_dispatch_resolved', 'system', 'r', 'ac-a' || g, 'success',
+                jsonb_build_object('dispatch_token', 'ac-' || (700000 + g), 'link_run_attempt', '1',
+                                   'outcome', 'dispatched', 'dispatched_run_id', (600000000 + g)::text),
+                now() - interval '2 hours' - g * interval '1 second'
+         FROM generate_series(1, ${OPEN_A}) g;`,
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_checkpoint', 'system', 'c', NULL, 'success',
+                jsonb_build_object('run_id', (600000000 + g)::text, 'dry_run', false),
+                now() - interval '1 hour' - g * interval '1 second'
+         FROM generate_series(1, ${OPEN_A}) g;`,
+        // Arm B: resolved pairs (closed) and a tail of prepared rows with no resolved row (open)
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_dispatch_prepared', 'system', 'p', NULL, 'success',
+                jsonb_build_object('dispatch_token', 'ac-' || g, 'link_run_attempt', '1'),
+                now() - interval '1 hour' - g * interval '1 second'
+         FROM generate_series(1, ${PAIRS_B + OPEN_B}) g;`,
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_dispatch_resolved', 'system', 'r', NULL, 'success',
+                jsonb_build_object('dispatch_token', 'ac-' || g, 'link_run_attempt', '1', 'outcome', 'not_dispatched'),
+                now() - interval '1 hour' - g * interval '1 second' + interval '1 minute'
+         FROM generate_series(1, ${PAIRS_B}) g;`,
+        // Retro governance S2: the ack and green anti-joins at volume. Runs 1..ACKED_A get an Arm A
+        // ack; the next GREEN_A runs get a green link_finished; ACKED_B of the open prepares get an
+        // Arm B ack. Each set must drop out of the count.
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_silent_stop_ack', 'operator', 'ack', NULL, 'success',
+                jsonb_build_object('arm', 'A', 'key', (600000000 + g)::text), now() - interval '5 minutes'
+         FROM generate_series(1, ${ACKED_A}) g;`,
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_link_finished', 'system', 'l', NULL, 'success',
+                jsonb_build_object('completed_run_id', (600000000 + g)::text, 'status', 'success'),
+                now() - interval '50 minutes'
+         FROM generate_series(${ACKED_A + 1}, ${ACKED_A + GREEN_A}) g;`,
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_autochain_silent_stop_ack', 'operator', 'ack', NULL, 'success',
+                jsonb_build_object('arm', 'B', 'key', 'ac-' || g || ':1'), now() - interval '5 minutes'
+         FROM generate_series(${PAIRS_B + 1}, ${PAIRS_B + ACKED_B}) g;`,
+        // Retro governance S3: a NEWER dry-run checkpoint for every open run. If the dry-run filter
+        // were ignored, the latest checkpoint would be 10 minutes old and no Arm A run would be due.
+        `INSERT INTO audit_logs (event_type, actor, action, resource, result, metadata, created_at)
+         SELECT 'indexer_backfill_checkpoint', 'system', 'c', NULL, 'success',
+                jsonb_build_object('run_id', (600000000 + g)::text, 'dry_run', true),
+                now() - interval '10 minutes'
+         FROM generate_series(1, ${OPEN_A}) g;`,
+        'ANALYZE audit_logs;',
+        "SELECT 'count=' || arm || ':' || sub_kind || ':' || count(*) FROM public.backfill_autochain_silent_stop_candidates() GROUP BY arm, sub_kind ORDER BY arm, sub_kind;",
+      ])
+      expect(r.lines).toEqual([
+        `count=A:no_link:${OPEN_A - ACKED_A - GREEN_A}`,
+        `count=B:unresolved:${OPEN_B - ACKED_B}`,
       ])
     })
 
@@ -135,6 +203,28 @@ export function registerVolumeTests(ctx: Ctx): void {
       ]
       expect((await inTxn(ctx.ctl(), seed('tie-a', 'tie-b'))).lines).toEqual(['link=1111'])
       expect((await inTxn(ctx.ctl(), seed('tie-b', 'tie-a'))).lines).toEqual(['link=2222'])
+    })
+
+    // Cross-family gate on PR #3175: ->> renders a JSON number as the same digits, so only the
+    // jsonb_typeof check keeps a malformed numeric ack from closing a real incident.
+    it('an Arm A ack whose key is a JSON NUMBER equal to the run id does not close the incident', async () => {
+      const r = await inTxn(ctx.ctl(), [
+        dispatchedRow('424242', '13 hours'),
+        `INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
+         VALUES ('indexer_backfill_autochain_silent_stop_ack', 'operator', 'ack', 'success',
+                 '{"arm": "A", "key": 424242, "reason": "malformed"}'::jsonb, now() - interval '1 minute');`,
+        CANDIDATES,
+      ])
+      expect(r.lines).toEqual([cand('A', '424242', 'no_link', '-01:00:00')])
+      // control: the same ack with a STRING key does close it
+      const ok = await inTxn(ctx.ctl(), [
+        dispatchedRow('424242', '13 hours'),
+        `INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
+         VALUES ('indexer_backfill_autochain_silent_stop_ack', 'operator', 'ack', 'success',
+                 '{"arm": "A", "key": "424242", "reason": "ok"}'::jsonb, now() - interval '1 minute');`,
+        CANDIDATES,
+      ])
+      expect(ok.lines).toEqual([])
     })
 
     it('the 1-year window is inclusive: a resolved row exactly 1 year old is still a candidate', async () => {

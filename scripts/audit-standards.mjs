@@ -13,7 +13,7 @@
 import { parseArgs } from 'node:util'
 import { createHash } from 'node:crypto'
 import { execSync, execFileSync } from 'child_process'
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { dirname, join, relative, resolve as resolvePath } from 'path'
 import {
   satisfies,
@@ -4115,12 +4115,12 @@ console.log(`\n${BOLD}47. Edge-function registration coherence (SMI-4963)${RESET
         // Pure Node (no child_process): readdirSync + readFileSync + String.includes.
         const AUTH_PATH = join(FUNCTIONS_DIR, '_shared/auth.ts')
         // SMI-5004: predicate 5 reads content from supabase/functions/**, which
-        // is git-crypt encrypted. In CI jobs that check out without the
-        // git-crypt key (e.g. the `code-review` job in ci.yml — `quality-checks`
-        // unlocks first, code-review does not), `_shared/auth.ts` is the
+        // is git-crypt encrypted. In a tree without the git-crypt key (a local
+        // locked run, or a fork PR's Quality Checks; CI's locked `code-review`
+        // job was retired in SMI-7174), `_shared/auth.ts` is the
         // ciphertext blob starting with \x00GITCRYPT. The @consumers regex
         // would then fail-to-match and falsely fire "missing tag". Skip the
-        // predicate in that case — quality-checks already enforces it.
+        // predicate in that case — an unlocked Quality Checks run enforces it.
         // Sentinel pattern mirrors vitest.config.root-tests.ts:gitCryptLocked.
         const gitCryptLocked = existsSync(AUTH_PATH) && isGitCryptEncrypted(AUTH_PATH)
         if (!existsSync(AUTH_PATH)) {
@@ -6509,6 +6509,19 @@ const score = Math.round((passed / total) * 100)
 console.log(
   `\nCompliance Score: ${score >= 80 ? GREEN : score >= 60 ? YELLOW : RED}${score}%${RESET}`
 )
+
+// SMI-7174: scripts/ci-code-review.sh builds the CI report from these counts, never from
+// the log, which carries PR-description text. A write failure never changes the verdict.
+if (process.env.AUDIT_SUMMARY_FILE) {
+  try {
+    writeFileSync(
+      process.env.AUDIT_SUMMARY_FILE,
+      JSON.stringify({ passed, warnings, failed, score })
+    )
+  } catch (err) {
+    console.error(`⚠ Could not write AUDIT_SUMMARY_FILE: ${err?.message ?? err}`)
+  }
+}
 
 if (failed > 0) {
   console.log(`\n${RED}${BOLD}Standards audit failed.${RESET} Fix the failures above.\n`)
