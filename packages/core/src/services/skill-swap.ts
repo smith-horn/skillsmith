@@ -12,9 +12,10 @@
  *  6-8. Rename 1 (`realDir` → `OP/old`), rename 2 (`OP/new` → `realDir`),
  *     identity checks; a replaced folder is undone (`target-changed`).
  *  9. Hash O: a foreign write before rename 1 warns `backup-holds-foreign-change`.
- *  10. Commit under one `withManifestLock`: (a) CAS, else undo
+ *  10. Commit: `check`, `newIdentity` and the re-hash (warning `live-folder-changed`)
+ *     before lock 3; then under one `withManifestLock`: (a) CAS, else undo
  *     (`changed-since-plan`); (b) `check` and `newIdentity`, else `stopped`;
- *     (c) re-hash, warning `live-folder-changed`; (d) pre-commit check; (e) write.
+ *     (d) pre-commit check and (e) write, both inside `write()`.
  *  11. Journal append; a failure is `committed` with `incomplete: audit`.
  *  12. `publishTree(O, 'backup')`; across devices a verified copy, O left in OP.
  *  13. Metadata unlinks and `rmdir OP`; across devices the park intent, the
@@ -45,6 +46,8 @@ import { getJournalSessionId } from '../journal/path.js'
 import { JOURNAL_SCHEMA_VERSION } from '../journal/types.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import { ensureSkillsRoot } from './skill-root.ensure.js'
+import { ManifestEntryChanged } from './skill-manifest.entry.js'
+import { ManifestLockLost } from './skill-manifest.lock.js'
 import { treeHashOf } from './skill-tree.js'
 import { stagingGitignoreHint } from './skill-write-lock.gitignore.js'
 import { bindSkillsRoot, withSkillWriteLock } from './skill-write-lock.js'
@@ -70,7 +73,7 @@ import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
 import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
 import { refuseIfRecorded } from './skill-swap.scan.js'
 import { undoSwap } from './skill-swap.undo.js'
-import { changedPaths } from './skill-swap.writeset.js'
+import { warnIfLiveFolderChanged } from './skill-swap.writeset.js'
 import type {
   SwapInput,
   SwapOptions,
@@ -198,39 +201,39 @@ function assertIdentity(
 
 type CommitVerdict = 'committed' | 'cas-failed'
 
-/** Step 10 (a)-(e), all inside one `withManifestLock`. */
+/**
+ * Step 10. Before lock 3: `check`, identity, the `beforeCommitRehash` hook and
+ * the re-hash. Under it (retried once on `ManifestLockLost`, so no side effect
+ * repeats): (a) CAS, (b) `check` and identity, (e) `write()` with (d) inside.
+ * A lock lost twice is `pre-commit-check-failed`; a changed entry `cas-failed`.
+ */
 async function commit(st: SwapState): Promise<CommitVerdict> {
   const { realDir, manifest, manifestPath } = st.input
-  return manifest.withManifestLock(async (m): Promise<CommitVerdict> => {
-    if (!(await m.casMatches())) return 'cas-failed'
-    check(st)
-    assertIdentity(realDir, st.newIdentity!, 'target-changed', 'the new folder')
-    await hook(st, 'beforeCommitRehash')
-    const live = treeHashOf(realDir)
-    if (!live.ok) {
-      st.warnings.push({ code: 'live-folder-changed', paths: [path.relative(realDir, live.path)] })
-    } else if (live.hash !== st.postTree) {
-      st.warnings.push({
-        code: 'live-folder-changed',
-        paths: changedPaths(st.postRecord!, live.record),
-      })
-    }
-    try {
-      await m.preCommitCheck()
-    } catch (err) {
-      rethrowLockOrder(err)
-      throw new SwapFault('pre-commit-check-failed', messageOf(err), err)
-    }
-    try {
-      await m.write()
-    } catch (err) {
-      rethrowLockOrder(err)
-      throw new SwapFault('manifest-write-failed', messageOf(err), err)
-    }
-    trace(st, { op: 'manifest-write', path: manifestPath })
-    st.phase = 'committed'
-    return 'committed'
-  })
+  check(st)
+  assertIdentity(realDir, st.newIdentity!, 'target-changed', 'the new folder')
+  await hook(st, 'beforeCommitRehash')
+  warnIfLiveFolderChanged(st)
+  try {
+    return await manifest.withManifestLock(async (m): Promise<CommitVerdict> => {
+      if (!(await m.casMatches())) return 'cas-failed'
+      check(st)
+      assertIdentity(realDir, st.newIdentity!, 'target-changed', 'the new folder')
+      try {
+        await m.write()
+      } catch (err) {
+        if (err instanceof ManifestEntryChanged) return 'cas-failed'
+        if (err instanceof ManifestLockLost) throw err
+        rethrowLockOrder(err)
+        throw new SwapFault('manifest-write-failed', messageOf(err), err)
+      }
+      trace(st, { op: 'manifest-write', path: manifestPath })
+      st.phase = 'committed'
+      return 'committed'
+    })
+  } catch (err) {
+    if (!(err instanceof ManifestLockLost)) throw err
+    throw new SwapFault('pre-commit-check-failed', messageOf(err), err)
+  }
 }
 
 /** Undo, step 13, and the `undone` result. Failures propagate (phase `swapped`: `stopped`). */
@@ -239,9 +242,11 @@ async function undoAndFinish(
   reason: 'target-changed' | 'changed-since-plan'
 ): Promise<SwapResult> {
   const { keptAs, keptPath } = await undoSwap(st)
-  // Step 9's warning named a backup that an undo never makes.
+  // Step 9's backup warning, and step 10's live-edit one (the edit moved aside), no longer hold.
   for (let i = st.warnings.length - 1; i >= 0; i--) {
-    if (st.warnings[i]!.code === 'backup-holds-foreign-change') st.warnings.splice(i, 1)
+    if (['backup-holds-foreign-change', 'live-folder-changed'].includes(st.warnings[i]!.code)) {
+      st.warnings.splice(i, 1)
+    }
   }
   const r = { status: 'undone' as const, opId: st.opId, reason, keptAs, keptPath }
   return { ...r, ...(await finishOp(st)), warnings: st.warnings }

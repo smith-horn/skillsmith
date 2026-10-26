@@ -39,6 +39,30 @@ export {
   type CopyResult,
   type TreeHashResult,
 } from '../services/skill-tree.js'
+// SMI-6531 A1 step 7a: the manifest port, its entry model and the canonical form its CAS compares.
+export {
+  canonicalize,
+  canonicalJson,
+  type JsonObject,
+  type JsonValue,
+} from '../services/skill-manifest.canonical.js'
+export {
+  buildPostEntry,
+  classifyEntry,
+  ENTRY_WRITABLE_FIELDS,
+  ManifestEntryChanged,
+  rawEntryAt,
+  readEntryState,
+  type EntryState,
+  type EntryWritable,
+  type EntryWritableField,
+} from '../services/skill-manifest.entry.js'
+export {
+  createManifestPort,
+  type ManifestPortOptions,
+  type ManifestPortTarget,
+} from '../services/skill-manifest.port.js'
+export { withManifestLockHeld, type ManifestLockHold } from '../services/skill-manifest.lock.js'
 // SMI-6531 A1 steps 4a-4c: the in-place update transaction, on one device and across devices (plan §3.3).
 export {
   computeRecordSha256,

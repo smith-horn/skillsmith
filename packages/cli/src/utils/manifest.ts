@@ -74,6 +74,10 @@ export interface SkillManifestEntry {
   provenance?: 'local' | 'registry'
   /** ADR-145 §3 / ADR-144 §6: last successful re-verification timestamp. See core's `SkillManifestEntry`. */
   verifiedAt?: string
+  /** SMI-6531 A1 step 7a: SHA-256 of the fetched upstream SKILL.md. See core's `SkillManifestEntry`. */
+  upstreamContentHash?: string
+  /** SMI-6531 A1 step 7a: SHA-256 per fetched optional file. See core's `SkillManifestEntry`. */
+  fileHashes?: Record<string, string>
 }
 
 export interface SkillManifest {

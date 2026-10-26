@@ -270,6 +270,17 @@ export interface SkillManifestEntry {
    * combination matrix — it is a freshness signal, not a trust axis.
    */
   verifiedAt?: string
+  /**
+   * SMI-6531 A1 step 7a: SHA-256 of the upstream SKILL.md bytes an in-place
+   * update fetched. Written only by `updateInPlace`; absent on older entries.
+   */
+  upstreamContentHash?: string
+  /**
+   * SMI-6531 A1 step 7a: SHA-256 per fetched optional file (relative path),
+   * the baselines later updates compare local edits against. SKILL.md is not
+   * in it (its baseline is `originalContentHash`). Merged, never replaced.
+   */
+  fileHashes?: Record<string, string>
 }
 
 /** Manifest tracking all installed skills */

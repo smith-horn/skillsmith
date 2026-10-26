@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 7a: `createManifestPort`, the manifest commit the in-place update
+  and doctor share. Under the manifest lock it classifies an entry as planned, updated or changed,
+  and writes only that one entry, refusing with `ManifestEntryChanged` if it changed since the plan.
+  Entries are compared in a canonical form (keys sorted at every depth, arrays in order, `null`
+  distinct from absent), and an update may write only five fields. The swap's commit now re-hashes
+  the new folder before taking the manifest lock, so the lock's hold no longer grows with the size
+  of the skill. An undo after a failed manifest check now also drops the `live-folder-changed`
+  warning, since the edit it named moved to the kept copy. No command calls this yet.
+
 - **Changed**: SMI-6531 -- PR #3165 retro: the update probe's record-check docs name every error
   case (a staging entry that can't be inspected with `lstat` included), and the full-device marker
   test checks that its trigger fired. No behaviour change.

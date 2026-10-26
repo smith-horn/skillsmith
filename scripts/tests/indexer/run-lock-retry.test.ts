@@ -423,6 +423,33 @@ describe('SMI-6246: handleLockSkip', () => {
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
+  // SMI-6887: indexer-backfill.yml reads the LAST stdout line and ends a backfill run green
+  // only when that line is exactly this two-key object. A stdout write after it (on either
+  // the success or the failed-audit path) would silently bring back the red lock skip.
+  it.each([
+    ['the audit write succeeds', { error: null }],
+    ['the audit write fails', { error: { message: 'boom' } }],
+  ])(
+    'a backfill skip ends stdout with exactly the lock-skip object when %s',
+    async (_label, insertResult) => {
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      const insert = vi.fn().mockResolvedValue(insertResult)
+      const supabase = { rpc: vi.fn(), from: vi.fn().mockReturnValue({ insert }) }
+      await handleLockSkip(
+        supabase as never,
+        baseEnv({ RUN_TYPE: 'discovery', BACKFILL_MODE: true }),
+        'req-1'
+      )
+      expect(insert).toHaveBeenCalledTimes(1) // the audit write ran before the assertion
+      expect(exitSpy).toHaveBeenCalledWith(0)
+      expect(stdoutSpy).not.toHaveBeenCalled()
+      // Byte-exact: the workflow guard compares the line to JSON.stringify of this object.
+      expect(logSpy.mock.calls.at(-1)).toStrictEqual([
+        '{"event":"lock_held_by_other_run","request_id":"req-1"}',
+      ])
+    }
+  )
+
   it('a backfill skip echoes github_run_id/resumed_from/dispatch_inputs into the audit row', async () => {
     process.env.GITHUB_RUN_ID = '123456'
     process.env.RESUME_FROM = 'latest'
