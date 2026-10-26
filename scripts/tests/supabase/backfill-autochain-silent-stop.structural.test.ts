@@ -475,9 +475,55 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
     const cte = (t: string, name: string): string => {
       const s = t.indexOf(`${name} AS MATERIALIZED (`)
       if (s < 0) return ''
-      const e = t.indexOf('\n  ),', s)
-      return e < 0 ? '' : t.slice(s, e)
+      // A middle CTE ends at `\n  ),`; the last one (`prepared`) ends at `\n  )\n`.
+      const ends = [t.indexOf('\n  ),', s), t.indexOf('\n  )\n', s)].filter((i) => i >= 0)
+      return ends.length === 0 ? '' : t.slice(s, Math.min(...ends))
     }
+    /** Replace `from` with `to` INSIDE one CTE only; throws when that CTE lacks `from`. */
+    const swapIn = (t: string, name: string, from: string, to: string): string => {
+      const c = cte(t, name)
+      if (!c.includes(from)) throw new Error(`swapIn: ${name} has no ${from}`)
+      return t.replace(c, c.replace(from, to))
+    }
+    // Retro governance S1: every CTE's event type is pinned (a CTE reading the wrong event would
+    // otherwise pass), and `prepared`, the last CTE, is sliced and pinned too.
+    const eventPins: Array<[string, string, string]> = [
+      [
+        'green',
+        'indexer_backfill_autochain_link_finished',
+        'indexer_backfill_autochain_link_started',
+      ],
+      [
+        'ack_a',
+        'indexer_backfill_autochain_silent_stop_ack',
+        'indexer_backfill_autochain_link_started',
+      ],
+      [
+        'ack_b',
+        'indexer_backfill_autochain_silent_stop_ack',
+        'indexer_backfill_autochain_link_started',
+      ],
+      [
+        'dispatched',
+        'indexer_backfill_autochain_dispatch_resolved',
+        'indexer_backfill_autochain_dispatch_prepared',
+      ],
+      [
+        'prepared',
+        'indexer_backfill_autochain_dispatch_prepared',
+        'indexer_backfill_autochain_dispatch_resolved',
+      ],
+    ]
+    for (const [name, ev, wrong] of eventPins) {
+      const reads = (t: string) => cte(t, name).includes(`l.event_type = '${ev}'`)
+      expect(reads(b), `${name} reads ${ev}`).toBe(true)
+      expect(reads(swapIn(b, name, `'${ev}'`, `'${wrong}'`)), `${name}: known-negative`).toBe(false)
+    }
+    const preparedShapes = (t: string) =>
+      cte(t, 'prepared').includes("l.m->>'dispatch_token' ~ '^ac-[1-9][0-9]{0,18}$'") &&
+      cte(t, 'prepared').includes("l.m->>'link_run_attempt' ~ '^[1-9][0-9]{0,4}$'")
+    expect(preparedShapes(b)).toBe(true)
+    expect(preparedShapes(swapIn(b, 'prepared', "'^[1-9][0-9]{0,4}$'", "'^[0-9]+$'"))).toBe(false)
     const pins: Array<[string, (t: string) => boolean]> = [
       [
         'green requires link_finished with status success',
