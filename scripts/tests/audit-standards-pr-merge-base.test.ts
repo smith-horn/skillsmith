@@ -227,7 +227,13 @@ describe('Check 78: the full audit runs the registered entry (X4)', () => {
   it("the Check 78 block is exactly a call to CHECK_REGISTRY.get('pr-merge-base')", () => {
     const src = readFileSync(AUDIT, 'utf8')
     const start = src.indexOf('${BOLD}Check 78:')
-    const end = src.indexOf('// Summary', start)
+    // The block ends at the next check's comment or at the summary, whichever is first,
+    // so a check added after Check 78 (Check 79, SMI-6744 A5.3) does not land inside it.
+    // Anchored on a numbered check comment, so a stray "// Check ..." line inside the
+    // block cannot end the cut early and hide the code after it.
+    const next = /\n\/\/ Check \d+:/.exec(src.slice(start))
+    const ends = [next ? start + next.index : -1, src.indexOf('// Summary', start)]
+    const end = Math.min(...ends.filter((i) => i > -1))
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
     const body = src.slice(src.indexOf('\n', start) + 1, end).trim()
