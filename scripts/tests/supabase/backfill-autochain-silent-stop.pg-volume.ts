@@ -205,6 +205,28 @@ export function registerVolumeTests(ctx: Ctx): void {
       expect((await inTxn(ctx.ctl(), seed('tie-b', 'tie-a'))).lines).toEqual(['link=2222'])
     })
 
+    // Cross-family gate on PR #3175: ->> renders a JSON number as the same digits, so only the
+    // jsonb_typeof check keeps a malformed numeric ack from closing a real incident.
+    it('an Arm A ack whose key is a JSON NUMBER equal to the run id does not close the incident', async () => {
+      const r = await inTxn(ctx.ctl(), [
+        dispatchedRow('424242', '13 hours'),
+        `INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
+         VALUES ('indexer_backfill_autochain_silent_stop_ack', 'operator', 'ack', 'success',
+                 '{"arm": "A", "key": 424242, "reason": "malformed"}'::jsonb, now() - interval '1 minute');`,
+        CANDIDATES,
+      ])
+      expect(r.lines).toEqual([cand('A', '424242', 'no_link', '-01:00:00')])
+      // control: the same ack with a STRING key does close it
+      const ok = await inTxn(ctx.ctl(), [
+        dispatchedRow('424242', '13 hours'),
+        `INSERT INTO audit_logs (event_type, actor, action, result, metadata, created_at)
+         VALUES ('indexer_backfill_autochain_silent_stop_ack', 'operator', 'ack', 'success',
+                 '{"arm": "A", "key": "424242", "reason": "ok"}'::jsonb, now() - interval '1 minute');`,
+        CANDIDATES,
+      ])
+      expect(ok.lines).toEqual([])
+    })
+
     it('the 1-year window is inclusive: a resolved row exactly 1 year old is still a candidate', async () => {
       const r = await inTxn(ctx.ctl(), [dispatchedRow('424242', '1 year'), CANDIDATES])
       expect(r.lines).toHaveLength(1)

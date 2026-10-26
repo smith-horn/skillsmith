@@ -525,6 +525,26 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
       cte(t, 'prepared').includes("l.m->>'link_run_attempt' ~ '^[1-9][0-9]{0,4}$'")
     expect(preparedShapes(b)).toBe(true)
     expect(preparedShapes(swapIn(b, 'prepared', "'^[1-9][0-9]{0,4}$'", "'^[0-9]+$'"))).toBe(false)
+    // Cross-family gate on PR #3175: every jsonb_typeof string check, in its own CTE. Without one, a
+    // malformed JSON number renders through ->> as the same digits and can close or open an incident.
+    const typeChecks: Array<[string, string]> = [
+      ['green', 'completed_run_id'],
+      ['finished_any', 'completed_run_id'],
+      ['started_any', 'completed_run_id'],
+      ['ack_a', 'key'],
+      ['ack_b', 'key'],
+      ['resolved_keys', 'dispatch_token'],
+      ['resolved_keys', 'link_run_attempt'],
+      ['dispatched', 'dispatched_run_id'],
+      ['prepared', 'dispatch_token'],
+      ['prepared', 'link_run_attempt'],
+    ]
+    for (const [name, field] of typeChecks) {
+      const check = `jsonb_typeof(l.m->'${field}') = 'string'`
+      const has = (t: string) => cte(t, name).includes(check)
+      expect(has(b), `${name} checks ${field} is a string`).toBe(true)
+      expect(has(swapIn(b, name, check, 'TRUE')), `${name}/${field}: known-negative`).toBe(false)
+    }
     const pins: Array<[string, (t: string) => boolean]> = [
       [
         'green requires link_finished with status success',
