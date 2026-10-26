@@ -892,6 +892,33 @@ describe('SMI-6465 retro gate round 3: the helper is found however the script is
     expectSynced(repo, result)
   })
 
+  it('T67: a ../ link through a symlinked directory resolves, and syncs (pin)', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    // d1 -> d2/sub; d1/a -> ../a, which resolves through d1 to d2/a, the script.
+    const base = join(repo.root, 'links')
+    mkdirSync(join(base, 'd2', 'sub'), { recursive: true })
+    symlinkSync(join(base, 'd2', 'sub'), join(base, 'd1'))
+    symlinkSync(SCRIPT_PATH, join(base, 'd2', 'a'))
+    symlinkSync('../a', join(base, 'd2', 'sub', 'a'))
+    symlinkSync('d1/a', join(base, 'a'))
+    const started = Date.now()
+    const result = runAs(repo.local, join(base, 'a'), GIT_ENV)
+    expect(Date.now() - started).toBeLessThan(20_000)
+    expectSynced(repo, result)
+  })
+
+  it('T68: a symlink cycle cannot run at all: the kernel refuses it (ELOOP)', () => {
+    const repo = makeRepo()
+    const bin = join(repo.root, 'bin')
+    mkdirSync(bin)
+    symlinkSync('b', join(bin, 'a'))
+    symlinkSync('a', join(bin, 'b'))
+    const result = runAs(repo.local, join(bin, 'a'), GIT_ENV)
+    expect(result.status).toBe(126)
+    expect(result.stderr).toMatch(/Too many levels of symbolic links/i)
+  })
+
   it('T66: run through a symlink outside scripts/, it still syncs', () => {
     const repo = makeRepo()
     pushUpstream(repo, { 'a.txt': 'a2\n' })

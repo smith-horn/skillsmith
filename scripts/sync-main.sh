@@ -58,8 +58,12 @@ refuse() {
 
 # Locate the real script (through any symlinks) to find its helper. CDPATH is
 # cleared for every relative cd: with it set, cd prints the directory it chose.
-self=${BASH_SOURCE[0]}
+# The kernel refuses to run a path behind more than 40 links (ELOOP), so this
+# loop is bounded already; the hop limit keeps it bounded on its own terms.
+self=${BASH_SOURCE[0]} hops=0
 while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  [ "$hops" -le 40 ] || { printf 'sync-main: ERROR: more than 40 symlinks resolving %s\n' "${BASH_SOURCE[0]}" >&2; exit 3; }
   link=$(readlink "$self")
   case "$link" in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac
 done
