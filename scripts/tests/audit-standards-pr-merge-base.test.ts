@@ -229,7 +229,10 @@ describe('Check 78: the full audit runs the registered entry (X4)', () => {
     const start = src.indexOf('${BOLD}Check 78:')
     // The block ends at the next check's comment or at the summary, whichever is first,
     // so a check added after Check 78 (Check 79, SMI-6744 A5.3) does not land inside it.
-    const ends = [src.indexOf('\n// Check ', start), src.indexOf('// Summary', start)]
+    // Anchored on a numbered check comment, so a stray "// Check ..." line inside the
+    // block cannot end the cut early and hide the code after it.
+    const next = /\n\/\/ Check \d+:/.exec(src.slice(start))
+    const ends = [next ? start + next.index : -1, src.indexOf('// Summary', start)]
     const end = Math.min(...ends.filter((i) => i > -1))
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
