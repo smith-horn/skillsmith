@@ -294,3 +294,19 @@ export function odShimEnv(repo: Repo, mode: 'fail' | 'short'): NodeJS.ProcessEnv
   chmodSync(join(dir, 'od'), 0o755)
   return { ...GIT_ENV, PATH: `${dir}:${GIT_ENV.PATH ?? ''}` }
 }
+
+/**
+ * Put a `grep` first on PATH that fails (exit 2) for sync-main.sh's recursive
+ * reflog scan only, and behaves as the real grep for every other call.
+ */
+export function grepFailEnv(repo: Repo, base: NodeJS.ProcessEnv = GIT_ENV): NodeJS.ProcessEnv {
+  const realGrep = execFileSync('sh', ['-c', 'command -v grep'], { encoding: 'utf8' }).trim()
+  const dir = join(repo.root, 'grep-shim')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'grep'),
+    `#!/bin/sh\ncase " $* " in *" -RlF "*) echo 'grep: simulated read error' >&2; exit 2 ;; esac\nexec ${JSON.stringify(realGrep)} "$@"\n`
+  )
+  chmodSync(join(dir, 'grep'), 0o755)
+  return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
+}

@@ -9,7 +9,16 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -18,6 +27,7 @@ import {
   commitLocal,
   git,
   GIT_ENV,
+  grepFailEnv,
   makeRepo,
   odShimEnv,
   originMain,
@@ -720,6 +730,57 @@ describe('SMI-6465 pre-merge gate: main not at origin after a move is never a sy
     expect(result.status, result.stderr).toBe(3)
     expect(result.stdout).not.toContain('Synced to main')
     expect(result.stderr).toContain('no reflog entry shows this sync moving it')
+  })
+})
+
+describe('SMI-6465 pre-merge gate round 2: the moved-ref scan is authoritative', () => {
+  function featureLog(repo: Repo): string {
+    return join(repo.local, '.git', 'logs', 'refs', 'heads', 'feature', 'x')
+  }
+
+  it('T55: with reflogs disabled and no feature/x log, a raced move is still caught', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    git(repo.local, 'config', 'core.logAllRefUpdates', 'false')
+    git(repo.local, 'branch', 'feature/x')
+    expect(existsSync(featureLog(repo))).toBe(false)
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-and-back-then-other-sync'))
+    expect(git(repo.local, 'rev-parse', 'main')).toBe(remote)
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+
+  it('T56: a symlinked branch log is still scanned', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    git(repo.local, 'branch', 'feature/x')
+    const elsewhere = join(repo.root, 'feature-x.log')
+    renameSync(featureLog(repo), elsewhere)
+    symlinkSync(elsewhere, featureLog(repo))
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-and-back-then-other-sync'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+
+  it('T57: a reflog scan that errors is "could not verify", never success', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const result = runSync(repo.local, [], grepFailEnv(repo))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(result.stderr).toContain('could not read the branch reflogs')
+  })
+
+  it('T58: an uncontended sync with reflogs disabled and no main log still succeeds', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    git(repo.local, 'config', 'core.logAllRefUpdates', 'false')
+    rmSync(join(repo.local, '.git', 'logs', 'refs', 'heads', 'main'))
+    expectSynced(repo, runSync(repo.local))
   })
 })
 

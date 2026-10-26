@@ -268,10 +268,10 @@ if [ "$mode" != none ]; then
   }
   move_status=0
   if [ "$mode" = ff ]; then
-    GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null merge --ff-only --no-autostash --no-overwrite-ignore -q "$REMOTE" \
+    GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null -c core.logAllRefUpdates=always merge --ff-only --no-autostash --no-overwrite-ignore -q "$REMOTE" \
       >"$tmp/move.out" 2>&1 || move_status=$?
   else
-    GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null reset --keep --no-recurse-submodules -q "$REMOTE" \
+    GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null -c core.logAllRefUpdates=always reset --keep --no-recurse-submodules -q "$REMOTE" \
       >"$tmp/move.out" 2>&1 || move_status=$?
   fi
 else
@@ -281,20 +281,30 @@ fi
 # --- Change 4 (after): which ref did this run's move update? -------------
 # The move updates whatever ref HEAD named at that instant, which need not be
 # what HEAD names now: another session can switch away and back. So the moved
-# ref is found by this run's nonce in the branch reflogs, and the sync counts
-# as done only if HEAD names main now, main is at REMOTE, and no other branch
-# carries this run's entry. Without file reflogs (for example reftable), the
-# last condition cannot be checked and the first two decide.
+# ref is found by this run's nonce in the branch reflogs (the move forces a
+# reflog entry with core.logAllRefUpdates=always). The sync counts as done
+# only if exactly one branch carries this run's entry and it is main, main is
+# at REMOTE, and HEAD names main now. A scan that cannot run, errors, or has
+# no file reflogs to read (for example reftable) is "could not verify": exit 3.
 after_ref=$(git symbolic-ref -q HEAD 2>/dev/null) || after_ref=''
 main_now=$(git rev-parse -q --verify refs/heads/main 2>/dev/null) || main_now=''
-moved='' moved_count=0
+moved='' moved_count=0 scan_ok=1
 if [ "$mode" != none ] && [ "$move_status" -eq 0 ]; then
   logdir=$(git rev-parse --git-path logs/refs/heads 2>/dev/null) || logdir=''
+  scan_status=0
   if [ -n "$logdir" ] && [ -d "$logdir" ]; then
+    grep -RlF --null -e "$(printf '\t')sync-main $nonce: " -- "$logdir" >"$tmp/moved" 2>/dev/null || scan_status=$?
+  else
+    scan_status=2
+  fi
+  # grep: 0 matched, 1 no match, anything else an error.
+  if [ "$scan_status" -gt 1 ]; then
+    scan_ok=0
+  else
     while IFS= read -r -d '' f; do
       moved_count=$((moved_count + 1))
       moved="refs/heads/${f#"$logdir"/}"
-    done < <(grep -rlF --null -e "$(printf '\t')sync-main $nonce: " -- "$logdir" 2>/dev/null || true)
+    done <"$tmp/moved"
   fi
 fi
 shown=${after_ref:-detached HEAD}
@@ -303,9 +313,12 @@ if [ "$mode" = none ] || [ "$move_status" -ne 0 ]; then
     printf 'ERROR [branch-changed-after-sync]: this checkout switched to %s during the sync; this sync moved no ref.\n' "$shown" >&2
     exit 3
   fi
-elif [ "$after_ref" != refs/heads/main ] || [ "$main_now" != "$REMOTE" ] || [ "$moved_count" -gt 1 ] ||
-  { [ "$moved_count" -eq 1 ] && [ "$moved" != refs/heads/main ]; }; then
-  if [ "$moved_count" -eq 1 ] && [ "$moved" != refs/heads/main ]; then
+elif [ "$scan_ok" -ne 1 ] || [ "$after_ref" != refs/heads/main ] || [ "$main_now" != "$REMOTE" ] ||
+  [ "$moved_count" -ne 1 ] || [ "$moved" != refs/heads/main ]; then
+  if [ "$scan_ok" -ne 1 ]; then
+    printf 'ERROR [branch-changed-after-sync]: could not read the branch reflogs to confirm which ref this sync moved (main is at %s, origin/main at %s, HEAD names %s). Check with git reflog.\n' \
+      "${main_now:0:12}" "${REMOTE:0:12}" "$shown" >&2
+  elif [ "$moved_count" -eq 1 ] && [ "$moved" != refs/heads/main ]; then
     # The displaced value comes from this run's own entry in the moved ref's
     # reflog, read from one copy of the file. Never ORIG_HEAD (any session can
     # rewrite it), LOCAL (the moved ref need not have started there), or a
