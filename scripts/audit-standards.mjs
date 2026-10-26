@@ -6483,13 +6483,17 @@ console.log(
     fail,
     info: (msg) => console.log(`  ${msg}`),
   }
-  for (const line of rufloClassificationReportLines(
-    evaluateRufloClassification({
-      settingsPath: join('.claude', 'settings.json'),
-      docPath: join('docs', 'internal', 'architecture', 'ruflo-tool-classification.md'),
-    })
-  )) {
-    reporters[line.severity](line.message, line.fix)
+  try {
+    for (const line of rufloClassificationReportLines(
+      evaluateRufloClassification({
+        settingsPath: join('.claude', 'settings.json'),
+        docPath: join('docs', 'internal', 'architecture', 'ruflo-tool-classification.md'),
+      })
+    )) {
+      reporters[line.severity](line.message, line.fix)
+    }
+  } catch (err) {
+    fail(`Check 79 could not run: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

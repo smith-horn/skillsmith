@@ -43,6 +43,10 @@ interface Fx {
   docFence?: string
   extraFence?: boolean
   strayRow?: string
+  unclosedFence?: boolean
+  extraTableLines?: string[]
+  settingsThrows?: boolean
+  docThrows?: boolean
   docPresent?: boolean
   core?: string[]
   mcp?: string[]
@@ -85,13 +89,14 @@ function render(fx: Fx): Record<string, string> {
     '# Doc',
     '```json',
     fence,
-    '```',
+    ...(fx.unclosedFence ? [] : ['```']),
     ...(fx.extraFence ? ['```json', '{}', '```'] : []),
     '## Full classification table',
     '| Prefix | Allowed | Blocked |',
     '|---|---|---|',
     ...table,
     '| | | a continuation row, not parsed |',
+    ...(fx.extraTableLines ?? []),
     '## Next',
     ...(fx.strayRow ? [fx.strayRow] : []),
     '',
@@ -105,6 +110,8 @@ function run(fx: Fx) {
     settingsPath: SETTINGS,
     docPath: DOC,
     readFile: (p: string) => {
+      if (fx.settingsThrows && p === SETTINGS) throw new Error('EACCES settings')
+      if (fx.docThrows && p === DOC) throw new Error('EACCES doc')
       if (!(p in files)) throw new Error(`ENOENT ${p}`)
       return files[p]
     },
@@ -141,8 +148,9 @@ describe('Check 79: live repo (presence control)', () => {
   })
 
   it.skipIf(!existsSync(docPath))(
-    'doc half (only when docs/internal exists; CI has none): doc=51 and rules A-F are clean',
+    'doc half (only when docs/internal exists; CI has none): doc=51 and rules A-F and F2 are clean',
     () => {
+      expect(live.findings).toEqual([])
       expect(live.docChecked).toBe(true)
       expect(live.docCount).toBe(51)
       expect(live.rows).toBeGreaterThan(0)
@@ -234,6 +242,7 @@ describe('Check 79: array and doc-block red arms', () => {
       'doc half: not checked (docs/internal absent)'
     )
     expect(lines[0].message).toContain('doc=not checked')
+    expect(lines[0].message).not.toContain('table rows agree')
     const mutated = base()
     mutated.docPresent = false
     ;(mutated.deny as string[]).push(`${P}x_new`)
@@ -306,6 +315,30 @@ describe('Check 79: array and doc-block red arms', () => {
       expect(r.findings).toContain(text)
       expect(r.docCount).toBeNull()
     }
+  })
+
+  it('t: an unclosed json fence is a finding, not a pass', () => {
+    applied('t:unclosed-fence')
+    const r = run({ ...base(), unclosedFence: true })
+    expect(r.findings).toContain('doc must hold exactly one closed json fence, found 1')
+    expect(r.docCount).toBeNull()
+  })
+
+  it('u: settings.json unreadable (readFile throws) -> a finding naming it', () => {
+    applied('u:settings-unreadable')
+    const r = run({ ...base(), settingsThrows: true })
+    expect(r.findings.some((x: string) => x.includes(`${SETTINGS} is unreadable`))).toBe(true)
+    expect(r.coreCount).toBeNull()
+  })
+
+  it('v: doc exists but readFile throws -> a finding naming it', () => {
+    applied('v:doc-unreadable')
+    const r = run({ ...base(), docThrows: true })
+    expect(r.docChecked).toBe(true)
+    expect(r.findings.some((x: string) => x.includes(`doc ${DOC} exists but is unreadable`))).toBe(
+      true
+    )
+    expect(r.docCount).toBeNull()
   })
 
   it('m: malformed JSON inside the doc fence', () => {
@@ -418,6 +451,37 @@ describe('Check 79: table rule red arms', () => {
     applied('r:stray-row')
     const f = run(fx).findings
     expect(f.some((x: string) => x.startsWith('rule F: stray table row'))).toBe(true)
+  })
+
+  it('w: a denied tool in an Allowed cell of a row that does not own it -> rule C (full set)', () => {
+    const general: Row = { prefix: 'hooks_', allowed: '`intelligence_learn`', blocked: 'none' }
+    const specific: Row = { prefix: 'hooks_intelligence_', allowed: '`safe`', blocked: '`learn`' }
+    applied('w:allowed-denied-owned-by-other-row')
+    expect(run(small('hooks_intelligence_learn', [general, specific])).findings).toEqual([
+      'rule C: denied "hooks_intelligence_learn" appears in the Allowed cell as "intelligence_learn"',
+    ])
+    // negative control: the same rows with a harmless Allowed token stay clean
+    const harmless = small('hooks_intelligence_learn', [
+      { ...general, allowed: '`safe`' },
+      specific,
+    ])
+    expect(run(harmless).findings).toEqual([])
+  })
+
+  it('x: a table row that is none of header, separator, parsed or continuation -> rule F2', () => {
+    const shapes = [
+      '| `transfer_*` (legacy) | `detect-pii` | none |',
+      '| memory_stats | all | none |',
+      '| `Session_*` | all | none |',
+      '| `hooks_intelligence*` | all | none |',
+    ]
+    for (const line of shapes) {
+      applied(`x:${line}`)
+      const f = run({ ...base(), extraTableLines: [line] }).findings
+      expect(f).toEqual([`rule F2: unparsed table row: ${line.slice(0, 60)}`])
+    }
+    // negative control: header, separator and continuation rows (all in the base fixture) are clean
+    expect(run(base()).findings).toEqual([])
   })
 
   it('s: a prefix containing an underscore is parsed and matched', () => {

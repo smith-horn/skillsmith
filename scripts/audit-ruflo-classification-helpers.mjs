@@ -20,12 +20,13 @@
  *     parsed fail-closed.
  *   - doc half: runs only where docs/internal exists (CI's quality-checks job
  *     checks out without submodules). Exactly one `json` fence equal to the
- *     pinned list, plus table rules A-F over `## Full classification table`.
+ *     pinned list, plus table rules A-F and F2 over `## Full classification table`.
  *     When the doc is absent the half is reported "not checked", never passed.
  *
  * Residual gap (D1): a doc-only edit is caught only when someone next runs
- * audit:standards with the submodule present. Parenthetical text inside table
- * cells, and continuation rows with an empty first cell, are not parsed.
+ * audit:standards with the submodule present. Parenthetical text inside Blocked
+ * cells is stripped before rule D; rule C reads the whole Allowed cell (parentheticals
+ * included), so Allowed prose without backticks is invisible to it.
  */
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -37,6 +38,9 @@ const BARE_TOKEN = '[a-z0-9_*-]+'
 const BLOCKED_LIST_RE = new RegExp('^`' + BARE_TOKEN + '`(?:\\s*,\\s*`' + BARE_TOKEN + '`)*$')
 const TOKEN_RE = new RegExp('`(' + BARE_TOKEN + ')`', 'g')
 const TABLE_ROW_RE = /^\|\s*`([a-z0-9_-]+_)\*`\s*\|/
+const TABLE_HEADER_RE = /^\|\s*Prefix\s*\|/
+const TABLE_SEPARATOR_RE = /^\|[\s:|-]*-[\s:|-]*$/
+const TABLE_CONTINUATION_RE = /^\|\s*\|/
 
 /**
  * The pinned core deny list (SMI-6744 A5.3): the `mcp__ruflo__*` entries of
@@ -197,7 +201,18 @@ function parseRows(section, findings) {
   const rows = []
   for (let i = section.start + 1; i < section.end; i++) {
     const m = TABLE_ROW_RE.exec(section.lines[i])
-    if (!m) continue
+    if (!m) {
+      const t = section.lines[i].trim()
+      if (
+        t.startsWith('|') &&
+        !TABLE_HEADER_RE.test(t) &&
+        !TABLE_SEPARATOR_RE.test(t) &&
+        !TABLE_CONTINUATION_RE.test(t)
+      ) {
+        findings.push(`rule F2: unparsed table row: ${t.slice(0, 60)}`)
+      }
+      continue
+    }
     const cells = section.lines[i]
       .trim()
       .replace(/^\||\|$/g, '')
@@ -284,11 +299,12 @@ function checkTable(doc, rufloDenies, findings) {
       findings.push(`rule C: ${row.prefix}* has denials but its Allowed cell starts with "all"`)
     }
     for (const t of tokensOf(row.allowed)) {
-      const hit = [...denied].find((s) =>
-        t.endsWith('*') ? s.startsWith(t.slice(0, -1)) : s === t
+      const full = row.prefix + t
+      const hit = names.find((n) =>
+        t.endsWith('*') ? n.startsWith(full.slice(0, -1)) : n === full
       )
       if (hit !== undefined) {
-        findings.push(`rule C: denied "${row.prefix}${hit}" appears in the Allowed cell as "${t}"`)
+        findings.push(`rule C: denied "${hit}" appears in the Allowed cell as "${t}"`)
       }
     }
   }
