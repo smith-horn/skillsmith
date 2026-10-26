@@ -1161,7 +1161,7 @@ jobs:
           # caused the diff to throw, the catch handler returned empty
           # changedFiles, and check 45 silently no-op'd in every PR --
           # zero protection as deployed. fetch-depth: 0 unblocks the diff.
-          fetch-depth: 0
+          fetch-depth: 1
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
