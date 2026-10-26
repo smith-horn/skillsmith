@@ -391,6 +391,7 @@ export function evaluateRufloClassification(options) {
     rufloDenies = deny.filter((e) => e.startsWith(RUFLO_PREFIX))
     // Uniqueness over the whole ruflo set, before partitioning: Check 75 reads the
     // array as a set, so a duplicated Wave 4 entry would otherwise pass both checks.
+    // A duplicated core entry is also reported by compareToPinned; two findings, one cause.
     const seenDeny = new Set()
     for (const e of rufloDenies) {
       if (seenDeny.has(e)) findings.push(`duplicate deny entry "${e}" in ${settingsPath}`)
