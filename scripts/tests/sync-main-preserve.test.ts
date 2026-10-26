@@ -8,7 +8,7 @@
  * plan: docs/internal/implementation/smi-6465-sync-main-preserve-uncommitted-work.md
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -19,7 +19,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   blobOf,
@@ -35,6 +35,7 @@ import {
   pushUpstream,
   read,
   runSync,
+  SCRIPT_PATH,
   SEED,
   shimEnv,
   trFailEnv,
@@ -873,6 +874,30 @@ describe("SMI-6465 retro gate round 2: rendering git's reason can never fail", (
     const { cause } = refusedAfterFetch(repo, before, result, 'ff-refused')
     expect(cause.endsWith(': no message from git')).toBe(true)
     expect(result.stderr).not.toContain('Illegal byte sequence')
+  })
+})
+
+describe('SMI-6465 retro gate round 3: the helper is found however the script is run', () => {
+  function runAs(cwd: string, script: string, env: NodeJS.ProcessEnv): SyncResult {
+    const r = spawnSync('bash', [script], { cwd, encoding: 'utf8', env, timeout: 30_000 })
+    return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+  }
+
+  it('T65: run by a CDPATH-resolvable relative path with CDPATH set, it still syncs', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    symlinkSync(dirname(SCRIPT_PATH), join(repo.local, 'x'))
+    // `cd x` consults CDPATH (x does not start with / or .) and prints the directory.
+    const result = runAs(repo.local, 'x/sync-main.sh', { ...GIT_ENV, CDPATH: repo.local })
+    expectSynced(repo, result)
+  })
+
+  it('T66: run through a symlink outside scripts/, it still syncs', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    mkdirSync(join(repo.root, 'bin'))
+    symlinkSync(SCRIPT_PATH, join(repo.root, 'bin', 'sync'))
+    expectSynced(repo, runAs(repo.local, join(repo.root, 'bin', 'sync'), GIT_ENV))
   })
 })
 

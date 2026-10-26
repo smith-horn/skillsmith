@@ -56,8 +56,15 @@ refuse() {
   exit "${5:-1}"
 }
 
+# Locate the real script (through any symlinks) to find its helper. CDPATH is
+# cleared for every relative cd: with it set, cd prints the directory it chose.
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac
+done
 # shellcheck source=scripts/lib/sync-main-render.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/sync-main-render.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd -P)/lib/sync-main-render.sh"
 
 discard=0
 for arg in "$@"; do
@@ -72,7 +79,7 @@ for arg in "$@"; do
 done
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync-main.XXXXXX")
-tmp=$(cd "$tmp" && pwd -P) # absolute: the script cds to the top level below
+tmp=$(CDPATH='' cd -- "$tmp" && pwd -P) # absolute: the script cds to the top level below
 trap 'rm -rf "$tmp"' EXIT
 
 # --- Change 1: never move HEAD off the branch it found --------------------
