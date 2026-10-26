@@ -355,8 +355,6 @@ class DynamicPlanner {
     this.currentPlan = null;
     this.worldState = new Map();
     this.monitoringActive = false;
-    // Keys this planner has stored; PlanningLearner.retrieveSimilarPatterns reads them.
-    this.storedPatternKeys = [];
   }
 
   async startMonitoring() {
@@ -410,17 +408,14 @@ class DynamicPlanner {
     if (newPlan && newPlan.confidence > 0.8) {
       this.currentPlan = newPlan;
 
-      // Store successful pattern — CLI path, not an MCP tool call.
-      // mcp__ruflo__memory_store is not exposed in this session's connected
-      // MCP tool registry (SMI-5777 H-4 default). Shell via execFileSync
-      // with array args, never execSync string interpolation.
-      const key = `goap-patterns/replan_${Date.now()}`;
+      // Store successful pattern.
+      // Illustrative only; not runnable here: the host ruflo CLI is denied and the served store is separate (SMI-6744 A6.1 governs writes).
       execFileSync("npx", [
         "ruflo",
         "memory",
         "store",
         "-k",
-        key,
+        `goap-patterns/replan_${Date.now()}`,
         "--value",
         JSON.stringify({
           trigger: this.lastDeviation,
@@ -428,7 +423,6 @@ class DynamicPlanner {
           worldState: Array.from(this.worldState.entries())
         })
       ]);
-      this.storedPatternKeys.push(key);
     }
   }
 }
@@ -472,15 +466,10 @@ class PlanningLearner {
   }
 
   async retrieveSimilarPatterns(currentSituation, patternKeys) {
-    // Exact-key lookup of the patterns the replanner stored above. It writes
-    // `goap-patterns/replan_<ts>` with no --namespace, so they live in "default";
-    // pass the keys it wrote, e.g.
-    // learner.retrieveSimilarPatterns(situation, dynamicPlanner.storedPatternKeys).
-    // Those keys live only in that planner instance; a new process starts with none.
-    // Similarity is computed client-side below.
-    // memory_list and embeddings_search are denied (SMI-7184: their sql.js
-    // fallback rewrites memory.db unguarded). memory_retrieve's fallback also
-    // rewrites it, but under the store lock, and it refuses while WAL sidecars exist.
+    // Illustrative only; not runnable here: the host ruflo CLI is denied and the served store is separate (SMI-6744 A6.1 governs writes).
+    // Exact-key lookup by the keys the caller passes; similarity is computed
+    // client-side below. (memory_list and embeddings_search are denied, SMI-7184;
+    // see claude-flow-guide.md.)
     const patterns = [];
     for (const key of patternKeys) {
       const r = await mcp__ruflo__memory_retrieve({ key, namespace: "default" });
