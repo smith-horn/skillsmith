@@ -180,7 +180,7 @@ gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .gith
 
 ## Pure-JS Carve-Out (SMI-4647)
 
-Two CI jobs run on the host runner instead of inside the Docker image: `quality-checks` (Quality Checks — bundles ESLint, Prettier, `tsc`, and `audit:standards` since SMI-4908) and `code-review` (Code Review). They are exempt from the project-wide Docker-first directive because their import closures contain zero native bindings.
+One CI job runs on the host runner instead of inside the Docker image: `quality-checks` (Quality Checks — bundles ESLint, Prettier, `tsc`, and `audit:standards` since SMI-4908). It is exempt from the project-wide Docker-first directive because its import closure contains zero native bindings. A second carved-out job, `code-review`, was retired in SMI-7174.
 
 ### Why
 
@@ -189,7 +189,7 @@ Two CI jobs run on the host runner instead of inside the Docker image: `quality-
 ### Pattern (must match exactly)
 
 ```yaml
-quality-checks:                              # code-review: same, minus the unlock (see below)
+quality-checks:
   name: Quality Checks
   # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
   needs: [classify, detect-changes]          # NO docker-build
@@ -207,7 +207,9 @@ quality-checks:                              # code-review: same, minus the unlo
     - run: npm run lint                       # then format:check / typecheck / audit:standards
 ```
 
-`code-review` checks out with `fetch-depth: 0` too (SMI-7164), and, like `quality-checks`, passes `PR_BODY` to its audit step, but it never unlocks git-crypt. So it audits a locked tree: Check 77 fails it, by design, on any PR whose diff touches an in-scope migration. Whether the job should unlock, stay as a locked-tree canary or be retired is SMI-7174. It also `needs` the package `test` job, so it runs only on PRs that touch a package. `audit:standards` Check 78 fails either job if its checkout can't resolve the PR's merge-base.
+The audit step runs `bash scripts/ci-code-review.sh audit-report.json` (SMI-7174), which exits with the audit's own exit code and writes the SMI-1826 report. Two report-only steps follow, both `continue-on-error` so they can't fail this required job: the `audit-report` artifact (renamed from `code-review-report`, 7 days) and a job-page summary table. The report's counts come from a file the audit writes (`AUDIT_SUMMARY_FILE`), never from log text, because the log carries PR-description text. `audit:standards` Check 78 fails the job if its checkout can't resolve the PR's merge-base.
+
+The `code-review` job, which ran the same audit on a locked tree after `quality-checks` and the package tests, was retired in SMI-7174. CI now has no locked-tree audit run; locked trees remain local runs and fork PRs.
 
 Convention precedent: `release-cadence.yml:84` and the `package-validation` job in `ci.yml`. New carve-out jobs MUST match the same `setup-node` SHA, `cache: 'npm'`, and `--ignore-scripts` flag.
 
@@ -232,11 +234,7 @@ graph LR
   docker-build --> build
   docker-build --> fresh-install-test
 
-  quality-checks --> code-review
-  test --> code-review
 ```
-
-`code-review` retains a Docker-bound predecessor (`test`) and gains no wall-clock improvement from carve-out — kept in for policy uniformity.
 
 ### Drift prevention (Check 38 in `audit-standards.mjs`)
 
@@ -588,4 +586,4 @@ If you still conclude an admin merge is warranted, that is a **named bypass requ
 
 ## Docker-First CI Carve-out (SMI-4647)
 
-Two pure-JS jobs run on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `quality-checks` (Quality Checks — bundles ESLint, Prettier, `tsc`, `audit-standards.mjs` since SMI-4908) and `code-review` (Code Review, `ci-code-review.sh`). They are exempt because their import closures contain zero native bindings. The carve-out lets these jobs start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](../../docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).
+One pure-JS job runs on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `quality-checks` (Quality Checks — bundles ESLint, Prettier, `tsc`, `audit-standards.mjs` since SMI-4908, run through `ci-code-review.sh` for the `audit-report` artifact since SMI-7174, which retired the second carved-out job, `code-review`). It is exempt because its import closure contains zero native bindings. The carve-out lets this job start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](../../docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).

@@ -24,6 +24,7 @@ import {
   fixtureSql,
   inTxn,
   inTxnRaw,
+  latestFunctionsSql,
   migrationForHarness,
   noLiveTestPg,
   requireTestConn,
@@ -35,6 +36,7 @@ import { registerCandidateTests } from './backfill-autochain-silent-stop.pg-cand
 import { registerDetectorTests } from './backfill-autochain-silent-stop.pg-detector.ts'
 import { registerDeliveryTests } from './backfill-autochain-silent-stop.pg-delivery.ts'
 import { registerConcurrencyTests } from './backfill-autochain-silent-stop.pg-concurrency.ts'
+import { registerVolumeTests } from './backfill-autochain-silent-stop.pg-volume.ts'
 
 const CALLS: Record<(typeof ALL_FNS)[number], string> = {
   backfill_autochain_silent_stop_candidates:
@@ -70,6 +72,11 @@ describe.skipIf(noLiveTestPg)(
     beforeEach(async () => {
       const fx = await ctl.send(fixtureSql())
       expect(fx.stderr, `fixture reload failed:\n${fx.stderr}`).not.toMatch(/ERROR/)
+      // Case 1 re-sends the ORIGINAL migration (apply, re-apply, rollback round-trip), which puts
+      // its own function bodies back. Without this, every case after it would test the 20261025000000
+      // bodies instead of the latest migration's (found 2026-10-25 by the volume case).
+      const latest = await ctl.send(latestFunctionsSql())
+      expect(latest.stderr, `latest bodies failed:\n${latest.stderr}`).not.toMatch(/ERROR/)
     })
 
     describe('case 1: apply', () => {
@@ -110,7 +117,7 @@ describe.skipIf(noLiveTestPg)(
           )
         )
         expect(r.lines).toEqual([
-          `${FN_SIGS[0]}=false|s|search_path=public, pg_temp`,
+          `${FN_SIGS[0]}=false|s|search_path=public, pg_temp;enable_nestloop=off`, // 20261025000001
           `${FN_SIGS[1]}=true|v|search_path=public, net, vault, extensions, pg_temp`,
         ])
       })
@@ -175,6 +182,7 @@ describe.skipIf(noLiveTestPg)(
     registerDetectorTests(ctx)
     registerDeliveryTests(ctx)
     registerConcurrencyTests(ctx)
+    registerVolumeTests(ctx)
 
     // Rollback last: it drops the objects the arms above run against; the migration is re-applied
     // before the arm returns, success or failure.
