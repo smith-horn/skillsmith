@@ -510,6 +510,7 @@ describe('SMI-7184', () => {
     it.skipIf(!hasDoc)(`SMI-7184 T3 ${name}: token removed from Blocked cell -> rule A`, () => {
       expect(cellOf(docText, prefix, 2)).toContain(`\`${sfx}\``)
       const doc = mutate(docText, (t) => withCell(t, prefix, 2, (c) => c.replace(`\`${sfx}\``, '')))
+      expect(doc).not.toBe(docText)
       applied(`T3:${name}`)
       expect(evalReal({ doc }).findings).toContain(
         `rule A: denied "${name}" is not in the ${prefix}* Blocked cell`
@@ -521,6 +522,7 @@ describe('SMI-7184', () => {
       const doc = mutate(docText, (t) =>
         withCell(t, prefix, 1, (c) => `${c.trimEnd()}, \`${sfx}\` `)
       )
+      expect(doc).not.toBe(docText)
       applied(`T4:${name}`)
       expect(evalReal({ doc }).findings).toContain(
         `rule C: denied "${name}" appears in the Allowed cell as "${sfx}"`
@@ -530,8 +532,32 @@ describe('SMI-7184', () => {
     it.skipIf(!hasDoc)(`SMI-7184 T5 ${name}: removed from the doc paste block only`, () => {
       expect(withFence(docText, (f) => f)).toContain(`"${full}"`)
       const doc = mutate(docText, (t) => withFence(t, (f) => f.replace(`      "${full}",\n`, '')))
+      expect(doc).not.toBe(docText)
       applied(`T5:${name}`)
       expect(evalReal({ doc }).findings).toContain(`pin-only: "${full}" is missing from doc`)
+    })
+
+    // Rule C must read the Allowed cell's parentheticals too: the memory_* and
+    // hooks_* Allowed cells carry long ones. Where the row has a parenthetical the
+    // denied name goes inside it; embeddings_* has none, so the arm adds one.
+    it.skipIf(!hasDoc)(`SMI-7184 T9 ${name}: inside an Allowed parenthetical -> rule C`, () => {
+      const cell = cellOf(docText, prefix, 1)
+      expect(cell).not.toContain(`\`${sfx}\``)
+      const open = cell.indexOf('(')
+      const insert = (c: string) =>
+        open === -1
+          ? `${c.trimEnd()} (not \`${sfx}\`) `
+          : `${c.slice(0, open + 1)}\`${sfx}\`, ${c.slice(open + 1)}`
+      const doc = mutate(docText, (t) => withCell(t, prefix, 1, insert))
+      expect(doc).not.toBe(docText)
+      const after = cellOf(doc, prefix, 1)
+      const at = after.indexOf(`\`${sfx}\``)
+      expect(at).toBeGreaterThan(after.indexOf('('))
+      expect(at).toBeLessThan(after.lastIndexOf(')'))
+      applied(`T9:${name}`)
+      expect(evalReal({ doc }).findings).toContain(
+        `rule C: denied "${name}" appears in the Allowed cell as "${sfx}"`
+      )
     })
   }
 

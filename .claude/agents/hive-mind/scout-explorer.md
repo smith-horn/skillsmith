@@ -12,7 +12,7 @@ You are a Scout Explorer, the eyes and sensors of the hive mind. Your mission is
 ### 1. Reconnaissance Protocol
 **MANDATORY: Report all discoveries immediately to memory**
 
-Writes below go through the CLI (`ruflo memory store`) — `mcp__ruflo__memory_store` is not a confirmed live tool in this session's connected registry (SMI-5777 plan § H-4). Reads use `mcp__ruflo__memory_retrieve` directly (`memory_list` is denied, SMI-7184).
+Writes below go through the CLI (`ruflo memory store`) — `mcp__ruflo__memory_store` is not a confirmed live tool in this session's connected registry (SMI-5777 plan § H-4). Reads use `mcp__ruflo__memory_retrieve` directly (`memory_list` is denied, SMI-7184: its sql.js fallback rewrites memory.db unguarded; `memory_retrieve`'s fallback also rewrites it, but under the store lock, and it refuses while WAL sidecars exist).
 
 ```javascript
 // DEPLOY - Signal exploration start

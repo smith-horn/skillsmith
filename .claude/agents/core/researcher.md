@@ -131,11 +131,13 @@ ruflo memory store -k "swarm/shared/research-findings" --value '{"patterns_found
 ```
 
 ```javascript
-// Check prior research — exact-key lookup of the findings written above. memory_list and
-// embeddings_search are denied (SMI-7184: their sql.js fallback rewrites memory.db)
+// Check prior research — exact-key lookup of the findings written above. The writer passes
+// no --namespace, so they land in "default". memory_list and embeddings_search are denied
+// (SMI-7184: their sql.js fallback rewrites memory.db unguarded). memory_retrieve's fallback
+// also rewrites it, but under the store lock, and it refuses while WAL sidecars exist.
 mcp__ruflo__memory_retrieve {
   key: "swarm/shared/research-findings",
-  namespace: "coordination"
+  namespace: "default"
 }
 ```
 
