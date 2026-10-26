@@ -626,3 +626,33 @@ describe('SMI-6465 confirmation round: each path is named once', () => {
     expect(cause.split('a.txt')).toHaveLength(2)
   })
 })
+
+describe('SMI-6465 second confirmation round: a clock the reflog cannot be trusted with', () => {
+  function run(mode: string): SyncResult {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    git(repo.local, 'branch', 'feature/x')
+    return runSync(repo.local, [], shimEnv(repo, mode))
+  }
+
+  it('T45: a clock step back plus a future-dated matching entry prints no restore command', () => {
+    const result = run('reflog-rollback-with-future')
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain('reconcile by hand')
+    expect(result.stderr).not.toContain('git update-ref')
+  })
+
+  it('T46: any entry dated after the move means the clock is untrusted: no command', () => {
+    const result = run('reflog-future-other')
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain('reconcile by hand')
+    expect(result.stderr).not.toContain('git update-ref')
+  })
+
+  it('T47: the newest entry must be dated within the move, even when one other entry is', () => {
+    const result = run('reflog-rollback-with-inwindow')
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain('reconcile by hand')
+    expect(result.stderr).not.toContain('git update-ref')
+  })
+})

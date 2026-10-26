@@ -227,7 +227,7 @@ if [ "$sub" = merge-base ] && [ "$mode" = merge-base-fails ]; then
 fi
 if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   case "$mode" in
-    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head | switch-before-move-then-away-and-back)
+    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head | switch-before-move-then-away-and-back | reflog-*)
       "$real" symbolic-ref HEAD refs/heads/feature/x ;;
     edit-unrelated-before-move) printf 'edited by another session\\n' >>unrelated.txt ;;
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
@@ -238,6 +238,23 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   "$real" "$@" || st=$?
   [ "$mode" = switch-before-move-then-commit ] && "$real" commit -q --allow-empty -m 'later commit'
   [ "$mode" = switch-before-move-overwrite-orig-head ] && "$real" update-ref ORIG_HEAD HEAD
+  case "$mode" in
+    reflog-*)
+      # Simulate a clock step or a foreign entry by rewriting feature/x's reflog.
+      log=$("$real" rev-parse --git-path logs/refs/heads/feature/x)
+      last=$(tail -n 1 "$log")
+      body=$(sed '$d' "$log")
+      target=\${args[\${#args[@]}-1]}
+      z=0000000000000000000000000000000000000001
+      rolled=$(printf '%s\\n' "$last" | sed -E 's/> [0-9]+ ([-+][0-9]{4})/> 1000000000 \\1/')
+      case "$mode" in
+        reflog-rollback-with-future) extra="$z $target t <t@t> 9999999999 +0000\\tmerge $target: Fast-forward" final=$rolled ;;
+        reflog-future-other) extra="$z $z t <t@t> 9999999999 +0000\\tother" final=$last ;;
+        reflog-rollback-with-inwindow) extra="$z $target t <t@t> $(date +%s) +0000\\tother" final=$rolled ;;
+      esac
+      { [ -z "$body" ] || printf '%s\\n' "$body"; printf '%b\\n' "$extra"; printf '%s\\n' "$final"; } >"$log"
+      ;;
+  esac
   if [ "$mode" = switch-before-move-then-away-and-back ]; then
     target=\${args[\${#args[@]}-1]}
     "$real" reset -q --soft HEAD^ && "$real" merge -q --ff-only "$target"

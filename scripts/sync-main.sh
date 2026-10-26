@@ -55,7 +55,8 @@ refuse() {
   exit "${5:-1}"
 }
 
-# Render up to 5 NUL-separated paths from a file as one line, each once.
+# Render up to 5 NUL-separated paths from a file as one line, each once, in
+# bytewise order (deterministic, whichever git command listed them first).
 # Newlines and tabs in a path are shown as \n and \t so it stays on one line.
 render_paths() {
   local file=$1 out='' n=0 p
@@ -265,6 +266,7 @@ if [ "$mode" != none ]; then
     git -c core.hooksPath=/dev/null reset --keep --no-recurse-submodules -q "$REMOTE" \
       >"$tmp/move.out" 2>&1 || move_status=$?
   fi
+  move_end=$(date +%s)
 else
   move_status=0
 fi
@@ -281,31 +283,36 @@ if [ "$after_ref" != refs/heads/main ]; then
     # The displaced value comes from the moved ref's own reflog, read once so
     # old and new come from one snapshot. Never ORIG_HEAD (any session can
     # rewrite it) or LOCAL (the switched-to ref need not have started there).
-    # The entry counts as this sync's only if, since just before the move,
-    # exactly one entry moved the ref to REMOTE, it is the newest line, and its
-    # subject is this move's. Anything else (an away-and-back by another
-    # session, no reflog) is ambiguous, and no command is printed.
+    # The entry counts as this sync's only if the newest line is it: new value
+    # REMOTE, this move's subject, dated within the move's own time window, and
+    # no other entry since the move started set the ref to REMOTE. Any entry
+    # dated after the move, or any line whose date cannot be read, means the
+    # clock or the log cannot be trusted. Anything ambiguous (an away-and-back
+    # by another session, no reflog, a clock step) prints no command.
     if [ "$mode" = ff ]; then want="merge $REMOTE: Fast-forward"; else want="reset: moving to $REMOTE"; fi
-    old='' cand='' cand_subject='' hits=0 last_new=''
+    old='' hits=0 anomaly=0 l_old='' l_new='' l_ts='' l_subject=''
     log=''
     [ -z "$after_ref" ] || log=$(git rev-parse --git-path "logs/$after_ref" 2>/dev/null) || log=''
     if [ -n "$log" ] && [ -f "$log" ]; then
       cp "$log" "$tmp/reflog"
       while IFS=$'\t' read -r head subject || [ -n "$head" ]; do
-        e_old=${head%% *}
+        l_old=${head%% *}
         rest=${head#* }
-        e_new=${rest%% *}
-        e_ts=${head% *}
-        e_ts=${e_ts##* }
-        last_new=$e_new
-        case "$e_ts" in '' | *[!0-9]*) continue ;; esac
-        if [ "$e_ts" -ge "$move_start" ] && [ "$e_new" = "$REMOTE" ]; then
-          hits=$((hits + 1))
-          cand=$e_old cand_subject=$subject
-        fi
+        l_new=${rest%% *}
+        l_ts=${head% *}
+        l_ts=${l_ts##* }
+        l_subject=$subject
+        case "$l_ts" in '' | *[!0-9]*)
+          anomaly=1
+          continue
+          ;;
+        esac
+        [ "$l_ts" -le "$move_end" ] || anomaly=1
+        if [ "$l_ts" -ge "$move_start" ] && [ "$l_new" = "$REMOTE" ]; then hits=$((hits + 1)); fi
       done <"$tmp/reflog"
-      if [ "$hits" -eq 1 ] && [ "$cand_subject" = "$want" ] && [ "$last_new" = "$REMOTE" ]; then
-        old=$cand
+      if [ "$anomaly" -eq 0 ] && [ "$hits" -eq 1 ] && [ "$l_new" = "$REMOTE" ] &&
+        [ "$l_subject" = "$want" ] && [ "$l_ts" -ge "$move_start" ]; then
+        old=$l_old
       fi
     fi
     printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move).\n' \
