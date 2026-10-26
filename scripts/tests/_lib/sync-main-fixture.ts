@@ -226,16 +226,23 @@ if [ "$sub" = merge-base ] && [ "$mode" = merge-base-fails ]; then
   exit 128
 fi
 if [ "$sub" = merge ] || [ "$sub" = reset ]; then
+  # Side effects play another session, which never carries this run's reflog nonce.
+  ra=\${GIT_REFLOG_ACTION-}
+  unset GIT_REFLOG_ACTION
   case "$mode" in
     switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head | switch-before-move-then-away-and-back | reflog-*)
       "$real" symbolic-ref HEAD refs/heads/feature/x ;;
     edit-unrelated-before-move) printf 'edited by another session\\n' >>unrelated.txt ;;
+    other-sync-moves-first)
+      "$real" symbolic-ref HEAD refs/heads/feature/x
+      GIT_REFLOG_ACTION='sync-main other-run' "$real" merge --ff-only -q "\${args[\${#args[@]}-1]}"
+      ;;
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
     fail-move) exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
   esac
   st=0
-  "$real" "$@" || st=$?
+  GIT_REFLOG_ACTION=$ra "$real" "$@" || st=$?
   [ "$mode" = switch-before-move-then-commit ] && "$real" commit -q --allow-empty -m 'later commit'
   [ "$mode" = switch-before-move-overwrite-orig-head ] && "$real" update-ref ORIG_HEAD HEAD
   case "$mode" in

@@ -257,16 +257,17 @@ if [ "$mode" != none ]; then
   fi
 
   # --- Change 5: no hook fires; neither move touches submodule checkouts ---
-  move_start=$(date +%s) # reflog entries this sync can own are no older
+  # The move's reflog subject carries a nonce unique to this run, so the
+  # after-check can tell this run's entry from any other process's.
+  nonce="${tmp##*/}-$$"
   move_status=0
   if [ "$mode" = ff ]; then
-    git -c core.hooksPath=/dev/null merge --ff-only --no-autostash --no-overwrite-ignore -q "$REMOTE" \
+    GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null merge --ff-only --no-autostash --no-overwrite-ignore -q "$REMOTE" \
       >"$tmp/move.out" 2>&1 || move_status=$?
   else
-    git -c core.hooksPath=/dev/null reset --keep --no-recurse-submodules -q "$REMOTE" \
+    GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null reset --keep --no-recurse-submodules -q "$REMOTE" \
       >"$tmp/move.out" 2>&1 || move_status=$?
   fi
-  move_end=$(date +%s)
 else
   move_status=0
 fi
@@ -280,43 +281,44 @@ if [ "$after_ref" != refs/heads/main ]; then
   elif [ "$(git rev-parse refs/heads/main)" = "$REMOTE" ]; then
     printf 'ERROR [branch-changed-after-sync]: main was synced to %s, then this checkout switched to %s.\n' "${REMOTE:0:12}" "$shown" >&2
   else
-    # The displaced value comes from the moved ref's own reflog, read once so
-    # old and new come from one snapshot. Never ORIG_HEAD (any session can
-    # rewrite it) or LOCAL (the switched-to ref need not have started there).
-    # The entry counts as this sync's only if the newest line is it: new value
-    # REMOTE, this move's subject, dated within the move's own time window, and
-    # no other entry since the move started set the ref to REMOTE. Any entry
-    # dated after the move, or any line whose date cannot be read, means the
-    # clock or the log cannot be trusted. Anything ambiguous (an away-and-back
-    # by another session, no reflog, a clock step) prints no command.
-    if [ "$mode" = ff ]; then want="merge $REMOTE: Fast-forward"; else want="reset: moving to $REMOTE"; fi
-    old='' hits=0 anomaly=0 l_old='' l_new='' l_ts='' l_subject=''
+    # The displaced value comes from this run's own entry in the moved ref's
+    # reflog, found by the nonce in its subject and read from one copy of the
+    # file. Never ORIG_HEAD (any session can rewrite it), LOCAL (the
+    # switched-to ref need not have started there), or a timestamp or subject
+    # match (another process can produce both). It is used only if exactly one
+    # entry carries the nonce, it moved the ref to REMOTE, and it is the newest
+    # line. Anything else prints no command.
+    old='' hits=0 cand='' cand_new='' l_subject=''
     log=''
     [ -z "$after_ref" ] || log=$(git rev-parse --git-path "logs/$after_ref" 2>/dev/null) || log=''
     if [ -n "$log" ] && [ -f "$log" ]; then
       cp "$log" "$tmp/reflog"
       while IFS=$'\t' read -r head subject || [ -n "$head" ]; do
-        l_old=${head%% *}
-        rest=${head#* }
-        l_new=${rest%% *}
-        l_ts=${head% *}
-        l_ts=${l_ts##* }
         l_subject=$subject
-        case "$l_ts" in '' | *[!0-9]*)
-          anomaly=1
-          continue
-          ;;
+        case "$subject" in
+          "sync-main $nonce: "*)
+            hits=$((hits + 1))
+            cand=${head%% *}
+            rest=${head#* }
+            cand_new=${rest%% *}
+            ;;
         esac
-        [ "$l_ts" -le "$move_end" ] || anomaly=1
-        if [ "$l_ts" -ge "$move_start" ] && [ "$l_new" = "$REMOTE" ]; then hits=$((hits + 1)); fi
       done <"$tmp/reflog"
-      if [ "$anomaly" -eq 0 ] && [ "$hits" -eq 1 ] && [ "$l_new" = "$REMOTE" ] &&
-        [ "$l_subject" = "$want" ] && [ "$l_ts" -ge "$move_start" ]; then
-        old=$l_old
+      case "$l_subject" in
+        "sync-main $nonce: "*) newest_is_ours=1 ;;
+        *) newest_is_ours=0 ;;
+      esac
+      if [ "$hits" -eq 1 ] && [ "$cand_new" = "$REMOTE" ] && [ "$newest_is_ours" -eq 1 ]; then
+        old=$cand
       fi
     fi
-    printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move).\n' \
-      "$shown" "${old:-<unknown: no unambiguous reflog entry>}" "$REMOTE" >&2
+    if [ -n "$old" ]; then
+      printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move).\n' \
+        "$shown" "$old" "$REMOTE" >&2
+    else
+      printf 'ERROR [branch-changed-after-sync]: this checkout switched to %s during the sync, which now points at %s; no reflog entry shows this sync moving it.\n' \
+        "$shown" "${REMOTE:0:12}" >&2
+    fi
     if [ -n "$old" ] && [ "$(git rev-parse -q --verify "$after_ref" 2>/dev/null)" = "$REMOTE" ]; then
       printf 'restore the ref (not the index or working tree): git update-ref %s %s %s\n' "$after_ref" "$old" "$REMOTE" >&2
     else

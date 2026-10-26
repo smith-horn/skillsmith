@@ -627,32 +627,38 @@ describe('SMI-6465 confirmation round: each path is named once', () => {
   })
 })
 
-describe('SMI-6465 second confirmation round: a clock the reflog cannot be trusted with', () => {
-  function run(mode: string): SyncResult {
+describe("SMI-6465 confirmation rounds: the restore value is this run's own, whatever the clock", () => {
+  function run(mode: string): { result: SyncResult; local: string; remote: string } {
     const repo = makeRepo()
-    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
     git(repo.local, 'branch', 'feature/x')
-    return runSync(repo.local, [], shimEnv(repo, mode))
+    return { result: runSync(repo.local, [], shimEnv(repo, mode)), local, remote }
   }
 
-  it('T45: a clock step back plus a future-dated matching entry prints no restore command', () => {
-    const result = run('reflog-rollback-with-future')
+  it('T45: a clock step back plus a future-dated matching entry: the command still names the true old value', () => {
+    const { result, local, remote } = run('reflog-rollback-with-future')
     expect(result.status, result.stderr).toBe(3)
-    expect(result.stderr).toContain('reconcile by hand')
-    expect(result.stderr).not.toContain('git update-ref')
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
   })
 
-  it('T46: any entry dated after the move means the clock is untrusted: no command', () => {
-    const result = run('reflog-future-other')
+  it("T46: an entry dated after the move does not change which entry is this run's", () => {
+    const { result, local, remote } = run('reflog-future-other')
     expect(result.status, result.stderr).toBe(3)
-    expect(result.stderr).toContain('reconcile by hand')
-    expect(result.stderr).not.toContain('git update-ref')
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
   })
 
-  it('T47: the newest entry must be dated within the move, even when one other entry is', () => {
-    const result = run('reflog-rollback-with-inwindow')
+  it("T47: an in-window entry from someone else does not change which entry is this run's", () => {
+    const { result, local, remote } = run('reflog-rollback-with-inwindow')
     expect(result.status, result.stderr).toBe(3)
-    expect(result.stderr).toContain('reconcile by hand')
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+
+  it('T48: another sync moved the ref first and this run was a no-op: no restore command', () => {
+    const { result, remote } = run('other-sync-moves-first')
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain(`no reflog entry shows this sync moving it`)
+    expect(result.stderr).toContain(remote.slice(0, 12))
     expect(result.stderr).not.toContain('git update-ref')
   })
 })
