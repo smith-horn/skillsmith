@@ -12,7 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ManifestEntryChanged } from '../../../src/services/skill-manifest.entry.js'
-import { ManifestLockLost } from '../../../src/services/skill-manifest.lock.js'
+import { ManifestLockLost, runManifestUpdate } from '../../../src/services/skill-manifest.lock.js'
 import { createManifestPort } from '../../../src/services/skill-manifest.port.js'
 import { ManifestUnwritableError } from '../../../src/services/skill-manifest.read-state.js'
 
@@ -338,5 +338,90 @@ describe('T-C4 end to end: a record written in another key order still passes th
     await createManifestPort(target(other.manifestPath)).withManifestLock(async (m) => {
       expect(await m.casMatches()).toBe(false)
     })
+  })
+})
+
+describe('the port and runManifestUpdate exclude each other on one manifest', () => {
+  type Doc = { version: string; installedSkills: Record<string, unknown> }
+  const gate = () => {
+    let open: () => void = () => {}
+    const opened = new Promise<void>((resolve) => (open = resolve))
+    return { open, opened }
+  }
+  /** Fails clearly, rather than hanging, if `p` does not settle in time. */
+  const within = <T>(p: Promise<T>, what: string, ms = 10_000): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms)
+      ),
+    ])
+  const readSkills = (p: string) => (readDoc(p) as Doc).installedSkills
+  const addB = (m: Doc): Doc => ({
+    ...m,
+    installedSkills: { ...m.installedSkills, B: { id: 'B' } },
+  })
+  const loadDoc = async (p: string): Promise<Doc> => readDoc(p) as Doc
+
+  it('runManifestUpdate does not enter while the port holds the lock, and enters and completes after release', async () => {
+    const { manifestPath } = setup({ version: '1.0.0', installedSkills: { [KEY]: PRE } })
+    const portHeld = gate()
+    const release = gate()
+    const events: string[] = []
+    const port = createManifestPort(target(manifestPath)).withManifestLock(async (m) => {
+      events.push('port-enter')
+      portHeld.open()
+      await release.opened
+      await m.write()
+      events.push('port-done')
+    })
+    await within(portHeld.opened, 'the port hold to start')
+
+    const entered = gate()
+    const update = runManifestUpdate<Doc>({
+      manifestPath,
+      load: () => loadDoc(manifestPath),
+      update: (m) => {
+        events.push('update-enter')
+        entered.open()
+        return addB(m)
+      },
+    })
+    // Observation window: the update has been started and given time to run; the
+    // port's hold is still open, so it must not have entered.
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(events).toEqual(['port-enter'])
+
+    release.open()
+    await within(Promise.all([port, update]), 'both writers to finish')
+    // Presence, from the same run: the update did enter, and only after the port finished.
+    expect(events).toEqual(['port-enter', 'port-done', 'update-enter'])
+    await within(entered.opened, 'the update callback')
+  })
+
+  it('a port write of key A and a runManifestUpdate write of key B, concurrently, both survive', async () => {
+    const { manifestPath } = setup({ version: '1.0.0', installedSkills: { other: { id: 'o' } } })
+    const portHeld = gate()
+    const release = gate()
+    const port = createManifestPort(
+      target(manifestPath, { manifestKey: 'A', preEntry: null })
+    ).withManifestLock(async (m) => {
+      portHeld.open()
+      await release.opened
+      await m.write()
+    })
+    await within(portHeld.opened, 'the port hold to start')
+    const update = runManifestUpdate<Doc>({
+      manifestPath,
+      load: () => loadDoc(manifestPath),
+      update: addB,
+    })
+    release.open()
+    await within(Promise.all([port, update]), 'both writers to finish')
+    const skills = readSkills(manifestPath)
+    expect(Object.keys(skills).sort()).toEqual(['A', 'B', 'other'])
+    expect(skills.A).toEqual(POST)
+    expect(skills.B).toEqual({ id: 'B' })
+    expect(skills.other).toEqual({ id: 'o' })
   })
 })
