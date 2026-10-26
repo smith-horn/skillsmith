@@ -27,7 +27,9 @@
  * audit:standards with the submodule present. Parenthetical text inside Blocked
  * cells is stripped before rule D; rule C reads the whole Allowed cell (parentheticals
  * included), so Allowed prose without backticks is invisible to it. Continuation
- * rows (empty first cell) are not parsed by any rule.
+ * rows (empty first cell) are not parsed by any rule. Known false positive
+ * (SMI-7182): rule C's bare-wildcard form (a short prefix with `*` in an Allowed
+ * cell) can over-match denied tools of other families and flag a correct doc.
  */
 
 import { readFileSync, existsSync } from 'node:fs'
