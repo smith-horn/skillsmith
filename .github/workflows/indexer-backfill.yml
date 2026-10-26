@@ -342,8 +342,8 @@ jobs:
           # scripts/indexer/run-lock-retry.ts), writes a skipped_lock audit row carrying this
           # run's dispatch intent, and exits 0 before any GitHub call. End green so the
           # autochain link runs and retries from that row (SMI-6246, capped at 5). Only that
-          # exact two-key shape passes; anything else, including a lock-skip line that also
-          # carries data or meta, falls through to the token_source check below.
+          # exact line passes, byte for byte; anything else, including a lock-skip line that
+          # also carries data or meta, falls through to the token_source check below.
           if LOCK_SKIP_REQ=$(node -e '
             let r
             try { r = JSON.parse(process.env.RESPONSE ?? "") } catch { process.exit(1) }
@@ -352,6 +352,10 @@ jobs:
               r.event === "lock_held_by_other_run" &&
               typeof r.request_id === "string" && /^[A-Za-z0-9-]{1,64}$/.test(r.request_id)
             if (!ok) process.exit(1)
+            // The producer prints JSON.stringify of exactly this object, so require the same
+            // bytes: no duplicate keys, escapes, reordering or whitespace.
+            const exact = JSON.stringify({ event: "lock_held_by_other_run", request_id: r.request_id })
+            if (process.env.RESPONSE !== exact) process.exit(1)
             process.stdout.write(r.request_id)'); then
             echo "::notice::Lock held by another run (request_id=$LOCK_SKIP_REQ). This run did no work and made no GitHub calls; the autochain link retries it from its skipped_lock audit row."
             {

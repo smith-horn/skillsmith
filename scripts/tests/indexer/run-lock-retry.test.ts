@@ -443,12 +443,10 @@ describe('SMI-6246: handleLockSkip', () => {
       expect(insert).toHaveBeenCalledTimes(1) // the audit write ran before the assertion
       expect(exitSpy).toHaveBeenCalledWith(0)
       expect(stdoutSpy).not.toHaveBeenCalled()
-      const last = logSpy.mock.calls.at(-1)
-      expect(last).toHaveLength(1)
-      expect(JSON.parse(String(last?.[0]))).toStrictEqual({
-        event: 'lock_held_by_other_run',
-        request_id: 'req-1',
-      })
+      // Byte-exact: the workflow guard compares the line to JSON.stringify of this object.
+      expect(logSpy.mock.calls.at(-1)).toStrictEqual([
+        '{"event":"lock_held_by_other_run","request_id":"req-1"}',
+      ])
     }
   )
 

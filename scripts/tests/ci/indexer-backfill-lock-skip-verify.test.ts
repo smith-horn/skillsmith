@@ -127,6 +127,32 @@ describe('SMI-6887: every other response still reaches the token_source check', 
     expect(r.summary).not.toContain(LOCK_LINE)
   })
 
+  // PR #3179 gate: each of these PARSES to the producer's object (or nearly), but is not
+  // the producer's bytes. Only JSON.stringify({event, request_id}) passes.
+  const sameValueOtherBytes: Array<[string, string]> = [
+    [
+      'a duplicate event key',
+      '{"event":"wrong","event":"lock_held_by_other_run","request_id":"r"}',
+    ],
+    ['a unicode-escaped event key', '{"\\u0065vent":"lock_held_by_other_run","request_id":"r"}'],
+    ['reordered keys', '{"request_id":"r","event":"lock_held_by_other_run"}'],
+    ['added whitespace', '{"event": "lock_held_by_other_run", "request_id": "r"}'],
+    ['a suffixed event', '{"event":"lock_held_by_other_run_x","request_id":"r"}'],
+  ]
+
+  it.each(sameValueOtherBytes)('%s fails with the token_source error', (_label, response) => {
+    const r = runVerify(response)
+    expect(r.status).toBe(1)
+    expect(r.out).toContain(`token_source is 'unknown' (expected 'pat')`)
+    expect(r.summary).not.toContain(LOCK_LINE)
+  })
+
+  it('CONTROL: the producer bytes for the same request id pass', () => {
+    const r = runVerify(JSON.stringify({ event: 'lock_held_by_other_run', request_id: 'r' }))
+    expect(r.status).toBe(0)
+    expect(r.summary).toContain(LOCK_LINE)
+  })
+
   // Not JSON objects at all: the step must not end green. Real jq and the shim both
   // stop the step at the first field read, before the token message, so only the
   // exit status and the absent lock summary are asserted.
