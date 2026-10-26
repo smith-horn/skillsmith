@@ -222,14 +222,22 @@ if [ "$sub" = fetch ]; then
   [ "$mode" = switch-during-fetch ] && "$real" checkout -q -b feature/y
   exit 0
 fi
+if [ "$sub" = merge-base ] && [ "$mode" = merge-base-fails ]; then
+  exit 128
+fi
 if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   case "$mode" in
-    switch-before-move | switch-before-move-then-commit) "$real" symbolic-ref HEAD refs/heads/feature/x ;;
+    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head)
+      "$real" symbolic-ref HEAD refs/heads/feature/x ;;
     edit-unrelated-before-move) printf 'edited by another session\\n' >>unrelated.txt ;;
+    diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
+    fail-move) exit 1 ;;
+    stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
   esac
   st=0
   "$real" "$@" || st=$?
   [ "$mode" = switch-before-move-then-commit ] && "$real" commit -q --allow-empty -m 'later commit'
+  [ "$mode" = switch-before-move-overwrite-orig-head ] && "$real" update-ref ORIG_HEAD HEAD
   exit "$st"
 fi
 exec "$real" "$@"

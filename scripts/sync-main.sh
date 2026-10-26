@@ -37,8 +37,9 @@ uncommitted change. Refuses (exit 1, nothing local changed) when:
   branch-changed-during-fetch   another session switched or moved main during the fetch
   fetch-failed                  git fetch origin main failed
 
---discard-local-commits  drop local main's own commits (reset --keep), after
-                         saving them: git branch save/main-<short> HEAD
+--discard-local-commits  drop local main's own commits (reset --keep). This flag
+                         does not save them; first run:
+                         git branch save/main-<short> HEAD
 
 Exit codes: 0 synced, 1 refused, 2 usage, 3 stopped partway or HEAD moved.
 EOF
@@ -54,11 +55,16 @@ refuse() {
   exit "${5:-1}"
 }
 
-# Render up to 5 NUL-separated paths from a file as one line. Newlines and
-# tabs in a path are shown as \n and \t so each path stays on one line.
+# Render up to 5 NUL-separated paths from a file as one line, each once.
+# Newlines and tabs in a path are shown as \n and \t so it stays on one line.
 render_paths() {
-  local file=$1 out='' n=0 p
+  local file=$1 out='' n=0 p s dup
+  local seen=()
   while IFS= read -r -d '' p; do
+    dup=0
+    for s in ${seen[@]+"${seen[@]}"}; do [ "$s" != "$p" ] || dup=1; done
+    [ "$dup" -eq 0 ] || continue
+    seen+=("$p")
     n=$((n + 1))
     [ "$n" -le 5 ] || continue
     p=${p//$'\n'/\\n}
@@ -103,6 +109,9 @@ if [ "$head_ref" != refs/heads/main ]; then
   refuse not-on-main "this checkout is on '$b', not main" "$STATE_PRE" \
     "this checkout is on '$b', which another session may be using. Leave it as it is; $leave_it or ask the session that owns '$b'"
 fi
+
+# Every path set below is repo-root-relative, so run from the top level.
+cd "$(git rev-parse --show-toplevel)"
 
 # --- Change 2: preconditions before the fetch -----------------------------
 for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-apply rebase-merge sequencer BISECT_LOG; do
@@ -161,13 +170,26 @@ if [ "$LOCAL" != "$REMOTE" ]; then
 fi
 
 # --- Change 3: classify, then fast-forward or (opt-in) reset --keep -------
+# is_ancestor <a> <b>: 0 yes, 1 no; any other git status is a failure, not "no".
+is_ancestor() {
+  local st=0
+  git merge-base --is-ancestor "$1" "$2" || st=$?
+  case "$st" in
+    0 | 1) return "$st" ;;
+    *)
+      printf 'sync-main: ERROR: git merge-base --is-ancestor failed (exit %s); inspect git status before rerunning\n' "$st" >&2
+      exit 3
+      ;;
+  esac
+}
+
 mode=none
 if [ "$LOCAL" != "$REMOTE" ]; then
-  if git merge-base --is-ancestor "$LOCAL" "$REMOTE"; then
+  if is_ancestor "$LOCAL" "$REMOTE"; then
     mode=ff
   else
     short=$(git rev-parse --short "$LOCAL")
-    if git merge-base --is-ancestor "$REMOTE" "$LOCAL"; then
+    if is_ancestor "$REMOTE" "$LOCAL"; then
       token=local-ahead cause="local main has $AHEAD commit(s) not on origin/main"
     else
       token=local-diverged cause="local main and origin/main have diverged ($AHEAD local, $BEHIND upstream)"
@@ -187,6 +209,8 @@ if [ "$mode" != none ]; then
   git diff -z --name-only --no-renames --diff-filter=A "$LOCAL" "$REMOTE" >"$tmp/added"
   : >"$tmp/overlap"
   : >"$tmp/collide"
+  : >"$tmp/fp-index.before"
+  : >"$tmp/fp-wt.before"
   if [ -s "$tmp/incoming" ]; then
     # Tracked paths with a staged or unstaged change that origin/main also changes.
     xargs -0 git --literal-pathspecs diff -z --name-only --no-renames --cached -- <"$tmp/incoming" >>"$tmp/overlap"
@@ -249,10 +273,23 @@ if [ "$after_ref" != refs/heads/main ]; then
   elif [ "$(git rev-parse refs/heads/main)" = "$REMOTE" ]; then
     printf 'ERROR [branch-changed-after-sync]: main was synced to %s, then this checkout switched to %s.\n' "${REMOTE:0:12}" "$shown" >&2
   else
-    old=$(git rev-parse -q --verify ORIG_HEAD 2>/dev/null) || old=$LOCAL
+    # The displaced value comes from the moved ref's own reflog entry for this
+    # move, never from ORIG_HEAD (any session can rewrite it) or LOCAL (the
+    # switched-to ref need not have started at main's commit).
+    if [ "$mode" = ff ]; then want="merge $REMOTE: Fast-forward"; else want="reset: moving to $REMOTE"; fi
+    old='' i=0
+    if [ -n "$after_ref" ]; then
+      while IFS=' ' read -r sha subject; do
+        if [ "$sha" = "$REMOTE" ] && [ "$subject" = "$want" ]; then
+          old=$(git rev-parse -q --verify "$after_ref@{$((i + 1))}" 2>/dev/null) || old=''
+          break
+        fi
+        i=$((i + 1))
+      done < <(git log -g --format='%H %gs' "$after_ref" -- 2>/dev/null || true)
+    fi
     printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move).\n' \
-      "$shown" "$old" "$REMOTE" >&2
-    if [ -n "$after_ref" ] && [ "$(git rev-parse -q --verify "$after_ref" 2>/dev/null)" = "$REMOTE" ]; then
+      "$shown" "${old:-<unknown: no reflog entry>}" "$REMOTE" >&2
+    if [ -n "$old" ] && [ "$(git rev-parse -q --verify "$after_ref" 2>/dev/null)" = "$REMOTE" ]; then
       printf 'restore the ref (not the index or working tree): git update-ref %s %s %s\n' "$after_ref" "$old" "$REMOTE" >&2
     else
       printf '%s moved again; reconcile by hand (reflog: git reflog %s)\n' "$shown" "${after_ref:-HEAD}" >&2
@@ -265,20 +302,24 @@ if [ "$move_status" -ne 0 ]; then
   # --- Change 6: did the failed move leave incoming paths half-written? ---
   : >"$tmp/fp-index.after"
   : >"$tmp/fp-wt.after"
+  : >"$tmp/fp-named"
   if [ -s "$tmp/incoming" ]; then
     xargs -0 git --literal-pathspecs ls-files -z -s -- <"$tmp/incoming" >"$tmp/fp-index.after"
     xargs -0 git --literal-pathspecs diff -z --name-only --no-renames -- <"$tmp/incoming" >"$tmp/fp-wt.after"
+    # Name index-only changes too: incoming paths now staged against HEAD.
+    cat "$tmp/fp-wt.after" >"$tmp/fp-named"
+    xargs -0 git --literal-pathspecs diff -z --name-only --no-renames --cached -- <"$tmp/incoming" >>"$tmp/fp-named"
   fi
   if ! cmp -s "$tmp/fp-index.before" "$tmp/fp-index.after" || ! cmp -s "$tmp/fp-wt.before" "$tmp/fp-wt.after"; then
     printf 'ERROR [partial-move]: these incoming paths changed during the attempted move (source unknown; a failing checkout filter such as git-crypt is one cause, another session'"'"'s edit is another): %s\n' \
-      "$(render_paths "$tmp/fp-wt.after")" >&2
+      "$(render_paths "$tmp/fp-named")" >&2
     printf 'HEAD and main still point at %s; the working tree needs attention.\n' "${LOCAL:0:12}" >&2
     printf 'next: inspect git status before changing anything; if every path above is unedited by any session, git restore --worktree -- <path> undoes this sync'"'"'s writes\n' >&2
     exit 3
   fi
   if [ -s "$tmp/overlap" ]; then
     refuse overlap "uncommitted change(s) on path(s) origin/main changes: $(render_paths "$tmp/overlap")" "$STATE_POST" \
-      'keep your edit: commit it on a branch first. Discard it only if it is yours: git restore --worktree --staged -- <path>'
+      'keep the edit: copy it out (git diff HEAD -- <path> > a file outside the repo) or redo it in a worktree. Discard it only if it is yours: git restore --worktree --staged -- <path>'
   fi
   if [ -s "$tmp/collide" ]; then
     refuse untracked-collision "origin/main adds $(render_paths "$tmp/collide"), which exist locally" "$STATE_POST" \

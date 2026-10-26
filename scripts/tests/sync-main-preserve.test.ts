@@ -474,3 +474,96 @@ describe('SMI-6465: a move that fails partway is reported, not hidden', () => {
     expect(read(repo.local, 'unrelated.txt')).toBe('u\nedited by another session\n')
   })
 })
+
+describe('SMI-6465 review round: governance and GPT-5.6-Sol findings', () => {
+  it('T32: run from a subdirectory, an overlap is still named [overlap]', () => {
+    const repo = makeRepo({ ...SEED, 'd/f.txt': 'f\n' })
+    pushUpstream(repo, { 'd/f.txt': 'f2\n' })
+    write(repo.local, 'd/f.txt', 'my f\n')
+    const before = snapshot(repo.local)
+    const result = runSync(join(repo.local, 'd'))
+    const { cause } = refusedAfterFetch(repo, before, result, 'overlap')
+    expect(cause).toContain('d/f.txt')
+  })
+
+  it('T33: a staged edit on a path origin/main changes is refused [overlap]', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    write(repo.local, 'a.txt', 'staged a\n')
+    git(repo.local, 'add', 'a.txt')
+    const before = snapshot(repo.local)
+    const { cause } = refusedAfterFetch(repo, before, runSync(repo.local), 'overlap')
+    expect(cause).toContain('a.txt')
+  })
+
+  it('T34: a failed move with no incoming paths is [keep-refused], not [partial-move]', () => {
+    const repo = makeRepo()
+    git(repo.local, 'commit', '-q', '--allow-empty', '-m', 'empty local commit')
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, ['--discard-local-commits'], shimEnv(repo, 'fail-move'))
+    refusedAfterFetch(repo, before, result, 'keep-refused')
+  })
+
+  it('T35: an index-only change during a failed move is [partial-move] naming the path', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const result = runSync(repo.local, [], shimEnv(repo, 'stage-incoming-then-fail'))
+    expect(result.status, result.stderr).toBe(3)
+    const first = result.stderr.split('\n')[0]
+    expect(first).toMatch(/^ERROR \[partial-move\]: /)
+    expect(first).toMatch(/: a\.txt$/)
+  })
+
+  it('T36: on the --discard-local-commits path, a switch before the move gets the same CAS restore', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = commitLocal(repo, { 'mine.txt': 'key\n' })
+    git(repo.local, 'branch', 'feature/x')
+    const result = runSync(
+      repo.local,
+      ['--discard-local-commits'],
+      shimEnv(repo, 'switch-before-move')
+    )
+    expect(result.status, result.stderr).toBe(3)
+    const cas = `git update-ref refs/heads/feature/x ${local} ${remote}`
+    expect(result.stderr).toContain(cas)
+    execFileSync('sh', ['-c', cas], { cwd: repo.local, env: GIT_ENV })
+    expect(git(repo.local, 'rev-parse', 'feature/x')).toBe(local)
+    expect(git(repo.local, 'rev-parse', 'main')).toBe(local)
+  })
+
+  it('T37: the restore value comes from the moved ref, not ORIG_HEAD another session rewrote', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    git(repo.local, 'branch', 'feature/x')
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-before-move-overwrite-orig-head'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(git(repo.local, 'rev-parse', 'ORIG_HEAD')).toBe(remote)
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+
+  it('T38: main diverging just before the move is refused; no merge commit, no merge state', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const result = runSync(repo.local, [], shimEnv(repo, 'diverge-main-before-move'))
+    expectRefusal(result, 'ff-refused', STATE_POST)
+    expect(git(repo.local, 'log', '-1', '--format=%s', 'main')).toBe('race commit on main')
+    expect(git(repo.local, 'log', '-1', '--format=%P', 'main').split(' ')).toHaveLength(1)
+    expect(existsSync(join(repo.local, '.git', 'MERGE_HEAD'))).toBe(false)
+    expect(read(repo.local, 'a.txt')).toBe('a\n')
+  })
+})
+
+describe('SMI-6465 review round: a git error is never read as an answer', () => {
+  it('T39: merge-base failing (exit 128) exits 3, not a local-diverged refusal', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], shimEnv(repo, 'merge-base-fails'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain('git merge-base --is-ancestor failed (exit 128)')
+    expect(result.stderr).not.toContain('REFUSED')
+    expect(snapshot(repo.local)).toBe(before)
+  })
+})
