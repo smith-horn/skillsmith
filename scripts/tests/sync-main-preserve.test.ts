@@ -37,6 +37,7 @@ import {
   runSync,
   SEED,
   shimEnv,
+  trFailEnv,
   snapshot,
   STATE_POST,
   STATE_PRE,
@@ -825,6 +826,8 @@ describe('SMI-6465 retro gate: any git output yields a one-line refusal, exit 1'
     ['fail-move-out-ansi', (r) => expect(r).toBe('[31mfatal: red[0m tail')],
     ['fail-move-out-long', (r) => expect(r).toBe(`fatal: ${'x'.repeat(193)}`)],
     ['fail-move-out-empty', (r) => expect(r).toBe('no message from git')],
+    ['fail-move-out-malformed', (r) => expect(r).toBe('fatal: bad ?? bytes ? C1 DEL end')],
+    ['fail-move-out-huge', (r) => expect(r).toBe(`fatal: ${'x'.repeat(193)}`)],
   ]
   for (const [mode, check] of cases) {
     for (const flow of ['ff', 'keep'] as const) {
@@ -835,7 +838,8 @@ describe('SMI-6465 retro gate: any git output yields a one-line refusal, exit 1'
         const before = snapshot(repo.local)
         const args = flow === 'keep' ? ['--discard-local-commits'] : []
         const token = flow === 'keep' ? 'keep-refused' : 'ff-refused'
-        const result = runSync(repo.local, args, shimEnv(repo, mode))
+        // A UTF-8 locale, where a malformed byte can make a non-C tr exit.
+        const result = runSync(repo.local, args, { ...shimEnv(repo, mode), LC_ALL: 'C.UTF-8' })
         const { cause } = refusedAfterFetch(repo, before, result, token)
         // eslint-disable-next-line no-control-regex
         expect(cause).not.toMatch(/[\x00-\x1f\x7f]/)
@@ -843,6 +847,33 @@ describe('SMI-6465 retro gate: any git output yields a one-line refusal, exit 1'
       })
     }
   }
+})
+
+describe('SMI-6465 retro gate round 2: a fetch failure renders as one line too', () => {
+  it('T63: malformed bytes in fetch output give one [fetch-failed] line, exit 1', () => {
+    const repo = makeRepo()
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], {
+      ...shimEnv(repo, 'fetch-fails-malformed'),
+      LC_ALL: 'C.UTF-8',
+    })
+    const { cause } = expectRefusal(result, 'fetch-failed', STATE_PRE)
+    expect(snapshot(repo.local)).toBe(before)
+    expect(cause).toBe('git fetch origin main failed: fatal: bad ?? fetch ?end')
+  })
+})
+
+describe("SMI-6465 retro gate round 2: rendering git's reason can never fail", () => {
+  it('T64: a stage of the reason pipeline failing still gives one [ff-refused] line, exit 1', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const env = trFailEnv(repo, shimEnv(repo, 'fail-move-with-message'))
+    const result = runSync(repo.local, [], env)
+    const { cause } = refusedAfterFetch(repo, before, result, 'ff-refused')
+    expect(cause.endsWith(': no message from git')).toBe(true)
+    expect(result.stderr).not.toContain('Illegal byte sequence')
+  })
 })
 
 describe('SMI-6465 pre-merge gate: the nonce-failure path moves nothing', () => {

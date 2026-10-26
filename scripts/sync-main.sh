@@ -56,28 +56,8 @@ refuse() {
   exit "${5:-1}"
 }
 
-# Render up to 5 NUL-separated paths from a file as one line, each once, in
-# bytewise order (deterministic, whichever git command listed them first).
-# Newlines and tabs in a path are shown as \n and \t so it stays on one line.
-render_paths() {
-  local file=$1 out='' n=0 p
-  while IFS= read -r -d '' p; do
-    n=$((n + 1))
-    [ "$n" -le 5 ] || continue
-    p=${p//$'\n'/\\n}
-    p=${p//$'\t'/\\t}
-    out="${out:+$out, }$p"
-  done < <(LC_ALL=C sort -zu "$file")
-  [ "$n" -le 5 ] || out="$out (and $((n - 5)) more)"
-  printf '%s' "$out"
-}
-
-# Count NUL-separated records in a file.
-count_paths() {
-  local n=0 p
-  while IFS= read -r -d '' p; do n=$((n + 1)); done <"$1"
-  printf '%s' "$n"
-}
+# shellcheck source=scripts/lib/sync-main-render.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/sync-main-render.sh"
 
 discard=0
 for arg in "$@"; do
@@ -144,7 +124,7 @@ fi
 # here so one inaccessible submodule cannot abort the parent fetch before the
 # per-path fail-soft reporting has a chance to run.
 if ! git fetch --no-recurse-submodules origin main >"$tmp/fetch.out" 2>&1; then
-  reason=$(tr '\r' '\n' <"$tmp/fetch.out" | sed '/^[[:space:]]*$/d' | tail -n 1)
+  reason=$(one_line "$tmp/fetch.out" last)
   refuse fetch-failed "git fetch origin main failed: ${reason:-no output}" "$STATE_PRE" \
     'check network and auth, then rerun'
 fi
@@ -400,9 +380,7 @@ if [ "$move_status" -ne 0 ]; then
       'move the named path(s) aside, then rerun'
   fi
   # Show git's own first line (shown only; the token never depends on it).
-  # Every stage reads to EOF: a reader that quits early would SIGPIPE the one
-  # before it, and pipefail would turn this refusal into the ERR trap's exit 3.
-  reason=$(tr '\r\t\000' '\n  ' <"$tmp/move.out" | awk 'NF && !d { print; d = 1 }' | tr -d '[:cntrl:]' | cut -c1-200)
+  reason=$(one_line "$tmp/move.out" first)
   if [ "$mode" = keep ]; then
     refuse keep-refused "git reset --keep refused the move: ${reason:-no message from git}" "$STATE_POST" \
       'resolve what git names, then rerun'
