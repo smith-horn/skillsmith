@@ -41,8 +41,8 @@ set +e
 # which is expected and unrelated to this propagation behavior). Before the
 # `set +e` above, an errexit abort inside this hook made `git checkout`
 # return 1, which would break any `set -e` script or `&&` chain wrapping a
-# checkout -- including sync-main.sh, rebase-worktree.sh, and
-# create-worktree.sh. This hook always exits 0, so it never does.
+# checkout -- including rebase-worktree.sh and create-worktree.sh. This
+# hook always exits 0, so it never does.
 
 # Color codes (match post-merge style)
 GREEN='\033[0;32m'

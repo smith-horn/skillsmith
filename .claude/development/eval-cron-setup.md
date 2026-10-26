@@ -109,7 +109,7 @@ If the dev-tree write itself fails (path not writable / disk full), the cron log
 | Drift detected | Fresh heartbeat (copy-back) | `baseline.json` + `.cron-heartbeat` via auto-PR (`eval-baseline-cron` label), opened from the clone |
 | No drift | Fresh heartbeat (copy-back) | Nothing — copy-back alone keeps Check 44 fresh |
 
-The copied-back heartbeat sits **untracked** in your primary tree; that's expected and harmless (Check 44 reads the working-tree file, and the cron no longer runs in your tree so it can't be tripped by it).
+The copied-back heartbeat shows as a modified **tracked** file (` M packages/doc-retrieval-mcp/eval/.cron-heartbeat`) in your primary tree; that's expected and harmless (Check 44 reads the working-tree file, and the cron no longer runs in your tree so it can't be tripped by it). `./scripts/sync-main.sh` keeps it across a sync. On a week a drift PR changes the committed heartbeat, the sync refuses `[overlap]` naming it; restore it with `git restore -- packages/doc-retrieval-mcp/eval/.cron-heartbeat` and rerun.
 
 ## Liveness alert — retrieval-telemetry stale-feed backstop (SMI-5432)
 
