@@ -791,6 +791,32 @@ describe('SMI-6465 pre-merge gate round 3: the discard path also forces its refl
   })
 })
 
+describe("SMI-6465 retro: a refusal git explains carries git's own reason", () => {
+  it('T60: [keep-refused] names the first line git printed', () => {
+    const repo = makeRepo()
+    commitLocal(repo, { 'mine.txt': 'key\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(
+      repo.local,
+      ['--discard-local-commits'],
+      shimEnv(repo, 'fail-move-with-message')
+    )
+    const { cause } = refusedAfterFetch(repo, before, result, 'keep-refused')
+    expect(cause).toContain('fatal: simulated index.lock held')
+    expect(cause).not.toContain('\r')
+    expect(result.stderr).not.toContain('paths above')
+  })
+
+  it('T61: [ff-refused] names the first line git printed', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], shimEnv(repo, 'fail-move-with-message'))
+    const { cause } = refusedAfterFetch(repo, before, result, 'ff-refused')
+    expect(cause).toContain('fatal: simulated index.lock held')
+  })
+})
+
 describe('SMI-6465 pre-merge gate: the nonce-failure path moves nothing', () => {
   it('T50: od printing too few bytes exits 3 before any move, stating the post-fetch state', () => {
     const repo = makeRepo()

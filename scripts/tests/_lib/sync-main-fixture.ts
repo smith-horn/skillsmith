@@ -240,6 +240,7 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
     detach-before-move-and-back) "$real" checkout -q --detach ;;
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
     fail-move) exit 1 ;;
+    fail-move-with-message) printf 'fatal: simulated index.lock held\\r\\n' >&2; exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
   esac
   st=0

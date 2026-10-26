@@ -41,7 +41,8 @@ uncommitted change. Refuses (exit 1, nothing local changed) when:
                          does not save them; first run:
                          git branch save/main-<short> HEAD
 
-Exit codes: 0 synced, 1 refused, 2 usage, 3 stopped partway or HEAD moved.
+Exit codes: 0 synced, 1 refused, 2 usage, 3 stopped partway, HEAD moved, or the
+move could not be verified (no readable branch reflogs, for example reftable).
 EOF
 }
 
@@ -398,12 +399,14 @@ if [ "$move_status" -ne 0 ]; then
     refuse untracked-collision "origin/main adds $(render_paths "$tmp/collide"), which exist locally" "$STATE_POST" \
       'move the named path(s) aside, then rerun'
   fi
+  # Show git's own first line (shown only; the token never depends on it).
+  reason=$(tr '\r\t' '\n ' <"$tmp/move.out" | sed -n '/[^[:space:]]/{p;q;}' | tr -d '[:cntrl:]' | cut -c1-200)
   if [ "$mode" = keep ]; then
-    refuse keep-refused 'git reset --keep refused the move' "$STATE_POST" \
-      'the paths above changed locally and upstream; resolve them, then rerun'
+    refuse keep-refused "git reset --keep refused the move: ${reason:-no message from git}" "$STATE_POST" \
+      'resolve what git names, then rerun'
   fi
-  refuse ff-refused 'git refused the fast-forward for a reason this script does not classify' "$STATE_POST" \
-    'run git status and look for a change on a path origin/main touches, then rerun'
+  refuse ff-refused "git refused the fast-forward for a reason this script does not classify: ${reason:-no message from git}" "$STATE_POST" \
+    'resolve what git names (check git status for a change on a path origin/main touches), then rerun'
 fi
 
 # SMI-5823 Phase 2: keep every declared submodule checkout aligned with the
