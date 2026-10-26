@@ -662,3 +662,18 @@ describe("SMI-6465 confirmation rounds: the restore value is this run's own, wha
     expect(result.stderr).not.toContain('git update-ref')
   })
 })
+
+describe('SMI-6465 fourth confirmation round: the reflog nonce is unpredictable', () => {
+  it('T49: two runs tag their moves with different 128-bit nonces', () => {
+    const subjects = [0, 1].map(() => {
+      const repo = makeRepo()
+      pushUpstream(repo, { 'a.txt': 'a2\n' })
+      git(repo.local, 'branch', 'feature/x')
+      const result = runSync(repo.local, [], shimEnv(repo, 'switch-before-move'))
+      expect(result.status, result.stderr).toBe(3)
+      return git(repo.local, 'log', '-g', '-1', '--format=%gs', 'refs/heads/feature/x')
+    })
+    for (const s of subjects) expect(s).toMatch(/^sync-main [0-9a-f]{32}: Fast-forward$/)
+    expect(subjects[0]).not.toBe(subjects[1])
+  })
+})

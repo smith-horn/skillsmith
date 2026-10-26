@@ -258,8 +258,14 @@ if [ "$mode" != none ]; then
 
   # --- Change 5: no hook fires; neither move touches submodule checkouts ---
   # The move's reflog subject carries a nonce unique to this run, so the
-  # after-check can tell this run's entry from any other process's.
-  nonce="${tmp##*/}-$$"
+  # after-check can tell this run's entry from any other process's. Random,
+  # not PID or temp-dir based: both can be reused, leaving a stale entry that
+  # a later run would mistake for its own.
+  nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  [ "${#nonce}" -eq 32 ] || {
+    printf 'sync-main: ERROR: could not read 16 random bytes for the reflog nonce; nothing was moved\n' >&2
+    exit 3
+  }
   move_status=0
   if [ "$mode" = ff ]; then
     GIT_REFLOG_ACTION="sync-main $nonce" git -c core.hooksPath=/dev/null merge --ff-only --no-autostash --no-overwrite-ignore -q "$REMOTE" \
