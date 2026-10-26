@@ -784,6 +784,16 @@ describe('SMI-6465 pre-merge gate round 2: the moved-ref scan is authoritative',
   })
 })
 
+describe('SMI-6465 pre-merge gate round 3: the discard path also forces its reflog entry', () => {
+  it('T59: --discard-local-commits with reflogs disabled and no main log still succeeds', () => {
+    const repo = makeRepo()
+    commitLocal(repo, { 'mine.txt': 'key\n' })
+    git(repo.local, 'config', 'core.logAllRefUpdates', 'false')
+    rmSync(join(repo.local, '.git', 'logs', 'refs', 'heads', 'main'))
+    expectSynced(repo, runSync(repo.local, ['--discard-local-commits']))
+  })
+})
+
 describe('SMI-6465 pre-merge gate: the nonce-failure path moves nothing', () => {
   it('T50: od printing too few bytes exits 3 before any move, stating the post-fetch state', () => {
     const repo = makeRepo()
