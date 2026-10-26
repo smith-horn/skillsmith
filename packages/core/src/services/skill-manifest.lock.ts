@@ -143,6 +143,62 @@ function warnLegacyWait(pid: number | null): void {
   )
 }
 
+/** What `withManifestLockHeld` hands its callback for one acquisition of the manifest lock. */
+export interface ManifestLockHold {
+  lockPath: string
+  /**
+   * The pre-commit check, bound to this acquisition's lock snapshot. Pass it
+   * as `writeManifestAtomic`'s `beforeRename`: it reads the temp file's mtime
+   * as the file clock and throws `ManifestLockLost` if the lock is no longer
+   * this writer's.
+   */
+  beforeRename: (tempPath: string) => void
+}
+
+/**
+ * The one manifest-lock protocol every writer runs (A1 plan §3.2, #8): lock
+ * rank 3, a wait on an older version's bare-PID claim (with the legacy
+ * warning), a snapshot of the lock right after acquiring, and one retry from
+ * a fresh acquisition when `fn` throws `ManifestLockLost`. A second loss
+ * propagates. `fn` therefore runs at most twice and must be idempotent per
+ * attempt (no side effect outside the manifest before its write).
+ */
+export async function withManifestLockHeld<T>(
+  manifestPath: string,
+  label: string,
+  fn: (hold: ManifestLockHold) => Promise<T>,
+  onLegacyWait?: (pid: number | null) => void
+): Promise<T> {
+  const lockPath = `${manifestPath}.lock`
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await withFileLock(
+        manifestPath,
+        label,
+        async () => {
+          const acquired = snapshotLock(lockPath)
+          if (acquired === null) throw new ManifestLockLost(lockPath, 'the lock file is gone')
+          return fn({
+            lockPath,
+            beforeRename: (tempPath) => {
+              const fsNs = fs.statSync(tempPath, { bigint: true }).mtimeNs
+              const why = lockStillOurs(acquired, snapshotLock(lockPath), {
+                wallNs: wallNowNs(),
+                fsNs,
+              })
+              if (why !== null) throw new ManifestLockLost(lockPath, why)
+            },
+          })
+        },
+        { waitOnLegacy: true, onLegacyWait: onLegacyWait ?? warnLegacyWait, rank: '3' }
+      )
+    } catch (err) {
+      if (err instanceof ManifestLockLost && attempt === 1) continue
+      throw err
+    }
+  }
+}
+
 export interface ManifestUpdateArgs<M> {
   manifestPath: string
   /** Loads the manifest under the lock. Throws on anything but a missing file. */
@@ -166,46 +222,26 @@ export interface ManifestUpdateArgs<M> {
  * older version is waited on like any live holder (A1 plan §3.8, #8).
  */
 export async function runManifestUpdate<M>(args: ManifestUpdateArgs<M>): Promise<void> {
-  const lockPath = `${args.manifestPath}.lock`
   const serialize = args.serialize ?? ((m: M) => JSON.stringify(m, null, 2))
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await withFileLock(
-        args.manifestPath,
-        'manifest update',
-        async () => {
-          const acquired = snapshotLock(lockPath)
-          if (acquired === null) throw new ManifestLockLost(lockPath, 'the lock file is gone')
-          const manifest = await args.load()
-          // A1 step 1 (T-L4): the callback may not request any lock.
-          const updated = runPureCallback(() => args.update(manifest))
-          if (updated == null || typeof updated !== 'object') {
-            throw new TypeError(
-              'runManifestUpdate: update must return the manifest; it returned nothing'
-            )
-          }
-          if (typeof (updated as { then?: unknown }).then === 'function') {
-            throw new TypeError(
-              'runManifestUpdate: update must be synchronous; it returned a promise'
-            )
-          }
-          await writeManifestAtomic(args.manifestPath, serialize(updated), {
-            beforeRename: (tempPath) => {
-              const fsNs = fs.statSync(tempPath, { bigint: true }).mtimeNs
-              const why = lockStillOurs(acquired, snapshotLock(lockPath), {
-                wallNs: wallNowNs(),
-                fsNs,
-              })
-              if (why !== null) throw new ManifestLockLost(lockPath, why)
-            },
-          })
-        },
-        { waitOnLegacy: true, onLegacyWait: args.onLegacyWait ?? warnLegacyWait, rank: '3' }
-      )
-      return
-    } catch (err) {
-      if (err instanceof ManifestLockLost && attempt === 1) continue
-      throw err
-    }
-  }
+  await withManifestLockHeld(
+    args.manifestPath,
+    'manifest update',
+    async (hold) => {
+      const manifest = await args.load()
+      // A1 step 1 (T-L4): the callback may not request any lock.
+      const updated = runPureCallback(() => args.update(manifest))
+      if (updated == null || typeof updated !== 'object') {
+        throw new TypeError(
+          'runManifestUpdate: update must return the manifest; it returned nothing'
+        )
+      }
+      if (typeof (updated as { then?: unknown }).then === 'function') {
+        throw new TypeError('runManifestUpdate: update must be synchronous; it returned a promise')
+      }
+      await writeManifestAtomic(args.manifestPath, serialize(updated), {
+        beforeRename: hold.beforeRename,
+      })
+    },
+    args.onLegacyWait
+  )
 }

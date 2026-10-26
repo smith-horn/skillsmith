@@ -24,6 +24,8 @@ import type {
   SwapWriteEntry,
   TraceOp,
 } from '../../../src/services/skill-swap.js'
+import type { EntryState } from '../../../src/services/skill-manifest.entry.js'
+import { ManifestLockLost } from '../../../src/services/skill-manifest.lock.js'
 import { treeHashOf } from '../../../src/services/skill-tree.js'
 import type { TreeRecord } from '../../../src/install/tree-hash.js'
 import { listTree, tmp } from './skill-tree.helpers.js'
@@ -85,7 +87,11 @@ export function makeFixture(files: Record<string, string>): Fixture {
   }
 }
 
-/** A fake lock-3 port: the raw entry lives here; `failCasOnCall` makes the Nth CAS fail. */
+/**
+ * A fake lock-3 port: the raw entry lives here; `failCasOnCall` makes the Nth CAS fail.
+ * `preCommitError` is what the pre-commit lock check would find, so `write()` (where
+ * the real port runs that check, inside the atomic write) throws `ManifestLockLost`.
+ */
 export class FakeManifest implements ManifestPort {
   entry: unknown
   casCalls = 0
@@ -98,17 +104,23 @@ export class FakeManifest implements ManifestPort {
   ) {
     this.entry = preEntry
   }
+  private stateOf(): EntryState {
+    const now = JSON.stringify(this.entry)
+    if (now === JSON.stringify(this.preEntry)) return 'pre'
+    return now === JSON.stringify(this.postEntry) ? 'post' : 'other'
+  }
   async withManifestLock<T>(fn: (m: ManifestCommitHandle) => Promise<T>): Promise<T> {
     return fn({
+      classify: async () => this.stateOf(),
       casMatches: async () => {
         this.casCalls++
         if (this.failCasOnCall === this.casCalls) return false
-        return JSON.stringify(this.entry) === JSON.stringify(this.preEntry)
-      },
-      preCommitCheck: async () => {
-        if (this.preCommitError !== null) throw this.preCommitError
+        return this.stateOf() === 'pre'
       },
       write: async () => {
+        if (this.preCommitError !== null) {
+          throw new ManifestLockLost('fake-manifest.json.lock', this.preCommitError.message)
+        }
         this.writes++
         this.entry = this.postEntry
       },

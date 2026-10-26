@@ -31,7 +31,7 @@ useTmpCleanup()
 
 /** A port whose handle throws a `LockOrderError` from one method. */
 class LockOrderPort extends FakeManifest {
-  constructor(readonly throwFrom: 'casMatches' | 'preCommitCheck') {
+  constructor(readonly throwFrom: 'casMatches' | 'write') {
     super({ version: '1.0.0' }, { version: '2.0.0' })
   }
   override async withManifestLock<T>(fn: (m: ManifestCommitHandle) => Promise<T>): Promise<T> {
@@ -131,7 +131,7 @@ describe('the manifest CAS', () => {
 })
 
 describe('a LockOrderError is a bug, not an outcome', () => {
-  for (const from of ['casMatches', 'preCommitCheck'] as const) {
+  for (const from of ['casMatches', 'write'] as const) {
     it(`thrown from the port's ${from}: swapInPlace rejects with it`, async () => {
       const fx = makeFixture({ 'SKILL.md': '# v1\n' })
       const p = plan(fx, [modify('SKILL.md', '# v2\n')])
