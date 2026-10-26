@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- A1 step 7a: the CLI's manifest entry type gains the optional
+  `upstreamContentHash` and `fileHashes` fields that the in-place update will record. No behaviour
+  change.
+
 - **Security**: SMI-7168 -- the published bundle inlines `@skillsmith/core` and
   `@skillsmith/mcp-server`, so it carried their vulnerable `zod`. A rebuild picks up `zod` 4.6.7
   (GHSA-mrhx-c7xc-m3w5, memory exhaustion when validating oversized constrained collections). The

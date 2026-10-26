@@ -133,7 +133,7 @@ const oldIdentity = bindIdentity(realDir)
 const pre = treeHashOf(realDir)
 const port = {
   withManifestLock: (fn) =>
-    fn({ casMatches: async () => true, preCommitCheck: async () => {}, write: async () => {} }),
+    fn({ classify: async () => 'pre', casMatches: async () => true, write: async () => {} }),
 }
 const result = await swapInPlace(
   {
