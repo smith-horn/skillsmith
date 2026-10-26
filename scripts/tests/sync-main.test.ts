@@ -164,4 +164,36 @@ describe('SMI-5823 Phase 2: sync-main submodule alignment', () => {
       `docs/internal: dirty worktree preserved (found ${oldA.slice(0, 12)}, expected ${expectedA.slice(0, 12)})`
     )
   })
+
+  // SMI-6465 T31: under --discard-local-commits the move is `reset --keep`,
+  // which honours submodule.recurse. The submodule must be left to the loop.
+  it('T31: --discard-local-commits leaves a dirty submodule to the loop under submodule.recurse=true', () => {
+    const fixture = makeFixture()
+    const subA = join(fixture.syncClone, 'docs/internal')
+    const oldA = git(subA, 'rev-parse', 'HEAD')
+    const expectedA = advanceSubmodule(fixture, 'docs/internal')
+    writeFileSync(join(fixture.syncClone, 'local-only.md'), 'local\n')
+    git(fixture.syncClone, 'add', 'local-only.md')
+    git(fixture.syncClone, 'commit', '-m', 'local work')
+    git(fixture.syncClone, 'config', 'submodule.recurse', 'true')
+    writeFileSync(join(subA, 'subA.md'), 'dirty local work\n')
+
+    const result = spawnSync('bash', [SCRIPT_PATH, '--discard-local-commits'], {
+      cwd: fixture.syncClone,
+      encoding: 'utf8',
+      env: GIT_ENV,
+      timeout: 30_000,
+    })
+    const output = `${result.stdout}${result.stderr}`
+
+    expect(result.status, output).toBe(0)
+    expect(git(fixture.syncClone, 'rev-parse', 'HEAD')).toBe(
+      git(fixture.parentSource, 'rev-parse', 'HEAD')
+    )
+    expect(git(subA, 'rev-parse', 'HEAD')).toBe(oldA)
+    expect(git(subA, 'status', '--porcelain')).toContain('M subA.md')
+    expect(output).toContain(
+      `docs/internal: dirty worktree preserved (found ${oldA.slice(0, 12)}, expected ${expectedA.slice(0, 12)})`
+    )
+  })
 })
