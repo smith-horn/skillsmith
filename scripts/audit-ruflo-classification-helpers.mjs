@@ -26,7 +26,8 @@
  * Residual gap (D1): a doc-only edit is caught only when someone next runs
  * audit:standards with the submodule present. Parenthetical text inside Blocked
  * cells is stripped before rule D; rule C reads the whole Allowed cell (parentheticals
- * included), so Allowed prose without backticks is invisible to it.
+ * included), so Allowed prose without backticks is invisible to it. Continuation
+ * rows (empty first cell) are not parsed by any rule.
  */
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -199,20 +200,29 @@ function sectionOf(doc, findings) {
 
 function parseRows(section, findings) {
   const rows = []
+  let headerSeen = false
   for (let i = section.start + 1; i < section.end; i++) {
     const m = TABLE_ROW_RE.exec(section.lines[i])
     if (!m) {
       const t = section.lines[i].trim()
+      // The header is accepted once, as the section's first `|` line; any later
+      // header-shaped line could carry names nothing reads, so it is F2.
+      const isHeader = !headerSeen && TABLE_HEADER_RE.test(t)
+      if (t.startsWith('|')) headerSeen = true
       if (
         t.startsWith('|') &&
-        !TABLE_HEADER_RE.test(t) &&
+        !isHeader &&
         !TABLE_SEPARATOR_RE.test(t) &&
         !TABLE_CONTINUATION_RE.test(t)
       ) {
         findings.push(`rule F2: unparsed table row: ${t.slice(0, 60)}`)
+      } else if (t !== '' && !t.startsWith('|') && t.includes('|')) {
+        // GFM renders a row without a leading pipe; it must not escape the rules.
+        findings.push(`rule F2: table row without a leading pipe: ${t.slice(0, 60)}`)
       }
       continue
     }
+    headerSeen = true
     const cells = section.lines[i]
       .trim()
       .replace(/^\||\|$/g, '')
@@ -299,9 +309,11 @@ function checkTable(doc, rufloDenies, findings) {
       findings.push(`rule C: ${row.prefix}* has denials but its Allowed cell starts with "all"`)
     }
     for (const t of tokensOf(row.allowed)) {
-      const full = row.prefix + t
+      // A token may be a suffix of this row's prefix, or a full tool name, with
+      // or without the mcp__ruflo__ prefix; each form is checked.
+      const forms = [row.prefix + t, t.startsWith(RUFLO_PREFIX) ? t.slice(RUFLO_PREFIX.length) : t]
       const hit = names.find((n) =>
-        t.endsWith('*') ? n.startsWith(full.slice(0, -1)) : n === full
+        forms.some((f) => (f.endsWith('*') ? n.startsWith(f.slice(0, -1)) : n === f))
       )
       if (hit !== undefined) {
         findings.push(`rule C: denied "${hit}" appears in the Allowed cell as "${t}"`)

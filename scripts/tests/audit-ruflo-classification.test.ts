@@ -17,117 +17,21 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import {
-  RUFLO_CORE_DENY_ENTRIES,
   evaluateRufloClassification,
   rufloClassificationReportLines,
 } from '../audit-ruflo-classification-helpers.mjs'
-// @ts-expect-error - .mjs helper has no typings
-import { RUFLO_MCP_DENY_ENTRIES } from '../audit-ruflo-mcp-denies-helpers.mjs'
-
-const P = 'mcp__ruflo__'
-const CORE: string[] = [...RUFLO_CORE_DENY_ENTRIES]
-const WAVE4: string[] = [...RUFLO_MCP_DENY_ENTRIES]
-const SETTINGS = '/fx/settings.json'
-const DOC = '/fx/doc.md'
-
-interface Row {
-  prefix: string
-  allowed: string
-  blocked: string
-}
-interface Fx {
-  deny: unknown
-  docDeny: unknown
-  rows: Row[]
-  settingsText?: string
-  docFence?: string
-  extraFence?: boolean
-  strayRow?: string
-  unclosedFence?: boolean
-  extraTableLines?: string[]
-  settingsThrows?: boolean
-  docThrows?: boolean
-  docPresent?: boolean
-  core?: string[]
-  mcp?: string[]
-}
-
-function prefixOf(name: string): string {
-  if (name.startsWith('managed_agent_')) return 'managed_agent_'
-  return /^[a-z0-9-]+_/.exec(name)![0]
-}
-
-function rowsFor(denies: string[]): Row[] {
-  const by = new Map<string, string[]>()
-  for (const d of denies) {
-    const name = d.slice(P.length)
-    const pre = prefixOf(name)
-    by.set(pre, [...(by.get(pre) ?? []), name.slice(pre.length)])
-  }
-  return [...by].map(([prefix, sfx]) => ({
-    prefix,
-    allowed: '`safe`',
-    blocked: sfx.map((s) => `\`${s}\``).join(', '),
-  }))
-}
-
-function base(): Fx {
-  return {
-    deny: ['Bash(ls)', ...CORE, ...WAVE4],
-    docDeny: [...CORE],
-    rows: rowsFor([...CORE, ...WAVE4]),
-  }
-}
-
-function render(fx: Fx): Record<string, string> {
-  const files: Record<string, string> = {}
-  files[SETTINGS] = fx.settingsText ?? JSON.stringify({ permissions: { deny: fx.deny } })
-  if (fx.docPresent === false) return files
-  const fence = fx.docFence ?? JSON.stringify({ permissions: { deny: fx.docDeny } }, null, 2)
-  const table = fx.rows.map((r) => `| \`${r.prefix}*\` | ${r.allowed} | ${r.blocked} |`)
-  files[DOC] = [
-    '# Doc',
-    '```json',
-    fence,
-    ...(fx.unclosedFence ? [] : ['```']),
-    ...(fx.extraFence ? ['```json', '{}', '```'] : []),
-    '## Full classification table',
-    '| Prefix | Allowed | Blocked |',
-    '|---|---|---|',
-    ...table,
-    '| | | a continuation row, not parsed |',
-    ...(fx.extraTableLines ?? []),
-    '## Next',
-    ...(fx.strayRow ? [fx.strayRow] : []),
-    '',
-  ].join('\n')
-  return files
-}
-
-function run(fx: Fx) {
-  const files = render(fx)
-  return evaluateRufloClassification({
-    settingsPath: SETTINGS,
-    docPath: DOC,
-    readFile: (p: string) => {
-      if (fx.settingsThrows && p === SETTINGS) throw new Error('EACCES settings')
-      if (fx.docThrows && p === DOC) throw new Error('EACCES doc')
-      if (!(p in files)) throw new Error(`ENOENT ${p}`)
-      return files[p]
-    },
-    exists: (p: string) => p in files,
-    ...(fx.core ? { coreEntries: fx.core } : {}),
-    ...(fx.mcp ? { mcpEntries: fx.mcp } : {}),
-  })
-}
-
-function applied(name: string): void {
-  console.log(`applied=${name}`)
-}
-
-function row(fx: Fx, prefix: string): Row {
-  return fx.rows.find((r) => r.prefix === prefix)!
-}
+import {
+  P,
+  CORE,
+  WAVE4,
+  SETTINGS,
+  DOC,
+  base,
+  run,
+  applied,
+  row,
+} from './audit-ruflo-classification.fixtures'
+import type { Fx, Row } from './audit-ruflo-classification.fixtures'
 
 /** Tiny fixture for the prefix-matching arms: one denied name and its rows. */
 function small(name: string, rows: Row[]): Fx {
