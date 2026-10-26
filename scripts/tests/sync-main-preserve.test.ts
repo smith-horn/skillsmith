@@ -27,6 +27,7 @@ import {
   commitLocal,
   git,
   GIT_ENV,
+  gitRaw,
   grepFailEnv,
   makeRepo,
   odShimEnv,
@@ -412,11 +413,7 @@ describe('SMI-6465: preconditions, arguments and fetch', () => {
   it('T18: refuses [in-progress-op] during a stopped git am, even with the flag', () => {
     const repo = makeRepo()
     pushUpstream(repo, { 'a.txt': 'a2\n' })
-    const patch = execFileSync('git', ['format-patch', '-1', '--stdout'], {
-      cwd: repo.up,
-      encoding: 'utf8',
-      env: GIT_ENV,
-    })
+    const patch = gitRaw(repo.up, 'format-patch', '-1', '--stdout')
     commitLocal(repo, { 'a.txt': 'conflicting\n' })
     execFileSync('sh', ['-c', 'git am -q || true'], {
       cwd: repo.local,
