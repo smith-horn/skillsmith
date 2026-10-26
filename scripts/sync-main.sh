@@ -263,7 +263,7 @@ if [ "$mode" != none ]; then
   # a later run would mistake for its own.
   nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
   [ "${#nonce}" -eq 32 ] || {
-    printf 'sync-main: ERROR: could not read 16 random bytes for the reflog nonce; nothing was moved\n' >&2
+    printf 'sync-main: ERROR: could not read 16 random bytes for the reflog nonce. %s\n' "$STATE_POST" >&2
     exit 3
   }
   move_status=0
