@@ -230,13 +230,14 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   ra=\${GIT_REFLOG_ACTION-}
   unset GIT_REFLOG_ACTION
   case "$mode" in
-    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head | switch-before-move-then-away-and-back | reflog-*)
+    switch-before-move | switch-before-move-then-commit | switch-before-move-overwrite-orig-head | switch-before-move-then-away-and-back | switch-before-move-and-back | switch-and-back-then-other-sync | reflog-*)
       "$real" symbolic-ref HEAD refs/heads/feature/x ;;
     edit-unrelated-before-move) printf 'edited by another session\\n' >>unrelated.txt ;;
     other-sync-moves-first)
       "$real" symbolic-ref HEAD refs/heads/feature/x
       GIT_REFLOG_ACTION='sync-main other-run' "$real" merge --ff-only -q "\${args[\${#args[@]}-1]}"
       ;;
+    detach-before-move-and-back) "$real" checkout -q --detach ;;
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
     fail-move) exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
@@ -245,6 +246,12 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
   GIT_REFLOG_ACTION=$ra "$real" "$@" || st=$?
   [ "$mode" = switch-before-move-then-commit ] && "$real" commit -q --allow-empty -m 'later commit'
   [ "$mode" = switch-before-move-overwrite-orig-head ] && "$real" update-ref ORIG_HEAD HEAD
+  [ "$mode" = switch-before-move-and-back ] && "$real" symbolic-ref HEAD refs/heads/main
+  [ "$mode" = detach-before-move-and-back ] && "$real" symbolic-ref HEAD refs/heads/main
+  if [ "$mode" = switch-and-back-then-other-sync ]; then
+    "$real" symbolic-ref HEAD refs/heads/main
+    GIT_REFLOG_ACTION='sync-main other-run' "$real" merge --ff-only -q "\${args[\${#args[@]}-1]}"
+  fi
   case "$mode" in
     reflog-*)
       # Simulate a clock step or a foreign entry by rewriting feature/x's reflog.
@@ -272,5 +279,18 @@ exec "$real" "$@"
 `
   writeFileSync(join(dir, 'git'), shim)
   chmodSync(join(dir, 'git'), 0o755)
+  return { ...GIT_ENV, PATH: `${dir}:${GIT_ENV.PATH ?? ''}` }
+}
+
+/**
+ * Put an `od` first on PATH that fails (`fail`) or prints too few bytes
+ * (`short`), to drive sync-main.sh's nonce-failure path.
+ */
+export function odShimEnv(repo: Repo, mode: 'fail' | 'short'): NodeJS.ProcessEnv {
+  const dir = join(repo.root, 'od-shim')
+  mkdirSync(dir, { recursive: true })
+  const body = mode === 'fail' ? 'exit 1' : "printf 'ab\\n'"
+  writeFileSync(join(dir, 'od'), `#!/bin/sh\n${body}\n`)
+  chmodSync(join(dir, 'od'), 0o755)
   return { ...GIT_ENV, PATH: `${dir}:${GIT_ENV.PATH ?? ''}` }
 }

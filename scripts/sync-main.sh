@@ -278,25 +278,42 @@ else
   move_status=0
 fi
 
-# --- Change 4 (after): did HEAD still name main when git moved it? --------
+# --- Change 4 (after): which ref did this run's move update? -------------
+# The move updates whatever ref HEAD named at that instant, which need not be
+# what HEAD names now: another session can switch away and back. So the moved
+# ref is found by this run's nonce in the branch reflogs, and the sync counts
+# as done only if HEAD names main now, main is at REMOTE, and no other branch
+# carries this run's entry. Without file reflogs (for example reftable), the
+# last condition cannot be checked and the first two decide.
 after_ref=$(git symbolic-ref -q HEAD 2>/dev/null) || after_ref=''
-if [ "$after_ref" != refs/heads/main ]; then
-  shown=${after_ref:-detached HEAD}
-  if [ "$mode" = none ] || [ "$move_status" -ne 0 ]; then
+main_now=$(git rev-parse -q --verify refs/heads/main 2>/dev/null) || main_now=''
+moved='' moved_count=0
+if [ "$mode" != none ] && [ "$move_status" -eq 0 ]; then
+  logdir=$(git rev-parse --git-path logs/refs/heads 2>/dev/null) || logdir=''
+  if [ -n "$logdir" ] && [ -d "$logdir" ]; then
+    while IFS= read -r -d '' f; do
+      moved_count=$((moved_count + 1))
+      moved="refs/heads/${f#"$logdir"/}"
+    done < <(grep -rlF --null -e "$(printf '\t')sync-main $nonce: " -- "$logdir" 2>/dev/null || true)
+  fi
+fi
+shown=${after_ref:-detached HEAD}
+if [ "$mode" = none ] || [ "$move_status" -ne 0 ]; then
+  if [ "$after_ref" != refs/heads/main ]; then
     printf 'ERROR [branch-changed-after-sync]: this checkout switched to %s during the sync; this sync moved no ref.\n' "$shown" >&2
-  elif [ "$(git rev-parse refs/heads/main)" = "$REMOTE" ]; then
-    printf 'ERROR [branch-changed-after-sync]: main was synced to %s, then this checkout switched to %s.\n' "${REMOTE:0:12}" "$shown" >&2
-  else
+    exit 3
+  fi
+elif [ "$after_ref" != refs/heads/main ] || [ "$main_now" != "$REMOTE" ] || [ "$moved_count" -gt 1 ] ||
+  { [ "$moved_count" -eq 1 ] && [ "$moved" != refs/heads/main ]; }; then
+  if [ "$moved_count" -eq 1 ] && [ "$moved" != refs/heads/main ]; then
     # The displaced value comes from this run's own entry in the moved ref's
-    # reflog, found by the nonce in its subject and read from one copy of the
-    # file. Never ORIG_HEAD (any session can rewrite it), LOCAL (the
-    # switched-to ref need not have started there), or a timestamp or subject
-    # match (another process can produce both). It is used only if exactly one
-    # entry carries the nonce, it moved the ref to REMOTE, and it is the newest
-    # line. Anything else prints no command.
+    # reflog, read from one copy of the file. Never ORIG_HEAD (any session can
+    # rewrite it), LOCAL (the moved ref need not have started there), or a
+    # timestamp or subject match (another process can produce both). It is
+    # used only if exactly one entry carries the nonce, it set the ref to
+    # REMOTE, and it is the newest line. Anything else prints no command.
     old='' hits=0 cand='' cand_new='' l_subject=''
-    log=''
-    [ -z "$after_ref" ] || log=$(git rev-parse --git-path "logs/$after_ref" 2>/dev/null) || log=''
+    log=$(git rev-parse --git-path "logs/$moved" 2>/dev/null) || log=''
     if [ -n "$log" ] && [ -f "$log" ]; then
       cp "$log" "$tmp/reflog"
       while IFS=$'\t' read -r head subject || [ -n "$head" ]; do
@@ -319,17 +336,24 @@ if [ "$after_ref" != refs/heads/main ]; then
       fi
     fi
     if [ -n "$old" ]; then
-      printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move).\n' \
-        "$shown" "$old" "$REMOTE" >&2
+      printf 'ERROR [branch-changed-after-sync]: %s was moved %s→%s by this sync (HEAD switched before the move; it now names %s).\n' \
+        "$moved" "$old" "$REMOTE" "$shown" >&2
     else
-      printf 'ERROR [branch-changed-after-sync]: this checkout switched to %s during the sync, which now points at %s; no reflog entry shows this sync moving it.\n' \
-        "$shown" "${REMOTE:0:12}" >&2
+      printf 'ERROR [branch-changed-after-sync]: %s was moved to %s by this sync (HEAD switched before the move; it now names %s); later reflog entries leave its old value ambiguous.\n' \
+        "$moved" "${REMOTE:0:12}" "$shown" >&2
     fi
-    if [ -n "$old" ] && [ "$(git rev-parse -q --verify "$after_ref" 2>/dev/null)" = "$REMOTE" ]; then
-      printf 'restore the ref (not the index or working tree): git update-ref %s %s %s\n' "$after_ref" "$old" "$REMOTE" >&2
+    if [ -n "$old" ] && [ "$(git rev-parse -q --verify "$moved" 2>/dev/null)" = "$REMOTE" ]; then
+      printf 'restore the ref (not the index or working tree): git update-ref %s %s %s\n' "$moved" "$old" "$REMOTE" >&2
     else
-      printf '%s moved again; reconcile by hand (reflog: git reflog %s)\n' "$shown" "${after_ref:-HEAD}" >&2
+      printf '%s moved again; reconcile by hand (reflog: git reflog %s)\n' "$moved" "$moved" >&2
     fi
+  elif [ "$moved_count" -gt 1 ]; then
+    printf 'ERROR [branch-changed-after-sync]: %s branch reflogs carry this sync'"'"'s entry; reconcile by hand (git reflog).\n' "$moved_count" >&2
+  elif [ "$main_now" = "$REMOTE" ]; then
+    printf 'ERROR [branch-changed-after-sync]: main was synced to %s, then this checkout switched to %s.\n' "${REMOTE:0:12}" "$shown" >&2
+  else
+    printf 'ERROR [branch-changed-after-sync]: this checkout switched to %s during the sync; no reflog entry shows this sync moving it (main is at %s, origin/main at %s). Reconcile by hand (git reflog).\n' \
+      "$shown" "${main_now:0:12}" "${REMOTE:0:12}" >&2
   fi
   exit 3
 fi

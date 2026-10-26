@@ -19,6 +19,7 @@ import {
   git,
   GIT_ENV,
   makeRepo,
+  odShimEnv,
   originMain,
   pushUpstream,
   read,
@@ -675,5 +676,75 @@ describe('SMI-6465 fourth confirmation round: the reflog nonce is unpredictable'
     })
     for (const s of subjects) expect(s).toMatch(/^sync-main [0-9a-f]{32}: Fast-forward$/)
     expect(subjects[0]).not.toBe(subjects[1])
+  })
+})
+
+describe('SMI-6465 pre-merge gate: success is checked by outcome, not by where HEAD points', () => {
+  it('T52: a switch away before the move and back after it is not reported as a sync', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    git(repo.local, 'branch', 'feature/x')
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-before-move-and-back'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(git(repo.local, 'symbolic-ref', 'HEAD')).toBe('refs/heads/main')
+    expect(git(repo.local, 'rev-parse', 'main')).toBe(local)
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+})
+
+describe("SMI-6465 pre-merge gate: a foreign ref carrying this run's entry is never a sync", () => {
+  it('T53: main reaching origin by another sync does not hide this run moving feature/x', () => {
+    const repo = makeRepo()
+    const remote = pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    git(repo.local, 'branch', 'feature/x')
+    const result = runSync(repo.local, [], shimEnv(repo, 'switch-and-back-then-other-sync'))
+    expect(git(repo.local, 'rev-parse', 'main')).toBe(remote)
+    expect(git(repo.local, 'symbolic-ref', 'HEAD')).toBe('refs/heads/main')
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(result.stderr).toContain(`git update-ref refs/heads/feature/x ${local} ${remote}`)
+  })
+})
+
+describe('SMI-6465 pre-merge gate: main not at origin after a move is never a sync', () => {
+  it('T54: a detach before the move and a return to main after it exits 3, not success', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const local = git(repo.local, 'rev-parse', 'HEAD')
+    const result = runSync(repo.local, [], shimEnv(repo, 'detach-before-move-and-back'))
+    expect(git(repo.local, 'symbolic-ref', 'HEAD')).toBe('refs/heads/main')
+    expect(git(repo.local, 'rev-parse', 'main')).toBe(local)
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(result.stderr).toContain('no reflog entry shows this sync moving it')
+  })
+})
+
+describe('SMI-6465 pre-merge gate: the nonce-failure path moves nothing', () => {
+  it('T50: od printing too few bytes exits 3 before any move, stating the post-fetch state', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], odShimEnv(repo, 'short'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(snapshot(repo.local)).toBe(before)
+    expect(result.stderr).toContain(
+      `could not read 16 random bytes for the reflog nonce. ${STATE_POST}`
+    )
+  })
+
+  it('T51: od failing exits 3 through the ERR trap before any move', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], odShimEnv(repo, 'fail'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stdout).not.toContain('Synced to main')
+    expect(snapshot(repo.local)).toBe(before)
+    expect(result.stderr).toContain('sync-main: ERROR: unexpected failure at line')
   })
 })
