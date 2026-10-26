@@ -206,3 +206,120 @@ describe('the commit retry after a lost manifest lock', () => {
     expect(entryOf(p.manifestPath, fx.dirName)).toEqual(PRE)
   })
 })
+
+/** The real port, but `onHold(attempt)` runs inside each lock-3 hold just before the callback. */
+function hookedPort(p: ReturnType<typeof realPlan>, onHold: (attempt: number) => void) {
+  const real = p.input.manifest
+  let attempts = 0
+  const port: ManifestPort = {
+    withManifestLock: (fn) =>
+      real.withManifestLock(async (m) => {
+        attempts += 1
+        onHold(attempts)
+        return fn(m)
+      }),
+  }
+  return port
+}
+
+describe('commit(): write() throws ManifestEntryChanged after casMatches() was true', () => {
+  it('undoes with changed-since-plan, writes nothing, and restores the old folder', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = realPlan(fx)
+    const real = p.input.manifest
+    const pinned = { ...PRE, pinnedVersion: 'z' }
+    const changed = { version: '1.0.0', installedSkills: { [fx.dirName]: pinned } }
+    const casAnswers: boolean[] = []
+    let holds = 0
+    p.input = {
+      ...p.input,
+      manifest: {
+        withManifestLock: (fn) =>
+          real.withManifestLock(async (m) => {
+            holds += 1
+            if (holds < 2) return fn(m)
+            // The commit's hold: the CAS answers true, then the entry changes before write().
+            return fn({
+              ...m,
+              casMatches: async () => {
+                const r = await m.casMatches()
+                casAnswers.push(r)
+                fs.writeFileSync(p.manifestPath, JSON.stringify(changed))
+                return r
+              },
+            })
+          }),
+      },
+    }
+    const { result, trace } = await run(p)
+    expect(casAnswers).toEqual([true])
+    expect(result).toMatchObject({ status: 'undone', reason: 'changed-since-plan' })
+    expect(trace.some((t) => t.op === 'manifest-write')).toBe(false)
+    expect(hashOf(fx.realDir)).toBe(p.input.preTree)
+    expect(entryOf(p.manifestPath, fx.dirName)).toEqual(pinned)
+  })
+
+  it('the control, with the entry untouched, commits', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = realPlan(fx)
+    const { result, trace } = await run(p)
+    expect(result.status).toBe('committed')
+    expect(trace.some((t) => t.op === 'manifest-write')).toBe(true)
+  })
+})
+
+describe('an undo drops the live-folder-changed warning', () => {
+  const edit = (fx: Fixture) => () => {
+    fs.appendFileSync(path.join(fx.realDir, 'a.txt'), 'live\n')
+  }
+
+  it('a live edit plus a CAS failure: undone, no such warning, the edit kept under keptPath', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n', 'a.txt': 'a\n' })
+    const p = realPlan(fx)
+    const { result } = await run(p, {
+      hooks: {
+        beforeCommit: pinEntry(p.manifestPath, fx.dirName),
+        beforeCommitRehash: edit(fx),
+      },
+    })
+    expect(result.status).toBe('undone')
+    if (result.status !== 'undone') throw new Error('unreachable')
+    expect(result.warnings.some((w) => w.code === 'live-folder-changed')).toBe(false)
+    expect(fs.readFileSync(path.join(result.keptPath!, 'a.txt'), 'utf8')).toContain('live')
+  })
+
+  it('the control, the same edit without the CAS failure, commits and does warn', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n', 'a.txt': 'a\n' })
+    const p = realPlan(fx)
+    const { result } = await run(p, { hooks: { beforeCommitRehash: edit(fx) } })
+    expect(result.status).toBe('committed')
+    expect(result.warnings.some((w) => w.code === 'live-folder-changed')).toBe(true)
+  })
+})
+
+describe('commit(): the in-hold identity check', () => {
+  it('a folder replaced just before the callback runs stops with target-changed, writing nothing', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = realPlan(fx)
+    p.input = {
+      ...p.input,
+      manifest: hookedPort(p, (n) => {
+        if (n !== 2) return
+        fs.renameSync(fx.realDir, `${fx.realDir}.moved`)
+        fs.mkdirSync(fx.realDir)
+      }),
+    }
+    const { result, trace } = await run(p)
+    expect(result).toMatchObject({ status: 'stopped', reason: 'target-changed' })
+    expect(trace.some((t) => t.op === 'manifest-write')).toBe(false)
+    expect(entryOf(p.manifestPath, fx.dirName)).toEqual(PRE)
+  })
+
+  it('the control, nothing replaced, commits through the same wrapper', async () => {
+    const fx = makeFixture({ 'SKILL.md': '# v1\n' })
+    const p = realPlan(fx)
+    p.input = { ...p.input, manifest: hookedPort(p, () => undefined) }
+    const { result } = await run(p)
+    expect(result.status).toBe('committed')
+  })
+})

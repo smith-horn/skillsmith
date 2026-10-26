@@ -9,7 +9,8 @@
  *   at `manifestKey` is `pre`, `post` or `other`.
  * - `casMatches()`: `classify() === 'pre'`.
  * - `write()`: reloads, requires `pre` (else `ManifestEntryChanged`), replaces
- *   only that one key with `postEntry` and saves with the pre-commit lock check
+ *   only that one key with the canonical form of `postEntry` (its keys, nested
+ *   ones included, land sorted) and saves with the pre-commit lock check
  *   inside `writeManifestAtomic`'s `beforeRename`, so the file clock is the
  *   temp file just written. A lost lock throws `ManifestLockLost`; the hold is
  *   retried once from a fresh acquisition, so the callback must be idempotent
