@@ -127,9 +127,12 @@ describe('SMI-6887: every other response still reaches the token_source check', 
     expect(r.summary).not.toContain(LOCK_LINE)
   })
 
-  // PR #3179 gate: each of these PARSES to the producer's object (or nearly), but is not
-  // the producer's bytes. Only JSON.stringify({event, request_id}) passes.
+  // PR #3179 gate. All but the last PARSE to a valid lock-skip object but are not the
+  // producer's bytes, so only the byte compare rejects them. The last pins the exact event
+  // check against a startsWith-style loosening. Only JSON.stringify({event, request_id})
+  // passes.
   const sameValueOtherBytes: Array<[string, string]> = [
+    ['an escaped request_id', '{"event":"lock_held_by_other_run","request_id":"\\u0072"}'],
     [
       'a duplicate event key',
       '{"event":"wrong","event":"lock_held_by_other_run","request_id":"r"}',
