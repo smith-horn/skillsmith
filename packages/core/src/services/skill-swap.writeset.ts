@@ -17,6 +17,7 @@ import path from 'node:path'
 import { mkdirWithParentBits } from '../install/mkdir-parent-bits.js'
 import type { TreeRecord, TreeRecordEntry } from '../install/tree-hash.js'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
+import { treeHashOf } from './skill-tree.js'
 import {
   check,
   rethrowLockOrder,
@@ -174,4 +175,20 @@ export function outsideWriteSet(
   }
   for (const rel of files) if (built.get(rel)?.type !== 'file') bad.push(rel)
   return [...new Set(bad)].sort()
+}
+
+/** Step 10's advisory re-hash, before lock 3: a foreign write after rename 2 only warns. */
+export function warnIfLiveFolderChanged(st: SwapState): void {
+  const live = treeHashOf(st.input.realDir)
+  if (!live.ok) {
+    st.warnings.push({
+      code: 'live-folder-changed',
+      paths: [path.relative(st.input.realDir, live.path)],
+    })
+  } else if (live.hash !== st.postTree) {
+    st.warnings.push({
+      code: 'live-folder-changed',
+      paths: changedPaths(st.postRecord!, live.record),
+    })
+  }
 }

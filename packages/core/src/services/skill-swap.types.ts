@@ -7,6 +7,7 @@
 import type { JournalRecordInput } from '../journal/types.js'
 import type { ParkOptions, ParkResult } from '../install/park-result.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
+import type { EntryState } from './skill-manifest.entry.js'
 
 /** One file of the approved write set (plan §3.7). `rel` is relative to the skill folder. */
 export interface SwapWriteEntry {
@@ -16,17 +17,21 @@ export interface SwapWriteEntry {
   bytes: Buffer
 }
 
-/** What `ManifestPort.withManifestLock` hands its callback, under lock 3. */
+/** What `ManifestPort.withManifestLock` hands its callback, under lock 3 (A1 step 7a). */
 export interface ManifestCommitHandle {
-  /** The raw entry at `manifestKey` equals `preEntry` (§3.6 CAS). */
+  /** A strict load of the raw manifest under this hold; the entry at `manifestKey` is pre, post or other. */
+  classify(): Promise<EntryState>
+  /** `classify() === 'pre'` (§3.6 CAS); the swap's step 4 and step 10 (a) branch on it. */
   casMatches(): Promise<boolean>
-  /** SMI-6358's pre-commit lock check; throws to stop. */
-  preCommitCheck(): Promise<void>
-  /** The atomic manifest write of `postEntry`. */
+  /**
+   * Reloads and requires the entry to be `pre` (else `ManifestEntryChanged`),
+   * replaces only that key with `postEntry`, and saves with SMI-6358's
+   * pre-commit lock check inside the atomic write (else `ManifestLockLost`).
+   */
   write(): Promise<void>
 }
 
-/** Step 7 implements this with lock 3 (`withFileLock` on the manifest) and §3.6's CAS. */
+/** Implemented by `createManifestPort` (`skill-manifest.port.ts`): lock 3 and §3.6's CAS. */
 export interface ManifestPort {
   withManifestLock<T>(fn: (m: ManifestCommitHandle) => Promise<T>): Promise<T>
 }
