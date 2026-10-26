@@ -142,6 +142,7 @@ describe('design § 7: the record is unlinked last', () => {
     const again = await done(st, 'apply')
     expect(again.result.from).toBe('empty-op-dir')
     expect(again.trace).toContainEqual({ op: 'rmdir', path: st.opDir })
+    expect(again.result.swept.removed).toEqual([st.opDir])
     expect(fs.existsSync(st.opDir)).toBe(false)
   })
 })

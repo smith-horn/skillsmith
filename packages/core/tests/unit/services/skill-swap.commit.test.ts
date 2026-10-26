@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest'
 import { LockOrderError } from '../../../src/config/lock-tracker.js'
 import { StuckLockError } from '../../../src/config/owned-lock.js'
 import { ManifestUnwritableError } from '../../../src/services/skill-manifest.read-state.js'
+import { SwapFault } from '../../../src/services/skill-swap.ops.js'
+import { SkillWriteStop } from '../../../src/services/skill-write-lock.types.js'
 import type { ManifestCommitHandle, ManifestPort } from '../../../src/services/skill-swap.types.js'
 import {
   FakeManifest,
@@ -141,4 +143,48 @@ describe('via doctor S2 --apply', () => {
       act(st, 'apply', {}, { manifestPort: faultyPort('lock-order', file) })
     ).rejects.toBeInstanceOf(LockOrderError)
   })
+})
+
+/** A port whose `casMatches()` throws `err` inside the hold. */
+function throwingCas(err: Error): ManifestPort {
+  return {
+    withManifestLock: async <T>(fn: (m: ManifestCommitHandle) => Promise<T>): Promise<T> =>
+      fn({
+        classify: async () => 'pre',
+        casMatches: async () => {
+          throw err
+        },
+        write: async () => {
+          throw new Error('never reached')
+        },
+      }),
+  }
+}
+
+describe('a SwapFault or SkillWriteStop from inside the hold passes through unchanged', () => {
+  const CASES: Array<[string, Error, string, string]> = [
+    [
+      'SwapFault',
+      new SwapFault('target-changed', 'the new folder moved'),
+      'target-changed',
+      'the new folder moved',
+    ],
+    [
+      'SkillWriteStop',
+      new SkillWriteStop({ code: 'root-changed', path: '/r', detail: 'the root moved' }),
+      'root-changed',
+      'the root moved',
+    ],
+    ['control: an unknown Error', new Error('boom'), 'manifest-write-failed', 'Error: boom'],
+  ]
+  for (const [name, err, reason, detail] of CASES) {
+    it(`${name} -> stopped/${reason}`, async () => {
+      const st = await s2(makeFixture({ 'SKILL.md': '# v1\n' }))
+      const a = await act(st, 'apply', {}, { manifestPort: throwingCas(err) })
+      expect(a.result).toMatchObject({ status: 'stopped', reason })
+      if (a.result.status === 'stopped') expect(a.result.detail).toContain(detail)
+      expect(fs.existsSync(path.join(st.opDir, 'record.json'))).toBe(true)
+      expect(entryOf(st.fx)).toEqual(PRE)
+    })
+  }
 })

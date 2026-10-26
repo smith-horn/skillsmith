@@ -78,21 +78,55 @@ describe('appendJournalRecordOnce', () => {
     expect(lines(f)).toHaveLength(2)
   })
 
-  it('a torn tail writes nothing and says so', async () => {
+  it('a torn tail (no final newline) writes nothing and says so', async () => {
     const f = journal()
     await appendJournalRecordOnce(input('op0'), { file: f })
     fs.appendFileSync(f, '{"tool":"upd')
     const before = fs.readFileSync(f)
-    expect((await appendJournalRecordOnce(input('op1'), { file: f })).outcome).toBe('torn-tail')
+    expect(await appendJournalRecordOnce(input('op1'), { file: f })).toMatchObject({
+      outcome: 'torn-tail',
+      why: 'unparseable-tail',
+    })
     expect(fs.readFileSync(f).equals(before)).toBe(true)
   })
 
-  it('finds the record past a corrupt middle line (not only the verified chain)', async () => {
+  it('a newline-terminated last line that does not parse writes nothing', async () => {
     const f = journal()
-    await appendJournalRecordOnce(input('op1'), { file: f })
+    await appendJournalRecordOnce(input('op0'), { file: f })
     fs.appendFileSync(f, 'not json at all\n')
-    await appendJournalRecordOnce(input('op2'), { file: f }).catch(() => undefined)
+    const before = fs.readFileSync(f)
+    expect(await appendJournalRecordOnce(input('op1'), { file: f })).toMatchObject({
+      outcome: 'torn-tail',
+      why: 'unparseable-tail',
+    })
+    expect(fs.readFileSync(f).equals(before)).toBe(true)
+  })
+
+  it('a last line that parses but names no chain head writes nothing (corrupt-tail branch)', async () => {
+    const f = journal()
+    await appendJournalRecordOnce(input('op0'), { file: f })
+    fs.appendFileSync(f, JSON.stringify({ tool: 'other', suggestion_id: 'x' }) + '\n')
+    const before = fs.readFileSync(f)
+    expect(await appendJournalRecordOnce(input('op1'), { file: f })).toMatchObject({
+      outcome: 'torn-tail',
+      why: 'no-chain-head',
+    })
+    expect(fs.readFileSync(f).equals(before)).toBe(true)
+  })
+
+  it('finds a record placed after a corrupt middle line (not only the verified chain)', async () => {
+    const f = journal()
+    await appendJournalRecordOnce(input('op0'), { file: f })
+    fs.appendFileSync(f, 'not json at all\n')
+    // op1's record after the break, as a record line with a chain head of its own.
+    fs.appendFileSync(
+      f,
+      JSON.stringify({ ...input('op1'), prev_hash: 'x', record_hash: 'f'.repeat(64) }) + '\n'
+    )
     expect((await appendJournalRecordOnce(input('op1'), { file: f })).outcome).toBe('present')
     expect(lines(f).filter((l) => l.includes('"op1"'))).toHaveLength(1)
+    // A different op still appends after it: the last line names a chain head.
+    expect((await appendJournalRecordOnce(input('op2'), { file: f })).outcome).toBe('appended')
+    expect(lines(f).filter((l) => l.includes('"op2"'))).toHaveLength(1)
   })
 })

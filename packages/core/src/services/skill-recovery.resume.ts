@@ -52,9 +52,20 @@ import { ROLE_DIR } from './skill-recovery.pstate.js'
 import type { KeepGroup, OpFacts, ReadTranscript, Role } from './skill-recovery.types.js'
 
 /** A kind `publishTree` can write, else a stop: a name this module cannot keep. */
-export function publishKindOf(kind: string): PublishKind {
+function publishKindOf(kind: string): PublishKind {
   if (kind === 'backup' || KEPT_KINDS.has(kind)) return kind as PublishKind
   throw new SwapFault('backup-unsafe', `a keep of kind ${kind} is not one this step resumes`)
+}
+
+/** `t` is the empty claim with identity `claim`, else `SwapFault('target-changed')`. */
+async function assertClaim(t: string, claim: RecordIdentity): Promise<void> {
+  const now = bindIdentity(t)
+  if (!now.ok || !sameIdentity(boundOf(claim), now)) {
+    throw new SwapFault('target-changed', `${t} is not the empty claim the plan observed`)
+  }
+  if ((await fs.promises.readdir(t)).length > 0) {
+    throw new SwapFault('target-changed', `${t} is no longer empty`)
+  }
 }
 
 /** Puts `src` (O or N, a directory in OP) at the skill path. */
@@ -69,6 +80,10 @@ export async function installAt(
     const r = await claimPublish(src, t, {
       afterClaim: () => {
         check(st)
+        // claimPublish's `afterClaim` is synchronous (it runs between its own
+        // mkdir and rename, with no await between them), so a test hook here
+        // can only act synchronously: a throw stops before the rename, and a
+        // returned promise cannot be waited on without changing claimPublish.
         void st.options.hooks?.afterClaim?.()
       },
     })
@@ -87,15 +102,14 @@ export async function installAt(
     trace(st, { op: 'dirsync', path: root })
   } else {
     check(st)
-    const now = bindIdentity(t)
-    if (!now.ok || !sameIdentity(boundOf(claim), now)) {
-      throw new SwapFault('target-changed', `${t} is not the empty claim the plan observed`)
-    }
-    if ((await fs.promises.readdir(t)).length > 0) {
-      throw new SwapFault('target-changed', `${t} is no longer empty`)
-    }
-    void st.options.hooks?.afterClaim?.()
+    await assertClaim(t, claim)
+    await hook(st, 'afterClaim')
+    // Immediately before the rename: the claim must still be the planned one
+    // (identity, file type included) and empty, or a replacement would be
+    // renamed over. A swap between this check and the rename is the §3.0
+    // item 9 residual (no renameat2).
     check(st)
+    await assertClaim(t, claim)
     await fs.promises.rename(src, t)
     trace(st, { op: 'rename', path: src, dest: t })
     await syncDir(st, root)

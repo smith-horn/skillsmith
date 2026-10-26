@@ -7,9 +7,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Changed**: SMI-6531 -- A1 step 6a-ii: `skillsmith doctor locks --release <path>` also accepts
   a skills root's write lock or its reclaim lock, as the listing shows them, under the same rules.
 
-- **Internal**: SMI-6531 -- A1 step 6a-ii: `doctor recovery` gains hidden one-device repair
-  options with the confirmation prompt. They are not a supported command yet and no help text or
-  message names them.
+- **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor recovery`;
+  no supported command yet. `doctor recovery` gains hidden one-device repair options with the
+  confirmation prompt; the help text does not list them, and the CLI prints no remediation that
+  names them.
 
 - **Added**: SMI-6531 -- A1 step 6a-i: `skillsmith doctor recovery` lists what a crashed update
   left in each skills root, read-only. It takes `--root <dir>` (repeatable), `--state-root <dir>`

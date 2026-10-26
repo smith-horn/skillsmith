@@ -215,10 +215,12 @@ export type AppendOnceOutcome =
   /** A parseable line already names this `tool` and `suggestion_id`; nothing was written. */
   | { outcome: 'present'; file: string }
   /**
-   * The journal ends mid-line, without its newline, or with a last line that
-   * names no chain head: nothing was written.
+   * Nothing was written: the journal ends mid-line (no final newline) or with
+   * an unparseable last line (`unparseable-tail`), or its last line parses but
+   * names no chain head, `record_hash` (`no-chain-head`), so the chain cannot
+   * be continued.
    */
-  | { outcome: 'torn-tail'; file: string }
+  | { outcome: 'torn-tail'; file: string; why: 'unparseable-tail' | 'no-chain-head' }
 
 /** Every parseable line of `raw` that is an object naming `tool` and `id`. */
 function holdsRecordFor(raw: string, tool: string, id: string): boolean {
@@ -278,13 +280,13 @@ export function appendJournalRecordOnce(
         await syncOrReject(dirname(file))
         return { outcome: 'present', file }
       }
-      if (tornTail(raw)) return { outcome: 'torn-tail', file }
+      if (tornTail(raw)) return { outcome: 'torn-tail', file, why: 'unparseable-tail' }
       let record: JournalRecord
       try {
         record = await appendLocked(input, file, madeDirs)
       } catch (err) {
         // A last line that parses but names no chain head: as unappendable as a torn one.
-        if (isCorruptTailError(err)) return { outcome: 'torn-tail', file }
+        if (isCorruptTailError(err)) return { outcome: 'torn-tail', file, why: 'no-chain-head' }
         throw err
       }
       await syncOrReject(dirname(file))

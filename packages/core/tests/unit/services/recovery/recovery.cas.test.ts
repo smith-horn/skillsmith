@@ -15,7 +15,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { hashOf, makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
-import { opReport, POST, s1, s2, writeEntry } from './recovery.helpers.js'
+import { opReport, POST, s1, s2, un1, writeEntry } from './recovery.helpers.js'
 import { act, done, entryOf, keptTrees } from './recovery.act.helpers.js'
 
 useTmpCleanup()
@@ -121,5 +121,46 @@ describe('T-J2 control: undo without the aside', () => {
     expect(hashOf(path.join(st.opDir, 'old'))).toBe(oHash)
     expect(hashOf(path.join(st.opDir, 'undone'))).toBe(newHash)
     expect(fs.existsSync(path.join(st.opDir, 'record.json'))).toBe(true)
+  })
+})
+
+describe('the existing claim is re-checked immediately before the rename', () => {
+  it('control: UN1 over an untouched empty claim finishes', async () => {
+    const st = await un1(file())
+    fs.mkdirSync(st.fx.realDir)
+    const a = await done(st, 'apply')
+    expect(a.result.installed).toBe('O')
+  })
+
+  it('a claim replaced by another empty directory during afterClaim: target-changed, untouched', async () => {
+    const st = await un1(file())
+    fs.mkdirSync(st.fx.realDir)
+    const oHash = hashOf(path.join(st.opDir, 'old'))
+    let replacement: bigint | null = null
+    const a = await act(
+      st,
+      'apply',
+      {},
+      {
+        swap: {
+          hooks: {
+            afterClaim: () => {
+              const next = `${st.fx.realDir}.next`
+              fs.mkdirSync(next)
+              replacement = fs.lstatSync(next, { bigint: true }).ino
+              fs.rmdirSync(st.fx.realDir)
+              fs.renameSync(next, st.fx.realDir)
+            },
+          },
+        },
+      }
+    )
+    expect(a.result).toMatchObject({ status: 'stopped', reason: 'target-changed' })
+    expect(replacement).not.toBeNull()
+    expect(fs.lstatSync(st.fx.realDir, { bigint: true }).ino).toBe(replacement)
+    expect(fs.readdirSync(st.fx.realDir)).toEqual([])
+    expect(hashOf(path.join(st.opDir, 'old'))).toBe(oHash)
+    expect(fs.existsSync(path.join(st.opDir, 'record.json'))).toBe(true)
+    expect(a.trace.some((t) => t.op === 'rename' && t.dest === st.fx.realDir)).toBe(false)
   })
 })

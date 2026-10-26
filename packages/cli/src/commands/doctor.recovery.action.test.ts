@@ -120,8 +120,12 @@ describe('the confirmation contract', () => {
     })
     expect(process.exitCode).toBe(3)
     expect(asked).toBe(false)
-    const plan = JSON.parse(out.join('\n')) as { status: string; plan: { action: string } }
-    expect(plan).toMatchObject({ status: 'planned', plan: { action: 'undo' } })
+    const doc = JSON.parse(out.join('\n')) as {
+      plan: { status: string; plan: { action: string } }
+      result: unknown
+    }
+    expect(doc).toMatchObject({ plan: { status: 'planned', plan: { action: 'undo' } } })
+    expect(doc.result).toBeNull()
     expect(snapshot(base)).toEqual(before)
     expect(calls.executes).toBe(0)
   })
@@ -209,6 +213,42 @@ describe('the confirmation contract', () => {
     await runRecoveryAction({})
     expect(process.exitCode).toBe(1)
     expect(err.join('\n')).toContain('exactly one of --apply')
+  })
+})
+
+describe('--json prints one document', () => {
+  it('--json --yes: one JSON object holding the plan and the result', async () => {
+    const u = plantCrashedUpdate(base)
+    await runRecoveryAction({ apply: u.opId, json: true, yes: true })
+    expect(process.exitCode).toBeUndefined()
+    const doc = JSON.parse(out.join('\n')) as {
+      plan: { status: string }
+      result: { status: string }
+    }
+    expect(doc.plan.status).toBe('planned')
+    expect(doc.result.status).toBe('done')
+    expect(entry(u.stateRoot)).toEqual({ version: '2.0.0' })
+  })
+
+  it('--json, refused at targeting: one object with a null plan', async () => {
+    plantCrashedUpdate(base)
+    await runRecoveryAction({ apply: 'z'.repeat(32), json: true, yes: true })
+    expect(process.exitCode).toBe(1)
+    const doc = JSON.parse(out.join('\n')) as { plan: unknown; result: { status: string } }
+    expect(doc.plan).toBeNull()
+    expect(doc.result.status).toBe('refused')
+  })
+})
+
+describe('the empty target op dir', () => {
+  it('a rerun after record.json went removes the empty op dir and says so', async () => {
+    const u = plantCrashedUpdate(base)
+    for (const n of fs.readdirSync(u.opDir)) fs.rmSync(path.join(u.opDir, n), { recursive: true })
+    expect(fs.readdirSync(u.opDir)).toEqual([])
+    await runRecoveryAction({ apply: u.opId, yes: true })
+    expect(process.exitCode).toBeUndefined()
+    expect(fs.existsSync(u.opDir)).toBe(false)
+    expect(out.join('\n')).toContain(`removed the empty directory ${u.opDir}`)
   })
 })
 

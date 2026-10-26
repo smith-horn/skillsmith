@@ -154,6 +154,28 @@ describe('T-J3: S3', () => {
     expect(fs.existsSync(st.opDir)).toBe(false)
   })
 
+  it('a last line that names no chain head: audit-not-recorded says so', async () => {
+    const fx = file()
+    const st = await s3(fx)
+    writeJournalLine(fx, 'c'.repeat(32), 'update')
+    const a = await done(st, 'apply')
+    expect(a.result.audit).toMatchObject({ kind: 'not-recorded' })
+    if (a.result.audit.kind === 'not-recorded') {
+      expect(a.result.audit.detail).toContain('names no chain head')
+    }
+    expect(a.trace.some((t) => t.op === 'journal-append')).toBe(false)
+    expect(keptTrees(fx)[st.opId]).toBeDefined()
+  })
+
+  it('a record already present is not traced as a journal append', async () => {
+    const fx = file()
+    const st = await s3(fx)
+    writeJournalLine(fx, st.opId)
+    const a = await done(st, 'apply')
+    expect(a.result.audit.kind).toBe('present')
+    expect(a.trace.some((t) => t.op === 'journal-append')).toBe(false)
+  })
+
   it('--undo is not offered: the update is complete', async () => {
     const fx = file()
     const st = await s3(fx)

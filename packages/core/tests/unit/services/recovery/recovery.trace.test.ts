@@ -93,10 +93,11 @@ function keepSeq(fx: Fixture, src: string, dest: string) {
   ]
 }
 
-/** The one-device finish: owner, then the record last, sync OP, rmdir OP, sync ST. */
+/** The one-device finish: owner, sync OP, then the record last, sync OP, rmdir OP, sync ST. */
 function finishSeq(fx: Fixture) {
   return [
     { op: 'unlink' as const, path: path.join(fx.opDir, 'owner.json') },
+    { op: 'dirsync' as const, path: fx.opDir },
     { op: 'unlink' as const, path: path.join(fx.opDir, 'record.json') },
     { op: 'dirsync' as const, path: fx.opDir },
     { op: 'rmdir' as const, path: fx.opDir },
@@ -202,6 +203,23 @@ describe('T-P4: each doctor sequence is in its order', () => {
       expect(isSubsequence(a.trace, want(st.fx))).toEqual({ ok: true })
     })
   }
+})
+
+describe('T-P4: the finish syncs OP between the other metadata and the record', () => {
+  it('the dirsync of OP falls between the owner.json unlink and the record.json unlink', async () => {
+    const { st } = await crashed('S2')
+    const a = await done(st, 'apply')
+    const owner = a.trace.findIndex(
+      (t) => t.op === 'unlink' && t.path === path.join(st.opDir, 'owner.json')
+    )
+    const rec = a.trace.findIndex(
+      (t) => t.op === 'unlink' && t.path === path.join(st.opDir, 'record.json')
+    )
+    expect(owner).toBeGreaterThan(-1)
+    expect(rec).toBeGreaterThan(owner)
+    const between = a.trace.slice(owner + 1, rec)
+    expect(between).toContainEqual({ op: 'dirsync', path: st.opDir })
+  })
 })
 
 describe('T-P4: the publish resume sequences (P0, P1 with a rewrite, R1, R2, R3)', () => {

@@ -61,7 +61,10 @@ export type RecoveryPlanResult = RecoveryRefusal | PlannedRecovery
 export type AuditOutcome =
   | { kind: 'none' }
   | { kind: 'appended' | 'present'; file: string }
-  /** The journal ends mid-line: nothing was appended, and once the record goes the gap is permanent. */
+  /**
+   * The journal ends mid-line, or with a complete line naming no chain head:
+   * nothing was appended, and once the record goes the gap is permanent.
+   */
   | { kind: 'not-recorded'; file: string; detail: string }
 
 export interface RecoveryDone {

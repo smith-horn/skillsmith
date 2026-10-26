@@ -56,10 +56,33 @@ export interface RecoveryActionOptions {
   afterConfirm?: () => void | Promise<void>
 }
 
+/** The streams `askOnce` talks to (default: the process's terminal). */
+export interface PromptIO {
+  input: NodeJS.ReadableStream
+  output: NodeJS.WritableStream
+  /** Treat the streams as a terminal (Ctrl-C is SIGINT); default: readline's own detection. */
+  terminal?: boolean
+}
+
+/** The prompt runs only when both stdin and stdout are terminals (§3.9 item 2). */
+export function isInteractive(
+  stdin: { isTTY?: boolean } = process.stdin,
+  stdout: { isTTY?: boolean } = process.stdout
+): boolean {
+  return stdin.isTTY === true && stdout.isTTY === true
+}
+
 /** One question on the terminal: `y`/`yes` is yes; anything else, EOF included, is no; Ctrl-C interrupts. */
-export function askOnce(question: string): Promise<PromptAnswer> {
+export function askOnce(
+  question: string,
+  io: PromptIO = { input: process.stdin, output: process.stdout }
+): Promise<PromptAnswer> {
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    const rl = createInterface({
+      input: io.input,
+      output: io.output,
+      ...(io.terminal === undefined ? {} : { terminal: io.terminal }),
+    })
     let settled = false
     const done = (a: PromptAnswer): void => {
       if (settled) return
@@ -122,9 +145,13 @@ function resultLines(r: RecoveryRunResult): string[] {
   return lines
 }
 
-const print = (json: boolean, value: unknown, lines: string[]): void => {
-  if (json) console.log(JSON.stringify(value, null, 2))
-  else for (const l of lines) console.log(l)
+const printLines = (lines: string[]): void => {
+  for (const l of lines) console.log(l)
+}
+
+/** `--json` prints exactly one document: the plan (null when targeting refused) and the result. */
+const printJson = (plan: unknown, result: unknown): void => {
+  console.log(JSON.stringify({ plan, result }, null, 2))
 }
 
 /** `--apply` / `--undo`: plan, confirm, then act under lock 1. */
@@ -152,19 +179,23 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     ...(options.acceptIdentity === true ? { acceptIdentity: true } : {}),
   })
   if (planned.status !== 'planned') {
-    print(json, planned, resultLines(planned))
+    if (json) printJson(null, planned)
+    else printLines(resultLines(planned))
     process.exitCode = 1
     return
   }
-  print(
-    json,
-    { status: 'planned', opDir: planned.opDir, label: planned.report.label, plan: planned.plan },
-    planLines(planned)
-  )
+  const plan = {
+    status: 'planned',
+    opDir: planned.opDir,
+    label: planned.report.label,
+    plan: planned.plan,
+  }
+  if (!json) printLines(planLines(planned))
   if (options.yes !== true) {
-    const tty = options.isTTY?.() ?? (process.stdin.isTTY === true && process.stdout.isTTY === true)
+    const tty = options.isTTY?.() ?? isInteractive()
     if (json || !tty) {
-      if (!json) console.log('Nothing changed: confirm with --yes, or run this at a terminal.')
+      if (json) printJson(plan, null)
+      else console.log('Nothing changed: confirm with --yes, or run this at a terminal.')
       process.exitCode = 3
       return
     }
@@ -183,6 +214,7 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
   }
   await options.afterConfirm?.()
   const result = await executeRecovery(planned)
-  print(json, result, resultLines(result))
+  if (json) printJson(plan, result)
+  else printLines(resultLines(result))
   if (result.status !== 'done') process.exitCode = 1
 }

@@ -69,7 +69,7 @@ function kindIn(steps: readonly PlanStep[], tree: PlanStep['tree']): string | nu
   return s !== undefined && s.disposition.kind === 'kept' ? s.disposition.as : null
 }
 
-/** The metadata files finish may unlink: `owner.json` and a provable `record.json.tmp`, `record.json` last. */
+/** The metadata files finish may unlink: `owner.json`, a provable `record.json.tmp`, and `record.json` (last). */
 function adoptAll(f: OpFacts, names: readonly string[], t: ReadTranscript): Adopted[] {
   const out: Adopted[] = []
   const at = (n: string): string => path.join(f.opDir, n)
@@ -123,14 +123,19 @@ async function audit(row: Row): Promise<AuditOutcome> {
     const msg = err instanceof Error ? err.message : String(err)
     throw new SwapFault('journal-append-failed', `the audit append failed (${msg})`, err)
   }
-  if (r.outcome !== 'torn-tail') trace(row.st, { op: 'journal-append', path: row.st.opId })
+  // Only an append is a journal write: `present` found the record and wrote nothing.
+  if (r.outcome === 'appended') trace(row.st, { op: 'journal-append', path: row.st.opId })
   await hook(row.st, 'afterAudit')
   if (r.outcome === 'torn-tail') {
+    const how =
+      r.why === 'unparseable-tail'
+        ? 'ends mid-line or with a line that does not parse'
+        : 'ends with a complete line that names no chain head (record_hash)'
     return {
       kind: 'not-recorded',
       file: r.file,
       detail:
-        `audit-not-recorded: ${r.file} ends mid-line, so no audit record was appended for ` +
+        `audit-not-recorded: ${r.file} ${how}, so no audit record was appended for ` +
         `${row.st.opId}; once this operation's record is removed the gap is permanent`,
     }
   }
@@ -311,7 +316,9 @@ async function underLock(
       const d = describe(err)
       return { status: 'stopped', opId: req.opId, ...d, recordPath: null, warnings: [] }
     }
-    out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
+    const swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
+    // The target itself is the first thing this action removed.
+    out.swept = { removed: [planned.emptyTarget.path, ...swept.removed], left: swept.left }
     return out
   }
   if (cls.kind !== 'state') {

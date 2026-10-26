@@ -8,8 +8,8 @@
  * hold exactly the adopted metadata (UD40's rule: anything else stops
  * `op-not-empty` with nothing removed). It unlinks every other metadata file
  * first (`owner.json`, an adopted `record.json.tmp`), each through
- * `unlinkAdopted`, and `record.json` last (owner decision 2026-10-26), then
- * syncs OP, `rmdir`s it and syncs ST. A kill before `record.json` goes leaves
+ * `unlinkAdopted`, then syncs OP, then unlinks `record.json` last (owner
+ * decision 2026-10-26), syncs OP again, `rmdir`s it and syncs ST. A kill before `record.json` goes leaves
  * an op the same action still classifies and finishes; a kill after leaves an
  * empty op dir.
  *
@@ -33,7 +33,7 @@ import { boundOf, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
 import type { SkillWriteContext } from './skill-write-lock.types.js'
 
-/** Unlinks the adopted metadata (`record.json` last), syncs OP, removes it, syncs ST. */
+/** Unlinks the adopted metadata, syncs OP, unlinks `record.json`, syncs OP, removes it, syncs ST. */
 export async function finishRecovered(st: SwapState, adopted: readonly Adopted[]): Promise<void> {
   await hook(st, 'beforeMetadataCleanup')
   check(st)
@@ -50,6 +50,9 @@ export async function finishRecovered(st: SwapState, adopted: readonly Adopted[]
     await unlinkAdopted(st, a)
     if (path.basename(a.path) === OWNER_FILE) await hook(st, 'afterOwnerUnlink')
   }
+  // Those unlinks are made durable before the record goes: a crash may persist
+  // the record's removal only after them, never instead of them.
+  await syncDir(st, st.opDir)
   await unlinkAdopted(st, record)
   st.recordRemoved = true
   await hook(st, 'afterRecordUnlink')

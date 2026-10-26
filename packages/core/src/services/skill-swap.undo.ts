@@ -90,8 +90,8 @@ async function recreateEntry(
   st.warnings.push({ code: 'conflict-kept', path: kept })
 }
 
-/** Undo step 2: O back at the path (claim-publish; doctor's UN1 and S2x reuse it). */
-export async function restoreOld(st: SwapState, oldDir: string, realDir: string): Promise<void> {
+/** Undo step 2: O back at the path (claim-publish). */
+async function restoreOld(st: SwapState, oldDir: string, realDir: string): Promise<void> {
   const root = st.binding.root
   check(st)
   const o = await fs.promises.lstat(oldDir, { bigint: true })
@@ -132,8 +132,9 @@ export async function undoAside(st: SwapState): Promise<void> {
 
 /**
  * Runs undo steps 1-4. Throws on any failure (the caller reports `stopped`).
- * Doctor runs the same steps one at a time, from the state a kill left
- * (`undoAside`, `restoreOld` or its existing-claim form, then the keep).
+ * Doctor runs the same steps one at a time, from the state a kill left:
+ * `undoAside`, then its own `installAt` (`skill-recovery.resume.ts`, which
+ * also restores over an existing empty claim), then the keep.
  */
 export async function undoSwap(st: SwapState): Promise<UndoOutcome> {
   const { oldDir, undoneDir } = opPaths(st)
