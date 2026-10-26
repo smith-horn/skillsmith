@@ -400,7 +400,9 @@ if [ "$move_status" -ne 0 ]; then
       'move the named path(s) aside, then rerun'
   fi
   # Show git's own first line (shown only; the token never depends on it).
-  reason=$(tr '\r\t' '\n ' <"$tmp/move.out" | sed -n '/[^[:space:]]/{p;q;}' | tr -d '[:cntrl:]' | cut -c1-200)
+  # Every stage reads to EOF: a reader that quits early would SIGPIPE the one
+  # before it, and pipefail would turn this refusal into the ERR trap's exit 3.
+  reason=$(tr '\r\t\000' '\n  ' <"$tmp/move.out" | awk 'NF && !d { print; d = 1 }' | tr -d '[:cntrl:]' | cut -c1-200)
   if [ "$mode" = keep ]; then
     refuse keep-refused "git reset --keep refused the move: ${reason:-no message from git}" "$STATE_POST" \
       'resolve what git names, then rerun'

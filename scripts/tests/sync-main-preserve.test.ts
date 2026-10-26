@@ -817,6 +817,34 @@ describe("SMI-6465 retro: a refusal git explains carries git's own reason", () =
   })
 })
 
+describe('SMI-6465 retro gate: any git output yields a one-line refusal, exit 1', () => {
+  // [shim mode, the reason the cause must end with (or a predicate on it)]
+  const cases: Array<[string, (reason: string) => void]> = [
+    ['fail-move-out-verbose', (r) => expect(r).toBe('fatal: first line')],
+    ['fail-move-out-leading', (r) => expect(r).toBe('fatal: after blanks')],
+    ['fail-move-out-ansi', (r) => expect(r).toBe('[31mfatal: red[0m tail')],
+    ['fail-move-out-long', (r) => expect(r).toBe(`fatal: ${'x'.repeat(193)}`)],
+    ['fail-move-out-empty', (r) => expect(r).toBe('no message from git')],
+  ]
+  for (const [mode, check] of cases) {
+    for (const flow of ['ff', 'keep'] as const) {
+      it(`T62 ${flow} ${mode}`, () => {
+        const repo = makeRepo()
+        if (flow === 'ff') pushUpstream(repo, { 'a.txt': 'a2\n' })
+        else commitLocal(repo, { 'mine.txt': 'key\n' })
+        const before = snapshot(repo.local)
+        const args = flow === 'keep' ? ['--discard-local-commits'] : []
+        const token = flow === 'keep' ? 'keep-refused' : 'ff-refused'
+        const result = runSync(repo.local, args, shimEnv(repo, mode))
+        const { cause } = refusedAfterFetch(repo, before, result, token)
+        // eslint-disable-next-line no-control-regex
+        expect(cause).not.toMatch(/[\x00-\x1f\x7f]/)
+        check(cause.slice(cause.indexOf(': ') + 2))
+      })
+    }
+  }
+})
+
 describe('SMI-6465 pre-merge gate: the nonce-failure path moves nothing', () => {
   it('T50: od printing too few bytes exits 3 before any move, stating the post-fetch state', () => {
     const repo = makeRepo()

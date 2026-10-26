@@ -241,6 +241,12 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
     fail-move) exit 1 ;;
     fail-move-with-message) printf 'fatal: simulated index.lock held\\r\\n' >&2; exit 1 ;;
+    fail-move-out-verbose)
+      { printf 'fatal: first line\\n'; awk 'BEGIN{for(i=0;i<20000;i++)print "more output line", i}'; } >&2; exit 1 ;;
+    fail-move-out-leading) printf '\\n\\n  \\nfatal: after blanks\\nsecond line\\n' >&2; exit 1 ;;
+    fail-move-out-ansi) printf '\\033[31mfatal: red\\033[0m\\001\\000tail\\n' >&2; exit 1 ;;
+    fail-move-out-long) awk 'BEGIN{s="fatal: "; for(i=0;i<300;i++) s=s "x"; print s}' >&2; exit 1 ;;
+    fail-move-out-empty) exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
   esac
   st=0
