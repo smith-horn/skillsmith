@@ -483,7 +483,8 @@ describe.skipIf(perfRaw === null)('SMI-7167 -- candidates() perf migration (PG-f
     const swapIn = (t: string, name: string, from: string, to: string): string => {
       const c = cte(t, name)
       if (!c.includes(from)) throw new Error(`swapIn: ${name} has no ${from}`)
-      return t.replace(c, c.replace(from, to))
+      // function-form replacements: a `$'` in `to` (the regex shapes end in `$'`) must stay literal
+      return t.replace(c, () => c.replace(from, () => to))
     }
     // Retro governance S1: every CTE's event type is pinned (a CTE reading the wrong event would
     // otherwise pass), and `prepared`, the last CTE, is sliced and pinned too.
