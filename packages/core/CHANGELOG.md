@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- three doc comments on the space checks (`skill-recovery.mark.ts`,
+  `skill-swap.space.ts`, `skill-swap.xdev.ts`) are rewrapped to the 100-character width. No
+  behaviour change.
+
 - **Fixed**: SMI-6531 -- the `state-root-full` message no longer names `skillsmith doctor backups
   --prune`, which is not available yet (it arrives in A1 step 6c). The space check states the
   shortfall (the device, the free space, the space needed) and says to free space on the state

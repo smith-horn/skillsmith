@@ -20,9 +20,10 @@
  * state without a copy temp) is measured against the free bytes and inodes of
  * the area's device, with the same estimate as `publishTree`'s space check.
  * Too little refuses `state-root-full` naming `FREE_SPACE_REMEDY` (free space
- * by hand; the prune command is not available yet), with nothing changed. A P2 copy temp is not measured here: it is
- * kept as `partial-copy` first, then the copy's own space check runs, so the
- * user can remove it by hand. Like that check, it is a first-attempt filter.
+ * by hand; the prune command is not available yet), with nothing changed. A
+ * P2 copy temp is not measured here: it is kept as `partial-copy` first, then
+ * the copy's own space check runs, so the user can remove it by hand. Like that
+ * check, it is a first-attempt filter.
  *
  * @module @skillsmith/core/services/skill-recovery.mark
  */

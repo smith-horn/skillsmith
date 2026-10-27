@@ -7,9 +7,10 @@
  *  1. **Space first** (`skill-swap.space.ts`): fewer free bytes than the
  *     copy's estimated allocation, or fewer free inodes than its entries,
  *     refuse `state-root-full` naming `FREE_SPACE_REMEDY` (free space by
- *     hand; the prune command is not available yet), before anything is written. A first-attempt filter only: it does not
- *     promise the copy fits (directory indexes and extent metadata are not
- *     counted, GPT-5.6-Sol round 2).
+ *     hand; the prune command is not available yet), before anything is
+ *     written. A first-attempt filter only: it does not promise the copy fits
+ *     (directory indexes and extent metadata are not counted, GPT-5.6-Sol
+ *     round 2).
  *  2. **Copy.** `check`; the copy temp `<area>/.tmp-<basename(dest)>` is made
  *     by the no-follow copy's own plain `mkdir` (an existing entry there is
  *     `backup-unsafe`, untouched), its identity bound and the area synced
