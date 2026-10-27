@@ -6,7 +6,10 @@
  *    there is no generated sub-skill and no companion write (§3.7 item 1).
  * 2. SKILL.md and the optional files are fetched and scanned through
  *    `install()`'s own pipeline (`skill-installation.fetch-scan.ts`), before
- *    any lock.
+ *    any lock. A security verdict (scan, skip-scan, quarantine) is
+ *    `scan-rejected`, install's confirmation gate `confirmation-required`,
+ *    anything else (a throw included, with install's sanitized message)
+ *    `fetch-failed`; a skill ID that does not parse is `manifest-key-conflict`.
  * 3. The write set is SKILL.md plus the fetched optional files, minus those
  *    whose current bytes already equal the fetched bytes. Nothing is ever
  *    removed: a file upstream no longer serves stays, with its baseline (Q12).
@@ -36,8 +39,10 @@ import {
   fetchAndScanOptional,
   fetchAndScanSkillMd,
   resolveInstallSource,
-  type InstallSource,
+  type FetchScanStage,
 } from './skill-installation.fetch-scan.js'
+import { sanitizeInstallError } from './skill-installation.helpers.js'
+import { parseSkillIdInternal } from './skill-installation.validate.js'
 import type {
   AiDefenceFeedback,
   InstallResult,
@@ -76,8 +81,16 @@ const codeOf = (err: unknown): string => {
   return typeof code === 'string' && code !== '' ? code : 'UNKNOWN'
 }
 
-/** The fetch-and-scan failure codes that are a scan's verdict, not a fetch's. */
-const SCAN_CODES: ReadonlySet<string> = new Set(['SCAN_REJECTED', 'SKIP_SCAN_FORBIDDEN'])
+/**
+ * The fetch-and-scan failure codes that are a security verdict, not a fetch's:
+ * retrying cannot change them. A2 has no quarantine reason, so a quarantined
+ * registry skill is `scan-rejected` too (its remedy audits the source).
+ */
+const SCAN_CODES: ReadonlySet<string> = new Set([
+  'SCAN_REJECTED',
+  'SKIP_SCAN_FORBIDDEN',
+  'QUARANTINED',
+])
 
 function refusalOf(result: InstallResult): UpdateRefusal {
   const reason: UpdateRefusalReason =
@@ -137,8 +150,8 @@ async function currentAt(realDir: string, rel: string): Promise<Current> {
       fs.constants.O_RDONLY | O_NOFOLLOW | fs.constants.O_NONBLOCK
     )
     try {
-      const now = await fh.stat()
-      if (!now.isFile() || now.nlink !== 1 || now.ino !== st.ino || now.dev !== st.dev) {
+      const fst = await fh.stat()
+      if (!fst.isFile() || fst.nlink !== 1 || fst.ino !== st.ino || fst.dev !== st.dev) {
         return { refuse: 'unsupported-entry', detail: `${abs} changed while read`, path: abs }
       }
       return { kind: 'modify', bytes: await fh.readFile() }
@@ -150,33 +163,64 @@ async function currentAt(realDir: string, rel: string): Promise<Current> {
   }
 }
 
+/**
+ * Runs one fetch-and-scan stage. Its failure result maps through `refusalOf`;
+ * a throw becomes `fetch-failed` with `install()`'s own sanitized message
+ * (`install()` reports it as `UNKNOWN`), except a `LockOrderError`, which is a
+ * bug and propagates.
+ */
+async function runStage<T>(
+  stage: () => Promise<FetchScanStage<T>>
+): Promise<{ ok: true; value: T } | UpdateRefusal> {
+  try {
+    const r = await stage()
+    return r.ok ? r : refusalOf(r.result)
+  } catch (err) {
+    if (err instanceof LockOrderError) throw err
+    return { ok: false, reason: 'fetch-failed', detail: sanitizeInstallError(err) }
+  }
+}
+
 /** Plans the in-place update of `input.target` (§3.7), or refuses with nothing written. */
 export async function planSkillUpdate(
   input: PlanSkillUpdateInput
 ): Promise<UpdatePlan | UpdateRefusal> {
   const { target, skillId } = input
   const onProgress = input.onProgress ?? (() => {})
-  let source: InstallSource
+  // An unparseable recorded skill ID is not transient, so it must not get
+  // `fetch-failed`'s retry. A2 has no reason for it; `manifest-key-conflict`
+  // (the entry's identity is wrong; its remedy re-verifies or relinks it) is
+  // the nearest.
   try {
-    const resolved = await resolveInstallSource(skillId, input.registryLookup, onProgress)
-    if (!resolved.ok) return refusalOf(resolved.result)
-    source = resolved.value
-  } catch (err) {
-    if (err instanceof LockOrderError) throw err
-    return { ok: false, reason: 'fetch-failed', detail: (err as Error)?.message ?? String(err) }
+    parseSkillIdInternal(skillId)
+  } catch {
+    return {
+      ok: false,
+      reason: 'manifest-key-conflict',
+      detail: `the skill ID ${JSON.stringify(skillId)} recorded for ${target.comparedPath} is neither a registry ID nor a GitHub URL`,
+    }
   }
+  const resolved = await runStage(() =>
+    resolveInstallSource(skillId, input.registryLookup, onProgress)
+  )
+  if (!resolved.ok) return resolved
+  const source = resolved.value
   const installPath = target.comparedPath
-  const skillMd = await fetchAndScanSkillMd(source, {
-    skillId,
-    installPath,
-    ...(input.skipScan !== undefined && { skipScan: input.skipScan }),
-    ...(input.confirmed !== undefined && { confirmed: input.confirmed }),
-    onProgress,
-    ...(input.aiDefenceFeedback !== undefined && { aiDefenceFeedback: input.aiDefenceFeedback }),
-  })
-  if (!skillMd.ok) return refusalOf(skillMd.result)
-  const optional = await fetchAndScanOptional(source, skillId, installPath, input.skipScan)
-  if (!optional.ok) return refusalOf(optional.result)
+  const skillMd = await runStage(() =>
+    fetchAndScanSkillMd(source, {
+      skillId,
+      installPath,
+      ...(input.skipScan !== undefined && { skipScan: input.skipScan }),
+      ...(input.confirmed !== undefined && { confirmed: input.confirmed }),
+      onProgress,
+      ...(input.aiDefenceFeedback !== undefined && { aiDefenceFeedback: input.aiDefenceFeedback }),
+    })
+  )
+  if (!skillMd.ok) return skillMd
+  const optional = await runStage(() =>
+    fetchAndScanOptional(source, skillId, installPath, input.skipScan)
+  )
+  if (!optional.ok) return optional
 
   const skillMdBytes = Buffer.from(skillMd.value.skillMdContent, 'utf8')
   const fetched = [
@@ -188,13 +232,13 @@ export async function planSkillUpdate(
   ]
   const files: PlannedFile[] = []
   for (const f of fetched) {
-    const now = await currentAt(target.realDir, f.rel)
-    if ('refuse' in now)
-      return { ok: false, reason: now.refuse, detail: now.detail, path: now.path }
-    if (now.kind === 'create') {
+    const current = await currentAt(target.realDir, f.rel)
+    if ('refuse' in current)
+      return { ok: false, reason: current.refuse, detail: current.detail, path: current.path }
+    if (current.kind === 'create') {
       files.push({ rel: f.rel, kind: 'create', bytes: f.bytes, preSha256: null })
-    } else if (!now.bytes.equals(f.bytes)) {
-      files.push({ rel: f.rel, kind: 'modify', bytes: f.bytes, preSha256: sha256(now.bytes) })
+    } else if (!current.bytes.equals(f.bytes)) {
+      files.push({ rel: f.rel, kind: 'modify', bytes: f.bytes, preSha256: sha256(current.bytes) })
     }
   }
 

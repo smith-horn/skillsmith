@@ -86,11 +86,14 @@ export interface UpdatePlan {
 /**
  * Why no plan was made. A2's words (`update-target-reason.ts`) where one
  * applies; `confirmation-required` is install's own gate (SMI-3863), which
- * A2's table has no row for.
+ * A2's table has no row for. `manifest-key-conflict` is used for a recorded
+ * skill ID that does not parse (A2 has no row for that either; its remedy
+ * re-verifies the entry's identity, which is what fixing the ID needs).
  */
 export type UpdateRefusalReason =
   | 'manifest-unreadable'
   | 'untracked'
+  | 'manifest-key-conflict'
   | 'identity-mismatch'
   | 'probe-failed'
   | 'unreadable'

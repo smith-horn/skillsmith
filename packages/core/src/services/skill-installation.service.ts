@@ -272,10 +272,14 @@ export class SkillInstallationService {
   /**
    * SMI-6531 A1 step 7b: updates an existing tracked folder in place from a
    * plan `planSkillUpdate` built (`skill-update.ts`). No production caller
-   * until A1 step 9; `update` still calls `install()`.
+   * until A1 step 9; `update` still calls `install()`. The plan is
+   * authoritative: it carries its own skills root, manifest path and client
+   * from the target it was built for, and this service's `skillsDir`,
+   * manifest and `client` are not consulted or checked against it. Only the
+   * progress callback defaults to this service's.
    */
   async updateInPlace(plan: UpdatePlan, options: UpdateInPlaceOptions = {}): Promise<UpdateResult> {
-    return updateInPlace(plan, { onProgress: this.onProgress, ...options })
+    return updateInPlace(plan, { ...options, onProgress: options.onProgress ?? this.onProgress })
   }
 
   async uninstall(skillName: string, options: UninstallOptions = {}): Promise<UninstallResult> {

@@ -261,6 +261,36 @@ describe('Q8 and the manifest', () => {
     expect((await buildUpdateTarget(targetInput(fx))).ok).toBe(true)
   })
 
+  it('refuses an entry whose installPath does not name realDir as untracked (§4.3 row 4)', async () => {
+    const fx = updateFixture({ 'SKILL.md': skillMd('v1') })
+    const elsewhere = path.join(fx.skillsDir, 'other-skill')
+    fs.mkdirSync(elsewhere)
+    const noPath: Record<string, unknown> = { ...fx.entry }
+    delete noPath.installPath
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [noPath, 'missing or invalid installPath'],
+      [{ ...fx.entry, installPath: '' }, 'missing or invalid installPath'],
+      [{ ...fx.entry, installPath: 42 }, 'missing or invalid installPath'],
+      [{ ...fx.entry, installPath: path.join(fx.base, 'gone') }, 'does not resolve'],
+      [{ ...fx.entry, installPath: elsewhere }, `resolves to ${elsewhere}`],
+    ]
+    for (const [entry, detail] of cases) {
+      writeManifest(fx.manifestPath, { 'my-skill': entry })
+      const r = await buildUpdateTarget(targetInput(fx))
+      expect(r).toMatchObject({ ok: false, reason: 'untracked' })
+      expect(r.ok ? '' : r.detail).toContain(detail)
+    }
+
+    // The control: an installPath that is a symlink resolving to realDir is accepted.
+    const alias = path.join(fx.base, 'alias')
+    fs.symlinkSync(fx.realDir, alias)
+    writeManifest(fx.manifestPath, { 'my-skill': { ...fx.entry, installPath: alias } })
+    expect(await buildUpdateTarget(targetInput(fx))).toMatchObject({
+      ok: true,
+      target: { manifestKey: 'my-skill', realDir: fx.realDir },
+    })
+  })
+
   it('refuses a corrupt manifest as manifest-unreadable', async () => {
     const fx = updateFixture({ 'SKILL.md': skillMd('v1') })
     fs.writeFileSync(fx.manifestPath, '{ not json')

@@ -84,7 +84,15 @@ describe('T-U2: the optimizer is off', () => {
 
 /** The named bindings and module specifiers a module imports or re-exports. */
 function importsOf(file: string): { names: Set<string>; modules: Set<string> } {
-  const src = fs.readFileSync(file, 'utf8')
+  return importsIn(fs.readFileSync(file, 'utf8'))
+}
+
+/**
+ * `importsOf` on source text. Static `import`/`export ... from` give names and
+ * specifiers; a dynamic `import('...')` or a `require('...')` gives its
+ * specifier (it binds no name statically).
+ */
+function importsIn(src: string): { names: Set<string>; modules: Set<string> } {
   const names = new Set<string>()
   const modules = new Set<string>()
   const re = /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?([\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g
@@ -97,6 +105,9 @@ function importsOf(file: string): { names: Set<string>; modules: Set<string> } {
         .trim()
       if (name !== '') names.add(name)
     }
+  }
+  for (const m of src.matchAll(/\b(?:import|require)\s*\(\s*['"`]([^'"`]+)['"`]/g)) {
+    modules.add(path.basename(m[1]!))
   }
   return { names, modules }
 }
@@ -138,5 +149,14 @@ describe('T-U2: the import graph', () => {
     const { names } = importsOf(path.join(SERVICES, 'skill-installation.service.ts'))
     expect(names.has('applyOptimization')).toBe(true)
     expect(names.has('writeInstallFiles')).toBe(true)
+  })
+
+  it('the control: the same parser finds dynamic import() and require() specifiers', () => {
+    const { modules } = importsIn(
+      "const t = await import( './TransformationService.js' )\n" +
+        'const w = require("./skill-installation.io.write.js")\n'
+    )
+    expect(modules.has('TransformationService.js')).toBe(true)
+    expect(modules.has('skill-installation.io.write.js')).toBe(true)
   })
 })

@@ -100,7 +100,12 @@ describe('the write set (§3.7 items 3-4, Q12)', () => {
   it('records every fetched optional file in fileHashes, the skipped README included, never SKILL.md', async () => {
     const upstream = useUpstream()
     serveV2(upstream)
-    const fx = updateFixture(OLD, { entry: { fileHashes: { 'old.txt': 'f'.repeat(64) } } })
+    const fx = updateFixture(OLD, {
+      entry: {
+        fileHashes: { 'old.txt': 'f'.repeat(64) },
+        verifiedAt: '2026-05-01T00:00:00.000Z',
+      },
+    })
     const plan = await planned(fx)
     expect(plan.files.map((f) => f.rel)).not.toContain('README.md')
     expect(plan.postEntry.fileHashes).toEqual({
@@ -116,11 +121,13 @@ describe('the write set (§3.7 items 3-4, Q12)', () => {
       version: '2.0.0',
       lastUpdated: NOW.toISOString(),
     })
-    // Every field outside the allow-list is carried over unchanged.
-    for (const k of ['id', 'name', 'source', 'installPath', 'installedAt', 'provenance']) {
+    // Every field outside the allow-list is carried over unchanged, verifiedAt included.
+    const kept = ['id', 'name', 'source', 'installPath', 'installedAt', 'provenance', 'verifiedAt']
+    for (const k of kept) {
+      expect(fx.entry[k]).toBeDefined()
       expect(plan.postEntry[k]).toEqual(fx.entry[k])
     }
-    expect(plan.postEntry).not.toHaveProperty('verifiedAt')
+    expect(plan.postEntry.verifiedAt).toBe('2026-05-01T00:00:00.000Z')
   })
 
   it('keeps the recorded version when none is named', async () => {

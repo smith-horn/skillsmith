@@ -13,8 +13,12 @@
  *   name never does. A symlinked `comparedPath` whose target is another
  *   direct child of R is accepted.
  * - No entry at the key is `untracked` (Q8): `postEntry` needs an entry to
- *   extend, and `update` adopts untracked folders before it plans.
- * - A key that does not own `realDir` under UD22's rule
+ *   extend, and `update` adopts untracked folders before it plans. So is an
+ *   entry that does not name `realDir`: its `installPath` missing, not a
+ *   non-empty string, unresolvable, or resolving (native realpath) somewhere
+ *   else. That is §4.3 row 4's `invalid-install-path` / `path-mismatch`, and
+ *   install's own guard refuses the same case `INSTALL_TARGET_UNTRACKED`.
+ * - A key that names `realDir` but does not own it under UD22's rule
  *   (`skill-update.owner.ts`) is `identity-mismatch` naming the owner.
  *
  * @module @skillsmith/core/services/skill-update.target
@@ -162,6 +166,24 @@ export async function buildUpdateTarget(
     )
   }
   const resolved = await installPathsResolved(raw)
+  const own = rawEntry.installPath
+  if (typeof own !== 'string' || own === '') {
+    return refuse(
+      'untracked',
+      `the manifest entry "${manifestKey}" has a missing or invalid installPath`,
+      { path: comparedPath }
+    )
+  }
+  const ownReal = own === realDir ? realDir : (resolved.get(own) ?? null)
+  if (ownReal !== realDir) {
+    return refuse(
+      'untracked',
+      ownReal === null
+        ? `the manifest entry "${manifestKey}" records ${own}, which does not resolve`
+        : `the manifest entry "${manifestKey}" records ${own}, which resolves to ${ownReal}, not ${realDir}`,
+      { path: comparedPath }
+    )
+  }
   const owner = manifestKeyOwner(raw, realDir, (p) => resolved.get(p) ?? null)
   if (owner !== null && owner !== manifestKey) {
     return refuse(
