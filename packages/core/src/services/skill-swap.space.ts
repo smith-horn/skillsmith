@@ -126,8 +126,8 @@ export async function spaceFirst(st: SwapState, src: string, record: TreeRecord 
   }
   const free = s.bavail * s.bsize
   const need = bytesNeeded(shape, s.bsize)
-  // Facts and the free-space remedy only. `publishTree` reaches this check from
-  // six callers (the update's backup, the update's undo, abort cleanup, and
+  // Facts and the free-space remedy only. `moveAcross` (directly, or through
+  // `publishTree`) reaches this check from six callers (the update's backup, the update's undo, abort cleanup, and
   // doctor's resume, run and cross-device moves), and what to run afterwards
   // differs for each, so any next step written here would be wrong for some of
   // them. Each caller's own result line names its next action.

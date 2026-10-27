@@ -10,9 +10,11 @@ All notable changes to `@skillsmith/core` are documented here.
   directory's device by hand. It names no next step, because six callers reach it (the update's
   backup and undo, abort cleanup, and doctor's resume, run and cross-device moves) and each has
   its own: the update has already installed the new tree and kept its record, so it is not
-  rerunnable (`recovery-pending`). `doctor recovery --apply`/`--undo` refuse before changing
-  anything when a copy would not fit, so that refusal adds "then run this command again"; its
-  plan note states the facts only, since the read-only listing shows it too.
+  rerunnable (`recovery-pending`). Before it changes anything, `doctor recovery --apply`/`--undo`
+  checks that its copies will fit; when they won't, it refuses with nothing changed and adds
+  "then run this command again". A copy that still runs out of space later stops with the record
+  kept, and doctor prints that the same command resumes it. Its plan note states the facts only,
+  since the read-only listing shows it too.
 
 - **Added**: SMI-6531 -- A1 step 6a-iii: `skillsmith doctor recovery --apply <opId>` and
   `--undo <opId>` are supported, on one device and across devices. With the backup area on
@@ -20,11 +22,12 @@ All notable changes to `@skillsmith/core` are documented here.
   then counts it as kept; the verified source stays in the operation folder, which is set aside
   whole once its metadata is removed (the parked copy is reported). A run stopped anywhere in a
   copy is resumed by the same command: a copy that does not match is kept as `partial-copy`,
-  never removed, and the copy starts again. A doctor copy that would not fit refuses
-  `state-root-full` telling the user to free space on the state directory's device and run the
-  command again (the prune command, `skillsmith doctor backups --prune`, is not available yet),
-  with nothing changed; an interrupted copy's temp is first kept as `partial-copy`, so a stop
-  there has kept it. When doctor's own copy runs
+  never removed, and the copy starts again. When doctor's copies clearly won't fit, it refuses
+  `state-root-full` before changing anything, telling the user to free space on the state
+  directory's device and run the command again (the prune command, `skillsmith doctor backups
+  --prune`, is not available yet). A copy that still runs out of space later stops
+  `state-root-full` with the record kept, and the same command resumes it; an interrupted copy's
+  temp is first kept as `partial-copy`, so a stop there has kept it. When doctor's own copy runs
   out of space, the update's record is marked with where, as the update itself does. If setting
   the folder aside does not finish, the result says so with `removal-not-done`. No folder is
   removed. A run killed after the record was removed is finished by the same command: an
