@@ -7,7 +7,8 @@
  * The contract, in order:
  *  1. Plan without any lock (`planRecovery`) and print it (`--json`: as JSON).
  *     A refusal (`recovery-other-user` first, then targeting and the row's own
- *     words) prints why and exits 1; nothing was locked.
+ *     words) prints why and exits 1, except `already-parked` (report only),
+ *     which prints why and exits 0; nothing was locked.
  *  2. Ask once, default No (`Proceed? [y/N]`), only when stdin and stdout are
  *     terminals and `--json` is not given; the prompt runs before lock 1 and
  *     asserts no skills-root lock is held.
@@ -17,7 +18,10 @@
  *  5. `--yes` skips the prompt and waives no check.
  *  6. `executeRecovery` takes lock 1, re-plans and compares digests; a
  *     difference is `plan-changed` with zero mutation (exit 1).
- *  7. A kill after confirmation resumes with the same command.
+ *  7. A kill after confirmation resumes with the same command, except a kill
+ *     right after the park's move (`afterPark` / `afterParkSync`): the op dir is
+ *     gone, so the rerun only reports `already-parked` (exit 0) and the park's
+ *     post-move syncs are not run.
  *
  * Exit status: 0 done, declined, or already set aside (`already-parked`: doctor
  * takes no action), 1 refused or stopped, 3 not confirmed

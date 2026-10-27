@@ -11,8 +11,10 @@
  * refused before the roots are scanned.
  */
 import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { syncDirectory } from '../../../../src/install/dir-sync.js'
 import type { ReaderOptions } from '../../../../src/services/skill-recovery.reader.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import { OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
@@ -48,13 +50,18 @@ async function forged(): Promise<State> {
   return st
 }
 
-/** Counts every `fs.promises.open`, the call a directory sync starts with. */
+/**
+ * Counts every `fs.promises.open`, the call a directory sync starts with.
+ * `syncDirectory` takes `open` by a named `fs/promises` import, which a stub
+ * reaches only after `syncBuiltinESMExports()`; `useStubs` re-publishes on restore.
+ */
 function countOpens(): { n: () => number } {
   let n = 0
   stub(fs.promises, 'open', (orig: AnyFn) => async (...a: unknown[]) => {
     n++
     return orig(...a)
   })
+  syncBuiltinESMExports()
   return { n: () => n }
 }
 
@@ -97,6 +104,65 @@ describe('already set aside: report only, nothing done', () => {
     const a = await act({ ...st, opId: 'c'.repeat(32) }, 'apply')
     expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
     if (a.result.status === 'refused') expect(a.result.detail).toContain('no operation directory')
+  })
+
+  it('a parked area for one opId does not make a different opId already-parked', async () => {
+    const st = await forged()
+    const other = 'c'.repeat(32)
+    expect(other).not.toBe(OP_ID)
+    const before = world(st)
+    const a = await act({ ...st, opId: other }, 'apply')
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+    expect(world(st)).toBe(before)
+  })
+
+  describe('the open counter sees a directory sync (known-positive control)', () => {
+    it('a direct syncDirectory counts an open', async () => {
+      const st = await forged()
+      const opens = countOpens()
+      expect(await syncDirectory(st.fx.base)).toEqual({ outcome: 'synced' })
+      expect(opens.n()).toBeGreaterThan(0)
+    })
+
+    it('an offered apply, which does sync directories, counts opens', async () => {
+      const st = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
+      const opens = countOpens()
+      const a = await act(st, 'apply')
+      expect(a.result.status).toBe('done')
+      expect(opens.n()).toBeGreaterThan(0)
+    })
+  })
+
+  describe('a root whose staging is unreadable may hold the operation', () => {
+    it('unsafe root A plus a parked copy in root B: recovery-ambiguous, not already-parked', async () => {
+      const bad = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
+      const good = await forged()
+      const badRoot = fs.realpathSync(bad.fx.skillsDir)
+      const goodRoot = fs.realpathSync(good.fx.skillsDir)
+      // The staging dir becomes a plain file: bindSkillsRootReadOnly refuses it.
+      fs.rmSync(bad.fx.staging, { recursive: true, force: true })
+      fs.writeFileSync(bad.fx.staging, 'x')
+      const before = world(good)
+      const r = await planRecovery(requestOf(good, 'apply', { roots: [badRoot, goodRoot] }))
+      expect(r).toMatchObject({ status: 'refused', reason: 'recovery-ambiguous' })
+      if (r.status !== 'refused') throw new Error('expected a refusal')
+      expect(r.detail).toContain(badRoot)
+      expect(r.detail).toContain(landingOf(good))
+      expect(r.detail).toContain('may hold the operation')
+      expect([...r.paths].sort()).toEqual([badRoot, landingOf(good)].sort())
+      expect(world(good)).toBe(before)
+    })
+
+    it('the pair: with --root on the readable root, it is already-parked', async () => {
+      const bad = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
+      const good = await forged()
+      const goodRoot = fs.realpathSync(good.fx.skillsDir)
+      fs.rmSync(bad.fx.staging, { recursive: true, force: true })
+      fs.writeFileSync(bad.fx.staging, 'x')
+      const roots = [fs.realpathSync(bad.fx.skillsDir), goodRoot]
+      const r = await planRecovery(requestOf(good, 'apply', { roots, root: goodRoot }))
+      expect(r).toMatchObject({ status: 'refused', reason: 'already-parked' })
+    })
   })
 
   it('an op dir that exists wins over a parked area of the same opId (not reported as parked)', async () => {

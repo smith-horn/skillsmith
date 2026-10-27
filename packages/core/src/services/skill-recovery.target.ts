@@ -5,7 +5,12 @@
  *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
  * write: `listRoot`), finds every op dir named `opId`, and:
- *  - none: `recovery-not-offered` ("no operation directory named it");
+ *  - none: `recovery-not-offered` ("no operation directory named it"), except:
+ *    a parked area `ST/.skillsmith-parked/<opId>` in a root is `already-parked`
+ *    (report only: nothing is acted on, the CLI exits 0), unless a scanned root's
+ *    staging is unsafe (unreadable): that root may hold the op, so it is
+ *    `recovery-ambiguous`, naming the unsafe roots and the parked paths;
+ *  - an op dir in one root and a parked copy in another: `recovery-ambiguous`;
  *  - more than one (a copied root, E29 6b): `recovery-ambiguous`, naming each,
  *    unless `--root` narrows the search to one root, compared by native real
  *    path, so any spelling of a root selects it and only it;
@@ -133,6 +138,19 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     )
   }
   if (found.length === 0) {
+    const unsafe = reports.filter((r) => r.staging === 'unsafe')
+    if (parked.length > 0 && unsafe.length > 0) {
+      // A root whose staging could not be read may hold this very op dir, so
+      // "already set aside" cannot be concluded from the other roots.
+      return refusal(
+        'recovery-ambiguous',
+        `${request.opId} has no op dir in the roots that could be read, and ${where.join(', ')} ` +
+          `${where.length === 1 ? 'exists' : 'exist'}, but ${unsafe.map((r) => r.root).join(', ')} ` +
+          `could not be read (its staging is unsafe), so it may hold the operation: ` +
+          'fix that root, or pick one with --root <skills root>',
+        [...unsafe.map((r) => r.root), ...where]
+      )
+    }
     if (parked.length > 0) {
       return refusal(
         'already-parked',
