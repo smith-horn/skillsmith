@@ -251,6 +251,7 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
     fail-move-out-ansi) printf '\\033[31mfatal: red\\033[0m\\001\\000tail\\n' >&2; exit 1 ;;
     fail-move-out-long) awk 'BEGIN{s="fatal: "; for(i=0;i<300;i++) s=s "x"; print s}' >&2; exit 1 ;;
     fail-move-out-empty) exit 1 ;;
+    fail-move-out-ctl-first) printf '\\033\\033\\n  \\nfatal: real reason\\n' >&2; exit 1 ;;
     fail-move-out-malformed) printf 'fatal: bad \\377\\376 bytes \\233 C1 \\177DEL end\\n' >&2; exit 1 ;;
     fail-move-out-huge) awk 'BEGIN{printf "fatal: "; for(i=0;i<2000000;i++) printf "x"; print ""}' >&2; exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
@@ -338,4 +339,43 @@ export function trFailEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEn
   )
   chmodSync(join(dir, 'tr'), 0o755)
   return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
+}
+
+/** Put a tool shim first on PATH; `body` is the shim's shell, `real` the real tool's path. */
+function toolShimEnv(
+  repo: Repo,
+  tool: string,
+  body: (real: string) => string,
+  base: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const real = execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim()
+  const dir = join(repo.root, `${tool}-shim`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, tool), `#!/bin/sh\n${body(JSON.stringify(real))}\n`)
+  chmodSync(join(dir, tool), 0o755)
+  return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
+}
+
+/** `readlink` that always names the same relative link, so resolution never ends. */
+export function readlinkLoopEnv(
+  repo: Repo,
+  link: string,
+  base: NodeJS.ProcessEnv = GIT_ENV
+): NodeJS.ProcessEnv {
+  return toolShimEnv(repo, 'readlink', () => `printf '%s\\n' ${JSON.stringify(link)}`, base)
+}
+
+/**
+ * `tr`, `awk` and `cut` shims that fail one_line's own calls unless LC_ALL=C.
+ * one_line's calls are recognised loosely, by any argument that matches: a
+ * `tr` argument starting with a backslash, an `awk` argument starting `pick=`,
+ * or `cut`'s exact `-c1-200`. No other call in sync-main.sh matches those, so
+ * every other call (it uses awk and tr elsewhere) goes to the real tool.
+ */
+export function oneLineNeedsCLocaleEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const check = (pattern: string) => (real: string) =>
+    `for a in "$@"; do case "$a" in ${pattern}) [ "$LC_ALL" = C ] || { echo "locale $LC_ALL" >&2; exit 1; } ;; esac; done\nexec ${real} "$@"`
+  let env = toolShimEnv(repo, 'tr', check("'\\'*"), base)
+  env = toolShimEnv(repo, 'awk', check('pick=*'), env)
+  return toolShimEnv(repo, 'cut', check('-c1-200'), env)
 }

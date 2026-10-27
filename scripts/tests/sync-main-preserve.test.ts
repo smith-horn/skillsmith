@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -31,6 +32,7 @@ import {
   grepFailEnv,
   makeRepo,
   odShimEnv,
+  readlinkLoopEnv,
   originMain,
   pushUpstream,
   read,
@@ -39,6 +41,7 @@ import {
   SEED,
   shimEnv,
   trFailEnv,
+  oneLineNeedsCLocaleEnv,
   snapshot,
   STATE_POST,
   STATE_PRE,
@@ -908,6 +911,7 @@ describe('SMI-6465 retro gate round 3: the helper is found however the script is
     expectSynced(repo, result)
   })
 
+  // Pins the kernel's refusal; it does not reach the script's own hop limit (T69 does).
   it('T68: a symlink cycle cannot run at all: the kernel refuses it (ELOOP)', () => {
     const repo = makeRepo()
     const bin = join(repo.root, 'bin')
@@ -919,12 +923,60 @@ describe('SMI-6465 retro gate round 3: the helper is found however the script is
     expect(result.stderr).toMatch(/Too many levels of symbolic links/i)
   })
 
+  it('T69: symlink resolution that never ends stops at the 40-hop limit, exit 3', () => {
+    const repo = makeRepo()
+    mkdirSync(join(repo.root, 'bin'))
+    symlinkSync(SCRIPT_PATH, join(repo.root, 'bin', 'loop'))
+    // The kernel follows bin/loop to the script; the shimmed readlink keeps
+    // answering "loop", so the script's own walk never reaches a non-link.
+    const result = runAs(repo.local, join(repo.root, 'bin', 'loop'), readlinkLoopEnv(repo, 'loop'))
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain('more than 40 symlinks')
+  })
+
+  it('T72: a missing helper file exits 3 and names it', () => {
+    const repo = makeRepo()
+    mkdirSync(join(repo.root, 'tool'))
+    copyFileSync(SCRIPT_PATH, join(repo.root, 'tool', 'sync-main.sh'))
+    const result = runAs(repo.local, join(repo.root, 'tool', 'sync-main.sh'), GIT_ENV)
+    expect(result.status, result.stderr).toBe(3)
+    expect(result.stderr).toContain('sync-main: ERROR: cannot read')
+    expect(result.stderr).toContain('lib/sync-main-render.sh')
+  })
+
   it('T66: run through a symlink outside scripts/, it still syncs', () => {
     const repo = makeRepo()
     pushUpstream(repo, { 'a.txt': 'a2\n' })
     mkdirSync(join(repo.root, 'bin'))
     symlinkSync(SCRIPT_PATH, join(repo.root, 'bin', 'sync'))
     expectSynced(repo, runAs(repo.local, join(repo.root, 'bin', 'sync'), GIT_ENV))
+  })
+})
+
+describe('SMI-6465 retro 2: rendering pins the C locale and skips control-only lines', () => {
+  it('T70: one_line runs every stage under LC_ALL=C, whatever the caller set', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const env = oneLineNeedsCLocaleEnv(repo, {
+      ...shimEnv(repo, 'fail-move-with-message'),
+      LC_ALL: 'C.UTF-8',
+    })
+    const { cause } = refusedAfterFetch(repo, before, runSync(repo.local, [], env), 'ff-refused')
+    expect(cause.endsWith(': fatal: simulated index.lock held')).toBe(true)
+  })
+
+  it('T71: a first line of control bytes alone does not hide the real reason', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const { cause } = refusedAfterFetch(
+      repo,
+      before,
+      runSync(repo.local, [], shimEnv(repo, 'fail-move-out-ctl-first')),
+      'ff-refused'
+    )
+    expect(cause.endsWith(': fatal: real reason')).toBe(true)
   })
 })
 
