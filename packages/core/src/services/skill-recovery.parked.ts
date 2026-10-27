@@ -1,45 +1,64 @@
 /**
- * SMI-6531 (A1 step 6a-iii, owner decision 2026-10-26): `--apply` / `--undo`
- * for an op whose dir is already parked (a kill after the park moved OP and
- * before its syncs reported). The park's own post-move syncs (`<opId>`'s
- * landing directory, then ST) may not have run, so under lock 1 the landing
- * directory must still have the identity the plan saw, and both are synced:
- * what the uninterrupted run's `syncPark` does. Nothing moves or is removed.
+ * SMI-6531 (A1 step 6a-iii): `--apply` / `--undo` for an op whose dir is
+ * already parked (a kill after the park moved OP and before its syncs
+ * reported). The park's own post-move syncs (`<opId>`'s landing directory,
+ * then ST) may not have run. Under lock 1 the park is judged again with a
+ * fresh reader (`inspectParked`), and its digest must equal the confirmed
+ * plan's before either directory is synced (GPT-5.6-Sol bf-zyg F1); then both
+ * are synced, as the uninterrupted run's `syncPark` does. Nothing moves or is
+ * removed.
  *
  * @module @skillsmith/core/services/skill-recovery.parked
  */
-import fs from 'node:fs'
 import { syncDirectory } from '../install/dir-sync.js'
-import { identityOf, sameIdentity } from '../install/park-tree.identity.js'
-import { boundOf } from './skill-recovery.state.js'
+import { digestOf } from './skill-recovery.digest.js'
+import { inspectParked } from './skill-recovery.parked-check.js'
+import type { ParkedView } from './skill-recovery.parked-check.js'
+import { ClassifierReader } from './skill-recovery.reader.js'
 import type {
   PlannedRecovery,
+  RecoveryRequest,
   RecoveryRunOptions,
   RecoveryRunResult,
 } from './skill-recovery.run.types.js'
 import type { SkillWriteContext } from './skill-write-lock.types.js'
 
-/** Syncs the parked landing directory, then ST, and reports the parked copy. */
+/** `inspectParked`'s arguments for a request in a bound root. */
+export function parkedArgs(request: RecoveryRequest, b: { root: string; stagingDir: string }) {
+  return {
+    root: b.root,
+    stagingDir: b.stagingDir,
+    opId: request.opId,
+    euid: request.euid ?? process.geteuid?.() ?? -1,
+    stateRoots: request.stateRoots ?? [],
+  }
+}
+
+/** The digest over everything `inspectParked` read and what it concluded. */
+export function parkedDigest(
+  reader: ClassifierReader,
+  view: ParkedView,
+  request: RecoveryRequest
+): string {
+  return digestOf(reader.transcript(), { parked: view, action: request.action })
+}
+
+/** Re-judges the park under lock 1, then syncs its landing directory and ST. */
 export async function syncParked(
   planned: PlannedRecovery,
   ctx: SkillWriteContext,
   opts: RecoveryRunOptions
 ): Promise<RecoveryRunResult> {
   const p = planned.parked!
-  const refusal = (detail: string): RecoveryRunResult => ({
-    status: 'refused',
-    reason: 'plan-changed',
-    detail,
-    paths: [p.landing],
-  })
-  let now: fs.BigIntStats
-  try {
-    now = fs.lstatSync(p.landing, { bigint: true })
-  } catch {
-    return refusal(`${p.landing} is gone; nothing was changed`)
-  }
-  if (!now.isDirectory() || !sameIdentity(boundOf(p.identity), identityOf(now))) {
-    return refusal(`${p.landing} is not the directory the plan saw; nothing was changed`)
+  const reader = new ClassifierReader(planned.request.reader)
+  const view = inspectParked(reader, parkedArgs(planned.request, ctx))
+  if (view === null || parkedDigest(reader, view, planned.request) !== planned.report.digest) {
+    return {
+      status: 'refused',
+      reason: 'plan-changed',
+      detail: `${p.landing} is not what the plan read; nothing was changed. Run the command again to see the new plan`,
+      paths: [p.landing],
+    }
   }
   ctx.check()
   for (const dir of [p.landing, ctx.stagingDir]) {
@@ -63,7 +82,7 @@ export async function syncParked(
     from: planned.report.label,
     installed: null,
     kept: [],
-    extraCopy: p.copies.length === 1 ? p.copies[0]! : null,
+    extraCopy: p.copy,
     manifest: 'untouched',
     audit: { kind: 'none' },
     warnings: [],

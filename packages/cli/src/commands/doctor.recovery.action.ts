@@ -148,7 +148,7 @@ function resultLines(r: RecoveryRunResult): string[] {
   }
   lines.push(`  manifest: ${r.manifest}`)
   if (r.audit.kind === 'not-recorded') lines.push(`  ${r.audit.detail}`)
-  for (const w of r.warnings) lines.push(...warningLines(w, r.opId))
+  for (const w of r.warnings) lines.push(...warningLines(w, r))
   for (const p of r.swept.removed) lines.push(`  removed the empty directory ${p}`)
   for (const p of r.swept.left) lines.push(`  left ${p.path} (${p.errno})`)
   return lines
@@ -156,18 +156,25 @@ function resultLines(r: RecoveryRunResult): string[] {
 
 type Warning = Extract<RecoveryRunResult, { status: 'done' }>['warnings'][number]
 
-/** A warning's line; `removal-not-done` names the op dir, the park's status and what finishes it. */
-function warningLines(w: Warning, opId: string): string[] {
+/**
+ * A warning's line. `removal-not-done` names the op dir and the park's status:
+ * a held park moved it but holds it (check it); a kept or stopped one left it
+ * in place, and the same command finishes it (governance S1).
+ */
+function warningLines(w: Warning, r: { opId: string; action: 'apply' | 'undo' }): string[] {
   if (w.code !== 'removal-not-done') return [`  warning: ${w.code}`]
-  const errno = w.errno === undefined ? '' : ` (${w.errno})`
-  const where =
-    w.status === 'held' ? `; it was moved to ${String(w.parkedPath)} and is held there` : ''
+  const status = `${w.status}/${w.reason}${w.errno === undefined ? '' : ` (${w.errno})`}`
+  const head =
+    w.status === 'held'
+      ? `  warning: removal-not-done: the op dir ${w.path} was moved to ${String(w.parkedPath)} but is held there (${status})`
+      : `  warning: removal-not-done: the op dir ${w.path} was not set aside (${status})`
+  const command = `skillsmith doctor recovery --${r.action} ${r.opId}`
   return [
-    `  warning: removal-not-done: the op dir ${w.path} was not set aside (${w.status}/${w.reason}${errno})${where}`,
+    head,
     ...(w.detail === undefined ? [] : [`    ${w.detail}`]),
     ...(w.status === 'held'
       ? ['    it may have changed while it moved: check it before relying on it']
-      : [`    run \`skillsmith doctor recovery --clean-staging ${opId}\` to finish it`]),
+      : [`    run \`${command}\` again to finish setting it aside`]),
   ]
 }
 
@@ -205,6 +212,7 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     action,
     opId,
     roots: found.roots.map((r) => r.root),
+    stateRoots: found.stateRoots,
     ...(narrowed === undefined ? {} : { root: narrowed }),
     ...(options.acceptIdentity === true ? { acceptIdentity: true } : {}),
   })

@@ -327,12 +327,43 @@ describe('across devices (6a-iii): the op dir is parked, and a park that does no
       expect(process.exitCode).toBe(4)
       const text = out.join('\n')
       expect(text).toContain('Done: apply')
-      expect(text).toContain(`removal-not-done: the op dir ${u.opDir} was not set aside (${label}/`)
+      if (label === 'held') {
+        // W5: a held park moved the op dir; the line says so and asks for a check, not a rerun.
+        expect(text).toContain(
+          `removal-not-done: the op dir ${u.opDir} was moved to ${heldAt} but is held there (held/`
+        )
+        expect(text).not.toContain('was not set aside')
+        expect(text).toContain('check it before relying on it')
+      } else {
+        expect(text).toContain(
+          `removal-not-done: the op dir ${u.opDir} was not set aside (${label}/`
+        )
+        // Governance S1: the same command finishes it, not --clean-staging.
+        expect(text).toContain(
+          `run \`skillsmith doctor recovery --apply ${u.opId}\` again to finish setting it aside`
+        )
+      }
+      expect(text).not.toContain('--clean-staging')
       expect(fs.existsSync(u.backupDest)).toBe(true)
       expect(fs.existsSync(path.join(u.opDir, 'record.json'))).toBe(false)
       expect(entry(u.stateRoot)).toEqual({ version: '2.0.0' })
     })
   }
+
+  it('--undo whose park ends kept: the hint names --undo, the command that was run', async () => {
+    const u = plantAcross()
+    await runRecoveryAction({
+      undo: u.opId,
+      yes: true,
+      runOptions: {
+        swap: { park: async () => ({ ...nulls, status: 'kept', reason: 'op-not-empty' }) as never },
+      },
+    })
+    expect(process.exitCode).toBe(4)
+    expect(out.join('\n')).toContain(
+      `run \`skillsmith doctor recovery --undo ${u.opId}\` again to finish setting it aside`
+    )
+  })
 
   it('--json: the result carries the removal-not-done warning, and the exit is still 4', async () => {
     const u = plantAcross()

@@ -11,7 +11,6 @@ import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { OpReport } from './skill-recovery.listing.js'
 import type { SweepEntry, SweepResult } from './skill-recovery.finish.js'
 import type { ActionPlan, RecoveryRefuseReason, TreePosition } from './skill-recovery.types.js'
-import type { RecordIdentity } from './skill-swap.types.js'
 import type { ManifestPort, SwapOptions, SwapWarning } from './skill-swap.types.js'
 import type { SkillWriteStopCode } from './skill-write-lock.types.js'
 
@@ -30,6 +29,11 @@ export interface RecoveryRequest {
   journalFile?: string
   /** @internal Test seam passed to every reader. */
   reader?: ReaderOptions
+  /**
+   * The state roots doctor discovered or was given (`--state-root`), as native
+   * real paths: a park intent's `backupPath` must lie in one (governance S4).
+   */
+  stateRoots?: readonly string[]
 }
 
 /** A refusal before anything changed (no lock taken, or under it with zero mutation). */
@@ -60,7 +64,7 @@ export interface PlannedRecovery {
    * after the park moved OP, before its syncs reported): the action makes the
    * park durable (syncs `<opId>`'s landing directory, then ST) and is done.
    */
-  parked: { landing: string; identity: RecordIdentity; copies: string[] } | null
+  parked: { landing: string; copy: string } | null
 }
 
 export type RecoveryPlanResult = RecoveryRefusal | PlannedRecovery

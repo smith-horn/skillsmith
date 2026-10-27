@@ -10,8 +10,9 @@
  * probe. It creates, writes, renames and removes nothing: a root with no
  * staging directory is reported as having none, never given one.
  *
- * `--apply`, `--undo`, `--abandon`, `--clean-staging` and `--park` are later
- * steps; the listing names what each would do and which are offered.
+ * The listing names what each action would do and which are offered.
+ * `--apply` and `--undo` are supported (`doctor.recovery.action.ts`, SMI-6531
+ * step 6a-iii); `--abandon`, `--clean-staging` and `--park` are later steps.
  * Exit status: 0 when listed; 1 when a `--root` could not be used or on an
  * unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.recovery

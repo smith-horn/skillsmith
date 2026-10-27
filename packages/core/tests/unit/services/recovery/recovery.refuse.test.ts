@@ -215,6 +215,41 @@ describe('6a-iii lifts the one-device gate: cross-device and full-device plans a
     expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
     expect(world(st)).toBe(before)
   })
+
+  // T4: each clause of the check fails alone, with the other two this op's own.
+  const CLAUSES: Array<[string, (st: State) => { opId: string; dest: string }]> = [
+    [
+      'an opId that is not this op',
+      (st) => ({ opId: 'b'.repeat(32), dest: path.join(areaOf(st.fx), st.opId) }),
+    ],
+    ['a dest outside its area', (st) => ({ opId: st.opId, dest: path.join(st.fx.base, st.opId) })],
+  ]
+  for (const [label, over] of CLAUSES) {
+    it(`a full-device marker with ${label} alone is anything else; refused, zero mutation`, async () => {
+      const st = await s2(file())
+      const recPath = path.join(st.opDir, 'record.json')
+      const { recordSha256: _h, ...rest } = JSON.parse(
+        fs.readFileSync(recPath, 'utf8')
+      ) as SwapRecord
+      const body = {
+        ...rest,
+        fullDevice: {
+          cause: 'ENOSPC' as const,
+          stage: 'copy' as const,
+          area: areaOf(st.fx),
+          ...over(st),
+        },
+      }
+      fs.writeFileSync(
+        recPath,
+        JSON.stringify({ ...body, recordSha256: computeRecordSha256(body) })
+      )
+      const before = world(st)
+      const a = await act(st, 'apply')
+      expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+      expect(world(st)).toBe(before)
+    })
+  }
 })
 
 describe('T-J6: each broken condition ends with its named failure and zero mutation', () => {

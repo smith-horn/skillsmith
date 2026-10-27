@@ -126,8 +126,12 @@ function adoptAll(
   return { files: out, intent, tmp: recordTmp }
 }
 
-/** Doctor's seams on the state: the adopted sidecar unlink and its own marker rewrite. */
-function adoptInto(st: SwapState, t: ReadTranscript, a: ReturnType<typeof adoptAll>): void {
+/**
+ * Doctor's seams on the state: the adopted sidecar unlink and its own marker
+ * rewrite. Exported for its unit test (the area-path guard).
+ * @internal
+ */
+export function adoptInto(st: SwapState, t: ReadTranscript, a: ReturnType<typeof adoptAll>): void {
   st.unlinkAdopted = async (p, reason) => {
     // Only a sidecar or its temp in this op's area, read whole by the re-plan.
     if (path.dirname(p) !== st.areaPath) return false
@@ -319,6 +323,7 @@ export async function executeRecovery(
     euid: req.euid ?? process.geteuid?.() ?? -1,
     journalFile,
     ...(req.acceptIdentity === undefined ? {} : { acceptIdentity: req.acceptIdentity }),
+    stateRoots: req.stateRoots ?? [],
   }
   const locked = await withSkillWriteLock(
     binding,

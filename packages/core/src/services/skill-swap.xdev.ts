@@ -118,6 +118,25 @@ async function copyToTemp(st: SwapState, src: string, temp: string): Promise<Cop
 }
 
 /**
+ * Every entry of `temp` is in `src` with the same content: a file's size and
+ * bytes, a link's text, a directory's type: the temp holds no bytes the source
+ * does not (plan §3.5 `partial-copy`, `sourceUnchanged`). Shared by this
+ * module's partial keep and doctor's P2 keep (`skill-recovery.xdev.ts`). Modes are not compared (a copy
+ * killed mid-way can leave a directory at its creation mode); they hold no bytes.
+ */
+export function isTreeSubsetOf(temp: TreeRecord, src: TreeRecord): boolean {
+  for (const [rel, e] of temp) {
+    const s = src.get(rel)
+    if (s === undefined || s.type !== e.type) return false
+    if (e.type === 'file' && (s.size !== e.size || (s as typeof e).contentHash !== e.contentHash)) {
+      return false
+    }
+    if (e.type === 'symlink' && (s as typeof e).linkText !== e.linkText) return false
+  }
+  return true
+}
+
+/**
  * Keeps this run's temp as `partial-copy` (sidecar first, then a rename within
  * the area). Returns where it went, or null when the temp is not the one this
  * run made (then nothing is touched).
@@ -133,16 +152,24 @@ async function keepPartial(
   const now = bindIdentity(temp)
   if (tempId === null || !now.ok || !sameIdentity(tempId, now)) return null
   // Computed only for `ENOSPC` (plan §3.3); a mismatch is `false` by definition.
+  // True only when the source still matches its sidecar AND the temp is a
+  // subset of it (plan §3.5): an edit made in the temp keeps it false.
   const s = partialCause === 'enospc' ? treeHashOf(m.src) : null
+  const t = treeHashOf(temp)
   const sourceUnchanged =
-    s !== null && s.ok && m.sidecar.treeHash !== null && s.hash === m.sidecar.treeHash
+    s !== null &&
+    s.ok &&
+    m.sidecar.treeHash !== null &&
+    s.hash === m.sidecar.treeHash &&
+    t.ok &&
+    isTreeSubsetOf(t.record, s.record)
   const dest = await destFor(st, 'partial-copy')
   const was = progress.stage
   progress.stage = 'partial-keep'
   await writeSidecar(
     st,
     dest,
-    sidecarOf(st, 'partial-copy', treeHashOf(temp), now, { sourceUnchanged, partialCause })
+    sidecarOf(st, 'partial-copy', t, now, { sourceUnchanged, partialCause })
   )
   await renameChecked(st, temp, dest)
   await syncDir(st, st.areaPath)

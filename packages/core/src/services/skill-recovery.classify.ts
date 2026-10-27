@@ -57,6 +57,8 @@ export interface ClassifyContext {
   journalFile: string
   /** `--accept-identity`: identity is waived and each present tree must hash to its role's recorded hash. */
   acceptIdentity?: boolean
+  /** The state roots discovered or given (6a-iii, governance S4); a park intent's must be one. */
+  stateRoots?: readonly string[]
 }
 
 const OWNER_CAP = 4096
@@ -432,7 +434,13 @@ function noRecord(
       }
     }
   }
-  const intent = noRecordIntent(r, { ...base, root: ctx.root, names, opIdentity })
+  const intent = noRecordIntent(r, {
+    ...base,
+    root: ctx.root,
+    names,
+    opIdentity,
+    stateRoots: ctx.stateRoots ?? [],
+  })
   // Whose op dir this is: owner.json's uid, else the verifying intent's (6a-iii).
   const uid = owner?.uid ?? (intent?.valid === true ? intent.ownerUid : null)
   return {

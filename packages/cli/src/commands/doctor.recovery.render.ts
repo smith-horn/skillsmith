@@ -80,11 +80,18 @@ function noteOf(cls: RecoveryClass): string[] {
       return ["    empty: a later doctor action holding this root's lock removes it with one rmdir"]
     case 'no-record':
       return [
-        `    no record.json (a crash before the update began); entries: ${cls.entries.join(', ') || 'none'}`,
+        // W1: a verifying move-source intent means the record went at the end, not before the start.
+        cls.intent !== null && cls.intent.valid && cls.intent.kind === 'move-source'
+          ? `    no record.json: a finish killed after its record was removed, before its op dir was set aside; entries: ${cls.entries.join(', ') || 'none'}`
+          : `    no record.json (a crash before the update began); entries: ${cls.entries.join(', ') || 'none'}`,
         cls.owner === null
           ? '    owner: no owner.json'
           : `    owner: pid ${cls.owner.pid ?? '?'} on ${cls.owner.host ?? '?'}, uid ${cls.owner.uid ?? '?'}`,
-        ...(cls.hasParkIntent ? ['    a park intent is present'] : []),
+        ...(cls.intent === null
+          ? []
+          : cls.intent.blocked === null
+            ? ['    a park intent is present and verifies: --apply or --undo finishes the park']
+            : [`    a park intent is present: ${cls.intent.blocked}`]),
         ...(cls.recordTmp === null ? [] : [`    ${cls.recordTmp} is present`]),
       ]
     case 'unreadable':

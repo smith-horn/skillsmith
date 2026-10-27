@@ -26,7 +26,7 @@ import type { SwapHookPoint } from '../../../../src/services/skill-swap.types.js
 import { hashOf, useTmpCleanup } from '../skill-swap.helpers.js'
 import type { Fixture } from '../skill-swap.helpers.js'
 import { parkedCopies, useOtherDeviceCleanup } from '../skill-swap.xdev.helpers.js'
-import { opReport, s0, s2, s3, un1 } from './recovery.helpers.js'
+import { opReport, s0, s1, s2, s3, un1 } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import {
   act,
@@ -99,6 +99,9 @@ const ROWS: Array<[string, Build, 'apply' | 'undo', number]> = [
   ['S3 (O kept across devices)', s3, 'apply', 0],
   ['S2 (commit, then O kept across devices)', s2, 'apply', 1],
   ['S0 (N kept across devices)', s0, 'apply', 0],
+  // T8: S1 across devices, both ways.
+  ['S1 (N installed, commit, then O kept across devices)', s1, 'apply', 1],
+  ['S1 --undo (O installed, N kept across devices)', s1, 'undo', 0],
   ['UN1 (O installed, U kept across devices)', un1, 'apply', 0],
   ['S2 --undo (O installed, T kept as undone across devices)', s2, 'undo', 0],
 ]

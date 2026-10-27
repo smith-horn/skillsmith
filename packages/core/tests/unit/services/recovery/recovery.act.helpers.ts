@@ -42,6 +42,7 @@ export function requestOf(
     roots: over.roots ?? [fs.realpathSync(st.fx.skillsDir)],
     euid: process.geteuid?.() ?? 0,
     journalFile: journalOf(st.fx),
+    stateRoots: [fs.realpathSync(st.fx.stateRoot)],
     ...over,
   }
 }

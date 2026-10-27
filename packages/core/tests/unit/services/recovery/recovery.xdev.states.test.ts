@@ -23,7 +23,7 @@ import { recordIdentity } from '../../../../src/services/skill-swap.staging.js'
 import { deletesOf } from '../skill-swap.abort.helpers.js'
 import { areaOf, hashOf, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { useOtherDeviceCleanup, useStubs, errnoError } from '../skill-swap.xdev.helpers.js'
-import { opReport, POST, s2 } from './recovery.helpers.js'
+import { opReport, POST, PRE, s1, s2 } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import { act, auditLines, entryOf } from './recovery.act.helpers.js'
 import {
@@ -43,6 +43,11 @@ import {
 useTmpCleanup()
 useOtherDeviceCleanup()
 const stub = useStubs()
+
+/** A mid-copy ENOSPC: the update marks its record and leaves the temp at its name (P2). */
+function throwNoSpace(): never {
+  throw errnoError('ENOSPC')
+}
 
 /** The sub-state the listing names for O's keep. */
 async function oState(st: State): Promise<string | null> {
@@ -195,15 +200,48 @@ describe('T-X8 (Sol): a copy temp edited after its copy is P2, kept as partial-c
     expect(kept).toHaveLength(1)
     expect(fs.readFileSync(path.join(kept[0]!, 'a.txt'), 'utf8')).toBe('edited in the copy temp\n')
     const ps = JSON.parse(fs.readFileSync(`${kept[0]}.json`, 'utf8')) as Record<string, unknown>
+    // Governance S3 (plan §3.5): the temp holds bytes the source never had, so it is not
+    // unchanged. This assertion pinned true before the subset rule; it now pins false.
     expect(ps).toMatchObject({
       kind: 'partial-copy',
-      sourceUnchanged: true,
+      sourceUnchanged: false,
       partialCause: 'mismatch',
     })
     if (a.result.status === 'done') {
       expect(a.result.kept).toContainEqual({ tree: 'O', kind: 'partial-copy', path: kept[0] })
     }
     nothingLost(before, contentSet(st.fx.skillsDir, st.fx.stateRoot))
+  })
+})
+
+describe("T5: a P2 temp's sourceUnchanged and partialCause (governance S3, plan §3.5)", () => {
+  /** The kept partial's sidecar after --apply on a P2 made by `options`, with `edit` run first. */
+  async function keptPartial(options: Options, edit?: (st: State) => void) {
+    const st = await xs3(options)
+    expect(await oState(st)).toBe('P2')
+    edit?.(st)
+    const a = await actSpied(st, 'apply')
+    expect(a.result.status).toBe('done')
+    const kept = partialTrees(st.fx)
+    expect(kept).toHaveLength(1)
+    return JSON.parse(fs.readFileSync(`${kept[0]}.json`, 'utf8')) as Record<string, unknown>
+  }
+
+  it('a mid-copy kill: the temp is a subset of an unchanged source, so true', async () => {
+    const ps = await keptPartial({ duringBackupCopy: () => killed('mid-copy') })
+    expect(ps).toMatchObject({ sourceUnchanged: true, partialCause: 'mismatch' })
+  })
+
+  it('the source edited after its sidecar: false (the pair of the case above)', async () => {
+    const ps = await keptPartial({ duringBackupCopy: () => killed('mid-copy') }, (st) =>
+      fs.writeFileSync(path.join(st.opDir, 'old', 'a.txt'), 'O edited after the copy began\n')
+    )
+    expect(ps).toMatchObject({ sourceUnchanged: false, partialCause: 'mismatch' })
+  })
+
+  it("a copy stopped by ENOSPC: the record's marker names this dest, so partialCause enospc", async () => {
+    const ps = await keptPartial({ duringBackupCopy: () => throwNoSpace() })
+    expect(ps).toMatchObject({ sourceUnchanged: true, partialCause: 'enospc' })
   })
 })
 
@@ -259,5 +297,30 @@ describe('T-R1 (cross-device): the committed entry is the canonical postEntry', 
     expect(theParkedCopy(st.fx)).toBeTruthy()
     expect(treeDeletesDoctor(st.fx, a.events)).toEqual([])
     expect(auditLines(st.fx, OP_ID)).toBe(1)
+  })
+})
+
+describe('T8: S1 across devices, --apply and --undo', () => {
+  it('--apply: N installed, postEntry committed, O kept across devices, the op dir parked', async () => {
+    const st = await s1(xfile())
+    const a = await actSpied(st, 'apply')
+    expect(a.result.status).toBe('done')
+    expect(fs.readFileSync(path.join(st.fx.realDir, 'SKILL.md'), 'utf8')).toBe('# staged\n')
+    expect(entryOf(st.fx)).toEqual(POST)
+    expect(hashOf(backupOf(st.fx))).toBe(st.p.input.preTree)
+    expect(fs.readdirSync(theParkedCopy(st.fx)).sort()).toEqual(['old', 'park-intent.json'])
+    expect(treeDeletesDoctor(st.fx, a.events)).toEqual([])
+  })
+
+  it('--undo: O installed, preEntry kept, N kept as unused-new across devices, the op dir parked', async () => {
+    const st = await s1(xfile())
+    const nHash = hashOf(path.join(st.opDir, 'new'))
+    const a = await actSpied(st, 'undo')
+    expect(a.result.status).toBe('done')
+    expect(hashOf(st.fx.realDir)).toBe(st.p.input.preTree)
+    expect(entryOf(st.fx)).toEqual(PRE)
+    expect(hashOf(path.join(areaOf(st.fx), `${OP_ID}.unused-new`))).toBe(nHash)
+    expect(fs.readdirSync(theParkedCopy(st.fx)).sort()).toEqual(['new', 'park-intent.json'])
+    expect(treeDeletesDoctor(st.fx, a.events)).toEqual([])
   })
 })

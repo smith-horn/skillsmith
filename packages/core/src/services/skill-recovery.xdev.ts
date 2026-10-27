@@ -9,7 +9,8 @@
  *    crashed run published.
  *  - **P2** (`resumeCopyTemp`, a copy temp that is not the source): the temp
  *    is kept as `partial-copy` (sidecar first, then a rename within the area;
- *    `sourceUnchanged` recorded), never removed, then the copy starts again
+ *    `sourceUnchanged` true only when the source still matches its sidecar
+ *    and the temp is a subset of it), never removed, then the copy starts again
  *    with the space check (`moveAcross`). A temp can hold the only copy of a
  *    file version, so it is kept even when it looks complete.
  *  - **P3** (the same call, when the temp hashes to the source): the sidecar
@@ -47,7 +48,7 @@ import {
   writeSidecar,
 } from './skill-swap.sidecar.js'
 import type { PartialCause, PublishKind, Sidecar } from './skill-swap.sidecar.js'
-import { moveAcross } from './skill-swap.xdev.js'
+import { isTreeSubsetOf, moveAcross } from './skill-swap.xdev.js'
 import type { FullDeviceMarker, RecordIdentity } from './skill-swap.types.js'
 import { boundOf } from './skill-recovery.state.js'
 import type { KeepGroup } from './skill-recovery.types.js'
@@ -203,7 +204,14 @@ async function keepPartial(
   th: TreeHashResult,
   sh: TreeHashResult
 ): Promise<void> {
-  const sourceUnchanged = sh.ok && k.sidecarHash !== null && sh.hash === k.sidecarHash
+  // Plan §3.5 `partial-copy`: true only when the source still matches its sidecar and the
+  // temp holds no bytes the source does not (every entry of the temp's tree is the source's).
+  const sourceUnchanged =
+    sh.ok &&
+    k.sidecarHash !== null &&
+    sh.hash === k.sidecarHash &&
+    th.ok &&
+    isTreeSubsetOf(th.record, sh.record)
   const partialCause: PartialCause =
     k.marker !== null && k.marker.dest === k.group.destPath
       ? 'enospc'

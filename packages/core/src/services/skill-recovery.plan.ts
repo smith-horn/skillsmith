@@ -348,7 +348,7 @@ function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan
       `park the op dir (kind ${i.kind}), checked against a fresh hash of its contents`,
     ],
     [
-      `the record is gone: every keep finished, and the copy is at ${i.backupPath}`,
+      `the record is gone; the intent records the verified copy's path as ${i.backupPath}`,
       '`--apply` and `--undo` are the same here: they finish the park',
     ]
   )

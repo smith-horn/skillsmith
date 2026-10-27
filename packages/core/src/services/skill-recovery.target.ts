@@ -32,7 +32,12 @@ import type {
   RecoveryRefusal,
   RecoveryRequest,
 } from './skill-recovery.run.types.js'
+import { inspectParked } from './skill-recovery.parked-check.js'
+import type { ParkedView } from './skill-recovery.parked-check.js'
+import { parkedArgs, parkedDigest } from './skill-recovery.parked.js'
 import { planAction } from './skill-recovery.plan.js'
+import { ClassifierReader } from './skill-recovery.reader.js'
+import { bindSkillsRootReadOnly } from './skill-write-lock.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const refusal = (
@@ -93,6 +98,12 @@ function emptyPlan(action: 'apply' | 'undo'): Extract<ActionPlan, { offered: tru
 
 /** Targets `request.opId` across the roots and returns the plan, or why it is not offered. */
 export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPlanResult> {
+  if (!opIdOk(request.opId)) {
+    return refusal(
+      'recovery-not-offered',
+      `${JSON.stringify(request.opId)} is not an operation id (one path component)`
+    )
+  }
   const wanted = request.root === undefined ? null : realOf(request.root)
   const roots = request.roots.filter((r) => wanted === null || realOf(r) === wanted)
   if (wanted !== null && roots.length === 0) {
@@ -108,11 +119,12 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       ...(request.journalFile === undefined ? {} : { journalFile: request.journalFile }),
       ...(request.acceptIdentity === undefined ? {} : { acceptIdentity: request.acceptIdentity }),
       ...(request.reader === undefined ? {} : { reader: request.reader }),
+      stateRoots: request.stateRoots ?? [],
     })
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
   if (found.length === 0) {
-    const parked = parkedTarget(request, roots)
+    const parked = await parkedTarget(request, roots)
     if (parked !== null) return parked
     return refusal(
       'recovery-not-offered',
@@ -151,68 +163,77 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
   return { ...base, plan, emptyTarget: null, parked: null }
 }
 
+/** The opId is one path component (governance S2): checked before any path is joined or read. */
+function opIdOk(opId: string): boolean {
+  return (
+    opId !== '' &&
+    opId !== '.' &&
+    opId !== '..' &&
+    !opId.includes('/') &&
+    !opId.includes('\\') &&
+    !opId.includes('\0') &&
+    path.basename(opId) === opId
+  )
+}
+
 /**
- * 6a-iii: no op dir is named `opId`, but exactly one root holds its parked
- * area `ST/.skillsmith-parked/<opId>` (a kill after the park moved OP): the
- * plan is to make that park durable. Another user's area is refused.
+ * 6a-iii: no op dir is named `opId`, but a root holds its parked area (a kill
+ * after the park moved OP). Accepted only as `inspectParked` validates it, read
+ * through the reader so the run under lock 1 repeats the reads and compares
+ * this digest before it syncs anything (GPT-5.6-Sol bf-zyg F1).
  */
-function parkedTarget(
+async function parkedTarget(
   request: RecoveryRequest,
   roots: readonly string[]
-): RecoveryPlanResult | null {
-  const hits: Array<{ root: string; landing: string; identity: RecordIdentity; uid: number }> = []
+): Promise<RecoveryPlanResult | null> {
+  const hits: Array<{ root: string; view: ParkedView; digest: string }> = []
   for (const r of roots) {
-    const root = realOf(r)
-    const landing = path.join(root, '.skillsmith-staging', '.skillsmith-parked', request.opId)
-    let s: fs.BigIntStats
-    try {
-      s = fs.lstatSync(landing, { bigint: true })
-    } catch {
-      continue
-    }
-    const identity = identityAt(landing)
-    if (s.isDirectory() && identity !== null) {
-      hits.push({ root, landing, identity, uid: Number(s.uid) })
-    }
+    const binding = await bindSkillsRootReadOnly(r).catch(() => null)
+    if (binding === null) continue
+    const reader = new ClassifierReader(request.reader)
+    const view = inspectParked(reader, parkedArgs(request, binding))
+    if (view === null) continue
+    hits.push({ root: binding.root, view, digest: parkedDigest(reader, view, request) })
   }
-  if (hits.length !== 1) return null
-  const h = hits[0]!
-  const euid = request.euid ?? process.geteuid?.() ?? -1
-  if (h.uid !== euid) {
+  if (hits.length === 0) return null
+  if (hits.length > 1) {
     return refusal(
-      'recovery-other-user',
-      `${h.landing} belongs to uid ${h.uid}, not this user: run doctor as that user`,
-      [h.landing]
+      'recovery-ambiguous',
+      `${request.opId} is parked in ${hits.length} skills roots; pick one with --root <skills root>`,
+      hits.map((h) => h.view.landing)
     )
   }
-  const copies = fs
-    .readdirSync(h.landing)
-    .filter((n) => !n.endsWith('.json'))
-    .sort()
-    .map((n) => path.join(h.landing, n))
+  const { root, view, digest } = hits[0]!
+  if (!view.ok) {
+    return refusal(
+      view.otherUid !== null ? 'recovery-other-user' : 'recovery-not-offered',
+      `${view.landing} is not a finished park of this operation: ${view.why}`,
+      [view.landing]
+    )
+  }
   return {
     status: 'planned',
     request,
-    root: h.root,
-    opDir: h.landing,
+    root,
+    opDir: view.landing,
     report: {
       opId: request.opId,
-      opDir: h.landing,
-      cls: { kind: 'empty-op-dir', opId: request.opId, opDir: h.landing },
+      opDir: view.landing,
+      cls: { kind: 'empty-op-dir', opId: request.opId, opDir: view.landing },
       label: 'already parked',
       plans: [],
-      digest: '',
+      digest,
     },
     plan: {
       offered: true,
       action: request.action,
       steps: [],
       manifest: 'untouched',
-      remaining: [`sync ${h.landing}, then the staging dir, so the park is durable`],
-      notes: ['the op dir was already set aside whole; nothing else is left to do'],
+      remaining: [`sync ${view.landing}, then the staging dir, so the park is durable`],
+      notes: [`the op dir was already set aside whole, at ${view.copy}`],
     },
     sweep: [],
     emptyTarget: null,
-    parked: { landing: h.landing, identity: h.identity, copies },
+    parked: { landing: view.landing, copy: view.copy },
   }
 }

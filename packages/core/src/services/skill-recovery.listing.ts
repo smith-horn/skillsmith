@@ -54,6 +54,8 @@ export interface ListOptions {
   acceptIdentity?: boolean
   /** @internal Test seam passed to every reader. */
   reader?: ReaderOptions
+  /** The state roots discovered or given (6a-iii): a park intent's `backupPath` must lie in one. */
+  stateRoots?: readonly string[]
 }
 
 /** Classifies one op dir with a fresh reader and digests what it read plus its plan. */
@@ -104,6 +106,7 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     euid: options.euid ?? process.geteuid?.() ?? -1,
     journalFile: options.journalFile ?? getJournalFilePath(),
     ...(options.acceptIdentity === undefined ? {} : { acceptIdentity: options.acceptIdentity }),
+    ...(options.stateRoots === undefined ? {} : { stateRoots: options.stateRoots }),
   }
   const ops: OpReport[] = []
   for (const opId of view.opIds) ops.push(await reportOp(ctx, opId, options.reader))

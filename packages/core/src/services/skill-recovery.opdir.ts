@@ -161,6 +161,7 @@ export function noRecordIntent(
     root: string
     names: readonly string[]
     opIdentity: RecordIdentity
+    stateRoots: readonly string[]
   }
 ): NoRecordIntent | null {
   if (!a.names.includes(PARK_INTENT_FILE)) return null
@@ -194,7 +195,9 @@ export function noRecordIntent(
   if (!valid) blocked = 'its park-intent.json does not verify for this op dir'
   else if (v.kind !== 'move-source') blocked = 'an abort-new intent: --clean-staging finishes it'
   else if (target === null) blocked = `its backupPath ${backupPath} is not this root's backup area`
-  else if (sources.length === 0) blocked ??= 'it holds no source to park'
+  else if (!a.stateRoots.includes(target.stateRoot)) {
+    blocked = `its state root ${target.stateRoot} is not one doctor discovered or was given`
+  } else if (sources.length === 0) blocked ??= 'it holds no source to park'
   return {
     path: p,
     valid,

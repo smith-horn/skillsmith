@@ -18,7 +18,9 @@
  *  4. `record.json` last (§7), then OP synced. A kill before this leaves an op
  *     the same command classifies and finishes (the intent is reused). A kill
  *     after it leaves OP with its sources and a verifying intent and no
- *     record: `doctor recovery --clean-staging <opId>` finishes that park (6b);
+ *     record, whose park the same command finishes from the intent
+ *     (`skill-recovery.intent-park.ts`); a kill after the park moved OP is
+ *     finished by the same command too (`skill-recovery.parked.ts`);
  *  5. OP must hold exactly the sources and the intent, then the park of OP
  *     from ST (`parkOpFromStaging`, caller and kind `move-source`, `backupPath`
  *     the first kept copy's path, design Q3).
