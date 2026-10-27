@@ -11,16 +11,20 @@
  *    backup complete, reports `removal-not-done` (the CLI maps it to exit 4),
  *    and deletes no tree entry.
  *  - T-F1 (space block): too little space or too few inodes for the copy
- *    refuses `state-root-full` naming `skillsmith doctor backups --prune`,
- *    with zero mutation, and three attempts add no `partial-copy`; once the
- *    partial is pruned by hand (`doctor backups --prune` is 6c) `--apply`
- *    completes. Doctor's own `ENOSPC` records the marker in the adopted record.
+ *    refuses `state-root-full` with the free-space remedy (the prune command
+ *    is 6c, so the message says it is not available yet), with zero mutation,
+ *    and three attempts add no `partial-copy`; once the partial is removed by
+ *    hand `--apply` completes. Doctor's own `ENOSPC` records the marker in the adopted record.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parkTreeIndexed } from '../../../../src/install/park-call.js'
-import { inodesNeeded, shapeOf } from '../../../../src/services/skill-swap.space.js'
+import {
+  FREE_SPACE_REMEDY,
+  inodesNeeded,
+  shapeOf,
+} from '../../../../src/services/skill-swap.space.js'
 import type { SwapOptions } from '../../../../src/services/skill-swap.js'
 import { areaOf, hashOf, OP_ID, readRecord, useTmpCleanup } from '../skill-swap.helpers.js'
 import {
@@ -265,8 +269,8 @@ function statfsAs(st: State, over: (s: fs.BigIntStatsFs) => Partial<fs.BigIntSta
   return { off: () => void (on = false) }
 }
 
-describe('T-F1 (space block): state-root-full naming the prune, with zero mutation', () => {
-  it('too few bytes: three attempts refuse with nothing changed; after a prune --apply completes', async () => {
+describe('T-F1 (space block): state-root-full with the free-space remedy, with zero mutation', () => {
+  it('too few bytes: three attempts refuse with nothing changed; after freeing space by hand --apply completes', async () => {
     const st = await fullDevice()
     const lim = statfsAs(st, () => ({ bavail: 1n }))
     const before = world(st)
@@ -274,12 +278,14 @@ describe('T-F1 (space block): state-root-full naming the prune, with zero mutati
       const a = await act(st, 'apply')
       expect(a.result).toMatchObject({ status: 'refused', reason: 'state-root-full' })
       if (a.result.status === 'refused') {
-        expect(a.result.detail).toContain('skillsmith doctor backups --prune')
+        expect(a.result.detail).toContain(FREE_SPACE_REMEDY)
+        expect(a.result.detail).toContain('not available yet')
+        expect(a.result.detail).not.toContain('run `skillsmith doctor backups --prune`')
       }
       expect(world(st)).toBe(before)
       expect(partialTrees(st.fx)).toHaveLength(1)
     }
-    // The prune (6c's command) by hand: the partial and its sidecar.
+    // Freeing space by hand (6c's prune command is not available yet): the partial and its sidecar.
     const partial = partialTrees(st.fx)[0]!
     fs.rmSync(partial, { recursive: true })
     fs.rmSync(`${partial}.json`)

@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { SwapResult } from '../../../src/services/skill-swap.js'
+import { FREE_SPACE_REMEDY } from '../../../src/services/skill-swap.space.js'
 import { ALL_DELETES, contentOf, runSpied } from './skill-swap.abort.helpers.js'
 import {
   areaOf,
@@ -238,7 +239,7 @@ function stubStatfs(
 const FILES_NEED = (4n + 2n + 2n) * BLOCK + 65536n
 
 describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
-  it('refuses state-root-full naming doctor backups --prune, before any copy temp exists', async () => {
+  it('refuses state-root-full with the free-space remedy, before any copy temp exists', async () => {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     const hit = stubStatfs(fx, 16n * BLOCK)
@@ -246,7 +247,9 @@ describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
     expect(hit.asked).toBe(1)
     const r = committedOf(run.result)
     assertStoppedAtPublish(fx, p.input.preTree, r, 'state-root-full')
-    expect(r.incomplete?.detail).toContain('skillsmith doctor backups --prune')
+    expect(r.incomplete?.detail).toContain(FREE_SPACE_REMEDY)
+    expect(r.incomplete?.detail).toContain('not available yet')
+    expect(r.incomplete?.detail).not.toContain('run `skillsmith doctor backups --prune`')
     expect(areaNames(areaOf(fx))).toEqual([`${OP_ID}.json`])
     expect(treeDeletesX(fx, run.events)).toEqual([])
   })

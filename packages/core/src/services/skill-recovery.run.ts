@@ -29,7 +29,8 @@
  *
  * Across devices (6a-iii): before the first mutation, a keep that still has
  * to be copied and would not fit refuses `state-root-full` naming
- * `skillsmith doctor backups --prune` (`spaceBlock`). A keep's verified
+ * `FREE_SPACE_REMEDY`, free space by hand (`spaceBlock`; the prune command is
+ * not available yet). A keep's verified
  * source stays in OP, and the finish parks OP whole once its metadata is
  * unlinked (`skill-recovery.park.ts`, UD28); a park that does not finish is a
  * `removal-not-done` warning (exit 4, UD32). Doctor's own full-device stop

@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- the `state-root-full` message no longer names `skillsmith doctor backups
+  --prune`, which is not available yet (it arrives in A1 step 6c); it says to free space on the
+  state directory's device by hand and run the same command again. `PRUNE_COMMAND` in
+  `skill-swap.space.ts` is now `FREE_SPACE_REMEDY`, which the update, `doctor recovery` and its
+  plan notes all print.
+
 - **Added**: SMI-6531 -- A1 step 6a-iii: `skillsmith doctor recovery --apply <opId>` and
   `--undo <opId>` are supported, on one device and across devices. With the backup area on
   another device, each keep copies the folder, verifies the copy against the source, and only
@@ -11,7 +17,9 @@ All notable changes to `@skillsmith/core` are documented here.
   whole once its metadata is removed (the parked copy is reported). A run stopped anywhere in a
   copy is resumed by the same command: a copy that does not match is kept as `partial-copy`,
   never removed, and the copy starts again. A copy that would not fit refuses `state-root-full`
-  naming `skillsmith doctor backups --prune`, with nothing changed; an interrupted copy's temp is
+  telling the user to free space on the state directory's device and run the command again (the
+  prune command, `skillsmith doctor backups --prune`, is not available yet), with nothing
+  changed; an interrupted copy's temp is
   first kept as `partial-copy`, so a stop there has kept it. When doctor's own copy runs
   out of space, the update's record is marked with where, as the update itself does. If setting
   the folder aside does not finish, the result says so with `removal-not-done`. No folder is
@@ -19,7 +27,9 @@ All notable changes to `@skillsmith/core` are documented here.
   operation folder with no record whose `park-intent.json` verifies is set aside as the intent
   says. One already set aside is only reported (`already-parked`: doctor takes no action and
   neither verifies nor syncs that copy), in the listing too. An opId that is an operation folder
-  in one root and set aside in another is `recovery-ambiguous`; `--root` picks one. A
+  in one root and set aside in another is `recovery-ambiguous`; `--root` picks one. A set-aside
+  copy together with a skills root whose staging cannot be read safely (unsafe staging) is also
+  `recovery-ambiguous` and exits 1. A
   `move-source` park intent now also names its verified copy (`backupPath`).
 
 - **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor
@@ -27,8 +37,7 @@ All notable changes to `@skillsmith/core` are documented here.
   device, an update a crash left: it plans without a lock, then takes the root's write lock,
   reads everything again and changes nothing if any of it differs. It removes no folder, only its
   own metadata files (each checked by identity and bytes first) and the emptied operation folder.
-  Records on another
-  device, or marked full-device, were refused at that step (6a-iii above lifts it). The audit
+  Records on another device, or marked full-device, were refused at that step (6a-iii above lifts it). The audit
   record is appended only if the journal holds none for the operation; a journal it cannot extend
   is reported, not fatal.
 
@@ -112,7 +121,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 - **Added**: SMI-6531 A1 step 4c -- `swapInPlace` now backs up across devices when the state root is
   on another filesystem. It first estimates the space the copy needs and refuses with
-  `state-root-full` (naming `skillsmith doctor backups --prune`) when it clearly won't fit. It
+  `state-root-full` (telling the user to free space on the state directory's device and run the
+  command again; the prune command is not available yet) when it clearly won't fit. It
   copies the old folder into a temp, verifies the copy against the source by tree hash, keeps a copy
   that doesn't match as `partial-copy` and copies once more, then moves the verified copy into
   place. The source is never removed: the operation's staging folder is parked whole, with a park

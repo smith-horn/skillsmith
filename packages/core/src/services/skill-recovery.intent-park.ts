@@ -7,7 +7,8 @@
  * The op dir is accepted only with a `park-intent.json` that verifies for its
  * opId and OP's current identity (`isParkIntentFor`, the check
  * `--clean-staging` uses), of kind `move-source`, whose `backupPath` is this
- * root's backup area plus the opId, and whose other entries are tree
+ * root's backup area plus `<opId>` or `<opId>.<kind>[.<k>]` (`intentTarget`),
+ * in a state root doctor discovered or was given, and whose other entries are tree
  * directories (`old`, `new`, `undone`) and at most `owner.json`
  * (`skill-recovery.opdir.ts`, `noRecordIntent`). The plan, the prompt, the
  * other-user refusal (owner.json's uid, else the intent's) and the re-plan
