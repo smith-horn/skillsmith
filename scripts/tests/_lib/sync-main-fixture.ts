@@ -365,13 +365,16 @@ export function readlinkLoopEnv(
   return toolShimEnv(repo, 'readlink', () => `printf '%s\\n' ${JSON.stringify(link)}`, base)
 }
 
-/** `tr` that fails one_line's calls (first argument starts with a backslash) unless LC_ALL=C. */
-export function trNeedsCLocaleEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return toolShimEnv(
-    repo,
-    'tr',
-    (real) =>
-      `case "$1" in '\\'*) [ "$LC_ALL" = C ] || { echo "tr: locale $LC_ALL" >&2; exit 1; } ;; esac\nexec ${real} "$@"`,
-    base
-  )
+/**
+ * `tr`, `awk` and `cut` shims that fail one_line's own calls unless LC_ALL=C.
+ * one_line's calls are recognised by their arguments: any `tr` argument that
+ * starts with a backslash, `awk -v pick=...`, and `cut -c1-200`. Every other
+ * call (the script uses awk and tr elsewhere) goes straight to the real tool.
+ */
+export function oneLineNeedsCLocaleEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const check = (pattern: string) => (real: string) =>
+    `for a in "$@"; do case "$a" in ${pattern}) [ "$LC_ALL" = C ] || { echo "locale $LC_ALL" >&2; exit 1; } ;; esac; done\nexec ${real} "$@"`
+  let env = toolShimEnv(repo, 'tr', check("'\\'*"), base)
+  env = toolShimEnv(repo, 'awk', check('pick=*'), env)
+  return toolShimEnv(repo, 'cut', check('-c1-200'), env)
 }

@@ -41,7 +41,7 @@ import {
   SEED,
   shimEnv,
   trFailEnv,
-  trNeedsCLocaleEnv,
+  oneLineNeedsCLocaleEnv,
   snapshot,
   STATE_POST,
   STATE_PRE,
@@ -958,7 +958,7 @@ describe('SMI-6465 retro 2: rendering pins the C locale and skips control-only l
     const repo = makeRepo()
     pushUpstream(repo, { 'a.txt': 'a2\n' })
     const before = snapshot(repo.local)
-    const env = trNeedsCLocaleEnv(repo, {
+    const env = oneLineNeedsCLocaleEnv(repo, {
       ...shimEnv(repo, 'fail-move-with-message'),
       LC_ALL: 'C.UTF-8',
     })

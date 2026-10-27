@@ -68,8 +68,11 @@ while [ -L "$self" ]; do
   case "$link" in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac
 done
 lib="$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd -P)/lib/sync-main-render.sh"
+# Check first: bash 3.2 (macOS /bin/bash) exits at once when `.` cannot open
+# a file, so a `|| handler` after it never runs there.
+[ -r "$lib" ] || { printf 'sync-main: ERROR: cannot read %s\n' "$lib" >&2; exit 3; }
 # shellcheck source=scripts/lib/sync-main-render.sh
-. "$lib" || { printf 'sync-main: ERROR: cannot read %s\n' "$lib" >&2; exit 3; }
+. "$lib"
 
 discard=0
 for arg in "$@"; do
