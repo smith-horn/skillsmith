@@ -265,6 +265,10 @@ function statfsAs(st: State, over: (s: fs.BigIntStatsFs) => Partial<fs.BigIntSta
   return { off: () => void (on = false) }
 }
 
+/** The remedy, written out here so a change to it fails these tests (not imported). */
+const REMEDY_TEXT =
+  'free space on the device that holds the Skillsmith state directory (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'
+
 describe('T-F1 (space block): state-root-full with the free-space remedy, with zero mutation', () => {
   it('too few bytes: three attempts refuse with nothing changed; after freeing space by hand --apply completes', async () => {
     const st = await fullDevice()
@@ -274,6 +278,8 @@ describe('T-F1 (space block): state-root-full with the free-space remedy, with z
       const a = await act(st, 'apply')
       expect(a.result).toMatchObject({ status: 'refused', reason: 'state-root-full' })
       if (a.result.status === 'refused') {
+        const tail = `; nothing was changed; ${REMEDY_TEXT}, then run this command again`
+        expect(a.result.detail.slice(-tail.length)).toBe(tail)
         expect(a.result.detail).toContain(
           'free space on the device that holds the Skillsmith state directory'
         )
@@ -328,6 +334,7 @@ describe("the copy's own space check, reached through doctor --undo", () => {
     expect(a.result.status).toBe('stopped')
     if (a.result.status !== 'stopped') return
     expect(a.result.reason).toBe('state-root-full')
+    expect(a.result.detail.slice(-(REMEDY_TEXT.length + 2))).toBe(`; ${REMEDY_TEXT}`)
     expect(a.result.detail).toContain(
       'free space on the device that holds the Skillsmith state directory'
     )

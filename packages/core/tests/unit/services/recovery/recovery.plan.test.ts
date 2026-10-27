@@ -196,6 +196,10 @@ describe('S0: a staged tree is kept by its hash, and a started keep keeps its ow
   })
 })
 
+/** The remedy, written out here so a change to it fails these tests (not imported). */
+const REMEDY_TEXT =
+  'free space on the device that holds the Skillsmith state directory (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'
+
 describe('S2 and its neighbours', () => {
   it('S2: --apply commits and keeps O as backup; --undo installs O and keeps T as undone', async () => {
     const cls = await classOf(() => s2(file()))
@@ -242,7 +246,10 @@ describe('S2 and its neighbours', () => {
     const note = offered(planAction(cls, 'apply')).notes.find((n) =>
       n.includes('stopped on a full device')
     )
-    expect(note).toBeDefined()
+    expect(note).toBe(
+      'an earlier copy stopped on a full device (ENOSPC at copy); if the copy still cannot fit, ' +
+        `this stops with state-root-full: ${REMEDY_TEXT}`
+    )
     expect(note).toContain('free space on the device that holds the Skillsmith state directory')
     expect(note).toContain('not available yet')
     // The note is also shown in the read-only listing, where "this command" is ambiguous.
