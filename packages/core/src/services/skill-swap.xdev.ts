@@ -31,8 +31,9 @@
  *     area, opId, dest; the leftovers are derived from the opId), in this op's
  *     kept `record.json`
  *     (`skill-swap.fullmark.ts`); that kept record is what refuses the next
- *     update until doctor resumes this one. For `ENOSPC`, `sourceUnchanged` is computed: true when `src`
- *     still hashes to its sidecar's `treeHash`. For any other copy failure it
+ *     update until doctor resumes this one. For `ENOSPC`, `sourceUnchanged` is
+ *     computed: true when `src` still hashes to its sidecar's `treeHash` and
+ *     the kept temp is a subset of `src` (`isTreeSubsetOf`). For any other copy failure it
  *     is false, as for a mismatch. If the keep itself fails (the partial's
  *     sidecar cannot be written on a full device), the temp is left at its
  *     name and the stop says so. A `check` that fails mid-copy stops with no
