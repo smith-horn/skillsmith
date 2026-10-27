@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { LockOrderError } from '../../../../src/config/lock-tracker.js'
 import { executeRecovery } from '../../../../src/services/skill-recovery.run.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
@@ -175,31 +175,5 @@ describe('sweepRoot: a listed probe swapped for another empty directory', () => 
       expect(result.swept.removed).toEqual([])
     }
     expect(fs.lstatSync(probe, { bigint: true }).ino).toBe(swappedIno)
-  })
-})
-
-describe('the cross-device gate is re-checked under lock 1', () => {
-  afterEach(() => vi.restoreAllMocks())
-
-  it('the area device changes between the plan and the lock: plan-changed, zero mutation', async () => {
-    const st = await s2(file())
-    const stateReal = fs.realpathSync(st.fx.stateRoot)
-    const real = fs.lstatSync.bind(fs)
-    const { result, before } = await withGap(st, () => {
-      // Not reachable through the digest: the area does not exist yet, so its
-      // nearest existing ancestor (the state root) is read only by the gate.
-      // A real case needs a mount at the same path; the stub stands in for it.
-      vi.spyOn(fs, 'lstatSync').mockImplementation(((p: fs.PathLike, o?: unknown) => {
-        const st0 = real(p, o as fs.StatSyncOptions) as fs.BigIntStats
-        if (String(p) !== stateReal || st0 === undefined) return st0
-        return Object.assign(Object.create(Object.getPrototypeOf(st0) as object), st0, {
-          dev: (st0 as fs.BigIntStats).dev + 1n,
-        }) as fs.BigIntStats
-      }) as typeof fs.lstatSync)
-    })
-    expect(result).toMatchObject({ status: 'refused', reason: 'plan-changed' })
-    if (result.status === 'refused') expect(result.detail).toContain('moved devices')
-    vi.restoreAllMocks()
-    expect(world(st)).toBe(before)
   })
 })

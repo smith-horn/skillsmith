@@ -123,6 +123,20 @@ export async function unlinkAdopted(
   reason: 'staging-unsafe' | 'backup-unsafe' = 'staging-unsafe'
 ): Promise<void> {
   check(st)
+  assertAdopted(a, reason)
+  await fs.promises.unlink(a.path)
+  trace(st, { op: 'unlink', path: a.path })
+}
+
+/**
+ * `a.path` is still the adopted file: its identity and the sha256 of its bytes
+ * are the ones the re-plan read. Otherwise stops with `reason` (6a-iii: also
+ * the check before doctor renames a marked record over `record.json`).
+ */
+export function assertAdopted(
+  a: Adopted,
+  reason: 'staging-unsafe' | 'backup-unsafe' = 'staging-unsafe'
+): void {
   let now: { identity: RecordIdentity; sha256: string }
   try {
     now = fingerprint(a.path)
@@ -139,8 +153,6 @@ export async function unlinkAdopted(
       `${a.path} is not the file the plan read (its identity or bytes changed); it was left untouched`
     )
   }
-  await fs.promises.unlink(a.path)
-  trace(st, { op: 'unlink', path: a.path })
 }
 
 export interface RecoveryStateInput {

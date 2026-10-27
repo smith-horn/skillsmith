@@ -39,6 +39,7 @@ import {
   UNDONE_DIR,
 } from './skill-swap.types.js'
 import type {
+  FullDeviceMarker,
   SwapRecord,
   SwapHookPoint,
   SwapIncomplete,
@@ -117,6 +118,20 @@ export interface SwapState {
   owned: Map<string, BoundIdentity>
   /** Set by step 3's refusal: the opIds of the records that block this write. */
   blockedBy: string[] | null
+  /**
+   * Doctor (SMI-6531 6a-iii): unlinks a metadata file this run did not write
+   * but adopted from its re-plan (identity and bytes re-checked), returning
+   * false when `p` was not adopted. `unlinkOwned` falls back to it, so a
+   * sidecar a crashed run published can be replaced by a resumed rewrite.
+   * Unset for the transaction.
+   */
+  unlinkAdopted?: (p: string, reason: 'staging-unsafe' | 'backup-unsafe') => Promise<boolean>
+  /**
+   * Doctor (6a-iii): records a full-device marker in the adopted `record.json`
+   * (`skill-swap.fullmark.ts` uses it in place of its own rewrite, which needs a
+   * record this run wrote). Unset for the transaction.
+   */
+  rewriteMarker?: (marker: FullDeviceMarker) => Promise<void>
   /** `staging` → `locked` (lock 1 held) → `swapped` (rename 1 ran) → `committed` (manifest written). */
   phase: 'staging' | 'locked' | 'swapped' | 'committed'
   step: PostCommitStep
@@ -201,6 +216,14 @@ export async function unlinkOwned(
 ): Promise<void> {
   check(st)
   const bound = st.owned.get(p)
+  // Doctor: a file it adopted rather than wrote goes through its byte-checked unlink.
+  if (
+    bound === undefined &&
+    st.unlinkAdopted !== undefined &&
+    (await st.unlinkAdopted(p, reason))
+  ) {
+    return
+  }
   const now = await lstatOrNull(p)
   if (bound === undefined || now === null || !sameIdentity(bound, identityOf(now))) {
     throw new SwapFault(reason, `${p} is not the file this run wrote; it was left untouched`)

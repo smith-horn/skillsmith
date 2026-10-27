@@ -24,13 +24,23 @@ import os from 'node:os'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { publishJson, recordIdentity } from './skill-swap.staging.js'
-import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.types.js'
+import type { ParkIntent, ParkIntentKind } from './skill-swap.types.js'
 
-const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-source'])
-
-/** The intent this run writes: OP's identity as `createOp` bound it, and the owner it recorded. */
-export function parkIntentOf(st: SwapState, kind: ParkIntentKind = 'abort-new'): ParkIntent {
+/**
+ * The intent this run writes: OP's identity as `createOp` bound it, and the
+ * owner it recorded. A `move-source` intent also names `backupPath`, the
+ * verified copy the park's held message names (6a-iii: doctor finishes the
+ * park from the intent alone once the record is gone).
+ */
+export function parkIntentOf(
+  st: SwapState,
+  kind: ParkIntentKind = 'abort-new',
+  backupPath?: string
+): ParkIntent {
   if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
+  if (kind === 'move-source' && backupPath === undefined) {
+    throw new SwapFault('staging-unsafe', 'a move-source park intent needs the backup path')
+  }
   // `owner.json` is written before anything else in OP; if this run never
   // published it, the owner is still this process.
   const owner = st.owner ?? {
@@ -44,58 +54,19 @@ export function parkIntentOf(st: SwapState, kind: ParkIntentKind = 'abort-new'):
     owner: { pid: owner.pid, host: owner.host, uid: owner.uid },
     opIdentity: recordIdentity(st.op.identity),
     kind,
+    ...(kind === 'move-source' ? { backupPath } : {}),
   }
 }
 
 /** Publishes `park-intent.json` durably. Kill points: `afterIntentTemp`, `afterIntent`. */
 export async function writeParkIntent(
   st: SwapState,
-  kind: ParkIntentKind = 'abort-new'
+  kind: ParkIntentKind = 'abort-new',
+  backupPath?: string
 ): Promise<void> {
-  await publishJson(st, opPaths(st).intent, parkIntentOf(st, kind), 'afterIntentTemp')
+  const intent = parkIntentOf(st, kind, backupPath)
+  await publishJson(st, opPaths(st).intent, intent, 'afterIntentTemp')
   await hook(st, 'afterIntent')
 }
 
-const DECIMAL = /^(0|[1-9][0-9]*)$/
-
-function isRecordIdentity(v: unknown): v is RecordIdentity {
-  if (v === null || typeof v !== 'object') return false
-  const o = v as Record<string, unknown>
-  const keys = Object.keys(o).sort().join(',')
-  return (
-    keys === 'birthtimeNs,dev,fmt,ino' &&
-    ['dev', 'ino', 'birthtimeNs', 'fmt'].every(
-      (k) => typeof o[k] === 'string' && DECIMAL.test(o[k] as string)
-    )
-  )
-}
-
-/**
- * True when `value` is a park intent for `opId` with `opIdentity` (the
- * acceptance doctor's `--clean-staging` applies, step 6). Exact keys, exact
- * types, and a kind of `abort-new` or `move-source` (the park doctor then
- * finishes): anything else is refused, never repaired.
- */
-export function isParkIntentFor(
-  value: unknown,
-  opId: string,
-  opIdentity: RecordIdentity
-): value is ParkIntent {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-  const o = value as Record<string, unknown>
-  if (Object.keys(o).sort().join(',') !== 'kind,opId,opIdentity,owner,schema') return false
-  if (o.schema !== 1 || o.opId !== opId || !KINDS.has(o.kind)) return false
-  const owner = o.owner as Record<string, unknown> | null
-  if (owner === null || typeof owner !== 'object' || Array.isArray(owner)) return false
-  if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false
-  if (!Number.isInteger(owner.pid) || typeof owner.host !== 'string') return false
-  if (!Number.isInteger(owner.uid)) return false
-  if (!isRecordIdentity(o.opIdentity)) return false
-  const id = o.opIdentity
-  return (
-    id.dev === opIdentity.dev &&
-    id.ino === opIdentity.ino &&
-    id.birthtimeNs === opIdentity.birthtimeNs &&
-    id.fmt === opIdentity.fmt
-  )
-}
+export { isParkIntentFor } from './skill-swap.intent-schema.js'

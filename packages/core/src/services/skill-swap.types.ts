@@ -142,6 +142,8 @@ export type SwapHookPoint =
   | 'beforeMetadataCleanup'
   /** Doctor: after `record.json` (the last metadata file) is unlinked and OP synced. */
   | 'afterRecoveredOpSync'
+  /** Doctor (6a-iii): after a P2 copy temp is kept as `partial-copy` and the area synced, before the copy again. */
+  | 'afterPartialKeep'
 
 /** One traced mutation or sync, in the order it happened (T-P4). Recorded after it succeeds. */
 export type TraceOp =
@@ -265,6 +267,12 @@ export interface ParkIntent {
   opIdentity: RecordIdentity
   /** `abort-new` (abort cleanup) or `move-source` (step 13 after a cross-device move). */
   kind: ParkIntentKind
+  /**
+   * `move-source` only, and required there (6a-iii): the verified copy's path
+   * (the backup, for an update), which the park of OP names and doctor reads
+   * to finish that park once the record is gone.
+   */
+  backupPath?: string
 }
 
 export type ParkIntentKind = 'abort-new' | 'move-source'

@@ -25,6 +25,7 @@ const GOOD = {
   opIdentity: { ...ID },
   kind: 'abort-new',
 }
+const MOVE = { ...GOOD, kind: 'move-source', backupPath: '/state/backups/update/x/' + OP }
 const without = (o: Record<string, unknown>, k: string) => {
   const c = { ...o }
   delete c[k]
@@ -37,8 +38,23 @@ describe('isParkIntentFor: known-positive and known-negatives', () => {
   })
 
   it('accepts the move-source kind (4c: step 13 after a cross-device move)', () => {
-    expect(isParkIntentFor({ ...GOOD, kind: 'move-source' }, OP, ID)).toBe(true)
+    expect(isParkIntentFor(MOVE, OP, ID)).toBe(true)
   })
+
+  // 6a-iii: a move-source intent names its verified copy, so doctor can finish its park alone.
+  const MOVE_BAD: Array<[string, unknown]> = [
+    ['move-source without backupPath', { ...GOOD, kind: 'move-source' }],
+    ['move-source with a relative backupPath', { ...MOVE, backupPath: 'state/backups/x' }],
+    ['move-source with a .. component', { ...MOVE, backupPath: '/state/../x' }],
+    ['move-source with an empty component', { ...MOVE, backupPath: '/state//x' }],
+    ['move-source with a non-string backupPath', { ...MOVE, backupPath: 7 }],
+    ['abort-new with a backupPath', { ...GOOD, backupPath: '/state/backups/x' }],
+  ]
+  for (const [label, value] of MOVE_BAD) {
+    it(`refuses ${label}`, () => {
+      expect(isParkIntentFor(value, OP, ID)).toBe(false)
+    })
+  }
 
   const BAD: Array<[string, unknown, string?, RecordIdentity?]> = [
     ['null', null],
@@ -108,9 +124,15 @@ describe('parkIntentOf', () => {
 
   it('writes the kind it is given (move-source for step 13)', () => {
     const st = { opId: OP, op, owner: { pid: 7, host: 'h', uid: 9 } } as unknown as SwapState
-    const intent = parkIntentOf(st, 'move-source')
+    const intent = parkIntentOf(st, 'move-source', '/state/backup')
     expect(intent.kind).toBe('move-source')
+    expect(intent.backupPath).toBe('/state/backup')
     expect(isParkIntentFor(intent, OP, intent.opIdentity)).toBe(true)
+  })
+
+  it('refuses a move-source intent without the backup path (staging-unsafe)', () => {
+    const st = { opId: OP, op, owner: { pid: 7, host: 'h', uid: 9 } } as unknown as SwapState
+    expect(() => parkIntentOf(st, 'move-source')).toThrow(/staging-unsafe/)
   })
 
   it('falls back to this process as the owner when owner.json was never published', () => {

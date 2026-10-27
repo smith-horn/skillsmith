@@ -1,5 +1,5 @@
 /**
- * SMI-6531 (A1 step 6a-ii): the types of doctor's one-device `--apply` and
+ * SMI-6531 (A1 steps 6a-ii, 6a-iii): the types of doctor's `--apply` and
  * `--undo` (`skill-recovery.target.ts` plans and targets, `skill-recovery.run.ts`
  * acts under lock 1).
  *
@@ -11,6 +11,7 @@ import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { OpReport } from './skill-recovery.listing.js'
 import type { SweepEntry, SweepResult } from './skill-recovery.finish.js'
 import type { ActionPlan, RecoveryRefuseReason, TreePosition } from './skill-recovery.types.js'
+import type { RecordIdentity } from './skill-swap.types.js'
 import type { ManifestPort, SwapOptions, SwapWarning } from './skill-swap.types.js'
 import type { SkillWriteStopCode } from './skill-write-lock.types.js'
 
@@ -34,7 +35,8 @@ export interface RecoveryRequest {
 /** A refusal before anything changed (no lock taken, or under it with zero mutation). */
 export interface RecoveryRefusal {
   status: 'refused'
-  reason: RecoveryRefuseReason | SkillWriteStopCode
+  /** `state-root-full` (6a-iii): a cross-device keep would not fit; nothing changed. */
+  reason: RecoveryRefuseReason | SkillWriteStopCode | 'state-root-full'
   detail: string
   /** The op dirs a `recovery-ambiguous` refusal names, or the one refused. */
   paths: string[]
@@ -53,6 +55,12 @@ export interface PlannedRecovery {
   sweep: SweepEntry[]
   /** The target itself was an empty op dir (a kill after its `record.json` went). */
   emptyTarget: SweepEntry | null
+  /**
+   * 6a-iii: no op dir is named the opId, but its parked area is there (a kill
+   * after the park moved OP, before its syncs reported): the action makes the
+   * park durable (syncs `<opId>`'s landing directory, then ST) and is done.
+   */
+  parked: { landing: string; identity: RecordIdentity; copies: string[] } | null
 }
 
 export type RecoveryPlanResult = RecoveryRefusal | PlannedRecovery
@@ -75,6 +83,12 @@ export interface RecoveryDone {
   from: string
   installed: TreePosition | null
   kept: Array<{ tree: TreePosition; kind: string; path: string }>
+  /**
+   * 6a-iii: across devices, where the op dir (holding the verified sources)
+   * was parked; null on one device, or when the park did not finish (then a
+   * `removal-not-done` warning names it, and the command exits 4).
+   */
+  extraCopy: string | null
   manifest: 'committed' | 'untouched'
   audit: AuditOutcome
   warnings: SwapWarning[]

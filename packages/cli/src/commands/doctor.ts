@@ -30,7 +30,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { Command, Option } from 'commander'
+import { Command } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
@@ -267,15 +267,20 @@ export function createDoctorCommand(): Command {
   )
   doctor
     .command('recovery')
-    .description('List what a crashed update left in each skills root (read-only)')
+    .description(
+      'List what a crashed update left in each skills root, or finish or undo one with --apply or --undo'
+    )
     .option('--root <dir>', 'Also scan this skills root (repeatable)', collectRoot, [] as string[])
     .option('--state-root <dir>', 'State root to read instead of the discovered ones')
-    .option('--json', 'Print the listing as JSON')
-    // SMI-6531 6a-ii: one-device actions, an internal milestone; hidden until 6a-iii.
-    .addOption(new Option('--apply <opId>', 'Finish an unfinished update').hideHelp())
-    .addOption(new Option('--undo <opId>', 'Undo an unfinished update').hideHelp())
-    .addOption(new Option('--accept-identity', 'Waive the identity check only').hideHelp())
-    .addOption(new Option('--yes', 'Proceed without the prompt').hideHelp())
+    .option('--json', 'Print the listing (or the plan and its result) as JSON')
+    // SMI-6531 6a-iii: the supported endpoint, on one device and across devices.
+    .option('--apply <opId>', 'Finish an unfinished update (shows the plan, then asks)')
+    .option('--undo <opId>', 'Undo an unfinished update (shows the plan, then asks)')
+    .option(
+      '--accept-identity',
+      'With --apply or --undo: waive the identity check only (each tree must still hash to its role)'
+    )
+    .option('--yes', 'With --apply or --undo: proceed without the prompt (waives no check)')
     .action((opts: RecoveryActionOptions & DoctorRecoveryOptions) =>
       opts.apply !== undefined || opts.undo !== undefined
         ? doctorRecoveryApplyAction(opts)

@@ -4,13 +4,29 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6a-iii: `skillsmith doctor recovery --apply <opId>` and
+  `--undo <opId>` are supported, on one device and across devices. With the backup area on
+  another device, each keep copies the folder, verifies the copy against the source, and only
+  then counts it as kept; the verified source stays in the operation folder, which is set aside
+  whole once its metadata is removed (the parked copy is reported). A run stopped anywhere in a
+  copy is resumed by the same command: a copy that does not match is kept as `partial-copy`,
+  never removed, and the copy starts again. A copy that would not fit refuses `state-root-full`
+  naming `skillsmith doctor backups --prune`, with nothing changed. When doctor's own copy runs
+  out of space, the update's record is marked with where, as the update itself does. If setting
+  the folder aside does not finish, the result says so with `removal-not-done`. No folder is
+  removed. A run killed after the record was removed is finished by the same command: an
+  operation folder with no record whose `park-intent.json` verifies is set aside as the intent
+  says, and one already set aside has that made durable. A `move-source` park intent now also
+  names its verified copy (`backupPath`).
+
 - **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor
   recovery`; no supported command yet. Core can now finish or undo, on one device, an update a
   crash left: it plans without a lock, then takes the root's write lock, reads everything again
   and changes nothing if any of it differs. It removes no folder, only its own metadata files
   (each checked by identity and bytes first) and the emptied operation folder. Records on another
-  device, or marked full-device, are refused for now. The audit record is appended only if the
-  journal holds none for the operation; a journal it cannot extend is reported, not fatal.
+  device, or marked full-device, were refused at that step (6a-iii above lifts it). The audit
+  record is appended only if the journal holds none for the operation; a journal it cannot extend
+  is reported, not fatal.
 
 - **Internal**: SMI-6531 -- A1 step 6a-ii: the update's manifest commit moved to
   `skill-swap.commit.ts`, shared with that groundwork. A failure inside the manifest lock (an

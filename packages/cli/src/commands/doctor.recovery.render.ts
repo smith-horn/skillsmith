@@ -105,7 +105,9 @@ function noteOf(cls: RecoveryClass): string[] {
 function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
-  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\` (not available yet)`]
+  // `--apply` and `--undo` are supported (6a-iii); `--abandon`, `--clean-staging` and `--park` are 6b's.
+  const later = p.action === 'apply' || p.action === 'undo' ? '' : ' (not available yet)'
+  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\`${later}`]
   for (const s of p.steps) {
     const d = s.disposition
     lines.push(`      ${s.tree}: ${d.kind === 'kept' ? `kept as ${d.as}` : d.kind}; ${s.note}`)

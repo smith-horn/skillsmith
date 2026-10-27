@@ -5,8 +5,8 @@
  * `planAction(cls, action)` is pure: a table from a classification to an
  * `ActionPlan`, a list of steps whose dispositions are `installed`, `kept as
  * <kind>` or `untouched`, and nothing else. No row removes a tree (UD13); the
- * `Disposition` type has no case for it. 6a-i only lists these plans: nothing
- * performs an action yet.
+ * `Disposition` type has no case for it. `--apply` and `--undo` perform these
+ * plans (`skill-recovery.run.ts`).
  *
  * `--apply` and `--undo` are offered for the §3.3 rows and their post-keep
  * forms; every other class gets its own words (`recovery-moved`,
@@ -20,6 +20,7 @@ import { canonicalJson } from './skill-recovery.digest.js'
 import type {
   ActionPlan,
   Disposition,
+  NoRecordIntent,
   OpFacts,
   PlanStep,
   RecoveryAction,
@@ -117,8 +118,16 @@ const FINISH = 'unlink the metadata files, then rmdir the op dir and sync the st
 /** Notes every row of the plan states: where the old folder is kept, and what a cross-device keep needs. */
 function commonNotes(f: OpFacts): string[] {
   const notes = [`the old folder is kept at ${f.record.backupDest}`]
-  if (f.groups.some((g) => g.crossDevice) || f.fullDevice !== null) {
-    notes.push('part of the keep is across devices: that resume is not available yet')
+  if (f.groups.some((g) => g.crossDevice)) {
+    notes.push(
+      'part of the keep is across devices: each copy is verified before its source is parked with the op dir'
+    )
+  }
+  if (f.fullDevice !== null) {
+    notes.push(
+      `an earlier copy stopped on a full device (${f.fullDevice.cause} at ${f.fullDevice.stage}); ` +
+        'if the copy still cannot fit, this stops with state-root-full: run `skillsmith doctor backups --prune`'
+    )
   }
   return notes
 }
@@ -318,6 +327,33 @@ function swappedPlan(
   )
 }
 
+/**
+ * 6a-iii: an op dir whose record is gone but whose park intent verifies (a
+ * cross-device finish killed after the record went). `--apply` and `--undo`
+ * finish that park as the uninterrupted run would: each source goes with OP.
+ */
+function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan {
+  return offer(
+    action,
+    i.sources.map((s) =>
+      step(
+        s.name === 'old' ? 'O' : s.name === 'new' ? 'N' : 'U',
+        kept('move-source'),
+        `the verified source ${s.name} is set aside with the op dir`
+      )
+    ),
+    'untouched',
+    [
+      'unlink owner.json if it is there',
+      `park the op dir (kind ${i.kind}), checked against a fresh hash of its contents`,
+    ],
+    [
+      `the record is gone: every keep finished, and the copy is at ${i.backupPath}`,
+      '`--apply` and `--undo` are the same here: they finish the park',
+    ]
+  )
+}
+
 /** The words for `--abandon`, `--clean-staging` and `--park`, which 6b performs. */
 function otherActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | null {
   const only = (word: string): ActionPlan =>
@@ -340,7 +376,13 @@ function otherActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | 
             'untouched',
             [FINISH]
           )
-        : only('--clean-staging')
+        : refuse(
+            action,
+            'recovery-not-offered',
+            `offered here: --clean-staging${
+              cls.intent?.blocked == null ? '' : ` (${cls.intent.blocked})`
+            }`
+          )
     case 'unreadable':
       return action === 'park'
         ? offer(action, [], 'untouched', ['park the whole op dir'])
@@ -386,6 +428,9 @@ export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPl
   }
   if (action === 'apply' || action === 'undo') {
     if (cls.kind === 'state') return rowPlan(cls, action)
+    if (cls.kind === 'no-record' && cls.intent !== null && cls.intent.blocked === null) {
+      return intentParkPlan(cls.intent, action)
+    }
     if (cls.kind === 'moved') {
       return refuse(
         action,

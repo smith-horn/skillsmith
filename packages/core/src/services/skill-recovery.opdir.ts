@@ -14,6 +14,11 @@
  * module only lists them: removing one is a `rmdir` that a later doctor action
  * does under lock 1.
  *
+ * 6a-iii: `analyzeParkIntent` judges a `park-intent.json` (and its temp) found
+ * beside a record, which a cross-device finish that stopped leaves behind;
+ * `noRecordIntent` judges one in an op dir whose record is already gone, which
+ * `--apply`/`--undo` then finish by parking the op dir as the intent says.
+ *
  * All reads go through the reader. This module has no `fs`.
  *
  * @module @skillsmith/core/services/skill-recovery.opdir
@@ -21,8 +26,12 @@
 import path from 'node:path'
 import { PROBE_NAME } from './skill-recovery.reader.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
-import type { FileType } from './skill-recovery.types.js'
-import type { RecordIdentity } from './skill-swap.types.js'
+import type { FileType, NoRecordIntent, OpFacts } from './skill-recovery.types.js'
+import { KIND_ROLE } from './skill-recovery.pstate.js'
+import { backupAreaPath, rootKeyOf } from './skill-swap.area.js'
+import { isParkIntentFor } from './skill-swap.intent-schema.js'
+import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
+import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 
 /** A leftover clock-gate probe in ST. */
 export interface ProbeFact {
@@ -62,4 +71,139 @@ export function listStaging(r: ClassifierReader, stagingDir: string): StagingVie
     if (st.ok && st.type === 'dir') opIds.push(name)
   }
   return { ok: true, opIds, probes }
+}
+
+const INTENT_CAP = 4096
+
+/** One read of an intent file: whether it is this op's `move-source` intent, and whether it is empty. */
+function intentFile(r: ClassifierReader, p: string, rec: SwapRecord) {
+  const read = r.readFile(p, INTENT_CAP)
+  const st = r.stat(p)
+  let value: unknown = null
+  if (read.bytes !== null && read.fact.ok && !read.fact.truncated) {
+    try {
+      value = JSON.parse(read.bytes.toString('utf8'))
+    } catch {
+      value = null
+    }
+  }
+  const valid =
+    isParkIntentFor(value, rec.opId, rec.opDirIdentity) &&
+    (value as { kind: string }).kind === 'move-source'
+  const empty =
+    st.ok && st.type === 'file' && st.nlink === 1 && read.fact.ok && read.fact.size === 0
+  return { valid, empty }
+}
+
+/** `park-intent.json` and its temp beside a record (6a-iii: a cross-device finish that stopped). */
+export function analyzeParkIntent(
+  r: ClassifierReader,
+  opDir: string,
+  names: readonly string[],
+  rec: SwapRecord
+): Pick<OpFacts, 'parkIntent' | 'parkIntentTmp'> {
+  const at = (n: string) => path.join(opDir, n)
+  const intent = names.includes(PARK_INTENT_FILE)
+    ? { path: at(PARK_INTENT_FILE), valid: intentFile(r, at(PARK_INTENT_FILE), rec).valid }
+    : null
+  const tmpName = `${PARK_INTENT_FILE}.tmp`
+  let tmp: OpFacts['parkIntentTmp'] = null
+  if (names.includes(tmpName)) {
+    const f = intentFile(r, at(tmpName), rec)
+    tmp = { path: at(tmpName), provable: f.valid || f.empty }
+  }
+  return { parkIntent: intent, parkIntentTmp: tmp }
+}
+
+/** The directories a recorded op keeps its trees in: what a no-record park may carry. */
+const SOURCE_NAMES: ReadonlySet<string> = new Set(['old', 'new', 'undone'])
+
+const oneComponent = (c: string | undefined): c is string =>
+  c !== undefined && c !== '' && c !== '.' && c !== '..' && !c.includes('/') && !c.includes('\0')
+
+/** `<opId>` (the backup) or `<opId>.<kind>` with an optional `.<k>`: a kept copy's name. */
+function isKeptName(name: string, opId: string): boolean {
+  if (name === opId) return true
+  if (!name.startsWith(`${opId}.`)) return false
+  const parts = name.slice(opId.length + 1).split('.')
+  if (parts.length > 2 || !Object.hasOwn(KIND_ROLE, parts[0]!)) return false
+  return parts.length === 1 || /^[1-9][0-9]*$/.test(parts[1]!)
+}
+
+/**
+ * Where a move-source intent's `backupPath` puts the state root, client and
+ * folder: it must be `<stateRoot>/backups/update/<client>/<rootKey of R>/<dirName>/<opId>`
+ * (or `<opId>.<kind>`, a kept copy of another kind) exactly (`backupAreaPath`), or
+ * no target is derived.
+ */
+export function intentTarget(
+  backupPath: string,
+  root: string,
+  opId: string
+): NoRecordIntent['target'] {
+  const parts = backupPath.split('/')
+  const [id, dirName, key, client, update, backups] = parts.slice(-6).reverse()
+  if (id === undefined || !isKeptName(id, opId)) return null
+  if (update !== 'update' || backups !== 'backups' || key !== rootKeyOf(root)) return null
+  if (!oneComponent(client) || !oneComponent(dirName)) return null
+  const stateRoot = parts.slice(0, -6).join('/')
+  if (!stateRoot.startsWith('/')) return null
+  const area = backupAreaPath(stateRoot, client, root, dirName)
+  return path.join(area, id) === backupPath ? { stateRoot, client, dirName } : null
+}
+
+/** A no-record op dir's `park-intent.json`, and whether its park can be finished from it. */
+export function noRecordIntent(
+  r: ClassifierReader,
+  a: {
+    opDir: string
+    opId: string
+    root: string
+    names: readonly string[]
+    opIdentity: RecordIdentity
+  }
+): NoRecordIntent | null {
+  if (!a.names.includes(PARK_INTENT_FILE)) return null
+  const p = path.join(a.opDir, PARK_INTENT_FILE)
+  const read = r.readFile(p, INTENT_CAP)
+  let value: unknown = null
+  if (read.bytes !== null && read.fact.ok && !read.fact.truncated) {
+    try {
+      value = JSON.parse(read.bytes.toString('utf8'))
+    } catch {
+      value = null
+    }
+  }
+  const valid = isParkIntentFor(value, a.opId, a.opIdentity)
+  const v = (valid ? value : {}) as { kind?: string; backupPath?: string; owner?: { uid: number } }
+  const backupPath = v.backupPath ?? null
+  const target = backupPath === null ? null : intentTarget(backupPath, a.root, a.opId)
+  const sources: NoRecordIntent['sources'] = []
+  let blocked: string | null = null
+  for (const n of [...a.names].sort()) {
+    if (n === PARK_INTENT_FILE) continue
+    const st = r.stat(path.join(a.opDir, n))
+    if (n === OWNER_FILE) {
+      if (!st.ok || st.type !== 'file') blocked ??= `${OWNER_FILE} is not a regular file`
+      continue
+    }
+    if (!SOURCE_NAMES.has(n)) blocked ??= `the op dir also holds ${n}`
+    else if (!st.ok || st.type !== 'dir') blocked ??= `${n} is not a directory`
+    else sources.push({ name: n, identity: st.identity })
+  }
+  if (!valid) blocked = 'its park-intent.json does not verify for this op dir'
+  else if (v.kind !== 'move-source') blocked = 'an abort-new intent: --clean-staging finishes it'
+  else if (target === null) blocked = `its backupPath ${backupPath} is not this root's backup area`
+  else if (sources.length === 0) blocked ??= 'it holds no source to park'
+  return {
+    path: p,
+    valid,
+    kind: v.kind ?? null,
+    backupPath,
+    ownerUid: v.owner?.uid ?? null,
+    opIdentity: valid ? a.opIdentity : null,
+    target,
+    sources,
+    blocked,
+  }
 }

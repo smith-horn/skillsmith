@@ -155,23 +155,21 @@ describe('T-J5: identity changes refuse with zero mutation', () => {
   })
 })
 
-describe('6a-ii is one device only: cross-device and full-device plans are not offered', () => {
-  it('a backup area on another device than the skills root', async () => {
+describe('6a-iii lifts the one-device gate: cross-device and full-device plans are offered', () => {
+  it('a backup area on another device than the skills root: --apply plans and finishes', async () => {
     const st = await s2(xdevFixture({ 'SKILL.md': '# v1\n' }))
-    const before = world(st)
     const a = await act(st, 'apply')
-    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
-    if (a.result.status === 'refused') {
-      expect(a.result.detail).toContain('cross-device recovery is not available yet')
-    }
-    expect(world(st)).toBe(before)
+    expect(a.planned.status).toBe('planned')
+    expect(a.result).toMatchObject({ status: 'done' })
+    if (a.result.status === 'done') expect(a.result.extraCopy).not.toBeNull()
+    expect(fs.existsSync(st.opDir)).toBe(false)
+    expect(fs.existsSync(path.join(areaOf(st.fx), st.opId))).toBe(true)
   })
 
-  it('a record with a full-device marker, on one device; the same record without it is offered', async () => {
+  it('a record with a full-device marker naming its own area, on one device: offered and finished', async () => {
     const st = await s2(file())
     const recPath = path.join(st.opDir, 'record.json')
-    const plain = fs.readFileSync(recPath, 'utf8')
-    const r = JSON.parse(plain) as SwapRecord
+    const r = JSON.parse(fs.readFileSync(recPath, 'utf8')) as SwapRecord
     const { recordSha256: _h, ...rest } = r
     const body = {
       ...rest,
@@ -187,13 +185,35 @@ describe('6a-ii is one device only: cross-device and full-device plans are not o
       recPath,
       JSON.stringify({ ...body, recordSha256: computeRecordSha256(body) }, null, 2) + '\n'
     )
+    const a = await done(st, 'apply')
+    expect(a.result.status).toBe('done')
+    expect(fs.existsSync(st.opDir)).toBe(false)
+  })
+
+  it('a full-device marker naming another area is anything else: --apply refused, zero mutation', async () => {
+    const st = await s2(file())
+    const recPath = path.join(st.opDir, 'record.json')
+    const r = JSON.parse(fs.readFileSync(recPath, 'utf8')) as SwapRecord
+    const { recordSha256: _h, ...rest } = r
+    const elsewhere = path.join(st.fx.base, 'elsewhere')
+    const body = {
+      ...rest,
+      fullDevice: {
+        cause: 'ENOSPC' as const,
+        stage: 'copy' as const,
+        area: elsewhere,
+        opId: st.opId,
+        dest: path.join(elsewhere, st.opId),
+      },
+    }
+    fs.writeFileSync(
+      recPath,
+      JSON.stringify({ ...body, recordSha256: computeRecordSha256(body) }, null, 2) + '\n'
+    )
     const before = world(st)
     const a = await act(st, 'apply')
     expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
-    if (a.result.status === 'refused') expect(a.result.detail).toContain('full-device marker')
     expect(world(st)).toBe(before)
-    fs.writeFileSync(recPath, plain)
-    expect((await done(st, 'apply')).result.status).toBe('done')
   })
 })
 

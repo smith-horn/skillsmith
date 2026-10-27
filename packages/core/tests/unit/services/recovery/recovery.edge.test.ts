@@ -12,7 +12,7 @@ import { ClassifierReader } from '../../../../src/services/skill-recovery.reader
 import { computeRecordSha256 } from '../../../../src/services/skill-swap.js'
 import type { SwapRecord } from '../../../../src/services/skill-swap.js'
 import type { KeepGroup, PState } from '../../../../src/services/skill-recovery.types.js'
-import { makeFixture, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
+import { areaOf, makeFixture, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { opDirOf, opIdN, otherSkill } from '../skill-swap.scan.helpers.js'
 import {
   copyTree,
@@ -429,7 +429,13 @@ describe('AB, and a record.json.tmp beside the record', () => {
     const { recordSha256: _h, ...body } = JSON.parse(fs.readFileSync(recPath, 'utf8')) as SwapRecord
     const marked = {
       ...body,
-      fullDevice: { cause: 'ENOSPC', stage: 'copy', area: '/a', opId: st.opId, dest: '/a/x' },
+      fullDevice: {
+        cause: 'ENOSPC',
+        stage: 'copy',
+        area: areaOf(fx),
+        opId: st.opId,
+        dest: path.join(areaOf(fx), st.opId),
+      },
     } as Omit<SwapRecord, 'recordSha256'>
     fs.writeFileSync(
       path.join(st.opDir, 'record.json.tmp'),
@@ -447,7 +453,13 @@ describe('AB, and a record.json.tmp beside the record', () => {
     const { recordSha256: _h, ...body } = JSON.parse(fs.readFileSync(recPath, 'utf8')) as SwapRecord
     const marked = {
       ...body,
-      fullDevice: { cause: 'EDQUOT', stage: 'copy', area: '/a', opId: st.opId, dest: '/a/x' },
+      fullDevice: {
+        cause: 'EDQUOT',
+        stage: 'copy',
+        area: areaOf(fx),
+        opId: st.opId,
+        dest: path.join(areaOf(fx), st.opId),
+      },
     } as Omit<SwapRecord, 'recordSha256'>
     const tmpPath = path.join(st.opDir, 'record.json.tmp')
     fs.writeFileSync(

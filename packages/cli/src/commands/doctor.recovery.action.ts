@@ -1,8 +1,8 @@
 /**
- * @fileoverview `skillsmith doctor recovery --apply <opId>` / `--undo <opId>`
- * on one device, under the confirmation contract (A1 plan §3.9; SMI-6531 step
- * 6a-ii, an internal milestone: the options are registered hidden and no
- * message names them until 6a-iii).
+ * @fileoverview `skillsmith doctor recovery --apply <opId>` / `--undo <opId>`,
+ * under the confirmation contract (A1 plan §3.9; SMI-6531 steps 6a-ii and
+ * 6a-iii: one device and across devices, where the op dir holding the verified
+ * sources is parked once its metadata is unlinked, UD28).
  *
  * The contract, in order:
  *  1. Plan without any lock (`planRecovery`) and print it (`--json`: as JSON).
@@ -20,7 +20,8 @@
  *  7. A kill after confirmation resumes with the same command.
  *
  * Exit status: 0 done (or declined), 1 refused or stopped, 3 not confirmed
- * (no terminal), 130 interrupted.
+ * (no terminal), 4 done but the op dir's park did not finish
+ * (`removal-not-done`, UD32; 1 wins over 4), 130 interrupted.
  * @module @skillsmith/cli/commands/doctor.recovery.action
  */
 
@@ -33,6 +34,7 @@ import {
   planRecovery,
   type DiscoverOptions,
   type PlannedRecovery,
+  type RecoveryRunOptions,
   type RecoveryRunResult,
 } from '@skillsmith/core'
 
@@ -54,6 +56,8 @@ export interface RecoveryActionOptions {
   prompt?: (question: string) => Promise<PromptAnswer>
   /** @internal Test seam: runs between the confirmation and lock 1. */
   afterConfirm?: () => void | Promise<void>
+  /** @internal Test seam: passed to `executeRecovery` (a park stub, hooks). */
+  runOptions?: RecoveryRunOptions
 }
 
 /** The streams `askOnce` talks to (default: the process's terminal). */
@@ -137,13 +141,39 @@ function resultLines(r: RecoveryRunResult): string[] {
   const lines = [`Done: ${r.action} of ${r.opId} (from ${r.from}).`]
   if (r.installed !== null) lines.push(`  installed: ${r.installed}`)
   for (const k of r.kept) lines.push(`  kept ${k.tree} as ${k.kind} at ${k.path}`)
+  if (r.extraCopy !== null) {
+    lines.push(
+      `  the op dir, holding the verified source copies, was moved aside to ${r.extraCopy}`
+    )
+  }
   lines.push(`  manifest: ${r.manifest}`)
   if (r.audit.kind === 'not-recorded') lines.push(`  ${r.audit.detail}`)
-  for (const w of r.warnings) lines.push(`  warning: ${w.code}`)
+  for (const w of r.warnings) lines.push(...warningLines(w, r.opId))
   for (const p of r.swept.removed) lines.push(`  removed the empty directory ${p}`)
   for (const p of r.swept.left) lines.push(`  left ${p.path} (${p.errno})`)
   return lines
 }
+
+type Warning = Extract<RecoveryRunResult, { status: 'done' }>['warnings'][number]
+
+/** A warning's line; `removal-not-done` names the op dir, the park's status and what finishes it. */
+function warningLines(w: Warning, opId: string): string[] {
+  if (w.code !== 'removal-not-done') return [`  warning: ${w.code}`]
+  const errno = w.errno === undefined ? '' : ` (${w.errno})`
+  const where =
+    w.status === 'held' ? `; it was moved to ${String(w.parkedPath)} and is held there` : ''
+  return [
+    `  warning: removal-not-done: the op dir ${w.path} was not set aside (${w.status}/${w.reason}${errno})${where}`,
+    ...(w.detail === undefined ? [] : [`    ${w.detail}`]),
+    ...(w.status === 'held'
+      ? ['    it may have changed while it moved: check it before relying on it']
+      : [`    run \`skillsmith doctor recovery --clean-staging ${opId}\` to finish it`]),
+  ]
+}
+
+/** UD32: a park that did not finish is exit 4 (an action that stopped or was refused is 1, which wins). */
+const exitOf = (r: RecoveryRunResult): number | undefined =>
+  r.status !== 'done' ? 1 : r.warnings.some((w) => w.code === 'removal-not-done') ? 4 : undefined
 
 const printLines = (lines: string[]): void => {
   for (const l of lines) console.log(l)
@@ -213,8 +243,9 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     }
   }
   await options.afterConfirm?.()
-  const result = await executeRecovery(planned)
+  const result = await executeRecovery(planned, options.runOptions ?? {})
   if (json) printJson(plan, result)
   else printLines(resultLines(result))
-  if (result.status !== 'done') process.exitCode = 1
+  const code = exitOf(result)
+  if (code !== undefined) process.exitCode = code
 }

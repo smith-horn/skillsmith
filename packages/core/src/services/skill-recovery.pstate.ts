@@ -9,7 +9,8 @@
  * the rest): the tree, its sidecar `<base>.json`, the sidecar's temp
  * `<base>.json.tmp` and the copy temp `.tmp-<base>`. Each group is checked
  * against the tree it comes from in OP and classified P0-P5 (P2-P4 exist only
- * across devices) or R1-R3 (a kill inside the one-device rewrite). A group no
+ * across devices) or R1-R3 (a kill inside a sidecar rewrite: the one-device
+ * one, or, beside a verified copy temp, the cross-device one). A group no
  * sub-state names is `unclassified` with a reason; it is kept and reported, and
  * the resume refuses until the user resolves it.
  *
@@ -210,7 +211,9 @@ export function classifyGroup(g: GroupInputs): { state: PState | null; why: stri
 
   if (scOk && tmp !== null && tmp.sameInodeAsSidecar) return ok('R3')
   if (sc === null && tmp !== null && tmp.thisOps && srcP && !destP) return ok('R2')
-  if (scOk && tmp !== null && srcP && !destP && !copyP) return ok('R1')
+  // R1 beside a copy temp is the cross-device rewrite (`publishTree` step 4c's
+  // `rewriteSidecar`, after the copy verified): resumed as R1, then P3 or P2.
+  if (scOk && tmp !== null && srcP && !destP) return ok('R1')
   if (sc === null && srcP && !copyP && !destP) return ok('P0')
   if (sc === null) return no('a tree or copy temp has no sidecar')
   if (!scOk) return no(`its sidecar ${sc.invalid ?? 'is invalid'}`)
@@ -308,7 +311,8 @@ export function observeGroups(
     group.state = c.state
     group.unclassified = c.why
     group.verified = verifiedKeep(group)
-    group.crossDevice = c.state === 'P2' || c.state === 'P3' || c.state === 'P4'
+    group.crossDevice =
+      c.state === 'P2' || c.state === 'P3' || c.state === 'P4' || group.copyTmp.present
     group.hashChanged =
       c.state === 'P1' &&
       sidecar?.treeHash !== null &&

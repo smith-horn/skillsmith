@@ -25,6 +25,7 @@
  */
 import path from 'node:path'
 import { canonicalJson } from './skill-recovery.digest.js'
+import { analyzeParkIntent, noRecordIntent } from './skill-recovery.opdir.js'
 import { observeGroups, ROLE_DIR } from './skill-recovery.pstate.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId, sourceCheck, tStateOf } from './skill-recovery.trees.js'
@@ -42,7 +43,7 @@ import type {
 import { backupAreaPath } from './skill-swap.area.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
 import { OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
-import type { SwapRecord } from './skill-swap.types.js'
+import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 import type { EntryState } from './skill-manifest.entry.js'
 
 export interface ClassifyContext {
@@ -261,6 +262,7 @@ async function classifyRecorded(
     fullDevice: rec.fullDevice ?? null,
     recordTmp,
     nHashesToPost: nSource === null ? null : nSource.hash === rec.postTree,
+    ...analyzeParkIntent(r, opDir, names, rec),
   }
   const base = { opId, opDir }
   const elseWith = (reason: string): RecoveryClass => ({
@@ -284,6 +286,19 @@ async function classifyRecorded(
     } else if (!recordTmp.bodyMatches && !recordTmp.emptySingleLink) {
       return elseWith(`${recordTmp.path} is not provably this operation's`)
     }
+  }
+  if (facts.parkIntent !== null && !facts.parkIntent.valid) {
+    return elseWith(`${facts.parkIntent.path} is not this operation's move-source park intent`)
+  }
+  if (facts.parkIntentTmp !== null && !facts.parkIntentTmp.provable) {
+    return elseWith(`${facts.parkIntentTmp.path} is not provably this operation's`)
+  }
+  const fd = facts.fullDevice
+  if (fd !== null && (fd.opId !== opId || fd.area !== area || path.dirname(fd.dest) !== area)) {
+    // Its leftovers are read from the record's own area; a marker naming another is not followed.
+    return elseWith(
+      `the full-device marker names ${fd.dest}, outside this operation's area ${area}`
+    )
   }
   if (!entry.ok) return elseWith(`the manifest could not be read (${entry.refusal})`)
   if (view.listError !== null)
@@ -355,7 +370,7 @@ export async function classifyOp(
   const read = r.readFile(path.join(opDir, RECORD_FILE), MAX_RECORD_BYTES + 1)
   if (!read.fact.ok) {
     const errno = read.fact.errno
-    if (errno === 'ENOENT') return noRecord(r, ctx, base, listed.names)
+    if (errno === 'ENOENT') return noRecord(r, ctx, base, listed.names, dir.identity)
     if (DENIED.has(errno)) return { kind: 'other-user', ...base, ownerUid: dir.uid, errno }
     if (errno === 'NOT_A_FILE') return { kind: 'unreadable', ...base, why: 'not-a-file' }
     return { kind: 'unreadable', ...base, why: 'open-failed', errno }
@@ -398,7 +413,8 @@ function noRecord(
   r: ClassifierReader,
   ctx: ClassifyContext,
   base: { opId: string; opDir: string },
-  names: readonly string[]
+  names: readonly string[],
+  opIdentity: RecordIdentity
 ): RecoveryClass {
   let owner: { pid: number | null; host: string | null; uid: number | null } | null = null
   if (names.includes(OWNER_FILE)) {
@@ -416,13 +432,17 @@ function noRecord(
       }
     }
   }
+  const intent = noRecordIntent(r, { ...base, root: ctx.root, names, opIdentity })
+  // Whose op dir this is: owner.json's uid, else the verifying intent's (6a-iii).
+  const uid = owner?.uid ?? (intent?.valid === true ? intent.ownerUid : null)
   return {
     kind: 'no-record',
     ...base,
     owner,
     entries: [...names],
     hasParkIntent: names.includes(PARK_INTENT_FILE),
-    otherUid: owner !== null && owner.uid !== null && owner.uid !== ctx.euid ? owner.uid : null,
+    otherUid: uid !== null && uid !== ctx.euid ? uid : null,
+    intent,
     recordTmp: names.includes(`${RECORD_FILE}.tmp`)
       ? path.join(base.opDir, `${RECORD_FILE}.tmp`)
       : null,

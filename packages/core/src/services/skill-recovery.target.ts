@@ -10,11 +10,9 @@
  *    unless `--root` narrows the search to one root, compared by native real
  *    path, so any spelling of a root selects it and only it;
  *  - one: `planAction(cls, action)`. Its refusals stand, the other-user one
- *    first (Q8: before any lock is requested). 6a-ii is one device only: a plan
- *    whose record has a full-device marker, whose keeps include a cross-device
- *    sub-state, or whose backup area is on another device than the skills
- *    root refuses `recovery-not-offered` ("cross-device recovery is not
- *    available yet").
+ *    first (Q8: before any lock is requested). Since 6a-iii a plan across
+ *    devices, or with a full-device marker, is offered like any other: its
+ *    keeps copy and verify, and the finish parks the op dir (UD28).
  *
  * The plan carries the op's digest (`digestOf(transcript, plan)`), which the
  * re-plan under lock 1 must reproduce, and the sweep's candidates: the
@@ -26,12 +24,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { listRoot } from './skill-recovery.listing.js'
 import type { RootReport } from './skill-recovery.listing.js'
-import type {
-  ActionPlan,
-  OpFacts,
-  RecoveryClass,
-  RecoveryRefuseReason,
-} from './skill-recovery.types.js'
+import type { ActionPlan, RecoveryRefuseReason } from './skill-recovery.types.js'
 import type { SweepEntry } from './skill-recovery.finish.js'
 import type {
   PlannedRecovery,
@@ -71,33 +64,6 @@ function identityAt(p: string): RecordIdentity | null {
     return null
   }
 }
-
-/** The device of the nearest existing ancestor of `p` (the area may not exist yet). */
-function deviceOf(p: string): string | null {
-  for (let at = p; ; at = path.dirname(at)) {
-    const id = identityAt(at)
-    if (id !== null) return id.dev
-    if (path.dirname(at) === at) return null
-  }
-}
-
-/** Why this plan is not one-device recovery (6a-iii's), or null when it is. */
-export function crossDeviceReason(f: OpFacts): string | null {
-  if (f.fullDevice !== null) {
-    return `the record carries a full-device marker (${f.fullDevice.cause} while ${f.fullDevice.stage})`
-  }
-  const g = f.groups.find((x) => x.crossDevice)
-  if (g !== undefined) return `the keep ${g.base} is a cross-device copy (${g.state})`
-  const areaDev = deviceOf(f.area)
-  if (areaDev === null || areaDev !== f.record.rootIdentity.dev) {
-    return `the backup area ${f.area} is on another device than the skills root`
-  }
-  return null
-}
-
-/** The facts a class carries, when it carries them. */
-const factsOf = (cls: RecoveryClass): OpFacts | null =>
-  'facts' in cls && cls.facts !== null ? cls.facts : null
 
 /** The leftover probes and other empty op dirs of `r`, by the identity seen now. */
 function sweepOf(r: RootReport, target: string): SweepEntry[] {
@@ -146,6 +112,8 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
   if (found.length === 0) {
+    const parked = parkedTarget(request, roots)
+    if (parked !== null) return parked
     return refusal(
       'recovery-not-offered',
       `no operation directory named ${request.opId} is in the scanned skills roots`
@@ -174,17 +142,77 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       ...base,
       plan: emptyPlan(request.action),
       emptyTarget: { path: op.opDir, identity: id },
+      parked: null,
     }
     return planned
   }
   const plan = planAction(op.cls, request.action)
   if (!plan.offered) return refusal(plan.reason, plan.detail, [op.opDir])
-  const f = factsOf(op.cls)
-  const xdev = f === null ? null : crossDeviceReason(f)
-  if (xdev !== null) {
-    return refusal('recovery-not-offered', `cross-device recovery is not available yet: ${xdev}`, [
-      op.opDir,
-    ])
+  return { ...base, plan, emptyTarget: null, parked: null }
+}
+
+/**
+ * 6a-iii: no op dir is named `opId`, but exactly one root holds its parked
+ * area `ST/.skillsmith-parked/<opId>` (a kill after the park moved OP): the
+ * plan is to make that park durable. Another user's area is refused.
+ */
+function parkedTarget(
+  request: RecoveryRequest,
+  roots: readonly string[]
+): RecoveryPlanResult | null {
+  const hits: Array<{ root: string; landing: string; identity: RecordIdentity; uid: number }> = []
+  for (const r of roots) {
+    const root = realOf(r)
+    const landing = path.join(root, '.skillsmith-staging', '.skillsmith-parked', request.opId)
+    let s: fs.BigIntStats
+    try {
+      s = fs.lstatSync(landing, { bigint: true })
+    } catch {
+      continue
+    }
+    const identity = identityAt(landing)
+    if (s.isDirectory() && identity !== null) {
+      hits.push({ root, landing, identity, uid: Number(s.uid) })
+    }
   }
-  return { ...base, plan, emptyTarget: null }
+  if (hits.length !== 1) return null
+  const h = hits[0]!
+  const euid = request.euid ?? process.geteuid?.() ?? -1
+  if (h.uid !== euid) {
+    return refusal(
+      'recovery-other-user',
+      `${h.landing} belongs to uid ${h.uid}, not this user: run doctor as that user`,
+      [h.landing]
+    )
+  }
+  const copies = fs
+    .readdirSync(h.landing)
+    .filter((n) => !n.endsWith('.json'))
+    .sort()
+    .map((n) => path.join(h.landing, n))
+  return {
+    status: 'planned',
+    request,
+    root: h.root,
+    opDir: h.landing,
+    report: {
+      opId: request.opId,
+      opDir: h.landing,
+      cls: { kind: 'empty-op-dir', opId: request.opId, opDir: h.landing },
+      label: 'already parked',
+      plans: [],
+      digest: '',
+    },
+    plan: {
+      offered: true,
+      action: request.action,
+      steps: [],
+      manifest: 'untouched',
+      remaining: [`sync ${h.landing}, then the staging dir, so the park is durable`],
+      notes: ['the op dir was already set aside whole; nothing else is left to do'],
+    },
+    sweep: [],
+    emptyTarget: null,
+    parked: { landing: h.landing, identity: h.identity, copies },
+  }
 }

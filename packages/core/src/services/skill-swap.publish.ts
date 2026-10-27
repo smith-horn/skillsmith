@@ -182,18 +182,21 @@ export async function publishTree(st: SwapState, src: string, kind: PublishKind)
 /**
  * The move of a keep whose sidecar is already published (a P1 resume, UD38):
  * `check`, `rename(src, dest)`, sync the area, then OP, with the same hooks as
- * `publishTree`'s move. One device only: `EXDEV` stops `write-failed`.
+ * `publishTree`'s move. `EXDEV` (nothing moved) runs `across`, doctor's
+ * cross-device copy (6a-iii); without it, it stops `write-failed`.
  */
 export async function moveKept(
   st: SwapState,
   src: string,
   dest: string,
-  kind: PublishKind
+  kind: PublishKind,
+  across?: () => Promise<void>
 ): Promise<void> {
   try {
     await renameChecked(st, src, dest)
   } catch (err) {
     if (codeOf(err) === 'EXDEV') {
+      if (across !== undefined) return across()
       throw new SwapFault('write-failed', `${dest} is on another device: not resumed here`, err)
     }
     throw err

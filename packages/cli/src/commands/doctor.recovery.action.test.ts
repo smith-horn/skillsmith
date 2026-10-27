@@ -266,3 +266,89 @@ describe('through commander', () => {
     expect(entry(u.stateRoot)).toEqual({ version: '1.0.0' })
   })
 })
+
+describe('across devices (6a-iii): the op dir is parked, and a park that does not finish exits 4', () => {
+  const shm: string[] = []
+  afterEach(() => {
+    for (const d of shm.splice(0)) fs.rmSync(d, { recursive: true, force: true })
+  })
+  /** A crashed update whose state root (and so its backup area) is on another device. */
+  function plantAcross() {
+    const stateRoot = fs.realpathSync(fs.mkdtempSync('/dev/shm/doctor-xdev-'))
+    shm.push(stateRoot)
+    const u = plantCrashedUpdate(base, 'a'.repeat(32), stateRoot)
+    expect(fs.statSync(stateRoot).dev).not.toBe(fs.statSync(u.root).dev)
+    return u
+  }
+  const nulls = {
+    reason: null,
+    path: null,
+    entry: null,
+    treeHash: null,
+    errno: null,
+    opId: null,
+    sidecarPath: null,
+    detail: null,
+    originPath: null,
+    heldPath: null,
+    misplaced: null,
+    parkedAreaCreated: null,
+  }
+
+  it('--apply --yes: done, exit status unset (0), the backup made and the op dir parked', async () => {
+    const u = plantAcross()
+    await runRecoveryAction({ apply: u.opId, yes: true })
+    expect(process.exitCode).toBeUndefined()
+    expect(fs.existsSync(u.backupDest)).toBe(true)
+    expect(fs.existsSync(u.opDir)).toBe(false)
+    expect(out.join('\n')).toContain('was moved aside to')
+    expect(entry(u.stateRoot)).toEqual({ version: '2.0.0' })
+  })
+
+  const OUTCOMES = [
+    ['kept', { status: 'kept', reason: 'identity-changed' }],
+    ['held', { status: 'held', reason: 'changed-during-move' }],
+    ['stopped', { status: 'stopped', reason: 'park-failed', errno: 'EACCES' }],
+  ] as const
+  for (const [label, r] of OUTCOMES) {
+    it(`a park that ends ${label}: done, removal-not-done, exit 4 (UD32)`, async () => {
+      const u = plantAcross()
+      const heldAt = path.join(base, 'held-here')
+      await runRecoveryAction({
+        apply: u.opId,
+        yes: true,
+        runOptions: {
+          swap: {
+            park: async () =>
+              ({ ...nulls, ...r, ...(label === 'held' ? { path: heldAt } : {}) }) as never,
+          },
+        },
+      })
+      expect(process.exitCode).toBe(4)
+      const text = out.join('\n')
+      expect(text).toContain('Done: apply')
+      expect(text).toContain(`removal-not-done: the op dir ${u.opDir} was not set aside (${label}/`)
+      expect(fs.existsSync(u.backupDest)).toBe(true)
+      expect(fs.existsSync(path.join(u.opDir, 'record.json'))).toBe(false)
+      expect(entry(u.stateRoot)).toEqual({ version: '2.0.0' })
+    })
+  }
+
+  it('--json: the result carries the removal-not-done warning, and the exit is still 4', async () => {
+    const u = plantAcross()
+    await runRecoveryAction({
+      apply: u.opId,
+      yes: true,
+      json: true,
+      runOptions: {
+        swap: { park: async () => ({ ...nulls, status: 'kept', reason: 'op-not-empty' }) as never },
+      },
+    })
+    expect(process.exitCode).toBe(4)
+    const doc = JSON.parse(out.join('\n')) as {
+      result: { status: string; warnings: Array<{ code: string }> }
+    }
+    expect(doc.result.status).toBe('done')
+    expect(doc.result.warnings.map((w) => w.code)).toContain('removal-not-done')
+  })
+})

@@ -186,7 +186,9 @@ export async function markIfFullDevice(
     dest,
   }
   try {
-    await rewriteRecord(st, marker)
+    // Doctor (6a-iii) adopted its record rather than wrote it, so it rewrites through its own seam.
+    if (st.rewriteMarker !== undefined) await st.rewriteMarker(marker)
+    else await rewriteRecord(st, marker)
     return err
   } catch (markErr) {
     const why = markErr instanceof SwapFault ? markErr.detail : messageOf(markErr)

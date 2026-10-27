@@ -1,7 +1,7 @@
 /**
- * SMI-6531 (A1 step 6a-ii): `doctor recovery --apply` / `--undo` on one
- * device, after confirmation (A1 plan §3.9, the confirmation contract items
- * 6-7; §3.3 dispositions; design § 2 "Used twice", § 4, § 5).
+ * SMI-6531 (A1 steps 6a-ii, 6a-iii): `doctor recovery --apply` / `--undo`,
+ * after confirmation (A1 plan §3.9, the confirmation contract items 6-7; §3.3
+ * dispositions; design § 2 "Used twice", § 4, § 5).
  *
  * `executeRecovery(planned)` takes lock 1 for the root, then re-plans with a
  * fresh reader and compares `digestOf(transcript, plan)` with the confirmed
@@ -27,6 +27,15 @@
  * same command resumes it. After a finished action, the probes and empty op
  * dirs the plan listed are removed (`sweepRoot`).
  *
+ * Across devices (6a-iii): before the first mutation, a keep that still has
+ * to be copied and would not fit refuses `state-root-full` naming
+ * `skillsmith doctor backups --prune` (`spaceBlock`). A keep's verified
+ * source stays in OP, and the finish parks OP whole once its metadata is
+ * unlinked (`skill-recovery.park.ts`, UD28); a park that does not finish is a
+ * `removal-not-done` warning (exit 4, UD32). Doctor's own full-device stop
+ * records the marker in the adopted record (`skill-recovery.mark.ts`), and a
+ * sidecar a crashed run published is replaced through `unlinkAdopted`.
+ *
  * @module @skillsmith/core/services/skill-recovery.run
  */
 import path from 'node:path'
@@ -36,17 +45,21 @@ import { classifyOp } from './skill-recovery.classify.js'
 import type { ClassifyContext } from './skill-recovery.classify.js'
 import { digestOf } from './skill-recovery.digest.js'
 import { finishRecovered, removeEmptyOp, sweepRoot } from './skill-recovery.finish.js'
+import { rewriteMarkerAdopted, spaceBlock } from './skill-recovery.mark.js'
+import { finishFromIntent } from './skill-recovery.intent-park.js'
+import { finishRecoveredAcross } from './skill-recovery.park.js'
+import { syncParked } from './skill-recovery.parked.js'
 import { serializePlan } from './skill-recovery.plan.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import { installAt, keepRole } from './skill-recovery.resume.js'
 import type { KeepContext } from './skill-recovery.resume.js'
-import { adoptMetadata, recoveryState } from './skill-recovery.state.js'
+import { adoptMetadata, recoveryState, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
-import { crossDeviceReason } from './skill-recovery.target.js'
 import type {
   AuditOutcome,
   PlannedRecovery,
   RecoveryDone,
+  RecoveryRefusal,
   RecoveryRunOptions,
   RecoveryRunResult,
 } from './skill-recovery.run.types.js'
@@ -69,20 +82,66 @@ function kindIn(steps: readonly PlanStep[], tree: PlanStep['tree']): string | nu
   return s !== undefined && s.disposition.kind === 'kept' ? s.disposition.as : null
 }
 
-/** The metadata files finish may unlink: `owner.json`, a provable `record.json.tmp`, and `record.json` (last). */
-function adoptAll(f: OpFacts, names: readonly string[], t: ReadTranscript): Adopted[] {
+/**
+ * The metadata files finish may unlink: `owner.json`, a provable
+ * `record.json.tmp`, a provable `park-intent.json.tmp`, and `record.json`
+ * (last); plus a verifying `park-intent.json`, which a cross-device finish
+ * reuses (and a one-device one unlinks).
+ */
+function adoptAll(
+  f: OpFacts,
+  names: readonly string[],
+  t: ReadTranscript
+): { files: Adopted[]; intent: Adopted | null; tmp: Adopted | null } {
   const out: Adopted[] = []
   const at = (n: string): string => path.join(f.opDir, n)
   if (names.includes(OWNER_FILE)) out.push(adoptMetadata(t, at(OWNER_FILE)))
   const tmp = f.recordTmp
+  let recordTmp: Adopted | null = null
   if (tmp !== null) {
-    if (!tmp.sameInode && !tmp.emptySingleLink && !(tmp.bodyMatches && !tmp.hasMarker)) {
+    // A marked temp whose body matches the record is this op's (a marker rewrite that crashed).
+    if (!tmp.sameInode && !tmp.emptySingleLink && !tmp.bodyMatches) {
       throw new SwapFault('staging-unsafe', `${tmp.path} is not provably this operation's`)
     }
-    out.push(adoptMetadata(t, tmp.path))
+    recordTmp = adoptMetadata(t, tmp.path)
+    out.push(recordTmp)
+  }
+  if (f.parkIntentTmp !== null) {
+    if (!f.parkIntentTmp.provable) {
+      throw new SwapFault(
+        'staging-unsafe',
+        `${f.parkIntentTmp.path} is not provably this operation's`
+      )
+    }
+    out.push(adoptMetadata(t, f.parkIntentTmp.path))
+  }
+  let intent: Adopted | null = null
+  if (f.parkIntent !== null) {
+    if (!f.parkIntent.valid) {
+      throw new SwapFault('staging-unsafe', `${f.parkIntent.path} is not this operation's`)
+    }
+    intent = adoptMetadata(t, f.parkIntent.path)
   }
   out.push(adoptMetadata(t, at(RECORD_FILE)))
-  return out
+  return { files: out, intent, tmp: recordTmp }
+}
+
+/** Doctor's seams on the state: the adopted sidecar unlink and its own marker rewrite. */
+function adoptInto(st: SwapState, t: ReadTranscript, a: ReturnType<typeof adoptAll>): void {
+  st.unlinkAdopted = async (p, reason) => {
+    // Only a sidecar or its temp in this op's area, read whole by the re-plan.
+    if (path.dirname(p) !== st.areaPath) return false
+    let adopted: Adopted
+    try {
+      adopted = adoptMetadata(t, p)
+    } catch {
+      return false
+    }
+    await unlinkAdopted(st, adopted, reason)
+    return true
+  }
+  const record = a.files[a.files.length - 1]!
+  st.rewriteMarker = (marker) => rewriteMarkerAdopted(st, record, a.tmp, marker)
 }
 
 /** The names the re-plan listed in OP. */
@@ -106,7 +165,12 @@ interface Row {
 async function keep(row: Row, tree: 'O' | 'N' | 'U'): Promise<void> {
   const kind = kindIn(row.steps, tree) ?? (tree === 'O' ? 'backup' : null)
   if (kind === null) return
+  const before = row.k.partials.length
   const dest = await keepRole(row.st, tree, kind, row.k)
+  // A cross-device resume keeps a copy temp that was not the source (P2) before it copies again.
+  for (const p of row.k.partials.slice(before)) {
+    row.out.kept.push({ tree, kind: 'partial-copy', path: p })
+  }
   if (dest === null) return
   row.out.kept.push({ tree, kind, path: dest })
   if (kind === 'conflict') row.st.warnings.push({ code: 'conflict-kept', path: dest })
@@ -233,12 +297,11 @@ function acceptedIdentities(f: OpFacts) {
   return { ...(old === undefined ? {} : { old }), ...(next === undefined ? {} : { new: next }) }
 }
 
-const refused = (reason: 'plan-changed', detail: string, opDir: string): RecoveryRunResult => ({
-  status: 'refused',
-  reason,
-  detail,
-  paths: [opDir],
-})
+const refused = (
+  reason: 'plan-changed' | 'state-root-full',
+  detail: string,
+  opDir: string
+): RecoveryRefusal => ({ status: 'refused', reason, detail, paths: [opDir] })
 
 /** Lock 1, the re-plan and its digest comparison, then the row. Never prompts. */
 export async function executeRecovery(
@@ -280,6 +343,7 @@ async function underLock(
   journalFile: string
 ): Promise<RecoveryRunResult> {
   const req = planned.request
+  if (planned.parked !== null) return syncParked(planned, ctx, opts)
   const reader = new ClassifierReader(req.reader)
   const cls = await classifyOp(reader, classifyCtx, req.opId)
   const transcript = reader.transcript()
@@ -290,11 +354,6 @@ async function underLock(
       planned.opDir
     )
   }
-  if (cls.kind !== 'empty-op-dir' && 'facts' in cls && cls.facts !== null) {
-    const xdev = crossDeviceReason(cls.facts)
-    if (xdev !== null)
-      return refused('plan-changed', `the backup area moved devices: ${xdev}`, planned.opDir)
-  }
   await opts.afterReplan?.()
   const out: RecoveryDone = {
     status: 'done',
@@ -303,6 +362,7 @@ async function underLock(
     from: planned.report.label,
     installed: null,
     kept: [],
+    extraCopy: null,
     manifest: 'untouched',
     audit: { kind: 'none' },
     warnings: [],
@@ -319,6 +379,20 @@ async function underLock(
     const swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
     // The target itself is the first thing this action removed.
     out.swept = { removed: [planned.emptyTarget.path, ...swept.removed], left: swept.left }
+    return out
+  }
+  if (cls.kind === 'no-record') {
+    // 6a-iii: the record is gone and the park intent verifies: finish the park from it.
+    try {
+      const r = await finishFromIntent(ctx, cls, transcript, opts.swap ?? {})
+      out.warnings = r.st.warnings
+      out.extraCopy = r.extraCopy
+    } catch (err) {
+      rethrowLockOrder(err)
+      const d = describe(err)
+      return { status: 'stopped', opId: req.opId, ...d, recordPath: null, warnings: [] }
+    }
+    out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
     return out
   }
   if (cls.kind !== 'state') {
@@ -338,13 +412,17 @@ async function underLock(
     st,
     cls,
     steps: planned.plan.steps,
-    k: { facts: f, transcript },
+    k: { facts: f, transcript, partials: [] },
     out,
     opts,
     journalFile,
   }
   try {
     const adopted = adoptAll(f, listedNames(transcript, f.opDir), transcript)
+    adoptInto(st, transcript, adopted)
+    // Before the first mutation: a cross-device copy that cannot fit refuses, nothing changed.
+    const full = await spaceBlock(st, f, planned.plan.steps)
+    if (full !== null) return refused('state-root-full', full, planned.opDir)
     if ((await runRow(row, req.action)) === 'plan-changed') {
       return refused(
         'plan-changed',
@@ -352,7 +430,11 @@ async function underLock(
         planned.opDir
       )
     }
-    await finishRecovered(st, adopted)
+    if (st.moveSources.size > 0) {
+      out.extraCopy = await finishRecoveredAcross(st, adopted.files, adopted.intent)
+    } else {
+      await finishRecovered(st, [...adopted.files, ...(adopted.intent ? [adopted.intent] : [])])
+    }
   } catch (err) {
     rethrowLockOrder(err)
     const d = describe(err)
