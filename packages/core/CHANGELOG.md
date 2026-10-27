@@ -4,6 +4,29 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 7b: the in-place update of an existing tracked skill folder,
+  as a library with no production caller yet (`update` still calls `install()` until A1 step 9).
+  `buildUpdateTarget` binds the folder `update` diffed: its native real path must be a directory
+  directly inside the skills root's real path and on the same device, the manifest key comes
+  from the folder's own name (never the upstream name), a folder with no entry is refused
+  `untracked`, and a key that does not own the folder (another key records it, by the
+  `installPath`, earliest `installedAt`, then smallest-key rule) is refused `identity-mismatch`
+  naming the owner (`manifestKeyOwner`). `planSkillUpdate` fetches and scans SKILL.md and the
+  optional files through `install()`'s own pipeline, with the optimizer off, and plans a write
+  set of only the files whose bytes differ, each a modify or a create; nothing is ever removed,
+  and a symlink, directory, FIFO or hard link at a write-set path is refused
+  `unsupported-entry`. The new manifest entry is computed once, at plan time: the version, the
+  update time, the SKILL.md hashes, and a hash for every fetched optional file merged into the
+  existing `fileHashes`; every other field is kept. `updateInPlace` runs the swap through the
+  real manifest port with the plan's sealed entries and bytes, and when the backup publish stops
+  on a full state root its result names the command that finishes the update (`next`:
+  `skillsmith doctor recovery --apply <opId>`). `SkillInstallationService.updateInPlace`
+  delegates to it.
+
+- **Internal**: SMI-6531 -- `install()`'s fetch-and-scan pipeline moved to
+  `skill-installation.fetch-scan.ts`, so the in-place update planner runs the same trust-tier,
+  skip-scan, scan and confirmation gates. No behaviour change to `install()`.
+
 - **Internal**: SMI-6531 -- three doc comments on the space checks (`skill-recovery.mark.ts`,
   `skill-swap.space.ts`, `skill-swap.xdev.ts`) are rewrapped to the 100-character width. No
   behaviour change.

@@ -1,16 +1,12 @@
 /** @fileoverview SkillInstallationService — shared install/uninstall business logic (SMI-3483) */
 import * as path from 'path'
 import * as os from 'os'
-import { SecurityScanner } from '../security/index.js'
-import { LockOrderError, assertSkillWriteLockNotHeld } from '../config/lock-tracker.js'
 import type { TrustTier } from '../types/skill.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { RiskScoreHistoryRepository } from '../repositories/RiskScoreHistoryRepository.js'
 import type { Database } from '../db/database-interface.js'
 import {
-  TRUSTED_INSTALL_TIERS,
-  scannerOptionsForTier,
   type ProgressCallback,
   type InstallOptions,
   type InstallResult,
@@ -23,7 +19,6 @@ import {
   type AiDefenceFeedback,
 } from './skill-installation.types.js'
 import { installFromContent } from './skill-installation.content.js'
-import { recordAiDefenceFeedback } from './skill-installation.feedback.js'
 import { installedSkillsOf, ManifestManager } from './skill-manifest.js'
 import {
   hashContent,
@@ -33,19 +28,17 @@ import {
   manifestKeyFor,
 } from './skill-installation.helpers.js'
 import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
+import { writeInstallFiles } from './skill-installation.io.js'
 import {
-  parseSkillIdInternal,
-  validateSkillMd,
-  resolveRegistryInstall,
-} from './skill-installation.validate.js'
-import {
-  fetchFromGitHub,
-  writeInstallFiles,
-  fetchAndScanOptionalFiles,
-} from './skill-installation.io.js'
-import { buildInstallFailure, buildConfirmationRequired } from './skill-installation.errors.js'
+  fetchAndScanOptional,
+  fetchAndScanSkillMd,
+  resolveInstallSource,
+} from './skill-installation.fetch-scan.js'
+import { buildInstallFailure } from './skill-installation.errors.js'
 import { checkInstallTarget } from './skill-installation.target-guard.js'
 import { finalizeSuccessfulInstall } from './skill-installation.service.finalize.js'
+import { updateInPlace } from './skill-update.js'
+import type { UpdateInPlaceOptions, UpdatePlan, UpdateResult } from './skill-update.types.js'
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
 export interface SkillInstallationServiceParams {
@@ -109,42 +102,13 @@ export class SkillInstallationService {
   async install(skillId: string, options: InstallOptions = {}): Promise<InstallResult> {
     let trustTier: TrustTier = 'unknown'
     try {
-      this.onProgress('parse', 'Parsing skill ID')
-      const parsed = parseSkillIdInternal(skillId)
-      let owner: string
-      let repo: string
-      let basePath: string
-      let skillName: string
-      let branch: string = 'main'
-      let fromRegistry = false
-      let indexedContentHash: string | undefined
-      if (parsed.isRegistryId) {
-        if (!this.registryLookup) {
-          return buildInstallFailure('REGISTRY_LOOKUP_UNAVAILABLE', {
-            skillId,
-            installPath: '',
-            error:
-              'Registry lookup not available. ' +
-              'Use a full GitHub URL: install { skillId: "https://github.com/owner/repo" }',
-          })
-        }
-        this.onProgress('lookup', 'Looking up skill in registry')
-        const resolution = await resolveRegistryInstall(skillId, this.registryLookup)
-        if (!resolution.resolved) return resolution.failure
-        owner = resolution.owner
-        repo = resolution.repo
-        basePath = resolution.basePath
-        branch = resolution.branch
-        skillName = resolution.skillName
-        trustTier = resolution.trustTier
-        indexedContentHash = resolution.indexedContentHash
-        fromRegistry = true
-      } else {
-        owner = parsed.owner
-        repo = parsed.repo
-        basePath = parsed.path ? parsed.path + '/' : ''
-        skillName = parsed.path ? path.basename(parsed.path) : repo
-      }
+      // SMI-6531 A1 step 7b: parse, fetch and scan are shared with the in-place
+      // update planner (`skill-installation.fetch-scan.ts`, moved unchanged).
+      const resolved = await resolveInstallSource(skillId, this.registryLookup, this.onProgress)
+      if (!resolved.ok) return resolved.result
+      const source = resolved.value
+      const { owner, repo, skillName } = source
+      trustTier = source.trustTier
 
       const installPath = path.join(this.skillsDir, skillName)
       this.onProgress('manifest', 'Checking manifest')
@@ -173,148 +137,17 @@ export class SkillInstallationService {
           ...(targetCheck.tips !== undefined && { tips: targetCheck.tips }),
         })
       }
-      this.onProgress('fetch', 'Fetching SKILL.md from GitHub')
-      const skillMdPath = basePath + 'SKILL.md'
-      let skillMdContent: string
-      try {
-        skillMdContent = await fetchFromGitHub(owner, repo, skillMdPath, branch)
-      } catch (fetchError) {
-        // A lock-order refusal is a programming error, not a missing SKILL.md.
-        if (fetchError instanceof LockOrderError) throw fetchError
-        const repoUrl = 'https://github.com/' + owner + '/' + repo
-        return buildInstallFailure('FETCH_FAILED', {
-          skillId,
-          installPath,
-          trustTier,
-          error: fromRegistry
-            ? 'This skill is indexed in the Skillsmith registry but its installation source appears broken (SKILL.md not found at ' +
-              (basePath || 'repository root') +
-              '). This is a registry data quality issue. Please report it at https://skillsmith.app/contact?topic=registry-quality. Repository: ' +
-              repoUrl
-            : 'Could not find SKILL.md at ' +
-              (basePath || 'repository root') +
-              '. Skills must have a SKILL.md file with YAML frontmatter to be installable. Repository: ' +
-              repoUrl,
-          tips: fromRegistry
-            ? [
-                'This is a registry data quality issue, not a path format error',
-                'Report the broken entry: https://skillsmith.app/contact?topic=registry-quality',
-              ]
-            : [
-                'This skill may be browse-only (no SKILL.md at expected location)',
-                'Verify the repository exists: ' + repoUrl,
-              ],
-        })
-      }
-      this.onProgress('validate', 'Validating SKILL.md')
-      const validation = validateSkillMd(skillMdContent)
-      if (!validation.valid) {
-        return buildInstallFailure('VALIDATION_FAILED', {
-          skillId,
-          installPath,
-          trustTier,
-          error: 'Invalid SKILL.md: ' + validation.errors.join(', '),
-          tips: [
-            'SKILL.md must have YAML frontmatter with name and description fields',
-            'Content must be at least 100 characters',
-          ],
-        })
-      }
-
-      const contentHashMismatch = // SMI-3510
-        indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
-      // SMI-7056: the tier as shown in messages; an empty tier reads "unknown".
-      const tierName = trustTier || 'unknown'
-      // Security scan — GAP-06: Restrict skipScan to trusted tiers only (SMI-7056: fail-closed allowlist)
-      if (options.skipScan && !TRUSTED_INSTALL_TIERS.has(trustTier)) {
-        return buildInstallFailure('SKIP_SCAN_FORBIDDEN', {
-          skillId,
-          installPath: '',
-          trustTier,
-          error:
-            'Cannot skip security scan for ' +
-            tierName +
-            ' tier skills. ' +
-            'Only official, verified, curated, community, and local tier skills may use skipScan.',
-          tips: [
-            'Trust tier "' + tierName + '" requires a security scan before installation',
-            'If you believe this skill is safe, request a trust tier upgrade from the author',
-          ],
-        })
-      }
-      let securityReport: InstallResult['securityReport']
-      if (!options.skipScan) {
-        this.onProgress('scan', 'Running security scan')
-        const scannerOptions = scannerOptionsForTier(trustTier)
-        const scanner = new SecurityScanner(scannerOptions)
-        assertSkillWriteLockNotHeld('scan: install SKILL.md')
-        securityReport = scanner.scan(skillId, skillMdContent)
-
-        if (!securityReport.passed) {
-          recordAiDefenceFeedback({
-            feedback: this.aiDefenceFeedback,
-            skillMdContent,
-            scanReport: securityReport,
-            blocked: true,
-          })
-          const criticalFindings = securityReport.findings.filter(
-            (f) => f.severity === 'critical' || f.severity === 'high'
-          )
-          // SMI-7056: "Direct GitHub install" only when it was one; a registry skill
-          // stored as `unknown` is an unreviewed tier like any other.
-          const tierContext =
-            !fromRegistry && trustTier === 'unknown'
-              ? ' (Direct GitHub install - strictest scanning applied)'
-              : trustTier === 'experimental'
-                ? ' (Experimental skill - aggressive scanning applied)'
-                : !TRUSTED_INSTALL_TIERS.has(trustTier)
-                  ? ' (Unreviewed trust tier - strictest scanning applied)'
-                  : ''
-
-          return buildInstallFailure('SCAN_REJECTED', {
-            skillId,
-            installPath,
-            trustTier,
-            securityReport,
-            error:
-              'Security scan failed with ' +
-              criticalFindings.length +
-              ' critical/high findings' +
-              tierContext +
-              (!TRUSTED_INSTALL_TIERS.has(trustTier)
-                ? '. skipScan is not available for ' + tierName + ' tier skills.'
-                : '. Use skipScan=true to override (not recommended).'),
-            tips: [
-              'Trust tier: ' + tierName + ' (threshold: ' + scannerOptions.riskThreshold + ')',
-              'Risk score: ' + securityReport.riskScore,
-            ],
-          })
-        }
-      }
-
-      // SMI-3863: Pre-install confirmation gate for registry skills outside the trusted tiers (SMI-7056: fail-closed)
-      const needsConfirmation =
-        fromRegistry && !TRUSTED_INSTALL_TIERS.has(trustTier) && !options.confirmed
-      if (needsConfirmation) {
-        const scanNote = securityReport
-          ? securityReport.passed
-            ? 'Skills in this tier have not been reviewed.'
-            : 'Security scan detected issues.'
-          : 'No security scan was performed.'
-        return buildConfirmationRequired({
-          skillId,
-          installPath,
-          trustTier,
-          securityReport,
-          confirmationReason:
-            'This skill is in the "' +
-            tierName +
-            '" trust tier. ' +
-            scanNote +
-            ' Re-run with confirmed=true to proceed.',
-          tips: ['Trust tier: ' + tierName, 'Use confirmed=true to proceed with installation'],
-        })
-      }
+      // Fetch and validate SKILL.md, the skip-scan gate, the scan and the confirmation gate.
+      const skillMd = await fetchAndScanSkillMd(source, {
+        skillId,
+        installPath,
+        skipScan: options.skipScan,
+        confirmed: options.confirmed,
+        onProgress: this.onProgress,
+        aiDefenceFeedback: this.aiDefenceFeedback,
+      })
+      if (!skillMd.ok) return skillMd.result
+      const { skillMdContent, contentHashMismatch, securityReport } = skillMd.value
       this.onProgress('optimize', 'Applying optimization')
       const optimizeResult = options.skipOptimize
         ? {
@@ -332,46 +165,9 @@ export class SkillInstallationService {
       // malicious optional file rejects the install with no files stranded on disk.
       // (H4: previously writeInstallFiles ran first, so a post-write reject left
       // SKILL.md orphaned; the optional scan also silently `continue`d on failure.)
-      const optionalFiles = await fetchAndScanOptionalFiles(
-        owner,
-        repo,
-        basePath,
-        branch,
-        skillId,
-        options.skipScan ? null : scannerOptionsForTier(trustTier)
-      )
-      if (optionalFiles.failedScans.length > 0) {
-        const first = optionalFiles.failedScans[0]
-        const crit = first.report.findings.filter(
-          (f) => f.severity === 'critical' || f.severity === 'high'
-        )
-        const others = optionalFiles.failedScans.slice(1).map((s) => s.file)
-        // SMI-5422: surface the matched finding type so the author knows what to fix.
-        const topFinding = crit[0] ?? first.report.findings[0]
-        const matchedLabel = topFinding ? (topFinding.category ?? topFinding.type) : 'unknown'
-        return buildInstallFailure('SCAN_REJECTED', {
-          skillId,
-          installPath,
-          trustTier,
-          securityReport: first.report,
-          error:
-            'Optional file "' +
-            first.file +
-            '" failed the security scan with ' +
-            crit.length +
-            ' critical/high finding(s) (risk score ' +
-            first.report.riskScore +
-            ', matched: ' +
-            matchedLabel +
-            '). See https://skillsmith.app/docs/security/scanner',
-          tips: [
-            'Rejected file: ' + first.file + ' (matched: ' + matchedLabel + ')',
-            'Risk score: ' + first.report.riskScore,
-            'Security scanner docs: https://skillsmith.app/docs/security/scanner',
-            ...(others.length > 0 ? ['Other rejected files: ' + others.join(', ')] : []),
-          ],
-        })
-      }
+      const optional = await fetchAndScanOptional(source, skillId, installPath, options.skipScan)
+      if (!optional.ok) return optional.result
+      const optionalFiles = optional.value
       this.onProgress('write', 'Writing skill files')
       // Optional files ride writeInstallFiles' rollback alongside the sub-skills.
       // Dedupe by filename first: a generated sub-skill and a repo optional file
@@ -471,6 +267,15 @@ export class SkillInstallationService {
       companionBaseDir: this.companionBaseDir,
       onProgress: this.onProgress,
     })
+  }
+
+  /**
+   * SMI-6531 A1 step 7b: updates an existing tracked folder in place from a
+   * plan `planSkillUpdate` built (`skill-update.ts`). No production caller
+   * until A1 step 9; `update` still calls `install()`.
+   */
+  async updateInPlace(plan: UpdatePlan, options: UpdateInPlaceOptions = {}): Promise<UpdateResult> {
+    return updateInPlace(plan, { onProgress: this.onProgress, ...options })
   }
 
   async uninstall(skillName: string, options: UninstallOptions = {}): Promise<UninstallResult> {
