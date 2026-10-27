@@ -251,6 +251,7 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
     fail-move-out-ansi) printf '\\033[31mfatal: red\\033[0m\\001\\000tail\\n' >&2; exit 1 ;;
     fail-move-out-long) awk 'BEGIN{s="fatal: "; for(i=0;i<300;i++) s=s "x"; print s}' >&2; exit 1 ;;
     fail-move-out-empty) exit 1 ;;
+    fail-move-out-ctl-first) printf '\\033\\033\\n  \\nfatal: real reason\\n' >&2; exit 1 ;;
     fail-move-out-malformed) printf 'fatal: bad \\377\\376 bytes \\233 C1 \\177DEL end\\n' >&2; exit 1 ;;
     fail-move-out-huge) awk 'BEGIN{printf "fatal: "; for(i=0;i<2000000;i++) printf "x"; print ""}' >&2; exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
@@ -338,4 +339,39 @@ export function trFailEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEn
   )
   chmodSync(join(dir, 'tr'), 0o755)
   return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
+}
+
+/** Put a tool shim first on PATH; `body` is the shim's shell, `real` the real tool's path. */
+function toolShimEnv(
+  repo: Repo,
+  tool: string,
+  body: (real: string) => string,
+  base: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const real = execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim()
+  const dir = join(repo.root, `${tool}-shim`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, tool), `#!/bin/sh\n${body(JSON.stringify(real))}\n`)
+  chmodSync(join(dir, tool), 0o755)
+  return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
+}
+
+/** `readlink` that always names the same relative link, so resolution never ends. */
+export function readlinkLoopEnv(
+  repo: Repo,
+  link: string,
+  base: NodeJS.ProcessEnv = GIT_ENV
+): NodeJS.ProcessEnv {
+  return toolShimEnv(repo, 'readlink', () => `printf '%s\\n' ${JSON.stringify(link)}`, base)
+}
+
+/** `tr` that fails one_line's calls (first argument starts with a backslash) unless LC_ALL=C. */
+export function trNeedsCLocaleEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return toolShimEnv(
+    repo,
+    'tr',
+    (real) =>
+      `case "$1" in '\\'*) [ "$LC_ALL" = C ] || { echo "tr: locale $LC_ALL" >&2; exit 1; } ;; esac\nexec ${real} "$@"`,
+    base
+  )
 }

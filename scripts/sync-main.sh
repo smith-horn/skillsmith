@@ -67,8 +67,9 @@ while [ -L "$self" ]; do
   link=$(readlink "$self")
   case "$link" in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac
 done
+lib="$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd -P)/lib/sync-main-render.sh"
 # shellcheck source=scripts/lib/sync-main-render.sh
-. "$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd -P)/lib/sync-main-render.sh"
+. "$lib" || { printf 'sync-main: ERROR: cannot read %s\n' "$lib" >&2; exit 3; }
 
 discard=0
 for arg in "$@"; do
