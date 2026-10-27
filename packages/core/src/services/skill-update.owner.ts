@@ -16,8 +16,8 @@
  *
  * Pure: the caller resolves `installPath`s (`realPathOf`) before calling, so
  * the rule itself does no I/O. The in-place update refuses a non-owning key
- * (`skill-update.target.ts`); A2 fills `plan.identityMismatch` from the same
- * function.
+ * (`skill-update.target.ts`). A2's `plan.identityMismatch` has no producer
+ * yet; when one is wired it must call this same function.
  *
  * @module @skillsmith/core/services/skill-update.owner
  */
