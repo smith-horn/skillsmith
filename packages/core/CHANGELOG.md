@@ -4,13 +4,19 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- #3198 retro: `skill-update.owner.ts`'s header no longer claims A2
+  fills `plan.identityMismatch` from `manifestKeyOwner` (nothing produces it yet), and the step 7b
+  entry below says which `installPath` errors are `manifest-key-conflict` and which are
+  `probe-failed`. No behaviour change.
+
 - **Added**: SMI-6531 -- A1 step 7b: the in-place update of an existing tracked skill folder,
   as a library with no production caller yet (`update` still calls `install()` until A1 step 9).
   `buildUpdateTarget` binds the folder `update` diffed: its native real path must be a directory
   directly inside the skills root's real path and on the same device, the manifest key comes
   from the folder's own name (never the upstream name), a folder with no entry is refused
-  `untracked`, an entry whose `installPath` is invalid, relative, unresolvable or names another
-  folder is refused `manifest-key-conflict` (§4.3 row 4, taken from A2's own code), and a key
+  `untracked`, an entry whose `installPath` is invalid, relative, absent on disk or names another
+  folder is refused `manifest-key-conflict` (§4.3 row 4, taken from A2's own code; any other
+  error resolving it is `probe-failed`), and a key
   that does not own the folder (another key records it, by the
   `installPath`, earliest `installedAt`, then smallest-key rule) is refused `identity-mismatch`
   naming the owner (`manifestKeyOwner`). `planSkillUpdate` fetches and scans SKILL.md and the
