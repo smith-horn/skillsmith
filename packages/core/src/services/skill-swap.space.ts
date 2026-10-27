@@ -126,7 +126,9 @@ export async function spaceFirst(st: SwapState, src: string, record: TreeRecord 
   }
   const free = s.bavail * s.bsize
   const need = bytesNeeded(shape, s.bsize)
-  const next = FREE_SPACE_REMEDY
+  // The update has already installed the new tree and kept its record, so
+  // rerunning it is refused `recovery-pending`: doctor finishes it.
+  const next = `${FREE_SPACE_REMEDY}, then finish the update with \`skillsmith doctor recovery --apply ${st.opId}\``
   if (free < need) {
     throw new SwapFault(
       'state-root-full',

@@ -475,11 +475,14 @@ export const UNDONE_DIR = 'undone'
 export const PARK_INTENT_FILE = 'park-intent.json'
 
 /**
- * The remedy a `state-root-full` stop names. Every clause is true today: the
- * prune command does not exist yet. A1 step 6c adds `skillsmith doctor backups
- * --prune`; it restores the command as the instruction here. Defined in this
- * fs-free module so the recovery classifier (`skill-recovery.plan.ts`) can
- * print it; `skill-swap.space.ts` re-exports it.
+ * The free-space clause of a `state-root-full` stop, with no next step: each
+ * caller adds its own, because what to run afterwards differs (the update has
+ * already installed the new tree and kept its record; doctor refused with
+ * nothing changed). Every clause is true today: the prune command does not
+ * exist yet. A1 step 6c adds `skillsmith doctor backups --prune`; it restores
+ * the command as the instruction here. Defined in this fs-free module so the
+ * recovery classifier (`skill-recovery.plan.ts`) can print it;
+ * `skill-swap.space.ts` re-exports it.
  */
 export const FREE_SPACE_REMEDY =
-  'free space on the device that holds the Skillsmith state directory, then run the same command again (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'
+  'free space on the device that holds the Skillsmith state directory (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'

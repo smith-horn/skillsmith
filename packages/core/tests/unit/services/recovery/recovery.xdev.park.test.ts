@@ -20,11 +20,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parkTreeIndexed } from '../../../../src/install/park-call.js'
-import {
-  FREE_SPACE_REMEDY,
-  inodesNeeded,
-  shapeOf,
-} from '../../../../src/services/skill-swap.space.js'
+import { inodesNeeded, shapeOf } from '../../../../src/services/skill-swap.space.js'
 import type { SwapOptions } from '../../../../src/services/skill-swap.js'
 import { areaOf, hashOf, OP_ID, readRecord, useTmpCleanup } from '../skill-swap.helpers.js'
 import {
@@ -278,8 +274,12 @@ describe('T-F1 (space block): state-root-full with the free-space remedy, with z
       const a = await act(st, 'apply')
       expect(a.result).toMatchObject({ status: 'refused', reason: 'state-root-full' })
       if (a.result.status === 'refused') {
-        expect(a.result.detail).toContain(FREE_SPACE_REMEDY)
+        expect(a.result.detail).toContain(
+          'free space on the device that holds the Skillsmith state directory'
+        )
         expect(a.result.detail).toContain('not available yet')
+        expect(a.result.detail).toContain('run this command again')
+        expect(a.result.detail).not.toContain('finish the update')
         expect(a.result.detail).not.toContain('run `skillsmith doctor backups --prune`')
       }
       expect(world(st)).toBe(before)

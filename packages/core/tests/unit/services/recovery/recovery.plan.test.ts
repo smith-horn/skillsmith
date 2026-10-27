@@ -22,7 +22,9 @@ import type {
   RecoveryAction,
   RecoveryClass,
 } from '../../../../src/services/skill-recovery.types.js'
-import { makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
+import { computeRecordSha256 } from '../../../../src/services/skill-swap.js'
+import type { SwapRecord } from '../../../../src/services/skill-swap.js'
+import { areaOf, makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
 import {
   keepTree,
   opReport,
@@ -214,6 +216,38 @@ describe('S2 and its neighbours', () => {
     const cls = (await opReport(st)).cls
     expect(offered(planAction(cls, 'apply')).notes.join('\n')).toContain('live-folder-changed')
     expect(dispositionOf(planAction(cls, 'undo'), 'T')).toBe('kept:conflict')
+  })
+
+  it('a full-device marker adds a note naming the free-space clause and rerunning this command', async () => {
+    const fx = file()
+    const st = await s2(fx)
+    const recPath = path.join(st.opDir, 'record.json')
+    const { recordSha256: _h, ...body } = JSON.parse(fs.readFileSync(recPath, 'utf8')) as SwapRecord
+    const marked = {
+      ...body,
+      fullDevice: {
+        cause: 'ENOSPC',
+        stage: 'copy',
+        area: areaOf(fx),
+        opId: st.opId,
+        dest: path.join(areaOf(fx), st.opId),
+      },
+    } as Omit<SwapRecord, 'recordSha256'>
+    fs.writeFileSync(
+      recPath,
+      JSON.stringify({ ...marked, recordSha256: computeRecordSha256(marked) })
+    )
+    const cls = (await opReport(st)).cls
+    expect(cls.kind === 'state' && cls.facts.fullDevice).toMatchObject({ cause: 'ENOSPC' })
+    const note = offered(planAction(cls, 'apply')).notes.find((n) =>
+      n.includes('stopped on a full device')
+    )
+    expect(note).toBeDefined()
+    expect(note).toContain('free space on the device that holds the Skillsmith state directory')
+    expect(note).toContain('not available yet')
+    expect(note).toContain('run this command again')
+    expect(note).not.toContain('run `skillsmith doctor backups --prune`')
+    expect(note).not.toContain('finish the update')
   })
 
   it("S2′: --apply refuses recovery-conflict, --undo is S2's", async () => {

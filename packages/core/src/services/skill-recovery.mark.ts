@@ -22,7 +22,7 @@
  * Too little refuses `state-root-full` naming `FREE_SPACE_REMEDY` (free space
  * by hand; the prune command is not available yet), with nothing changed. A P2 copy temp is not measured here: it is
  * kept as `partial-copy` first, then the copy's own space check runs, so the
- * user can prune it. Like that check, it is a first-attempt filter.
+ * user can remove it by hand. Like that check, it is a first-attempt filter.
  *
  * @module @skillsmith/core/services/skill-recovery.mark
  */
@@ -127,7 +127,7 @@ export async function spaceBlock(
     const free = s.bavail * s.bsize
     const need = bytesNeeded(shape, s.bsize)
     const inodes = inodesNeeded(shape)
-    const next = FREE_SPACE_REMEDY
+    const next = `${FREE_SPACE_REMEDY}, then run this command again`
     if (free < need) {
       return `${area.at} has ${free} bytes free and the backup of ${src} needs about ${need}; nothing was changed; ${next}`
     }

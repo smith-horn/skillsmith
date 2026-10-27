@@ -19,7 +19,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { SwapResult } from '../../../src/services/skill-swap.js'
-import { FREE_SPACE_REMEDY } from '../../../src/services/skill-swap.space.js'
 import { ALL_DELETES, contentOf, runSpied } from './skill-swap.abort.helpers.js'
 import {
   areaOf,
@@ -247,9 +246,13 @@ describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
     expect(hit.asked).toBe(1)
     const r = committedOf(run.result)
     assertStoppedAtPublish(fx, p.input.preTree, r, 'state-root-full')
-    expect(r.incomplete?.detail).toContain(FREE_SPACE_REMEDY)
-    expect(r.incomplete?.detail).toContain('not available yet')
-    expect(r.incomplete?.detail).not.toContain('run `skillsmith doctor backups --prune`')
+    const detail = r.incomplete?.detail
+    expect(detail).toContain('free space on the device that holds the Skillsmith state directory')
+    expect(detail).toContain('not available yet')
+    expect(detail).toContain('skillsmith doctor recovery --apply')
+    expect(detail).not.toContain('run the same command again')
+    expect(detail).not.toContain('run this command again')
+    expect(detail).not.toContain('run `skillsmith doctor backups --prune`')
     expect(areaNames(areaOf(fx))).toEqual([`${OP_ID}.json`])
     expect(treeDeletesX(fx, run.events)).toEqual([])
   })
