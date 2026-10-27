@@ -8,7 +8,7 @@
  * open (a dir sync opens its directory first, so no open means no fsync).
  *
  * Governance S2 also lives here: an opId that is not one path component is
- * refused before any read.
+ * refused before the roots are scanned.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -19,7 +19,7 @@ import { OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { parkedCopies, useOtherDeviceCleanup, useStubs } from '../skill-swap.xdev.helpers.js'
 import { report } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
-import { act, contentSnapshot, killAt } from './recovery.act.helpers.js'
+import { act, contentSnapshot, killAt, requestOf } from './recovery.act.helpers.js'
 import { killed, xs3 } from './recovery.xdev.helpers.js'
 
 useTmpCleanup()
@@ -180,9 +180,27 @@ describe('the listing and the plan agree on what counts as set aside', () => {
     expect([...a.result.paths].sort()).toEqual([landingOf(one), landingOf(two)].sort())
     for (const p of a.result.paths) expect(a.result.detail).toContain(p)
   })
+
+  it('an op dir in one root and a parked copy in another: ambiguous; --root picks each', async () => {
+    const live = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
+    const gone = await forged()
+    const liveRoot = fs.realpathSync(live.fx.skillsDir)
+    const goneRoot = fs.realpathSync(gone.fx.skillsDir)
+    const roots = [liveRoot, goneRoot]
+    const before = world(live)
+    const bare = await planRecovery(requestOf(live, 'apply', { roots }))
+    expect(bare).toMatchObject({ status: 'refused', reason: 'recovery-ambiguous' })
+    if (bare.status !== 'refused') throw new Error('expected a refusal')
+    expect([...bare.paths].sort()).toEqual([live.opDir, landingOf(gone)].sort())
+    expect(world(live)).toBe(before)
+    const pickLive = await planRecovery(requestOf(live, 'apply', { roots, root: liveRoot }))
+    expect(pickLive).toMatchObject({ status: 'planned', opDir: live.opDir })
+    const pickGone = await planRecovery(requestOf(live, 'apply', { roots, root: goneRoot }))
+    expect(pickGone).toMatchObject({ status: 'refused', reason: 'already-parked' })
+  })
 })
 
-describe('governance S2: an opId that is not one path component is refused before any read', () => {
+describe('governance S2: an opId that is not one path component is refused before the roots are scanned', () => {
   /** A real root holding a parked area, with a counter on every reader stat. */
   async function counted(): Promise<{
     roots: string[]

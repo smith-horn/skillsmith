@@ -120,13 +120,24 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     reports.push(r)
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
+  // The listing hides a parked copy in a root that also holds the op dir, so
+  // every hit here is in a root with no op dir of this opId.
+  const parked = reports.flatMap((r) => r.parked.filter((p) => p.opId === request.opId))
+  const where = parked.map((h) => h.path)
+  if (found.length > 0 && parked.length > 0) {
+    return refusal(
+      'recovery-ambiguous',
+      `${request.opId} names an operation directory and a copy already set aside in another ` +
+        'root; pick one with --root <skills root>',
+      [...found.map((x) => x.op.opDir), ...where]
+    )
+  }
   if (found.length === 0) {
-    const hits = reports.flatMap((r) => r.parked.filter((p) => p.opId === request.opId))
-    if (hits.length > 0) {
-      const where = hits.map((h) => h.path)
+    if (parked.length > 0) {
       return refusal(
         'already-parked',
-        `${request.opId} has no op dir, and ${where.join(', ')} exists: it was already set aside. ` +
+        `${request.opId} has no op dir, and ${where.join(', ')} ` +
+          `${where.length === 1 ? 'exists' : 'exist'}: it was already set aside. ` +
           'Doctor takes no action: it neither verifies nor syncs that copy',
         where
       )

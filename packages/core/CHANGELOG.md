@@ -18,8 +18,9 @@ All notable changes to `@skillsmith/core` are documented here.
   removed. A run killed after the record was removed is finished by the same command: an
   operation folder with no record whose `park-intent.json` verifies is set aside as the intent
   says. One already set aside is only reported (`already-parked`: doctor takes no action and
-  neither verifies nor syncs that copy), in the listing too. A `move-source` park intent now also names its
-  verified copy (`backupPath`).
+  neither verifies nor syncs that copy), in the listing too. An opId that is an operation folder
+  in one root and set aside in another is `recovery-ambiguous`; `--root` picks one. A
+  `move-source` park intent now also names its verified copy (`backupPath`).
 
 - **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor
   recovery`, which 6a-iii (above) makes a supported command. Core can now finish or undo, on one
