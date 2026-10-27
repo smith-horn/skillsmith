@@ -237,6 +237,9 @@ async function classifyRecorded(
   const view = observeGroups(r, { opDir, opId, area, rec })
   const resolved = resolveRoles(r, opDir, rec, view.groups, accept)
   const tmpRead = analyzeRecordTmp(r, opDir, names, rec)
+  // `owner.json` is a metadata file doctor unlinks: read through the reader so
+  // its identity and bytes are in the digest, which is what adoption checks.
+  if (names.includes(OWNER_FILE)) r.readFile(path.join(opDir, OWNER_FILE), OWNER_CAP)
   const recordTmp = tmpRead === null ? null : tmpRead.tmp
   const journal = r.journalHasUpdate(opId, ctx.journalFile)
   const nSource = resolved.roles.N.kind === 'source' ? resolved.roles.N.obs : null

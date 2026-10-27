@@ -12,10 +12,12 @@
  *  6-8. Rename 1 (`realDir` → `OP/old`), rename 2 (`OP/new` → `realDir`),
  *     identity checks; a replaced folder is undone (`target-changed`).
  *  9. Hash O: a foreign write before rename 1 warns `backup-holds-foreign-change`.
- *  10. Commit: `check`, `newIdentity` and the re-hash (warning `live-folder-changed`)
- *     before lock 3; then under one `withManifestLock`: (a) CAS, else undo
- *     (`changed-since-plan`); (b) `check` and `newIdentity`, else `stopped`;
- *     (d) pre-commit check and (e) write, both inside `write()`.
+ *  10. Commit (`skill-swap.commit.ts`, shared with doctor): `check`, `newIdentity`
+ *     and the re-hash (warning `live-folder-changed`) before lock 3; then under
+ *     one `withManifestLock`: (a) CAS, else undo (`changed-since-plan`); (b)
+ *     `check` and `newIdentity`, else `stopped`; (d) pre-commit check and (e)
+ *     write, both inside `write()`. A throw from the hold is `stopped` with
+ *     `manifest-write-failed` (or `pre-commit-check-failed` for a lost lock).
  *  11. Journal append; a failure is `committed` with `incomplete: audit`.
  *  12. `publishTree(O, 'backup')`; across devices a verified copy, O left in OP.
  *  13. Metadata unlinks and `rmdir OP`; across devices the park intent, the
@@ -40,12 +42,8 @@
  */
 import fs from 'node:fs'
 import { appendJournalRecord } from '../journal/writer.js'
-import { getJournalSessionId } from '../journal/path.js'
-import { JOURNAL_SCHEMA_VERSION } from '../journal/types.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import { ensureSkillsRoot } from './skill-root.ensure.js'
-import { ManifestEntryChanged } from './skill-manifest.entry.js'
-import { ManifestLockLost } from './skill-manifest.lock.js'
 import { treeHashOf } from './skill-tree.js'
 import { stagingGitignoreHint } from './skill-write-lock.gitignore.js'
 import { bindSkillsRoot, withSkillWriteLock } from './skill-write-lock.js'
@@ -72,7 +70,7 @@ import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.
 import { refuseIfRecorded } from './skill-swap.scan.js'
 import { assertSwapInput, newState } from './skill-swap.state.js'
 import { undoSwap } from './skill-swap.undo.js'
-import { warnIfLiveFolderChanged } from './skill-swap.writeset.js'
+import { assertIdentity, commit, journalInput } from './skill-swap.commit.js'
 import type {
   SwapInput,
   SwapOptions,
@@ -185,56 +183,6 @@ async function reverify(st: SwapState): Promise<void> {
     throw new SwapFault('changed-since-plan', 'the manifest entry changed since it was planned')
 }
 
-/** `lstat(p)` is a directory (not a symlink) with `id`, else `SwapFault(reason)`. */
-function assertIdentity(
-  p: string,
-  id: Parameters<typeof sameIdentity>[0],
-  reason: string,
-  what: string
-): void {
-  const now = bindIdentity(p)
-  if (!now.ok || !sameIdentity(id, now)) {
-    throw new SwapFault(reason, `${what} at ${p} is not the one that was planned`)
-  }
-}
-
-type CommitVerdict = 'committed' | 'cas-failed'
-
-/**
- * Step 10. Before lock 3: `check`, identity, the `beforeCommitRehash` hook and
- * the re-hash. Under it (retried once on `ManifestLockLost`, so no side effect
- * repeats): (a) CAS, (b) `check` and identity, (e) `write()` with (d) inside.
- * A lock lost twice is `pre-commit-check-failed`; a changed entry `cas-failed`.
- */
-async function commit(st: SwapState): Promise<CommitVerdict> {
-  const { realDir, manifest, manifestPath } = st.input
-  check(st)
-  assertIdentity(realDir, st.newIdentity!, 'target-changed', 'the new folder')
-  await hook(st, 'beforeCommitRehash')
-  warnIfLiveFolderChanged(st)
-  try {
-    return await manifest.withManifestLock(async (m): Promise<CommitVerdict> => {
-      if (!(await m.casMatches())) return 'cas-failed'
-      check(st)
-      assertIdentity(realDir, st.newIdentity!, 'target-changed', 'the new folder')
-      try {
-        await m.write()
-      } catch (err) {
-        if (err instanceof ManifestEntryChanged) return 'cas-failed'
-        if (err instanceof ManifestLockLost) throw err
-        rethrowLockOrder(err)
-        throw new SwapFault('manifest-write-failed', messageOf(err), err)
-      }
-      trace(st, { op: 'manifest-write', path: manifestPath })
-      st.phase = 'committed'
-      return 'committed'
-    })
-  } catch (err) {
-    if (!(err instanceof ManifestLockLost)) throw err
-    throw new SwapFault('pre-commit-check-failed', messageOf(err), err)
-  }
-}
-
 /** Undo, step 13, and the `undone` result. Failures propagate (phase `swapped`: `stopped`). */
 async function undoAndFinish(
   st: SwapState,
@@ -249,24 +197,6 @@ async function undoAndFinish(
   }
   const r = { status: 'undone' as const, opId: st.opId, reason, keptAs, keptPath }
   return { ...r, ...(await finishOp(st)), warnings: st.warnings }
-}
-
-/** Step 11's journal input. */
-function journalInput(st: SwapState) {
-  return {
-    schema: JOURNAL_SCHEMA_VERSION,
-    ts: Date.now(),
-    session_id: getJournalSessionId(),
-    tool: 'update',
-    action: 'apply' as const,
-    suggestion_id: st.opId,
-    target_path: st.input.realDir,
-    before_hash: st.input.preTree,
-    after_hash: st.postTree,
-    approval: 'update',
-    backup_ref: st.backupDest,
-    detail: null,
-  }
 }
 
 /** Steps 6-13. */

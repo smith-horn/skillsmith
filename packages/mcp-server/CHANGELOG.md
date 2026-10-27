@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- the update result text for a recovery record that belongs to a moved
+  root or operation folder no longer says the target needs relinking.
+
 - **Security**: SMI-7168 -- `zod` moves from 3.25.76 to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5
   (memory exhaustion when validating oversized constrained collections). The root `body-parser`
   override floor moves to `^2.4.0`, which fixes GHSA-27r3-jxmh-p828 (denial of service through

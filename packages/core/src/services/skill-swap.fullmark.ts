@@ -79,6 +79,7 @@ const KEPT_KIND_TABLE = {
   'edited-new': true,
   'unrecorded-new': true,
   'partial-copy': true,
+  'unused-new': true,
 } satisfies Record<Exclude<PublishKind, 'backup'>, true>
 export const KEPT_KINDS: ReadonlySet<string> = new Set(Object.keys(KEPT_KIND_TABLE))
 

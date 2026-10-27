@@ -20,9 +20,8 @@
  * The listing also covers every skills root doctor discovers (the nine client
  * roots, the workspace roots from the current directory, every root the
  * manifest names, and each `--root`; SMI-6531 step 6a-i): each root's
- * `.skillsmith-writes.lock` and its `.reclaim`, with the same fields. Releasing
- * one of those is a later step; `--release` still accepts only the state
- * root's.
+ * `.skillsmith-writes.lock` and its `.reclaim`, with the same fields, and
+ * `--release` accepts those paths too, under the same rules (SMI-6531 6a-ii).
  * Exit status: 0 when listed or released; 1 when a release is refused, when the
  * arguments are invalid (an unlisted path, the unsafe flag without --release, a
  * state root that is not a directory), or on an unexpected filesystem error.
@@ -31,7 +30,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
@@ -44,7 +43,8 @@ import {
   type DiscoverOptions,
   type LockInspection,
 } from '@skillsmith/core'
-import { collectRoot, doctorRecoveryAction } from './doctor.recovery.js'
+import { collectRoot, doctorRecoveryAction, type DoctorRecoveryOptions } from './doctor.recovery.js'
+import { runRecoveryAction, type RecoveryActionOptions } from './doctor.recovery.action.js'
 
 export interface DoctorLocksOptions {
   stateRoot?: string
@@ -111,6 +111,19 @@ export function describeLock(path: string, insp: LockInspection | null): string[
   return lines
 }
 
+/** Every discovered skills root's write lock and its `.reclaim`, whether present or not. */
+async function rootLockPaths(options: DoctorLocksOptions): Promise<string[]> {
+  const found = await discoverRoots({
+    ...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
+    ...(options.root === undefined || options.root.length === 0 ? {} : { roots: options.root }),
+    ...options.discovery,
+  })
+  return rootLockEntries(
+    found.roots.map((r) => r.root),
+    () => null
+  ).map((e) => e.path)
+}
+
 /** The skills-root write locks: each discovered root's lock and reclaim lock that exists. */
 async function printRootLocks(options: DoctorLocksOptions): Promise<void> {
   const found = await discoverRoots({
@@ -173,12 +186,17 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
   }
 
   // The lock file itself is never resolved (doctor refuses a symlinked lock);
-  // its folder is, so a symlinked folder can't name a file elsewhere.
+  // its folder is, so a symlinked folder can't name a file elsewhere. The
+  // releasable set is what the listing shows: the state root's locks and each
+  // discovered skills root's write lock and its `.reclaim` (SMI-6531 6a-ii).
   const asGiven = resolve(options.release)
   const target = join(realOrSelf(dirname(asGiven)), basename(asGiven))
-  if (!paths.includes(target)) {
+  const releasable = [...paths, ...(await rootLockPaths(options))]
+  if (!releasable.includes(target)) {
     console.error(
-      chalk.red(`${target} is not a lock doctor lists. It releases only:\n  ${paths.join('\n  ')}`)
+      chalk.red(
+        `${target} is not a lock doctor lists. It releases only:\n  ${releasable.join('\n  ')}`
+      )
     )
     process.exitCode = 1
     return
@@ -230,6 +248,12 @@ export async function runDoctorLocks(options: DoctorLocksOptions): Promise<void>
   console.log(chalk.green(`Released ${target}.`))
 }
 
+export const doctorRecoveryApplyAction = withTelemetry(runRecoveryAction, {
+  source: 'cli',
+  extractSkillId: () => 'doctor-recovery-action',
+  extractFramework: () => 'cli',
+})
+
 export const doctorLocksAction = withTelemetry(runDoctorLocks, {
   source: 'cli',
   extractSkillId: () => 'doctor-locks',
@@ -247,7 +271,16 @@ export function createDoctorCommand(): Command {
     .option('--root <dir>', 'Also scan this skills root (repeatable)', collectRoot, [] as string[])
     .option('--state-root <dir>', 'State root to read instead of the discovered ones')
     .option('--json', 'Print the listing as JSON')
-    .action(doctorRecoveryAction)
+    // SMI-6531 6a-ii: one-device actions, an internal milestone; hidden until 6a-iii.
+    .addOption(new Option('--apply <opId>', 'Finish an unfinished update').hideHelp())
+    .addOption(new Option('--undo <opId>', 'Undo an unfinished update').hideHelp())
+    .addOption(new Option('--accept-identity', 'Waive the identity check only').hideHelp())
+    .addOption(new Option('--yes', 'Proceed without the prompt').hideHelp())
+    .action((opts: RecoveryActionOptions & DoctorRecoveryOptions) =>
+      opts.apply !== undefined || opts.undo !== undefined
+        ? doctorRecoveryApplyAction(opts)
+        : doctorRecoveryAction(opts)
+    )
   doctor
     .command('locks')
     .description("List Skillsmith's lock files, or release a stuck one")

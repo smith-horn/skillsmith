@@ -4,6 +4,21 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor
+  recovery`; no supported command yet. Core can now finish or undo, on one device, an update a
+  crash left: it plans without a lock, then takes the root's write lock, reads everything again
+  and changes nothing if any of it differs. It removes no folder, only its own metadata files
+  (each checked by identity and bytes first) and the emptied operation folder. Records on another
+  device, or marked full-device, are refused for now. The audit record is appended only if the
+  journal holds none for the operation; a journal it cannot extend is reported, not fatal.
+
+- **Internal**: SMI-6531 -- A1 step 6a-ii: the update's manifest commit moved to
+  `skill-swap.commit.ts`, shared with that groundwork. A failure inside the manifest lock (an
+  unreadable manifest, or the lock not acquired) now stops `manifest-write-failed` naming the
+  cause, instead of `write-failed`; the record is kept either way. The update remediation data
+  for a moved record and for a changed identity now points to `doctor recovery` instead of the
+  manifest reconcile tool. No command calls any of this yet.
+
 - **Added**: SMI-6531 -- A1 step 6a-i: the read-only half of `skillsmith doctor recovery`, in
   core. It finds every skills root (the nine client roots, the workspace roots from the current
   directory, every root the manifest names, and any extra `--root`), counting a root reached by

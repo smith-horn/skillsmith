@@ -337,6 +337,7 @@ function tmpFacts(
     path: tmpPath,
     thisOps: facts.validForOp,
     treeHash: facts.treeHash,
+    identity: facts.identity,
     sameInodeAsSidecar: same,
     emptySingleLink: st.ok && st.type === 'file' && st.nlink === 1 && emptyFile(r, tmpPath),
   }
