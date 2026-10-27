@@ -15,9 +15,8 @@ At session end, automatically saves:
 
 ### 2. Session Restoration
 ```javascript
-// Using MCP tools for memory operations (memory_usage has no action-dispatch form in v3 —
-// use the discrete tool for each action). Illustrative only: `session-state` is a
-// placeholder key that nothing in this repo writes; substitute a key you stored.
+// Illustrative only; not runnable here: `session-state` is a placeholder key that
+// nothing in this repo writes (SMI-6744 A6.1 governs writes). One discrete tool per action.
 mcp__ruflo__memory_retrieve({
   "key": "session-state",
   "namespace": "sessions"
@@ -29,10 +28,7 @@ mcp__ruflo__session_restore({
 })
 ```
 
-**Fallback with npx:**
-```bash
-npx -y ruflo@3.14.2 hooks session-restore --session-id "sess-123"
-```
+There is no CLI fallback here: the host ruflo CLI is denied, and the served store is separate from the host's.
 
 ### 3. Memory Types
 
@@ -56,12 +52,9 @@ npx -y ruflo@3.14.2 hooks session-restore --session-id "sess-123"
 
 ### 4. Privacy & Control
 ```javascript
-// Illustrative only: `session-state` in namespace `sessions` is a placeholder, and
-// nothing in this repo writes it. Substitute a key you stored yourself, because
-// memory_retrieve and memory_delete need an exact key and there is no way to list keys
-// (no action-dispatch form in v3 — discrete tool per action). memory_list is denied (SMI-7184: its sql.js fallback rewrites memory.db
-// unguarded). memory_retrieve and memory_delete also rewrite it in the fallback, but under
-// the store lock, and both refuse while WAL sidecars exist.
+// Illustrative only; not runnable here: `session-state` is a placeholder key that
+// nothing in this repo writes. Both tools need an exact key.
+// (memory_list is denied, SMI-7184; see claude-flow-guide.md.)
 mcp__ruflo__memory_retrieve({
   "key": "session-state",
   "namespace": "sessions"
@@ -79,13 +72,7 @@ mcp__ruflo__memory_export({
 })
 ```
 
-**Manual control:**
-```bash
-# View stored memory
-ls .ruflo/memory/
-
-# Disable memory persistence — env var not verified in v3, do not rely on this
-```
+**Manual control:** none documented here. The store lives inside the `skillsmith-ruflo-1` service, not in this checkout, and no verified switch disables persistence.
 
 ## Benefits
 - 🧠 Contextual awareness

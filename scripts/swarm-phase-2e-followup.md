@@ -32,11 +32,7 @@ claude -p "Execute Phase 2e Follow-up Batch 1: Quick Wins
 You are continuing work on the Skillsmith project. Phase 2e is complete but code review identified follow-up items. This batch contains 4 small issues that can be completed quickly.
 
 ## Memory Coordination
-Before starting, retrieve context:
-- npx claude-flow memory get swarm/phase-2e/context
-
-Store your progress after each issue:
-- npx claude-flow memory store swarm/batch1/SMI-XXX '{\"status\": \"done\", \"files\": [...]}'
+Not runnable here: the host ruflo and claude-flow CLIs are Bash-denied in `.claude/settings.json`, and run from the host they would use the host checkout's `.swarm` store, not the served one (SMI-7184; SMI-6744 A6.1 governs writes). Take context from git history and the Linear issues below, and record progress as Linear comments.
 
 ## Issues to Complete
 
@@ -60,7 +56,7 @@ Store your progress after each issue:
 **File:** Create docs/guides/swarm-recovery.md
 **Task:**
 1. Document how to detect a stuck session
-2. Document memory retrieval by key: npx claude-flow memory retrieve -k <key> (never memory list, SMI-7184)
+2. Document that the npx claude-flow memory commands are not runnable here (Bash-denied; they would use the host store, not the served one, SMI-7184), and document recovery from git and Linear state instead
 3. Document agent restart procedures
 4. Add troubleshooting FAQ
 5. Link from main README or CLAUDE.md
@@ -100,10 +96,7 @@ claude -p "Execute Phase 2e Follow-up Batch 2: Medium Improvements
 Batch 1 is complete (SMI-757, 759, 762, 763). Now tackling 3 medium-sized issues.
 
 ## Memory Coordination
-Retrieve Batch 1 status:
-- npx claude-flow memory get swarm/batch1/status
-
-Store progress after each issue.
+Not runnable here (see Batch 1's Memory Coordination note). Take Batch 1 status from git history and its Linear issues, and record progress as Linear comments.
 
 ## Issues to Complete
 
@@ -275,9 +268,9 @@ If a session dies mid-batch:
 # Check what's committed
 git log --oneline -5
 
-# Check memory for progress, then resume from the last known state
-# (read by key; memory list is denied, SMI-7184)
-npx claude-flow memory retrieve -k swarm/batch1/status
+# Memory steps are not runnable here (see the Memory Coordination note), and nothing
+# writes a batch status key. Resume from the committed state above and the batch's
+# Linear issues.
 ```
 
 ---
