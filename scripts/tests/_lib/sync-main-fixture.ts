@@ -367,9 +367,10 @@ export function readlinkLoopEnv(
 
 /**
  * `tr`, `awk` and `cut` shims that fail one_line's own calls unless LC_ALL=C.
- * one_line's calls are recognised by their arguments: any `tr` argument that
- * starts with a backslash, `awk -v pick=...`, and `cut -c1-200`. Every other
- * call (the script uses awk and tr elsewhere) goes straight to the real tool.
+ * one_line's calls are recognised loosely, by any argument that matches: a
+ * `tr` argument starting with a backslash, an `awk` argument starting `pick=`,
+ * or `cut`'s exact `-c1-200`. No other call in sync-main.sh matches those, so
+ * every other call (it uses awk and tr elsewhere) goes to the real tool.
  */
 export function oneLineNeedsCLocaleEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const check = (pattern: string) => (real: string) =>
