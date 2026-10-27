@@ -9,7 +9,9 @@ All notable changes to `@skillsmith/core` are documented here.
   `buildUpdateTarget` binds the folder `update` diffed: its native real path must be a directory
   directly inside the skills root's real path and on the same device, the manifest key comes
   from the folder's own name (never the upstream name), a folder with no entry is refused
-  `untracked`, and a key that does not own the folder (another key records it, by the
+  `untracked`, an entry whose `installPath` is invalid, relative, unresolvable or names another
+  folder is refused `manifest-key-conflict` (§4.3 row 4, taken from A2's own code), and a key
+  that does not own the folder (another key records it, by the
   `installPath`, earliest `installedAt`, then smallest-key rule) is refused `identity-mismatch`
   naming the owner (`manifestKeyOwner`). `planSkillUpdate` fetches and scans SKILL.md and the
   optional files through `install()`'s own pipeline, with the optimizer off, and plans a write
@@ -26,6 +28,14 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Internal**: SMI-6531 -- `install()`'s fetch-and-scan pipeline moved to
   `skill-installation.fetch-scan.ts`, so the in-place update planner runs the same trust-tier,
   skip-scan, scan and confirmation gates. No behaviour change to `install()`.
+
+- **Internal**: SMI-6531 -- the update-target gate's §4.3 row 4 checks are extracted unchanged as
+  `entryInstallPathVerdict`, `resolvedPathVerdict` and `rowFourReason`, which both the gate and
+  the in-place update's target builder call. No behaviour change to the gate.
+
+- **Internal**: SMI-6531 -- `skill-swap.xdev.ts`'s header now states the full `sourceUnchanged`
+  rule for a full-device keep (`ENOSPC` or `EDQUOT`): the source still matches its sidecar and
+  the kept temp is a subset of it. No behaviour change.
 
 - **Internal**: SMI-6531 -- three doc comments on the space checks (`skill-recovery.mark.ts`,
   `skill-swap.space.ts`, `skill-swap.xdev.ts`) are rewrapped to the 100-character width. No
