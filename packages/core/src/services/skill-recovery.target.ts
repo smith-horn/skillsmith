@@ -5,16 +5,19 @@
  *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
  * write: `listRoot`), finds every op dir named `opId`, and:
- *  - none: `recovery-not-offered` ("no operation directory named it");
+ *  - none: `recovery-not-offered` ("no operation directory named it"), except:
+ *    a parked area `ST/.skillsmith-parked/<opId>` in a root is `already-parked`
+ *    (report only: nothing is acted on, the CLI exits 0), unless a scanned root's
+ *    staging is unsafe (unreadable): that root may hold the op, so it is
+ *    `recovery-ambiguous`, naming the unsafe roots and the parked paths;
+ *  - an op dir in one root and a parked copy in another: `recovery-ambiguous`;
  *  - more than one (a copied root, E29 6b): `recovery-ambiguous`, naming each,
  *    unless `--root` narrows the search to one root, compared by native real
  *    path, so any spelling of a root selects it and only it;
  *  - one: `planAction(cls, action)`. Its refusals stand, the other-user one
- *    first (Q8: before any lock is requested). 6a-ii is one device only: a plan
- *    whose record has a full-device marker, whose keeps include a cross-device
- *    sub-state, or whose backup area is on another device than the skills
- *    root refuses `recovery-not-offered` ("cross-device recovery is not
- *    available yet").
+ *    first (Q8: before any lock is requested). Since 6a-iii a plan across
+ *    devices, or with a full-device marker, is offered like any other: its
+ *    keeps copy and verify, and the finish parks the op dir (UD28).
  *
  * The plan carries the op's digest (`digestOf(transcript, plan)`), which the
  * re-plan under lock 1 must reproduce, and the sweep's candidates: the
@@ -26,12 +29,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { listRoot } from './skill-recovery.listing.js'
 import type { RootReport } from './skill-recovery.listing.js'
-import type {
-  ActionPlan,
-  OpFacts,
-  RecoveryClass,
-  RecoveryRefuseReason,
-} from './skill-recovery.types.js'
+import type { ActionPlan, RecoveryRefuseReason } from './skill-recovery.types.js'
 import type { SweepEntry } from './skill-recovery.finish.js'
 import type {
   PlannedRecovery,
@@ -72,33 +70,6 @@ function identityAt(p: string): RecordIdentity | null {
   }
 }
 
-/** The device of the nearest existing ancestor of `p` (the area may not exist yet). */
-function deviceOf(p: string): string | null {
-  for (let at = p; ; at = path.dirname(at)) {
-    const id = identityAt(at)
-    if (id !== null) return id.dev
-    if (path.dirname(at) === at) return null
-  }
-}
-
-/** Why this plan is not one-device recovery (6a-iii's), or null when it is. */
-export function crossDeviceReason(f: OpFacts): string | null {
-  if (f.fullDevice !== null) {
-    return `the record carries a full-device marker (${f.fullDevice.cause} while ${f.fullDevice.stage})`
-  }
-  const g = f.groups.find((x) => x.crossDevice)
-  if (g !== undefined) return `the keep ${g.base} is a cross-device copy (${g.state})`
-  const areaDev = deviceOf(f.area)
-  if (areaDev === null || areaDev !== f.record.rootIdentity.dev) {
-    return `the backup area ${f.area} is on another device than the skills root`
-  }
-  return null
-}
-
-/** The facts a class carries, when it carries them. */
-const factsOf = (cls: RecoveryClass): OpFacts | null =>
-  'facts' in cls && cls.facts !== null ? cls.facts : null
-
 /** The leftover probes and other empty op dirs of `r`, by the identity seen now. */
 function sweepOf(r: RootReport, target: string): SweepEntry[] {
   const out: SweepEntry[] = []
@@ -127,6 +98,12 @@ function emptyPlan(action: 'apply' | 'undo'): Extract<ActionPlan, { offered: tru
 
 /** Targets `request.opId` across the roots and returns the plan, or why it is not offered. */
 export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPlanResult> {
+  if (!opIdOk(request.opId)) {
+    return refusal(
+      'recovery-not-offered',
+      `${JSON.stringify(request.opId)} is not an operation id (one path component)`
+    )
+  }
   const wanted = request.root === undefined ? null : realOf(request.root)
   const roots = request.roots.filter((r) => wanted === null || realOf(r) === wanted)
   if (wanted !== null && roots.length === 0) {
@@ -136,16 +113,56 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     )
   }
   const found: Array<{ root: RootReport; op: RootReport['ops'][number] }> = []
+  const reports: RootReport[] = []
   for (const root of roots) {
     const r = await listRoot(root, {
       ...(request.euid === undefined ? {} : { euid: request.euid }),
       ...(request.journalFile === undefined ? {} : { journalFile: request.journalFile }),
       ...(request.acceptIdentity === undefined ? {} : { acceptIdentity: request.acceptIdentity }),
       ...(request.reader === undefined ? {} : { reader: request.reader }),
+      stateRoots: request.stateRoots ?? [],
     })
+    reports.push(r)
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
+  // The listing hides a parked copy in a root that also holds the op dir, so
+  // every hit here is in a root with no op dir of this opId.
+  const parked = reports.flatMap((r) => r.parked.filter((p) => p.opId === request.opId))
+  const where = parked.map((h) => h.path)
+  if (found.length > 0 && parked.length > 0) {
+    return refusal(
+      'recovery-ambiguous',
+      `${request.opId} names an operation directory and a copy already set aside in another ` +
+        'root; pick one with --root <skills root>',
+      [...found.map((x) => x.op.opDir), ...where]
+    )
+  }
   if (found.length === 0) {
+    const unsafe = reports.filter((r) => r.staging === 'unsafe')
+    if (parked.length > 0 && unsafe.length > 0) {
+      // A root whose staging could not be read may hold this very op dir, so
+      // "already set aside" cannot be concluded from the other roots.
+      return refusal(
+        'recovery-ambiguous',
+        `${request.opId} has no op dir in the roots that could be read, and ${where.join(', ')} ` +
+          `${where.length === 1 ? 'exists' : 'exist'}, but ${unsafe.map((r) => r.root).join(', ')} ` +
+          (unsafe.length === 1
+            ? 'could not be read (its staging is unsafe), so it may hold the operation: ' +
+              'fix that root, or pick one with --root <skills root>'
+            : 'could not be read (their staging is unsafe), so they may hold the operation: ' +
+              'fix those roots, or pick one with --root <skills root>'),
+        [...unsafe.map((r) => r.root), ...where]
+      )
+    }
+    if (parked.length > 0) {
+      return refusal(
+        'already-parked',
+        `${request.opId} has no op dir, and ${where.join(', ')} ` +
+          `${where.length === 1 ? 'exists' : 'exist'}: it was already set aside. ` +
+          'Doctor takes no action: it neither verifies nor syncs that copy',
+        where
+      )
+    }
     return refusal(
       'recovery-not-offered',
       `no operation directory named ${request.opId} is in the scanned skills roots`
@@ -179,12 +196,18 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
   }
   const plan = planAction(op.cls, request.action)
   if (!plan.offered) return refusal(plan.reason, plan.detail, [op.opDir])
-  const f = factsOf(op.cls)
-  const xdev = f === null ? null : crossDeviceReason(f)
-  if (xdev !== null) {
-    return refusal('recovery-not-offered', `cross-device recovery is not available yet: ${xdev}`, [
-      op.opDir,
-    ])
-  }
   return { ...base, plan, emptyTarget: null }
+}
+
+/** The opId is one path component (governance S2): checked before any path is joined or read. */
+function opIdOk(opId: string): boolean {
+  return (
+    opId !== '' &&
+    opId !== '.' &&
+    opId !== '..' &&
+    !opId.includes('/') &&
+    !opId.includes('\\') &&
+    !opId.includes('\0') &&
+    path.basename(opId) === opId
+  )
 }

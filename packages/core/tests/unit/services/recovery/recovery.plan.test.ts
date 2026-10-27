@@ -378,6 +378,7 @@ describe('what every other class says', () => {
       hasParkIntent: false,
       recordTmp: null,
       otherUid: null,
+      intent: null,
     }
     expect(planAction(noRecord, 'clean-staging').offered).toBe(true)
     expect(planAction(noRecord, 'apply').offered).toBe(false)

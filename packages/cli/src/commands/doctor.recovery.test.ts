@@ -80,8 +80,11 @@ describe('skillsmith doctor recovery', () => {
     expect(text).toContain(`${u.opId}  S2 swapped`)
     expect(text).toContain(`backup: ${u.backupDest}`)
     expect(text).toContain('manifest entry: pre')
-    expect(text).toContain(`skillsmith doctor recovery --apply ${u.opId}\` (not available yet)`)
-    expect(text).toContain(`skillsmith doctor recovery --undo ${u.opId}\` (not available yet)`)
+    // 6a-iii: --apply and --undo are supported; the listing names them without a caveat.
+    expect(text).toContain(`--apply: \`skillsmith doctor recovery --apply ${u.opId}\`\n`)
+    expect(text).toContain(`--undo: \`skillsmith doctor recovery --undo ${u.opId}\`\n`)
+    expect(text).not.toContain(`--apply ${u.opId}\` (not available yet)`)
+    expect(text).not.toContain(`--undo ${u.opId}\` (not available yet)`)
     expect(text).toContain('O: kept as backup')
     expect(text).toContain('O: installed')
     // The identities and hashes it compared are printed.
@@ -312,13 +315,14 @@ describe('the doctor command', () => {
       '--accept-identity',
       '--yes',
     ])
-    // 6a-ii's options are registered hidden: no help text names them until 6a-iii.
+    // 6a-iii: the supported endpoint, so the help names every option and hides none.
     const recovery = cmd.commands.find((c) => c.name() === 'recovery')!
-    const hidden = recovery.options.filter((o) => o.hidden).map((o) => o.long)
-    expect(hidden).toEqual(['--apply', '--undo', '--accept-identity', '--yes'])
+    expect(recovery.options.filter((o) => o.hidden)).toEqual([])
     const help = recovery.helpInformation()
     expect(help).toContain('--state-root')
-    for (const f of hidden) expect(help).not.toContain(f!)
+    for (const f of ['--apply <opId>', '--undo <opId>', '--accept-identity', '--yes']) {
+      expect(help).toContain(f)
+    }
     expect(flags('locks')).toEqual([
       '--state-root',
       '--root',

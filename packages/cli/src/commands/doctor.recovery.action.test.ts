@@ -252,6 +252,64 @@ describe('the empty target op dir', () => {
   })
 })
 
+describe('an op already set aside (report only, owner decision 2026-10-27)', () => {
+  it('--apply says doctor takes no action, exits 0 and changes nothing; the listing names it', async () => {
+    const u = plantCrashedUpdate(base)
+    const landing = path.join(u.root, '.skillsmith-staging', '.skillsmith-parked', u.opId)
+    fs.mkdirSync(landing, { recursive: true })
+    fs.renameSync(u.opDir, path.join(landing, `${u.opId}-0123abcd`))
+    const before = snapshot(base)
+    await runRecoveryAction({ apply: u.opId, yes: true })
+    expect(process.exitCode).toBe(0)
+    expect(out.join('\n')).toContain('Not done (already-parked)')
+    expect(out.join('\n')).toContain('takes no action')
+    expect(snapshot(base)).toEqual(before)
+    expect(calls.executes).toBe(0)
+    out = []
+    const cmd = createDoctorCommand()
+    cmd.exitOverride()
+    await cmd.parseAsync(['node', 'doctor', 'recovery'])
+    expect(out.join('\n')).toContain('already set aside')
+    expect(out.join('\n')).toContain(`${u.opId}  ${landing}`)
+  })
+
+  it('the pair: an unknown opId with no parked area is still exit 1', async () => {
+    plantCrashedUpdate(base)
+    await runRecoveryAction({ apply: 'c'.repeat(32), yes: true })
+    expect(process.exitCode).toBe(1)
+  })
+
+  it('a different opId than the parked one is exit 1 and changes nothing', async () => {
+    const u = plantCrashedUpdate(base)
+    const landing = path.join(u.root, '.skillsmith-staging', '.skillsmith-parked', u.opId)
+    fs.mkdirSync(landing, { recursive: true })
+    fs.renameSync(u.opDir, path.join(landing, `${u.opId}-0123abcd`))
+    const before = snapshot(base)
+    await runRecoveryAction({ apply: 'c'.repeat(32), yes: true })
+    expect(process.exitCode).toBe(1)
+    expect(out.join('\n')).toContain('recovery-not-offered')
+    expect(snapshot(base)).toEqual(before)
+    expect(calls.executes).toBe(0)
+  })
+
+  it('a parked copy while another scanned root is unreadable is exit 1 and changes nothing', async () => {
+    const u = plantCrashedUpdate(base)
+    const landing = path.join(u.root, '.skillsmith-staging', '.skillsmith-parked', u.opId)
+    fs.mkdirSync(landing, { recursive: true })
+    fs.renameSync(u.opDir, path.join(landing, `${u.opId}-0123abcd`))
+    const unreadable = path.join(base, 'unreadable-root')
+    fs.mkdirSync(unreadable)
+    fs.writeFileSync(path.join(unreadable, '.skillsmith-staging'), 'x')
+    const before = snapshot(base)
+    await runRecoveryAction({ apply: u.opId, yes: true, root: [u.root, unreadable] })
+    expect(process.exitCode).toBe(1)
+    expect(out.join('\n')).toContain('recovery-ambiguous')
+    expect(out.join('\n')).toContain('may hold the operation')
+    expect(snapshot(base)).toEqual(before)
+    expect(calls.executes).toBe(0)
+  })
+})
+
 describe('through commander', () => {
   it('`doctor recovery --undo <opId> --yes` runs the action; without the flags it lists', async () => {
     const u = plantCrashedUpdate(base)
@@ -264,5 +322,122 @@ describe('through commander', () => {
     expect(out.join('\n')).toContain('Done: undo')
     expect(fs.readFileSync(path.join(u.skillDir, 'SKILL.md'), 'utf8')).toBe('# old\n')
     expect(entry(u.stateRoot)).toEqual({ version: '1.0.0' })
+  })
+})
+
+describe('across devices (6a-iii): the op dir is parked, and a park that does not finish exits 4', () => {
+  const shm: string[] = []
+  afterEach(() => {
+    for (const d of shm.splice(0)) fs.rmSync(d, { recursive: true, force: true })
+  })
+  /** A crashed update whose state root (and so its backup area) is on another device. */
+  function plantAcross() {
+    const stateRoot = fs.realpathSync(fs.mkdtempSync('/dev/shm/doctor-xdev-'))
+    shm.push(stateRoot)
+    const u = plantCrashedUpdate(base, 'a'.repeat(32), stateRoot)
+    expect(fs.statSync(stateRoot).dev).not.toBe(fs.statSync(u.root).dev)
+    return u
+  }
+  const nulls = {
+    reason: null,
+    path: null,
+    entry: null,
+    treeHash: null,
+    errno: null,
+    opId: null,
+    sidecarPath: null,
+    detail: null,
+    originPath: null,
+    heldPath: null,
+    misplaced: null,
+    parkedAreaCreated: null,
+  }
+
+  it('--apply --yes: done, exit status unset (0), the backup made and the op dir parked', async () => {
+    const u = plantAcross()
+    await runRecoveryAction({ apply: u.opId, yes: true })
+    expect(process.exitCode).toBeUndefined()
+    expect(fs.existsSync(u.backupDest)).toBe(true)
+    expect(fs.existsSync(u.opDir)).toBe(false)
+    expect(out.join('\n')).toContain('was moved aside to')
+    expect(entry(u.stateRoot)).toEqual({ version: '2.0.0' })
+  })
+
+  const OUTCOMES = [
+    ['kept', { status: 'kept', reason: 'identity-changed' }],
+    ['held', { status: 'held', reason: 'changed-during-move' }],
+    ['stopped', { status: 'stopped', reason: 'park-failed', errno: 'EACCES' }],
+  ] as const
+  for (const [label, r] of OUTCOMES) {
+    it(`a park that ends ${label}: done, removal-not-done, exit 4 (UD32)`, async () => {
+      const u = plantAcross()
+      const heldAt = path.join(base, 'held-here')
+      await runRecoveryAction({
+        apply: u.opId,
+        yes: true,
+        runOptions: {
+          swap: {
+            park: async () =>
+              ({ ...nulls, ...r, ...(label === 'held' ? { path: heldAt } : {}) }) as never,
+          },
+        },
+      })
+      expect(process.exitCode).toBe(4)
+      const text = out.join('\n')
+      expect(text).toContain('Done: apply')
+      if (label === 'held') {
+        // W5: a held park moved the op dir; the line says so and asks for a check, not a rerun.
+        expect(text).toContain(
+          `removal-not-done: the op dir ${u.opDir} was moved to ${heldAt} but is held there (held/`
+        )
+        expect(text).not.toContain('was not set aside')
+        expect(text).toContain('check it before relying on it')
+      } else {
+        expect(text).toContain(
+          `removal-not-done: the op dir ${u.opDir} was not set aside (${label}/`
+        )
+        // Governance S1: the same command finishes it, not --clean-staging.
+        expect(text).toContain(
+          `run \`skillsmith doctor recovery --apply ${u.opId}\` again to finish setting it aside`
+        )
+      }
+      expect(text).not.toContain('--clean-staging')
+      expect(fs.existsSync(u.backupDest)).toBe(true)
+      expect(fs.existsSync(path.join(u.opDir, 'record.json'))).toBe(false)
+      expect(entry(u.stateRoot)).toEqual({ version: '2.0.0' })
+    })
+  }
+
+  it('--undo whose park ends kept: the hint names --undo, the command that was run', async () => {
+    const u = plantAcross()
+    await runRecoveryAction({
+      undo: u.opId,
+      yes: true,
+      runOptions: {
+        swap: { park: async () => ({ ...nulls, status: 'kept', reason: 'op-not-empty' }) as never },
+      },
+    })
+    expect(process.exitCode).toBe(4)
+    expect(out.join('\n')).toContain(
+      `run \`skillsmith doctor recovery --undo ${u.opId}\` again to finish setting it aside`
+    )
+  })
+
+  it('--json: the result carries the removal-not-done warning, and the exit is still 4', async () => {
+    const u = plantAcross()
+    await runRecoveryAction({
+      apply: u.opId,
+      yes: true,
+      json: true,
+      runOptions: {
+        swap: { park: async () => ({ ...nulls, status: 'kept', reason: 'op-not-empty' }) as never },
+      },
+    })
+    expect(process.exitCode).toBe(4)
+    const doc = JSON.parse(out.join('\n')) as {
+      result: { status: string; warnings: Array<{ code: string }> }
+    }
+    expect(doc.result.status).toBe('done')
+    expect(doc.result.warnings.map((w) => w.code)).toContain('removal-not-done')
   })
 })

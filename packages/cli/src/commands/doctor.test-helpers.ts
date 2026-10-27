@@ -66,9 +66,13 @@ export interface PlantedUpdate {
  * verifies, and the manifest entry still as planned. Built by hand with the
  * same fields `swapInPlace` writes, so `doctor recovery` reads a real record.
  */
-export function plantCrashedUpdate(base: string, opId = 'a'.repeat(32)): PlantedUpdate {
+export function plantCrashedUpdate(
+  base: string,
+  opId = 'a'.repeat(32),
+  /** The state root (default `<base>/.skillsmith`); another device makes the backup cross-device. */
+  stateRoot = join(base, '.skillsmith')
+): PlantedUpdate {
   const root = realpathSync(join(base, 'clients', 'claude-code'))
-  const stateRoot = join(base, '.skillsmith')
   mkdirSync(stateRoot, { recursive: true })
   const staging = join(root, '.skillsmith-staging')
   mkdirSync(staging, { mode: 0o700 })

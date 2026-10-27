@@ -192,6 +192,7 @@ export async function report(st: Pick<State, 'fx'>, over: ListOptions = {}): Pro
   return listRoot(st.fx.skillsDir, {
     euid: process.geteuid?.() ?? 0,
     journalFile: journalOf(st.fx),
+    stateRoots: [fs.realpathSync(st.fx.stateRoot)],
     ...over,
   })
 }

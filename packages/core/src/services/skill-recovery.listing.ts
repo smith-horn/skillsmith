@@ -11,6 +11,7 @@
  *
  * @module @skillsmith/core/services/skill-recovery.listing
  */
+import path from 'node:path'
 import { getJournalFilePath } from '../journal/path.js'
 import { classifyOp } from './skill-recovery.classify.js'
 import type { ClassifyContext } from './skill-recovery.classify.js'
@@ -44,6 +45,12 @@ export interface RootReport {
   ops: OpReport[]
   /** Leftover clock-gate probes (UD25), by name. */
   probes: ProbeFact[]
+  /**
+   * 6a-iii (report only): opIds with a parked area `ST/.skillsmith-parked/<opId>`
+   * and no op dir: it was already set aside. Doctor takes no action: it neither
+   * verifies nor syncs that copy. Only real, non-dot-named directories count.
+   */
+  parked: Array<{ opId: string; path: string }>
   /** Over what the staging listing read, probes included. */
   stagingDigest: string | null
 }
@@ -54,6 +61,8 @@ export interface ListOptions {
   acceptIdentity?: boolean
   /** @internal Test seam passed to every reader. */
   reader?: ReaderOptions
+  /** The state roots discovered or given (6a-iii): a park intent's `backupPath` must lie in one. */
+  stateRoots?: readonly string[]
 }
 
 /** Classifies one op dir with a fresh reader and digests what it read plus its plan. */
@@ -81,10 +90,26 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     binding = await bindSkillsRootReadOnly(root)
   } catch (err) {
     if (!(err instanceof SkillWriteStop)) throw err
-    return { root, staging: 'unsafe', detail: err.detail, ops: [], probes: [], stagingDigest: null }
+    return {
+      root,
+      staging: 'unsafe',
+      detail: err.detail,
+      ops: [],
+      probes: [],
+      parked: [],
+      stagingDigest: null,
+    }
   }
   if (binding === null) {
-    return { root, staging: 'absent', detail: null, ops: [], probes: [], stagingDigest: null }
+    return {
+      root,
+      staging: 'absent',
+      detail: null,
+      ops: [],
+      probes: [],
+      parked: [],
+      stagingDigest: null,
+    }
   }
   const reader = new ClassifierReader(options.reader)
   const view = listStaging(reader, binding.stagingDir)
@@ -95,15 +120,28 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
       detail: `${binding.stagingDir} could not be listed (${view.errno})`,
       ops: [],
       probes: [],
+      parked: [],
       stagingDigest: null,
     }
   }
+  const parkedDir = path.join(binding.stagingDir, '.skillsmith-parked')
+  const parkedList = reader.list(parkedDir, { name: 'all' })
+  const parked = (parkedList.ok ? parkedList.names : [])
+    .filter((n) => !view.opIds.includes(n))
+    .filter((n) => {
+      if (n.startsWith('.')) return false
+      const st = reader.stat(path.join(parkedDir, n))
+      return st.ok && st.type === 'dir'
+    })
+    .sort()
+    .map((opId) => ({ opId, path: path.join(parkedDir, opId) }))
   const ctx: ClassifyContext = {
     root: binding.root,
     stagingDir: binding.stagingDir,
     euid: options.euid ?? process.geteuid?.() ?? -1,
     journalFile: options.journalFile ?? getJournalFilePath(),
     ...(options.acceptIdentity === undefined ? {} : { acceptIdentity: options.acceptIdentity }),
+    ...(options.stateRoots === undefined ? {} : { stateRoots: options.stateRoots }),
   }
   const ops: OpReport[] = []
   for (const opId of view.opIds) ops.push(await reportOp(ctx, opId, options.reader))
@@ -113,6 +151,7 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     detail: null,
     ops,
     probes: view.probes,
+    parked,
     stagingDigest: digestOf(reader.transcript(), { probes: view.probes.map((p) => p.name) }),
   }
 }

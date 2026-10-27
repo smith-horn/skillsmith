@@ -1,5 +1,5 @@
 /**
- * SMI-6531 (A1 step 6a-ii): the types of doctor's one-device `--apply` and
+ * SMI-6531 (A1 steps 6a-ii, 6a-iii): the types of doctor's `--apply` and
  * `--undo` (`skill-recovery.target.ts` plans and targets, `skill-recovery.run.ts`
  * acts under lock 1).
  *
@@ -29,12 +29,18 @@ export interface RecoveryRequest {
   journalFile?: string
   /** @internal Test seam passed to every reader. */
   reader?: ReaderOptions
+  /**
+   * The state roots doctor discovered or was given (`--state-root`), as native
+   * real paths: a park intent's `backupPath` must lie in one (governance S4).
+   */
+  stateRoots?: readonly string[]
 }
 
 /** A refusal before anything changed (no lock taken, or under it with zero mutation). */
 export interface RecoveryRefusal {
   status: 'refused'
-  reason: RecoveryRefuseReason | SkillWriteStopCode
+  /** `state-root-full` (6a-iii): a cross-device keep would not fit; nothing changed. */
+  reason: RecoveryRefuseReason | SkillWriteStopCode | 'state-root-full'
   detail: string
   /** The op dirs a `recovery-ambiguous` refusal names, or the one refused. */
   paths: string[]
@@ -75,6 +81,12 @@ export interface RecoveryDone {
   from: string
   installed: TreePosition | null
   kept: Array<{ tree: TreePosition; kind: string; path: string }>
+  /**
+   * 6a-iii: across devices, where the op dir (holding the verified sources)
+   * was parked; null on one device, or when the park did not finish (then a
+   * `removal-not-done` warning names it, and the command exits 4).
+   */
+  extraCopy: string | null
   manifest: 'committed' | 'untouched'
   audit: AuditOutcome
   warnings: SwapWarning[]

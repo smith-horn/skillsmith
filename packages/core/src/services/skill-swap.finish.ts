@@ -107,7 +107,7 @@ async function finishEmptyOp(st: SwapState): Promise<Finish> {
 }
 
 /** Runs `fn` after the record unlink. Every failure there is a stop, reported as not done. */
-async function afterRecord(fn: () => Promise<NotDone | null>): Promise<NotDone | null> {
+export async function afterRecord(fn: () => Promise<NotDone | null>): Promise<NotDone | null> {
   try {
     return await fn()
   } catch (err) {
@@ -155,10 +155,10 @@ async function finishMoveSources(st: SwapState): Promise<Finish> {
       before.detail ?? `${st.opDir} is not as this update left it`
     )
   }
-  await writeParkIntent(st, 'move-source')
+  const backupPath = [...st.moveSources.values()][0]!.dest
+  await writeParkIntent(st, 'move-source', backupPath)
   await unlinkOwned(st, p.record, 'staging-unsafe')
   st.recordRemoved = true
-  const backupPath = [...st.moveSources.values()][0]!.dest
   let outcome: ParkOpOutcome | null = null
   const n = await afterRecord(async () => {
     await syncDir(st, st.opDir)

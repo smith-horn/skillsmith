@@ -20,8 +20,12 @@
  * 2026-10-26): only one that parses as this op's sidecar for that `dest` with
  * the source's identity, or an empty regular file with one link. Otherwise
  * the resume stops `backup-unsafe` naming the path. Every unlink of a metadata
- * file doctor did not write goes through `unlinkAdopted`. Cross-device
- * sub-states (P2-P4) are 6a-iii's: they stop here.
+ * file doctor did not write goes through `unlinkAdopted`. Across devices
+ * (6a-iii, `skill-recovery.xdev.ts`): a P1 move whose rename fails `EXDEV`
+ * copies and verifies; P2 keeps its copy temp as `partial-copy` and copies
+ * again; P3 renames its verified temp to `dest`; P4 verifies and leaves the
+ * source for the op dir's park; a rewrite state beside a copy temp finishes
+ * the rewrite, then continues as P3 or P2.
  *
  * @module @skillsmith/core/services/skill-recovery.resume
  */
@@ -49,6 +53,8 @@ import type { RecordIdentity } from './skill-swap.types.js'
 import { adoptMetadata, boundOf, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
+import { acrossFor, resumeCopied, resumeCopyTemp } from './skill-recovery.xdev.js'
+import type { AcrossKeep } from './skill-recovery.xdev.js'
 import type { KeepGroup, OpFacts, ReadTranscript, Role } from './skill-recovery.types.js'
 
 /** A kind `publishTree` can write, else a stop: a name this module cannot keep. */
@@ -122,6 +128,8 @@ export async function installAt(
 export interface KeepContext {
   facts: OpFacts
   transcript: ReadTranscript
+  /** Where each copy temp a cross-device resume keeps as `partial-copy` went. */
+  partials: string[]
 }
 
 /** Keeps `role`'s tree as `kind`. Returns where the tree is kept, or null when there is none. */
@@ -201,10 +209,20 @@ async function resumeGroup(
   k: KeepContext
 ): Promise<string> {
   if (g.state === 'P5') return g.destPath
-  if (g.crossDevice || g.state === 'P2' || g.state === 'P3' || g.state === 'P4') {
-    throw new SwapFault('write-failed', `${g.base} is a cross-device keep: not resumed here`)
-  }
   await ensureArea(st)
+  const across = (named: AcrossKeep['named'], sidecarHash: string | null): AcrossKeep => ({
+    group: g,
+    src,
+    kind: publishKindOf(g.kind),
+    named,
+    sidecarHash,
+    marker: k.facts.fullDevice,
+    partials: k.partials,
+  })
+  if (g.state === 'P4') return resumeCopied(st, across(g.sidecar!.identity, g.sidecar!.treeHash))
+  if (g.state === 'P2' || g.state === 'P3') {
+    return resumeCopyTemp(st, across(g.sidecar!.identity, g.sidecar!.treeHash))
+  }
   const final = sidecarPathOf(g)
   const tmp = tmpOf(g)
   // What `<dest>.json` holds once the temp handling is done: its adoption and tree hash.
@@ -255,8 +273,13 @@ async function resumeGroup(
   } else {
     sidecar = { adopted: adoptMetadata(k.transcript, final), treeHash: g.sidecar!.treeHash }
   }
+  // The cross-device rewrite: the copy temp verified, so it continues as P3 (or P2).
+  if (g.copyTmp.present) return resumeCopyTemp(st, across(namedOf(g), sidecar.treeHash))
   return resumeP1(st, g, src, sidecar)
 }
+
+/** The identity the sidecar (or, after R2, the temp now at its name) names for the source. */
+const namedOf = (g: KeepGroup) => g.sidecar?.identity ?? g.sidecarTmp?.identity ?? null
 
 /**
  * P1: the sidecar is published. Rewrite it when the source's hash changed,
@@ -273,8 +296,7 @@ async function resumeP1(
   const id = bindIdentity(src)
   const h = treeHashOf(src)
   if (!id.ok || !h.ok) throw new SwapFault('write-failed', `${src} could not be hashed`)
-  // The sidecar (or, after R2, the temp now at its name) names the source's identity.
-  const named = g.sidecar?.identity ?? g.sidecarTmp?.identity ?? null
+  const named = namedOf(g)
   if (named === null || !sameIdentity(boundOf(named), id)) {
     throw new SwapFault('backup-unsafe', `${src} is not the tree its sidecar names`)
   }
@@ -283,7 +305,9 @@ async function resumeP1(
   if (await present(g.destPath)) {
     throw new SwapFault('backup-unsafe', `${g.destPath} already exists; it was left untouched`)
   }
-  await moveKept(st, src, g.destPath, kind)
+  // Across devices the rename fails `EXDEV` and nothing moved: copy and verify (6a-iii).
+  const over = acrossFor(st, { src, dest: g.destPath, kind, id, sidecarHash: h.hash }, h)
+  await moveKept(st, src, g.destPath, kind, over)
   return g.destPath
 }
 

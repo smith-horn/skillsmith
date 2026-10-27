@@ -195,7 +195,7 @@ export interface KeepGroup {
   verified: boolean
   /** P1: `src`'s hash is not the sidecar's, so resume rewrites the sidecar. */
   hashChanged: boolean
-  /** P2-P4 and `dest`'s device is not the skills root's. */
+  /** P2-P4, or a sidecar-rewrite state beside a copy temp: a keep across devices. */
   crossDevice: boolean
 }
 
@@ -242,6 +242,36 @@ export interface OpFacts {
   } | null
   /** N hashes to `postTree`: S1 `--apply` installs it only then. */
   nHashesToPost: boolean | null
+  /**
+   * 6a-iii: a `park-intent.json` beside the record (a cross-device finish that
+   * stopped after its intent): `valid` when it is this op's `move-source`
+   * intent for OP's recorded identity, which the resumed finish reuses.
+   */
+  parkIntent: { path: string; valid: boolean } | null
+  /** Its temp: `provable` when it parses as that same intent, or is an empty file with one link. */
+  parkIntentTmp: { path: string; provable: boolean } | null
+}
+
+/**
+ * 6a-iii: the park intent of an op dir whose record is gone (a cross-device
+ * finish killed after it unlinked the record). `--apply`/`--undo` finish its
+ * park when `blocked` is null.
+ */
+export interface NoRecordIntent {
+  path: string
+  /** `isParkIntentFor` for this opId and OP's current identity. */
+  valid: boolean
+  kind: string | null
+  backupPath: string | null
+  ownerUid: number | null
+  /** OP's identity as the verifying intent names it (equal to OP's current one); null if invalid. */
+  opIdentity: RecordIdentity | null
+  /** From `backupPath`: the state root (the parked index), the client and the folder. */
+  target: { stateRoot: string; client: string; dirName: string } | null
+  /** The op dir's tree entries (`old`, `new`, `undone`), as the plan saw them. */
+  sources: Array<{ name: string; identity: RecordIdentity }>
+  /** Why the park cannot be finished from it; null when it can. */
+  blocked: string | null
 }
 
 export type UnreadableWhy = RecordParseWhy | 'open-failed' | 'not-a-file' | 'inconsistent-record'
@@ -258,8 +288,13 @@ export type RecoveryClass =
       entries: string[]
       hasParkIntent: boolean
       recordTmp: string | null
-      /** `owner.json`'s uid when it is not the effective uid: another user started this. */
+      /**
+       * The uid of whoever started it, when it is not the effective uid:
+       * `owner.json`'s, else (6a-iii) the verifying park intent's.
+       */
       otherUid: number | null
+      /** 6a-iii: its `park-intent.json`, when it has one. */
+      intent: NoRecordIntent | null
     }
   | {
       kind: 'unreadable'
@@ -313,6 +348,12 @@ export type RecoveryRefuseReason =
   | 'recovery-record-unreadable'
   | 'recovery-other-user'
   | 'plan-changed'
+  /**
+   * 6a-iii (report only): no op dir has the opId, but its parked area exists:
+   * it was already set aside. Doctor takes no action: it neither verifies nor
+   * syncs that copy (the CLI exits 0).
+   */
+  | 'already-parked'
 
 /** Every tree ends installed, kept or untouched. There is no removal case (UD13). */
 export type Disposition =

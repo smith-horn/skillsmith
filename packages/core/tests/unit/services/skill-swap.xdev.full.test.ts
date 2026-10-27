@@ -127,6 +127,58 @@ describe('T-F1: ENOSPC during the cross-device copy', () => {
   })
 })
 
+/** The regular files under `dir`, by absolute path. */
+function filesUnder(dir: string): string[] {
+  const out: string[] = []
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) out.push(...filesUnder(p))
+    else if (e.isFile()) out.push(p)
+  }
+  return out
+}
+
+describe('sourceUnchanged on the update path needs the temp to be a subset of the source (plan §3.5)', () => {
+  /** ENOSPC at the copy's 2nd create; when `editTemp`, a file already in the temp is edited first. */
+  async function enospcKeep(editTemp: boolean) {
+    const fx = xdevFixture(FILES)
+    const p = plan(fx, [modify('SKILL.md', '# v2\n')])
+    const temp = path.join(areaOf(fx), `.tmp-${OP_ID}`)
+    let creates = 0
+    let edited: string | null = null
+    stub(fs.promises, 'open', (orig) => async (...a: unknown[]) => {
+      if (isCreateUnder(a, temp) && ++creates === 2) {
+        if (editTemp) {
+          edited = filesUnder(temp)[0] ?? null
+          if (edited !== null) fs.appendFileSync(edited, 'written into the temp only\n')
+        }
+        throw errnoError('ENOSPC')
+      }
+      return orig(...a)
+    })
+    const run = await runSpied(p, ALL_DELETES)
+    expect(creates).toBeGreaterThanOrEqual(2)
+    assertStoppedAtPublish(fx, p.input.preTree, committedOf(run.result), 'write-failed')
+    const kept = partials(areaOf(fx))
+    expect(kept).toHaveLength(1)
+    return { side: sidecarOf(kept[0]!), edited, kept: kept[0]! }
+  }
+
+  it('a temp edited before the ENOSPC stop: sourceUnchanged false, though the source is unchanged', async () => {
+    const r = await enospcKeep(true)
+    expect(r.edited).not.toBeNull()
+    expect(filesUnder(r.kept).some((f) => fs.readFileSync(f, 'utf8').includes('temp only'))).toBe(
+      true
+    )
+    expect(r.side).toMatchObject({ partialCause: 'enospc', sourceUnchanged: false })
+  })
+
+  it('the pair: the same stop with the temp unedited records true', async () => {
+    const r = await enospcKeep(false)
+    expect(r.side).toMatchObject({ partialCause: 'enospc', sourceUnchanged: true })
+  })
+})
+
 describe('T-F1: ENOSPC at the partial copy own sidecar', () => {
   it('leaves the temp at its name, says so, and stops write-failed: nothing removed', async () => {
     const fx = xdevFixture(FILES)

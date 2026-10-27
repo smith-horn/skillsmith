@@ -80,11 +80,18 @@ function noteOf(cls: RecoveryClass): string[] {
       return ["    empty: a later doctor action holding this root's lock removes it with one rmdir"]
     case 'no-record':
       return [
-        `    no record.json (a crash before the update began); entries: ${cls.entries.join(', ') || 'none'}`,
+        // W1: a verifying move-source intent means the record went at the end, not before the start.
+        cls.intent !== null && cls.intent.valid && cls.intent.kind === 'move-source'
+          ? `    no record.json: a finish killed after its record was removed, before its op dir was set aside; entries: ${cls.entries.join(', ') || 'none'}`
+          : `    no record.json (a crash before the update began); entries: ${cls.entries.join(', ') || 'none'}`,
         cls.owner === null
           ? '    owner: no owner.json'
           : `    owner: pid ${cls.owner.pid ?? '?'} on ${cls.owner.host ?? '?'}, uid ${cls.owner.uid ?? '?'}`,
-        ...(cls.hasParkIntent ? ['    a park intent is present'] : []),
+        ...(cls.intent === null
+          ? []
+          : cls.intent.blocked === null
+            ? ['    a park intent is present and verifies: --apply or --undo finishes the park']
+            : [`    a park intent is present: ${cls.intent.blocked}`]),
         ...(cls.recordTmp === null ? [] : [`    ${cls.recordTmp} is present`]),
       ]
     case 'unreadable':
@@ -105,7 +112,9 @@ function noteOf(cls: RecoveryClass): string[] {
 function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
-  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\` (not available yet)`]
+  // `--apply` and `--undo` are supported (6a-iii); `--abandon`, `--clean-staging` and `--park` are 6b's.
+  const later = p.action === 'apply' || p.action === 'undo' ? '' : ' (not available yet)'
+  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\`${later}`]
   for (const s of p.steps) {
     const d = s.disposition
     lines.push(`      ${s.tree}: ${d.kind === 'kept' ? `kept as ${d.as}` : d.kind}; ${s.note}`)
@@ -158,6 +167,12 @@ export function renderRecovery(found: Discovery, reports: readonly RootReport[])
     }
     if (r.ops.length === 0) lines.push('  no operation directories')
     for (const op of r.ops) lines.push(...opLines(op))
+    if (r.parked.length > 0) {
+      lines.push(
+        '  already set aside (doctor takes no action: it neither verifies nor syncs that copy):'
+      )
+      for (const p of r.parked) lines.push(`    ${p.opId}  ${p.path}`)
+    }
     if (r.probes.length > 0) {
       lines.push(
         "  leftover probes (empty directories a killed update left; removed by any doctor action holding this root's lock):"
