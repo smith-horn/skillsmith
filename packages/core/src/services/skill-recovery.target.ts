@@ -32,12 +32,7 @@ import type {
   RecoveryRefusal,
   RecoveryRequest,
 } from './skill-recovery.run.types.js'
-import { inspectParked } from './skill-recovery.parked-check.js'
-import type { ParkedView } from './skill-recovery.parked-check.js'
-import { parkedArgs, parkedDigest } from './skill-recovery.parked.js'
 import { planAction } from './skill-recovery.plan.js'
-import { ClassifierReader } from './skill-recovery.reader.js'
-import { bindSkillsRootReadOnly } from './skill-write-lock.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const refusal = (
@@ -124,8 +119,15 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
   if (found.length === 0) {
-    const parked = await parkedTarget(request, roots)
-    if (parked !== null) return parked
+    const parked = parkedLanding(request.opId, roots)
+    if (parked !== null) {
+      return refusal(
+        'already-parked',
+        `${request.opId} has no op dir, and ${parked} exists: it was already set aside, ` +
+          'so there is nothing left to do. Doctor took no action and did not verify that copy',
+        [parked]
+      )
+    }
     return refusal(
       'recovery-not-offered',
       `no operation directory named ${request.opId} is in the scanned skills roots`
@@ -154,13 +156,12 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       ...base,
       plan: emptyPlan(request.action),
       emptyTarget: { path: op.opDir, identity: id },
-      parked: null,
     }
     return planned
   }
   const plan = planAction(op.cls, request.action)
   if (!plan.offered) return refusal(plan.reason, plan.detail, [op.opDir])
-  return { ...base, plan, emptyTarget: null, parked: null }
+  return { ...base, plan, emptyTarget: null }
 }
 
 /** The opId is one path component (governance S2): checked before any path is joined or read. */
@@ -177,63 +178,19 @@ function opIdOk(opId: string): boolean {
 }
 
 /**
- * 6a-iii: no op dir is named `opId`, but a root holds its parked area (a kill
- * after the park moved OP). Accepted only as `inspectParked` validates it, read
- * through the reader so the run under lock 1 repeats the reads and compares
- * this digest before it syncs anything (GPT-5.6-Sol bf-zyg F1).
+ * 6a-iii (owner decision 2026-10-27, report only): the first root whose
+ * `ST/.skillsmith-parked/<opId>` is a directory (not followed), or null. Doctor
+ * says the op was already set aside and acts on nothing, so nothing here is
+ * authenticated: a forged directory reads the same as a real park.
  */
-async function parkedTarget(
-  request: RecoveryRequest,
-  roots: readonly string[]
-): Promise<RecoveryPlanResult | null> {
-  const hits: Array<{ root: string; view: ParkedView; digest: string }> = []
+function parkedLanding(opId: string, roots: readonly string[]): string | null {
   for (const r of roots) {
-    const binding = await bindSkillsRootReadOnly(r).catch(() => null)
-    if (binding === null) continue
-    const reader = new ClassifierReader(request.reader)
-    const view = inspectParked(reader, parkedArgs(request, binding))
-    if (view === null) continue
-    hits.push({ root: binding.root, view, digest: parkedDigest(reader, view, request) })
+    const landing = path.join(realOf(r), '.skillsmith-staging', '.skillsmith-parked', opId)
+    try {
+      if (fs.lstatSync(landing).isDirectory()) return landing
+    } catch {
+      continue
+    }
   }
-  if (hits.length === 0) return null
-  if (hits.length > 1) {
-    return refusal(
-      'recovery-ambiguous',
-      `${request.opId} is parked in ${hits.length} skills roots; pick one with --root <skills root>`,
-      hits.map((h) => h.view.landing)
-    )
-  }
-  const { root, view, digest } = hits[0]!
-  if (!view.ok) {
-    return refusal(
-      view.otherUid !== null ? 'recovery-other-user' : 'recovery-not-offered',
-      `${view.landing} is not a finished park of this operation: ${view.why}`,
-      [view.landing]
-    )
-  }
-  return {
-    status: 'planned',
-    request,
-    root,
-    opDir: view.landing,
-    report: {
-      opId: request.opId,
-      opDir: view.landing,
-      cls: { kind: 'empty-op-dir', opId: request.opId, opDir: view.landing },
-      label: 'already parked',
-      plans: [],
-      digest,
-    },
-    plan: {
-      offered: true,
-      action: request.action,
-      steps: [],
-      manifest: 'untouched',
-      remaining: [`sync ${view.landing}, then the staging dir, so the park is durable`],
-      notes: [`the op dir was already set aside whole, at ${view.copy}`],
-    },
-    sweep: [],
-    emptyTarget: null,
-    parked: { landing: view.landing, copy: view.copy },
-  }
+  return null
 }

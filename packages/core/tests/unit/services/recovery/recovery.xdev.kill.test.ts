@@ -6,7 +6,8 @@
  * The kill matrix is generated from the hooks an uninterrupted run fires: for
  * each row, every firing of every hook in `POINTS` and `AFTER_RECORD` is
  * killed once, and the same action run again. Each rerun must end done, with
- * no `removal-not-done`, as the uninterrupted run: the same skill folder,
+ * no `removal-not-done` (or, once the park already moved OP, report it set
+ * aside and do nothing), as the uninterrupted run: the same skill folder,
  * manifest entry, kept trees (by name and hash), at most one manifest write
  * and one audit record, no op dir in ST, and one parked copy holding the same
  * source. A kill inside the copy (`duringBackupCopy`) leaves a P2 temp, which
@@ -16,8 +17,9 @@
  * after it (owner decision 2026-10-26) leaves either OP with its sources and a
  * verifying `move-source` intent and no record, whose park the same command
  * finishes from the intent (`skill-recovery.intent-park.ts`), or OP already
- * parked (`afterPark`, `afterParkSync`), whose park the same command makes
- * durable (`skill-recovery.parked.ts`).
+ * parked (`afterPark`, `afterParkSync`), which the same command reports as
+ * already set aside (`already-parked`), taking no action (owner decision
+ * 2026-10-27: report only, nothing verified).
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -161,11 +163,26 @@ describe('T-J14 (cross-device): a doctor killed at each boundary resumes with th
           expect(first.result.status, `${point} #${nth}`).toBe('done')
           expect(recordKept, `${point} #${nth}`).toBe(false)
         }
+        // Only a kill once the park moved OP leaves no op dir before the rerun.
+        const alreadyParked = !fs.existsSync(st.opDir)
+        expect(alreadyParked, `${point} #${nth}`).toBe(
+          point === 'afterPark' || point === 'afterParkSync'
+        )
         const again = await act(st, action)
-        expect(
-          again.result.status,
-          `${point} #${nth}: ${JSON.stringify(again.result).slice(0, 300)}`
-        ).toBe('done')
+        if (alreadyParked) {
+          // The park already moved OP: reported set aside, nothing done, nothing traced.
+          expect(again.result, `${point} #${nth}`).toMatchObject({
+            status: 'refused',
+            reason: 'already-parked',
+          })
+          expect(again.trace, `${point} #${nth}`).toEqual([])
+          expect(parkedCopies(st.fx), `${point} #${nth}`).toHaveLength(1)
+        } else {
+          expect(
+            again.result.status,
+            `${point} #${nth}: ${JSON.stringify(again.result).slice(0, 300)}`
+          ).toBe('done')
+        }
         if (again.result.status === 'done') {
           expect(
             again.result.warnings.map((w) => w.code),

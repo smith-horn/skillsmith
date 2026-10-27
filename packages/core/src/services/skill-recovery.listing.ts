@@ -11,6 +11,7 @@
  *
  * @module @skillsmith/core/services/skill-recovery.listing
  */
+import path from 'node:path'
 import { getJournalFilePath } from '../journal/path.js'
 import { classifyOp } from './skill-recovery.classify.js'
 import type { ClassifyContext } from './skill-recovery.classify.js'
@@ -44,6 +45,11 @@ export interface RootReport {
   ops: OpReport[]
   /** Leftover clock-gate probes (UD25), by name. */
   probes: ProbeFact[]
+  /**
+   * 6a-iii (report only): opIds with a parked area `ST/.skillsmith-parked/<opId>`
+   * and no op dir: already set aside, nothing left to do. Not verified.
+   */
+  parked: Array<{ opId: string; path: string }>
   /** Over what the staging listing read, probes included. */
   stagingDigest: string | null
 }
@@ -83,10 +89,26 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     binding = await bindSkillsRootReadOnly(root)
   } catch (err) {
     if (!(err instanceof SkillWriteStop)) throw err
-    return { root, staging: 'unsafe', detail: err.detail, ops: [], probes: [], stagingDigest: null }
+    return {
+      root,
+      staging: 'unsafe',
+      detail: err.detail,
+      ops: [],
+      probes: [],
+      parked: [],
+      stagingDigest: null,
+    }
   }
   if (binding === null) {
-    return { root, staging: 'absent', detail: null, ops: [], probes: [], stagingDigest: null }
+    return {
+      root,
+      staging: 'absent',
+      detail: null,
+      ops: [],
+      probes: [],
+      parked: [],
+      stagingDigest: null,
+    }
   }
   const reader = new ClassifierReader(options.reader)
   const view = listStaging(reader, binding.stagingDir)
@@ -97,9 +119,16 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
       detail: `${binding.stagingDir} could not be listed (${view.errno})`,
       ops: [],
       probes: [],
+      parked: [],
       stagingDigest: null,
     }
   }
+  const parkedDir = path.join(binding.stagingDir, '.skillsmith-parked')
+  const parkedList = reader.list(parkedDir, { name: 'all' })
+  const parked = (parkedList.ok ? parkedList.names : [])
+    .filter((n) => !view.opIds.includes(n))
+    .sort()
+    .map((opId) => ({ opId, path: path.join(parkedDir, opId) }))
   const ctx: ClassifyContext = {
     root: binding.root,
     stagingDir: binding.stagingDir,
@@ -116,6 +145,7 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     detail: null,
     ops,
     probes: view.probes,
+    parked,
     stagingDigest: digestOf(reader.transcript(), { probes: view.probes.map((p) => p.name) }),
   }
 }

@@ -93,8 +93,6 @@ const CLASSIFIER = [
   'skill-recovery.pstate.ts',
   'skill-recovery.classify.ts',
   'skill-recovery.plan.ts',
-  // 6a-iii (bf-zyg F1): the already-parked check, digested like the classifier.
-  'skill-recovery.parked-check.ts',
 ]
 const READER = 'skill-recovery.reader.ts'
 

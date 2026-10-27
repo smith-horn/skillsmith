@@ -59,12 +59,6 @@ export interface PlannedRecovery {
   sweep: SweepEntry[]
   /** The target itself was an empty op dir (a kill after its `record.json` went). */
   emptyTarget: SweepEntry | null
-  /**
-   * 6a-iii: no op dir is named the opId, but its parked area is there (a kill
-   * after the park moved OP, before its syncs reported): the action makes the
-   * park durable (syncs `<opId>`'s landing directory, then ST) and is done.
-   */
-  parked: { landing: string; copy: string } | null
 }
 
 export type RecoveryPlanResult = RecoveryRefusal | PlannedRecovery

@@ -348,6 +348,11 @@ export type RecoveryRefuseReason =
   | 'recovery-record-unreadable'
   | 'recovery-other-user'
   | 'plan-changed'
+  /**
+   * 6a-iii (report only): no op dir has the opId, but its parked area exists;
+   * nothing is left to do and nothing was done (the CLI exits 0).
+   */
+  | 'already-parked'
 
 /** Every tree ends installed, kept or untouched. There is no removal case (UD13). */
 export type Disposition =

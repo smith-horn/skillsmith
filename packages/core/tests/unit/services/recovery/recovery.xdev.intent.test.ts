@@ -1,7 +1,8 @@
 /**
  * SMI-6531 (A1 step 6a-iii, owner decision 2026-10-26): `--apply` / `--undo`
  * finish the park of an op dir whose record is gone, from its verifying
- * `park-intent.json`, and make an already-moved park durable.
+ * `park-intent.json`. (An already-moved park is report-only:
+ * `recovery.parked-report.test.ts`.)
  *
  * Positives: a doctor finish killed after it unlinked the record, and the
  * update's own step 13 killed after its record unlink (with `owner.json` still
@@ -179,28 +180,5 @@ describe('refused, with zero mutation', () => {
     const r = await executeRecovery(planned)
     expect(r).toMatchObject({ status: 'refused', reason: 'plan-changed' })
     expect(world(st)).toBe(before)
-  })
-})
-
-describe('an op dir already parked (a kill after the park moved it): the park is made durable', () => {
-  it('the landing directory, then ST, synced; done, naming the parked copy', async () => {
-    const st = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
-    const first = await act(st, 'apply', {}, killAt('afterPark'))
-    expect(first.result.status).toBe('done')
-    expect(fs.existsSync(st.opDir)).toBe(false)
-    const parked = theParkedCopy(st.fx)
-    const a = await done(st, 'apply')
-    expect(a.result.from).toBe('already parked')
-    expect(a.result.extraCopy).toBe(parked)
-    expect(a.trace).toEqual([
-      { op: 'dirsync', path: path.dirname(parked) },
-      { op: 'dirsync', path: st.fx.staging },
-    ])
-  })
-
-  it('no op dir and no parked area: still refused, nothing named', async () => {
-    const st = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
-    const a = await act({ ...st, opId: 'c'.repeat(32) }, 'apply')
-    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
   })
 })

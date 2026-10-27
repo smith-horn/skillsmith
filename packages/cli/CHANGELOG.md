@@ -9,7 +9,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   devices. Each prints the plan and asks once (default No); `--yes` skips the question and waives
   no check. The help lists the options, and the listing names `--apply` and `--undo` without
   "not available yet" (`--abandon`, `--clean-staging` and `--park` keep it). A finished action
-  that could not set its operation folder aside reports `removal-not-done` and exits 4.
+  that could not set its operation folder aside reports `removal-not-done` and exits 4. An
+  operation already set aside is reported as such, in the listing and by `--apply`/`--undo`,
+  which change nothing and exit 0.
 
 - **Changed**: SMI-6531 -- A1 step 6a-ii: `skillsmith doctor locks --release <path>` also accepts
   a skills root's write lock or its reclaim lock, as the listing shows them, under the same rules.

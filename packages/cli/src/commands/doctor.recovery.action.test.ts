@@ -252,6 +252,34 @@ describe('the empty target op dir', () => {
   })
 })
 
+describe('an op already set aside (report only, owner decision 2026-10-27)', () => {
+  it('--apply says nothing is left to do, exits 0 and changes nothing; the listing names it', async () => {
+    const u = plantCrashedUpdate(base)
+    const landing = path.join(u.root, '.skillsmith-staging', '.skillsmith-parked', u.opId)
+    fs.mkdirSync(landing, { recursive: true })
+    fs.renameSync(u.opDir, path.join(landing, `${u.opId}-0123abcd`))
+    const before = snapshot(base)
+    await runRecoveryAction({ apply: u.opId, yes: true })
+    expect(process.exitCode).toBe(0)
+    expect(out.join('\n')).toContain('Not done (already-parked)')
+    expect(out.join('\n')).toContain('nothing left to do')
+    expect(snapshot(base)).toEqual(before)
+    expect(calls.executes).toBe(0)
+    out = []
+    const cmd = createDoctorCommand()
+    cmd.exitOverride()
+    await cmd.parseAsync(['node', 'doctor', 'recovery'])
+    expect(out.join('\n')).toContain('already set aside')
+    expect(out.join('\n')).toContain(`${u.opId}  ${landing}`)
+  })
+
+  it('the pair: an unknown opId with no parked area is still exit 1', async () => {
+    plantCrashedUpdate(base)
+    await runRecoveryAction({ apply: 'c'.repeat(32), yes: true })
+    expect(process.exitCode).toBe(1)
+  })
+})
+
 describe('through commander', () => {
   it('`doctor recovery --undo <opId> --yes` runs the action; without the flags it lists', async () => {
     const u = plantCrashedUpdate(base)

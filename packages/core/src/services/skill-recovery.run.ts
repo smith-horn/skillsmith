@@ -48,7 +48,6 @@ import { finishRecovered, removeEmptyOp, sweepRoot } from './skill-recovery.fini
 import { rewriteMarkerAdopted, spaceBlock } from './skill-recovery.mark.js'
 import { finishFromIntent } from './skill-recovery.intent-park.js'
 import { finishRecoveredAcross } from './skill-recovery.park.js'
-import { syncParked } from './skill-recovery.parked.js'
 import { serializePlan } from './skill-recovery.plan.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import { installAt, keepRole } from './skill-recovery.resume.js'
@@ -348,7 +347,6 @@ async function underLock(
   journalFile: string
 ): Promise<RecoveryRunResult> {
   const req = planned.request
-  if (planned.parked !== null) return syncParked(planned, ctx, opts)
   const reader = new ClassifierReader(req.reader)
   const cls = await classifyOp(reader, classifyCtx, req.opId)
   const transcript = reader.transcript()

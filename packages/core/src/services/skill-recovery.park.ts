@@ -19,8 +19,8 @@
  *     the same command classifies and finishes (the intent is reused). A kill
  *     after it leaves OP with its sources and a verifying intent and no
  *     record, whose park the same command finishes from the intent
- *     (`skill-recovery.intent-park.ts`); a kill after the park moved OP is
- *     finished by the same command too (`skill-recovery.parked.ts`);
+ *     (`skill-recovery.intent-park.ts`); after a kill once the park moved OP,
+ *     the same command reports it already set aside and does nothing;
  *  5. OP must hold exactly the sources and the intent, then the park of OP
  *     from ST (`parkOpFromStaging`, caller and kind `move-source`, `backupPath`
  *     the first kept copy's path, design Q3).

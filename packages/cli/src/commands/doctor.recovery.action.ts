@@ -19,7 +19,8 @@
  *     difference is `plan-changed` with zero mutation (exit 1).
  *  7. A kill after confirmation resumes with the same command.
  *
- * Exit status: 0 done (or declined), 1 refused or stopped, 3 not confirmed
+ * Exit status: 0 done, declined, or already set aside (`already-parked`: nothing
+ * to do, nothing done), 1 refused or stopped, 3 not confirmed
  * (no terminal), 4 done but the op dir's park did not finish
  * (`removal-not-done`, UD32; 1 wins over 4), 130 interrupted.
  * @module @skillsmith/cli/commands/doctor.recovery.action
@@ -219,7 +220,9 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
   if (planned.status !== 'planned') {
     if (json) printJson(null, planned)
     else printLines(resultLines(planned))
-    process.exitCode = 1
+    // Already set aside: nothing left to do, nothing done, so not a failure (as a declined
+    // prompt exits 0). Every other refusal is 1.
+    process.exitCode = planned.reason === 'already-parked' ? 0 : 1
     return
   }
   const plan = {
