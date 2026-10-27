@@ -4,8 +4,9 @@
  * only. `--apply` / `--undo` say it was already set aside and doctor takes
  * no action (`already-parked`), and the listing names it; neither
  * acts, so nothing is authenticated, and a genuine killed park and a forged
- * container read the same. Each case asserts zero mutation and no directory
- * open (a dir sync opens its directory first, so no open means no fsync).
+ * container read the same. Each already-parked case asserts zero mutation
+ * and no directory open (a dir sync opens its directory first, so no open
+ * means no fsync); the positive controls prove the open counter sees a sync.
  *
  * Governance S2 also lives here: an opId that is not one path component is
  * refused before the roots are scanned.
@@ -65,7 +66,7 @@ function countOpens(): { n: () => number } {
   return { n: () => n }
 }
 
-describe('already set aside: report only, nothing done', () => {
+describe('already set aside (report only, nothing done), its controls and neighbours', () => {
   for (const [label, build] of [
     ['a genuine killed park', genuine],
     ['a forged container', forged],

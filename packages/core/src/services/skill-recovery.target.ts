@@ -146,8 +146,11 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
         'recovery-ambiguous',
         `${request.opId} has no op dir in the roots that could be read, and ${where.join(', ')} ` +
           `${where.length === 1 ? 'exists' : 'exist'}, but ${unsafe.map((r) => r.root).join(', ')} ` +
-          `could not be read (its staging is unsafe), so it may hold the operation: ` +
-          'fix that root, or pick one with --root <skills root>',
+          (unsafe.length === 1
+            ? 'could not be read (its staging is unsafe), so it may hold the operation: ' +
+              'fix that root, or pick one with --root <skills root>'
+            : 'could not be read (their staging is unsafe), so they may hold the operation: ' +
+              'fix those roots, or pick one with --root <skills root>'),
         [...unsafe.map((r) => r.root), ...where]
       )
     }

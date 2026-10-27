@@ -19,9 +19,10 @@
  *  6. `executeRecovery` takes lock 1, re-plans and compares digests; a
  *     difference is `plan-changed` with zero mutation (exit 1).
  *  7. A kill after confirmation resumes with the same command, except a kill
- *     right after the park's move (`afterPark` / `afterParkSync`): the op dir is
- *     gone, so the rerun only reports `already-parked` (exit 0) and the park's
- *     post-move syncs are not run.
+ *     right after the park's move: at `afterPark` the park's post-move syncs
+ *     have not run, at `afterParkSync` they have. Either way the op dir is
+ *     gone, so the rerun only reports `already-parked` (exit 0) and syncs
+ *     nothing.
  *
  * Exit status: 0 done, declined, or already set aside (`already-parked`: doctor
  * takes no action), 1 refused or stopped, 3 not confirmed
