@@ -30,16 +30,17 @@ count_paths() {
 # output, safe to put on a refusal line. It reads at most 64 KiB (so no stage
 # ever holds an unbounded line), runs every stage in the C locale (so no
 # malformed byte can make a stage exit), keeps printable ASCII only (other
-# bytes become '?'), and caps the result at 200 characters. Every stage reads
+# bytes become '?') before choosing the line, so a line of control bytes alone
+# never counts as the message, and caps the result at 200 characters. Every stage reads
 # to EOF, its stderr is discarded and its status ignored, so it cannot fail.
 one_line() {
   local file=$1 pick=$2
   {
     if [ "$pick" = last ]; then tail -c 65536 "$file"; else head -c 65536 "$file"; fi |
       LC_ALL=C tr '\r\t\000' '\n  ' |
-      LC_ALL=C awk -v pick="$pick" 'NF { if (pick == "last") l = $0; else if (!d) { print; d = 1 } } END { if (pick == "last" && l != "") print l }' |
-      LC_ALL=C tr -d '\001-\037\177' |
+      LC_ALL=C tr -d '\001-\011\013-\037\177' |
       LC_ALL=C tr '\200-\377' '?' |
+      LC_ALL=C awk -v pick="$pick" 'NF { if (pick == "last") l = $0; else if (!d) { print; d = 1 } } END { if (pick == "last" && l != "") print l }' |
       LC_ALL=C cut -c1-200
   } 2>/dev/null || true
 }
