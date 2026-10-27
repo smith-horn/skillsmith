@@ -253,7 +253,7 @@ describe('the empty target op dir', () => {
 })
 
 describe('an op already set aside (report only, owner decision 2026-10-27)', () => {
-  it('--apply says nothing is left to do, exits 0 and changes nothing; the listing names it', async () => {
+  it('--apply says doctor takes no action, exits 0 and changes nothing; the listing names it', async () => {
     const u = plantCrashedUpdate(base)
     const landing = path.join(u.root, '.skillsmith-staging', '.skillsmith-parked', u.opId)
     fs.mkdirSync(landing, { recursive: true })
@@ -262,7 +262,7 @@ describe('an op already set aside (report only, owner decision 2026-10-27)', () 
     await runRecoveryAction({ apply: u.opId, yes: true })
     expect(process.exitCode).toBe(0)
     expect(out.join('\n')).toContain('Not done (already-parked)')
-    expect(out.join('\n')).toContain('nothing left to do')
+    expect(out.join('\n')).toContain('takes no action')
     expect(snapshot(base)).toEqual(before)
     expect(calls.executes).toBe(0)
     out = []

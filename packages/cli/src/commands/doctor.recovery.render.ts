@@ -168,7 +168,9 @@ export function renderRecovery(found: Discovery, reports: readonly RootReport[])
     if (r.ops.length === 0) lines.push('  no operation directories')
     for (const op of r.ops) lines.push(...opLines(op))
     if (r.parked.length > 0) {
-      lines.push('  already set aside (the op dir was parked; nothing left to do, not verified):')
+      lines.push(
+        '  already set aside (doctor takes no action: it neither verifies nor syncs that copy):'
+      )
       for (const p of r.parked) lines.push(`    ${p.opId}  ${p.path}`)
     }
     if (r.probes.length > 0) {

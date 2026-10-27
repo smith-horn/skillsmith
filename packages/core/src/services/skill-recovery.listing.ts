@@ -47,7 +47,8 @@ export interface RootReport {
   probes: ProbeFact[]
   /**
    * 6a-iii (report only): opIds with a parked area `ST/.skillsmith-parked/<opId>`
-   * and no op dir: already set aside, nothing left to do. Not verified.
+   * and no op dir: it was already set aside. Doctor takes no action: it neither
+   * verifies nor syncs that copy. Only real, non-dot-named directories count.
    */
   parked: Array<{ opId: string; path: string }>
   /** Over what the staging listing read, probes included. */
@@ -127,6 +128,11 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
   const parkedList = reader.list(parkedDir, { name: 'all' })
   const parked = (parkedList.ok ? parkedList.names : [])
     .filter((n) => !view.opIds.includes(n))
+    .filter((n) => {
+      if (n.startsWith('.')) return false
+      const st = reader.stat(path.join(parkedDir, n))
+      return st.ok && st.type === 'dir'
+    })
     .sort()
     .map((opId) => ({ opId, path: path.join(parkedDir, opId) }))
   const ctx: ClassifyContext = {

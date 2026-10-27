@@ -20,7 +20,7 @@
  *     after it leaves OP with its sources and a verifying intent and no
  *     record, whose park the same command finishes from the intent
  *     (`skill-recovery.intent-park.ts`); after a kill once the park moved OP,
- *     the same command reports it already set aside and does nothing;
+ *     the same command reports it already set aside and takes no action;
  *  5. OP must hold exactly the sources and the intent, then the park of OP
  *     from ST (`parkOpFromStaging`, caller and kind `move-source`, `backupPath`
  *     the first kept copy's path, design Q3).

@@ -108,6 +108,7 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     )
   }
   const found: Array<{ root: RootReport; op: RootReport['ops'][number] }> = []
+  const reports: RootReport[] = []
   for (const root of roots) {
     const r = await listRoot(root, {
       ...(request.euid === undefined ? {} : { euid: request.euid }),
@@ -116,16 +117,18 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       ...(request.reader === undefined ? {} : { reader: request.reader }),
       stateRoots: request.stateRoots ?? [],
     })
+    reports.push(r)
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
   if (found.length === 0) {
-    const parked = parkedLanding(request.opId, roots)
-    if (parked !== null) {
+    const hits = reports.flatMap((r) => r.parked.filter((p) => p.opId === request.opId))
+    if (hits.length > 0) {
+      const where = hits.map((h) => h.path)
       return refusal(
         'already-parked',
-        `${request.opId} has no op dir, and ${parked} exists: it was already set aside, ` +
-          'so there is nothing left to do. Doctor took no action and did not verify that copy',
-        [parked]
+        `${request.opId} has no op dir, and ${where.join(', ')} exists: it was already set aside. ` +
+          'Doctor takes no action: it neither verifies nor syncs that copy',
+        where
       )
     }
     return refusal(
@@ -175,22 +178,4 @@ function opIdOk(opId: string): boolean {
     !opId.includes('\0') &&
     path.basename(opId) === opId
   )
-}
-
-/**
- * 6a-iii (owner decision 2026-10-27, report only): the first root whose
- * `ST/.skillsmith-parked/<opId>` is a directory (not followed), or null. Doctor
- * says the op was already set aside and acts on nothing, so nothing here is
- * authenticated: a forged directory reads the same as a real park.
- */
-function parkedLanding(opId: string, roots: readonly string[]): string | null {
-  for (const r of roots) {
-    const landing = path.join(realOf(r), '.skillsmith-staging', '.skillsmith-parked', opId)
-    try {
-      if (fs.lstatSync(landing).isDirectory()) return landing
-    } catch {
-      continue
-    }
-  }
-  return null
 }

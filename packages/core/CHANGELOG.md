@@ -17,8 +17,8 @@ All notable changes to `@skillsmith/core` are documented here.
   the folder aside does not finish, the result says so with `removal-not-done`. No folder is
   removed. A run killed after the record was removed is finished by the same command: an
   operation folder with no record whose `park-intent.json` verifies is set aside as the intent
-  says. One already set aside is only reported (`already-parked`, nothing left to do, nothing
-  done or verified), in the listing too. A `move-source` park intent now also names its
+  says. One already set aside is only reported (`already-parked`: doctor takes no action and
+  neither verifies nor syncs that copy), in the listing too. A `move-source` park intent now also names its
   verified copy (`backupPath`).
 
 - **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor

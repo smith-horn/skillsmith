@@ -1,8 +1,8 @@
 /**
  * SMI-6531 (A1 step 6a-iii, owner decision 2026-10-27): an op whose dir is
  * gone but whose parked area `ST/.skillsmith-parked/<opId>` exists is report
- * only. `--apply` / `--undo` say it was already set aside and there is
- * nothing left to do (`already-parked`), and the listing names it; neither
+ * only. `--apply` / `--undo` say it was already set aside and doctor takes
+ * no action (`already-parked`), and the listing names it; neither
  * acts, so nothing is authenticated, and a genuine killed park and a forged
  * container read the same. Each case asserts zero mutation and no directory
  * open (a dir sync opens its directory first, so no open means no fsync).
@@ -13,6 +13,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { ReaderOptions } from '../../../../src/services/skill-recovery.reader.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import { OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { parkedCopies, useOtherDeviceCleanup, useStubs } from '../skill-swap.xdev.helpers.js'
@@ -74,8 +75,8 @@ describe('already set aside: report only, nothing done', () => {
           paths: [landingOf(st)],
         })
         if (a.result.status === 'refused') {
-          expect(a.result.detail).toContain('nothing left to do')
-          expect(a.result.detail).toContain('did not verify')
+          expect(a.result.detail).toContain('takes no action')
+          expect(a.result.detail).toContain('neither verifies nor syncs')
         }
         expect(a.trace).toEqual([])
         expect(opens.n()).toBe(0)
@@ -107,26 +108,114 @@ describe('already set aside: report only, nothing done', () => {
   })
 })
 
-describe('governance S2: an opId that is not one path component is refused before any read', () => {
-  for (const opId of ['..', '.', '', 'a/b', `${OP_ID}\0`, '../escape']) {
-    it(JSON.stringify(opId), async () => {
-      let reads = 0
-      const r = await planRecovery({
-        action: 'apply',
-        opId,
-        roots: ['/nonexistent-skills-root'],
-        reader: {
-          statOverride: (_p, real) => {
-            reads++
-            return real
-          },
-        },
-      })
-      expect(r).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
-      if (r.status === 'refused') expect(r.detail).toContain('is not an operation id')
-      expect(reads).toBe(0)
+/** The forged state with the op dir moved away and `.skillsmith-parked` left for the case to fill. */
+async function moved(): Promise<{ st: State; parkedDir: string; away: string }> {
+  const st = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
+  const away = path.join(st.fx.base, 'moved-away')
+  fs.renameSync(st.opDir, away)
+  return { st, parkedDir: path.join(st.fx.staging, '.skillsmith-parked'), away }
+}
+
+describe('the listing and the plan agree on what counts as set aside', () => {
+  const cases: Array<[string, (c: Awaited<ReturnType<typeof moved>>) => void]> = [
+    [
+      'a regular file named <opId>',
+      (c) => {
+        fs.mkdirSync(c.parkedDir, { recursive: true })
+        fs.writeFileSync(path.join(c.parkedDir, OP_ID), 'x')
+      },
+    ],
+    [
+      'a symlink named <opId>',
+      (c) => {
+        fs.mkdirSync(c.parkedDir, { recursive: true })
+        fs.symlinkSync(c.away, path.join(c.parkedDir, OP_ID))
+      },
+    ],
+    [
+      '.skillsmith-parked itself a symlink to a dir holding <opId>/',
+      (c) => {
+        const elsewhere = path.join(c.st.fx.base, 'elsewhere')
+        fs.mkdirSync(path.join(elsewhere, OP_ID), { recursive: true })
+        fs.symlinkSync(elsewhere, c.parkedDir)
+      },
+    ],
+  ]
+  for (const [label, plant] of cases) {
+    it(`${label}: absent from the listing, and not already-parked`, async () => {
+      const c = await moved()
+      plant(c)
+      expect((await report(c.st)).parked).toEqual([])
+      const a = await act(c.st, 'apply')
+      expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
     })
   }
+
+  it('a .prune-x directory is absent from the listing and not already-parked', async () => {
+    const c = await moved()
+    fs.mkdirSync(path.join(c.parkedDir, '.prune-x'), { recursive: true })
+    expect((await report(c.st)).parked).toEqual([])
+    const a = await act({ ...c.st, opId: '.prune-x' }, 'apply')
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+  })
+
+  it('control: a real directory named <opId> is listed and already-parked', async () => {
+    const c = await moved()
+    fs.mkdirSync(path.join(c.parkedDir, OP_ID), { recursive: true })
+    expect((await report(c.st)).parked).toEqual([
+      { opId: OP_ID, path: path.join(c.parkedDir, OP_ID) },
+    ])
+    const a = await act(c.st, 'apply')
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'already-parked' })
+  })
+
+  it('an opId parked in two roots is already-parked naming both paths', async () => {
+    const one = await forged()
+    const two = await forged()
+    const a = await act(one, 'apply', {
+      roots: [fs.realpathSync(one.fx.skillsDir), fs.realpathSync(two.fx.skillsDir)],
+    })
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'already-parked' })
+    if (a.result.status !== 'refused') throw new Error('expected a refusal')
+    expect([...a.result.paths].sort()).toEqual([landingOf(one), landingOf(two)].sort())
+    for (const p of a.result.paths) expect(a.result.detail).toContain(p)
+  })
+})
+
+describe('governance S2: an opId that is not one path component is refused before any read', () => {
+  /** A real root holding a parked area, with a counter on every reader stat. */
+  async function counted(): Promise<{
+    roots: string[]
+    reads: () => number
+    reader: ReaderOptions
+  }> {
+    const st = await forged()
+    let n = 0
+    const reader: ReaderOptions = {
+      statOverride: (_p, real) => {
+        n++
+        return real
+      },
+    }
+    return { roots: [fs.realpathSync(st.fx.skillsDir)], reads: () => n, reader }
+  }
+
+  for (const opId of ['..', '.', '', 'a/b', `${OP_ID}\0`, '../escape']) {
+    it(JSON.stringify(opId), async () => {
+      const c = await counted()
+      const r = await planRecovery({ action: 'apply', opId, roots: c.roots, reader: c.reader })
+      expect(r).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+      if (r.status === 'refused') expect(r.detail).toContain('is not an operation id')
+      expect(c.reads()).toBe(0)
+    })
+  }
+
+  it('the pair (known-positive control): a well-formed opId on the same root does read', async () => {
+    const c = await counted()
+    const r = await planRecovery({ action: 'apply', opId: OP_ID, roots: c.roots, reader: c.reader })
+    expect(r).toMatchObject({ status: 'refused', reason: 'already-parked' })
+    expect(c.reads()).toBeGreaterThan(0)
+  })
 
   it('the pair: a well-formed opId reaches the scan (and is not found)', async () => {
     const r = await planRecovery({ action: 'apply', opId: OP_ID, roots: ['/nonexistent-root'] })

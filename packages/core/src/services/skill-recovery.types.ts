@@ -349,8 +349,9 @@ export type RecoveryRefuseReason =
   | 'recovery-other-user'
   | 'plan-changed'
   /**
-   * 6a-iii (report only): no op dir has the opId, but its parked area exists;
-   * nothing is left to do and nothing was done (the CLI exits 0).
+   * 6a-iii (report only): no op dir has the opId, but its parked area exists:
+   * it was already set aside. Doctor takes no action: it neither verifies nor
+   * syncs that copy (the CLI exits 0).
    */
   | 'already-parked'
 
