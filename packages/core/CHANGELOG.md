@@ -5,8 +5,8 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **Internal**: SMI-6531 -- `skill-swap.xdev.ts`'s header now states the full `sourceUnchanged`
-  rule for an `ENOSPC` keep: the source still matches its sidecar and the kept temp is a subset
-  of it. No behaviour change.
+  rule for a full-device keep (`ENOSPC` or `EDQUOT`): the source still matches its sidecar and
+  the kept temp is a subset of it. No behaviour change.
 
 - **Internal**: SMI-6531 -- three doc comments on the space checks (`skill-recovery.mark.ts`,
   `skill-swap.space.ts`, `skill-swap.xdev.ts`) are rewrapped to the 100-character width. No
