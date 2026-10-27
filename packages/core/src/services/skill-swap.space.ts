@@ -1,8 +1,9 @@
 /**
  * SMI-6531 (A1 step 4c, rounds 1-3): the space check that runs first in a
  * cross-device `publishTree` (A1 plan §3.3 `publishTree` step 4, "Space
- * first"; E35). It refuses `state-root-full`, naming
- * `skillsmith doctor backups --prune`, before anything is written.
+ * first"; E35). It refuses `state-root-full`, naming `FREE_SPACE_REMEDY`
+ * (free space by hand; the prune command is not available yet), before
+ * anything is written.
  *
  * What stops a retry from piling up full-device copies is not here: a
  * full-device stop keeps this op's `record.json` and marks it with the cause,
@@ -42,6 +43,7 @@ import path from 'node:path'
 import type { TreeRecord } from '../install/tree-hash.js'
 import { codeOf, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { FREE_SPACE_REMEDY } from './skill-swap.types.js'
 
 /** The margin the space check adds (plan §3.3). */
 export const SPACE_MARGIN_BYTES = 64 * 1024
@@ -50,8 +52,8 @@ export const SIDECAR_BLOCKS = 2n
 /** Inodes beyond the tree's entries and the sidecars. */
 export const INODE_MARGIN = 16n
 
-/** The command a `state-root-full` stop names. */
-export const PRUNE_COMMAND = 'skillsmith doctor backups --prune'
+/** The remedy a `state-root-full` stop names (defined fs-free in `skill-swap.types.ts`). */
+export { FREE_SPACE_REMEDY }
 
 /** What the copy creates: each file's and symlink's size, and the directory count. */
 export interface TreeShape {
@@ -124,7 +126,12 @@ export async function spaceFirst(st: SwapState, src: string, record: TreeRecord 
   }
   const free = s.bavail * s.bsize
   const need = bytesNeeded(shape, s.bsize)
-  const next = `run \`${PRUNE_COMMAND}\` to free space, then finish the update with doctor`
+  // Facts and the free-space remedy only. `moveAcross` (directly, or through
+  // `publishTree`) reaches this check from six callers (the update's backup, the update's undo, abort cleanup, and
+  // doctor's resume, run and cross-device moves), and what to run afterwards
+  // differs for each, so any next step written here would be wrong for some of
+  // them. Each caller's own result line names its next action.
+  const next = FREE_SPACE_REMEDY
   if (free < need) {
     throw new SwapFault(
       'state-root-full',

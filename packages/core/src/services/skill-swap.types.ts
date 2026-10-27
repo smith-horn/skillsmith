@@ -303,7 +303,8 @@ export type SwapRefuseReason =
  * append rejected; its record may still be in the journal, since a failure
  * can follow the fsynced write),
  * `state-root-full` (4c: the backup area lacks the space for a cross-device
- * copy; the detail names `skillsmith doctor backups --prune`), `op-not-empty`
+ * copy; the detail says to free space by hand, since the prune command is not
+ * available yet), `op-not-empty`
  * (13: OP holds an entry this run did not write).
  */
 export type SwapStopReason =
@@ -472,3 +473,16 @@ export const NEW_DIR = 'new'
 export const OLD_DIR = 'old'
 export const UNDONE_DIR = 'undone'
 export const PARK_INTENT_FILE = 'park-intent.json'
+
+/**
+ * The free-space clause of a `state-root-full` stop, with no next step: each
+ * caller adds its own, because what to run afterwards differs (the update has
+ * already installed the new tree and kept its record; doctor refused with
+ * nothing changed). Every clause is true today: the prune command does not
+ * exist yet. A1 step 6c adds `skillsmith doctor backups --prune`; it restores
+ * the command as the instruction here. Defined in this fs-free module so the
+ * recovery classifier (`skill-recovery.plan.ts`) can print it;
+ * `skill-swap.space.ts` re-exports it.
+ */
+export const FREE_SPACE_REMEDY =
+  'free space on the device that holds the Skillsmith state directory (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'

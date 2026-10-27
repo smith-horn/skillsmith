@@ -11,7 +11,10 @@ All notable changes to `@skillsmith/cli` are documented here.
   "not available yet" (`--abandon`, `--clean-staging` and `--park` keep it). A finished action
   that could not set its operation folder aside reports `removal-not-done` and exits 4. An
   operation already set aside is reported as such, in the listing and by `--apply`/`--undo`,
-  which change nothing and exit 0.
+  which change nothing and exit 0; a set-aside copy together with a skills root whose staging
+  cannot be read safely (unsafe staging) is not that case: it is `recovery-ambiguous` and exits 1.
+  A copy that would not fit refuses `state-root-full` with a message to free space by hand (the
+  prune command is not available yet).
 
 - **Changed**: SMI-6531 -- A1 step 6a-ii: `skillsmith doctor locks --release <path>` also accepts
   a skills root's write lock or its reclaim lock, as the listing shows them, under the same rules.

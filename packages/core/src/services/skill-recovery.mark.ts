@@ -19,10 +19,10 @@
  * copied across devices (a source with no keep, or one at P0, P1 or a rewrite
  * state without a copy temp) is measured against the free bytes and inodes of
  * the area's device, with the same estimate as `publishTree`'s space check.
- * Too little refuses `state-root-full` naming `skillsmith doctor backups
- * --prune`, with nothing changed. A P2 copy temp is not measured here: it is
+ * Too little refuses `state-root-full` naming `FREE_SPACE_REMEDY` (free space
+ * by hand; the prune command is not available yet), with nothing changed. A P2 copy temp is not measured here: it is
  * kept as `partial-copy` first, then the copy's own space check runs, so the
- * user can prune it. Like that check, it is a first-attempt filter.
+ * user can remove it by hand. Like that check, it is a first-attempt filter.
  *
  * @module @skillsmith/core/services/skill-recovery.mark
  */
@@ -30,7 +30,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { messageOf, renameChecked, SwapFault, syncDir, writeNewFile } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { bytesNeeded, inodesNeeded, PRUNE_COMMAND, shapeOf } from './skill-swap.space.js'
+import { bytesNeeded, FREE_SPACE_REMEDY, inodesNeeded, shapeOf } from './skill-swap.space.js'
 import { sealRecord } from './skill-swap.staging.js'
 import type { FullDeviceMarker, SwapRecord } from './skill-swap.types.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
@@ -99,7 +99,7 @@ function toCopy(st: SwapState, f: OpFacts, steps: readonly PlanStep[]): string[]
   return out
 }
 
-/** `state-root-full` naming the prune command when a copy the plan needs cannot fit; else null. */
+/** `state-root-full` naming the free-space remedy when a copy the plan needs cannot fit; else null. */
 export async function spaceBlock(
   st: SwapState,
   f: OpFacts,
@@ -127,7 +127,10 @@ export async function spaceBlock(
     const free = s.bavail * s.bsize
     const need = bytesNeeded(shape, s.bsize)
     const inodes = inodesNeeded(shape)
-    const next = `run \`${PRUNE_COMMAND}\` to free space, then run this command again`
+    // "Run this command again" is true only here: this check refuses before any
+    // mutation and is reached only by `doctor recovery --apply/--undo`, so the
+    // same command can simply be rerun once space is freed.
+    const next = `${FREE_SPACE_REMEDY}, then run this command again`
     if (free < need) {
       return `${area.at} has ${free} bytes free and the backup of ${src} needs about ${need}; nothing was changed; ${next}`
     }

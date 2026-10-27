@@ -237,8 +237,12 @@ function stubStatfs(
  */
 const FILES_NEED = (4n + 2n + 2n) * BLOCK + 65536n
 
+/** The remedy, written out here so a change to it fails these tests (not imported). */
+const REMEDY_TEXT =
+  'free space on the device that holds the Skillsmith state directory (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'
+
 describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
-  it('refuses state-root-full naming doctor backups --prune, before any copy temp exists', async () => {
+  it('refuses state-root-full with the free-space remedy, before any copy temp exists', async () => {
     const fx = xdevFixture(FILES)
     const p = plan(fx, [modify('SKILL.md', '# v2\n')])
     const hit = stubStatfs(fx, 16n * BLOCK)
@@ -246,7 +250,17 @@ describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
     expect(hit.asked).toBe(1)
     const r = committedOf(run.result)
     assertStoppedAtPublish(fx, p.input.preTree, r, 'state-root-full')
-    expect(r.incomplete?.detail).toContain('skillsmith doctor backups --prune')
+    const detail = r.incomplete?.detail
+    // The whole tail is pinned: the facts end, then the remedy, then nothing.
+    expect(detail?.slice(-(REMEDY_TEXT.length + 2))).toBe(`; ${REMEDY_TEXT}`)
+    expect(detail).toContain('free space on the device that holds the Skillsmith state directory')
+    expect(detail).toContain('not available yet')
+    // Facts only: six callers reach this check and each names its own next step.
+    expect(detail).not.toContain('--apply')
+    expect(detail).not.toContain('finish the update')
+    expect(detail).not.toContain('run the same command again')
+    expect(detail).not.toContain('run this command again')
+    expect(detail).not.toContain('run `skillsmith doctor backups --prune`')
     expect(areaNames(areaOf(fx))).toEqual([`${OP_ID}.json`])
     expect(treeDeletesX(fx, run.events)).toEqual([])
   })

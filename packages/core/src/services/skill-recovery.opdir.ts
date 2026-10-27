@@ -136,11 +136,7 @@ function isKeptName(name: string, opId: string): boolean {
  * (or `<opId>.<kind>`, a kept copy of another kind) exactly (`backupAreaPath`), or
  * no target is derived.
  */
-export function intentTarget(
-  backupPath: string,
-  root: string,
-  opId: string
-): NoRecordIntent['target'] {
+function intentTarget(backupPath: string, root: string, opId: string): NoRecordIntent['target'] {
   const parts = backupPath.split('/')
   const [id, dirName, key, client, update, backups] = parts.slice(-6).reverse()
   if (id === undefined || !isKeptName(id, opId)) return null

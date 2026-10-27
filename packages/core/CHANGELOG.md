@@ -4,22 +4,39 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- the `state-root-full` message no longer names `skillsmith doctor backups
+  --prune`, which is not available yet (it arrives in A1 step 6c). The space check states the
+  shortfall (the device, the free space, the space needed) and says to free space on the state
+  directory's device by hand. It names no next step, because six callers reach it (the update's
+  backup and undo, abort cleanup, and doctor's resume, run and cross-device moves) and each has
+  its own: the update has already installed the new tree and kept its record, so it is not
+  rerunnable (`recovery-pending`). Before it changes anything, `doctor recovery --apply`/`--undo`
+  checks that its copies will fit; when they won't, it refuses with nothing changed and adds
+  "then run this command again". A copy that still runs out of space later stops with the record
+  kept, and doctor prints that the same command resumes it. Its plan note states the facts only,
+  since the read-only listing shows it too.
+
 - **Added**: SMI-6531 -- A1 step 6a-iii: `skillsmith doctor recovery --apply <opId>` and
   `--undo <opId>` are supported, on one device and across devices. With the backup area on
   another device, each keep copies the folder, verifies the copy against the source, and only
   then counts it as kept; the verified source stays in the operation folder, which is set aside
   whole once its metadata is removed (the parked copy is reported). A run stopped anywhere in a
   copy is resumed by the same command: a copy that does not match is kept as `partial-copy`,
-  never removed, and the copy starts again. A copy that would not fit refuses `state-root-full`
-  naming `skillsmith doctor backups --prune`, with nothing changed; an interrupted copy's temp is
-  first kept as `partial-copy`, so a stop there has kept it. When doctor's own copy runs
+  never removed, and the copy starts again. When doctor's copies clearly won't fit, it refuses
+  `state-root-full` before changing anything, telling the user to free space on the state
+  directory's device and run the command again (the prune command, `skillsmith doctor backups
+  --prune`, is not available yet). A copy that still runs out of space later stops
+  `state-root-full` with the record kept, and the same command resumes it; an interrupted copy's
+  temp is first kept as `partial-copy`, so a stop there has kept it. When doctor's own copy runs
   out of space, the update's record is marked with where, as the update itself does. If setting
   the folder aside does not finish, the result says so with `removal-not-done`. No folder is
   removed. A run killed after the record was removed is finished by the same command: an
   operation folder with no record whose `park-intent.json` verifies is set aside as the intent
   says. One already set aside is only reported (`already-parked`: doctor takes no action and
   neither verifies nor syncs that copy), in the listing too. An opId that is an operation folder
-  in one root and set aside in another is `recovery-ambiguous`; `--root` picks one. A
+  in one root and set aside in another is `recovery-ambiguous`; `--root` picks one. A set-aside
+  copy together with a skills root whose staging cannot be read safely (unsafe staging) is also
+  `recovery-ambiguous` and exits 1. A
   `move-source` park intent now also names its verified copy (`backupPath`).
 
 - **Internal**: SMI-6531 -- A1 step 6a-ii: internal groundwork for `skillsmith doctor
@@ -27,10 +44,9 @@ All notable changes to `@skillsmith/core` are documented here.
   device, an update a crash left: it plans without a lock, then takes the root's write lock,
   reads everything again and changes nothing if any of it differs. It removes no folder, only its
   own metadata files (each checked by identity and bytes first) and the emptied operation folder.
-  Records on another
-  device, or marked full-device, were refused at that step (6a-iii above lifts it). The audit
-  record is appended only if the journal holds none for the operation; a journal it cannot extend
-  is reported, not fatal.
+  Records on another device, or marked full-device, were refused at that step (6a-iii above
+  lifts it). The audit record is appended only if the journal holds none for the operation; a
+  journal it cannot extend is reported, not fatal.
 
 - **Internal**: SMI-6531 -- A1 step 6a-ii: the update's manifest commit moved to
   `skill-swap.commit.ts`, shared with that groundwork. A failure inside the manifest lock (an
@@ -112,7 +128,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 - **Added**: SMI-6531 A1 step 4c -- `swapInPlace` now backs up across devices when the state root is
   on another filesystem. It first estimates the space the copy needs and refuses with
-  `state-root-full` (naming `skillsmith doctor backups --prune`) when it clearly won't fit. It
+  `state-root-full` (stating the shortfall and telling the user to free space on the state
+  directory's device; the prune command is not available yet) when it clearly won't fit. It
   copies the old folder into a temp, verifies the copy against the source by tree hash, keeps a copy
   that doesn't match as `partial-copy` and copies once more, then moves the verified copy into
   place. The source is never removed: the operation's staging folder is parked whole, with a park

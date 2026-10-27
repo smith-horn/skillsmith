@@ -17,6 +17,7 @@
  * @module @skillsmith/core/services/skill-recovery.plan
  */
 import { canonicalJson } from './skill-recovery.digest.js'
+import { FREE_SPACE_REMEDY } from './skill-swap.types.js'
 import type {
   ActionPlan,
   Disposition,
@@ -126,7 +127,7 @@ function commonNotes(f: OpFacts): string[] {
   if (f.fullDevice !== null) {
     notes.push(
       `an earlier copy stopped on a full device (${f.fullDevice.cause} at ${f.fullDevice.stage}); ` +
-        'if the copy still cannot fit, this stops with state-root-full: run `skillsmith doctor backups --prune`'
+        `if the copy still cannot fit, this stops with state-root-full: ${FREE_SPACE_REMEDY}`
     )
   }
   return notes

@@ -11,10 +11,10 @@
  *    backup complete, reports `removal-not-done` (the CLI maps it to exit 4),
  *    and deletes no tree entry.
  *  - T-F1 (space block): too little space or too few inodes for the copy
- *    refuses `state-root-full` naming `skillsmith doctor backups --prune`,
- *    with zero mutation, and three attempts add no `partial-copy`; once the
- *    partial is pruned by hand (`doctor backups --prune` is 6c) `--apply`
- *    completes. Doctor's own `ENOSPC` records the marker in the adopted record.
+ *    refuses `state-root-full` with the free-space remedy (the prune command
+ *    is 6c, so the message says it is not available yet), with zero mutation,
+ *    and three attempts add no `partial-copy`; once the partial is removed by
+ *    hand `--apply` completes. Doctor's own `ENOSPC` records the marker in the adopted record.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -30,7 +30,7 @@ import {
   useOtherDeviceCleanup,
   useStubs,
 } from '../skill-swap.xdev.helpers.js'
-import { s3 } from './recovery.helpers.js'
+import { s1, s3 } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import { act, contentSnapshot, done, killAt } from './recovery.act.helpers.js'
 import {
@@ -265,8 +265,12 @@ function statfsAs(st: State, over: (s: fs.BigIntStatsFs) => Partial<fs.BigIntSta
   return { off: () => void (on = false) }
 }
 
-describe('T-F1 (space block): state-root-full naming the prune, with zero mutation', () => {
-  it('too few bytes: three attempts refuse with nothing changed; after a prune --apply completes', async () => {
+/** The remedy, written out here so a change to it fails these tests (not imported). */
+const REMEDY_TEXT =
+  'free space on the device that holds the Skillsmith state directory (a prune command, `skillsmith doctor backups --prune`, is planned but not available yet)'
+
+describe('T-F1 (space block): state-root-full with the free-space remedy, with zero mutation', () => {
+  it('too few bytes: three attempts refuse with nothing changed; after freeing space by hand --apply completes', async () => {
     const st = await fullDevice()
     const lim = statfsAs(st, () => ({ bavail: 1n }))
     const before = world(st)
@@ -274,12 +278,20 @@ describe('T-F1 (space block): state-root-full naming the prune, with zero mutati
       const a = await act(st, 'apply')
       expect(a.result).toMatchObject({ status: 'refused', reason: 'state-root-full' })
       if (a.result.status === 'refused') {
-        expect(a.result.detail).toContain('skillsmith doctor backups --prune')
+        const tail = `; nothing was changed; ${REMEDY_TEXT}, then run this command again`
+        expect(a.result.detail.slice(-tail.length)).toBe(tail)
+        expect(a.result.detail).toContain(
+          'free space on the device that holds the Skillsmith state directory'
+        )
+        expect(a.result.detail).toContain('not available yet')
+        expect(a.result.detail).toContain('run this command again')
+        expect(a.result.detail).not.toContain('finish the update')
+        expect(a.result.detail).not.toContain('run `skillsmith doctor backups --prune`')
       }
       expect(world(st)).toBe(before)
       expect(partialTrees(st.fx)).toHaveLength(1)
     }
-    // The prune (6c's command) by hand: the partial and its sidecar.
+    // Freeing space by hand (6c's prune command is not available yet): the partial and its sidecar.
     const partial = partialTrees(st.fx)[0]!
     fs.rmSync(partial, { recursive: true })
     fs.rmSync(`${partial}.json`)
@@ -301,6 +313,35 @@ describe('T-F1 (space block): state-root-full naming the prune, with zero mutati
     lim.off()
     statfsAs(st, () => ({ ffree: need, files: need * 10n }))
     expect((await done(st, 'apply')).result.status).toBe('done')
+  })
+})
+
+describe("the copy's own space check, reached through doctor --undo", () => {
+  it('stops state-root-full with the facts and the remedy only: no --apply, no "finish the update"', async () => {
+    // S1 --undo installs O, then keeps N as unused-new across devices: a real
+    // `publishTree` call from doctor. The space block (which would refuse first
+    // and name "run this command again") sees plenty; the copy's own check, one
+    // statfs later, sees a full device. So the refusal observed is `spaceFirst`'s.
+    const st = await s1(xfile())
+    let asked = 0
+    stub(fs.promises, 'statfs', (orig: AnyFn) => async (...a: unknown[]) => {
+      const s = (await orig(...a)) as fs.BigIntStatsFs
+      if (!String(a[0]).startsWith(st.fx.stateRoot)) return s
+      return ++asked === 1 ? s : { ...s, bavail: 1n }
+    })
+    const a = await act(st, 'undo')
+    expect(asked).toBe(2)
+    expect(a.result.status).toBe('stopped')
+    if (a.result.status !== 'stopped') return
+    expect(a.result.reason).toBe('state-root-full')
+    expect(a.result.detail.slice(-(REMEDY_TEXT.length + 2))).toBe(`; ${REMEDY_TEXT}`)
+    expect(a.result.detail).toContain(
+      'free space on the device that holds the Skillsmith state directory'
+    )
+    expect(a.result.detail).toContain('not available yet')
+    expect(a.result.detail).not.toContain('--apply')
+    expect(a.result.detail).not.toContain('finish the update')
+    expect(a.result.detail).not.toContain('run this command again')
   })
 })
 
