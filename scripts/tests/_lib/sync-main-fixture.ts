@@ -218,6 +218,10 @@ while [ "$i" -lt "\${#args[@]}" ]; do
 done
 mode=${JSON.stringify(mode)}
 if [ "$sub" = fetch ]; then
+  if [ "$mode" = fetch-fails-malformed ]; then
+    printf 'remote: x\\nfatal: bad \\377\\376 fetch \\233end\\n\\n' >&2
+    exit 128
+  fi
   "$real" "$@" || exit $?
   [ "$mode" = switch-during-fetch ] && "$real" checkout -q -b feature/y
   exit 0
@@ -240,6 +244,15 @@ if [ "$sub" = merge ] || [ "$sub" = reset ]; then
     detach-before-move-and-back) "$real" checkout -q --detach ;;
     diverge-main-before-move) "$real" commit -q --allow-empty -m 'race commit on main' ;;
     fail-move) exit 1 ;;
+    fail-move-with-message) printf 'fatal: simulated index.lock held\\r\\n' >&2; exit 1 ;;
+    fail-move-out-verbose)
+      { printf 'fatal: first line\\n'; awk 'BEGIN{for(i=0;i<20000;i++)print "more output line", i}'; } >&2; exit 1 ;;
+    fail-move-out-leading) printf '\\n\\n  \\nfatal: after blanks\\nsecond line\\n' >&2; exit 1 ;;
+    fail-move-out-ansi) printf '\\033[31mfatal: red\\033[0m\\001\\000tail\\n' >&2; exit 1 ;;
+    fail-move-out-long) awk 'BEGIN{s="fatal: "; for(i=0;i<300;i++) s=s "x"; print s}' >&2; exit 1 ;;
+    fail-move-out-empty) exit 1 ;;
+    fail-move-out-malformed) printf 'fatal: bad \\377\\376 bytes \\233 C1 \\177DEL end\\n' >&2; exit 1 ;;
+    fail-move-out-huge) awk 'BEGIN{printf "fatal: "; for(i=0;i<2000000;i++) printf "x"; print ""}' >&2; exit 1 ;;
     stage-incoming-then-fail) printf 'staged by another session\\n' >a.txt; "$real" add a.txt; exit 1 ;;
   esac
   st=0
@@ -308,5 +321,21 @@ export function grepFailEnv(repo: Repo, base: NodeJS.ProcessEnv = GIT_ENV): Node
     `#!/bin/sh\ncase " $* " in *" -RlF "*) echo 'grep: simulated read error' >&2; exit 2 ;; esac\nexec ${JSON.stringify(realGrep)} "$@"\n`
   )
   chmodSync(join(dir, 'grep'), 0o755)
+  return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
+}
+
+/**
+ * Put a `tr` first on PATH that fails (exit 1, with a diagnostic) for the
+ * rendering helper's high-byte mapping only, and is the real tr otherwise.
+ */
+export function trFailEnv(repo: Repo, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const realTr = execFileSync('sh', ['-c', 'command -v tr'], { encoding: 'utf8' }).trim()
+  const dir = join(repo.root, 'tr-shim')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, 'tr'),
+    `#!/bin/sh\ncase "$1" in '\\200-\\377') echo 'tr: Illegal byte sequence' >&2; exit 1 ;; esac\nexec ${JSON.stringify(realTr)} "$@"\n`
+  )
+  chmodSync(join(dir, 'tr'), 0o755)
   return { ...base, PATH: `${dir}:${base.PATH ?? ''}` }
 }

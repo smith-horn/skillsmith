@@ -8,7 +8,7 @@
  * plan: docs/internal/implementation/smi-6465-sync-main-preserve-uncommitted-work.md
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -19,7 +19,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   blobOf,
@@ -35,8 +35,10 @@ import {
   pushUpstream,
   read,
   runSync,
+  SCRIPT_PATH,
   SEED,
   shimEnv,
+  trFailEnv,
   snapshot,
   STATE_POST,
   STATE_PRE,
@@ -788,6 +790,141 @@ describe('SMI-6465 pre-merge gate round 3: the discard path also forces its refl
     git(repo.local, 'config', 'core.logAllRefUpdates', 'false')
     rmSync(join(repo.local, '.git', 'logs', 'refs', 'heads', 'main'))
     expectSynced(repo, runSync(repo.local, ['--discard-local-commits']))
+  })
+})
+
+describe("SMI-6465 retro: a refusal git explains carries git's own reason", () => {
+  it('T60: [keep-refused] names the first line git printed', () => {
+    const repo = makeRepo()
+    commitLocal(repo, { 'mine.txt': 'key\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(
+      repo.local,
+      ['--discard-local-commits'],
+      shimEnv(repo, 'fail-move-with-message')
+    )
+    const { cause } = refusedAfterFetch(repo, before, result, 'keep-refused')
+    expect(cause).toContain('fatal: simulated index.lock held')
+    expect(cause).not.toContain('\r')
+    expect(result.stderr).not.toContain('paths above')
+  })
+
+  it('T61: [ff-refused] names the first line git printed', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], shimEnv(repo, 'fail-move-with-message'))
+    const { cause } = refusedAfterFetch(repo, before, result, 'ff-refused')
+    expect(cause).toContain('fatal: simulated index.lock held')
+  })
+})
+
+describe('SMI-6465 retro gate: any git output yields a one-line refusal, exit 1', () => {
+  // [shim mode, the reason the cause must end with (or a predicate on it)]
+  const cases: Array<[string, (reason: string) => void]> = [
+    ['fail-move-out-verbose', (r) => expect(r).toBe('fatal: first line')],
+    ['fail-move-out-leading', (r) => expect(r).toBe('fatal: after blanks')],
+    ['fail-move-out-ansi', (r) => expect(r).toBe('[31mfatal: red[0m tail')],
+    ['fail-move-out-long', (r) => expect(r).toBe(`fatal: ${'x'.repeat(193)}`)],
+    ['fail-move-out-empty', (r) => expect(r).toBe('no message from git')],
+    ['fail-move-out-malformed', (r) => expect(r).toBe('fatal: bad ?? bytes ? C1 DEL end')],
+    ['fail-move-out-huge', (r) => expect(r).toBe(`fatal: ${'x'.repeat(193)}`)],
+  ]
+  for (const [mode, check] of cases) {
+    for (const flow of ['ff', 'keep'] as const) {
+      it(`T62 ${flow} ${mode}`, () => {
+        const repo = makeRepo()
+        if (flow === 'ff') pushUpstream(repo, { 'a.txt': 'a2\n' })
+        else commitLocal(repo, { 'mine.txt': 'key\n' })
+        const before = snapshot(repo.local)
+        const args = flow === 'keep' ? ['--discard-local-commits'] : []
+        const token = flow === 'keep' ? 'keep-refused' : 'ff-refused'
+        // A UTF-8 locale, where a malformed byte can make a non-C tr exit.
+        const result = runSync(repo.local, args, { ...shimEnv(repo, mode), LC_ALL: 'C.UTF-8' })
+        const { cause } = refusedAfterFetch(repo, before, result, token)
+        // eslint-disable-next-line no-control-regex
+        expect(cause).not.toMatch(/[\x00-\x1f\x7f]/)
+        check(cause.slice(cause.indexOf(': ') + 2))
+      })
+    }
+  }
+})
+
+describe('SMI-6465 retro gate round 2: a fetch failure renders as one line too', () => {
+  it('T63: malformed bytes in fetch output give one [fetch-failed] line, exit 1', () => {
+    const repo = makeRepo()
+    const before = snapshot(repo.local)
+    const result = runSync(repo.local, [], {
+      ...shimEnv(repo, 'fetch-fails-malformed'),
+      LC_ALL: 'C.UTF-8',
+    })
+    const { cause } = expectRefusal(result, 'fetch-failed', STATE_PRE)
+    expect(snapshot(repo.local)).toBe(before)
+    expect(cause).toBe('git fetch origin main failed: fatal: bad ?? fetch ?end')
+  })
+})
+
+describe("SMI-6465 retro gate round 2: rendering git's reason can never fail", () => {
+  it('T64: a stage of the reason pipeline failing still gives one [ff-refused] line, exit 1', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    const before = snapshot(repo.local)
+    const env = trFailEnv(repo, shimEnv(repo, 'fail-move-with-message'))
+    const result = runSync(repo.local, [], env)
+    const { cause } = refusedAfterFetch(repo, before, result, 'ff-refused')
+    expect(cause.endsWith(': no message from git')).toBe(true)
+    expect(result.stderr).not.toContain('Illegal byte sequence')
+  })
+})
+
+describe('SMI-6465 retro gate round 3: the helper is found however the script is run', () => {
+  function runAs(cwd: string, script: string, env: NodeJS.ProcessEnv): SyncResult {
+    const r = spawnSync('bash', [script], { cwd, encoding: 'utf8', env, timeout: 30_000 })
+    return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+  }
+
+  it('T65: run by a CDPATH-resolvable relative path with CDPATH set, it still syncs', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    symlinkSync(dirname(SCRIPT_PATH), join(repo.local, 'x'))
+    // `cd x` consults CDPATH (x does not start with / or .) and prints the directory.
+    const result = runAs(repo.local, 'x/sync-main.sh', { ...GIT_ENV, CDPATH: repo.local })
+    expectSynced(repo, result)
+  })
+
+  it('T67: a ../ link through a symlinked directory resolves, and syncs (pin)', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    // d1 -> d2/sub; d1/a -> ../a, which resolves through d1 to d2/a, the script.
+    const base = join(repo.root, 'links')
+    mkdirSync(join(base, 'd2', 'sub'), { recursive: true })
+    symlinkSync(join(base, 'd2', 'sub'), join(base, 'd1'))
+    symlinkSync(SCRIPT_PATH, join(base, 'd2', 'a'))
+    symlinkSync('../a', join(base, 'd2', 'sub', 'a'))
+    symlinkSync('d1/a', join(base, 'a'))
+    const started = Date.now()
+    const result = runAs(repo.local, join(base, 'a'), GIT_ENV)
+    expect(Date.now() - started).toBeLessThan(20_000)
+    expectSynced(repo, result)
+  })
+
+  it('T68: a symlink cycle cannot run at all: the kernel refuses it (ELOOP)', () => {
+    const repo = makeRepo()
+    const bin = join(repo.root, 'bin')
+    mkdirSync(bin)
+    symlinkSync('b', join(bin, 'a'))
+    symlinkSync('a', join(bin, 'b'))
+    const result = runAs(repo.local, join(bin, 'a'), GIT_ENV)
+    expect(result.status).toBe(126)
+    expect(result.stderr).toMatch(/Too many levels of symbolic links/i)
+  })
+
+  it('T66: run through a symlink outside scripts/, it still syncs', () => {
+    const repo = makeRepo()
+    pushUpstream(repo, { 'a.txt': 'a2\n' })
+    mkdirSync(join(repo.root, 'bin'))
+    symlinkSync(SCRIPT_PATH, join(repo.root, 'bin', 'sync'))
+    expectSynced(repo, runAs(repo.local, join(repo.root, 'bin', 'sync'), GIT_ENV))
   })
 })
 

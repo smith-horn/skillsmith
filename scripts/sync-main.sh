@@ -41,7 +41,8 @@ uncommitted change. Refuses (exit 1, nothing local changed) when:
                          does not save them; first run:
                          git branch save/main-<short> HEAD
 
-Exit codes: 0 synced, 1 refused, 2 usage, 3 stopped partway or HEAD moved.
+Exit codes: 0 synced, 1 refused, 2 usage, 3 stopped partway, HEAD moved, or the
+move could not be verified (no readable branch reflogs, for example reftable).
 EOF
 }
 
@@ -55,28 +56,19 @@ refuse() {
   exit "${5:-1}"
 }
 
-# Render up to 5 NUL-separated paths from a file as one line, each once, in
-# bytewise order (deterministic, whichever git command listed them first).
-# Newlines and tabs in a path are shown as \n and \t so it stays on one line.
-render_paths() {
-  local file=$1 out='' n=0 p
-  while IFS= read -r -d '' p; do
-    n=$((n + 1))
-    [ "$n" -le 5 ] || continue
-    p=${p//$'\n'/\\n}
-    p=${p//$'\t'/\\t}
-    out="${out:+$out, }$p"
-  done < <(LC_ALL=C sort -zu "$file")
-  [ "$n" -le 5 ] || out="$out (and $((n - 5)) more)"
-  printf '%s' "$out"
-}
-
-# Count NUL-separated records in a file.
-count_paths() {
-  local n=0 p
-  while IFS= read -r -d '' p; do n=$((n + 1)); done <"$1"
-  printf '%s' "$n"
-}
+# Locate the real script (through any symlinks) to find its helper. CDPATH is
+# cleared for every relative cd: with it set, cd prints the directory it chose.
+# The kernel refuses to run a path behind more than 40 links (ELOOP), so this
+# loop is bounded already; the hop limit keeps it bounded on its own terms.
+self=${BASH_SOURCE[0]} hops=0
+while [ -L "$self" ]; do
+  hops=$((hops + 1))
+  [ "$hops" -le 40 ] || { printf 'sync-main: ERROR: more than 40 symlinks resolving %s\n' "${BASH_SOURCE[0]}" >&2; exit 3; }
+  link=$(readlink "$self")
+  case "$link" in /*) self=$link ;; *) self=$(dirname -- "$self")/$link ;; esac
+done
+# shellcheck source=scripts/lib/sync-main-render.sh
+. "$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd -P)/lib/sync-main-render.sh"
 
 discard=0
 for arg in "$@"; do
@@ -91,7 +83,7 @@ for arg in "$@"; do
 done
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync-main.XXXXXX")
-tmp=$(cd "$tmp" && pwd -P) # absolute: the script cds to the top level below
+tmp=$(CDPATH='' cd -- "$tmp" && pwd -P) # absolute: the script cds to the top level below
 trap 'rm -rf "$tmp"' EXIT
 
 # --- Change 1: never move HEAD off the branch it found --------------------
@@ -143,7 +135,7 @@ fi
 # here so one inaccessible submodule cannot abort the parent fetch before the
 # per-path fail-soft reporting has a chance to run.
 if ! git fetch --no-recurse-submodules origin main >"$tmp/fetch.out" 2>&1; then
-  reason=$(tr '\r' '\n' <"$tmp/fetch.out" | sed '/^[[:space:]]*$/d' | tail -n 1)
+  reason=$(one_line "$tmp/fetch.out" last)
   refuse fetch-failed "git fetch origin main failed: ${reason:-no output}" "$STATE_PRE" \
     'check network and auth, then rerun'
 fi
@@ -398,12 +390,14 @@ if [ "$move_status" -ne 0 ]; then
     refuse untracked-collision "origin/main adds $(render_paths "$tmp/collide"), which exist locally" "$STATE_POST" \
       'move the named path(s) aside, then rerun'
   fi
+  # Show git's own first line (shown only; the token never depends on it).
+  reason=$(one_line "$tmp/move.out" first)
   if [ "$mode" = keep ]; then
-    refuse keep-refused 'git reset --keep refused the move' "$STATE_POST" \
-      'the paths above changed locally and upstream; resolve them, then rerun'
+    refuse keep-refused "git reset --keep refused the move: ${reason:-no message from git}" "$STATE_POST" \
+      'resolve what git names, then rerun'
   fi
-  refuse ff-refused 'git refused the fast-forward for a reason this script does not classify' "$STATE_POST" \
-    'run git status and look for a change on a path origin/main touches, then rerun'
+  refuse ff-refused "git refused the fast-forward for a reason this script does not classify: ${reason:-no message from git}" "$STATE_POST" \
+    'resolve what git names (check git status for a change on a path origin/main touches), then rerun'
 fi
 
 # SMI-5823 Phase 2: keep every declared submodule checkout aligned with the

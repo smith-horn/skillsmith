@@ -116,7 +116,7 @@ Use `format-patch` to preserve local commits:
 # 1. Save local commits as patches
 git format-patch -N HEAD -o /tmp/patches/   # N = number of unpushed commits
 
-# 2. Reset to remote
+# 2. Reset to remote (in your own worktree only, never the shared main checkout: ADR-184)
 git fetch origin main
 git reset --hard origin/main
 
@@ -141,7 +141,7 @@ When a Wave N PR is squash-merged to main and Wave N+1 needs rebasing, **`git fo
 git reflog | head -20
 # Look for the commit hash of your wave work (e.g. ed87250b)
 
-# 2. Reset to main
+# 2. Reset to main (in your own worktree only, never the shared main checkout: ADR-184)
 git fetch origin main
 git reset --hard origin/main
 
