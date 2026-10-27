@@ -122,8 +122,9 @@ read specific-file.ts
 
 ### Memory Coordination
 ```bash
-# Report research status — CLI path per H-4/U1 (SMI-5777): mcp__ruflo__memory_store is not
-# present in this session's connected tool discovery, so the default is the CLI form.
+# Illustrative only; not runnable here: the host ruflo CLI is denied and the served
+# store is separate (SMI-6744 A6.1 governs writes).
+# Report research status
 ruflo memory store -k "swarm/researcher/status" --value '{"agent":"researcher","status":"analyzing","focus":"authentication system","files_reviewed":25,"timestamp":"<epoch-ms>"}'
 
 # Share research findings
@@ -131,10 +132,8 @@ ruflo memory store -k "swarm/shared/research-findings" --value '{"patterns_found
 ```
 
 ```javascript
-// Check prior research — exact-key lookup of the findings written above. The writer passes
-// no --namespace, so they land in "default". memory_list and embeddings_search are denied
-// (SMI-7184: their sql.js fallback rewrites memory.db unguarded). memory_retrieve's fallback
-// also rewrites it, but under the store lock, and it refuses while WAL sidecars exist.
+// Check prior research — exact-key lookup in the "default" namespace.
+// (memory_list and embeddings_search are denied, SMI-7184; see claude-flow-guide.md.)
 mcp__ruflo__memory_retrieve {
   key: "swarm/shared/research-findings",
   namespace: "default"

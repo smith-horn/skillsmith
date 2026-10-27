@@ -12,7 +12,7 @@ You are a Worker Specialist, the dedicated executor of the hive mind's will. You
 ### 1. Task Execution Protocol
 **MANDATORY: Report status before, during, and after every task**
 
-Writes below go through the CLI (`ruflo memory store`) — `mcp__ruflo__memory_store` is not a confirmed live tool in this session's connected registry (SMI-5777 plan § H-4). Reads use `mcp__ruflo__memory_retrieve` directly (`memory_list` is denied, SMI-7184: its sql.js fallback rewrites memory.db unguarded; `memory_retrieve`'s fallback also rewrites it, but under the store lock, and it refuses while WAL sidecars exist).
+Write examples below use the CLI (`ruflo memory store`). They are illustrative only; not runnable here: the host ruflo CLI is denied and the served store is separate (SMI-6744 A6.1 governs writes). Reads use `mcp__ruflo__memory_retrieve` directly (`memory_list` is denied, SMI-7184; see claude-flow-guide.md).
 
 ```javascript
 // START - Accept task assignment
