@@ -133,10 +133,27 @@
 import * as path from 'path'
 
 import { isBackupDir } from '../provenance/local-skill-scan.js'
-import type { ManifestEvidence } from './update-target.evidence.js'
+import type { EvidenceDisqualifier, ManifestEvidence } from './update-target.evidence.js'
 import type { ProbeOk, ProbeOutcome } from './update-target.probe.js'
 import type { UpdateTargetReason } from './update-target-reason.js'
 import type { UpdateTargetClassification, UpdateTargetPlan } from './update-target-gate.types.js'
+
+/**
+ * Row 4's mapping (§4.3): `no-entry` is `untracked`; `path-mismatch` and
+ * `invalid-install-path` are `manifest-key-conflict`; no disqualifier is no
+ * row-4 match. The two row-4 rules below read it, and A1's in-place target
+ * builder (SMI-6531 step 7b, `skill-update.target.ts`) maps its entry verdict
+ * through it, so the two cannot disagree. Pure.
+ */
+export function rowFourReason(
+  disqualifiedBy: EvidenceDisqualifier | null
+): 'untracked' | 'manifest-key-conflict' | null {
+  if (disqualifiedBy === 'no-entry') return 'untracked'
+  if (disqualifiedBy === 'path-mismatch' || disqualifiedBy === 'invalid-install-path') {
+    return 'manifest-key-conflict'
+  }
+  return null
+}
 
 /** Everything one rule's `match` may read. */
 export interface RuleContext {
@@ -286,14 +303,14 @@ export const CLASSIFICATION_RULES: readonly ClassificationRule[] = [
   {
     row: '4',
     reason: 'untracked',
-    match: (ctx) => (ctx.evidence.disqualifiedBy === 'no-entry' ? { reason: 'untracked' } : null),
+    match: (ctx) =>
+      rowFourReason(ctx.evidence.disqualifiedBy) === 'untracked' ? { reason: 'untracked' } : null,
   },
   {
     row: '4',
     reason: 'manifest-key-conflict',
     match: (ctx) =>
-      ctx.evidence.disqualifiedBy === 'path-mismatch' ||
-      ctx.evidence.disqualifiedBy === 'invalid-install-path'
+      rowFourReason(ctx.evidence.disqualifiedBy) === 'manifest-key-conflict'
         ? { reason: 'manifest-key-conflict' }
         : null,
   },

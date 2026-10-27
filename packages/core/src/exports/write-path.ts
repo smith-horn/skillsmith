@@ -82,6 +82,25 @@ export {
   type SwapWriteEntry,
   type TraceOp,
 } from '../services/skill-swap.js'
+// SMI-6531 A1 step 7b: the in-place update of a tracked folder: target, plan, execute (plan §3.1, §3.7).
+export {
+  buildUpdateTarget,
+  type BuildUpdateTargetInput,
+  type BuildUpdateTargetOptions,
+} from '../services/skill-update.target.js'
+export { manifestKeyOwner, type RealPathOf } from '../services/skill-update.owner.js'
+export { planSkillUpdate, type PlanSkillUpdateInput } from '../services/skill-update.plan.js'
+export { recoveryNextStep, updateInPlace } from '../services/skill-update.js'
+export type {
+  PlannedFile,
+  UpdateInPlaceOptions,
+  UpdatePlan,
+  UpdateRefusal,
+  UpdateRefusalReason,
+  UpdateResult,
+  UpdateTarget,
+  UpdateTargetResult,
+} from '../services/skill-update.types.js'
 // SMI-6531 A1 step 5: the record scan of `.skillsmith-staging/` (plan §3.3 step 3, R1).
 export {
   isSwapRecord,

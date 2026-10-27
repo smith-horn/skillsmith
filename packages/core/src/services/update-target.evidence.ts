@@ -108,6 +108,41 @@ export interface ManifestEvidence {
  * already-resolved `ManifestEvidence` to it. */
 export type ManifestEvidenceResolver = (input: ManifestEvidenceInput) => Promise<ManifestEvidence>
 
+/**
+ * The checks on an entry before its `installPath` is resolved (SMI-6531 A1
+ * step 7b extracted them from the resolver below, unchanged, so A1's in-place
+ * target builder classifies an entry with this same code). `null` or
+ * `undefined` is `no-entry`; anything else whose `installPath` is not a string
+ * starting with `/` (a string, number, boolean or array entry, or an object
+ * without one) is `invalid-install-path`. Otherwise the path to resolve.
+ */
+export function entryInstallPathVerdict(
+  entry: unknown
+): { disqualifiedBy: 'no-entry' | 'invalid-install-path' } | { installPath: string } {
+  if (entry === null || entry === undefined) return { disqualifiedBy: 'no-entry' }
+  // Checked before resolving, because resolveRealOrFallback on a relative path
+  // silently resolves against process.cwd() and on undefined throws a raw
+  // TypeError — both of which turn a structured refusal into a wrong answer or
+  // a crash. Same guard target-guard.ts states for the same reason.
+  const installPath = (entry as { installPath?: unknown }).installPath
+  if (typeof installPath !== 'string' || !installPath.startsWith('/')) {
+    return { disqualifiedBy: 'invalid-install-path' }
+  }
+  return { installPath }
+}
+
+/**
+ * The check after resolving: the entry's resolved `installPath` against the
+ * resolved scanned directory. `realEntry` is `null` when the caller's
+ * resolution found nothing there, which names no directory.
+ */
+export function resolvedPathVerdict(
+  realEntry: string | null,
+  realScanned: string
+): 'path-mismatch' | null {
+  return realEntry !== realScanned ? 'path-mismatch' : null
+}
+
 /** The shape returned whenever evidence could not be produced. */
 function disqualified(
   manifestKey: string,
@@ -166,22 +201,20 @@ export const temporaryManifestEvidenceResolver: ManifestEvidenceResolver = async
   // safety check OPEN by crashing the run rather than reporting every skill
   // ineligible. Do not remove it on the type's word alone.
   const entry = (manifest.installedSkills?.[manifestKey] ?? null) as SkillManifestEntry | null
-  if (entry === null) {
-    return disqualified(manifestKey, null, 'no-entry')
+  const shape = entryInstallPathVerdict(entry)
+  if (entry === null || 'disqualifiedBy' in shape) {
+    return disqualified(
+      manifestKey,
+      entry,
+      'disqualifiedBy' in shape ? shape.disqualifiedBy : 'no-entry'
+    )
   }
 
-  // Checked before resolving, because resolveRealOrFallback on a relative path
-  // silently resolves against process.cwd() and on undefined throws a raw
-  // TypeError — both of which turn a structured refusal into a wrong answer or
-  // a crash. Same guard target-guard.ts states for the same reason.
-  if (typeof entry.installPath !== 'string' || !entry.installPath.startsWith('/')) {
-    return disqualified(manifestKey, entry, 'invalid-install-path')
-  }
-
-  const realEntry = await resolveRealOrFallback(entry.installPath)
+  const realEntry = await resolveRealOrFallback(shape.installPath)
   const realScanned = await resolveRealOrFallback(scannedDir)
-  if (realEntry !== realScanned) {
-    return disqualified(manifestKey, entry, 'path-mismatch')
+  const mismatch = resolvedPathVerdict(realEntry, realScanned)
+  if (mismatch !== null) {
+    return disqualified(manifestKey, entry, mismatch)
   }
 
   return {
