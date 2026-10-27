@@ -30,7 +30,7 @@ import {
   useOtherDeviceCleanup,
   useStubs,
 } from '../skill-swap.xdev.helpers.js'
-import { s3 } from './recovery.helpers.js'
+import { s1, s3 } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import { act, contentSnapshot, done, killAt } from './recovery.act.helpers.js'
 import {
@@ -307,6 +307,34 @@ describe('T-F1 (space block): state-root-full with the free-space remedy, with z
     lim.off()
     statfsAs(st, () => ({ ffree: need, files: need * 10n }))
     expect((await done(st, 'apply')).result.status).toBe('done')
+  })
+})
+
+describe("the copy's own space check, reached through doctor --undo", () => {
+  it('stops state-root-full with the facts and the remedy only: no --apply, no "finish the update"', async () => {
+    // S1 --undo installs O, then keeps N as unused-new across devices: a real
+    // `publishTree` call from doctor. The space block (which would refuse first
+    // and name "run this command again") sees plenty; the copy's own check, one
+    // statfs later, sees a full device. So the refusal observed is `spaceFirst`'s.
+    const st = await s1(xfile())
+    let asked = 0
+    stub(fs.promises, 'statfs', (orig: AnyFn) => async (...a: unknown[]) => {
+      const s = (await orig(...a)) as fs.BigIntStatsFs
+      if (!String(a[0]).startsWith(st.fx.stateRoot)) return s
+      return ++asked === 1 ? s : { ...s, bavail: 1n }
+    })
+    const a = await act(st, 'undo')
+    expect(asked).toBe(2)
+    expect(a.result.status).toBe('stopped')
+    if (a.result.status !== 'stopped') return
+    expect(a.result.reason).toBe('state-root-full')
+    expect(a.result.detail).toContain(
+      'free space on the device that holds the Skillsmith state directory'
+    )
+    expect(a.result.detail).toContain('not available yet')
+    expect(a.result.detail).not.toContain('--apply')
+    expect(a.result.detail).not.toContain('finish the update')
+    expect(a.result.detail).not.toContain('run this command again')
   })
 })
 

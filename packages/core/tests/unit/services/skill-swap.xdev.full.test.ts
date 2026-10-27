@@ -249,7 +249,9 @@ describe('T-F1: the space check (block-rounded allocation, inodes)', () => {
     const detail = r.incomplete?.detail
     expect(detail).toContain('free space on the device that holds the Skillsmith state directory')
     expect(detail).toContain('not available yet')
-    expect(detail).toContain('skillsmith doctor recovery --apply')
+    // Facts only: six callers reach this check and each names its own next step.
+    expect(detail).not.toContain('--apply')
+    expect(detail).not.toContain('finish the update')
     expect(detail).not.toContain('run the same command again')
     expect(detail).not.toContain('run this command again')
     expect(detail).not.toContain('run `skillsmith doctor backups --prune`')

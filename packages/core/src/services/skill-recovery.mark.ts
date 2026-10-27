@@ -127,6 +127,9 @@ export async function spaceBlock(
     const free = s.bavail * s.bsize
     const need = bytesNeeded(shape, s.bsize)
     const inodes = inodesNeeded(shape)
+    // "Run this command again" is true only here: this check refuses before any
+    // mutation and is reached only by `doctor recovery --apply/--undo`, so the
+    // same command can simply be rerun once space is freed.
     const next = `${FREE_SPACE_REMEDY}, then run this command again`
     if (free < need) {
       return `${area.at} has ${free} bytes free and the backup of ${src} needs about ${need}; nothing was changed; ${next}`

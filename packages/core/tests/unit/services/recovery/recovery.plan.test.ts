@@ -218,7 +218,7 @@ describe('S2 and its neighbours', () => {
     expect(dispositionOf(planAction(cls, 'undo'), 'T')).toBe('kept:conflict')
   })
 
-  it('a full-device marker adds a note naming the free-space clause and rerunning this command', async () => {
+  it('a full-device marker adds a note with the facts and the free-space clause only', async () => {
     const fx = file()
     const st = await s2(fx)
     const recPath = path.join(st.opDir, 'record.json')
@@ -245,7 +245,9 @@ describe('S2 and its neighbours', () => {
     expect(note).toBeDefined()
     expect(note).toContain('free space on the device that holds the Skillsmith state directory')
     expect(note).toContain('not available yet')
-    expect(note).toContain('run this command again')
+    // The note is also shown in the read-only listing, where "this command" is ambiguous.
+    expect(note).not.toContain('run this command again')
+    expect(note).not.toContain('--apply')
     expect(note).not.toContain('run `skillsmith doctor backups --prune`')
     expect(note).not.toContain('finish the update')
   })

@@ -127,7 +127,7 @@ function commonNotes(f: OpFacts): string[] {
   if (f.fullDevice !== null) {
     notes.push(
       `an earlier copy stopped on a full device (${f.fullDevice.cause} at ${f.fullDevice.stage}); ` +
-        `if the copy still cannot fit, this stops with state-root-full: ${FREE_SPACE_REMEDY}, then run this command again`
+        `if the copy still cannot fit, this stops with state-root-full: ${FREE_SPACE_REMEDY}`
     )
   }
   return notes
