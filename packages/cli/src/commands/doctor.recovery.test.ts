@@ -7,6 +7,7 @@
  * the home; discovery's seams (see `doctor.test-helpers.ts`) keep the real home
  * out of it. Each negative has a positive beside it.
  */
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -25,6 +26,15 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
 import { createDoctorCommand, runDoctorLocks } from './doctor.js'
 import { runDoctorRecovery } from './doctor.recovery.js'
 import { hermeticDiscovery, plantCrashedUpdate } from './doctor.test-helpers.js'
+
+function deadPid(): number {
+  const r = spawnSync(process.execPath, ['-e', ''])
+  expect(r.status).toBe(0)
+  return r.pid!
+}
+
+const v1 = (pid: number): string =>
+  JSON.stringify({ v: 1, pid, token: 'abcdef0123456789', host: os.hostname(), acquiredAt: 1 })
 
 let base = ''
 let out: string[] = []
@@ -239,8 +249,27 @@ describe('skillsmith doctor locks over the discovered roots', () => {
     expect(out.join('\n')).toContain('Scanned 10 skills roots')
   })
 
-  it('--release still accepts only a state-root lock, and a skills-root lock path is refused', async () => {
-    const lock = path.join(base, 'clients', 'cursor', '.skillsmith-writes.lock')
+  it('--release accepts a discovered skills-root lock (SMI-6531 6a-ii): a dead same-host claim goes', async () => {
+    const lock = path.join(
+      fs.realpathSync(path.join(base, 'clients', 'cursor')),
+      '.skillsmith-writes.lock'
+    )
+    fs.writeFileSync(lock, v1(deadPid()))
+    const state = path.join(base, 'state')
+    fs.mkdirSync(state)
+
+    await runDoctorLocks({ stateRoot: state, release: lock, discovery: calls.discovery })
+
+    expect(process.exitCode).toBeUndefined()
+    expect(out.join('\n')).toContain(`Released ${lock}.`)
+    expect(fs.existsSync(lock)).toBe(false)
+  })
+
+  it('--release of a skills-root lock keeps the rules: a bare-PID claim needs the flag', async () => {
+    const lock = path.join(
+      fs.realpathSync(path.join(base, 'clients', 'cursor')),
+      '.skillsmith-writes.lock'
+    )
     fs.writeFileSync(lock, '4242')
     const state = path.join(base, 'state')
     fs.mkdirSync(state)
@@ -248,8 +277,22 @@ describe('skillsmith doctor locks over the discovered roots', () => {
     await runDoctorLocks({ stateRoot: state, release: lock, discovery: calls.discovery })
 
     expect(process.exitCode).toBe(1)
+    expect(err.join('\n')).toContain('Not released')
+    expect(err.join('\n')).not.toContain('is not a lock doctor lists')
+    expect(fs.readFileSync(lock, 'utf8')).toBe('4242')
+  })
+
+  it('--release still refuses a path no listing shows', async () => {
+    const stray = path.join(base, 'clients', 'cursor', 'not-a-lock')
+    fs.writeFileSync(stray, v1(deadPid()))
+    const state = path.join(base, 'state')
+    fs.mkdirSync(state)
+
+    await runDoctorLocks({ stateRoot: state, release: stray, discovery: calls.discovery })
+
+    expect(process.exitCode).toBe(1)
     expect(err.join('\n')).toContain('is not a lock doctor lists')
-    expect(fs.existsSync(lock)).toBe(true)
+    expect(fs.existsSync(stray)).toBe(true)
   })
 })
 
@@ -260,7 +303,22 @@ describe('the doctor command', () => {
     expect(names).toEqual(['recovery', 'locks'])
     const flags = (name: string): string[] =>
       cmd.commands.find((c) => c.name() === name)!.options.map((o) => o.long ?? '')
-    expect(flags('recovery')).toEqual(['--root', '--state-root', '--json'])
+    expect(flags('recovery')).toEqual([
+      '--root',
+      '--state-root',
+      '--json',
+      '--apply',
+      '--undo',
+      '--accept-identity',
+      '--yes',
+    ])
+    // 6a-ii's options are registered hidden: no help text names them until 6a-iii.
+    const recovery = cmd.commands.find((c) => c.name() === 'recovery')!
+    const hidden = recovery.options.filter((o) => o.hidden).map((o) => o.long)
+    expect(hidden).toEqual(['--apply', '--undo', '--accept-identity', '--yes'])
+    const help = recovery.helpInformation()
+    expect(help).toContain('--state-root')
+    for (const f of hidden) expect(help).not.toContain(f!)
     expect(flags('locks')).toEqual([
       '--state-root',
       '--root',

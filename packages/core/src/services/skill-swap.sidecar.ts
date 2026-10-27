@@ -29,8 +29,10 @@ import { recordIdentity } from './skill-swap.staging.js'
 import type { RecordIdentity, SwapHookPoint } from './skill-swap.types.js'
 
 /**
- * A kept tree's kind (plan §3.5): 4a's three, abort cleanup's three (4b), and
- * `partial-copy` (4c: a cross-device copy temp that did not verify).
+ * A kept tree's kind (plan §3.5): 4a's three, abort cleanup's three (4b),
+ * `partial-copy` (4c: a cross-device copy temp that did not verify), and
+ * `unused-new` (6a-ii: doctor's keep of a staged tree no one installed, which
+ * still hashes to `postTree`).
  * `failed-build`, `unrecorded-new` and `partial-copy` are kept even when the
  * tree cannot be hashed (the sidecar's `treeHash` is then null, with
  * `treeHashError`). Every other kind needs the hash.
@@ -43,6 +45,7 @@ export type PublishKind =
   | 'edited-new'
   | 'unrecorded-new'
   | 'partial-copy'
+  | 'unused-new'
 
 /** A sidecar, in its fixed key order. */
 export interface Sidecar {

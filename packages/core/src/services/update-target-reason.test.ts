@@ -281,11 +281,11 @@ describe('REASON_GROUP (§4.5)', () => {
 //   - recovery-pending (both), recovery-conflict, recovery-ambiguous ->
 //     doctor{command:'recovery'}, the §3.9 workflow; conflict/ambiguous use
 //     action 'quarantine' since an automatic apply/undo would be a guess.
-//   - manifest-key-conflict, identity-mismatch, recovery-identity-changed ->
-//     reconcile{action:'verify'}: §4.3's own UD22 text says remediation
-//     "names the owning key".
-//   - recovery-moved -> reconcile{action:'relink'}: the target moved, so the
-//     manifest key needs relinking to the new location.
+//   - manifest-key-conflict, identity-mismatch -> reconcile{action:'verify'}:
+//     §4.3's own UD22 text says remediation "names the owning key".
+//   - recovery-moved -> doctor{command:'recovery', action:'abandon'}, and
+//     recovery-identity-changed -> doctor{command:'recovery', acceptIdentity}
+//     (`--apply|--undo --accept-identity`): SMI-6531 6a-ii, plan §3.9.
 //   - git-managed -> git-pull: git clones are pulled, never overwritten.
 //   - illegal-provenance, unverified, scan-rejected, no-baseline ->
 //     audit-sources: all four need a human to look at where content actually
@@ -333,9 +333,9 @@ const EXPECTED_RESULT_KIND: Record<UpdateResultCode, UpdateRemediation['kind']> 
   'recovery-pending': 'doctor',
   'recovery-record-unreadable': 'fix-permissions',
   'recovery-conflict': 'doctor',
-  'recovery-identity-changed': 'reconcile',
+  'recovery-identity-changed': 'doctor',
   'recovery-ambiguous': 'doctor',
-  'recovery-moved': 'reconcile',
+  'recovery-moved': 'doctor',
   'write-failed': 'fix-permissions',
 }
 
@@ -445,12 +445,32 @@ describe('remediationFor — result codes', () => {
     })
   })
 
-  it('recovery-moved carries action "relink" and the manifestKey', () => {
+  it('recovery-moved names doctor recovery --abandon for the op (SMI-6531 6a-ii)', () => {
     const result = remediationFor(
       { kind: 'result', result: 'recovery-moved' },
-      { manifestKey: 'foo::claude' }
+      { manifestKey: 'foo::claude', opId: 'op1', root: '/skills' }
     )
-    expect(result).toEqual({ kind: 'reconcile', action: 'relink', manifestKey: 'foo::claude' })
+    expect(result).toEqual({
+      kind: 'doctor',
+      command: 'recovery',
+      action: 'abandon',
+      opId: 'op1',
+      root: '/skills',
+    })
+  })
+
+  it('recovery-identity-changed names --apply or --undo with --accept-identity (SMI-6531 6a-ii)', () => {
+    const result = remediationFor(
+      { kind: 'result', result: 'recovery-identity-changed' },
+      { opId: 'op1', root: '/skills' }
+    )
+    expect(result).toEqual({
+      kind: 'doctor',
+      command: 'recovery',
+      opId: 'op1',
+      root: '/skills',
+      acceptIdentity: true,
+    })
   })
 })
 

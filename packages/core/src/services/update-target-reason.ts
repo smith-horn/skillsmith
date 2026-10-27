@@ -251,6 +251,11 @@ export type UpdateRemediation =
       readonly action?: 'apply' | 'undo' | 'abandon' | 'quarantine'
       readonly opId?: string
       readonly root?: string
+      /**
+       * `--accept-identity` with `--apply` or `--undo` (no `action`: either one
+       * applies; SMI-6531 6a-ii, `recovery-identity-changed`).
+       */
+      readonly acceptIdentity?: true
     }
   | { readonly kind: 'retry' }
   | { readonly kind: 'none' }
@@ -305,11 +310,6 @@ const gitPull = (c: UpdateRemediationContext): UpdateRemediation => ({
 const reconcileVerify = (c: UpdateRemediationContext): UpdateRemediation => ({
   kind: 'reconcile',
   action: 'verify',
-  manifestKey: c.manifestKey ?? '',
-})
-const reconcileRelink = (c: UpdateRemediationContext): UpdateRemediation => ({
-  kind: 'reconcile',
-  action: 'relink',
   manifestKey: c.manifestKey ?? '',
 })
 const unpin = (c: UpdateRemediationContext): UpdateRemediation => ({
@@ -434,8 +434,16 @@ const RESULT_REMEDIATION: Record<UpdateResultCode, RemediationBuilder> = {
   'recovery-record-unreadable': fixPermissions,
   'recovery-conflict': doctorRecovery('quarantine'),
   'recovery-ambiguous': doctorRecovery('quarantine'),
-  'recovery-identity-changed': reconcileVerify,
-  'recovery-moved': reconcileRelink,
+  // SMI-6531 6a-ii (design Q6, plan §3.9): a moved root or op dir is offered
+  // only `--abandon`; a copy or remount is `--apply|--undo --accept-identity`.
+  'recovery-identity-changed': (c) => ({
+    kind: 'doctor',
+    command: 'recovery',
+    opId: c.opId,
+    root: c.root,
+    acceptIdentity: true,
+  }),
+  'recovery-moved': doctorRecovery('abandon'),
 
   // Carries an errno (§4.4: "which carries the errno, so ENOSPC names the
   // full device") — surface path/errno the same way a probe failure does.
