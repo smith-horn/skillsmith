@@ -12,14 +12,17 @@
  * - `dirName` is `basename(comparedPath)` and names the key; the upstream
  *   name never does. A symlinked `comparedPath` whose target is another
  *   direct child of R is accepted.
- * - §4.3 row 4, mapped as A2 maps it (`update-target-gate.rules.ts`): no
- *   entry (or a non-object one) at the key is `untracked` (Q8: `postEntry`
- *   needs an entry to extend, and `update` adopts untracked folders before it
- *   plans); an entry that does not name `realDir` is `manifest-key-conflict`
- *   (A2's `invalid-install-path` / `path-mismatch`): its `installPath`
- *   missing, not a string, not absolute (never resolved against the cwd),
- *   absent on disk, or resolving (native realpath) somewhere else. Any other
- *   errno resolving it is `probe-failed`.
+ * - §4.3 row 4 comes from A2's own code, not a copy: the entry verdict from
+ *   `entryInstallPathVerdict` and `resolvedPathVerdict`
+ *   (`update-target.evidence.ts`) and its reason from `rowFourReason`
+ *   (`update-target-gate.rules.ts`). No entry is `untracked` (Q8: `update`
+ *   adopts untracked folders before it plans); any present entry whose
+ *   `installPath` is not an absolute string (a string, number, boolean or
+ *   array entry included), or resolves elsewhere, is `manifest-key-conflict`.
+ *   7b resolves with the native realpath (A2 falls back to the lexical path);
+ *   an errno other than `ENOENT`/`ENOTDIR` there is `probe-failed`. The entry
+ *   is read with `Object.hasOwn` (`rawEntryAt`), where A2 indexes the parsed
+ *   object, so a key named after an `Object.prototype` member reads as no entry.
  * - A key that names `realDir` but does not own it under UD22's rule
  *   (`skill-update.owner.ts`) is `identity-mismatch` naming the owner.
  *
@@ -37,6 +40,8 @@ import { readManifestState } from './skill-manifest.read-state.js'
 import { treeHashOf } from './skill-tree.js'
 import { manifestKeyOwner } from './skill-update.owner.js'
 import type { UpdateRefusal, UpdateTargetResult } from './skill-update.types.js'
+import { entryInstallPathVerdict, resolvedPathVerdict } from './update-target.evidence.js'
+import { rowFourReason } from './update-target-gate.rules.js'
 
 export interface BuildUpdateTargetInput {
   skillsDir: string
@@ -96,6 +101,55 @@ async function installPathsResolved(rawManifest: unknown): Promise<Map<string, s
     out.set(p, 'real' in r ? r.real : null)
   }
   return out
+}
+
+/**
+ * §4.3 row 4 for the key's own entry, by A2's code: the verdict from
+ * `entryInstallPathVerdict` and `resolvedPathVerdict` (`update-target.evidence.ts`),
+ * the reason from `rowFourReason` (`update-target-gate.rules.ts`). Only the
+ * resolution is 7b's: the native realpath, where A2 falls back to the lexical
+ * path. A path absent on disk (`ENOENT`/`ENOTDIR`) names nothing, so it is a
+ * mismatch; any other errno cannot be classified either way and is
+ * `probe-failed`. That check sits after the shape verdict (only a valid
+ * absolute path is resolved) and before the path verdict (it needs the
+ * resolution). `null` when the entry names `realDir`.
+ */
+async function rowFourRefusal(
+  rawEntry: unknown,
+  manifestKey: string,
+  realDir: string,
+  comparedPath: string
+): Promise<UpdateRefusal | null> {
+  const shape = entryInstallPathVerdict(rawEntry)
+  if ('disqualifiedBy' in shape) {
+    return refuse(
+      rowFourReason(shape.disqualifiedBy) ?? 'manifest-key-conflict',
+      shape.disqualifiedBy === 'no-entry'
+        ? `no manifest entry "${manifestKey}" tracks ${comparedPath}`
+        : `the manifest entry "${manifestKey}" has a missing or invalid installPath (not an absolute path)`,
+      { path: comparedPath }
+    )
+  }
+  const own = shape.installPath
+  if (own === realDir) return null
+  const r = await resolveInstallPath(own)
+  if ('errno' in r) {
+    return refuse(
+      'probe-failed',
+      `the manifest entry "${manifestKey}" records ${own}, which could not be resolved (${r.errno})`,
+      { path: own }
+    )
+  }
+  const real = 'real' in r ? r.real : null
+  const verdict = resolvedPathVerdict(real, realDir)
+  if (verdict === null) return null
+  return refuse(
+    rowFourReason(verdict) ?? 'manifest-key-conflict',
+    real === null
+      ? `the manifest entry "${manifestKey}" records ${own}, which does not resolve`
+      : `the manifest entry "${manifestKey}" records ${own}, which resolves to ${real}, not ${realDir}`,
+    { path: comparedPath }
+  )
 }
 
 function companionPathOf(input: BuildUpdateTargetInput, dirName: string): string | null {
@@ -178,42 +232,11 @@ export async function buildUpdateTarget(
 
   const manifestKey = manifestKeyFor(dirName, client)
   const rawEntry = rawEntryAt(raw, manifestKey)
-  if (rawEntry === null || !isPlainObject(rawEntry)) {
-    return refuse(
-      'untracked',
-      rawEntry === null
-        ? `no manifest entry "${manifestKey}" tracks ${comparedPath}`
-        : `the manifest entry "${manifestKey}" is not an object`,
-      { path: comparedPath }
-    )
-  }
-  // §4.3 row 4: an entry that does not name this folder is `manifest-key-conflict`.
-  const own = rawEntry.installPath
-  if (typeof own !== 'string' || !path.isAbsolute(own)) {
-    return refuse(
-      'manifest-key-conflict',
-      `the manifest entry "${manifestKey}" has a missing or invalid installPath (not an absolute path)`,
-      { path: comparedPath }
-    )
-  }
-  if (own !== realDir) {
-    const r = await resolveInstallPath(own)
-    if ('errno' in r) {
-      return refuse(
-        'probe-failed',
-        `the manifest entry "${manifestKey}" records ${own}, which could not be resolved (${r.errno})`,
-        { path: own }
-      )
-    }
-    if ('absent' in r || r.real !== realDir) {
-      return refuse(
-        'manifest-key-conflict',
-        'absent' in r
-          ? `the manifest entry "${manifestKey}" records ${own}, which does not resolve`
-          : `the manifest entry "${manifestKey}" records ${own}, which resolves to ${r.real}, not ${realDir}`,
-        { path: comparedPath }
-      )
-    }
+  const rowFour = await rowFourRefusal(rawEntry, manifestKey, realDir, comparedPath)
+  if (rowFour !== null) return rowFour
+  // Row 4 passed, so the entry has a string `installPath`: JSON gives that only to an object.
+  if (!isPlainObject(rawEntry)) {
+    return refuse('manifest-key-conflict', `the manifest entry "${manifestKey}" is not an object`)
   }
   const resolved = await installPathsResolved(raw)
   const owner = manifestKeyOwner(raw, realDir, (p) => resolved.get(p) ?? null)

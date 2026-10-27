@@ -21,6 +21,10 @@ import { manifestKeyOwner } from '../../../src/services/skill-update.owner.js'
 import { planSkillUpdate } from '../../../src/services/skill-update.plan.js'
 import { updateInPlace } from '../../../src/services/skill-update.js'
 import type { UpdateTarget } from '../../../src/services/skill-update.types.js'
+import type { SkillManifest } from '../../../src/services/skill-installation.types.js'
+import { temporaryManifestEvidenceResolver } from '../../../src/services/update-target.evidence.js'
+import { CLASSIFICATION_RULES } from '../../../src/services/update-target-gate.rules.js'
+import type { RuleContext } from '../../../src/services/update-target-gate.rules.js'
 import { otherDevice, useOtherDeviceCleanup } from './skill-swap.xdev.helpers.js'
 import {
   areaRel,
@@ -53,6 +57,29 @@ function targetInput(fx: UpdateFixture, comparedPath = fx.comparedPath) {
     manifestPath: fx.manifestPath,
     comparedPath,
   }
+}
+
+/**
+ * A2's own answer for row 4 on the fixture's manifest: its evidence resolver,
+ * then its two row-4 rules from the classification table (they read only the
+ * evidence). `null` when neither matches.
+ */
+async function a2RowFour(fx: UpdateFixture): Promise<string | null> {
+  const manifest = JSON.parse(fs.readFileSync(fx.manifestPath, 'utf8')) as SkillManifest
+  const evidence = await temporaryManifestEvidenceResolver({
+    manifest,
+    harness: fx.client,
+    scannedDir: fx.realDir,
+    dirName: fx.dirName,
+  })
+  const rowFour = CLASSIFICATION_RULES.filter((r) => r.row === '4')
+  expect(rowFour.length).toBe(2)
+  const ctx = { evidence } as unknown as RuleContext
+  for (const rule of rowFour) {
+    const hit = rule.match(ctx)
+    if (hit !== null) return hit.reason
+  }
+  return null
 }
 
 async function targetOf(fx: UpdateFixture, comparedPath?: string): Promise<UpdateTarget> {
@@ -261,7 +288,7 @@ describe('Q8 and the manifest', () => {
     expect((await buildUpdateTarget(targetInput(fx))).ok).toBe(true)
   })
 
-  it('refuses an entry whose installPath does not name realDir as manifest-key-conflict (§4.3 row 4)', async () => {
+  it('§4.3 row 4: every entry shape gets the reason A2’s own gate gives it', async () => {
     const fx = updateFixture({ 'SKILL.md': skillMd('v1') })
     const elsewhere = path.join(fx.skillsDir, 'other-skill')
     fs.mkdirSync(elsewhere)
@@ -271,20 +298,32 @@ describe('Q8 and the manifest', () => {
     const relative = path.relative(process.cwd(), fx.realDir)
     expect(path.isAbsolute(relative)).toBe(false)
     expect(fs.realpathSync(relative)).toBe(fx.realDir)
-    const cases: Array<[Record<string, unknown>, string]> = [
-      [noPath, 'missing or invalid installPath'],
-      [{ ...fx.entry, installPath: '' }, 'missing or invalid installPath'],
-      [{ ...fx.entry, installPath: 42 }, 'missing or invalid installPath'],
-      [{ ...fx.entry, installPath: relative }, 'not an absolute path'],
-      [{ ...fx.entry, installPath: path.join(fx.base, 'gone') }, 'does not resolve'],
-      [{ ...fx.entry, installPath: elsewhere }, `resolves to ${elsewhere}`],
+    const ABSENT = Symbol('absent')
+    const cases: Array<[string, unknown]> = [
+      ['absent', ABSENT],
+      ['null', null],
+      ['string', 'my-skill'],
+      ['number', 7],
+      ['boolean', false],
+      ['array', [fx.realDir]],
+      ['object without installPath', noPath],
+      ["installPath ''", { ...fx.entry, installPath: '' }],
+      ['installPath 42', { ...fx.entry, installPath: 42 }],
+      ['relative installPath', { ...fx.entry, installPath: relative }],
+      ['unresolvable absolute', { ...fx.entry, installPath: path.join(fx.base, 'gone') }],
+      ['absolute resolving elsewhere', { ...fx.entry, installPath: elsewhere }],
+      ['absolute resolving to realDir', { ...fx.entry, installPath: fx.realDir }],
     ]
-    for (const [entry, detail] of cases) {
-      writeManifest(fx.manifestPath, { 'my-skill': entry })
-      const r = await buildUpdateTarget(targetInput(fx))
-      expect(r).toMatchObject({ ok: false, reason: 'manifest-key-conflict' })
-      expect(r.ok ? '' : r.detail).toContain(detail)
+    const seen = new Set<string>()
+    for (const [label, entry] of cases) {
+      writeManifest(fx.manifestPath, entry === ABSENT ? {} : { 'my-skill': entry })
+      const ours = await buildUpdateTarget(targetInput(fx))
+      const theirs = await a2RowFour(fx)
+      seen.add(String(theirs))
+      expect([label, ours.ok ? null : ours.reason]).toEqual([label, theirs])
     }
+    // The table reached all three of A2's answers, so it is not one answer compared with itself.
+    expect([...seen].sort()).toEqual(['manifest-key-conflict', 'null', 'untracked'])
 
     // Another errno resolving the key's own installPath is probe-failed naming it (a link loop: ELOOP).
     const loop = path.join(fx.base, 'loop')
