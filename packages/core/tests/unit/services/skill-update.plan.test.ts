@@ -16,8 +16,10 @@ import { buildUpdateTarget } from '../../../src/services/skill-update.target.js'
 import { planSkillUpdate } from '../../../src/services/skill-update.plan.js'
 import { updateInPlace } from '../../../src/services/skill-update.js'
 import type { UpdatePlan, UpdateTarget } from '../../../src/services/skill-update.types.js'
+import { canonicalJson } from '../../../src/services/skill-manifest.canonical.js'
 import {
   changedBetween,
+  readInstalled,
   recorded,
   sha256,
   SKILL_ID,
@@ -236,6 +238,38 @@ describe('refusals from fetch and scan', () => {
       reason: 'scan-rejected',
       install: { errorCode: 'SKIP_SCAN_FORBIDDEN' },
     })
+    // Its fix is to run with the scan, which the detail says (A2's remedy for the reason does not).
+    expect(r.ok ? '' : r.detail).toContain('requires a security scan before installation')
+    expect(r.ok ? '' : r.detail).toContain('without skipScan')
+    // The control: the same plan without skipScan succeeds.
+    expect((await planSkillUpdate({ target: await targetOf(fx), skillId: SKILL_ID })).ok).toBe(true)
+  })
+})
+
+describe('T-C3 end to end: a committed update keeps every protected field', () => {
+  it('pinnedVersion, updatePolicy, contentHash, verifiedAt, installedAt, provenance and an unknown nested field are byte-identical', async () => {
+    const upstream = useUpstream()
+    serveV2(upstream)
+    const protectedFields = {
+      pinnedVersion: '1.0.0',
+      updatePolicy: 'auto',
+      contentHash: 'c'.repeat(64),
+      verifiedAt: '2026-05-01T00:00:00.000Z',
+      installedAt: '2025-12-31T23:59:59.000Z',
+      provenance: 'registry',
+      x: { y: [1, { z: null, b: 2 }], a: true },
+    }
+    const fx = updateFixture(OLD, { entry: protectedFields })
+    const plan = await planned(fx)
+    const result = await updateInPlace(plan, { swap: recorded().swap })
+    expect(result.status).toBe('committed')
+    const after = readInstalled(fx.manifestPath)[fx.manifestKey] as Record<string, unknown>
+    // The writable fields did change (the presence half).
+    expect(after.version).toBe('2.0.0')
+    expect(after.originalContentHash).toBe(sha256(skillMd('v2')))
+    for (const k of Object.keys(protectedFields)) {
+      expect([k, canonicalJson(after[k])]).toEqual([k, canonicalJson(fx.entry[k])])
+    }
   })
 })
 

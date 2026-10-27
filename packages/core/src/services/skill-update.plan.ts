@@ -6,8 +6,10 @@
  *    there is no generated sub-skill and no companion write (§3.7 item 1).
  * 2. SKILL.md and the optional files are fetched and scanned through
  *    `install()`'s own pipeline (`skill-installation.fetch-scan.ts`), before
- *    any lock. A security verdict (scan, skip-scan, quarantine) is
- *    `scan-rejected`, install's confirmation gate `confirmation-required`,
+ *    any lock. The security gate's refusals (a scan or quarantine verdict, and
+ *    `skipScan` on a tier that requires a scan, whose detail says to run
+ *    without it) are `scan-rejected`, install's confirmation gate
+ *    `confirmation-required`,
  *    anything else (a throw included, with install's sanitized message)
  *    `fetch-failed`; a skill ID that does not parse is `manifest-key-conflict`.
  * 3. The write set is SKILL.md plus the fetched optional files, minus those
@@ -82,9 +84,12 @@ const codeOf = (err: unknown): string => {
 }
 
 /**
- * The fetch-and-scan failure codes that are a security verdict, not a fetch's:
- * retrying cannot change them. A2 has no quarantine reason, so a quarantined
- * registry skill is `scan-rejected` too (its remedy audits the source).
+ * The fetch-and-scan failure codes that are the security gate's, not a
+ * fetch's, so `fetch-failed`'s retry is wrong for them. `SCAN_REJECTED` and
+ * `QUARANTINED` (A2 has no quarantine reason) are verdicts on the content.
+ * `SKIP_SCAN_FORBIDDEN` is not: the same update succeeds without `skipScan`,
+ * so its detail carries install's tip that the tier requires a scan, since
+ * `scan-rejected`'s A2 remedy (audit the source) does not say so.
  */
 const SCAN_CODES: ReadonlySet<string> = new Set([
   'SCAN_REJECTED',
@@ -99,10 +104,12 @@ function refusalOf(result: InstallResult): UpdateRefusal {
       : result.errorCode !== undefined && SCAN_CODES.has(result.errorCode)
         ? 'scan-rejected'
         : 'fetch-failed'
+  const base = result.error ?? result.confirmationReason ?? ''
+  const scanTip = result.errorCode === 'SKIP_SCAN_FORBIDDEN' ? result.tips?.[0] : undefined
   return {
     ok: false,
     reason,
-    detail: result.error ?? result.confirmationReason ?? '',
+    detail: scanTip === undefined ? base : `${base} ${scanTip}; run the update without skipScan.`,
     install: result,
   }
 }

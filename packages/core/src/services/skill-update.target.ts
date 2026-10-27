@@ -12,12 +12,14 @@
  * - `dirName` is `basename(comparedPath)` and names the key; the upstream
  *   name never does. A symlinked `comparedPath` whose target is another
  *   direct child of R is accepted.
- * - No entry at the key is `untracked` (Q8): `postEntry` needs an entry to
- *   extend, and `update` adopts untracked folders before it plans. So is an
- *   entry that does not name `realDir`: its `installPath` missing, not a
- *   non-empty string, unresolvable, or resolving (native realpath) somewhere
- *   else. That is §4.3 row 4's `invalid-install-path` / `path-mismatch`, and
- *   install's own guard refuses the same case `INSTALL_TARGET_UNTRACKED`.
+ * - §4.3 row 4, mapped as A2 maps it (`update-target-gate.rules.ts`): no
+ *   entry (or a non-object one) at the key is `untracked` (Q8: `postEntry`
+ *   needs an entry to extend, and `update` adopts untracked folders before it
+ *   plans); an entry that does not name `realDir` is `manifest-key-conflict`
+ *   (A2's `invalid-install-path` / `path-mismatch`): its `installPath`
+ *   missing, not a string, not absolute (never resolved against the cwd),
+ *   absent on disk, or resolving (native realpath) somewhere else. Any other
+ *   errno resolving it is `probe-failed`.
  * - A key that names `realDir` but does not own it under UD22's rule
  *   (`skill-update.owner.ts`) is `identity-mismatch` naming the owner.
  *
@@ -66,18 +68,32 @@ function refuse(
   return { ok: false, reason, detail, ...extra }
 }
 
-/** Native realpaths of every entry's `installPath`, for UD22's owner rule. */
+/** A native realpath, or why there is none: absent (`ENOENT`/`ENOTDIR`) or another errno. */
+type Resolution = { real: string } | { absent: true } | { errno: string }
+
+async function resolveInstallPath(p: string): Promise<Resolution> {
+  try {
+    return { real: await fs.promises.realpath(p) }
+  } catch (err) {
+    const code = codeOf(err)
+    return code === 'ENOENT' || code === 'ENOTDIR' ? { absent: true } : { errno: code }
+  }
+}
+
+/**
+ * Native realpaths of every entry's absolute `installPath`, for UD22's owner
+ * rule. A relative path is never resolved (it would resolve against the cwd),
+ * and another key's path that fails to resolve, for any reason, names nothing.
+ */
 async function installPathsResolved(rawManifest: unknown): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>()
   if (!isPlainObject(rawManifest) || !isPlainObject(rawManifest.installedSkills)) return out
   for (const entry of Object.values(rawManifest.installedSkills)) {
     if (!isPlainObject(entry) || typeof entry.installPath !== 'string') continue
     const p = entry.installPath
-    if (p === '' || out.has(p)) continue
-    out.set(
-      p,
-      await fs.promises.realpath(p).catch(() => null) // an unresolvable path names nothing
-    )
+    if (!path.isAbsolute(p) || out.has(p)) continue
+    const r = await resolveInstallPath(p)
+    out.set(p, 'real' in r ? r.real : null)
   }
   return out
 }
@@ -139,6 +155,12 @@ export async function buildUpdateTarget(
   let dirStat: BigIntStats
   try {
     rootStat = await lstat(root)
+  } catch (err) {
+    return refuse('probe-failed', `the skills root ${root} could not be read (${codeOf(err)})`, {
+      path: root,
+    })
+  }
+  try {
     dirStat = await lstat(realDir)
   } catch (err) {
     return refuse('probe-failed', `${realDir} could not be read (${codeOf(err)})`, {
@@ -165,25 +187,35 @@ export async function buildUpdateTarget(
       { path: comparedPath }
     )
   }
-  const resolved = await installPathsResolved(raw)
+  // §4.3 row 4: an entry that does not name this folder is `manifest-key-conflict`.
   const own = rawEntry.installPath
-  if (typeof own !== 'string' || own === '') {
+  if (typeof own !== 'string' || !path.isAbsolute(own)) {
     return refuse(
-      'untracked',
-      `the manifest entry "${manifestKey}" has a missing or invalid installPath`,
+      'manifest-key-conflict',
+      `the manifest entry "${manifestKey}" has a missing or invalid installPath (not an absolute path)`,
       { path: comparedPath }
     )
   }
-  const ownReal = own === realDir ? realDir : (resolved.get(own) ?? null)
-  if (ownReal !== realDir) {
-    return refuse(
-      'untracked',
-      ownReal === null
-        ? `the manifest entry "${manifestKey}" records ${own}, which does not resolve`
-        : `the manifest entry "${manifestKey}" records ${own}, which resolves to ${ownReal}, not ${realDir}`,
-      { path: comparedPath }
-    )
+  if (own !== realDir) {
+    const r = await resolveInstallPath(own)
+    if ('errno' in r) {
+      return refuse(
+        'probe-failed',
+        `the manifest entry "${manifestKey}" records ${own}, which could not be resolved (${r.errno})`,
+        { path: own }
+      )
+    }
+    if ('absent' in r || r.real !== realDir) {
+      return refuse(
+        'manifest-key-conflict',
+        'absent' in r
+          ? `the manifest entry "${manifestKey}" records ${own}, which does not resolve`
+          : `the manifest entry "${manifestKey}" records ${own}, which resolves to ${r.real}, not ${realDir}`,
+        { path: comparedPath }
+      )
+    }
   }
+  const resolved = await installPathsResolved(raw)
   const owner = manifestKeyOwner(raw, realDir, (p) => resolved.get(p) ?? null)
   if (owner !== null && owner !== manifestKey) {
     return refuse(

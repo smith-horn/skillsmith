@@ -261,25 +261,45 @@ describe('Q8 and the manifest', () => {
     expect((await buildUpdateTarget(targetInput(fx))).ok).toBe(true)
   })
 
-  it('refuses an entry whose installPath does not name realDir as untracked (§4.3 row 4)', async () => {
+  it('refuses an entry whose installPath does not name realDir as manifest-key-conflict (§4.3 row 4)', async () => {
     const fx = updateFixture({ 'SKILL.md': skillMd('v1') })
     const elsewhere = path.join(fx.skillsDir, 'other-skill')
     fs.mkdirSync(elsewhere)
     const noPath: Record<string, unknown> = { ...fx.entry }
     delete noPath.installPath
+    // A relative path that WOULD resolve to realDir against the cwd: still refused, never resolved.
+    const relative = path.relative(process.cwd(), fx.realDir)
+    expect(path.isAbsolute(relative)).toBe(false)
+    expect(fs.realpathSync(relative)).toBe(fx.realDir)
     const cases: Array<[Record<string, unknown>, string]> = [
       [noPath, 'missing or invalid installPath'],
       [{ ...fx.entry, installPath: '' }, 'missing or invalid installPath'],
       [{ ...fx.entry, installPath: 42 }, 'missing or invalid installPath'],
+      [{ ...fx.entry, installPath: relative }, 'not an absolute path'],
       [{ ...fx.entry, installPath: path.join(fx.base, 'gone') }, 'does not resolve'],
       [{ ...fx.entry, installPath: elsewhere }, `resolves to ${elsewhere}`],
     ]
     for (const [entry, detail] of cases) {
       writeManifest(fx.manifestPath, { 'my-skill': entry })
       const r = await buildUpdateTarget(targetInput(fx))
-      expect(r).toMatchObject({ ok: false, reason: 'untracked' })
+      expect(r).toMatchObject({ ok: false, reason: 'manifest-key-conflict' })
       expect(r.ok ? '' : r.detail).toContain(detail)
     }
+
+    // Another errno resolving the key's own installPath is probe-failed naming it (a link loop: ELOOP).
+    const loop = path.join(fx.base, 'loop')
+    fs.symlinkSync(loop, loop)
+    writeManifest(fx.manifestPath, { 'my-skill': { ...fx.entry, installPath: loop } })
+    const looped = await buildUpdateTarget(targetInput(fx))
+    expect(looped).toMatchObject({ ok: false, reason: 'probe-failed', path: loop })
+    expect(looped.ok ? '' : looped.detail).toContain('ELOOP')
+
+    // No entry at all stays untracked (row 4's other half).
+    writeManifest(fx.manifestPath, {})
+    expect(await buildUpdateTarget(targetInput(fx))).toMatchObject({
+      ok: false,
+      reason: 'untracked',
+    })
 
     // The control: an installPath that is a symlink resolving to realDir is accepted.
     const alias = path.join(fx.base, 'alias')
@@ -343,5 +363,21 @@ describe('Q11: one folder, several keys (UD22(4))', () => {
     })
     const owner = await buildUpdateTarget(targetInput(fx))
     expect(owner).toMatchObject({ ok: true, target: { manifestKey: 'my-skill' } })
+  })
+})
+
+describe('an lstat failure names the path that failed', () => {
+  it('the root’s own failure names the root; the folder’s names the folder', async () => {
+    const fx = updateFixture({ 'SKILL.md': skillMd('v1') })
+    const root = fs.realpathSync.native(fx.skillsDir)
+    const failing = (bad: string) => async (p: string) => {
+      if (p === bad) throw Object.assign(new Error('forced'), { code: 'EIO' })
+      return fs.promises.lstat(p, { bigint: true })
+    }
+    const r1 = await buildUpdateTarget(targetInput(fx), { lstat: failing(root) })
+    expect(r1).toMatchObject({ ok: false, reason: 'probe-failed', path: root })
+    expect(r1.ok ? '' : r1.detail).toContain('the skills root')
+    const r2 = await buildUpdateTarget(targetInput(fx), { lstat: failing(fx.realDir) })
+    expect(r2).toMatchObject({ ok: false, reason: 'probe-failed', path: fx.realDir })
   })
 })

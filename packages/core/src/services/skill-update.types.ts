@@ -18,6 +18,7 @@ import type { JsonObject } from './skill-manifest.canonical.js'
 import type { InstallResult, ProgressCallback } from './skill-installation.types.js'
 import type { ManifestPort, SwapOptions, SwapResult } from './skill-swap.types.js'
 import type { PlannedWrite } from './update-target-gate.types.js'
+import type { UpdateTargetReason } from './update-target-reason.js'
 
 /** Plan §3.1's `UpdateTarget`: the folder `update` diffed, bound at plan time. */
 export interface UpdateTarget {
@@ -89,17 +90,27 @@ export interface UpdatePlan {
  * A2's table has no row for. `manifest-key-conflict` is used for a recorded
  * skill ID that does not parse (A2 has no row for that either; its remedy
  * re-verifies the entry's identity, which is what fixing the ID needs).
+ *
+ * Every member but `confirmation-required` must be an `UpdateTargetReason`:
+ * `A2Reason` fails typecheck if A2 renames or drops one (a bare `Extract`
+ * would silently shrink the union instead). A2's `remediationFor` has no
+ * entry for `confirmation-required`, so step 9's command must render it
+ * itself (re-run with confirmation).
  */
+type A2Reason<R extends UpdateTargetReason> = R
+
 export type UpdateRefusalReason =
-  | 'manifest-unreadable'
-  | 'untracked'
-  | 'manifest-key-conflict'
-  | 'identity-mismatch'
-  | 'probe-failed'
-  | 'unreadable'
-  | 'unsupported-entry'
-  | 'fetch-failed'
-  | 'scan-rejected'
+  | A2Reason<
+      | 'manifest-unreadable'
+      | 'untracked'
+      | 'manifest-key-conflict'
+      | 'identity-mismatch'
+      | 'probe-failed'
+      | 'unreadable'
+      | 'unsupported-entry'
+      | 'fetch-failed'
+      | 'scan-rejected'
+    >
   | 'confirmation-required'
 
 /** Nothing was written: no target or no plan. */
