@@ -2,7 +2,7 @@
  * SMI-6531 (A1 step 6b-i): what the classifier reads of an op dir whose
  * record file failed, for `--park` (design § 1.1, bf-1k0 Major 1).
  *
- * `observeUnreadable(r, ctx, cls, op, names)` runs only for an `unreadable`
+ * `observeUnreadable(r, euid, cls, op, names)` runs only for an `unreadable`
  * class whose op dir was `lstat`ed as a directory and listed (the record file
  * itself failed: it could not be opened or read, is not a regular file, does
  * not parse, does not verify, or is inconsistent). It reads, through the

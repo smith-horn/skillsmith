@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- the `doctor recovery` listing marks actions "(not available yet)" from
+  core's own `PERFORMED` set, so an action enabled in core is listed as available without a
+  second edit here. No behaviour change.
+
 - **Added**: SMI-6531 -- A1 step 6b-i: `skillsmith doctor recovery --park <opId>` sets aside the
   whole operation folder of an update record that cannot be read, the only remedy for
   `recovery-record-unreadable`, which blocks every write in its skills root. Like `--apply` and

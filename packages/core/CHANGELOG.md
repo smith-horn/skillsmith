@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Internal**: SMI-6531 -- #3201 retro: `PERFORMED` (the recovery actions this version performs)
+  is exported, so the CLI listing reads core's set instead of a hand copy; two comments and a
+  CHANGELOG line are corrected. No behaviour change.
+
 - **Added**: SMI-6531 -- A1 step 6b-i: `planRecovery` and `executeRecovery` (now in
   `skill-recovery.exec.ts`) take any of the five recovery actions. Targeting is shared: an
   empty target operation folder is removed with one `rmdir` by any action, and
@@ -30,8 +34,8 @@ All notable changes to `@skillsmith/core` are documented here.
   `skillsmith doctor recovery` as that user, instead of naming `--park`, which doctor refuses
   there; when several kinds of record block the root, each is named. `remediationFor` maps
   `recovery-record-unreadable` to `doctor recovery` with action `park` (was `fix-permissions`),
-  or with no action for an `EACCES`/`EPERM` errno (another user's update), `recovery-conflict` to action `undo`, and
-  `recovery-ambiguous` to `doctor recovery` with `pickRoot` (`--root`); the `'quarantine'`
+  or with no action for an `EACCES`/`EPERM` errno (another user's update), `recovery-conflict`
+  to action `undo`, and `recovery-ambiguous` to `doctor recovery` with `pickRoot` (`--root`); the `'quarantine'`
   action literal is renamed `'park'`.
 
 - **Internal**: SMI-6531 -- #3198 retro: `skill-update.owner.ts`'s header no longer claims A2

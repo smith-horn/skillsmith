@@ -17,12 +17,12 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
-import { GUARD_WORD } from '@skillsmith/core'
+import { GUARD_WORD, PERFORMED } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
-/** The actions this version performs; the listing marks the others `(not available yet)`. */
-const SUPPORTED: ReadonlySet<string> = new Set(['apply', 'undo', 'park'])
+/** The actions this version performs (core's own set); the listing marks the others `(not available yet)`. */
+const SUPPORTED: ReadonlySet<string> = PERFORMED
 
 /** An unreadable record's op dir as the classifier read it: its entries and whether it can be guarded. */
 function observedLines(cls: Extract<RecoveryClass, { kind: 'unreadable' }>): string[] {

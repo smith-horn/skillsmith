@@ -145,7 +145,7 @@ export {
   plansFor,
   RECOVERY_ACTIONS,
 } from '../services/skill-recovery.plan.js'
-export { GUARD_WORD } from '../services/skill-recovery.plan.actions.js'
+export { GUARD_WORD, PERFORMED } from '../services/skill-recovery.plan.actions.js'
 export { rootLockEntries, type RootLockEntry } from '../services/skill-recovery.locks.js'
 // SMI-6531 A1 steps 6a-ii, 6b-i: targeting and the run under lock 1 for every action.
 export { planRecovery } from '../services/skill-recovery.target.js'

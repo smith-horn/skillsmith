@@ -272,7 +272,8 @@ describe('REASON_GROUP (§4.5)', () => {
 //     write-failed) -> fix-permissions, since §4.2/§4.4 both say these carry
 //     a sanitized/full {path, errno}.
 //   - recovery-record-unreadable (both) -> doctor{command:'recovery',
-//     action:'park'}: SMI-6531 6b-i makes `--park` real (design Q8, C8).
+//     action:'park'}: SMI-6531 6b-i makes `--park` real (design Q8, C8);
+//     no action for EACCES/EPERM (another user's update, C9).
 //   - backup-dir, untracked, local, local-edits, up-to-date, eligible,
 //     updated -> none: terminal non-error states or a deliberate choice.
 //   - policy-never, policy-manual -> set-policy{dirName, manifestKey,
