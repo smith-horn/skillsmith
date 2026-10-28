@@ -4,23 +4,24 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to
+  `skill-recovery.mark.ts` again (it was never a package export), and the recovery modules'
+  comments now describe the park-intent precheck as running on any device. No behaviour change.
 - **Added**: SMI-6531 -- A1 step 6b-ii: `--clean-staging` is performed for an operation
   folder with no `record.json`. With a verifying `park-intent.json` it finishes that park
   (`abort-new` with caller `abort-cleanup`, or `move-source` as `--apply` does). Without one it
   keeps `new/` through `publishTree` as `unrecorded-new` (a keep abort cleanup started resumes
   with its own kind), unlinks the provable temps and then `owner.json` last, and `rmdir`s the
   folder; across devices the verified `new/` stays and the folder is parked whole behind a
-  `move-source` intent that names the folder's own `owner.json` owner (doctor's own process
-  when there is no `owner.json`, or when the intent naming that owner is one the reader would
-  refuse). A cross-device `--apply` or `--undo` writes its intent naming doctor's own process,
-  whatever `owner.json` holds. Whether `new/` crosses
+  `move-source` intent (whose owner is chosen as the Fixed entry below describes). Whether
+  `new/` crosses
   devices is decided when the copy runs, so the keep plan's `remaining` lines state both
   finishes, each in the order its executor takes: on one device the temps, `owner.json` and
   the `rmdir`; across devices the unlink of a provable `park-intent.json.tmp` first, then the
   intent, the other temps, `owner.json`, and the park of the whole folder with no `rmdir`. The
   plan for finishing a verifying intent (`--clean-staging`, `--apply`, `--undo`) also names the
-  sync of the folder made after its temps or `owner.json` are unlinked. It is offered only when `owner.json` names a process on this host that
-  is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`, except
+  sync of the folder made after its temps or `owner.json` are unlinked. It is offered only when
+  `owner.json` names a process on this host that is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`, except
   that a verifying intent with no `owner.json` left needs neither; the owner verdict is in the
   serialized plan, so a change before the lock is `plan-changed`. The provable temps finished
   with an intent (by `--clean-staging`, `--apply` or `--undo`) are named in the plan. An
@@ -30,8 +31,11 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-6531 -- no path writes a `park-intent.json` that doctor's reader would refuse.
   The intent's bytes are produced in one place and put through the reader's own acceptance
   first (its 4096-byte cap, `INTENT_CAP`, shared by the reader and the writer, then the schema
-  check): an intent naming the op's own owner is written when the reader accepts it, else one
-  naming this process, else nothing (`staging-unsafe`, naming the size). The same check, on
+  check): an intent naming the op's own owner (the folder's `owner.json`) is written when the
+  reader accepts it, else one naming this process (doctor's own, also used when there is no
+  `owner.json`), else nothing (`staging-unsafe`, naming the size). A cross-device `--apply` or
+  `--undo` writes its intent naming doctor's own process, whatever `owner.json` holds. The same
+  check, on
   the worst case of the intent (the longest kept name and the longest identity), runs before
   the first mutation of doctor's `--apply`/`--undo` and `--clean-staging` (whenever they keep
   a tree) and of abort cleanup (whenever the staged folder will be parked or kept), on any
@@ -45,8 +49,9 @@ All notable changes to `@skillsmith/core` are documented here.
   refused `staging-unsafe`, `staged: 'none'`, "the update was not started", with no
   operation folder, record, backup or manifest change. It cannot wait to learn whether the
   backup crosses devices: that is known only from `EXDEV`, after the commit. The update's
-  process owner is read once, so `owner.json`, `record.json` and the intent name one host. A move-source intent under the state root `/` now resolves
-  its target instead of being blocked.
+  process owner is read once, so `owner.json`, `record.json` and the intent name one host. A
+  move-source intent under the state root `/` now resolves its target instead of being
+  blocked.
 - **Changed**: SMI-6531 -- A1 step 6b-ii (O1): the swap writes `client`, `scope`, `dirName`,
   `manifestKey` and `stateRoot` into `owner.json`, and an `abort-new` park intent carries them
   as schema 2 (schema 1 is still accepted; `move-source` intents stay schema 1). Doctor uses

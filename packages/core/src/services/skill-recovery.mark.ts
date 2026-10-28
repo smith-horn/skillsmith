@@ -1,6 +1,7 @@
 /**
  * SMI-6531 (A1 step 6a-iii): doctor's two full-device duties (A1 plan §3.3
- * "A record with `fullDevice`", T-F1 "Space block"; design § 0, UD42).
+ * "A record with `fullDevice`", T-F1 "Space block"; design § 0, UD42), and the
+ * intent block that runs beside the space block on any device.
  *
  * **Its own marker rewrite** (`rewriteMarkerAdopted`). When doctor's own
  * cross-device copy stops on `ENOSPC` or `EDQUOT`, `markIfFullDevice` records
@@ -42,13 +43,7 @@ import path from 'node:path'
 import { messageOf, renameChecked, SwapFault, syncDir, writeNewFile } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { intentPrecheck } from './skill-swap.intent.js'
-import {
-  bytesNeeded,
-  FREE_SPACE_REMEDY,
-  inodesNeeded,
-  nearestDevice,
-  shapeOf,
-} from './skill-swap.space.js'
+import { bytesNeeded, FREE_SPACE_REMEDY, inodesNeeded, shapeOf } from './skill-swap.space.js'
 import { sealRecord } from './skill-swap.staging.js'
 import type { FullDeviceMarker, SwapRecord } from './skill-swap.types.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
@@ -85,6 +80,17 @@ export async function rewriteMarkerAdopted(
     await syncDir(st, st.opDir)
   } catch (err) {
     throw new SwapFault('marker-unsynced', messageOf(err), err)
+  }
+}
+
+/** The device and the path to `statfs` for `p`: its nearest existing ancestor. */
+function nearest(p: string): { at: string; dev: bigint } | null {
+  for (let at = p; ; at = path.dirname(at)) {
+    try {
+      return { at, dev: fs.lstatSync(at, { bigint: true }).dev }
+    } catch {
+      if (path.dirname(at) === at) return null
+    }
   }
 }
 
@@ -146,7 +152,7 @@ export async function spaceBlock(
   f: SpaceFacts,
   steps: readonly PlanStep[]
 ): Promise<string | null> {
-  const area = nearestDevice(st.areaPath)
+  const area = nearest(st.areaPath)
   if (area === null) return null
   for (const src of toCopy(st, f, steps)) {
     let dev: bigint

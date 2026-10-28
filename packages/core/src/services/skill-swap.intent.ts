@@ -167,11 +167,14 @@ function backupPathBounds(st: SwapState): string[] {
 
 /**
  * The precheck each writer runs before its first mutation: the reason, with
- * no suffix (each caller says what is true of its own state: doctor "nothing
- * was changed", the update "the update was not started"), or null. The size
- * it names is the worst case's, so it says "could be up to N bytes"; the
- * write's own stop says "would be N bytes", the real size. It runs the round trip on the worst case of the intent this op could write,
- * with every `backupPath` it could name (`backupPathBounds`) and the longest
+ * no suffix (each caller says what is true of its own state), or null. The
+ * callers' suffixes: the update, "the update was not started"; abort cleanup,
+ * "abort cleanup changed nothing"; doctor's `--apply`/`--undo`, "nothing was
+ * changed" and `RECORDED_STATE_ROOT_NOTE`; doctor's `--clean-staging`,
+ * "nothing was changed" and `SHORTER_STATE_ROOT_REMEDY`. The size it names is
+ * the worst case's, so it says "could be up to N bytes"; the write's own stop
+ * says "would be N bytes", the real size. It runs the round trip on the worst
+ * case of the intent this op could write, with every `backupPath` it could name (`backupPathBounds`) and the longest
  * identity (`WORST_OP_IDENTITY`). It needs no OP, so the update runs it before
  * `createOp`.
  *
