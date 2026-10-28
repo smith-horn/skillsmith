@@ -44,14 +44,16 @@ import { observeGroups, STARTED_STATES } from './skill-recovery.pstate.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
 import type { KeepGroup, NoRecordIntent, RecoveryClass, RoleRes } from './skill-recovery.types.js'
-import { INTENT_CAP, isParkIntentFor } from './skill-swap.intent-schema.js'
+import { intentCap, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
 import { NEW_DIR, OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const INTENT_TMP = `${PARK_INTENT_FILE}.tmp`
 const RECORD_TMP = `${RECORD_FILE}.tmp`
-const TEMP_CAP = { [RECORD_TMP]: MAX_RECORD_BYTES + 1, [INTENT_TMP]: INTENT_CAP } as const
+/** A function, not a table: the intent cap is read when the temp is, so the test seam reaches it. */
+const tempCap = (name: string): number =>
+  name === RECORD_TMP ? MAX_RECORD_BYTES + 1 : name === INTENT_TMP ? intentCap() : 0
 
 /** Parses bytes as a JSON object, or null. */
 function objectOf(bytes: Buffer | null): Record<string, unknown> | null {
@@ -116,7 +118,7 @@ function tempProvable(
 ): boolean {
   const st = r.stat(file)
   if (!st.ok || st.type !== 'file') return false
-  const read = r.readFile(file, TEMP_CAP[name as keyof typeof TEMP_CAP])
+  const read = r.readFile(file, tempCap(name))
   if (!read.fact.ok || read.fact.truncated || read.bytes === null) return false
   if (read.fact.size === 0) return st.nlink === 1
   if (name === RECORD_TMP) {

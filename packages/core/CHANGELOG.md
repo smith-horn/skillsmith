@@ -4,6 +4,14 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer
+  strands an operation. The cap on `park-intent.json` (`INTENT_CAP`, shared by the writer and
+  doctor's reader) is now 64 KiB, as the sidecar's: a path cannot exceed about 4 KiB, and even
+  its worst JSON escaping is about 24 KiB, so every real intent fits. `--apply` and `--undo`
+  finish a recorded operation, and `--clean-staging` an unrecorded one, under any state root
+  instead of refusing `staging-unsafe`. The update's, abort cleanup's and
+  doctor's up-front prechecks are unchanged; they now size against the new cap, and their
+  refusal names it. No released version reads a park intent.
 - **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to
   `skill-recovery.mark.ts` again (it was never a package export), and the recovery modules'
   comments now describe the park-intent precheck as running on any device. No behaviour change.
@@ -30,7 +38,7 @@ All notable changes to `@skillsmith/core` are documented here.
   only metadata and the emptied folder go.
 - **Fixed**: SMI-6531 -- no path writes a `park-intent.json` that doctor's reader would refuse.
   The intent's bytes are produced in one place and put through the reader's own acceptance
-  first (its 4096-byte cap, `INTENT_CAP`, shared by the reader and the writer, then the schema
+  first (its byte cap, `INTENT_CAP`, shared by the reader and the writer, then the schema
   check): an intent naming the op's own owner (the folder's `owner.json`) is written when the
   reader accepts it, else one naming this process (doctor's own, also used when there is no
   `owner.json`), else nothing (`staging-unsafe`, naming the size). A cross-device `--apply` or

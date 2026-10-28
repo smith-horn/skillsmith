@@ -14,11 +14,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { bindIdentity } from '../../../../src/install/park-tree.identity.js'
 import { intentTarget } from '../../../../src/services/skill-recovery.opdir.js'
 import { rootKeyOf } from '../../../../src/services/skill-swap.area.js'
-import { INTENT_CAP } from '../../../../src/services/skill-swap.intent-schema.js'
+import { setIntentCapForTest } from '../../../../src/services/skill-swap.intent-schema.js'
 import { jsonBytes, recordIdentity } from '../../../../src/services/skill-swap.staging.js'
 import { refusedOf } from '../skill-swap.abort.helpers.js'
 import { abortAt } from '../skill-swap.abort.triggers.js'
@@ -33,7 +33,8 @@ import {
 } from '../skill-swap.helpers.js'
 import type { Fixture } from '../skill-swap.helpers.js'
 import { useOtherDeviceCleanup } from '../skill-swap.xdev.helpers.js'
-import { act, contentSnapshot, done, killAt } from './recovery.act.helpers.js'
+import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
+import { act, contentSnapshot, done, killAt, requestOf } from './recovery.act.helpers.js'
 import { opReport } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import { abortLeft, dead, editOwner, FILES, keptAt } from './recovery.clean.helpers.js'
@@ -41,6 +42,15 @@ import { killed, theParkedCopy, xfile, xs3 } from './recovery.xdev.helpers.js'
 
 useTmpCleanup()
 useOtherDeviceCleanup()
+
+/**
+ * The default cap is 64 KiB (SMI-7205), which no real path reaches. The
+ * refusals below are proven at the cap the seam lowers for the writer and the
+ * reader together; the last describe runs at the default.
+ */
+const INTENT_CAP = 4096
+beforeEach(() => setIntentCapForTest(INTENT_CAP))
+afterEach(() => setIntentCapForTest(null))
 
 const unsafe = { ...dead, unsafeUnverifiedOwner: true }
 
@@ -255,6 +265,65 @@ describe('the update’s abort cleanup with that state root: an edited N kept ac
     expect(atCheck).not.toBeNull()
     expect(snap()).toBe(atCheck)
     expect(fs.readdirSync(fx.opDir).sort()).toEqual(['new', 'owner.json'])
+  })
+})
+
+describe('SMI-7205: at the default cap a deep state root no longer strands a recorded op', () => {
+  beforeEach(() => setIntentCapForTest(null))
+
+  it('--apply across devices finishes it; the intent written is over 4096 bytes and reads back valid', async () => {
+    // No OLDER seam: the update's own precheck now accepts this root too.
+    const st = await xs3({ hooks: { afterSidecar: () => killed('afterSidecar') } }, deepXfile(DEEP))
+    const backup = path.join(areaOf(st.fx), OP_ID)
+    expect(intentSize(st.opDir, backup)).toBeGreaterThanOrEqual(INTENT_CAP)
+    // Stopped right after the record unlink: only the intent says what is left to do.
+    const first = await act(st, 'apply', {}, killAt('afterRecordUnlink'))
+    expect(first.result.status).toBe('done')
+    const intentFile = path.join(st.opDir, 'park-intent.json')
+    expect(fs.statSync(intentFile).size).toBeGreaterThanOrEqual(INTENT_CAP)
+    const cls = (await opReport(st)).cls
+    if (cls.kind !== 'no-record') throw new Error(`expected no-record, got ${cls.kind}`)
+    expect(cls.intent?.valid).toBe(true)
+    expect(cls.intent?.blocked).toBeNull()
+    // A temp linked to that big intent is provable too (its read follows the same cap).
+    const tmp = `${intentFile}.tmp`
+    fs.linkSync(intentFile, tmp)
+    const planned = await planRecovery(requestOf(st, 'apply'))
+    expect(planned.status).toBe('planned')
+    if (planned.status === 'planned') {
+      expect(planned.plan.remaining).toContain(`unlink the metadata temp ${tmp}`)
+    }
+    // The same command finishes the park from that intent.
+    const last = await done(st, 'apply')
+    expect(fs.existsSync(tmp)).toBe(false)
+    expect(last.result.status).toBe('done')
+    expect(fs.existsSync(st.opDir)).toBe(false)
+    expect(fs.existsSync(path.join(theParkedCopy(st.fx), 'park-intent.json'))).toBe(true)
+  })
+
+  it('a big intent BESIDE record.json (a finish killed after its intent, before the record unlink) classifies valid and the same command finishes it', async () => {
+    const st = await xs3({ hooks: { afterSidecar: () => killed('afterSidecar') } }, deepXfile(DEEP))
+    const backup = path.join(areaOf(st.fx), OP_ID)
+    expect(intentSize(st.opDir, backup)).toBeGreaterThanOrEqual(INTENT_CAP)
+    // Stopped once park-intent.json is durable and record.json is still there.
+    const first = await act(st, 'apply', {}, killAt('afterIntent'))
+    expect(first.result.status).toBe('stopped')
+    const recordFile = path.join(st.opDir, 'record.json')
+    const intentFile = path.join(st.opDir, 'park-intent.json')
+    expect(fs.existsSync(recordFile)).toBe(true)
+    expect(fs.statSync(intentFile).size).toBeGreaterThanOrEqual(INTENT_CAP)
+    // The classifier reads it beside the record (analyzeParkIntent) at the default cap, not 4096.
+    const cls = (await opReport(st)).cls
+    expect(cls.kind, JSON.stringify(cls).slice(0, 600)).not.toBe('no-record')
+    const facts = (cls as { facts?: { parkIntent: { valid: boolean } | null } }).facts
+    expect(facts?.parkIntent).not.toBeNull()
+    expect(facts?.parkIntent?.valid).toBe(true)
+    // The same command finishes it from that intent: parked, nothing lost.
+    const last = await done(st, 'apply')
+    expect(last.result.status).toBe('done')
+    expect(fs.existsSync(st.opDir)).toBe(false)
+    expect(fs.existsSync(path.join(theParkedCopy(st.fx), 'park-intent.json'))).toBe(true)
+    expect(fs.existsSync(path.join(areaOf(st.fx), OP_ID))).toBe(true)
   })
 })
 
