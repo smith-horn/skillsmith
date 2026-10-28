@@ -1,7 +1,8 @@
 /**
  * SMI-6531 (A1 steps 4b, 4c, 6b-i): the park of an op dir from ST, shared by its
  * callers (A1 plan §3.3; UD25, UD28, UD40): abort cleanup step 6 (caller
- * `abort-cleanup`, kind `abort-new`) and transaction step 13 after a
+ * `abort-cleanup`, kind `abort-new`; also doctor's `--clean-staging` finishing
+ * that park from its intent, 6b-ii, with O1's index) and transaction step 13 after a
  * cross-device move (caller `move-source`, kind `move-source`, with the
  * backup's path), and `doctor recovery --park` (6b-i: caller `doctor-park`,
  * kind `unreadable-record`, its parked-index path from O1 or none).
@@ -128,7 +129,12 @@ export type ParkOpOutcome =
   | { status: 'not-done'; notDone: NotDone }
 
 export type ParkOpCall =
-  | { caller: 'abort-cleanup'; kind: 'abort-new'; expected: Expected }
+  /**
+   * `indexPath` (6b-ii): doctor's `--clean-staging` finishing an abort-new
+   * intent passes O1's (or null for no index line); abort cleanup itself
+   * leaves it out and indexes in its own state root.
+   */
+  | { caller: 'abort-cleanup'; kind: 'abort-new'; expected: Expected; indexPath?: string | null }
   | { caller: 'move-source'; kind: 'move-source'; backupPath: string; expected: Expected }
   /**
    * 6b-i: `doctor recovery --park`, an op dir whose record cannot be read.
@@ -168,8 +174,9 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
   await hook(st, 'beforePark')
   checkTraced(st)
   const park = st.options.park ?? parkTreeIndexed
-  const indexPath =
-    c.caller === 'doctor-park' ? c.indexPath : path.join(st.stateRootReal, PARKED_INDEX_FILE)
+  const own = path.join(st.stateRootReal, PARKED_INDEX_FILE)
+  const given = c.caller === 'move-source' ? undefined : c.indexPath
+  const indexPath = given === undefined ? own : given
   const r: ParkResult = await park(ST, st.opId, {
     client: st.input.client,
     caller: c.caller,

@@ -7,6 +7,7 @@
  */
 import type { AppendOnceOutcome } from '../journal/writer.js'
 import type { JournalRecordInput } from '../journal/types.js'
+import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { OpReport } from './skill-recovery.listing.js'
 import type { SweepEntry, SweepResult } from './skill-recovery.finish.js'
@@ -42,6 +43,15 @@ export interface RecoveryRequest {
    * carries no attribution that validates.
    */
   stateRoots?: readonly string[]
+  /**
+   * `--unsafe-unverified-owner` (6b-ii): `--clean-staging` acts on a
+   * no-record op dir whose `owner.json` owner is not shown gone (another
+   * host, a live or unparseable pid, no `owner.json`). The plan first names
+   * the claim and why it can't be verified; `--yes` never stands in for it.
+   */
+  unsafeUnverifiedOwner?: boolean
+  /** @internal Test seam (6b-ii): how `owner.json`'s owner is judged (default `defaultOwnerProbe()`). */
+  ownerProbe?: OwnerProbe
 }
 
 /** A refusal before anything changed (no lock taken, or under it with zero mutation). */
@@ -88,7 +98,11 @@ export interface RecoveryDone {
   /** The class label the action ran from. */
   from: string
   installed: TreePosition | null
-  /** What was kept, and where. `--park` (6b-i): `{ tree: 'OP', kind: 'unreadable-record' }` at its parked path. */
+  /**
+   * What was kept, and where. `--park` (6b-i): `{ tree: 'OP', kind: 'unreadable-record' }`
+   * at its parked path; `--clean-staging` finishing an abort-new intent (6b-ii): `{ tree: 'OP',
+   * kind: 'abort-new' }`.
+   */
   kept: Array<{ tree: TreePosition; kind: string; path: string }>
   /**
    * 6a-iii: across devices, where the op dir (holding the verified sources)

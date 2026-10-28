@@ -52,6 +52,7 @@ import type {
 import { computeRecordSha256, MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.records.js'
 import type { RecordBytesWhy } from './skill-swap.records.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
+import { attributionOf } from './skill-swap.attribution.js'
 
 /** The bigint identity as `record.json` stores it (decimal strings). */
 export function recordIdentity(id: BoundIdentity): RecordIdentity {
@@ -130,10 +131,19 @@ export async function publishBytes(
   await syncDir(st, st.opDir)
 }
 
-/** `owner.json`: `{ pid, host, uid, createdAt }`, written first (plan §3.3 "Staging"). */
+/**
+ * `owner.json`: `{ pid, host, uid, createdAt }`, written first (plan §3.3
+ * "Staging"), plus (6b-ii, O1) the attribution `client`, `scope`, `dirName`,
+ * `manifestKey` and `stateRoot`: routing hints doctor's `--clean-staging`
+ * validates before it files a no-record op dir's trees (`skill-swap.attribution.ts`).
+ */
 export async function writeOwner(st: SwapState): Promise<void> {
   const owner = { pid: process.pid, host: os.hostname(), uid: process.geteuid?.() ?? -1 }
-  await publishJson(st, opPaths(st).owner, { ...owner, createdAt: new Date().toISOString() })
+  await publishJson(st, opPaths(st).owner, {
+    ...owner,
+    createdAt: new Date().toISOString(),
+    ...attributionOf(st),
+  })
   st.owner = owner
 }
 

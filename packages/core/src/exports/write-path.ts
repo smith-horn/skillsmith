@@ -162,6 +162,13 @@ export type {
   RecoveryStopped,
 } from '../services/skill-recovery.run.types.js'
 export type { ProbeFact } from '../services/skill-recovery.opdir.js'
+// SMI-6531 A1 step 6b-ii: `--clean-staging`'s owner verdict and observation.
+export type {
+  NoRecordObservation,
+  OwnerProbe,
+  OwnerVerdict,
+} from '../services/skill-recovery.clean.types.js'
+export { defaultOwnerProbe } from '../services/skill-recovery.owner.js'
 export type {
   ActionPlan,
   Disposition,

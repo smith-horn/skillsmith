@@ -3,7 +3,9 @@
  * (step 6) uses to finish a park without `--unsafe-unverified-owner`, so every
  * malformed intent must be refused. Also `parkIntentOf`'s fallbacks. Step 4c
  * adds the second kind, `move-source` (step 13 after a cross-device move):
- * both kinds verify, and any other kind is still refused.
+ * both kinds verify, and any other kind is still refused. Step 6b-ii (O1)
+ * adds schema 2, an `abort-new` intent carrying the attribution's five
+ * strings; schema 1 is still accepted.
  */
 import os from 'node:os'
 import { describe, expect, it } from 'vitest'
@@ -105,28 +107,82 @@ describe('isParkIntentFor: known-positive and known-negatives', () => {
   }
 })
 
+// 6b-ii (O1): an abort-new intent is schema 2, carrying the attribution's five strings.
+const ATTR = {
+  client: 'claude-code',
+  scope: 'user',
+  dirName: 'my-skill',
+  manifestKey: 'my-skill',
+  stateRoot: '/state',
+}
+const V2 = { ...GOOD, schema: 2, ...ATTR }
+
+describe('isParkIntentFor: schema 2 (abort-new with O1 attribution, 6b-ii)', () => {
+  it('accepts the well-formed schema-2 abort-new intent; schema 1 still verifies', () => {
+    expect(isParkIntentFor(V2, OP, ID)).toBe(true)
+    expect(isParkIntentFor(GOOD, OP, ID)).toBe(true)
+  })
+
+  it('accepts a well-formed but semantically bad hint (validation is the reader side, all or nothing)', () => {
+    expect(isParkIntentFor({ ...V2, dirName: '../x', client: 'emacs' }, OP, ID)).toBe(true)
+  })
+
+  const V2_BAD: Array<[string, unknown]> = [
+    ['schema 2 missing stateRoot', without(V2, 'stateRoot')],
+    ['schema 2 with a non-string client', { ...V2, client: 7 }],
+    ['schema 2 with a null dirName', { ...V2, dirName: null }],
+    ['schema 2 with an extra key', { ...V2, extra: 1 }],
+    ['schema 1 carrying the attribution keys', { ...V2, schema: 1 }],
+    ['schema 3', { ...V2, schema: 3 }],
+    ['a schema-2 move-source', { ...MOVE, schema: 2, ...ATTR }],
+    ['a move-source carrying the attribution keys', { ...MOVE, ...ATTR }],
+    ['schema 2 for another opId', { ...V2, opId: 'b'.repeat(32) }],
+  ]
+  for (const [label, value] of V2_BAD) {
+    it(`refuses ${label}`, () => {
+      expect(isParkIntentFor(value, OP, ID)).toBe(false)
+    })
+  }
+})
+
 describe('parkIntentOf', () => {
   const op = {
     path: '/x',
     identity: { ok: true, dev: 66n, ino: 1234n, birthtimeNs: 5n, fmt: 16384n },
   }
+  const input = { client: 'cursor', scope: 'workspace', dirName: 'd', manifestKey: 'd::cursor' }
+  const routed = { input, stateRootReal: '/real/state' }
 
-  it("copies the recorded owner and OP's identity as decimal strings", () => {
-    const st = { opId: OP, op, owner: { pid: 7, host: 'h', uid: 9 } } as unknown as SwapState
+  it("copies the recorded owner, OP's identity as decimal strings, and (6b-ii) the attribution", () => {
+    const st = {
+      opId: OP,
+      op,
+      owner: { pid: 7, host: 'h', uid: 9 },
+      ...routed,
+    } as unknown as SwapState
     expect(parkIntentOf(st)).toEqual({
-      schema: 1,
+      schema: 2,
       opId: OP,
       owner: { pid: 7, host: 'h', uid: 9 },
       opIdentity: { dev: '66', ino: '1234', birthtimeNs: '5', fmt: '16384' },
       kind: 'abort-new',
+      ...input,
+      stateRoot: '/real/state',
     })
   })
 
-  it('writes the kind it is given (move-source for step 13)', () => {
-    const st = { opId: OP, op, owner: { pid: 7, host: 'h', uid: 9 } } as unknown as SwapState
+  it('writes the kind it is given (move-source for step 13), schema 1 with no attribution', () => {
+    const st = {
+      opId: OP,
+      op,
+      owner: { pid: 7, host: 'h', uid: 9 },
+      ...routed,
+    } as unknown as SwapState
     const intent = parkIntentOf(st, 'move-source', '/state/backup')
     expect(intent.kind).toBe('move-source')
+    expect(intent.schema).toBe(1)
     expect(intent.backupPath).toBe('/state/backup')
+    expect(intent).not.toHaveProperty('client')
     expect(isParkIntentFor(intent, OP, intent.opIdentity)).toBe(true)
   })
 
@@ -136,7 +192,7 @@ describe('parkIntentOf', () => {
   })
 
   it('falls back to this process as the owner when owner.json was never published', () => {
-    const st = { opId: OP, op, owner: null } as unknown as SwapState
+    const st = { opId: OP, op, owner: null, ...routed } as unknown as SwapState
     const intent = parkIntentOf(st)
     expect(intent.owner).toEqual({
       pid: process.pid,

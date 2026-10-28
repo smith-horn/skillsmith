@@ -8,6 +8,7 @@ import type { JournalRecordInput } from '../journal/types.js'
 import type { ParkOptions, ParkResult } from '../install/park-result.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { EntryState } from './skill-manifest.entry.js'
+import type { AttributionHint } from './skill-swap.attribution.js'
 
 /** One file of the approved write set (plan §3.7). `rel` is relative to the skill folder. */
 export interface SwapWriteEntry {
@@ -258,9 +259,9 @@ export type AbortKeptKind = 'failed-build' | 'edited-new' | 'unrecorded-new'
  */
 export type AbortStaged = 'parked' | 'kept' | 'held' | 'left' | 'none'
 
-/** `park-intent.json` (plan §3.3 "Park intent"; review round 1 F3). */
-export interface ParkIntent {
-  schema: 1
+/** `park-intent.json` (plan §3.3 "Park intent"; review round 1 F3). Schema 2 (6b-ii): `abort-new` with O1's attribution. */
+export interface ParkIntent extends Partial<AttributionHint> {
+  schema: 1 | 2
   opId: string
   owner: { pid: number; host: string; uid: number }
   /** OP's identity as `createOp` bound it; decimal strings. */

@@ -313,6 +313,9 @@ describe('the doctor command', () => {
       '--apply',
       '--undo',
       '--park',
+      // 6b-ii: --clean-staging and the flag only it takes.
+      '--clean-staging',
+      '--unsafe-unverified-owner',
       '--accept-identity',
       '--yes',
     ])
@@ -325,6 +328,8 @@ describe('the doctor command', () => {
       '--apply <opId>',
       '--undo <opId>',
       '--park <opId>',
+      '--clean-staging <opId>',
+      '--unsafe-unverified-owner',
       '--accept-identity',
       '--yes',
     ]) {

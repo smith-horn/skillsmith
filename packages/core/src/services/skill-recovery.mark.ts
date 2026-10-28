@@ -82,13 +82,19 @@ function nearest(p: string): { at: string; dev: bigint } | null {
   }
 }
 
+/**
+ * What the space block reads: the roles, and T when the plan keeps it (a
+ * no-record op dir, 6b-ii `--clean-staging`, has no T and keeps none).
+ */
+export type SpaceFacts = Pick<OpFacts, 'roles'> & Partial<Pick<OpFacts, 't' | 'tPath'>>
+
 /** The trees the plan keeps that still need a cross-device copy, by path. */
-function toCopy(st: SwapState, f: OpFacts, steps: readonly PlanStep[]): string[] {
+function toCopy(st: SwapState, f: SpaceFacts, steps: readonly PlanStep[]): string[] {
   const out: string[] = []
   for (const s of steps) {
     if (s.disposition.kind !== 'kept') continue
     if (s.tree === 'T') {
-      if (f.t.present) out.push(f.tPath)
+      if (f.t?.present === true && f.tPath !== undefined) out.push(f.tPath)
       continue
     }
     // `OP` (6b-i) is `--park`'s whole op dir: a rename within ST, never a copy.
@@ -105,7 +111,7 @@ function toCopy(st: SwapState, f: OpFacts, steps: readonly PlanStep[]): string[]
 /** `state-root-full` naming the free-space remedy when a copy the plan needs cannot fit; else null. */
 export async function spaceBlock(
   st: SwapState,
-  f: OpFacts,
+  f: SpaceFacts,
   steps: readonly PlanStep[]
 ): Promise<string | null> {
   const area = nearest(st.areaPath)
@@ -131,8 +137,9 @@ export async function spaceBlock(
     const need = bytesNeeded(shape, s.bsize)
     const inodes = inodesNeeded(shape)
     // "Run this command again" is true only here: this check refuses before any
-    // mutation and is reached only by `doctor recovery --apply/--undo`, so the
-    // same command can simply be rerun once space is freed.
+    // mutation and is reached only by `doctor recovery --apply`, `--undo` and
+    // (6b-ii) `--clean-staging` (C10), so the same command can simply be rerun
+    // once space is freed.
     const next = `${FREE_SPACE_REMEDY}, then run this command again`
     if (free < need) {
       return `${area.at} has ${free} bytes free and the backup of ${src} needs about ${need}; nothing was changed; ${next}`

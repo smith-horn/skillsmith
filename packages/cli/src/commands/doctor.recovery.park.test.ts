@@ -269,7 +269,7 @@ describe('T-X17 (doctor-park row): a park that does not finish is removal-not-do
 })
 
 describe('a --park that stops says truthfully where the op dir is', () => {
-  it('a stop before the park (beforePark throws): exit 1, "nothing was moved", the op dir named, never "record is gone"', async () => {
+  it('a stop before the park (beforePark throws): exit 1, "nothing was moved", the op dir named, never "no record is kept"', async () => {
     const u = plantUnreadable()
     await runRecoveryAction({
       park: u.opId,
@@ -288,7 +288,7 @@ describe('a --park that stops says truthfully where the op dir is', () => {
     const text = out.join('\n')
     expect(text).toContain('Stopped (')
     expect(text).toContain(`nothing was moved; the op dir is still at ${u.opDir}`)
-    expect(text).not.toContain('record is gone')
+    expect(text).not.toContain('no record is kept')
     expect(fs.existsSync(path.join(u.opDir, 'record.json'))).toBe(true)
   })
 
@@ -311,7 +311,7 @@ describe('a --park that stops says truthfully where the op dir is', () => {
     const text = out.join('\n')
     expect(text).toContain(`the op dir is no longer at ${u.opDir}`)
     expect(text).not.toContain('nothing was moved')
-    expect(text).not.toContain('record is gone')
+    expect(text).not.toContain('no record is kept')
     expect(fs.existsSync(u.opDir)).toBe(false)
   })
 })
@@ -332,14 +332,17 @@ describe("the listing names a guard failure in the guard walk's own word", () =>
 })
 
 describe('through commander', () => {
-  it('registers --park visibly, and not --abandon or --clean-staging yet', () => {
+  it('registers --park and (6b-ii) --clean-staging visibly, and not --abandon yet', () => {
     const recovery = createDoctorCommand().commands.find((c) => c.name() === 'recovery')!
     const flags = recovery.options.map((o) => o.long ?? '')
     expect(flags).toContain('--park')
+    expect(flags).toContain('--clean-staging')
+    expect(flags).toContain('--unsafe-unverified-owner')
     expect(flags).not.toContain('--abandon')
-    expect(flags).not.toContain('--clean-staging')
     expect(recovery.options.find((o) => o.long === '--park')?.hidden).toBe(false)
+    expect(recovery.options.find((o) => o.long === '--clean-staging')?.hidden).toBe(false)
     expect(recovery.helpInformation()).toContain('--park <opId>')
+    expect(recovery.helpInformation()).toContain('--clean-staging <opId>')
   })
 
   it('`doctor recovery --park <opId> --yes` runs the action', async () => {

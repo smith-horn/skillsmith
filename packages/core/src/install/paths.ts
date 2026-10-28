@@ -11,6 +11,7 @@
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
+import { CLIENT_IDS } from './client-ids.js'
 
 // Verified 2026-04-30 against vendor docs:
 //   - Claude Code: code.claude.com/docs/en/skills
@@ -96,17 +97,8 @@ export const CLIENT_DISPLAY_LABELS: Record<ClientId, string> = {
   antigravity: 'Antigravity',
 }
 
-export const CLIENT_IDS: ReadonlyArray<ClientId> = Object.freeze([
-  'claude-code',
-  'cursor',
-  'copilot',
-  'windsurf',
-  'agents',
-  'opencode',
-  'hermes',
-  'grok',
-  'antigravity',
-])
+// SMI-6531 6b-ii: defined in `client-ids.ts` (no filesystem import), re-exported here.
+export { CLIENT_IDS }
 
 export function getCanonicalInstallPath(): string {
   return CLIENT_NATIVE_PATHS[CANONICAL_CLIENT]

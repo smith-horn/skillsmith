@@ -104,11 +104,28 @@ function noteOf(cls: RecoveryClass): string[] {
         cls.owner === null
           ? '    owner: no owner.json'
           : `    owner: pid ${cls.owner.pid ?? '?'} on ${cls.owner.host ?? '?'}, uid ${cls.owner.uid ?? '?'}`,
+        // 6b-ii: the owner verdict, and whether --clean-staging needs --unsafe-unverified-owner.
+        `    owner verdict: ${cls.clean.verdict} (${cls.clean.verdictWhy})${
+          cls.clean.verdict === 'same-host-dead' ||
+          (cls.intent?.valid === true && !cls.entries.includes('owner.json'))
+            ? ''
+            : '; --clean-staging needs --unsafe-unverified-owner'
+        }`,
         ...(cls.intent === null
           ? []
-          : cls.intent.blocked === null
-            ? ['    a park intent is present and verifies: --apply or --undo finishes the park']
-            : [`    a park intent is present: ${cls.intent.blocked}`]),
+          : !cls.intent.valid
+            ? [`    a park intent is present: ${cls.intent.blocked}`]
+            : cls.intent.kind === 'abort-new'
+              ? [
+                  `    an abort-new park intent is present and verifies: ${
+                    cls.clean.intentBlocked ?? '--clean-staging finishes the park'
+                  }`,
+                ]
+              : cls.intent.blocked === null
+                ? [
+                    '    a park intent is present and verifies: --apply, --undo or --clean-staging finishes the park',
+                  ]
+                : [`    a park intent is present: ${cls.intent.blocked}`]),
         ...(cls.recordTmp === null ? [] : [`    ${cls.recordTmp} is present`]),
       ]
     case 'unreadable':
@@ -132,7 +149,7 @@ function noteOf(cls: RecoveryClass): string[] {
 function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
-  // `--apply`, `--undo` (6a-iii) and `--park` (6b-i) are supported; `--abandon` and `--clean-staging` are 6b-ii/iii's.
+  // `--apply`, `--undo` (6a-iii), `--park` (6b-i) and `--clean-staging` (6b-ii) are supported; `--abandon` is 6b-iii's.
   const later = SUPPORTED.has(p.action) ? '' : ' (not available yet)'
   const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\`${later}`]
   for (const s of p.steps) {
@@ -161,6 +178,9 @@ function opLines(op: OpReport): string[] {
     // 6b-i: an unreadable record whose op dir cannot be parked says why, with the walk's path and errno.
     const park = op.plans.find((p) => p.action === 'park')
     if (op.cls.kind === 'unreadable' && park !== undefined) lines.push(...planLines(park, op.opId))
+    // 6b-ii: a no-record op dir says why --clean-staging is not offered (the owner, an entry, the intent).
+    const clean = op.plans.find((p) => p.action === 'clean-staging')
+    if (op.cls.kind === 'no-record' && clean !== undefined) lines.push(...planLines(clean, op.opId))
   } else {
     for (const p of offered) lines.push(...planLines(p, op.opId))
     for (const p of op.plans) {

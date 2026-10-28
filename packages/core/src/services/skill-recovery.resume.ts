@@ -57,6 +57,9 @@ import { acrossFor, resumeCopied, resumeCopyTemp } from './skill-recovery.xdev.j
 import type { AcrossKeep } from './skill-recovery.xdev.js'
 import type { KeepGroup, OpFacts, ReadTranscript, Role } from './skill-recovery.types.js'
 
+/** The facts a keep reads: each role's resolution, this op's groups, the full-device marker. */
+export type KeepFacts = Pick<OpFacts, 'roles' | 'groups' | 'fullDevice'>
+
 /** A kind `publishTree` can write, else a stop: a name this module cannot keep. */
 function publishKindOf(kind: string): PublishKind {
   if (kind === 'backup' || KEPT_KINDS.has(kind)) return kind as PublishKind
@@ -124,9 +127,13 @@ export async function installAt(
   await hook(st, 'afterInstall')
 }
 
-/** What a keep resume needs besides the state: the re-plan's facts and transcript. */
+/**
+ * What a keep resume needs besides the state: the re-plan's facts and
+ * transcript. 6b-ii: only the roles, the groups and the marker, which a
+ * no-record op dir supplies too (`--clean-staging`).
+ */
 export interface KeepContext {
-  facts: OpFacts
+  facts: KeepFacts
   transcript: ReadTranscript
   /** Where each copy temp a cross-device resume keeps as `partial-copy` went. */
   partials: string[]

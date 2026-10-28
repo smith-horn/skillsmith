@@ -16,7 +16,9 @@ import { getJournalFilePath } from '../journal/path.js'
 import { classifyOp } from './skill-recovery.classify.js'
 import type { ClassifyContext } from './skill-recovery.classify.js'
 import { digestOf } from './skill-recovery.digest.js'
+import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import { listStaging } from './skill-recovery.opdir.js'
+import { defaultOwnerProbe } from './skill-recovery.owner.js'
 import type { ProbeFact } from './skill-recovery.opdir.js'
 import { classLabel, plansFor, serializePlan } from './skill-recovery.plan.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
@@ -63,6 +65,8 @@ export interface ListOptions {
   reader?: ReaderOptions
   /** The state roots discovered or given (6a-iii): a park intent's `backupPath` must lie in one. */
   stateRoots?: readonly string[]
+  /** @internal Test seam (6b-ii): how `owner.json`'s owner is judged (default `defaultOwnerProbe()`). */
+  ownerProbe?: OwnerProbe
 }
 
 /** Classifies one op dir with a fresh reader and digests what it read plus its plan. */
@@ -142,6 +146,7 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     journalFile: options.journalFile ?? getJournalFilePath(),
     ...(options.acceptIdentity === undefined ? {} : { acceptIdentity: options.acceptIdentity }),
     ...(options.stateRoots === undefined ? {} : { stateRoots: options.stateRoots }),
+    ownerProbe: options.ownerProbe ?? defaultOwnerProbe(),
   }
   const ops: OpReport[] = []
   for (const opId of view.opIds) ops.push(await reportOp(ctx, opId, options.reader))

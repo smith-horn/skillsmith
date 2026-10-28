@@ -6,13 +6,23 @@
  *
  * @module @skillsmith/core/services/skill-swap.intent-schema
  */
+import { hasAttributionStrings } from './skill-swap.attribution.js'
 import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.types.js'
 
 const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-source'])
 
 const DECIMAL = /^(0|[1-9][0-9]*)$/
 const ABORT_KEYS = 'kind,opId,opIdentity,owner,schema'
+/** Schema 2 (6b-ii, O1): an `abort-new` intent that also carries the attribution's five strings. */
+const ABORT_KEYS_V2 = 'client,dirName,kind,manifestKey,opId,opIdentity,owner,schema,scope,stateRoot'
 const MOVE_SOURCE_KEYS = 'backupPath,kind,opId,opIdentity,owner,schema'
+
+/** The exact keys for the intent's kind and schema; null for a combination no writer makes. */
+function keysFor(o: Record<string, unknown>): string | null {
+  if (o.kind === 'move-source') return o.schema === 1 ? MOVE_SOURCE_KEYS : null
+  if (o.schema === 1) return ABORT_KEYS
+  return o.schema === 2 ? ABORT_KEYS_V2 : null
+}
 
 /** An absolute POSIX path with no NUL, `.` or `..` component: where the verified copy is. */
 function isBackupPath(v: unknown): v is string {
@@ -39,7 +49,12 @@ function isRecordIdentity(v: unknown): v is RecordIdentity {
  * True when `value` is a park intent for `opId` with `opIdentity` (the
  * acceptance doctor's `--clean-staging` applies, step 6). Exact keys, exact
  * types, and a kind of `abort-new` or `move-source` (the park doctor then
- * finishes): anything else is refused, never repaired.
+ * finishes): anything else is refused, never repaired. Schema 1 (both kinds)
+ * and schema 2 (`abort-new` with O1's attribution, 6b-ii) are accepted; the
+ * attribution is checked here only for its type (five strings): it is a
+ * routing hint, which doctor validates all or nothing elsewhere
+ * (`skill-recovery.attribution.ts`), so a bad hint never makes an intent
+ * that names this op dir fail to verify.
  */
 export function isParkIntentFor(
   value: unknown,
@@ -50,10 +65,11 @@ export function isParkIntentFor(
   const o = value as Record<string, unknown>
   // 6a-iii: a move-source intent also names the verified copy (`backupPath`), so the
   // park can be finished from the intent alone once the record is gone.
-  const keys = o.kind === 'move-source' ? MOVE_SOURCE_KEYS : ABORT_KEYS
-  if (Object.keys(o).sort().join(',') !== keys) return false
-  if (o.schema !== 1 || o.opId !== opId || !KINDS.has(o.kind)) return false
+  const keys = keysFor(o)
+  if (keys === null || Object.keys(o).sort().join(',') !== keys) return false
+  if (o.opId !== opId || !KINDS.has(o.kind)) return false
   if (o.kind === 'move-source' && !isBackupPath(o.backupPath)) return false
+  if (o.schema === 2 && !hasAttributionStrings(o)) return false
   const owner = o.owner as Record<string, unknown> | null
   if (owner === null || typeof owner !== 'object' || Array.isArray(owner)) return false
   if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false

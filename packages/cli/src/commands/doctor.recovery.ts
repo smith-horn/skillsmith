@@ -11,9 +11,11 @@
  * staging directory is reported as having none, never given one.
  *
  * The listing names what each action would do and which are offered.
- * `--apply`, `--undo` and `--park` are supported (`doctor.recovery.action.ts`,
- * SMI-6531 steps 6a-iii and 6b-i); `--abandon` and `--clean-staging` are listed
- * with what they would do, but this version does not perform them yet.
+ * `--apply`, `--undo`, `--park` and `--clean-staging` are supported
+ * (`doctor.recovery.action.ts`, SMI-6531 steps 6a-iii, 6b-i and 6b-ii; a
+ * no-record op dir shows its owner verdict and whether `--clean-staging` needs
+ * `--unsafe-unverified-owner`); `--abandon` is listed with what it would do,
+ * but this version does not perform it yet.
  * Exit status: 0 when listed; 1 when a `--root` could not be used or on an
  * unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.recovery
@@ -39,7 +41,12 @@ export async function runDoctorRecovery(options: DoctorRecoveryOptions): Promise
     ...(options.root === undefined || options.root.length === 0 ? {} : { roots: options.root }),
     ...options.discovery,
   })
-  const reports = await listRecovery(found.roots.map((r) => r.root))
+  // The state roots too (6b-ii): a no-record op dir's keep area and a park intent's
+  // state root are judged against them, as `--clean-staging`, `--apply` and `--undo` do.
+  const reports = await listRecovery(
+    found.roots.map((r) => r.root),
+    { stateRoots: found.stateRoots }
+  )
   if (options.json === true) {
     console.log(JSON.stringify(recoveryJson(found, reports), null, 2))
   } else {

@@ -21,6 +21,7 @@
  * @module @skillsmith/core/services/skill-swap.intent
  */
 import os from 'node:os'
+import { attributionOf } from './skill-swap.attribution.js'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { publishJson, recordIdentity } from './skill-swap.staging.js'
@@ -30,7 +31,11 @@ import type { ParkIntent, ParkIntentKind } from './skill-swap.types.js'
  * The intent this run writes: OP's identity as `createOp` bound it, and the
  * owner it recorded. A `move-source` intent also names `backupPath`, the
  * verified copy the park's held message names (6a-iii: doctor finishes the
- * park from the intent alone once the record is gone).
+ * park from the intent alone once the record is gone). An `abort-new` intent
+ * is schema 2 (6b-ii, O1): it copies `owner.json`'s attribution, so doctor's
+ * `--clean-staging` can name the park's client and parked index once
+ * `owner.json` is gone. A `move-source` intent stays schema 1: its
+ * `backupPath` already names the state root, client and folder.
  */
 export function parkIntentOf(
   st: SwapState,
@@ -48,14 +53,15 @@ export function parkIntentOf(
     host: os.hostname(),
     uid: process.geteuid?.() ?? -1,
   }
-  return {
-    schema: 1,
+  const base = {
     opId: st.opId,
     owner: { pid: owner.pid, host: owner.host, uid: owner.uid },
     opIdentity: recordIdentity(st.op.identity),
     kind,
-    ...(kind === 'move-source' ? { backupPath } : {}),
   }
+  return kind === 'move-source'
+    ? { schema: 1, ...base, backupPath }
+    : { schema: 2, ...base, ...attributionOf(st) }
 }
 
 /** Publishes `park-intent.json` durably. Kill points: `afterIntentTemp`, `afterIntent`. */

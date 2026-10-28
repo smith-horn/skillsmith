@@ -115,6 +115,9 @@ export function analyzeParkIntent(
   return { parkIntent: intent, parkIntentTmp: tmp }
 }
 
+/** `blocked` for an abort-new intent whose entries are its own: `--apply`/`--undo` never finish it. */
+export const ABORT_NEW_BLOCK = 'an abort-new intent: --clean-staging finishes it'
+
 /** The directories a recorded op keeps its trees in: what a no-record park may carry. */
 const SOURCE_NAMES: ReadonlySet<string> = new Set(['old', 'new', 'undone'])
 
@@ -148,7 +151,12 @@ function intentTarget(backupPath: string, root: string, opId: string): NoRecordI
   return path.join(area, id) === backupPath ? { stateRoot, client, dirName } : null
 }
 
-/** A no-record op dir's `park-intent.json`, and whether its park can be finished from it. */
+/**
+ * A no-record op dir's `park-intent.json`, and whether its park can be
+ * finished from it. 6b-ii: `temps` are the metadata temps the caller proved
+ * this op's (`record.json.tmp`, `park-intent.json.tmp`, a kill inside a
+ * metadata publish): they do not block, and the finish unlinks them first.
+ */
 export function noRecordIntent(
   r: ClassifierReader,
   a: {
@@ -158,6 +166,7 @@ export function noRecordIntent(
     names: readonly string[]
     opIdentity: RecordIdentity
     stateRoots: readonly string[]
+    temps?: ReadonlySet<string>
   }
 ): NoRecordIntent | null {
   if (!a.names.includes(PARK_INTENT_FILE)) return null
@@ -178,7 +187,7 @@ export function noRecordIntent(
   const sources: NoRecordIntent['sources'] = []
   let blocked: string | null = null
   for (const n of [...a.names].sort()) {
-    if (n === PARK_INTENT_FILE) continue
+    if (n === PARK_INTENT_FILE || a.temps?.has(n) === true) continue
     const st = r.stat(path.join(a.opDir, n))
     if (n === OWNER_FILE) {
       if (!st.ok || st.type !== 'file') blocked ??= `${OWNER_FILE} is not a regular file`
@@ -189,7 +198,8 @@ export function noRecordIntent(
     else sources.push({ name: n, identity: st.identity })
   }
   if (!valid) blocked = 'its park-intent.json does not verify for this op dir'
-  else if (v.kind !== 'move-source') blocked = 'an abort-new intent: --clean-staging finishes it'
+  // 6b-ii: an abort-new intent's entry checks stand (`--clean-staging` reads them); unblocked, it says who finishes it.
+  else if (v.kind !== 'move-source') blocked ??= ABORT_NEW_BLOCK
   else if (target === null) blocked = `its backupPath ${backupPath} is not this root's backup area`
   else if (!a.stateRoots.includes(target.stateRoot)) {
     blocked = `its state root ${target.stateRoot} is not one doctor discovered or was given`
@@ -204,5 +214,6 @@ export function noRecordIntent(
     target,
     sources,
     blocked,
+    raw: valid ? (value as Record<string, unknown>) : null,
   }
 }

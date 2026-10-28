@@ -134,7 +134,7 @@ describe('refused, with zero mutation', () => {
     await refusedWith(st, 'recovery-other-user', '434343')
   })
 
-  it('an intent for another opId (it does not verify): offered only --clean-staging', async () => {
+  it('an intent for another opId (it does not verify): --apply refuses it (and so does --clean-staging, O2)', async () => {
     const st = await doctorLeft()
     editIntent(st, (v) => ({ ...v, opId: 'b'.repeat(32) }))
     await refusedWith(st, 'recovery-not-offered', 'does not verify')

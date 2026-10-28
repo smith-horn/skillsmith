@@ -268,7 +268,7 @@ export function createDoctorCommand(): Command {
   doctor
     .command('recovery')
     .description(
-      'List what a crashed update left in each skills root; finish or undo one with --apply or --undo, or set an unreadable one aside with --park'
+      'List what a crashed update left in each skills root; finish or undo one with --apply or --undo, set an unreadable one aside with --park, or clean one with no record with --clean-staging'
     )
     .option('--root <dir>', 'Also scan this skills root (repeatable)', collectRoot, [] as string[])
     .option('--state-root <dir>', 'State root to read instead of the discovered ones')
@@ -281,13 +281,29 @@ export function createDoctorCommand(): Command {
       '--park <opId>',
       'Set aside the whole op dir of a record that cannot be read (shows the plan, then asks)'
     )
+    // SMI-6531 6b-ii: an op dir with no record, kept or parked; owner.json's owner must be gone.
+    .option(
+      '--clean-staging <opId>',
+      'Keep or set aside what an op dir with no record holds (shows the plan, then asks)'
+    )
+    .option(
+      '--unsafe-unverified-owner',
+      "With --clean-staging: also act when owner.json's owner can't be verified gone"
+    )
     .option(
       '--accept-identity',
       'With --apply or --undo: waive the identity check only (each tree must still hash to its role)'
     )
-    .option('--yes', 'With --apply, --undo or --park: proceed without the prompt (waives no check)')
+    .option(
+      '--yes',
+      'With --apply, --undo, --park or --clean-staging: proceed without the prompt (waives no check)'
+    )
     .action((opts: RecoveryActionOptions & DoctorRecoveryOptions) =>
-      opts.apply !== undefined || opts.undo !== undefined || opts.park !== undefined
+      opts.apply !== undefined ||
+      opts.undo !== undefined ||
+      opts.park !== undefined ||
+      opts.cleanStaging !== undefined ||
+      opts.unsafeUnverifiedOwner === true
         ? doctorRecoveryApplyAction(opts)
         : doctorRecoveryAction(opts)
     )

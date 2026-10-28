@@ -2,10 +2,10 @@
  * SMI-6531 (A1 step 6b-i): O1's reader side, the attribution of an op dir that
  * has no readable record (design § 2 O1, as amended by bf-1k0's minors).
  *
- * The swap is to write `client`, `scope`, `dirName`, `manifestKey` and
- * `stateRoot` into `owner.json` (and the `abort-new` intent is to copy them).
- * That writer is 6b-ii; until it lands no op dir carries them, so the fallback
- * below is what runs. The fields are **routing hints, not authority**: they
+ * The swap writes `client`, `scope`, `dirName`, `manifestKey` and `stateRoot`
+ * into `owner.json`, and the `abort-new` intent (schema 2) copies them (6b-ii,
+ * `skill-swap.attribution.ts`); an op dir made before that carries none, and
+ * the fallback below is what runs for it. The fields are **routing hints, not authority**: they
  * decide only where a kept tree is filed and what its sidecar and parked-index
  * line say, never what is kept, whether an action is offered, or which skill
  * is changed.
@@ -26,23 +26,21 @@
  * an empty `manifestKey` and the opId as `dirName`, and its parked-index line
  * goes to `<primary>`: the first state root given or discovered, or none.
  *
- * Pure: it reads nothing. Its inputs are what the classifier read through the
- * reader (so the re-plan digest covers them).
+ * Pure: it reads nothing, and it imports no filesystem module, so the
+ * classifier resolves the attribution itself (6b-ii: a no-record op dir's
+ * keep area is listed through the reader, so the re-plan digest covers it).
+ * Its inputs are what the classifier read through the reader. The writer
+ * side is `skill-swap.attribution.ts`.
  *
  * @module @skillsmith/core/services/skill-recovery.attribution
  */
 import path from 'node:path'
-import { CLIENT_IDS } from '../install/paths.js'
-import { PARKED_INDEX_FILE } from '../install/parked-index.js'
+import { CLIENT_IDS } from '../install/client-ids.js'
+import { PARKED_INDEX_FILE } from '../install/parked-index.name.js'
 import { backupAreaPath } from './skill-swap.area.js'
+import { ATTRIBUTION_FIELDS } from './skill-swap.attribution.js'
 
-export const ATTRIBUTION_FIELDS = [
-  'client',
-  'scope',
-  'dirName',
-  'manifestKey',
-  'stateRoot',
-] as const
+export { ATTRIBUTION_FIELDS }
 
 export interface AttributionFields {
   client: string
@@ -137,23 +135,21 @@ export const parkClientOf = (a: Attribution): string =>
 
 /** The parked index a park appends to: the attributed state root's, the primary's, or none. */
 export function parkIndexOf(a: Attribution): string | null {
-  const root = a.kind === 'attributed' ? a.stateRoot : a.primary
+  const root = routeRootOf(a)
   return root === null ? null : path.join(root, PARKED_INDEX_FILE)
 }
 
-/**
- * The backup area a keep of this op dir files into, or null with no state root.
- * @internal Consumed by 6b-ii (`--clean-staging`); no production caller in 6b-i.
- */
+/** The state root a keep or a park of this op dir routes to: the attributed one, the primary, or null. */
+export const routeRootOf = (a: Attribution): string | null =>
+  a.kind === 'attributed' ? a.stateRoot : a.primary
+
+/** The backup area a keep of this op dir files into (6b-ii `--clean-staging`), or null with no state root. */
 export function keepAreaOf(a: Attribution, root: string, opId: string): string | null {
   if (a.kind === 'attributed') return backupAreaPath(a.stateRoot, a.client, root, a.dirName)
   return a.primary === null ? null : backupAreaPath(a.primary, 'none', root, opId)
 }
 
-/**
- * The sidecar fields a keep of this op dir names (the client-`none` convention when unattributed).
- * @internal Consumed by 6b-ii (`--clean-staging`); no production caller in 6b-i.
- */
+/** The sidecar fields a keep of this op dir names (the client-`none` convention when unattributed). */
 export function keepSidecarOf(
   a: Attribution,
   opId: string
@@ -162,3 +158,9 @@ export function keepSidecarOf(
     ? { client: a.client, scope: a.scope, manifestKey: a.manifestKey, dirName: a.dirName }
     : { client: 'none', scope: 'none', manifestKey: '', dirName: opId }
 }
+
+/** What a keep of this op dir in R's area must name: its sidecar fields and `skillsDir` R. */
+export const keepExpectOf = (a: Attribution, root: string, opId: string) => ({
+  ...keepSidecarOf(a, opId),
+  skillsDir: root,
+})
