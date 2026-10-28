@@ -74,7 +74,9 @@ function parkState(
     input: {
       skillsDir: ctx.root,
       client: parkClientOf(attribution),
-      scope: attribution.kind === 'attributed' ? attribution.scope : 'user',
+      // Client, scope, state root and folder all come from the one `attribution`: O1's when it
+      // validated, else the client-`none` layout's (`none`); never fields from two sources.
+      scope: attribution.kind === 'attributed' ? attribution.scope : 'none',
       stateRoot,
       manifestPath: path.join(stateRoot, 'manifest.json'),
       manifestKey: dirName,

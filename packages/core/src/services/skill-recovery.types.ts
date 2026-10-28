@@ -16,6 +16,7 @@
  * @module @skillsmith/core/services/skill-recovery.types
  */
 import type { EntryState } from './skill-manifest.entry.js'
+import type { NoRecordObservation } from './skill-recovery.clean.types.js'
 import type { RecordParseWhy } from './skill-swap.record-schema.js'
 import type { FullDeviceMarker, RecordIdentity, SwapRecord } from './skill-swap.types.js'
 
@@ -272,8 +273,10 @@ export interface NoRecordIntent {
   target: { stateRoot: string; client: string; dirName: string } | null
   /** The op dir's tree entries (`old`, `new`, `undone`), as the plan saw them. */
   sources: Array<{ name: string; identity: RecordIdentity }>
-  /** Why the park cannot be finished from it; null when it can. */
+  /** Why `--apply`/`--undo` cannot finish the park from it; null when they can. */
   blocked: string | null
+  /** 6b-ii: the verifying intent's parsed object (its O1 attribution, if any); null when invalid. */
+  raw: Record<string, unknown> | null
 }
 
 export type UnreadableWhy = RecordParseWhy | 'open-failed' | 'not-a-file' | 'inconsistent-record'
@@ -324,6 +327,8 @@ export type RecoveryClass =
       otherUid: number | null
       /** 6a-iii: its `park-intent.json`, when it has one. */
       intent: NoRecordIntent | null
+      /** 6b-ii: the owner verdict, the attribution and what `--clean-staging` keeps (`skill-recovery.clean.types.ts`). */
+      clean: NoRecordObservation
     }
   | {
       kind: 'unreadable'

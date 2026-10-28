@@ -4,6 +4,9 @@
  * §3.3 "Recovery invariant", §3.9 leftover probes; design § 4
  * "`finishRecovered`", § 7).
  *
+ * `finishNoRecord(st, adopted)` (6b-ii): the same for an op dir with no
+ * record, `owner.json` last (see its comment).
+ *
  * `finishRecovered(st, adopted)`: every tree is installed or kept, so OP must
  * hold exactly the adopted metadata (UD40's rule: anything else stops
  * `op-not-empty` with nothing removed). It unlinks every other metadata file
@@ -57,6 +60,42 @@ export async function finishRecovered(st: SwapState, adopted: readonly Adopted[]
   st.recordRemoved = true
   await hook(st, 'afterRecordUnlink')
   await syncDir(st, st.opDir)
+  await hook(st, 'afterRecoveredOpSync')
+  await rmdirChecked(st, st.opDir)
+  await syncDir(st, st.binding.stagingDir)
+}
+
+/**
+ * 6b-ii (`--clean-staging`, one device): the end of a no-record op dir once
+ * its tree is kept. OP must hold exactly the adopted metadata (UD40). The
+ * provable temps go first and OP is synced; then `owner.json` **last**, OP
+ * synced, OP `rmdir`ed and ST synced. `owner.json` is what lets the same
+ * command resume without `--unsafe-unverified-owner` (PLAN:1276-1278's
+ * record-last rule, with `owner.json` in the record's place): a kill before
+ * it goes leaves an op dir holding only `owner.json`, which the same command
+ * finishes; a kill after leaves an empty op dir, which any action sweeps.
+ */
+export async function finishNoRecord(st: SwapState, adopted: readonly Adopted[]): Promise<void> {
+  await hook(st, 'beforeMetadataCleanup')
+  check(st)
+  const names = await fs.promises.readdir(st.opDir)
+  const allowed = new Set(adopted.map((a) => path.basename(a.path)))
+  const extra = names.filter((n) => !allowed.has(n)).sort()
+  if (extra.length > 0) {
+    throw new SwapFault('op-not-empty', `${st.opDir} still holds ${extra.join(', ')}`)
+  }
+  const owner = adopted.find((a) => path.basename(a.path) === OWNER_FILE)
+  for (const a of adopted) {
+    if (a === owner || !names.includes(path.basename(a.path))) continue
+    await unlinkAdopted(st, a)
+    await hook(st, 'afterTempUnlink')
+  }
+  await syncDir(st, st.opDir)
+  if (owner !== undefined && names.includes(OWNER_FILE)) {
+    await unlinkAdopted(st, owner)
+    await hook(st, 'afterOwnerUnlink')
+    await syncDir(st, st.opDir)
+  }
   await hook(st, 'afterRecoveredOpSync')
   await rmdirChecked(st, st.opDir)
   await syncDir(st, st.binding.stagingDir)

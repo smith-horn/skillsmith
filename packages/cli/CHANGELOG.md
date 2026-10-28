@@ -4,6 +4,23 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6b-ii: `skillsmith doctor recovery --clean-staging <opId>`
+  finishes an operation folder an update left before it wrote its record: it keeps the staged
+  `new/` folder in the backup area (or finishes the set-aside the update had begun), then
+  removes only the folder's metadata and the emptied folder. It runs only when the folder's
+  `owner.json` names a process on this host that has exited, or when the update had already
+  made its set-aside durable and removed `owner.json` (a verifying park intent with no
+  `owner.json` left needs nothing more); `--unsafe-unverified-owner`
+  (accepted only with `--clean-staging`, and never implied by `--yes`) acts past an owner it
+  cannot verify gone, and the plan names the claim and why first. Same confirmation contract
+  and exit codes as `--apply`, `--undo` and `--park`. The listing shows each such folder's
+  owner verdict and whether the flag is needed, and now judges park intents and keep areas
+  against the discovered state roots.
+
+- **Internal**: SMI-6531 -- the `doctor recovery` listing marks actions "(not available yet)" from
+  core's own `PERFORMED` set, so an action enabled in core is listed as available without a
+  second edit here. No behaviour change.
+
 - **Added**: SMI-6531 -- A1 step 6b-i: `skillsmith doctor recovery --park <opId>` sets aside the
   whole operation folder of an update record that cannot be read, the only remedy for
   `recovery-record-unreadable`, which blocks every write in its skills root. Like `--apply` and

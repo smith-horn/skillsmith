@@ -62,7 +62,7 @@ describe('record schema 1 carries op, target.scope and target.dirName', () => {
     const r = await realRecord()
     expect(r.json.op).toBe('update')
     const target = r.json.target as Record<string, unknown>
-    expect(target.scope).toBe('user')
+    expect(target.scope).toBe('global')
     expect(target.dirName).toBe('my-skill')
     expect(verifyRecordBytes(r.bytes, r.root, r.opId)).toMatchObject({ ok: true })
     expect(parseRecordBytes(r.bytes)).toMatchObject({ ok: true })

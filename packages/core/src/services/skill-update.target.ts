@@ -32,6 +32,7 @@ import fs, { type BigIntStats } from 'node:fs'
 import path from 'node:path'
 import { identityOf } from '../install/park-tree.identity.js'
 import { resolveCompanionAgentPath, type ClientId } from '../install/paths.js'
+import type { InstallScope } from '../install/workspace-scope.js'
 import { manifestKeyFor } from './skill-installation.helpers.js'
 import { canonicalize, isPlainObject } from './skill-manifest.canonical.js'
 import type { JsonObject } from './skill-manifest.canonical.js'
@@ -47,7 +48,7 @@ export interface BuildUpdateTargetInput {
   skillsDir: string
   client: ClientId
   /** The install scope (`global` or `workspace`). */
-  scope: string
+  scope: InstallScope
   manifestPath: string
   /** The directory `update` diffed. */
   comparedPath: string

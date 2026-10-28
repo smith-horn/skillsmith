@@ -87,7 +87,8 @@ export function resultLines(r: RecoveryRunResult): string[] {
     return [
       `Stopped (${r.reason}): ${r.detail}`,
       r.recordPath === null
-        ? '  the record is gone; run the same command to finish'
+        ? // No record is named: one already unlinked (a cross-device finish), or none at all (6b-ii).
+          '  no record is kept; run the same command again to finish'
         : `  the record is kept at ${r.recordPath}; run the same command again to resume`,
     ]
   }

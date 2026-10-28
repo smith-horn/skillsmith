@@ -12,6 +12,7 @@
  */
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { ClientId } from '../install/paths.js'
+import type { InstallScope } from '../install/workspace-scope.js'
 import type { ScanReport } from '../security/index.js'
 import type { TrustTier } from '../types/skill.js'
 import type { JsonObject } from './skill-manifest.canonical.js'
@@ -28,7 +29,7 @@ export interface UpdateTarget {
   realSkillsDir: string
   client: ClientId
   /** The install scope (`global` or `workspace`). */
-  scope: string
+  scope: InstallScope
   /** The directory holding `manifestPath`. */
   stateRoot: string
   manifestPath: string

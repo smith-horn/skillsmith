@@ -19,8 +19,9 @@
  *    park. An entry whose own `lstat` failed is refused the same way, naming
  *    it and its errno: the park binds every entry's identity (UD40).
  *
- * `--abandon` and `--clean-staging` keep 6a's words here until 6b-ii and
- * 6b-iii; `planRecovery` does not perform them yet (`PERFORMED`).
+ * `--clean-staging` (6b-ii) is planned in `skill-recovery.plan.clean.ts`.
+ * `--abandon` keeps 6a's words here until 6b-iii; `planRecovery` does not
+ * perform it yet (`PERFORMED`).
  *
  * @module @skillsmith/core/services/skill-recovery.plan.actions
  */
@@ -65,6 +66,7 @@ export const PERFORMED: ReadonlySet<RecoveryAction> = new Set<RecoveryAction>([
   'apply',
   'undo',
   'park',
+  'clean-staging',
 ])
 
 type Unreadable = Extract<RecoveryClass, { kind: 'unreadable' }>
@@ -147,23 +149,8 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
         "it holds nothing; any doctor action holding this root's lock removes it with one rmdir"
       )
     case 'no-record':
-      return action === 'clean-staging'
-        ? offer(
-            action,
-            [
-              step('O', kept('unrecorded-new'), 'kept if present'),
-              step('N', kept('unrecorded-new'), 'kept if present'),
-            ],
-            'untouched',
-            [FINISH]
-          )
-        : refuse(
-            action,
-            'recovery-not-offered',
-            `offered here: --clean-staging${
-              cls.intent?.blocked == null ? '' : ` (${cls.intent.blocked})`
-            }`
-          )
+      // 6b-ii: `planAction` plans it in `skill-recovery.plan.clean.ts` (C2) and never gets here.
+      return null
     case 'unreadable':
       return action === 'park'
         ? parkPlan(cls)

@@ -145,7 +145,7 @@ export {
   plansFor,
   RECOVERY_ACTIONS,
 } from '../services/skill-recovery.plan.js'
-export { GUARD_WORD } from '../services/skill-recovery.plan.actions.js'
+export { GUARD_WORD, PERFORMED } from '../services/skill-recovery.plan.actions.js'
 export { rootLockEntries, type RootLockEntry } from '../services/skill-recovery.locks.js'
 // SMI-6531 A1 steps 6a-ii, 6b-i: targeting and the run under lock 1 for every action.
 export { planRecovery } from '../services/skill-recovery.target.js'
@@ -162,6 +162,13 @@ export type {
   RecoveryStopped,
 } from '../services/skill-recovery.run.types.js'
 export type { ProbeFact } from '../services/skill-recovery.opdir.js'
+// SMI-6531 A1 step 6b-ii: `--clean-staging`'s owner verdict and observation.
+export type {
+  NoRecordObservation,
+  OwnerProbe,
+  OwnerVerdict,
+} from '../services/skill-recovery.clean.types.js'
+export { defaultOwnerProbe } from '../services/skill-recovery.owner.js'
 export type {
   ActionPlan,
   Disposition,

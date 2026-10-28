@@ -25,9 +25,11 @@
  */
 import path from 'node:path'
 import { canonicalJson } from './skill-recovery.digest.js'
+import { noRecord } from './skill-recovery.norecord.js'
 import { observeUnreadable, OWNER_CAP } from './skill-recovery.observe.js'
-import { analyzeParkIntent, noRecordIntent } from './skill-recovery.opdir.js'
-import { observeGroups, ROLE_DIR } from './skill-recovery.pstate.js'
+import { analyzeParkIntent } from './skill-recovery.opdir.js'
+import { expectOfRecord, observeGroups, ROLE_DIR, STARTED_STATES } from './skill-recovery.pstate.js'
+import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId, sourceCheck, tStateOf } from './skill-recovery.trees.js'
 import type {
@@ -45,8 +47,8 @@ import type {
 } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
-import { OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
-import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
+import { OWNER_FILE, RECORD_FILE } from './skill-swap.types.js'
+import type { SwapRecord } from './skill-swap.types.js'
 import type { EntryState } from './skill-manifest.entry.js'
 
 export interface ClassifyContext {
@@ -62,6 +64,14 @@ export interface ClassifyContext {
   acceptIdentity?: boolean
   /** The state roots discovered or given (6a-iii, governance S4); a park intent's must be one. */
   stateRoots?: readonly string[]
+  /**
+   * 6b-ii: how `owner.json`'s owner is judged (this host's name and the pid
+   * liveness probe), injected so the classifier imports no process or
+   * filesystem module. Absent, no owner is shown gone: an owner that names a
+   * pid and host is `other-host` (this host's name is unknown), as
+   * `ownerVerdict` decides.
+   */
+  ownerProbe?: OwnerProbe
 }
 
 const DENIED = new Set(['EACCES', 'EPERM'])
@@ -147,8 +157,6 @@ interface RoleResolution {
   changed: TreePosition[]
 }
 
-const STARTED = new Set(['P1', 'P2', 'P3', 'P4', 'R1', 'R2', 'R3'])
-
 /** Resolves O, N and U to a source, one verified keep, or nothing (plan §3.3 "Role resolution"). */
 function resolveRoles(
   r: ClassifierReader,
@@ -169,7 +177,8 @@ function resolveRoles(
       else if (chk === 'identity-changed') changed.push(role)
       if (keeps.length > 0) conflicts.push(`${role} is both a source and a kept copy`)
       const started =
-        groups.find((g) => g.role === role && g.state !== null && STARTED.has(g.state)) ?? null
+        groups.find((g) => g.role === role && g.state !== null && STARTED_STATES.has(g.state)) ??
+        null
       return { kind: 'source', obs, started }
     }
     if (obs.errno !== null) conflicts.push(`${role} could not be inspected (${obs.errno})`)
@@ -239,7 +248,7 @@ async function classifyRecorded(
     rec.postEntry
   )
   const t: TreeObs = observeTree(r, tPath)
-  const view = observeGroups(r, { opDir, opId, area, rec })
+  const view = observeGroups(r, { opDir, opId, area, expect: expectOfRecord(rec) })
   const resolved = resolveRoles(r, opDir, rec, view.groups, accept)
   const tmpRead = analyzeRecordTmp(r, opDir, names, rec)
   // `owner.json` is a metadata file doctor unlinks: read through the reader so
@@ -428,51 +437,4 @@ async function classifyListed(
   const why = inconsistency(r, ctx.root, rec)
   if (why !== null) return unreadable('inconsistent-record', { detail: why })
   return classifyRecorded(r, ctx, opId, opDir, rec, names)
-}
-
-/** An op dir with no `record.json`: its owner (if any), its entries, whether a park intent is there. */
-function noRecord(
-  r: ClassifierReader,
-  ctx: ClassifyContext,
-  base: { opId: string; opDir: string },
-  names: readonly string[],
-  opIdentity: RecordIdentity
-): RecoveryClass {
-  let owner: { pid: number | null; host: string | null; uid: number | null } | null = null
-  if (names.includes(OWNER_FILE)) {
-    const read = r.readFile(path.join(base.opDir, OWNER_FILE), OWNER_CAP)
-    if (read.bytes !== null) {
-      try {
-        const v = JSON.parse(read.bytes.toString('utf8')) as Record<string, unknown>
-        owner = {
-          pid: typeof v.pid === 'number' ? v.pid : null,
-          host: typeof v.host === 'string' ? v.host : null,
-          uid: typeof v.uid === 'number' ? v.uid : null,
-        }
-      } catch {
-        owner = { pid: null, host: null, uid: null }
-      }
-    }
-  }
-  const intent = noRecordIntent(r, {
-    ...base,
-    root: ctx.root,
-    names,
-    opIdentity,
-    stateRoots: ctx.stateRoots ?? [],
-  })
-  // Whose op dir this is: owner.json's uid, else the verifying intent's (6a-iii).
-  const uid = owner?.uid ?? (intent?.valid === true ? intent.ownerUid : null)
-  return {
-    kind: 'no-record',
-    ...base,
-    owner,
-    entries: [...names],
-    hasParkIntent: names.includes(PARK_INTENT_FILE),
-    otherUid: uid !== null && uid !== ctx.euid ? uid : null,
-    intent,
-    recordTmp: names.includes(`${RECORD_FILE}.tmp`)
-      ? path.join(base.opDir, `${RECORD_FILE}.tmp`)
-      : null,
-  }
 }

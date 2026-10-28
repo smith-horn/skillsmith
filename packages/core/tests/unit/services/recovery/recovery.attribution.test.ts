@@ -48,7 +48,8 @@ describe('resolveAttribution: all or nothing', () => {
     ['a client not in CLIENT_IDS', { client: 'emacs' }],
     ['a dirName that is not one component', { dirName: '../x' }],
     ['a manifestKey that is not one component', { manifestKey: 'a/b' }],
-    ['a scope that is neither user nor workspace', { scope: 'admin' }],
+    ['a scope that is not an install scope (admin)', { scope: 'admin' }],
+    ['the scope user (6b-i design premise; no writer produces it)', { scope: 'user' }],
     ['a stateRoot doctor did not discover', { stateRoot: '/elsewhere' }],
   ]
   for (const [name, over] of BAD) {
@@ -103,7 +104,7 @@ describe('--park uses the attribution for its client and index', () => {
       JSON.stringify({
         ...was,
         client: 'cursor',
-        scope: 'user',
+        scope: 'global',
         dirName: st.fx.dirName,
         manifestKey: st.fx.dirName,
         stateRoot,

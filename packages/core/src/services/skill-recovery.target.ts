@@ -1,13 +1,14 @@
 /**
- * SMI-6531 (A1 steps 6a-ii, 6b-i): the lock-free half of every `doctor
- * recovery` action (`--apply`, `--undo`, `--park`, and the targeting of
- * `--abandon` and `--clean-staging`): targeting and the plan shown before the
+ * SMI-6531 (A1 steps 6a-ii, 6b-i, 6b-ii): the lock-free half of every
+ * `doctor recovery` action (`--apply`, `--undo`, `--park`, `--clean-staging`,
+ * and the targeting of `--abandon`): targeting and the plan shown before the
  * prompt (A1 plan §3.9 "Targeting", confirmation contract item 1). Targeting
  * is shared by all five actions (design Q1): `already-parked` (O3a), the
  * ambiguity rules and `--root`, and the empty-target plan (one `rmdir`).
  * `--park`'s uid refusal (O3b) is the plan table's, so it is here too, before
- * any lock. `--abandon` and `--clean-staging` on a non-empty op dir are
- * refused here ("not performed by this version yet") until 6b-ii and 6b-iii.
+ * any lock, and so is `--clean-staging`'s owner verdict, planned with the
+ * request's `--unsafe-unverified-owner`. `--abandon` on a non-empty op dir is
+ * refused here ("not performed by this version yet") until 6b-iii.
  *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
  * write: `listRoot`), finds every op dir named `opId`, and:
@@ -127,6 +128,7 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       ...(request.journalFile === undefined ? {} : { journalFile: request.journalFile }),
       ...(request.acceptIdentity === undefined ? {} : { acceptIdentity: request.acceptIdentity }),
       ...(request.reader === undefined ? {} : { reader: request.reader }),
+      ...(request.ownerProbe === undefined ? {} : { ownerProbe: request.ownerProbe }),
       stateRoots: request.stateRoots ?? [],
     })
     reports.push(r)
@@ -201,10 +203,12 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     }
     return planned
   }
-  const plan = planAction(op.cls, request.action)
+  const plan = planAction(op.cls, request.action, {
+    ...(request.unsafeUnverifiedOwner === true ? { unsafeUnverifiedOwner: true } : {}),
+  })
   if (!plan.offered) return refusal(plan.reason, plan.detail, [op.opDir])
   if (!PERFORMED.has(request.action)) {
-    // 6b-i: `--abandon` and `--clean-staging` are planned (the listing shows them) but not yet run.
+    // `--abandon` is planned (the listing shows it) but not yet run (6b-iii).
     return refusal(
       'recovery-not-offered',
       `--${request.action} is not performed by this version yet; nothing was changed`,

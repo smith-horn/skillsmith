@@ -4,6 +4,41 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6b-ii: `--clean-staging` is performed for an operation
+  folder with no `record.json`. With a verifying `park-intent.json` it finishes that park
+  (`abort-new` with caller `abort-cleanup`, or `move-source` as `--apply` does). Without one it
+  keeps `new/` through `publishTree` as `unrecorded-new` (a keep abort cleanup started resumes
+  with its own kind), unlinks the provable temps and then `owner.json` last, and `rmdir`s the
+  folder; across devices the verified `new/` stays and the folder is parked whole behind a
+  `move-source` intent. It is offered only when `owner.json` names a process on this host that
+  is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`, except
+  that a verifying intent with no `owner.json` left needs neither; the owner verdict is in the
+  serialized plan, so a change before the lock is `plan-changed`. The provable temps finished
+  with an intent (by `--clean-staging`, `--apply` or `--undo`) are named in the plan. An
+  entry doctor cannot prove it wrote (a partial temp, an intent that does not verify, `old/`
+  without a record, a stray file) refuses with zero mutation, naming it. Nothing is deleted:
+  only metadata and the emptied folder go.
+- **Changed**: SMI-6531 -- A1 step 6b-ii (O1): the swap writes `client`, `scope`, `dirName`,
+  `manifestKey` and `stateRoot` into `owner.json`, and an `abort-new` park intent carries them
+  as schema 2 (schema 1 is still accepted; `move-source` intents stay schema 1). Doctor uses
+  them as routing hints only, validated all or nothing (`scope` against `InstallScope`,
+  `global` or `workspace`), else the client-`none` layout. A
+  `--park` of an unreadable record now names the attributed client. `CLIENT_IDS` and
+  `PARKED_INDEX_FILE` are defined in modules with no filesystem import (still re-exported from
+  their old homes), so the classifier can resolve the attribution.
+- **Changed**: SMI-6531 -- A1 step 6b-ii: the `--clean-staging` keep plan's last `remaining` line
+  now states both finishes, because whether `new/` crosses devices is decided when the copy
+  runs: on one device `owner.json` is unlinked last and the folder is `rmdir`ed; across devices
+  the move-source intent is written, `owner.json` goes last, and the folder is parked whole,
+  with no `rmdir`. A move-source intent's park takes its scope from `owner.json`'s attribution
+  only when that attribution names the same client, state root and folder as the intent's own
+  target, else `none`. `UpdateTarget.scope` and `BuildUpdateTargetInput.scope` are typed
+  `InstallScope`.
+
+- **Internal**: SMI-6531 -- #3201 retro: `PERFORMED` (the recovery actions this version performs)
+  is exported, so the CLI listing reads core's set instead of a hand copy; two comments and a
+  CHANGELOG line are corrected. No behaviour change.
+
 - **Added**: SMI-6531 -- A1 step 6b-i: `planRecovery` and `executeRecovery` (now in
   `skill-recovery.exec.ts`) take any of the five recovery actions. Targeting is shared: an
   empty target operation folder is removed with one `rmdir` by any action, and
@@ -30,8 +65,8 @@ All notable changes to `@skillsmith/core` are documented here.
   `skillsmith doctor recovery` as that user, instead of naming `--park`, which doctor refuses
   there; when several kinds of record block the root, each is named. `remediationFor` maps
   `recovery-record-unreadable` to `doctor recovery` with action `park` (was `fix-permissions`),
-  or with no action for an `EACCES`/`EPERM` errno (another user's update), `recovery-conflict` to action `undo`, and
-  `recovery-ambiguous` to `doctor recovery` with `pickRoot` (`--root`); the `'quarantine'`
+  or with no action for an `EACCES`/`EPERM` errno (another user's update), `recovery-conflict`
+  to action `undo`, and `recovery-ambiguous` to `doctor recovery` with `pickRoot` (`--root`); the `'quarantine'`
   action literal is renamed `'park'`.
 
 - **Internal**: SMI-6531 -- #3198 retro: `skill-update.owner.ts`'s header no longer claims A2

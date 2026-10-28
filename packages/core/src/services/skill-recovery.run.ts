@@ -124,6 +124,18 @@ function adoptAll(
  * @internal
  */
 export function adoptInto(st: SwapState, t: ReadTranscript, a: ReturnType<typeof adoptAll>): void {
+  adoptSidecarsInto(st, t)
+  const record = a.files[a.files.length - 1]!
+  st.rewriteMarker = (marker) => rewriteMarkerAdopted(st, record, a.tmp, marker)
+}
+
+/**
+ * The adopted sidecar unlink alone (6b-ii `--clean-staging` too, which has no
+ * record to mark): a sidecar or its temp in this op's area, read whole by the
+ * re-plan, may be replaced by a resumed rewrite.
+ * @internal
+ */
+export function adoptSidecarsInto(st: SwapState, t: ReadTranscript): void {
   st.unlinkAdopted = async (p, reason) => {
     // Only a sidecar or its temp in this op's area, read whole by the re-plan.
     if (path.dirname(p) !== st.areaPath) return false
@@ -136,8 +148,6 @@ export function adoptInto(st: SwapState, t: ReadTranscript, a: ReturnType<typeof
     await unlinkAdopted(st, adopted, reason)
     return true
   }
-  const record = a.files[a.files.length - 1]!
-  st.rewriteMarker = (marker) => rewriteMarkerAdopted(st, record, a.tmp, marker)
 }
 
 /** The names the re-plan listed in OP. */

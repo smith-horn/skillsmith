@@ -205,7 +205,7 @@ export function validRecord(
       manifestPath: path.join(fx.stateRoot, 'manifest.json'),
       manifestKey: fx.dirName,
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName: fx.dirName,
     },
     rootIdentity: ID,

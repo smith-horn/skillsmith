@@ -21,6 +21,7 @@
  * @module @skillsmith/core/services/skill-swap.intent
  */
 import os from 'node:os'
+import { attributionOf } from './skill-swap.attribution.js'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { publishJson, recordIdentity } from './skill-swap.staging.js'
@@ -30,7 +31,11 @@ import type { ParkIntent, ParkIntentKind } from './skill-swap.types.js'
  * The intent this run writes: OP's identity as `createOp` bound it, and the
  * owner it recorded. A `move-source` intent also names `backupPath`, the
  * verified copy the park's held message names (6a-iii: doctor finishes the
- * park from the intent alone once the record is gone).
+ * park from the intent alone once the record is gone). An `abort-new` intent
+ * is schema 2 (6b-ii, O1): it copies `owner.json`'s attribution, so doctor's
+ * `--clean-staging` can name the park's client and parked index once
+ * `owner.json` is gone. A `move-source` intent stays schema 1: its
+ * `backupPath` already names the state root, client and folder.
  */
 export function parkIntentOf(
   st: SwapState,
@@ -38,9 +43,6 @@ export function parkIntentOf(
   backupPath?: string
 ): ParkIntent {
   if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
-  if (kind === 'move-source' && backupPath === undefined) {
-    throw new SwapFault('staging-unsafe', 'a move-source park intent needs the backup path')
-  }
   // `owner.json` is written before anything else in OP; if this run never
   // published it, the owner is still this process.
   const owner = st.owner ?? {
@@ -48,14 +50,16 @@ export function parkIntentOf(
     host: os.hostname(),
     uid: process.geteuid?.() ?? -1,
   }
-  return {
-    schema: 1,
+  const base = {
     opId: st.opId,
     owner: { pid: owner.pid, host: owner.host, uid: owner.uid },
     opIdentity: recordIdentity(st.op.identity),
-    kind,
-    ...(kind === 'move-source' ? { backupPath } : {}),
   }
+  if (kind === 'abort-new') return { schema: 2, ...base, kind, ...attributionOf(st) }
+  if (backupPath === undefined) {
+    throw new SwapFault('staging-unsafe', 'a move-source park intent needs the backup path')
+  }
+  return { schema: 1, ...base, kind, backupPath }
 }
 
 /** Publishes `park-intent.json` durably. Kill points: `afterIntentTemp`, `afterIntent`. */

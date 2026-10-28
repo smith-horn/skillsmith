@@ -12,10 +12,12 @@
  *     - an empty target op dir, for any action: one `rmdir` (PLAN:1279);
  *     - `--park`: `parkUnreadable` (`skill-recovery.park-unreadable.ts`); a
  *       stop reports whether OP is still at its origin (`parkStopped`);
- *     - `--abandon` and `--clean-staging` on a non-empty op dir: refused
- *       "not performed by this version yet" with zero mutation (a backstop:
- *       `planRecovery` already refuses them before the prompt, until 6b-ii
- *       and 6b-iii);
+ *     - `--clean-staging` (6b-ii): `cleanStaging`
+ *       (`skill-recovery.clean.ts`): a verifying intent's park, or `new/`
+ *       kept and the metadata unlinked, `owner.json` last;
+ *     - `--abandon` on a non-empty op dir: refused "not performed by this
+ *       version yet" with zero mutation (a backstop: `planRecovery` already
+ *       refuses it before the prompt, until 6b-iii);
  *     - `--apply` / `--undo` of a no-record op dir whose intent verifies:
  *       `finishFromIntent` (6a-iii);
  *     - `--apply` / `--undo` of a §3.3 row: `runRecorded`
@@ -32,6 +34,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getJournalFilePath } from '../journal/path.js'
 import { classifyOp } from './skill-recovery.classify.js'
+import { cleanStaging } from './skill-recovery.clean.js'
+import { defaultOwnerProbe } from './skill-recovery.owner.js'
 import type { ClassifyContext } from './skill-recovery.classify.js'
 import { digestOf } from './skill-recovery.digest.js'
 import { removeEmptyOp, sweepRoot } from './skill-recovery.finish.js'
@@ -70,6 +74,7 @@ export async function executeRecovery(
     journalFile,
     ...(req.acceptIdentity === undefined ? {} : { acceptIdentity: req.acceptIdentity }),
     stateRoots: req.stateRoots ?? [],
+    ownerProbe: req.ownerProbe ?? defaultOwnerProbe(),
   }
   const locked = await withSkillWriteLock(
     binding,
@@ -182,6 +187,28 @@ async function underLock(
       }
     } catch (err) {
       return parkStopped(req.opId, err, cls)
+    }
+    out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
+    return out
+  }
+  if (req.action === 'clean-staging') {
+    if (cls.kind !== 'no-record') {
+      return refused('plan-changed', `the op is now ${cls.kind}`, planned.opDir)
+    }
+    try {
+      const r = await cleanStaging({
+        ctx,
+        cls,
+        transcript,
+        steps: planned.plan.steps,
+        options: opts.swap ?? {},
+      })
+      if (r.full !== null) return refused('state-root-full', r.full, planned.opDir)
+      out.warnings = r.st.warnings
+      out.kept = r.kept
+      out.extraCopy = r.extraCopy
+    } catch (err) {
+      return stoppedOf(req.opId, err)
     }
     out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
     return out

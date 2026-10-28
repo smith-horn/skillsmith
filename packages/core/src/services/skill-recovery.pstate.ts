@@ -151,15 +151,49 @@ function parseSidecar(bytes: Buffer): ParsedSidecar | { ok: false; why: string }
   }
 }
 
-/** Whether a parsed sidecar names this op, this kind, and this record's skill and root. */
-function mismatch(s: ParsedSidecar, opId: string, kind: string, rec: SwapRecord): string | null {
+/**
+ * What a sidecar of this op must name besides its opId and kind: the
+ * record's skill and root, or (6b-ii) a no-record op dir's attribution, its
+ * client-`none` layout when it has none (`keepExpectOf`). `from` words the
+ * mismatch ("the record", "the op dir's attribution").
+ */
+interface SidecarExpect {
+  dirName: string
+  client: string
+  skillsDir: string
+  scope: string
+  manifestKey: string
+  from: string
+}
+
+/** A recorded op's sidecar expectations: its record's target. */
+export const expectOfRecord = (rec: SwapRecord): SidecarExpect => ({
+  dirName: rec.target.dirName,
+  client: rec.target.client,
+  skillsDir: rec.target.skillsDir,
+  scope: rec.target.scope,
+  manifestKey: rec.target.manifestKey,
+  from: 'the record',
+})
+
+/** The sub-states of a keep that began and did not finish: a resume continues it with its kind. */
+export const STARTED_STATES: ReadonlySet<string> = new Set([
+  'P1',
+  'P2',
+  'P3',
+  'P4',
+  'R1',
+  'R2',
+  'R3',
+])
+
+/** Whether a parsed sidecar names this op, this kind, and the expected skill and root. */
+function mismatch(s: ParsedSidecar, opId: string, kind: string, e: SidecarExpect): string | null {
   if (s.opId !== opId) return "opId is another operation's"
   if (s.kind !== kind) return `kind ${s.kind} is not the ${kind} its name says`
-  if (s.dirName !== rec.target.dirName) return 'dirName differs from the record'
-  if (s.client !== rec.target.client) return 'client differs from the record'
-  if (s.skillsDir !== rec.target.skillsDir) return 'skillsDir differs from the record'
-  if (s.scope !== rec.target.scope) return 'scope differs from the record'
-  if (s.manifestKey !== rec.target.manifestKey) return 'manifestKey differs from the record'
+  for (const k of ['dirName', 'client', 'skillsDir', 'scope', 'manifestKey'] as const) {
+    if (s[k] !== e[k]) return `${k} differs from ${e.from}`
+  }
   return null
 }
 
@@ -168,7 +202,7 @@ function sidecarFacts(
   file: string,
   opId: string,
   kind: string,
-  rec: SwapRecord
+  rec: SidecarExpect
 ): SidecarFacts {
   const read = r.readFile(file, SIDECAR_CAP)
   const dead = (invalid: string): SidecarFacts => ({
@@ -264,7 +298,7 @@ export interface AreaView {
 /** This op's keep groups in `area`, each checked against its source in OP and classified. */
 export function observeGroups(
   r: ClassifierReader,
-  a: { opDir: string; opId: string; area: string; rec: SwapRecord }
+  a: { opDir: string; opId: string; area: string; expect: SidecarExpect }
 ): AreaView {
   const list = r.list(a.area, { name: 'areaForOp', opId: a.opId })
   if (!list.ok) {
@@ -281,10 +315,12 @@ export function observeGroups(
     const kind = kindOfBase(base, a.opId)
     const role = KIND_ROLE[kind] ?? null
     const dest = path.join(a.area, base)
-    const sidecar = has.has('sidecar') ? sidecarFacts(r, `${dest}.json`, a.opId, kind, a.rec) : null
+    const sidecar = has.has('sidecar')
+      ? sidecarFacts(r, `${dest}.json`, a.opId, kind, a.expect)
+      : null
     const tmpPath = `${dest}.json.tmp`
     const sidecarTmp = has.has('sidecar-tmp')
-      ? tmpFacts(r, tmpPath, `${dest}.json`, a.opId, kind, a.rec)
+      ? tmpFacts(r, tmpPath, `${dest}.json`, a.opId, kind, a.expect)
       : null
     const group: KeepGroup = {
       base,
@@ -330,7 +366,7 @@ function tmpFacts(
   sidecarPath: string,
   opId: string,
   kind: string,
-  rec: SwapRecord
+  rec: SidecarExpect
 ): NonNullable<KeepGroup['sidecarTmp']> {
   const facts = sidecarFacts(r, tmpPath, opId, kind, rec)
   const st = r.stat(tmpPath)

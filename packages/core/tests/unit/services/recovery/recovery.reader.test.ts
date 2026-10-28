@@ -107,6 +107,13 @@ describe('the classifier has no filesystem access except through the reader', ()
       'skill-swap.area.ts',
       'skill-recovery.digest.ts',
       'skill-swap.types.ts',
+      // 6b-ii: the no-record reading, O1's resolution and its fs-free constants, the clean plan.
+      'skill-recovery.norecord.ts',
+      'skill-recovery.attribution.ts',
+      '../install/client-ids.ts',
+      '../install/parked-index.name.ts',
+      '../install/scope-ids.ts',
+      'skill-recovery.plan.clean.ts',
     ]) {
       expect(walk.visited).toContain(expected)
     }

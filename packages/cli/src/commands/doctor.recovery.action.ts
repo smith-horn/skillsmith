@@ -1,10 +1,14 @@
 /**
  * @fileoverview `skillsmith doctor recovery --apply <opId>` / `--undo <opId>` /
- * `--park <opId>`, under the confirmation contract (A1 plan §3.9; SMI-6531
+ * `--park <opId>` / `--clean-staging <opId>`, under the confirmation contract (A1 plan §3.9; SMI-6531
  * steps 6a-ii and 6a-iii: one device and across devices, where the op dir
  * holding the verified sources is parked once its metadata is unlinked, UD28;
  * 6b-i: `--park`, which sets aside the whole op dir of a record that cannot be
- * read, the only remedy for `recovery-record-unreadable`). Every action runs
+ * read, the only remedy for `recovery-record-unreadable`; 6b-ii:
+ * `--clean-staging`, which keeps or parks what an op dir with no record holds,
+ * only when its `owner.json` owner is same-host and gone, or with
+ * `--unsafe-unverified-owner`, which the plan explains and `--yes` never
+ * stands in for). Every action runs
  * the same contract; the plan and result lines are
  * `doctor.recovery.action.render.ts`'s.
  *
@@ -32,7 +36,8 @@
  * takes no action), 1 refused or stopped, 3 not confirmed
  * (no terminal), 4 done but the op dir's park did not finish
  * (`removal-not-done`, UD32; 1 wins over 4: `--park` itself ending `kept`,
- * `stopped` or `held`, or the cross-device park of `--apply`/`--undo`),
+ * `stopped` or `held`, or the op dir's park of `--apply`, `--undo` or
+ * `--clean-staging`),
  * 130 interrupted.
  * @module @skillsmith/cli/commands/doctor.recovery.action
  */
@@ -46,6 +51,7 @@ import {
   planRecovery,
   type DiscoverOptions,
   type RecoveryAction,
+  type RecoveryRequest,
   type RecoveryRunOptions,
   type RecoveryRunResult,
 } from '@skillsmith/core'
@@ -58,6 +64,13 @@ export interface RecoveryActionOptions {
   undo?: string
   /** `--park <opId>` (6b-i): set aside an op dir whose record cannot be read. */
   park?: string
+  /** `--clean-staging <opId>` (6b-ii): keep or park what an op dir with no record holds. */
+  cleanStaging?: string
+  /**
+   * `--unsafe-unverified-owner` (6b-ii): with `--clean-staging` only, act past
+   * an `owner.json` whose owner is not shown gone. `--yes` never stands in for it.
+   */
+  unsafeUnverifiedOwner?: boolean
   root?: string[]
   stateRoot?: string
   acceptIdentity?: boolean
@@ -73,6 +86,8 @@ export interface RecoveryActionOptions {
   afterConfirm?: () => void | Promise<void>
   /** @internal Test seam: passed to `executeRecovery` (a park stub, hooks). */
   runOptions?: RecoveryRunOptions
+  /** @internal Test seam: merged into the request (the owner probe, the effective uid). */
+  request?: Partial<Pick<RecoveryRequest, 'ownerProbe' | 'euid'>>
 }
 
 /** The streams `askOnce` talks to (default: the process's terminal). */
@@ -129,30 +144,44 @@ const printJson = (plan: unknown, result: unknown): void => {
 }
 
 /**
- * The actions this command dispatches, in flag order. `--abandon` and
- * `--clean-staging` are core actions too, but not registered yet (6b-ii,
- * 6b-iii), so commander never passes them.
+ * The actions this command dispatches, in flag order, each with the option
+ * commander gives it. `--abandon` is a core action too, but not registered
+ * yet (6b-iii), so commander never passes it.
  */
-const DISPATCHED = ['apply', 'undo', 'park'] as const satisfies readonly RecoveryAction[]
+const DISPATCHED = [
+  ['apply', 'apply'],
+  ['undo', 'undo'],
+  ['park', 'park'],
+  ['clean-staging', 'cleanStaging'],
+] as const satisfies ReadonlyArray<readonly [RecoveryAction, keyof RecoveryActionOptions]>
 
 /** The one action given, or null when none or more than one is. */
 function actionOf(options: RecoveryActionOptions): { action: RecoveryAction; opId: string } | null {
-  const given = DISPATCHED.filter((a) => options[a] !== undefined)
+  const given = DISPATCHED.filter(([, key]) => options[key] !== undefined)
   if (given.length !== 1) return null
-  const action = given[0]!
-  return { action, opId: options[action]! }
+  const [action, key] = given[0]!
+  return { action, opId: options[key]! }
 }
 
-/** `--apply` / `--undo` / `--park`: plan, confirm, then act under lock 1. */
+/** `--apply` / `--undo` / `--park` / `--clean-staging`: plan, confirm, then act under lock 1. */
 export async function runRecoveryAction(options: RecoveryActionOptions): Promise<void> {
   const json = options.json === true
   const chosen = actionOf(options)
   if (chosen === null) {
-    console.error(chalk.red('Give exactly one of --apply <opId>, --undo <opId> and --park <opId>.'))
+    console.error(
+      chalk.red(
+        'Give exactly one of --apply <opId>, --undo <opId>, --park <opId> and --clean-staging <opId>.'
+      )
+    )
     process.exitCode = 1
     return
   }
   const { action, opId } = chosen
+  if (options.unsafeUnverifiedOwner === true && action !== 'clean-staging') {
+    console.error(chalk.red('--unsafe-unverified-owner applies only with --clean-staging <opId>.'))
+    process.exitCode = 1
+    return
+  }
   const found = await discoverRoots({
     ...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
     ...(options.root === undefined || options.root.length === 0 ? {} : { roots: options.root }),
@@ -167,6 +196,8 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     stateRoots: found.stateRoots,
     ...(narrowed === undefined ? {} : { root: narrowed }),
     ...(options.acceptIdentity === true ? { acceptIdentity: true } : {}),
+    ...(options.unsafeUnverifiedOwner === true ? { unsafeUnverifiedOwner: true } : {}),
+    ...options.request,
   })
   if (planned.status !== 'planned') {
     if (json) printJson(null, planned)

@@ -400,7 +400,7 @@ describe('what every other class says', () => {
     expect(planAction(cls, 'abandon').offered).toBe(true)
   })
 
-  it('unreadable: --park only when guardable (6b-i); no record: --clean-staging only; empty: nothing; AB: --abandon finishes it', async () => {
+  it('unreadable: --park only when guardable (6b-i); no record: --clean-staging only, with its owner gone (6b-ii); empty: nothing; AB: --abandon finishes it', async () => {
     const id = { dev: '1', ino: '2', birthtimeNs: '3', fmt: '16384' }
     const guardable: RecoveryClass = {
       kind: 'unreadable',
@@ -467,19 +467,52 @@ describe('what every other class says', () => {
       offered: false,
       reason: 'recovery-other-user',
     })
-    const noRecord: RecoveryClass = {
+    // 6b-ii (C2, § 1.2 case (b)): offered only for a same-host owner that is gone, or with
+    // --unsafe-unverified-owner; it keeps new/ as unrecorded-new, nothing else.
+    const nObs = {
+      present: true,
+      type: 'dir',
+      identity: id,
+      empty: false,
+      hash: null,
+      hashError: null,
+    }
+    const noRecordOf = (verdict: 'same-host-dead' | 'absent'): RecoveryClass => ({
       kind: 'no-record',
       opId: 'x',
-      opDir: '/x',
-      owner: null,
-      entries: ['new'],
+      opDir: '/st/x',
+      owner: verdict === 'absent' ? null : { pid: 4242, host: 'h', uid: 0 },
+      entries: verdict === 'absent' ? ['new'] : ['new', 'owner.json'],
       hasParkIntent: false,
       recordTmp: null,
       otherUid: null,
       intent: null,
-    }
-    expect(planAction(noRecord, 'clean-staging').offered).toBe(true)
-    expect(planAction(noRecord, 'apply').offered).toBe(false)
+      clean: {
+        opIdentity: id,
+        verdict,
+        verdictWhy: `the verdict is ${verdict}`,
+        attribution: { kind: 'fallback', why: 'none', primary: '/state' },
+        area: '/state/backups/update/none/k/x',
+        entries: [],
+        temps: [],
+        unprovable: null,
+        n: { kind: 'source', obs: nObs as never, started: null },
+        groups: [],
+        groupsBlocked: null,
+        intentBlocked: null,
+      },
+    })
+    const clean = offered(planAction(noRecordOf('same-host-dead'), 'clean-staging'))
+    expect(clean.steps).toEqual([
+      expect.objectContaining({ tree: 'N', disposition: { kind: 'kept', as: 'unrecorded-new' } }),
+    ])
+    expect(planAction(noRecordOf('same-host-dead'), 'apply').offered).toBe(false)
+    const ownerless = planAction(noRecordOf('absent'), 'clean-staging')
+    expect(ownerless).toMatchObject({ offered: false, reason: 'recovery-not-offered' })
+    expect(ownerless.offered ? '' : ownerless.detail).toContain('--unsafe-unverified-owner')
+    expect(
+      planAction(noRecordOf('absent'), 'clean-staging', { unsafeUnverifiedOwner: true }).offered
+    ).toBe(true)
     const empty: RecoveryClass = { kind: 'empty-op-dir', opId: 'x', opDir: '/x' }
     expect(RECOVERY_ACTIONS.every((a) => !planAction(empty, a).offered)).toBe(true)
     const st = await s2(file())

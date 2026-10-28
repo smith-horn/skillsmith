@@ -8,6 +8,7 @@ import type { JournalRecordInput } from '../journal/types.js'
 import type { ParkOptions, ParkResult } from '../install/park-result.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { EntryState } from './skill-manifest.entry.js'
+import type { AttributionHint } from './skill-swap.attribution.js'
 
 /** One file of the approved write set (plan §3.7). `rel` is relative to the skill folder. */
 export interface SwapWriteEntry {
@@ -258,22 +259,23 @@ export type AbortKeptKind = 'failed-build' | 'edited-new' | 'unrecorded-new'
  */
 export type AbortStaged = 'parked' | 'kept' | 'held' | 'left' | 'none'
 
-/** `park-intent.json` (plan §3.3 "Park intent"; review round 1 F3). */
-export interface ParkIntent {
-  schema: 1
+/** What every `park-intent.json` holds; OP's identity as `createOp` bound it, decimal strings. */
+interface ParkIntentBase {
   opId: string
   owner: { pid: number; host: string; uid: number }
-  /** OP's identity as `createOp` bound it; decimal strings. */
   opIdentity: RecordIdentity
-  /** `abort-new` (abort cleanup) or `move-source` (step 13 after a cross-device move). */
-  kind: ParkIntentKind
-  /**
-   * `move-source` only, and required there (6a-iii): the verified copy's path
-   * (the backup, for an update), which the park of OP names and doctor reads
-   * to finish that park once the record is gone.
-   */
-  backupPath?: string
 }
+
+/**
+ * `park-intent.json` (plan §3.3 "Park intent"; review round 1 F3): schema 1
+ * `abort-new` (abort cleanup) or `move-source` (step 13 after a cross-device
+ * move, with `backupPath`, the verified copy's path doctor finishes the park
+ * from, 6a-iii); schema 2 (6b-ii) is `abort-new` with O1's attribution.
+ */
+export type ParkIntent =
+  | (ParkIntentBase & { schema: 1; kind: 'abort-new' })
+  | (ParkIntentBase & { schema: 1; kind: 'move-source'; backupPath: string })
+  | (ParkIntentBase & AttributionHint & { schema: 2; kind: 'abort-new' })
 
 export type ParkIntentKind = 'abort-new' | 'move-source'
 

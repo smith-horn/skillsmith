@@ -18,9 +18,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { errCodeOrMessage } from './park-result.js'
+import { PARKED_INDEX_FILE } from './parked-index.name.js'
 
-/** The index file's name under the state root (UD26). */
-export const PARKED_INDEX_FILE = 'parked-index.jsonl'
+// The index file's name under the state root (UD26), defined with no filesystem import (6b-ii).
+export { PARKED_INDEX_FILE }
 
 const FIELDS = ['opId', 'path', 'client', 'rootKey', 'kind', 'bytes', 'createdAt'] as const
 

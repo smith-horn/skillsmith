@@ -40,8 +40,8 @@ const PARK_TREE_GRAPH = [
   'park-tree.verify.ts',
   'tree-hash.ts',
 ]
-/** Every module under the boundary: the walk above plus the parked-index entry. */
-const PARK_MODULES = [...PARK_TREE_GRAPH, 'parked-index.ts']
+/** Every module under the boundary: the walk above plus the parked-index entry and its fs-free name module. */
+const PARK_MODULES = [...PARK_TREE_GRAPH, 'parked-index.ts', 'parked-index.name.ts']
 const FS_USERS = [
   'mkdir-parent-bits.ts',
   'park-tree.destination.ts',
@@ -100,9 +100,12 @@ describe('the real park graph', () => {
     expect(r.files.map((f) => path.basename(f)).sort()).toEqual([
       'park-callers.ts',
       'park-result.ts',
+      'parked-index.name.ts',
       'parked-index.ts',
     ])
     expect(r.fsLocalsByFile[path.join(INSTALL, 'parked-index.ts')]).toEqual(['fs'])
+    // The name module stays fs-free: the classifier imports it, so it holds no fs local.
+    expect(r.fsLocalsByFile[path.join(INSTALL, 'parked-index.name.ts')]).toEqual([])
     expect(r.violations).toEqual([])
   })
 

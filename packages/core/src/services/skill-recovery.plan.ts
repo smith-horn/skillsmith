@@ -11,9 +11,10 @@
  * `--apply` and `--undo` are offered for the §3.3 rows and their post-keep
  * forms; every other class gets its own words (`recovery-moved`,
  * `recovery-identity-changed`, `recovery-conflict`, `recovery-other-user`,
- * `recovery-not-offered`). The words for `--abandon`, `--clean-staging` and
- * `--park` (6b), and the table's building blocks, are in
- * `skill-recovery.plan.actions.ts`.
+ * `recovery-not-offered`). The words for `--abandon` and `--park` (6b), and
+ * the table's building blocks, are in `skill-recovery.plan.actions.ts`; an op
+ * dir with no record (`--clean-staging`, 6b-ii) is
+ * `skill-recovery.plan.clean.ts`'s.
  *
  * @module @skillsmith/core/services/skill-recovery.plan
  */
@@ -29,6 +30,7 @@ import {
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
+import { noRecordPlan } from './skill-recovery.plan.clean.js'
 import { FREE_SPACE_REMEDY } from './skill-swap.types.js'
 import type {
   ActionPlan,
@@ -315,8 +317,14 @@ function swappedPlan(
  * 6a-iii: an op dir whose record is gone but whose park intent verifies (a
  * cross-device finish killed after the record went). `--apply` and `--undo`
  * finish that park as the uninterrupted run would: each source goes with OP.
+ * 6b-ii: the metadata temps the classifier proved this op's (`temps`) are
+ * unlinked first, so the plan names each one (and the digest covers them).
  */
-function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan {
+function intentParkPlan(
+  i: NoRecordIntent,
+  temps: readonly string[],
+  action: 'apply' | 'undo'
+): ActionPlan {
   return offer(
     action,
     i.sources.map((s) =>
@@ -328,6 +336,7 @@ function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan
     ),
     'untouched',
     [
+      ...temps.map((t) => `unlink the metadata temp ${t}`),
       'unlink owner.json if it is there',
       `park the op dir (kind ${i.kind}), checked against a fresh hash of its contents`,
     ],
@@ -338,8 +347,23 @@ function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan
   )
 }
 
-/** What `action` would do to `cls`: the steps and where each tree ends, or why it is not offered. */
-export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPlan {
+/** What a plan may take from the request besides the class (6b-ii). */
+export interface PlanOptions {
+  /** `--unsafe-unverified-owner`: `--clean-staging` acts past an owner it cannot show gone. */
+  unsafeUnverifiedOwner?: boolean
+}
+
+/**
+ * What `action` would do to `cls`: the steps and where each tree ends, or why
+ * it is not offered. The listing and the digest plan without `opts` (the
+ * owner verdict is in those words, so the digest covers it); the targeted
+ * action plans with the request's flags.
+ */
+export function planAction(
+  cls: RecoveryClass,
+  action: RecoveryAction,
+  opts: PlanOptions = {}
+): ActionPlan {
   const uid = foreignUid(cls)
   if (uid !== null) {
     return refuse(
@@ -351,7 +375,7 @@ export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPl
   if (action === 'apply' || action === 'undo') {
     if (cls.kind === 'state') return rowPlan(cls, action)
     if (cls.kind === 'no-record' && cls.intent !== null && cls.intent.blocked === null) {
-      return intentParkPlan(cls.intent, action)
+      return intentParkPlan(cls.intent, cls.clean.temps, action)
     }
     if (cls.kind === 'moved') {
       return refuse(
@@ -375,6 +399,9 @@ export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPl
       )
     }
   }
+  // 6b-ii: `--clean-staging` and the other actions' words for an op dir with no record.
+  if (cls.kind === 'no-record')
+    return noRecordPlan(cls, action, opts.unsafeUnverifiedOwner === true)
   const other = sixBActions(cls, action)
   if (other !== null) return other
   if (cls.kind === 'other-user') {

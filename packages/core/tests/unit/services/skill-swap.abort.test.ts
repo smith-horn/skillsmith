@@ -277,12 +277,18 @@ describe('T-PI2 (swap half): the park intent', () => {
       const intent = JSON.parse(fs.readFileSync(path.join(copy, 'park-intent.json'), 'utf8'))
       const opId = recordIdentity(run.built.op!)
       expect(isParkIntentFor(intent, OP_ID, opId)).toBe(true)
+      // 6b-ii (O1): schema 2, carrying owner.json's attribution so doctor can route the park.
       expect(intent).toEqual({
-        schema: 1,
+        schema: 2,
         opId: OP_ID,
         owner: { pid: process.pid, host: expect.any(String), uid: expect.any(Number) },
         opIdentity: opId,
         kind: 'abort-new',
+        client: 'claude-code',
+        scope: 'global',
+        dirName: run.fx.dirName,
+        manifestKey: run.fx.dirName,
+        stateRoot: fs.realpathSync.native(run.fx.stateRoot),
       })
       // The schema check refuses another opId, another identity, an extra key.
       expect(isParkIntentFor(intent, 'b'.repeat(32), opId)).toBe(false)

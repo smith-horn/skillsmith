@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveCompanionAgentDir } from '../../../src/install/paths.js'
 import { canonicalize, canonicalJson } from '../../../src/services/skill-manifest.canonical.js'
 import { buildUpdateTarget } from '../../../src/services/skill-update.target.js'
+import type { BuildUpdateTargetInput } from '../../../src/services/skill-update.target.js'
 import { manifestKeyOwner } from '../../../src/services/skill-update.owner.js'
 import { planSkillUpdate } from '../../../src/services/skill-update.plan.js'
 import { updateInPlace } from '../../../src/services/skill-update.js'
@@ -49,7 +50,7 @@ useOtherDeviceCleanup()
 
 const LOCK_PREFIX = '.skillsmith-writes.lock'
 
-function targetInput(fx: UpdateFixture, comparedPath = fx.comparedPath) {
+function targetInput(fx: UpdateFixture, comparedPath = fx.comparedPath): BuildUpdateTargetInput {
   return {
     skillsDir: fx.skillsDir,
     client: fx.client,

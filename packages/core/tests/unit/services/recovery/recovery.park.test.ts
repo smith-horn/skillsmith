@@ -120,8 +120,9 @@ describe('T-R2 (--park half) and bf-1k0 Major 1 case b: --park unblocks the root
       kind: string
       client: string
     }
-    expect(sidecar).toMatchObject({ kind: 'unreadable-record', client: 'none' })
-    // O1 fallback: no attribution, so client none and the primary state root's index.
+    // 6b-ii: the swap's owner.json carries O1's attribution, which validates: the park names its client.
+    expect(sidecar).toMatchObject({ kind: 'unreadable-record', client: 'claude-code' })
+    // ...and indexes in the attributed state root (the fixture's own).
     const index = fs.readFileSync(
       path.join(fs.realpathSync(fx.stateRoot), 'parked-index.jsonl'),
       'utf8'

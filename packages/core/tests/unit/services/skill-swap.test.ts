@@ -62,7 +62,7 @@ describe('swapInPlace: the committed path', () => {
       treeHash: p.input.preTree,
       client: 'claude-code',
       skillsDir: fs.realpathSync(fx.skillsDir),
-      scope: 'user',
+      scope: 'global',
       manifestKey: fx.dirName,
     })
 
@@ -152,7 +152,7 @@ describe('swapInPlace: the committed path', () => {
         skillsDir: fs.realpathSync(fx.skillsDir),
         manifestKey: fx.dirName,
         client: 'claude-code',
-        scope: 'user',
+        scope: 'global',
         dirName: fx.dirName,
       },
     })
