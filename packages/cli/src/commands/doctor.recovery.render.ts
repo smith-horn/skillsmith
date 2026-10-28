@@ -21,9 +21,6 @@ import { GUARD_WORD, PERFORMED } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
-/** The actions this version performs (core's own set); the listing marks the others `(not available yet)`. */
-const SUPPORTED: ReadonlySet<string> = PERFORMED
-
 /** An unreadable record's op dir as the classifier read it: its entries and whether it can be guarded. */
 function observedLines(cls: Extract<RecoveryClass, { kind: 'unreadable' }>): string[] {
   const o = cls.observed
@@ -150,7 +147,8 @@ function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
   // `--apply`, `--undo` (6a-iii), `--park` (6b-i) and `--clean-staging` (6b-ii) are supported; `--abandon` is 6b-iii's.
-  const later = SUPPORTED.has(p.action) ? '' : ' (not available yet)'
+  // Core's own set, read at call time (not module load); the listing marks the others `(not available yet)`.
+  const later = PERFORMED.has(p.action) ? '' : ' (not available yet)'
   const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\`${later}`]
   for (const s of p.steps) {
     const d = s.disposition
