@@ -10,9 +10,22 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { INTENT_CAP } from '../../../src/services/skill-swap.intent-schema.js'
-import { longestKeptName, WORST_OP_IDENTITY } from '../../../src/services/skill-swap.intent.js'
+import {
+  INTENT_CAP,
+  intentValueOf,
+  isParkIntentFor,
+} from '../../../src/services/skill-swap.intent-schema.js'
+import {
+  intentPrecheck,
+  longestKeptName,
+  parkIntentOf,
+  readableIntentBytes,
+  WORST_OP_IDENTITY,
+} from '../../../src/services/skill-swap.intent.js'
+import { processOwnerNow } from '../../../src/services/skill-swap.ops.js'
+import type { SwapState } from '../../../src/services/skill-swap.ops.js'
 import { jsonBytes } from '../../../src/services/skill-swap.staging.js'
+import type { ParkIntent } from '../../../src/services/skill-swap.types.js'
 import { deepSnapshot } from './skill-swap.scan.helpers.js'
 import {
   areaOf,
@@ -142,5 +155,166 @@ describe('this process is read once per update: owner.json, the record and the i
     expect(owner.host).toMatch(/^host-\d+$/)
     expect(intent.owner.host).toBe(owner.host)
     expect(record.host).toBe(owner.host)
+  })
+})
+
+const ID = { dev: '1', ino: '2', birthtimeNs: '3', fmt: '32768' }
+const OWNER = { pid: 1, host: '', uid: 0 }
+
+/** A minimal valid abort-new (schema 1) intent whose owner host is `host`. */
+const abortIntent = (host: string): ParkIntent => ({
+  schema: 1,
+  kind: 'abort-new',
+  opId: OP_ID,
+  owner: { ...OWNER, host },
+  opIdentity: ID,
+})
+
+describe('readableIntentBytes: the writer accepts exactly what the reader accepts, at the cap', () => {
+  const base = jsonBytes(abortIntent('')).length
+  const atCap = (delta: number): ParkIntent => abortIntent('x'.repeat(INTENT_CAP - base + delta))
+
+  it('an intent of exactly INTENT_CAP bytes is refused as the cap (size 4096), one byte less is accepted', () => {
+    expect(jsonBytes(atCap(0)).length).toBe(INTENT_CAP)
+    expect(jsonBytes(atCap(-1)).length).toBe(INTENT_CAP - 1)
+    expect(readableIntentBytes(atCap(0), OP_ID, ID)).toMatchObject({ ok: false, size: INTENT_CAP })
+    const under = readableIntentBytes(atCap(-1), OP_ID, ID)
+    expect(under.ok).toBe(true)
+    expect(under.ok && under.bytes.length).toBe(INTENT_CAP - 1)
+  })
+
+  it('the reader side of the same boundary: 4096 bytes parse to null, 4095 valid bytes do not', () => {
+    expect(intentValueOf(jsonBytes(atCap(0)))).toBeNull()
+    expect(isParkIntentFor(intentValueOf(jsonBytes(atCap(-1))), OP_ID, ID)).toBe(true)
+    expect(intentValueOf(jsonBytes(atCap(-1)))).not.toBeNull()
+  })
+
+  it('the writer verdict equals the reader verdict for every size around the cap', () => {
+    for (const delta of [-2, -1, 0, 1, 2]) {
+      const intent = atCap(delta)
+      const bytes = jsonBytes(intent)
+      const reader = isParkIntentFor(intentValueOf(bytes), OP_ID, ID)
+      expect(readableIntentBytes(intent, OP_ID, ID).ok, `delta ${delta}`).toBe(reader)
+    }
+  })
+})
+
+describe('readableIntentBytes: the whole round trip, not the owner alone', () => {
+  const moveSource = (backupPath: string): ParkIntent => ({
+    schema: 1,
+    kind: 'move-source',
+    opId: OP_ID,
+    owner: { ...OWNER, host: 'h' },
+    opIdentity: ID,
+    backupPath,
+  })
+
+  const NOT_VERIFYING = {
+    ok: false,
+    reason: 'the park intent would not verify for this op dir',
+    size: null,
+  }
+
+  it('positive control: an absolute path and the matching identity pass', () => {
+    expect(readableIntentBytes(moveSource('/state/backups/x'), OP_ID, ID).ok).toBe(true)
+  })
+
+  it('refuses a relative backupPath though the owner is valid', () => {
+    expect(readableIntentBytes(moveSource('state/backups/x'), OP_ID, ID)).toEqual(NOT_VERIFYING)
+  })
+
+  it('refuses an opIdentity that differs from the intent’s own though the owner is valid', () => {
+    const good = moveSource('/state/backups/x')
+    expect(readableIntentBytes(good, OP_ID, { ...ID, ino: '999' })).toEqual(NOT_VERIFYING)
+  })
+})
+
+describe('intentPrecheck bounds the longest kept name, not only the fixed backupDest', () => {
+  const self = processOwnerNow()
+  const areaOfLen = (len: number): string => {
+    let p = ''
+    while (p.length < len) p += '/' + 'd'.repeat(Math.min(200, Math.max(1, len - p.length - 1)))
+    return p
+  }
+  const stAt = (areaPath: string): SwapState =>
+    ({
+      opId: OP_ID,
+      owner: null,
+      self,
+      areaPath,
+      backupDest: path.join(areaPath, OP_ID),
+    }) as unknown as SwapState
+  const intentFor = (st: SwapState, backupPath: string): ParkIntent =>
+    parkIntentOf(st, 'move-source', backupPath, st.self, WORST_OP_IDENTITY)
+  const readable = (st: SwapState, backupPath: string): boolean =>
+    readableIntentBytes(intentFor(st, backupPath), OP_ID, WORST_OP_IDENTITY).ok
+  /** Area path lengths where an intent naming backupDest fits and one naming the longest kept name does not. */
+  const band = (): number[] => {
+    const out: number[] = []
+    for (let len = 3000; len < INTENT_CAP; len++) {
+      const st = stAt(areaOfLen(len))
+      if (
+        readable(st, st.backupDest) &&
+        !readable(st, path.join(st.areaPath, longestKeptName(OP_ID)))
+      )
+        out.push(st.areaPath.length)
+    }
+    return out
+  }
+
+  it('the band is real: at those depths backupDest alone is readable, the longest kept name is not, and the precheck refuses', () => {
+    const lens = band()
+    expect(lens.length).toBeGreaterThan(0)
+    for (const len of lens) {
+      const st = stAt(areaOfLen(len))
+      expect(st.areaPath.length).toBe(len)
+      expect(readable(st, st.backupDest)).toBe(true)
+      expect(readable(st, path.join(st.areaPath, longestKeptName(OP_ID)))).toBe(false)
+      const refusal = intentPrecheck(st, 'move-source')
+      expect(refusal).not.toBeNull()
+      expect(refusal).toMatch(
+        /^the park intent could be up to \d+ bytes, at or over the reader's 4096-byte cap$/
+      )
+    }
+  })
+
+  it('the update refuses staging-unsafe in the band, with no op dir', async () => {
+    const lens = band()
+    const target = lens[Math.floor(lens.length / 2)]!
+    const base = makeFixture(FILES)
+    const suffix = areaOf(base).length - base.stateRoot.length
+    const fx = deepen(makeFixture(FILES), target - suffix)
+    const st = stAt(areaOf(fx))
+    // The fixture's real area path is in the band: backupDest fits, the longest kept name does not.
+    expect(lens).toContain(st.areaPath.length)
+    expect(readable(st, st.backupDest)).toBe(true)
+    await refusesUntouched(fx)
+    expect(intentPrecheck(st, 'move-source')).not.toBeNull()
+  })
+})
+
+describe('WORST_OP_IDENTITY dominates every identity the type allows', () => {
+  const U64 = ((1n << 64n) - 1n).toString()
+  const MAXID = { dev: U64, ino: U64, birthtimeNs: U64, fmt: fs.constants.S_IFMT.toString() }
+
+  it('each field is at least as long as the maximum its type allows', () => {
+    for (const k of ['dev', 'ino', 'birthtimeNs', 'fmt'] as const) {
+      expect(WORST_OP_IDENTITY[k].length, k).toBeGreaterThanOrEqual(MAXID[k].length)
+    }
+  })
+
+  it('an intent with the maximum identity serializes to no more bytes than with WORST_OP_IDENTITY', () => {
+    const st = {
+      opId: OP_ID,
+      owner: null,
+      self: processOwnerNow(),
+      areaPath: '/a',
+      backupDest: '/a/' + OP_ID,
+    } as unknown as SwapState
+    const withMax = jsonBytes(parkIntentOf(st, 'move-source', st.backupDest, st.self, MAXID))
+    const withWorst = jsonBytes(
+      parkIntentOf(st, 'move-source', st.backupDest, st.self, WORST_OP_IDENTITY)
+    )
+    expect(withMax.length).toBeLessThanOrEqual(withWorst.length)
   })
 })
