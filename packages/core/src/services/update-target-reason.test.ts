@@ -268,10 +268,11 @@ describe('REASON_GROUP (§4.5)', () => {
 // of the 9 available kinds). Documented here so a reader can see the
 // reasoning without re-deriving it from update-target-reason.ts's own
 // comments:
-//   - I/O failures (manifest-unreadable, recovery-record-unreadable,
-//     probe-failed, unreadable, recovery-record-unreadable [result],
+//   - I/O failures (manifest-unreadable, probe-failed, unreadable,
 //     write-failed) -> fix-permissions, since §4.2/§4.4 both say these carry
 //     a sanitized/full {path, errno}.
+//   - recovery-record-unreadable (both) -> doctor{command:'recovery',
+//     action:'park'}: SMI-6531 6b-i makes `--park` real (design Q8, C8).
 //   - backup-dir, untracked, local, local-edits, up-to-date, eligible,
 //     updated -> none: terminal non-error states or a deliberate choice.
 //   - policy-never, policy-manual -> set-policy{dirName, manifestKey,
@@ -279,8 +280,8 @@ describe('REASON_GROUP (§4.5)', () => {
 //     comment) — unlike `none` (the prior mapping), this gives §4.5's
 //     groups a next step, matching the structurally identical `pinned`.
 //   - recovery-pending (both), recovery-conflict, recovery-ambiguous ->
-//     doctor{command:'recovery'}, the §3.9 workflow; conflict/ambiguous use
-//     action 'quarantine' since an automatic apply/undo would be a guess.
+//     doctor{command:'recovery'}, the §3.9 workflow; conflict names `--undo`
+//     (`--apply` refuses it) and ambiguous names `--root` (pickRoot), PLAN:2261.
 //   - manifest-key-conflict, identity-mismatch -> reconcile{action:'verify'}:
 //     §4.3's own UD22 text says remediation "names the owning key".
 //   - recovery-moved -> doctor{command:'recovery', action:'abandon'}, and
@@ -297,7 +298,7 @@ describe('REASON_GROUP (§4.5)', () => {
 //     move-aside: each names a directory that blocks the write until moved.
 const EXPECTED_REASON_KIND: Record<UpdateTargetReason, UpdateRemediation['kind']> = {
   'manifest-unreadable': 'fix-permissions',
-  'recovery-record-unreadable': 'fix-permissions',
+  'recovery-record-unreadable': 'doctor',
   'backup-dir': 'none',
   'recovery-pending': 'doctor',
   untracked: 'none',
@@ -331,7 +332,7 @@ const EXPECTED_RESULT_KIND: Record<UpdateResultCode, UpdateRemediation['kind']> 
   'staging-collision': 'move-aside',
   'backup-unsafe': 'move-aside',
   'recovery-pending': 'doctor',
-  'recovery-record-unreadable': 'fix-permissions',
+  'recovery-record-unreadable': 'doctor',
   'recovery-conflict': 'doctor',
   'recovery-identity-changed': 'doctor',
   'recovery-ambiguous': 'doctor',
@@ -459,6 +460,53 @@ describe('remediationFor — result codes', () => {
     })
   })
 
+  it("recovery-record-unreadable with EACCES or EPERM is another user's update: doctor recovery, no --park (C9)", () => {
+    for (const errno of ['EACCES', 'EPERM']) {
+      for (const code of [
+        { kind: 'result', result: 'recovery-record-unreadable' },
+        { kind: 'reason', reason: 'recovery-record-unreadable' },
+      ] as const) {
+        const r = remediationFor(code, { opId: 'op1', root: '/skills', errno })
+        expect(r).toMatchObject({ kind: 'doctor', command: 'recovery', opId: 'op1' })
+        expect(r.kind === 'doctor' ? r.action : 'not doctor').toBeUndefined()
+        // The pair: the same call with another errno names --park.
+        const other = remediationFor(code, { opId: 'op1', root: '/skills', errno: 'EIO' })
+        expect(other.kind === 'doctor' ? other.action : null).toBe('park')
+      }
+    }
+  })
+
+  it('recovery-record-unreadable names --park, recovery-conflict --undo, recovery-ambiguous --root (SMI-6531 6b-i, Q8)', () => {
+    const c = { opId: 'op1', root: '/skills', path: '/p', errno: 'EIO' }
+    const park = {
+      kind: 'doctor',
+      command: 'recovery',
+      action: 'park',
+      opId: 'op1',
+      root: '/skills',
+    }
+    expect(remediationFor({ kind: 'result', result: 'recovery-record-unreadable' }, c)).toEqual(
+      park
+    )
+    expect(remediationFor({ kind: 'reason', reason: 'recovery-record-unreadable' }, c)).toEqual(
+      park
+    )
+    expect(remediationFor({ kind: 'result', result: 'recovery-conflict' }, c)).toEqual({
+      kind: 'doctor',
+      command: 'recovery',
+      action: 'undo',
+      opId: 'op1',
+      root: '/skills',
+    })
+    expect(remediationFor({ kind: 'result', result: 'recovery-ambiguous' }, c)).toEqual({
+      kind: 'doctor',
+      command: 'recovery',
+      opId: 'op1',
+      root: '/skills',
+      pickRoot: true,
+    })
+  })
+
   it('recovery-identity-changed names --apply or --undo with --accept-identity (SMI-6531 6a-ii)', () => {
     const result = remediationFor(
       { kind: 'result', result: 'recovery-identity-changed' },
@@ -485,8 +533,8 @@ describe('remediationFor — reason/result string overlap (recovery-pending, rec
   it('resolves recovery-record-unreadable correctly whether tagged as a reason or a result', () => {
     const asReason = remediationFor({ kind: 'reason', reason: 'recovery-record-unreadable' })
     const asResult = remediationFor({ kind: 'result', result: 'recovery-record-unreadable' })
-    expect(asReason.kind).toBe('fix-permissions')
-    expect(asResult.kind).toBe('fix-permissions')
+    expect(asReason.kind).toBe('doctor')
+    expect(asResult.kind).toBe('doctor')
   })
 })
 

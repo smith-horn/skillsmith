@@ -23,7 +23,7 @@ import { opReport, syncManifest } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import { act, contentSnapshot, done, killAt } from './recovery.act.helpers.js'
 import { backupOf, killed, theParkedCopy, xfile, xs3 } from './recovery.xdev.helpers.js'
-import { executeRecovery } from '../../../../src/services/skill-recovery.run.js'
+import { executeRecovery } from '../../../../src/services/skill-recovery.exec.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import { requestOf } from './recovery.act.helpers.js'
 

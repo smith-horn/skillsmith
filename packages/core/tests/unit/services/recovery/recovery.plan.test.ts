@@ -400,17 +400,72 @@ describe('what every other class says', () => {
     expect(planAction(cls, 'abandon').offered).toBe(true)
   })
 
-  it('unreadable: --park only; no record: --clean-staging only; empty: nothing; AB: --abandon finishes it', async () => {
-    const unreadable: RecoveryClass = {
+  it('unreadable: --park only when guardable (6b-i); no record: --clean-staging only; empty: nothing; AB: --abandon finishes it', async () => {
+    const id = { dev: '1', ino: '2', birthtimeNs: '3', fmt: '16384' }
+    const guardable: RecoveryClass = {
       kind: 'unreadable',
       opId: 'x',
-      opDir: '/x',
+      opDir: '/st/x',
       why: 'not-json',
+      observed: {
+        identity: id,
+        uid: 0,
+        otherUid: null,
+        entries: [
+          { name: 'record.json', stat: { ok: true, type: 'file', identity: id, uid: 0, nlink: 1 } },
+        ],
+        hash: { ok: true, hash: 'f'.repeat(64), identity: id, bytes: 12 },
+        owner: null,
+      },
     }
-    expect(planAction(unreadable, 'park').offered).toBe(true)
-    expect(planAction(unreadable, 'apply')).toMatchObject({
+    // Offered: the one step is the whole op dir, kept as unreadable-record, and nothing is removed.
+    const park = offered(planAction(guardable, 'park'))
+    expect(park.steps).toEqual([
+      {
+        tree: 'OP',
+        disposition: { kind: 'kept', as: 'unreadable-record' },
+        note: expect.stringContaining('/st/.skillsmith-parked/x/x-<rnd>'),
+      },
+    ])
+    expect(park.manifest).toBe('untouched')
+    expect(planAction(guardable, 'apply')).toMatchObject({
       offered: false,
       reason: 'recovery-record-unreadable',
+    })
+    // C3: OP's own lstat or listing failed: nothing to guard, refused (the same class, observed null).
+    const opFailed: RecoveryClass = {
+      kind: 'unreadable',
+      opId: 'x',
+      opDir: '/st/x',
+      why: 'open-failed',
+      errno: 'EIO',
+      detail: 'the op dir cannot be listed',
+      observed: null,
+    }
+    const c3 = planAction(opFailed, 'park')
+    expect(c3).toMatchObject({ offered: false, reason: 'recovery-not-offered' })
+    expect(c3.offered ? '' : c3.detail).toContain('EIO')
+    // Not guardable (bf-1k0 Major 1): the walk's reason, path and errno are named.
+    const unguardable: RecoveryClass = {
+      ...guardable,
+      observed: {
+        ...guardable.observed!,
+        hash: { ok: false, reason: 'unreadable', path: '/st/x/record.json', errno: 'EIO' },
+      },
+    } as RecoveryClass
+    const refusedPark = planAction(unguardable, 'park')
+    expect(refusedPark).toMatchObject({ offered: false, reason: 'recovery-not-offered' })
+    for (const word of ['guard-unreadable', '/st/x/record.json', 'EIO', 'by hand']) {
+      expect(refusedPark.offered ? '' : refusedPark.detail).toContain(word)
+    }
+    // O3b: OP owned by another uid.
+    const theirs = {
+      ...guardable,
+      observed: { ...guardable.observed!, uid: 7, otherUid: 7 },
+    } as RecoveryClass
+    expect(planAction(theirs, 'park')).toMatchObject({
+      offered: false,
+      reason: 'recovery-other-user',
     })
     const noRecord: RecoveryClass = {
       kind: 'no-record',

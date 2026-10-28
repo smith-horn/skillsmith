@@ -17,8 +17,25 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
+import { GUARD_WORD } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
+
+/** The actions this version performs; the listing marks the others `(not available yet)`. */
+const SUPPORTED: ReadonlySet<string> = new Set(['apply', 'undo', 'park'])
+
+/** An unreadable record's op dir as the classifier read it: its entries and whether it can be guarded. */
+function observedLines(cls: Extract<RecoveryClass, { kind: 'unreadable' }>): string[] {
+  const o = cls.observed
+  if (o === null) return []
+  const h = o.hash
+  return [
+    `    entries: ${o.entries.map((e) => `${e.name} (${e.stat.ok ? e.stat.type : e.stat.errno})`).join(', ')}`,
+    h.ok
+      ? `    guard hash: ${short(h.hash)} (${h.bytes} bytes of files)`
+      : `    guard walk failed: ${GUARD_WORD[h.reason] ?? h.reason} at ${h.path}${h.errno === null ? '' : ` (${h.errno})`}`,
+  ]
+}
 
 function treeLine(name: string, role: string, obs: OpFacts['t']): string {
   if (!obs.present) {
@@ -77,7 +94,7 @@ function factsOf(cls: RecoveryClass): OpFacts | null {
 function noteOf(cls: RecoveryClass): string[] {
   switch (cls.kind) {
     case 'empty-op-dir':
-      return ["    empty: a later doctor action holding this root's lock removes it with one rmdir"]
+      return ["    empty: any doctor action holding this root's lock removes it with one rmdir"]
     case 'no-record':
       return [
         // W1: a verifying move-source intent means the record went at the end, not before the start.
@@ -95,7 +112,10 @@ function noteOf(cls: RecoveryClass): string[] {
         ...(cls.recordTmp === null ? [] : [`    ${cls.recordTmp} is present`]),
       ]
     case 'unreadable':
-      return [`    ${cls.detail ?? cls.why}${cls.errno === undefined ? '' : ` (${cls.errno})`}`]
+      return [
+        `    ${cls.detail ?? cls.why}${cls.errno === undefined ? '' : ` (${cls.errno})`}`,
+        ...observedLines(cls),
+      ]
     case 'other-user':
       return [`    cannot be read (${cls.errno}); owned by uid ${cls.ownerUid ?? 'unknown'}`]
     case 'moved':
@@ -112,8 +132,8 @@ function noteOf(cls: RecoveryClass): string[] {
 function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
-  // `--apply` and `--undo` are supported (6a-iii); `--abandon`, `--clean-staging` and `--park` are 6b's.
-  const later = p.action === 'apply' || p.action === 'undo' ? '' : ' (not available yet)'
+  // `--apply`, `--undo` (6a-iii) and `--park` (6b-i) are supported; `--abandon` and `--clean-staging` are 6b-ii/iii's.
+  const later = SUPPORTED.has(p.action) ? '' : ' (not available yet)'
   const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\`${later}`]
   for (const s of p.steps) {
     const d = s.disposition
@@ -138,6 +158,9 @@ function opLines(op: OpReport): string[] {
     lines.push(
       `    nothing is offered here${why !== undefined && !why.offered ? ` (${why.reason})` : ''}`
     )
+    // 6b-i: an unreadable record whose op dir cannot be parked says why, with the walk's path and errno.
+    const park = op.plans.find((p) => p.action === 'park')
+    if (op.cls.kind === 'unreadable' && park !== undefined) lines.push(...planLines(park, op.opId))
   } else {
     for (const p of offered) lines.push(...planLines(p, op.opId))
     for (const p of op.plans) {

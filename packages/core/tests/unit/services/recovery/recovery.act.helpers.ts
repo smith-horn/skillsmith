@@ -9,7 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { expect } from 'vitest'
-import { executeRecovery } from '../../../../src/services/skill-recovery.run.js'
+import { executeRecovery } from '../../../../src/services/skill-recovery.exec.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import type {
   RecoveryPlanResult,
@@ -17,6 +17,7 @@ import type {
   RecoveryRunOptions,
   RecoveryRunResult,
 } from '../../../../src/services/skill-recovery.run.types.js'
+import type { RecoveryAction } from '../../../../src/services/skill-recovery.types.js'
 import type { SwapHookPoint, TraceOp } from '../../../../src/services/skill-swap.types.js'
 import { areaOf, hashOf } from '../skill-swap.helpers.js'
 import { deepSnapshot } from '../skill-swap.scan.helpers.js'
@@ -33,7 +34,7 @@ export interface Acted {
 /** The request for `st`'s op in its own root. */
 export function requestOf(
   st: Pick<State, 'fx' | 'opId'>,
-  action: 'apply' | 'undo',
+  action: RecoveryAction,
   over: Partial<RecoveryRequest> = {}
 ): RecoveryRequest {
   return {
@@ -50,7 +51,7 @@ export function requestOf(
 /** Plans `action` for `st`, then (when offered) runs it. */
 export async function act(
   st: Pick<State, 'fx' | 'opId'>,
-  action: 'apply' | 'undo',
+  action: RecoveryAction,
   over: Partial<RecoveryRequest> = {},
   opts: RecoveryRunOptions = {}
 ): Promise<Acted> {
@@ -67,7 +68,7 @@ export async function act(
 /** `act`, requiring it to finish. */
 export async function done(
   st: Pick<State, 'fx' | 'opId'>,
-  action: 'apply' | 'undo',
+  action: RecoveryAction,
   over: Partial<RecoveryRequest> = {},
   opts: RecoveryRunOptions = {}
 ): Promise<Acted & { result: Extract<RecoveryRunResult, { status: 'done' }> }> {

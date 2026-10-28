@@ -91,6 +91,8 @@ function toCopy(st: SwapState, f: OpFacts, steps: readonly PlanStep[]): string[]
       if (f.t.present) out.push(f.tPath)
       continue
     }
+    // `OP` (6b-i) is `--park`'s whole op dir: a rename within ST, never a copy.
+    if (s.tree === 'OP') continue
     const res = f.roles[s.tree]
     if (res.kind !== 'source') continue
     const g = res.started

@@ -248,7 +248,7 @@ export type UpdateRemediation =
   | {
       readonly kind: 'doctor'
       readonly command: 'locks' | 'recovery'
-      readonly action?: 'apply' | 'undo' | 'abandon' | 'quarantine'
+      readonly action?: 'apply' | 'undo' | 'abandon' | 'park'
       readonly opId?: string
       readonly root?: string
       /**
@@ -256,6 +256,11 @@ export type UpdateRemediation =
        * applies; SMI-6531 6a-ii, `recovery-identity-changed`).
        */
       readonly acceptIdentity?: true
+      /**
+       * `--root <skills root>`: the opId names more than one operation, and
+       * the command must pick the root (SMI-6531 6b-i, `recovery-ambiguous`).
+       */
+      readonly pickRoot?: true
     }
   | { readonly kind: 'retry' }
   | { readonly kind: 'none' }
@@ -329,7 +334,7 @@ const moveAside = (c: UpdateRemediationContext): UpdateRemediation => ({
   dir: c.dir ?? '',
 })
 const doctorRecovery =
-  (action?: 'apply' | 'undo' | 'abandon' | 'quarantine') =>
+  (action?: 'apply' | 'undo' | 'abandon' | 'park') =>
   (c: UpdateRemediationContext): UpdateRemediation => ({
     kind: 'doctor',
     command: 'recovery',
@@ -337,6 +342,14 @@ const doctorRecovery =
     opId: c.opId,
     root: c.root,
   })
+/**
+ * `recovery-record-unreadable` (SMI-6531 6b-i, Q8, C9): `--park`, except for
+ * a record this user may not open (`EACCES`/`EPERM`), which is another user's
+ * update: doctor refuses `--park` there, so no action is named (run doctor as
+ * that user).
+ */
+const unreadableRecord = (c: UpdateRemediationContext): UpdateRemediation =>
+  c.errno === 'EACCES' || c.errno === 'EPERM' ? doctorRecovery()(c) : doctorRecovery('park')(c)
 
 /**
  * §4.3-reason -> remediation. Several of these are not literally spelled out
@@ -350,7 +363,8 @@ const doctorRecovery =
 const REASON_REMEDIATION: Record<UpdateTargetReason, RemediationBuilder> = {
   // I/O failures: the failing path/errno came from the probe, so surface them.
   'manifest-unreadable': fixPermissions,
-  'recovery-record-unreadable': fixPermissions,
+  // SMI-6531 6b-i (design Q8, PLAN:2261): `doctor recovery --park` is the remedy.
+  'recovery-record-unreadable': unreadableRecord,
   'probe-failed': fixPermissions,
   unreadable: fixPermissions,
 
@@ -426,14 +440,20 @@ const RESULT_REMEDIATION: Record<UpdateResultCode, RemediationBuilder> = {
   'backup-unsafe': moveAside,
 
   // §3.9 doctor recovery workflow, differentiated by action where the name
-  // itself implies one: an unresolved record needs applying/undoing (left to
-  // the operator, hence no forced action here); a conflicting or ambiguous
-  // record should be quarantined rather than guessed at; an identity change
-  // needs the same reconcile-verify treatment as its planning-time cousin.
+  // itself implies one (SMI-6531 6b-i, design Q8, PLAN:2261): an unresolved
+  // record needs applying/undoing (left to the operator, hence no forced
+  // action here); an unreadable record is parked (`--park`); a conflict is
+  // `--undo` (`--apply` refuses it); an ambiguous opId needs `--root`.
   'recovery-pending': doctorRecovery(),
-  'recovery-record-unreadable': fixPermissions,
-  'recovery-conflict': doctorRecovery('quarantine'),
-  'recovery-ambiguous': doctorRecovery('quarantine'),
+  'recovery-record-unreadable': unreadableRecord,
+  'recovery-conflict': doctorRecovery('undo'),
+  'recovery-ambiguous': (c) => ({
+    kind: 'doctor',
+    command: 'recovery',
+    opId: c.opId,
+    root: c.root,
+    pickRoot: true,
+  }),
   // SMI-6531 6a-ii (design Q6, plan §3.9): a moved root or op dir is offered
   // only `--abandon`; a copy or remount is `--apply|--undo --accept-identity`.
   'recovery-identity-changed': (c) => ({

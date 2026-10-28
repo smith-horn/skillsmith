@@ -68,13 +68,26 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
     // moved root) is `recovery-moved` to doctor, which lists it: parking it is
     // not what its remedy is (§3.9). Every other kind is parked.
     const isMoved = (why: string): boolean => why === 'foreign-root' || why === 'foreign-op-dir'
-    const parkIds = scan.unreadable.filter((r) => !isMoved(r.why)).map((r) => r.opId)
+    // 6b-i (Q7, C9): a record this user may not open is another user's update.
+    // Doctor classifies it `other-user` and refuses `--park`, so it names the user instead.
+    const isDenied = (r: (typeof scan.unreadable)[number]): boolean =>
+      r.why === 'open-failed' && (r.errno === 'EACCES' || r.errno === 'EPERM')
+    const parkIds = scan.unreadable
+      .filter((r) => !isMoved(r.why) && !isDenied(r))
+      .map((r) => r.opId)
     const movedIds = scan.unreadable.filter((r) => isMoved(r.why)).map((r) => r.opId)
+    const deniedIds = scan.unreadable.filter(isDenied).map((r) => r.opId)
     const advice = [
       ...(parkIds.length > 0 ? [`Run ${parkCommand(parkIds)}.`] : []),
+      ...(deniedIds.length > 0
+        ? [
+            `${deniedIds.join(', ')} ${deniedIds.length === 1 ? 'is' : 'are'} another user's ` +
+              `update; run \`${DOCTOR_RECOVERY}\` as that user.`,
+          ]
+        : []),
       ...(movedIds.length > 0
         ? [
-            parkIds.length > 0
+            parkIds.length + deniedIds.length > 0
               ? `Run \`${DOCTOR_RECOVERY}\` for ${movedIds.join(', ')}.`
               : `Run \`${DOCTOR_RECOVERY}\`.`,
           ]

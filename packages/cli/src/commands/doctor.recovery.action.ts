@@ -1,8 +1,12 @@
 /**
- * @fileoverview `skillsmith doctor recovery --apply <opId>` / `--undo <opId>`,
- * under the confirmation contract (A1 plan §3.9; SMI-6531 steps 6a-ii and
- * 6a-iii: one device and across devices, where the op dir holding the verified
- * sources is parked once its metadata is unlinked, UD28).
+ * @fileoverview `skillsmith doctor recovery --apply <opId>` / `--undo <opId>` /
+ * `--park <opId>`, under the confirmation contract (A1 plan §3.9; SMI-6531
+ * steps 6a-ii and 6a-iii: one device and across devices, where the op dir
+ * holding the verified sources is parked once its metadata is unlinked, UD28;
+ * 6b-i: `--park`, which sets aside the whole op dir of a record that cannot be
+ * read, the only remedy for `recovery-record-unreadable`). Every action runs
+ * the same contract; the plan and result lines are
+ * `doctor.recovery.action.render.ts`'s.
  *
  * The contract, in order:
  *  1. Plan without any lock (`planRecovery`) and print it (`--json`: as JSON).
@@ -27,7 +31,9 @@
  * Exit status: 0 done, declined, or already set aside (`already-parked`: doctor
  * takes no action), 1 refused or stopped, 3 not confirmed
  * (no terminal), 4 done but the op dir's park did not finish
- * (`removal-not-done`, UD32; 1 wins over 4), 130 interrupted.
+ * (`removal-not-done`, UD32; 1 wins over 4: `--park` itself ending `kept`,
+ * `stopped` or `held`, or the cross-device park of `--apply`/`--undo`),
+ * 130 interrupted.
  * @module @skillsmith/cli/commands/doctor.recovery.action
  */
 
@@ -39,16 +45,19 @@ import {
   executeRecovery,
   planRecovery,
   type DiscoverOptions,
-  type PlannedRecovery,
+  type RecoveryAction,
   type RecoveryRunOptions,
   type RecoveryRunResult,
 } from '@skillsmith/core'
+import { planLines, resultLines } from './doctor.recovery.action.render.js'
 
 export type PromptAnswer = 'yes' | 'no' | 'interrupt'
 
 export interface RecoveryActionOptions {
   apply?: string
   undo?: string
+  /** `--park <opId>` (6b-i): set aside an op dir whose record cannot be read. */
+  park?: string
   root?: string[]
   stateRoot?: string
   acceptIdentity?: boolean
@@ -106,84 +115,6 @@ export function askOnce(
   })
 }
 
-/** The plan's lines, as the prompt shows them. */
-export function planLines(p: PlannedRecovery): string[] {
-  const lines = [
-    `Plan for ${p.request.action === 'apply' ? '--apply' : '--undo'} ${p.request.opId}`,
-    `  op dir: ${p.opDir} (${p.report.label})`,
-  ]
-  for (const s of p.plan.steps) {
-    const d = s.disposition
-    lines.push(`  ${s.tree}: ${d.kind === 'kept' ? `kept as ${d.as}` : d.kind}; ${s.note}`)
-  }
-  lines.push(
-    `  manifest: ${p.plan.manifest === 'untouched' ? 'untouched' : 'committed to the updated entry'}`
-  )
-  for (const r of p.plan.remaining) lines.push(`  then: ${r}`)
-  for (const n of p.plan.notes) lines.push(`  note: ${n}`)
-  if (p.request.acceptIdentity === true && 'facts' in p.report.cls && p.report.cls.facts) {
-    const f = p.report.cls.facts
-    const rec = f.record
-    const now = (o: typeof f.t) =>
-      o.present ? `${o.identity.dev}/${o.identity.ino}/${o.identity.birthtimeNs}` : 'absent'
-    lines.push(
-      `  identity (dev/ino/birthtime) recorded old ${rec.oldIdentity.dev}/${rec.oldIdentity.ino}/${rec.oldIdentity.birthtimeNs}, new ${rec.newIdentity.dev}/${rec.newIdentity.ino}/${rec.newIdentity.birthtimeNs}; T now ${now(f.t)}`
-    )
-  }
-  return lines
-}
-
-function resultLines(r: RecoveryRunResult): string[] {
-  if (r.status === 'refused')
-    return [`Not done (${r.reason}): ${r.detail}`, ...r.paths.map((p) => `  ${p}`)]
-  if (r.status === 'stopped') {
-    return [
-      `Stopped (${r.reason}): ${r.detail}`,
-      r.recordPath === null
-        ? '  the record is gone; run the same command to finish'
-        : `  the record is kept at ${r.recordPath}; run the same command again to resume`,
-    ]
-  }
-  const lines = [`Done: ${r.action} of ${r.opId} (from ${r.from}).`]
-  if (r.installed !== null) lines.push(`  installed: ${r.installed}`)
-  for (const k of r.kept) lines.push(`  kept ${k.tree} as ${k.kind} at ${k.path}`)
-  if (r.extraCopy !== null) {
-    lines.push(
-      `  the op dir, holding the verified source copies, was moved aside to ${r.extraCopy}`
-    )
-  }
-  lines.push(`  manifest: ${r.manifest}`)
-  if (r.audit.kind === 'not-recorded') lines.push(`  ${r.audit.detail}`)
-  for (const w of r.warnings) lines.push(...warningLines(w, r))
-  for (const p of r.swept.removed) lines.push(`  removed the empty directory ${p}`)
-  for (const p of r.swept.left) lines.push(`  left ${p.path} (${p.errno})`)
-  return lines
-}
-
-type Warning = Extract<RecoveryRunResult, { status: 'done' }>['warnings'][number]
-
-/**
- * A warning's line. `removal-not-done` names the op dir and the park's status:
- * a held park moved it but holds it (check it); a kept or stopped one left it
- * in place, and the same command finishes it (governance S1).
- */
-function warningLines(w: Warning, r: { opId: string; action: 'apply' | 'undo' }): string[] {
-  if (w.code !== 'removal-not-done') return [`  warning: ${w.code}`]
-  const status = `${w.status}/${w.reason}${w.errno === undefined ? '' : ` (${w.errno})`}`
-  const head =
-    w.status === 'held'
-      ? `  warning: removal-not-done: the op dir ${w.path} was moved to ${String(w.parkedPath)} but is held there (${status})`
-      : `  warning: removal-not-done: the op dir ${w.path} was not set aside (${status})`
-  const command = `skillsmith doctor recovery --${r.action} ${r.opId}`
-  return [
-    head,
-    ...(w.detail === undefined ? [] : [`    ${w.detail}`]),
-    ...(w.status === 'held'
-      ? ['    it may have changed while it moved: check it before relying on it']
-      : [`    run \`${command}\` again to finish setting it aside`]),
-  ]
-}
-
 /** UD32: a park that did not finish is exit 4 (an action that stopped or was refused is 1, which wins). */
 const exitOf = (r: RecoveryRunResult): number | undefined =>
   r.status !== 'done' ? 1 : r.warnings.some((w) => w.code === 'removal-not-done') ? 4 : undefined
@@ -197,16 +128,31 @@ const printJson = (plan: unknown, result: unknown): void => {
   console.log(JSON.stringify({ plan, result }, null, 2))
 }
 
-/** `--apply` / `--undo`: plan, confirm, then act under lock 1. */
+/**
+ * The actions this command dispatches, in flag order. `--abandon` and
+ * `--clean-staging` are core actions too, but not registered yet (6b-ii,
+ * 6b-iii), so commander never passes them.
+ */
+const DISPATCHED = ['apply', 'undo', 'park'] as const satisfies readonly RecoveryAction[]
+
+/** The one action given, or null when none or more than one is. */
+function actionOf(options: RecoveryActionOptions): { action: RecoveryAction; opId: string } | null {
+  const given = DISPATCHED.filter((a) => options[a] !== undefined)
+  if (given.length !== 1) return null
+  const action = given[0]!
+  return { action, opId: options[action]! }
+}
+
+/** `--apply` / `--undo` / `--park`: plan, confirm, then act under lock 1. */
 export async function runRecoveryAction(options: RecoveryActionOptions): Promise<void> {
   const json = options.json === true
-  if ((options.apply === undefined) === (options.undo === undefined)) {
-    console.error(chalk.red('Give exactly one of --apply <opId> and --undo <opId>.'))
+  const chosen = actionOf(options)
+  if (chosen === null) {
+    console.error(chalk.red('Give exactly one of --apply <opId>, --undo <opId> and --park <opId>.'))
     process.exitCode = 1
     return
   }
-  const action = options.apply !== undefined ? 'apply' : 'undo'
-  const opId = (options.apply ?? options.undo)!
+  const { action, opId } = chosen
   const found = await discoverRoots({
     ...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
     ...(options.root === undefined || options.root.length === 0 ? {} : { roots: options.root }),

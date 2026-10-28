@@ -312,6 +312,7 @@ describe('the doctor command', () => {
       '--json',
       '--apply',
       '--undo',
+      '--park',
       '--accept-identity',
       '--yes',
     ])
@@ -320,7 +321,13 @@ describe('the doctor command', () => {
     expect(recovery.options.filter((o) => o.hidden)).toEqual([])
     const help = recovery.helpInformation()
     expect(help).toContain('--state-root')
-    for (const f of ['--apply <opId>', '--undo <opId>', '--accept-identity', '--yes']) {
+    for (const f of [
+      '--apply <opId>',
+      '--undo <opId>',
+      '--park <opId>',
+      '--accept-identity',
+      '--yes',
+    ]) {
       expect(help).toContain(f)
     }
     expect(flags('locks')).toEqual([

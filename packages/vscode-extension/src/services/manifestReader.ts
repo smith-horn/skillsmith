@@ -192,7 +192,7 @@ export const UPDATE_REMEDIATION_KIND: Record<
   UpdateRemediationKind
 > = {
   'manifest-unreadable': 'fix-permissions',
-  'recovery-record-unreadable': 'fix-permissions',
+  'recovery-record-unreadable': 'doctor',
   'backup-dir': 'none',
   'recovery-pending': 'doctor',
   untracked: 'none',

@@ -1,9 +1,10 @@
 /**
- * SMI-6531 (A1 steps 4b, 4c): the park of an op dir from ST, shared by its two
+ * SMI-6531 (A1 steps 4b, 4c, 6b-i): the park of an op dir from ST, shared by its
  * callers (A1 plan §3.3; UD25, UD28, UD40): abort cleanup step 6 (caller
  * `abort-cleanup`, kind `abort-new`) and transaction step 13 after a
  * cross-device move (caller `move-source`, kind `move-source`, with the
- * backup's path).
+ * backup's path), and `doctor recovery --park` (6b-i: caller `doctor-park`,
+ * kind `unreadable-record`, its parked-index path from O1 or none).
  *
  * The one rule for OP's entries (`opDiffers`, UD40): OP holds exactly an
  * expected set of names, each with the identity this run bound for it (dev,
@@ -129,6 +130,17 @@ export type ParkOpOutcome =
 export type ParkOpCall =
   | { caller: 'abort-cleanup'; kind: 'abort-new'; expected: Expected }
   | { caller: 'move-source'; kind: 'move-source'; backupPath: string; expected: Expected }
+  /**
+   * 6b-i: `doctor recovery --park`, an op dir whose record cannot be read.
+   * `indexPath` is O1's: the attributed state root's parked index, the
+   * primary state root's, or null for no index line (no state root at all).
+   */
+  | {
+      caller: 'doctor-park'
+      kind: 'unreadable-record'
+      expected: Expected
+      indexPath: string | null
+    }
 
 const notDone = (n: NotDone): ParkOpOutcome => ({ status: 'not-done', notDone: n })
 
@@ -156,6 +168,8 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
   await hook(st, 'beforePark')
   checkTraced(st)
   const park = st.options.park ?? parkTreeIndexed
+  const indexPath =
+    c.caller === 'doctor-park' ? c.indexPath : path.join(st.stateRootReal, PARKED_INDEX_FILE)
   const r: ParkResult = await park(ST, st.opId, {
     client: st.input.client,
     caller: c.caller,
@@ -166,7 +180,7 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
     expectIdentity: g.expectIdentity,
     maxBirthtimeNs: g.maxBirthtimeNs,
     rootKey: rootKeyOf(st.binding.root),
-    indexPath: path.join(st.stateRootReal, PARKED_INDEX_FILE),
+    ...(indexPath === null ? {} : { indexPath }),
   })
   const moved = r.status === 'parked' || r.status === 'held'
   tracePreMove(st, r)
