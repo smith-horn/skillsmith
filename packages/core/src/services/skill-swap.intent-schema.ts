@@ -13,8 +13,11 @@ const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-
 
 /**
  * The default byte cap for `park-intent.json` and its temp (64 KiB, as the
- * sidecar's). A path cannot exceed about 4 KiB (`PATH_MAX`), so every real
+ * sidecar's). A path cannot exceed about 4 KiB (`PATH_MAX`, in bytes), and JSON
+ * escaping at worst makes each byte a 6-byte `\uXXXX`: a 4095-byte path of
+ * control characters serializes to 24,572 bytes (measured). So every real
  * intent fits and no state root is too deep to finish a recorded op (SMI-7205).
+ * Do not lower this below that worst case.
  * Read the cap in force with `intentCap()`, never this constant.
  */
 export const INTENT_CAP = 64 * 1024

@@ -6,9 +6,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 - **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer
   strands an operation. The cap on `park-intent.json` (`INTENT_CAP`, shared by the writer and
-  doctor's reader) is now 64 KiB, as the sidecar's: a path cannot exceed about 4 KiB, so every
-  real intent fits, and `--apply`, `--undo` and `--clean-staging` finish a recorded operation
-  under any state root instead of refusing `staging-unsafe`. The update's, abort cleanup's and
+  doctor's reader) is now 64 KiB, as the sidecar's: a path cannot exceed about 4 KiB, and even
+  its worst JSON escaping is about 24 KiB, so every real intent fits. `--apply` and `--undo`
+  finish a recorded operation, and `--clean-staging` an unrecorded one, under any state root
+  instead of refusing `staging-unsafe`. The update's, abort cleanup's and
   doctor's up-front prechecks are unchanged; they now size against the new cap, and their
   refusal names it. No released version reads a park intent.
 - **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to

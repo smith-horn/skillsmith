@@ -33,9 +33,13 @@ const sized = (size: number, delta: number): ParkIntent =>
   abortIntent('x'.repeat(size - base + delta))
 
 describe('the default cap', () => {
-  it('is 65536 bytes when no test sets it, and a path (PATH_MAX about 4096) cannot reach it', () => {
+  afterEach(() => setIntentCapForTest(null))
+
+  it('is 65536 bytes when no test sets it, above a PATH_MAX path at its worst JSON escaping', () => {
     expect(INTENT_CAP).toBe(DEFAULT)
     expect(intentCap()).toBe(65536)
+    // PATH_MAX counts bytes; a control byte escapes to six (`\u0001`), the worst case.
+    expect(jsonBytes('\u0001'.repeat(4095)).length).toBeLessThan(DEFAULT)
   })
 
   it('the seam does not leak: lowering and restoring returns exactly the default', () => {
