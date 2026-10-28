@@ -104,6 +104,8 @@ describe('the real park graph', () => {
       'parked-index.ts',
     ])
     expect(r.fsLocalsByFile[path.join(INSTALL, 'parked-index.ts')]).toEqual(['fs'])
+    // The name module stays fs-free: the classifier imports it, so it holds no fs local.
+    expect(r.fsLocalsByFile[path.join(INSTALL, 'parked-index.name.ts')]).toEqual([])
     expect(r.violations).toEqual([])
   })
 
