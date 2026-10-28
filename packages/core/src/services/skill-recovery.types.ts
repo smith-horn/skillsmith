@@ -256,8 +256,9 @@ export interface OpFacts {
 }
 
 /**
- * 6a-iii: the park intent of an op dir whose record is gone (a cross-device
- * finish killed after it unlinked the record). `--apply`/`--undo` finish its
+ * 6a-iii: the park intent of an op dir with no record (a finish that had
+ * written its move-source intent: an update after it unlinked its record, or
+ * doctor's own cross-device `--clean-staging`). `--apply`/`--undo` finish its
  * park when `blocked` is null.
  */
 export interface NoRecordIntent {

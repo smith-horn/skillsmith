@@ -8,7 +8,8 @@
  * `--clean-staging`, which keeps or parks what an op dir with no record holds,
  * only when its `owner.json` owner is same-host and gone, or with
  * `--unsafe-unverified-owner`, which the plan explains and `--yes` never
- * stands in for). Every action runs
+ * stands in for; the one exception is a verifying park intent with no
+ * `owner.json` left, which needs neither a gone owner nor the flag). Every action runs
  * the same contract; the plan and result lines are
  * `doctor.recovery.action.render.ts`'s.
  *

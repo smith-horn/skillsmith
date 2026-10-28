@@ -17,7 +17,7 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
-import { GUARD_WORD, PERFORMED } from '@skillsmith/core'
+import { GUARD_WORD, PERFORMED, planAction } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
@@ -88,25 +88,46 @@ function factsOf(cls: RecoveryClass): OpFacts | null {
   return 'facts' in cls ? cls.facts : null
 }
 
+type NoRecordClass = Extract<RecoveryClass, { kind: 'no-record' }>
+
+/**
+ * Whether `--clean-staging` is refused now and would be offered with
+ * `--unsafe-unverified-owner`: decided from core's own plan table, so these
+ * words never copy its rule for when the owner stands in the way.
+ */
+function needsUnsafeFlag(cls: NoRecordClass): boolean {
+  return (
+    !planAction(cls, 'clean-staging').offered &&
+    planAction(cls, 'clean-staging', { unsafeUnverifiedOwner: true }).offered
+  )
+}
+
+/** How an op dir with no `record.json` came to be, from the park intent it holds (W1). */
+function noRecordWord(cls: NoRecordClass): string {
+  const entries = `entries: ${cls.entries.join(', ') || 'none'}`
+  const i = cls.intent
+  if (i !== null && i.valid && i.kind === 'move-source') {
+    return `    no record.json: a finish that had written its move-source intent (an update after its record was removed, or a cross-device --clean-staging), before its op dir was set aside; ${entries}`
+  }
+  if (i !== null && i.valid && i.kind === 'abort-new') {
+    return `    no record.json: the update aborted and was setting it aside (an abort-new park intent); ${entries}`
+  }
+  return `    no record.json (the update stopped before writing its record); ${entries}`
+}
+
 function noteOf(cls: RecoveryClass): string[] {
   switch (cls.kind) {
     case 'empty-op-dir':
       return ["    empty: any doctor action holding this root's lock removes it with one rmdir"]
     case 'no-record':
       return [
-        // W1: a verifying move-source intent means the record went at the end, not before the start.
-        cls.intent !== null && cls.intent.valid && cls.intent.kind === 'move-source'
-          ? `    no record.json: a finish killed after its record was removed, before its op dir was set aside; entries: ${cls.entries.join(', ') || 'none'}`
-          : `    no record.json (a crash before the update began); entries: ${cls.entries.join(', ') || 'none'}`,
+        noRecordWord(cls),
         cls.owner === null
           ? '    owner: no owner.json'
           : `    owner: pid ${cls.owner.pid ?? '?'} on ${cls.owner.host ?? '?'}, uid ${cls.owner.uid ?? '?'}`,
         // 6b-ii: the owner verdict, and whether --clean-staging needs --unsafe-unverified-owner.
         `    owner verdict: ${cls.clean.verdict} (${cls.clean.verdictWhy})${
-          cls.clean.verdict === 'same-host-dead' ||
-          (cls.intent?.valid === true && !cls.entries.includes('owner.json'))
-            ? ''
-            : '; --clean-staging needs --unsafe-unverified-owner'
+          needsUnsafeFlag(cls) ? '; --clean-staging needs --unsafe-unverified-owner' : ''
         }`,
         ...(cls.intent === null
           ? []

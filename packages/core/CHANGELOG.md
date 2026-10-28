@@ -10,7 +10,11 @@ All notable changes to `@skillsmith/core` are documented here.
   keeps `new/` through `publishTree` as `unrecorded-new` (a keep abort cleanup started resumes
   with its own kind), unlinks the provable temps and then `owner.json` last, and `rmdir`s the
   folder; across devices the verified `new/` stays and the folder is parked whole behind a
-  `move-source` intent. It is offered only when `owner.json` names a process on this host that
+  `move-source` intent that names the folder's own `owner.json` owner. Whether `new/` crosses
+  devices is decided when the copy runs, so the keep plan's `remaining` lines state both
+  finishes, each in the order its executor takes: on one device the temps, `owner.json` and
+  the `rmdir`; across devices the intent, the other temps, `owner.json`, and the park of the
+  whole folder with no `rmdir`. It is offered only when `owner.json` names a process on this host that
   is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`, except
   that a verifying intent with no `owner.json` left needs neither; the owner verdict is in the
   serialized plan, so a change before the lock is `plan-changed`. The provable temps finished
@@ -22,18 +26,14 @@ All notable changes to `@skillsmith/core` are documented here.
   `manifestKey` and `stateRoot` into `owner.json`, and an `abort-new` park intent carries them
   as schema 2 (schema 1 is still accepted; `move-source` intents stay schema 1). Doctor uses
   them as routing hints only, validated all or nothing (`scope` against `InstallScope`,
-  `global` or `workspace`), else the client-`none` layout. A
+  `global` or `workspace`), else the client-`none` layout. A `move-source` intent's park takes
+  its scope from `owner.json`'s attribution only when that attribution names the same client,
+  state root and folder as the intent's own target, else `none`. A
   `--park` of an unreadable record now names the attributed client. `CLIENT_IDS` and
   `PARKED_INDEX_FILE` are defined in modules with no filesystem import (still re-exported from
   their old homes), so the classifier can resolve the attribution.
-- **Changed**: SMI-6531 -- A1 step 6b-ii: the `--clean-staging` keep plan's last `remaining` line
-  now states both finishes, because whether `new/` crosses devices is decided when the copy
-  runs: on one device `owner.json` is unlinked last and the folder is `rmdir`ed; across devices
-  the move-source intent is written, `owner.json` goes last, and the folder is parked whole,
-  with no `rmdir`. A move-source intent's park takes its scope from `owner.json`'s attribution
-  only when that attribution names the same client, state root and folder as the intent's own
-  target, else `none`. `UpdateTarget.scope` and `BuildUpdateTargetInput.scope` are typed
-  `InstallScope`.
+- **Changed**: SMI-6531 -- A1 step 6b-ii: `UpdateTarget.scope` and
+  `BuildUpdateTargetInput.scope` are typed `InstallScope`.
 
 - **Internal**: SMI-6531 -- #3201 retro: `PERFORMED` (the recovery actions this version performs)
   is exported, so the CLI listing reads core's set instead of a hand copy; two comments and a

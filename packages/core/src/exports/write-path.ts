@@ -168,7 +168,6 @@ export type {
   OwnerProbe,
   OwnerVerdict,
 } from '../services/skill-recovery.clean.types.js'
-export { defaultOwnerProbe } from '../services/skill-recovery.owner.js'
 export type {
   ActionPlan,
   Disposition,

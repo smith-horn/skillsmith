@@ -5,8 +5,10 @@
  * dir's park"; design `step6b-design.md` § 1.2 case (a)).
  *
  * Two intents, two callers:
- *  - **`move-source`**, the state a cross-device finish leaves when it is
- *    killed after it unlinked `record.json`: `--apply` and `--undo` finish it
+ *  - **`move-source`**, the state a cross-device finish leaves once it has
+ *    written its intent, then is killed: an update after it unlinked
+ *    `record.json`, or doctor's own cross-device `--clean-staging` (which
+ *    never had a record): `--apply` and `--undo` finish it
  *    (6a-iii), and so does `--clean-staging` (6b-ii). The intent's
  *    `backupPath` must be this root's backup area plus `<opId>` or
  *    `<opId>.<kind>[.<k>]` (`intentTarget`), in a state root doctor

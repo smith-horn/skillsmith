@@ -73,6 +73,17 @@ const refusingPort: ManifestPort = {
   },
 }
 
+/**
+ * What `owner.json` says, when it parses whole: the park intent a cross-device
+ * finish writes copies it, so the intent names the update's own owner and not
+ * doctor's process. Null when there is no `owner.json` or a field is missing.
+ */
+function ownerOf(cls: NoRecord): SwapState['owner'] {
+  const o = cls.owner
+  if (o === null || o.pid === null || o.host === null || o.uid === null) return null
+  return { pid: o.pid, host: o.host, uid: o.uid }
+}
+
 /** The state a keep of a no-record op dir needs (see the module comment). */
 function noRecordState(ctx: SkillWriteContext, cls: NoRecord, options: SwapOptions): SwapState {
   const c = cls.clean
@@ -111,7 +122,7 @@ function noRecordState(ctx: SkillWriteContext, cls: NoRecord, options: SwapOptio
     buildIdentity: null,
     published: null,
     moveSources: new Map(),
-    owner: null,
+    owner: ownerOf(cls),
     newIdentity: null,
     postTree: null,
     postRecord: null,
