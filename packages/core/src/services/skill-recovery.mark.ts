@@ -25,13 +25,15 @@
  * the copy's own space check runs, so the user can remove it by hand. Like that
  * check, it is a first-attempt filter.
  *
- * **The intent block** (`intentBlock`). At the same point, when any tree the
- * plan keeps is on another device than the area (so the finish will write a
- * park intent), the intent that finish would write is put through the
- * reader's acceptance first (`intentPrecheck`, `skill-swap.intent.ts`). One the
- * reader would refuse (a state root so deep the intent reaches `INTENT_CAP`)
- * refuses `staging-unsafe` with nothing changed, instead of stopping after the
- * keeps at the intent's write.
+ * **The intent block** (`intentBlock`). At the same point, whenever the plan
+ * keeps a tree (whatever the device: a keep may cross devices, and then the
+ * finish writes a park intent; a bind mount of one filesystem shares `st_dev`
+ * yet its rename fails `EXDEV`, so `st_dev` cannot rule that out), the worst
+ * case of that intent is put through the reader's acceptance first
+ * (`intentPrecheck`, `skill-swap.intent.ts`). One the reader would refuse (a
+ * state root so deep the intent reaches `INTENT_CAP`) refuses `staging-unsafe`
+ * with nothing changed, instead of stopping after the keeps at the intent's
+ * write.
  *
  * @module @skillsmith/core/services/skill-recovery.mark
  */
@@ -42,7 +44,6 @@ import type { SwapState } from './skill-swap.ops.js'
 import { intentPrecheck } from './skill-swap.intent.js'
 import {
   bytesNeeded,
-  crossesDevices,
   FREE_SPACE_REMEDY,
   inodesNeeded,
   nearestDevice,
@@ -124,18 +125,19 @@ const toCopy = (st: SwapState, f: SpaceFacts, steps: readonly PlanStep[]): strin
     .map((k) => k.src)
 
 /**
- * `staging-unsafe`'s detail when a keep the plan makes will cross devices and
- * the `move-source` intent the finish would then write is one the reader
- * would refuse; else null (see the module comment). Run before the first
- * mutation, beside `spaceBlock`.
+ * Why a plan that keeps a tree is refused (the precheck's reason, no suffix):
+ * the `move-source` intent its finish could write is one the reader would
+ * refuse; else null (see the module comment). Run before the first mutation,
+ * beside `spaceBlock`.
  */
 export function intentBlock(
   st: SwapState,
   f: SpaceFacts,
   steps: readonly PlanStep[]
 ): string | null {
-  const across = keptSources(st, f, steps).some((k) => crossesDevices(k.src, st.areaPath))
-  return across ? intentPrecheck(st, 'move-source') : null
+  // Whatever the device: a bind mount of one filesystem shares st_dev, yet its
+  // rename still fails EXDEV, so no device guess says the keep stays a rename.
+  return keptSources(st, f, steps).length > 0 ? intentPrecheck(st, 'move-source') : null
 }
 
 /** `state-root-full` naming the free-space remedy when a copy the plan needs cannot fit; else null. */

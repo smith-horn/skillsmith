@@ -16,9 +16,10 @@
  *       identity the re-plan saw. Its manifest port refuses: nothing commits.
  *    2. Adopt `owner.json` and the provable temps from the re-plan's transcript.
  *    3. `spaceBlock`: a cross-device copy that cannot fit refuses
- *       `state-root-full` with nothing changed; `intentBlock`: when the keep
- *       of `new/` will cross devices, a park intent the reader would refuse
- *       (`intentPrecheck`) refuses `staging-unsafe` with nothing changed.
+ *       `state-root-full` with nothing changed; `intentBlock`: when `new/` is
+ *       kept, on any device, a park intent the reader would refuse
+ *       (`intentPrecheck`) refuses `staging-unsafe` with nothing changed,
+ *       naming `SHORTER_STATE_ROOT_REMEDY`.
  *    4. `new/`: a keep abort cleanup started resumes with its own kind
  *       (`keepRole` → `resumeGroup`); otherwise `lstat(new)` must still have
  *       the re-plan's identity (else `staging-unsafe`), then `publishTree(new,
@@ -57,8 +58,8 @@ import type {
   RecoveryClass,
   TreePosition,
 } from './skill-recovery.types.js'
-import { writeParkIntent } from './skill-swap.intent.js'
-import { check, hook, opPaths, SwapFault, syncDir } from './skill-swap.ops.js'
+import { SHORTER_STATE_ROOT_REMEDY, writeParkIntent } from './skill-swap.intent.js'
+import { processOwnerNow, check, hook, opPaths, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
@@ -129,6 +130,7 @@ function noRecordState(ctx: SkillWriteContext, cls: NoRecord, options: SwapOptio
     published: null,
     moveSources: new Map(),
     owner: ownerOf(cls),
+    self: processOwnerNow(),
     newIdentity: null,
     postTree: null,
     postRecord: null,
@@ -207,7 +209,10 @@ export async function cleanStaging(a: CleanRun): Promise<CleanResult> {
       st,
       kept: [],
       extraCopy: null,
-      refusal: { reason: 'staging-unsafe', detail: unreadable },
+      refusal: {
+        reason: 'staging-unsafe',
+        detail: `${unreadable}; nothing was changed; ${SHORTER_STATE_ROOT_REMEDY}`,
+      },
     }
   }
   const out: CleanResult = { st, kept: [], extraCopy: null, refusal: null }

@@ -61,6 +61,7 @@ import type { OpFacts, PlanStep, ReadTranscript, RecoveryClass } from './skill-r
 import { commit, journalInput } from './skill-swap.commit.js'
 import { hook, opPaths, rethrowLockOrder, SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { RECORDED_STATE_ROOT_NOTE } from './skill-swap.intent.js'
 import { publishTree } from './skill-swap.publish.js'
 import { describe } from './skill-swap.abort.js'
 import { undoAside } from './skill-swap.undo.js'
@@ -355,7 +356,10 @@ export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
     if (full !== null) return refused('state-root-full', full, planned.opDir)
     // And a park intent the finish would write that the reader would refuse (none is written when one is reused).
     const unreadable = adopted.intent === null ? intentBlock(st, f, planned.plan.steps) : null
-    if (unreadable !== null) return refused('staging-unsafe', unreadable, planned.opDir)
+    if (unreadable !== null) {
+      const detail = `${unreadable}; nothing was changed; ${RECORDED_STATE_ROOT_NOTE}`
+      return refused('staging-unsafe', detail, planned.opDir)
+    }
     if ((await runRow(row, action)) === 'plan-changed') {
       return refused(
         'plan-changed',

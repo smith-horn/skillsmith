@@ -49,7 +49,7 @@ import {
   parkIndexOf,
   routeRootOf,
 } from './skill-recovery.attribution.js'
-import { check, hook, SwapFault, syncDir } from './skill-swap.ops.js'
+import { processOwnerNow, check, hook, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
 import type { ParkOpOutcome } from './skill-swap.park-op.js'
@@ -161,6 +161,7 @@ function intentState(
             i.sources.map((s) => [s.name, { identity: boundOf(s.identity), dest: r.backupPath! }])
           ),
     owner: null,
+    self: processOwnerNow(),
     newIdentity: null,
     postTree: null,
     postRecord: null,

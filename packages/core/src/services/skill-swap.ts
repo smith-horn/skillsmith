@@ -345,7 +345,7 @@ export async function swapInPlace(
       : (intentPrecheck(st, 'move-source') ?? intentPrecheck(st, 'abort-new'))
   if (unreadable !== null) {
     return withHint(
-      noneResult(st, 'staging-unsafe', unreadable),
+      noneResult(st, 'staging-unsafe', `${unreadable}; the update was not started`),
       await stagingHintBeforeLock(binding)
     )
   }

@@ -159,19 +159,3 @@ export function nearestDevice(p: string): { at: string; dev: bigint } | null {
     }
   }
 }
-
-/**
- * Whether a keep of `src` into `areaPath` will cross devices, predicted before
- * anything moves: `src` is on another device than the area (read at its nearest
- * existing ancestor). The same inference doctor's space block makes. False
- * when either cannot be read; the keep itself still learns it from `EXDEV`.
- */
-export function crossesDevices(src: string, areaPath: string): boolean {
-  const area = nearestDevice(areaPath)
-  if (area === null) return false
-  try {
-    return fs.lstatSync(src, { bigint: true }).dev !== area.dev
-  } catch {
-    return false
-  }
-}

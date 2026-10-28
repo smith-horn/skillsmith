@@ -9,6 +9,7 @@
  */
 import os from 'node:os'
 import { describe, expect, it } from 'vitest'
+import { processOwnerNow } from '../../../src/services/skill-swap.ops.js'
 import type { SwapState } from '../../../src/services/skill-swap.ops.js'
 import { isParkIntentFor, parkIntentOf } from '../../../src/services/skill-swap.intent.js'
 import type { RecordIdentity } from '../../../src/services/skill-swap.js'
@@ -192,7 +193,13 @@ describe('parkIntentOf', () => {
   })
 
   it('falls back to this process as the owner when owner.json was never published', () => {
-    const st = { opId: OP, op, owner: null, ...routed } as unknown as SwapState
+    const st = {
+      opId: OP,
+      op,
+      owner: null,
+      self: processOwnerNow(),
+      ...routed,
+    } as unknown as SwapState
     const intent = parkIntentOf(st)
     expect(intent.owner).toEqual({
       pid: process.pid,

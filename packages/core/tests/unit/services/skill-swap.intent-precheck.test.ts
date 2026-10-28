@@ -7,8 +7,9 @@
  * are never more than its worst case's.
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { INTENT_CAP } from '../../../src/services/skill-swap.intent-schema.js'
 import { longestKeptName, WORST_OP_IDENTITY } from '../../../src/services/skill-swap.intent.js'
 import { jsonBytes } from '../../../src/services/skill-swap.staging.js'
@@ -54,10 +55,10 @@ async function refusesUntouched(fx: Fixture): Promise<void> {
   const r = await run(p)
   expect(r.result).toMatchObject({ status: 'refused', reason: 'staging-unsafe', staged: 'none' })
   const detail = (r.result as { detail: string }).detail
+  // The worst case's size, and only what is true: ST (and a missing root) may already exist.
   expect(detail).toMatch(
-    /^the park intent would be \d+ bytes, at or over the reader's 4096-byte cap/
+    /^the park intent could be up to \d+ bytes, at or over the reader's 4096-byte cap; the update was not started$/
   )
-  expect(detail).toContain('nothing was changed')
   expect(fs.existsSync(fx.opDir)).toBe(false)
   const staged = fs.existsSync(fx.staging) ? fs.readdirSync(fx.staging) : []
   expect(staged.filter((n) => n.startsWith(OP_ID))).toEqual([])
@@ -110,5 +111,36 @@ describe('a normal state root still updates, and its real intent is within the w
     for (const k of ['dev', 'ino', 'birthtimeNs', 'fmt'] as const) {
       expect(id[k]!.length, k).toBeLessThanOrEqual(WORST_OP_IDENTITY[k].length)
     }
+  })
+})
+
+describe('this process is read once per update: owner.json, the record and the intent name one host', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('a host name that changes on every call does not split them', async () => {
+    const fx = xdevFixture(FILES)
+    let calls = 0
+    vi.spyOn(os, 'hostname').mockImplementation(() => `host-${++calls}`)
+    // Stopped right after the intent is durable: owner.json, record.json and the intent are all in OP.
+    const r = await run(plan(fx, [modify('SKILL.md', '# v2\n')]), {
+      hooks: {
+        afterIntent: () => {
+          throw new Error('killed at afterIntent')
+        },
+      },
+    })
+    expect(r.result).toMatchObject({ status: 'committed', incomplete: { step: 'cleanup' } })
+    const read = (n: string) =>
+      JSON.parse(fs.readFileSync(path.join(fx.opDir, n), 'utf8')) as Record<string, unknown>
+    const owner = read('owner.json')
+    const record = read('record.json')
+    const intent = read('park-intent.json') as { owner: { host: string } }
+    // Presence: the stub is what named the owner (every call returns a new name).
+    expect(calls).toBeGreaterThanOrEqual(1)
+    expect(owner.host).toMatch(/^host-\d+$/)
+    expect(intent.owner.host).toBe(owner.host)
+    expect(record.host).toBe(owner.host)
   })
 })

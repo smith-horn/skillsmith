@@ -31,7 +31,6 @@
  *
  * @module @skillsmith/core/services/skill-swap.intent
  */
-import os from 'node:os'
 import path from 'node:path'
 import { S_IFMT } from '../install/park-tree.perms.js'
 import { KIND_ROLE } from './skill-recovery.pstate.js'
@@ -43,13 +42,6 @@ import { jsonBytes, publishBytes, recordIdentity } from './skill-swap.staging.js
 import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.types.js'
 
 type Owner = ParkIntent['owner']
-
-/** This process, as an intent names it. */
-const processOwner = (): Owner => ({
-  pid: process.pid,
-  host: os.hostname(),
-  uid: process.geteuid?.() ?? -1,
-})
 
 /**
  * The intent for `owner` (by default the op's own, else this process): OP's
@@ -65,7 +57,7 @@ export function parkIntentOf(
   st: SwapState,
   kind: ParkIntentKind = 'abort-new',
   backupPath?: string,
-  owner: Owner = st.owner ?? processOwner(),
+  owner: Owner = st.owner ?? st.self,
   opIdentity: RecordIdentity = opIdentityOf(st)
 ): ParkIntent {
   const base = {
@@ -86,8 +78,10 @@ function opIdentityOf(st: SwapState): RecordIdentity {
   return recordIdentity(st.op.identity)
 }
 
-/** The bytes to write, or why the reader would refuse them. */
-export type IntentBytes = { ok: true; bytes: Buffer } | { ok: false; reason: string }
+/** The bytes to write, or why the reader would refuse them (`size` when it is the cap). */
+export type IntentBytes =
+  | { ok: true; bytes: Buffer }
+  | { ok: false; reason: string; size: number | null }
 
 /**
  * The round trip: `intent` serialized exactly as written, then the reader's
@@ -104,10 +98,11 @@ export function readableIntentBytes(
     return {
       ok: false,
       reason: `the park intent would be ${bytes.length} bytes, at or over the reader's ${INTENT_CAP}-byte cap`,
+      size: bytes.length,
     }
   }
   if (!isParkIntentFor(intentValueOf(bytes), opId, opIdentity)) {
-    return { ok: false, reason: 'the park intent would not verify for this op dir' }
+    return { ok: false, reason: 'the park intent would not verify for this op dir', size: null }
   }
   return { ok: true, bytes }
 }
@@ -124,8 +119,8 @@ export function readableIntentOf(
   backupPath?: string,
   opIdentity: RecordIdentity = opIdentityOf(st)
 ): IntentBytes {
-  const owners = st.owner === null ? [processOwner()] : [st.owner, processOwner()]
-  let out: IntentBytes = { ok: false, reason: 'no owner to name' }
+  const owners = st.owner === null ? [st.self] : [st.owner, st.self]
+  let out: IntentBytes = { ok: false, reason: 'no owner to name', size: null }
   for (const owner of owners) {
     const intent = parkIntentOf(st, kind, backupPath, owner, opIdentity)
     out = readableIntentBytes(intent, st.opId, opIdentity)
@@ -171,8 +166,11 @@ function backupPathBounds(st: SwapState): string[] {
 }
 
 /**
- * The precheck each writer runs before its first mutation (the reason, or
- * null): the round trip on the worst case of the intent this op could write,
+ * The precheck each writer runs before its first mutation: the reason, with
+ * no suffix (each caller says what is true of its own state: doctor "nothing
+ * was changed", the update "the update was not started"), or null. The size
+ * it names is the worst case's, so it says "could be up to N bytes"; the
+ * write's own stop says "would be N bytes", the real size. It runs the round trip on the worst case of the intent this op could write,
  * with every `backupPath` it could name (`backupPathBounds`) and the longest
  * identity (`WORST_OP_IDENTITY`). It needs no OP, so the update runs it before
  * `createOp`.
@@ -190,10 +188,30 @@ export function intentPrecheck(st: SwapState, kind: ParkIntentKind): string | nu
   const paths = kind === 'move-source' ? backupPathBounds(st) : [undefined]
   for (const p of paths) {
     const r = readableIntentOf(st, kind, p, WORST_OP_IDENTITY)
-    if (!r.ok) return `${r.reason}; nothing was changed`
+    if (r.ok) continue
+    return r.size === null
+      ? r.reason
+      : `the park intent could be up to ${r.size} bytes, at or over the reader's ${INTENT_CAP}-byte cap`
   }
   return null
 }
+
+/**
+ * `--clean-staging`'s remedy for that refusal, in `FREE_SPACE_REMEDY`'s style:
+ * with `--state-root` naming another state directory, the op's attribution no
+ * longer matches a state root doctor was given, so its keep goes to that
+ * directory's client-`none` area (`resolveAttribution`'s primary).
+ */
+export const SHORTER_STATE_ROOT_REMEDY =
+  'run this command again with `--state-root` naming a state directory with a shorter path (the kept copy then goes there, in the client-`none` layout)'
+
+/**
+ * `--apply`/`--undo`'s: none exists. The record fixes the backup area under
+ * the state root its update used (`recoveryState`: `dirname(manifestPath)`),
+ * so no `--state-root` changes it.
+ */
+export const RECORDED_STATE_ROOT_NOTE =
+  "this op's record fixes its backup area under the state root its update used, so `--state-root` does not shorten it; no command in this version finishes it"
 
 /**
  * Publishes `park-intent.json` durably: the bytes `readableIntentOf` accepted,

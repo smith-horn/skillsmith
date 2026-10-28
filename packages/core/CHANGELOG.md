@@ -33,14 +33,19 @@ All notable changes to `@skillsmith/core` are documented here.
   check): an intent naming the op's own owner is written when the reader accepts it, else one
   naming this process, else nothing (`staging-unsafe`, naming the size). The same check, on
   the worst case of the intent (the longest kept name and the longest identity), runs before
-  the first mutation of doctor's `--apply`/`--undo` and `--clean-staging` (when a keep will
-  cross devices) and of abort cleanup (when the staged folder will be parked), refusing
-  `staging-unsafe` with nothing changed. `swapInPlace` runs it before it makes its operation
-  folder, on any device, for both intents an update could write (its step-13 `move-source`
-  and abort cleanup's `abort-new`): an update whose state root is too deep is refused
-  `staging-unsafe`, `staged: 'none'`, with no operation folder, record, backup or manifest
-  change. It cannot wait to learn whether the backup crosses devices: that is known only
-  from `EXDEV`, after the commit. A move-source intent under the state root `/` now resolves
+  the first mutation of doctor's `--apply`/`--undo` and `--clean-staging` (whenever they keep
+  a tree) and of abort cleanup (whenever the staged folder will be parked or kept), on any
+  device: a bind mount of one filesystem shares `st_dev` yet its rename fails `EXDEV`, so no
+  device check can rule a park intent out. Doctor's refusal says "could be up to N bytes"
+  (the worst case), "nothing was changed", and its remedy: for `--clean-staging`, run it
+  again with `--state-root` naming a state directory with a shorter path; for `--apply` and
+  `--undo`, none (the record fixes the backup area). `swapInPlace` runs it before it makes
+  its operation folder, on any device, for both intents an update could write (its step-13
+  `move-source` and abort cleanup's `abort-new`): an update whose state root is too deep is
+  refused `staging-unsafe`, `staged: 'none'`, "the update was not started", with no
+  operation folder, record, backup or manifest change. It cannot wait to learn whether the
+  backup crosses devices: that is known only from `EXDEV`, after the commit. The update's
+  process owner is read once, so `owner.json`, `record.json` and the intent name one host. A move-source intent under the state root `/` now resolves
   its target instead of being blocked.
 - **Changed**: SMI-6531 -- A1 step 6b-ii (O1): the swap writes `client`, `scope`, `dirName`,
   `manifestKey` and `stateRoot` into `owner.json`, and an `abort-new` park intent carries them

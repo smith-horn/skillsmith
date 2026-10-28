@@ -23,11 +23,11 @@
  *     `unrecorded-new` (`check`, then `publishTree`); equal stays to be parked.
  *     Across devices (4c) a keep copies N and leaves the verified N in OP
  *     (`st.moveSources`), so N is parked as well: a kept tree's source.
- *     Before that keep (the first mutation), when N will be parked (unchanged,
- *     or kept across devices: `crossesDevices`), the intent step 6 would write
- *     is put through the reader's acceptance (`intentPrecheck`); one the
- *     reader would refuse ends `left` with `stopped/staging-unsafe` and
- *     nothing changed.
+ *     Before that keep (the first mutation), whenever N will be parked or
+ *     kept, the intent step 6 could write is put through the reader's
+ *     acceptance on its worst case (`intentPrecheck`), whatever the device (a
+ *     bind mount shares `st_dev` yet its rename fails `EXDEV`); one the reader
+ *     would refuse ends `left` with `stopped/staging-unsafe` and nothing changed.
  *  6. Metadata, then the park. Unlink `record.json` if this run published it
  *     (sync OP); if N is to be parked, write `park-intent.json` durably;
  *     unlink `record.json.tmp`, `owner.json.tmp` and `owner.json` where this
@@ -82,7 +82,6 @@ import type { SwapState } from './skill-swap.ops.js'
 import { checkTraced, opDiffers, parkOpFromStaging, say } from './skill-swap.park-op.js'
 import type { Expected, NotDone } from './skill-swap.park-op.js'
 import { publishTree } from './skill-swap.publish.js'
-import { crossesDevices } from './skill-swap.space.js'
 import { cleanStagingHint } from './skill-swap.staging.js'
 import { NEW_DIR, PARK_INTENT_FILE } from './skill-swap.types.js'
 import type {
@@ -203,15 +202,13 @@ export async function runCleanup(
     if (differs !== null) return leftWith(st, reason, detail, undefined, differs)
     const kind = built ? await keepKindOf(st, newDir) : undefined
     // Before the first mutation: N is parked (with an intent) when unchanged or kept across devices.
-    const intent =
-      built && (kind === undefined || crossesDevices(newDir, st.areaPath))
-        ? intentPrecheck(st, 'abort-new')
-        : null
+    // Whenever N will be parked or kept: a keep's EXDEV is not predictable from st_dev.
+    const intent = built ? intentPrecheck(st, 'abort-new') : null
     if (intent !== null) {
       return leftWith(st, reason, detail, undefined, {
         status: 'stopped',
         reason: 'staging-unsafe',
-        detail: intent,
+        detail: `${intent}; abort cleanup changed nothing`,
       })
     }
     if (kind !== undefined) {

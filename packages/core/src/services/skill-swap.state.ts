@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { SkillsRootBinding } from './skill-write-lock.types.js'
+import { processOwnerNow } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import type { SwapInput, SwapOptions, SwapWarning } from './skill-swap.types.js'
@@ -66,6 +67,7 @@ export function newState(
     published: null,
     moveSources: new Map(),
     owner: null,
+    self: processOwnerNow(),
     newIdentity: null,
     postTree: null,
     postRecord: null,

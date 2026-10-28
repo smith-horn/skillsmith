@@ -24,7 +24,7 @@ import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { O_NOFOLLOW } from '../utils/safe-fs.js'
 import { createManifestPort } from './skill-manifest.port.js'
 import { backupAreaPath } from './skill-swap.area.js'
-import { check, codeOf, SwapFault, trace } from './skill-swap.ops.js'
+import { processOwnerNow, check, codeOf, SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import type { ManifestPort, RecordIdentity, SwapOptions, SwapRecord } from './skill-swap.types.js'
 import type { ReadTranscript } from './skill-recovery.types.js'
@@ -218,6 +218,7 @@ export function recoveryState(i: RecoveryStateInput): SwapState {
     published: null,
     moveSources: new Map(),
     owner: null,
+    self: processOwnerNow(),
     newIdentity: boundOf(i.identities?.new ?? rec.newIdentity),
     postTree: rec.postTree,
     postRecord: null,
