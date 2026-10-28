@@ -313,6 +313,7 @@ export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
   const { planned, opts, ctx, cls, transcript, journalFile, out } = a
   const req = planned.request
   const action = req.action
+  // Type narrowing only: `executeRecovery` calls this for `--apply`/`--undo` alone.
   if (action !== 'apply' && action !== 'undo') {
     return refused('plan-changed', `--${action} does not act on ${cls.state}`, planned.opDir)
   }

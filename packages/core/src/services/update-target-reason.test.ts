@@ -460,6 +460,22 @@ describe('remediationFor — result codes', () => {
     })
   })
 
+  it("recovery-record-unreadable with EACCES or EPERM is another user's update: doctor recovery, no --park (C9)", () => {
+    for (const errno of ['EACCES', 'EPERM']) {
+      for (const code of [
+        { kind: 'result', result: 'recovery-record-unreadable' },
+        { kind: 'reason', reason: 'recovery-record-unreadable' },
+      ] as const) {
+        const r = remediationFor(code, { opId: 'op1', root: '/skills', errno })
+        expect(r).toMatchObject({ kind: 'doctor', command: 'recovery', opId: 'op1' })
+        expect(r.kind === 'doctor' ? r.action : 'not doctor').toBeUndefined()
+        // The pair: the same call with another errno names --park.
+        const other = remediationFor(code, { opId: 'op1', root: '/skills', errno: 'EIO' })
+        expect(other.kind === 'doctor' ? other.action : null).toBe('park')
+      }
+    }
+  })
+
   it('recovery-record-unreadable names --park, recovery-conflict --undo, recovery-ambiguous --root (SMI-6531 6b-i, Q8)', () => {
     const c = { opId: 'op1', root: '/skills', path: '/p', errno: 'EIO' }
     const park = {

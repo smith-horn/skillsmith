@@ -141,13 +141,19 @@ export function parkIndexOf(a: Attribution): string | null {
   return root === null ? null : path.join(root, PARKED_INDEX_FILE)
 }
 
-/** The backup area a keep of this op dir files into (6b-ii's consumer), or null with no state root. */
+/**
+ * The backup area a keep of this op dir files into, or null with no state root.
+ * @internal Consumed by 6b-ii (`--clean-staging`); no production caller in 6b-i.
+ */
 export function keepAreaOf(a: Attribution, root: string, opId: string): string | null {
   if (a.kind === 'attributed') return backupAreaPath(a.stateRoot, a.client, root, a.dirName)
   return a.primary === null ? null : backupAreaPath(a.primary, 'none', root, opId)
 }
 
-/** The sidecar fields a keep of this op dir names (the client-`none` convention when unattributed). */
+/**
+ * The sidecar fields a keep of this op dir names (the client-`none` convention when unattributed).
+ * @internal Consumed by 6b-ii (`--clean-staging`); no production caller in 6b-i.
+ */
 export function keepSidecarOf(
   a: Attribution,
   opId: string

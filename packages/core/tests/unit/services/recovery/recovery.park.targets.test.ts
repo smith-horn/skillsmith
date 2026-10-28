@@ -8,6 +8,21 @@ import fs from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+/** Every request for lock 1 (`withSkillWriteLock`), counted through a pass-through mock. */
+const locks = vi.hoisted(() => ({ n: 0 }))
+vi.mock('../../../../src/services/skill-write-lock.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../../src/services/skill-write-lock.js')>()
+  return {
+    ...actual,
+    withSkillWriteLock: (...a: Parameters<typeof actual.withSkillWriteLock>) => {
+      locks.n++
+      return actual.withSkillWriteLock(...a)
+    },
+  }
+})
+
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import type { RecoveryAction } from '../../../../src/services/skill-recovery.types.js'
 import { refusedOf } from '../skill-swap.abort.helpers.js'
@@ -113,16 +128,23 @@ describe('the race between the check and the park (bf-1k0 Major 1, C13): a walk 
 })
 
 describe("O3b: --park refuses when OP's lstat uid is not the effective uid, before any lock", () => {
-  it('another euid: recovery-other-user at plan time, no probe; the same op as its owner is planned', async () => {
+  it('another euid: recovery-other-user, no probe, lock 1 never taken; as its owner it runs and takes lock 1', async () => {
     const st = await corrupt()
     const euid = (process.geteuid?.() ?? 0) + 1
     const before = contentSnapshot(st.fx.skillsDir, st.fx.stateRoot)
-    const r = await planRecovery(requestOf(st, 'park', { euid }))
-    expect(r).toMatchObject({ status: 'refused', reason: 'recovery-other-user' })
-    expect(r.status === 'refused' ? r.detail : '').toContain(String(process.geteuid?.() ?? 0))
+    locks.n = 0
+    // `act` runs the action whenever the plan is offered, so lock 1 is reached exactly then.
+    const a = await act(st, 'park', { euid })
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-other-user' })
+    expect(a.result.status === 'refused' ? a.result.detail : '').toContain(
+      String(process.geteuid?.() ?? 0)
+    )
+    expect(locks.n).toBe(0)
     expect(contentSnapshot(st.fx.skillsDir, st.fx.stateRoot)).toBe(before)
     expect(probesIn(st.fx.staging)).toEqual([])
-    expect((await planRecovery(requestOf(st, 'park'))).status).toBe('planned')
+    const ok = await act(st, 'park')
+    expect(ok.result.status).toBe('done')
+    expect(locks.n).toBe(1)
   })
 })
 

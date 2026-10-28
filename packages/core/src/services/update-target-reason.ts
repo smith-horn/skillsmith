@@ -342,6 +342,14 @@ const doctorRecovery =
     opId: c.opId,
     root: c.root,
   })
+/**
+ * `recovery-record-unreadable` (SMI-6531 6b-i, Q8, C9): `--park`, except for
+ * a record this user may not open (`EACCES`/`EPERM`), which is another user's
+ * update: doctor refuses `--park` there, so no action is named (run doctor as
+ * that user).
+ */
+const unreadableRecord = (c: UpdateRemediationContext): UpdateRemediation =>
+  c.errno === 'EACCES' || c.errno === 'EPERM' ? doctorRecovery()(c) : doctorRecovery('park')(c)
 
 /**
  * §4.3-reason -> remediation. Several of these are not literally spelled out
@@ -356,7 +364,7 @@ const REASON_REMEDIATION: Record<UpdateTargetReason, RemediationBuilder> = {
   // I/O failures: the failing path/errno came from the probe, so surface them.
   'manifest-unreadable': fixPermissions,
   // SMI-6531 6b-i (design Q8, PLAN:2261): `doctor recovery --park` is the remedy.
-  'recovery-record-unreadable': doctorRecovery('park'),
+  'recovery-record-unreadable': unreadableRecord,
   'probe-failed': fixPermissions,
   unreadable: fixPermissions,
 
@@ -437,7 +445,7 @@ const RESULT_REMEDIATION: Record<UpdateResultCode, RemediationBuilder> = {
   // action here); an unreadable record is parked (`--park`); a conflict is
   // `--undo` (`--apply` refuses it); an ambiguous opId needs `--root`.
   'recovery-pending': doctorRecovery(),
-  'recovery-record-unreadable': doctorRecovery('park'),
+  'recovery-record-unreadable': unreadableRecord,
   'recovery-conflict': doctorRecovery('undo'),
   'recovery-ambiguous': (c) => ({
     kind: 'doctor',

@@ -19,14 +19,18 @@ All notable changes to `@skillsmith/core` are documented here.
   (the gate) or `stopped/guard-unreadable` (the park's own walk) with nothing moved. O1's reader
   (`skill-recovery.attribution.ts`) validates an operation folder's attribution all or nothing
   and otherwise uses the client `none` layout, which supplies `--park`'s client and parked-index
-  path. `--abandon` and `--clean-staging` are planned and listed but refused before the prompt
-  ("not performed by this version yet").
+  path. A folder entry whose own `lstat` failed is refused the same way, naming it. A `--park`
+  that stops reports whether the folder is still where it was (`opDir.stillThere`) instead of
+  saying the record is gone. `--abandon` and `--clean-staging` are planned and listed; where
+  the plan would offer them, `planRecovery` refuses them before the prompt ("not performed by
+  this version yet"), and elsewhere the plan's own reason is the refusal.
 
 - **Changed**: SMI-6531 -- A1 step 6b-i: the write path's refusal for a record this user may
   not open (`EACCES`/`EPERM`) now says it is another user's update and to run
   `skillsmith doctor recovery` as that user, instead of naming `--park`, which doctor refuses
-  there. `remediationFor` maps `recovery-record-unreadable` to `doctor recovery` with action
-  `park` (was `fix-permissions`), `recovery-conflict` to action `undo`, and
+  there; when several kinds of record block the root, each is named. `remediationFor` maps
+  `recovery-record-unreadable` to `doctor recovery` with action `park` (was `fix-permissions`),
+  or with no action for an `EACCES`/`EPERM` errno (another user's update), `recovery-conflict` to action `undo`, and
   `recovery-ambiguous` to `doctor recovery` with `pickRoot` (`--root`); the `'quarantine'`
   action literal is renamed `'park'`.
 

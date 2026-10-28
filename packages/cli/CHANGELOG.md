@@ -12,7 +12,8 @@ All notable changes to `@skillsmith/cli` are documented here.
   itself failed, the folder belongs to this user, and every file in it can be read for the
   guard hash; otherwise it refuses with nothing changed, naming the failure, its path and errno,
   and saying to fix the device or move the folder aside by hand. A park that does not finish
-  (kept, stopped or held) reports `removal-not-done` and exits 4. The listing now names
+  (kept, stopped or held) reports `removal-not-done` and exits 4; a run that stops says whether
+  anything was moved and where the folder is. The listing now names
   `--park` without "not available yet" (`--abandon` and `--clean-staging` keep it) and shows an
   unreadable record's entries and guard hash. `--abandon` and `--clean-staging` are not options
   yet.

@@ -16,7 +16,8 @@
  *    `ok`. Otherwise it refuses with zero mutation, naming the walk's failure,
  *    its path and errno, and saying to fix the device or move the op dir out
  *    of `.skillsmith-staging/` by hand (O2's shape). There is no unverified
- *    park.
+ *    park. An entry whose own `lstat` failed is refused the same way, naming
+ *    it and its errno: the park binds every entry's identity (UD40).
  *
  * `--abandon` and `--clean-staging` keep 6a's words here until 6b-ii and
  * 6b-iii; `planRecovery` does not perform them yet (`PERFORMED`).
@@ -69,7 +70,7 @@ export const PERFORMED: ReadonlySet<RecoveryAction> = new Set<RecoveryAction>([
 type Unreadable = Extract<RecoveryClass, { kind: 'unreadable' }>
 
 /** The park guard's own words for a walk failure (`treeHashOf` reports `unsupported-entry`/`unreadable`). */
-const GUARD_WORD: Record<string, string> = {
+export const GUARD_WORD: Readonly<Record<string, string>> = {
   'unsupported-entry': 'guard-unsupported-type',
   unreadable: 'guard-unreadable',
 }
@@ -102,6 +103,16 @@ export function parkPlan(cls: Unreadable): ActionPlan {
       'recovery-not-offered',
       `the op dir cannot be guarded: its guard walk failed (${GUARD_WORD[h.reason] ?? h.reason}) at ` +
         `${h.path}${h.errno === null ? '' : ` (${h.errno})`}, so it is not set aside unverified; ${AT_HAND}`
+    )
+  }
+  // The park binds every entry's identity (UD40): one whose lstat failed cannot be bound.
+  const unbound = o.entries.find((e) => !e.stat.ok)
+  if (unbound !== undefined && !unbound.stat.ok) {
+    return refuse(
+      'park',
+      'recovery-not-offered',
+      `the op dir cannot be guarded: ${path.join(cls.opDir, unbound.name)} could not be inspected ` +
+        `(${unbound.stat.errno}), so it is not set aside unverified; ${AT_HAND}`
     )
   }
   const ST = path.dirname(cls.opDir)

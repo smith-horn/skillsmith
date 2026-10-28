@@ -87,7 +87,7 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
         : []),
       ...(movedIds.length > 0
         ? [
-            parkIds.length > 0
+            parkIds.length + deniedIds.length > 0
               ? `Run \`${DOCTOR_RECOVERY}\` for ${movedIds.join(', ')}.`
               : `Run \`${DOCTOR_RECOVERY}\`.`,
           ]

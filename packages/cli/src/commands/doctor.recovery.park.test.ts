@@ -8,6 +8,7 @@
  * that no lock was taken (`executeRecovery`, the only caller of lock 1 here,
  * was not called), beside a positive that proves the same setup acts.
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -30,6 +31,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
 import { withSkillWriteLock } from '@skillsmith/core'
 import { createDoctorCommand } from './doctor.js'
 import { runRecoveryAction } from './doctor.recovery.action.js'
+import { runDoctorRecovery } from './doctor.recovery.js'
 import type { PromptAnswer } from './doctor.recovery.action.js'
 import { hermeticDiscovery, plantCrashedUpdate } from './doctor.test-helpers.js'
 import type { PlantedUpdate } from './doctor.test-helpers.js'
@@ -263,6 +265,69 @@ describe('T-X17 (doctor-park row): a park that does not finish is removal-not-do
     await runRecoveryAction({ park: u.opId, yes: true })
     expect(process.exitCode).toBeUndefined()
     expect(out.join('\n')).not.toContain('removal-not-done')
+  })
+})
+
+describe('a --park that stops says truthfully where the op dir is', () => {
+  it('a stop before the park (beforePark throws): exit 1, "nothing was moved", the op dir named, never "record is gone"', async () => {
+    const u = plantUnreadable()
+    await runRecoveryAction({
+      park: u.opId,
+      yes: true,
+      runOptions: {
+        swap: {
+          hooks: {
+            beforePark: () => {
+              throw new Error('killed before the park')
+            },
+          },
+        },
+      },
+    })
+    expect(process.exitCode).toBe(1)
+    const text = out.join('\n')
+    expect(text).toContain('Stopped (')
+    expect(text).toContain(`nothing was moved; the op dir is still at ${u.opDir}`)
+    expect(text).not.toContain('record is gone')
+    expect(fs.existsSync(path.join(u.opDir, 'record.json'))).toBe(true)
+  })
+
+  it('a stop after the rename (afterPark throws): exit 1, the op dir is no longer there, never "nothing was moved"', async () => {
+    const u = plantUnreadable()
+    await runRecoveryAction({
+      park: u.opId,
+      yes: true,
+      runOptions: {
+        swap: {
+          hooks: {
+            afterPark: () => {
+              throw new Error('killed after the park')
+            },
+          },
+        },
+      },
+    })
+    expect(process.exitCode).toBe(1)
+    const text = out.join('\n')
+    expect(text).toContain(`the op dir is no longer at ${u.opDir}`)
+    expect(text).not.toContain('nothing was moved')
+    expect(text).not.toContain('record is gone')
+    expect(fs.existsSync(u.opDir)).toBe(false)
+  })
+})
+
+describe("the listing names a guard failure in the guard walk's own word", () => {
+  it('a FIFO at record.json lists "guard-unsupported-type", not the hash function\'s word', async () => {
+    const u = plantCrashedUpdate(base)
+    const rec = path.join(u.opDir, 'record.json')
+    fs.rmSync(rec)
+    execFileSync('mkfifo', [rec])
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(`guard walk failed: guard-unsupported-type at ${rec}`)
+    expect(text).not.toContain('unsupported-entry')
+    // The --park refusal beside it uses the same word.
+    expect(text).toContain('--park: not offered (recovery-not-offered)')
   })
 })
 

@@ -110,6 +110,13 @@ export interface RecoveryStopped {
   detail: string
   recordPath: string | null
   warnings: SwapWarning[]
+  /**
+   * `--park` (6b-i): whether the op dir is still at its origin with the
+   * identity the re-plan saw, observed after the stop. `stillThere` means
+   * nothing was moved; false means it is gone from there (a stop after the
+   * park's rename), and the same command reports where it was set aside.
+   */
+  opDir?: { path: string; stillThere: boolean }
 }
 
 export type RecoveryRunResult = RecoveryRefusal | RecoveryDone | RecoveryStopped

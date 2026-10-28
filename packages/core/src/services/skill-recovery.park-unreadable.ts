@@ -57,7 +57,7 @@ const refusingPort: ManifestPort = {
 }
 
 /** The state the park of an unreadable record's op dir needs (see the module comment). */
-export function parkState(
+function parkState(
   ctx: SkillWriteContext,
   cls: Unreadable,
   attribution: Attribution,
@@ -135,10 +135,13 @@ export interface UnreadableParkResult {
   st: SwapState
   /** Where OP was parked; null when the park did not finish (a `removal-not-done` warning says why). */
   parkedPath: string | null
-  attribution: Attribution
 }
 
-/** `--park` under lock 1, after the re-plan matched. Throws only a stop before the park. */
+/**
+ * `--park` under lock 1, after the re-plan matched. Throws a stop, or a hook's
+ * throw, which can come after the park's rename: the caller observes whether
+ * OP is still at its origin (`skill-recovery.exec.ts`, `parkStopped`).
+ */
 export async function parkUnreadable(
   ctx: SkillWriteContext,
   cls: Unreadable,
@@ -157,7 +160,7 @@ export async function parkUnreadable(
     expected,
     indexPath: parkIndexOf(attribution),
   })
-  if (o.status === 'parked') return { st, parkedPath: o.parkedPath, attribution }
+  if (o.status === 'parked') return { st, parkedPath: o.parkedPath }
   st.warnings.push({ code: 'removal-not-done', path: cls.opDir, ...o.notDone })
-  return { st, parkedPath: null, attribution }
+  return { st, parkedPath: null }
 }

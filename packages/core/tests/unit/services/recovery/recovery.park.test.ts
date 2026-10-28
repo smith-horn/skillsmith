@@ -13,6 +13,22 @@ import { execFileSync } from 'node:child_process'
 import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+/** Every request for lock 1 (`withSkillWriteLock`), counted through a pass-through mock. */
+const locks = vi.hoisted(() => ({ n: 0 }))
+vi.mock('../../../../src/services/skill-write-lock.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../../src/services/skill-write-lock.js')>()
+  return {
+    ...actual,
+    withSkillWriteLock: (...a: Parameters<typeof actual.withSkillWriteLock>) => {
+      locks.n++
+      return actual.withSkillWriteLock(...a)
+    },
+  }
+})
+
+import type { StatFact } from '../../../../src/services/skill-recovery.types.js'
 import { executeRecovery } from '../../../../src/services/skill-recovery.exec.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import { refusedOf } from '../skill-swap.abort.helpers.js'
@@ -186,22 +202,46 @@ describe('C3: an op dir whose own listing fails is not offered --park', () => {
 })
 
 describe('bf-1k0 Major 1 case a: an op dir the guard walk cannot read is refused at plan time', () => {
-  it('a persistent EIO on record.json refuses, naming EIO and its path; nothing changes, no probe, no lock', async () => {
+  it('a persistent EIO on record.json refuses, naming EIO and its path; nothing changes, no probe, lock 1 never taken', async () => {
     const st = await corrupt()
     const rec = path.join(st.opDir, 'record.json')
     const before = contentSnapshot(st.fx.skillsDir, st.fx.stateRoot)
     persistentEio(rec)
-    const r = await planRecovery(requestOf(st, 'park'))
+    locks.n = 0
+    // `act` runs the action whenever the plan is offered, so lock 1 is reached exactly then.
+    const a = await act(st, 'park')
+    const refusedLocks = locks.n
     vi.restoreAllMocks()
     syncBuiltinESMExports()
-    expect(r).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
-    const detail = r.status === 'refused' ? r.detail : ''
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+    const detail = a.result.status === 'refused' ? a.result.detail : ''
     for (const word of ['EIO', rec, 'guard-unreadable', 'by hand']) expect(detail).toContain(word)
-    // Refused at plan time: no lock is ever requested (executeRecovery is never reached).
-    expect(r.status).not.toBe('planned')
+    expect(refusedLocks).toBe(0)
     expect(contentSnapshot(st.fx.skillsDir, st.fx.stateRoot)).toBe(before)
     expect(probesIn(st.fx.staging)).toEqual([])
-    // The control: without the EIO the same op dir is offered.
+    // The control: without the EIO the same op dir is offered, and running it takes lock 1.
+    locks.n = 0
+    const ok = await act(st, 'park')
+    expect(ok.result.status).toBe('done')
+    expect(locks.n).toBe(1)
+  })
+
+  it('an entry whose own lstat fails is refused at plan time naming it and its errno; unmasked, it is offered', async () => {
+    const st = await corrupt()
+    const old = path.join(st.opDir, 'old')
+    const reader = {
+      statOverride: (p: string, real: StatFact): StatFact =>
+        p === old ? { ok: false, errno: 'EIO' } : real,
+    }
+    const before = contentSnapshot(st.fx.skillsDir, st.fx.stateRoot)
+    locks.n = 0
+    const a = await act(st, 'park', { reader })
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+    expect(a.result.status === 'refused' ? a.result.detail : '').toContain(
+      `${old} could not be inspected (EIO)`
+    )
+    expect(locks.n).toBe(0)
+    expect(contentSnapshot(st.fx.skillsDir, st.fx.stateRoot)).toBe(before)
     expect((await planRecovery(requestOf(st, 'park'))).status).toBe('planned')
   })
 
@@ -249,6 +289,35 @@ describe("Q7 (C9): the write path's advice for a record this user may not open",
     expect(denied.detail).toContain(`${OP_ID} is another user's update`)
     expect(denied.detail).toContain('run `skillsmith doctor recovery` as that user')
     expect(denied.detail).not.toContain('--park')
+  })
+})
+
+describe('the write path names every kind of blocking record', () => {
+  it('a denied record and a moved one, with none to park: both are named, the moved one by id', async () => {
+    const fx = file()
+    const other = otherSkill(fx, 'other-skill', { 'SKILL.md': '# other\n' })
+    const st = await s2(fx)
+    // A verified record copied into another op dir is `foreign-op-dir`: moved.
+    const moved = opIdN('9')
+    fs.mkdirSync(path.join(fx.staging, moved))
+    fs.copyFileSync(path.join(st.opDir, 'record.json'), path.join(fx.staging, moved, 'record.json'))
+    const rec = path.join(st.opDir, 'record.json')
+    const promises = fs.promises
+    const realOpen = promises.open.bind(promises)
+    vi.spyOn(promises, 'open').mockImplementation((async (p: fs.PathLike, ...rest: unknown[]) => {
+      if (String(p) === rec) {
+        throw Object.assign(new Error(`EACCES: permission denied, open '${rec}'`), {
+          code: 'EACCES',
+        })
+      }
+      return (realOpen as (...a: unknown[]) => Promise<fs.promises.FileHandle>)(p, ...rest)
+    }) as typeof promises.open)
+    syncBuiltinESMExports()
+    const r = refusedOf((await attempt(other, opIdN('d'))).result)
+    expect(r.reason).toBe('recovery-record-unreadable')
+    expect(r.detail).toContain(`${OP_ID} is another user's update`)
+    expect(r.detail).toContain(`Run \`skillsmith doctor recovery\` for ${moved}.`)
+    expect(r.detail).not.toContain('--park')
   })
 })
 

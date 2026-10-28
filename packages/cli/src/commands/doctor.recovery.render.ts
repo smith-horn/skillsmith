@@ -17,6 +17,7 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
+import { GUARD_WORD } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
@@ -32,7 +33,7 @@ function observedLines(cls: Extract<RecoveryClass, { kind: 'unreadable' }>): str
     `    entries: ${o.entries.map((e) => `${e.name} (${e.stat.ok ? e.stat.type : e.stat.errno})`).join(', ')}`,
     h.ok
       ? `    guard hash: ${short(h.hash)} (${h.bytes} bytes of files)`
-      : `    guard walk failed: ${h.reason} at ${h.path}${h.errno === null ? '' : ` (${h.errno})`}`,
+      : `    guard walk failed: ${GUARD_WORD[h.reason] ?? h.reason} at ${h.path}${h.errno === null ? '' : ` (${h.errno})`}`,
   ]
 }
 

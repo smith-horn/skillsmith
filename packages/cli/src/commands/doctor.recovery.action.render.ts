@@ -75,6 +75,15 @@ export function resultLines(r: RecoveryRunResult): string[] {
   if (r.status === 'refused')
     return [`Not done (${r.reason}): ${r.detail}`, ...r.paths.map((p) => `  ${p}`)]
   if (r.status === 'stopped') {
+    // `--park` (6b-i): say what is true of the op dir, not of a record it never removes.
+    if (r.opDir !== undefined) {
+      return [
+        `Stopped (${r.reason}): ${r.detail}`,
+        r.opDir.stillThere
+          ? `  nothing was moved; the op dir is still at ${r.opDir.path}; run the same command again`
+          : `  the op dir is no longer at ${r.opDir.path}; run the same command again to see where it was set aside`,
+      ]
+    }
     return [
       `Stopped (${r.reason}): ${r.detail}`,
       r.recordPath === null

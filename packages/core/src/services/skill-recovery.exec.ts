@@ -10,7 +10,12 @@
  *     Any difference is `plan-changed` with zero mutation;
  *  3. dispatches:
  *     - an empty target op dir, for any action: one `rmdir` (PLAN:1279);
- *     - `--park`: `parkUnreadable` (`skill-recovery.park-unreadable.ts`);
+ *     - `--park`: `parkUnreadable` (`skill-recovery.park-unreadable.ts`); a
+ *       stop reports whether OP is still at its origin (`parkStopped`);
+ *     - `--abandon` and `--clean-staging` on a non-empty op dir: refused
+ *       "not performed by this version yet" with zero mutation (a backstop:
+ *       `planRecovery` already refuses them before the prompt, until 6b-ii
+ *       and 6b-iii);
  *     - `--apply` / `--undo` of a no-record op dir whose intent verifies:
  *       `finishFromIntent` (6a-iii);
  *     - `--apply` / `--undo` of a §3.3 row: `runRecorded`
@@ -23,6 +28,8 @@
  *
  * @module @skillsmith/core/services/skill-recovery.exec
  */
+import fs from 'node:fs'
+import path from 'node:path'
 import { getJournalFilePath } from '../journal/path.js'
 import { classifyOp } from './skill-recovery.classify.js'
 import type { ClassifyContext } from './skill-recovery.classify.js'
@@ -41,6 +48,8 @@ import type {
 } from './skill-recovery.run.types.js'
 import { rethrowLockOrder } from './skill-swap.ops.js'
 import { describe } from './skill-swap.abort.js'
+import { RECORD_FILE } from './skill-swap.types.js'
+import type { RecoveryClass } from './skill-recovery.types.js'
 import { bindSkillsRootReadOnly, withSkillWriteLock } from './skill-write-lock.js'
 import type { SkillWriteContext } from './skill-write-lock.types.js'
 
@@ -82,6 +91,40 @@ function stoppedOf(opId: string, err: unknown): RecoveryRunResult {
   rethrowLockOrder(err)
   const d = describe(err)
   return { status: 'stopped', opId, ...d, recordPath: null, warnings: [] }
+}
+
+/**
+ * A `--park` that stopped: whether OP is still at its origin with the identity
+ * the re-plan saw is observed now, so the result says truthfully whether
+ * anything moved (a stop before the rename leaves `record.json` in OP).
+ */
+function parkStopped(
+  opId: string,
+  err: unknown,
+  cls: Extract<RecoveryClass, { kind: 'unreadable' }>
+): RecoveryRunResult {
+  rethrowLockOrder(err)
+  const d = describe(err)
+  const seen = cls.observed?.identity ?? null
+  let stillThere = false
+  try {
+    const s = fs.lstatSync(cls.opDir, { bigint: true })
+    stillThere =
+      s.isDirectory() &&
+      seen !== null &&
+      s.dev.toString() === seen.dev &&
+      s.ino.toString() === seen.ino
+  } catch {
+    stillThere = false
+  }
+  return {
+    status: 'stopped',
+    opId,
+    ...d,
+    recordPath: stillThere ? path.join(cls.opDir, RECORD_FILE) : null,
+    warnings: [],
+    opDir: { path: cls.opDir, stillThere },
+  }
 }
 
 async function underLock(
@@ -138,7 +181,7 @@ async function underLock(
         out.kept.push({ tree: 'OP', kind: 'unreadable-record', path: r.parkedPath })
       }
     } catch (err) {
-      return stoppedOf(req.opId, err)
+      return parkStopped(req.opId, err, cls)
     }
     out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
     return out
