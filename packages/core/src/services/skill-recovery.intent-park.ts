@@ -5,8 +5,11 @@
  * dir's park"; design `step6b-design.md` § 1.2 case (a)).
  *
  * Two intents, two callers:
- *  - **`move-source`**, the state a cross-device finish leaves when it is
- *    killed after it unlinked `record.json`: `--apply` and `--undo` finish it
+ *  - **`move-source`**, the state a cross-device finish leaves once it has
+ *    written its intent, then is killed: an update after it unlinked
+ *    `record.json`, or doctor's own cross-device `--apply`/`--undo` (each
+ *    unlinks `record.json` after the intent) or `--clean-staging` (which
+ *    never had a record): `--apply` and `--undo` finish it
  *    (6a-iii), and so does `--clean-staging` (6b-ii). The intent's
  *    `backupPath` must be this root's backup area plus `<opId>` or
  *    `<opId>.<kind>[.<k>]` (`intentTarget`), in a state root doctor
@@ -46,7 +49,7 @@ import {
   parkIndexOf,
   routeRootOf,
 } from './skill-recovery.attribution.js'
-import { check, hook, SwapFault, syncDir } from './skill-swap.ops.js'
+import { processOwnerNow, check, hook, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
 import type { ParkOpOutcome } from './skill-swap.park-op.js'
@@ -158,6 +161,7 @@ function intentState(
             i.sources.map((s) => [s.name, { identity: boundOf(s.identity), dest: r.backupPath! }])
           ),
     owner: null,
+    self: processOwnerNow(),
     newIdentity: null,
     postTree: null,
     postRecord: null,

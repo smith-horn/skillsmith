@@ -16,7 +16,9 @@
  *
  * 6a-iii: `analyzeParkIntent` judges a `park-intent.json` (and its temp) found
  * beside a record, which a cross-device finish that stopped leaves behind;
- * `noRecordIntent` judges one in an op dir whose record is already gone, which
+ * `noRecordIntent` judges one in an op dir with no record (an update that
+ * removed it, or doctor's own cross-device `--apply`/`--undo`, which unlink
+ * `record.json` after the intent, or `--clean-staging`, which never had one), which
  * `--apply`/`--undo` then finish by parking the op dir as the intent says.
  *
  * All reads go through the reader. This module has no `fs`.
@@ -29,7 +31,7 @@ import type { ClassifierReader } from './skill-recovery.reader.js'
 import type { FileType, NoRecordIntent, OpFacts } from './skill-recovery.types.js'
 import { KIND_ROLE } from './skill-recovery.pstate.js'
 import { backupAreaPath, rootKeyOf } from './skill-swap.area.js'
-import { isParkIntentFor } from './skill-swap.intent-schema.js'
+import { INTENT_CAP, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
 import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 
@@ -73,20 +75,17 @@ export function listStaging(r: ClassifierReader, stagingDir: string): StagingVie
   return { ok: true, opIds, probes }
 }
 
-const INTENT_CAP = 4096
+/** The reader's value of an intent file: its JSON, or null (unreadable, at the cap, not JSON). */
+function readIntent(r: ClassifierReader, p: string): unknown {
+  const read = r.readFile(p, INTENT_CAP)
+  return read.fact.ok ? intentValueOf(read.bytes) : null
+}
 
 /** One read of an intent file: whether it is this op's `move-source` intent, and whether it is empty. */
 function intentFile(r: ClassifierReader, p: string, rec: SwapRecord) {
   const read = r.readFile(p, INTENT_CAP)
   const st = r.stat(p)
-  let value: unknown = null
-  if (read.bytes !== null && read.fact.ok && !read.fact.truncated) {
-    try {
-      value = JSON.parse(read.bytes.toString('utf8'))
-    } catch {
-      value = null
-    }
-  }
+  const value = read.fact.ok ? intentValueOf(read.bytes) : null
   const valid =
     isParkIntentFor(value, rec.opId, rec.opDirIdentity) &&
     (value as { kind: string }).kind === 'move-source'
@@ -139,13 +138,18 @@ function isKeptName(name: string, opId: string): boolean {
  * (or `<opId>.<kind>`, a kept copy of another kind) exactly (`backupAreaPath`), or
  * no target is derived.
  */
-function intentTarget(backupPath: string, root: string, opId: string): NoRecordIntent['target'] {
+export function intentTarget(
+  backupPath: string,
+  root: string,
+  opId: string
+): NoRecordIntent['target'] {
   const parts = backupPath.split('/')
   const [id, dirName, key, client, update, backups] = parts.slice(-6).reverse()
   if (id === undefined || !isKeptName(id, opId)) return null
   if (update !== 'update' || backups !== 'backups' || key !== rootKeyOf(root)) return null
   if (!oneComponent(client) || !oneComponent(dirName)) return null
-  const stateRoot = parts.slice(0, -6).join('/')
+  // The six components above leave the state root; `/` itself leaves only the empty first part.
+  const stateRoot = parts.length === 7 ? '/' : parts.slice(0, -6).join('/')
   if (!stateRoot.startsWith('/')) return null
   const area = backupAreaPath(stateRoot, client, root, dirName)
   return path.join(area, id) === backupPath ? { stateRoot, client, dirName } : null
@@ -171,15 +175,7 @@ export function noRecordIntent(
 ): NoRecordIntent | null {
   if (!a.names.includes(PARK_INTENT_FILE)) return null
   const p = path.join(a.opDir, PARK_INTENT_FILE)
-  const read = r.readFile(p, INTENT_CAP)
-  let value: unknown = null
-  if (read.bytes !== null && read.fact.ok && !read.fact.truncated) {
-    try {
-      value = JSON.parse(read.bytes.toString('utf8'))
-    } catch {
-      value = null
-    }
-  }
+  const value = readIntent(r, p)
   const valid = isParkIntentFor(value, a.opId, a.opIdentity)
   const v = (valid ? value : {}) as { kind?: string; backupPath?: string; owner?: { uid: number } }
   const backupPath = v.backupPath ?? null
@@ -214,6 +210,6 @@ export function noRecordIntent(
     target,
     sources,
     blocked,
-    raw: valid ? (value as Record<string, unknown>) : null,
+    raw: valid ? (value as unknown as Record<string, unknown>) : null,
   }
 }

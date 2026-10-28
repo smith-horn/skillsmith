@@ -19,9 +19,9 @@
  * Refused whatever the flag: an entry doctor cannot prove it wrote (O2: named,
  * with "move it out by hand and run the command again"), an intent whose park
  * cannot be finished, a keep in the area that cannot be acted on, and no
- * state root to keep into. The owner verdict is in every one of these plans'
- * words, so the serialized plan (and so the re-plan digest) changes when it
- * does: a pid that dies between the plan and the lock is `plan-changed`.
+ * state root to keep into. The owner verdict is in every offered plan and in
+ * the owner refusal, so the serialized plan (and so the re-plan digest)
+ * changes when it does: a pid that dies between the plan and the lock is `plan-changed`.
  *
  * Pure, like the rest of the table: no row removes a tree (UD13).
  *
@@ -30,7 +30,13 @@
 import path from 'node:path'
 import { parkClientOf, parkIndexOf } from './skill-recovery.attribution.js'
 import type { Attribution } from './skill-recovery.attribution.js'
-import { kept, offer, refuse, step } from './skill-recovery.plan.actions.js'
+import {
+  kept,
+  MOVE_SOURCE_NO_RECORD_ORIGIN,
+  offer,
+  refuse,
+  step,
+} from './skill-recovery.plan.actions.js'
 import type {
   ActionPlan,
   NoRecordIntent,
@@ -38,7 +44,7 @@ import type {
   RecoveryAction,
   RecoveryClass,
 } from './skill-recovery.types.js'
-import { OWNER_FILE } from './skill-swap.types.js'
+import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
 
 type NoRecord = Extract<RecoveryClass, { kind: 'no-record' }>
 
@@ -78,7 +84,9 @@ function ownerNotes(cls: NoRecord, unsafe: boolean): string[] {
 const roleOf = (name: string): PlanStep['tree'] =>
   name === 'old' ? 'O' : name === 'new' ? 'N' : 'U'
 
-/** (a): finish the intent's park. */
+const SYNC_OP = 'sync the op dir'
+
+/** (a): finish the intent's park, in `finishFromIntent`'s order (its op-dir sync only after an unlink). */
 function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPlan {
   const c = cls.clean
   const kind = i.kind === 'abort-new' ? 'abort-new' : 'move-source'
@@ -97,13 +105,14 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
     [
       ...c.temps.map((t) => `unlink the metadata temp ${t}`),
       ...(owner ? ['unlink owner.json'] : []),
+      ...(owner || c.temps.length > 0 ? [SYNC_OP] : []),
       `park the op dir (kind ${kind}), checked against a fresh hash of its contents`,
     ],
     [
       kind === 'abort-new'
         ? `the update that made it aborted and was setting it aside (park-intent.json, kind abort-new); ` +
           `it is parked as client ${parkClientOf(c.attribution)}, ${index === null ? 'with no parked-index line' : `indexed in ${index}`}`
-        : `the record is gone; the intent records the verified copy's path as ${i.backupPath}`,
+        : `there is no record (${MOVE_SOURCE_NO_RECORD_ORIGIN}); the intent records the verified copy's path as ${i.backupPath}`,
       ...(kind === 'abort-new' ? [routeWords(c.attribution)] : []),
       ...(owner ? ownerNotes(cls, unsafe) : [`owner ${c.verdict}: ${c.verdictWhy}`]),
       UNTOUCHED_NOTE,
@@ -111,28 +120,54 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
   )
 }
 
+const tempLine = (t: string): string => `unlink the metadata temp ${t}`
+const isIntentTemp = (t: string): boolean => path.basename(t) === `${PARK_INTENT_FILE}.tmp`
+
 /**
- * How the op dir is finished. Only a `new/` that is still to be kept can cross
- * devices, and whether it does is decided when the copy runs (its rename fails
- * `EXDEV`), not by anything the plan reads, so the plan states both finishes:
- * a plan that named one would be wrong for the other, and a text that changed
- * with the device would be `plan-changed` at lock 1.
+ * What `finishNoRecord` does after the keep, in its order, every sync included:
+ * the temps, a sync of the op dir (made even when there are no temps), then
+ * `owner.json` and a sync of the op dir (only when the op dir holds it), the
+ * `rmdir` and a sync of the staging dir.
  */
-function finishWords(n: NoRecord['clean']['n']['kind']): string {
-  const oneDevice = 'unlink owner.json last, then rmdir the op dir and sync the staging dir'
-  if (n !== 'source') return oneDevice
-  return (
-    `then finish the op dir by whichever way new/'s copy decides: on one device, ${oneDevice}; ` +
-    'if the copy crosses devices (the verified new/ stays in the op dir), unlink a park-intent.json.tmp ' +
-    'of this op first, write park-intent.json (kind move-source) durably, unlink the other temps and ' +
-    'then owner.json last, sync the op dir, and park the op dir whole with new/ and the intent: no rmdir'
-  )
+function oneDeviceSteps(temps: readonly string[], owner: boolean): string[] {
+  return [
+    ...temps.map(tempLine),
+    SYNC_OP,
+    ...(owner ? ['unlink owner.json', SYNC_OP] : []),
+    'rmdir the emptied op dir',
+    'sync the staging dir',
+  ]
 }
 
-/** (b): keep `new/`, then the metadata, `owner.json` last. */
+/**
+ * What `finishAcross` does after the keep, in its order, every sync included: a
+ * `park-intent.json.tmp` of this op and a sync of the op dir (only when there
+ * is one), the intent, the other temps, `owner.json` (only when the op dir
+ * holds it), a sync of the op dir, then the park of the op dir whole.
+ */
+function acrossSteps(temps: readonly string[], owner: boolean): string[] {
+  const intentTemps = temps.filter(isIntentTemp)
+  return [
+    ...intentTemps.flatMap((t) => [tempLine(t), SYNC_OP]),
+    'write park-intent.json (kind move-source) durably',
+    ...temps.filter((t) => !isIntentTemp(t)).map(tempLine),
+    ...(owner ? ['unlink owner.json'] : []),
+    SYNC_OP,
+    'park the op dir whole with the verified new/ and the intent (no rmdir)',
+  ]
+}
+
+/**
+ * (b): keep `new/`, then the metadata. Only a `new/` still to be kept can cross
+ * devices, and whether it does is decided when the copy runs (its rename fails
+ * `EXDEV`), not by anything the plan reads. So for a source the plan states
+ * both finishes, each in the order its executor takes: a text that changed
+ * with the device would be `plan-changed` at lock 1.
+ */
 function keepPlan(cls: NoRecord, area: string, unsafe: boolean): ActionPlan {
   const c = cls.clean
   const n = c.n
+  const owner = cls.entries.includes(OWNER_FILE)
   const steps: PlanStep[] = []
   const remaining: string[] = []
   if (n.kind === 'source') {
@@ -151,7 +186,14 @@ function keepPlan(cls: NoRecord, area: string, unsafe: boolean): ActionPlan {
   } else if (n.kind === 'kept') {
     steps.push(step('N', kept(n.keep.kind), `already kept at ${n.keep.destPath}`))
   }
-  remaining.push(...c.temps.map((t) => `unlink the metadata temp ${t}`), finishWords(n.kind))
+  if (n.kind === 'source') {
+    remaining.push(
+      `on one device: ${oneDeviceSteps(c.temps, owner).join(', then ')}`,
+      `if the copy crosses devices: ${acrossSteps(c.temps, owner).join(', then ')}`
+    )
+  } else {
+    remaining.push(...oneDeviceSteps(c.temps, owner))
+  }
   return offer('clean-staging', steps, 'untouched', remaining, [
     `kept into ${area}; ${routeWords(c.attribution)}`,
     ...(n.kind === 'source'

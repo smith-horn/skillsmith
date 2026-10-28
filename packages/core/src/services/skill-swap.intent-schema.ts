@@ -11,6 +11,26 @@ import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.ty
 
 const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-source'])
 
+/**
+ * The reader's byte cap for `park-intent.json` and its temp: a read that fills
+ * the cap may be cut off, so it is not parsed. The one constant both the
+ * classifier's reads and the writer's round trip use.
+ */
+export const INTENT_CAP = 4096
+
+/**
+ * What the reader makes of an intent file's bytes, read with `INTENT_CAP`: the
+ * parsed JSON, or null when the read reached the cap or the bytes are not JSON.
+ */
+export function intentValueOf(bytes: Buffer | null): unknown {
+  if (bytes === null || bytes.length >= INTENT_CAP) return null
+  try {
+    return JSON.parse(bytes.toString('utf8')) as unknown
+  } catch {
+    return null
+  }
+}
+
 const DECIMAL = /^(0|[1-9][0-9]*)$/
 const ABORT_KEYS = 'kind,opId,opIdentity,owner,schema'
 /** Schema 2 (6b-ii, O1): an `abort-new` intent that also carries the attribution's five strings. */
@@ -46,6 +66,23 @@ function isRecordIdentity(v: unknown): v is RecordIdentity {
 }
 
 /**
+ * True when `value` is an owner a park intent may carry: exactly `host`, `pid`
+ * and `uid`, a string host and integer pid and uid. Part of `isParkIntentFor`.
+ * Passing it does not make an intent readable: a long `host` can still push the
+ * intent past `INTENT_CAP`. What a writer may write is decided only by the
+ * round trip (`readableIntentBytes`, `skill-swap.intent.ts`), which runs this
+ * check and the cap on the exact bytes.
+ */
+export function isIntentOwner(value: unknown): value is ParkIntent['owner'] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const owner = value as Record<string, unknown>
+  if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false
+  return (
+    Number.isInteger(owner.pid) && typeof owner.host === 'string' && Number.isInteger(owner.uid)
+  )
+}
+
+/**
  * True when `value` is a park intent for `opId` with `opIdentity` (the
  * acceptance doctor's `--clean-staging` applies, step 6). Exact keys, exact
  * types, and a kind of `abort-new` or `move-source` (the park doctor then
@@ -70,11 +107,7 @@ export function isParkIntentFor(
   if (o.opId !== opId || !KINDS.has(o.kind)) return false
   if (o.kind === 'move-source' && !isBackupPath(o.backupPath)) return false
   if (o.schema === 2 && !hasAttributionStrings(o)) return false
-  const owner = o.owner as Record<string, unknown> | null
-  if (owner === null || typeof owner !== 'object' || Array.isArray(owner)) return false
-  if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false
-  if (!Number.isInteger(owner.pid) || typeof owner.host !== 'string') return false
-  if (!Number.isInteger(owner.uid)) return false
+  if (!isIntentOwner(o.owner)) return false
   if (!isRecordIdentity(o.opIdentity)) return false
   const id = o.opIdentity
   return (

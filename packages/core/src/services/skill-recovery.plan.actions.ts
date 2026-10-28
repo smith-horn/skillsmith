@@ -59,6 +59,18 @@ export const step = (tree: PlanStep['tree'], disposition: Disposition, note: str
   note,
 })
 
+/**
+ * How an op dir with no `record.json` and a verifying `move-source` park intent
+ * came to be: the one wording every place that says it shares (the plan text in
+ * `skill-recovery.plan.ts` and `.plan.clean.ts`, and the CLI's listing), so the
+ * origins cannot be named differently in two places. Three finishes write that
+ * intent and then lose their record: an update after it removed its record,
+ * and doctor's own cross-device `--apply`/`--undo` (which unlinks `record.json`
+ * after the intent) and `--clean-staging` (which never had one).
+ */
+export const MOVE_SOURCE_NO_RECORD_ORIGIN =
+  'a finish that had written its move-source intent (an update after its record was removed, or a cross-device --apply, --undo or --clean-staging by doctor)'
+
 export const FINISH = 'unlink the metadata files, then rmdir the op dir and sync the staging dir'
 
 /** The actions `planRecovery` performs today; the others are planned but refused before the prompt. */

@@ -210,6 +210,12 @@ export interface SwapOptions {
   park?: (parentAbs: string, name: string, options: ParkOptions) => Promise<ParkResult>
   /** Replaces `appendJournalRecord` (step 11). */
   appendJournal?: (input: JournalRecordInput) => Promise<unknown>
+  /**
+   * Skips the park intent's precheck before OP is made, so a suite can leave
+   * the op dir an update before that precheck could have left (doctor's and
+   * abort cleanup's own prechecks are not skipped).
+   */
+  skipIntentPrecheck?: boolean
 }
 
 export type SwapWarning =

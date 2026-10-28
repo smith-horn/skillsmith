@@ -42,7 +42,7 @@ import { parkClientOf, parkIndexOf, resolveAttribution } from './skill-recovery.
 import type { Attribution } from './skill-recovery.attribution.js'
 import { boundOf } from './skill-recovery.state.js'
 import type { RecoveryClass } from './skill-recovery.types.js'
-import { SwapFault } from './skill-swap.ops.js'
+import { processOwnerNow, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { parkOpFromStaging } from './skill-swap.park-op.js'
 import type { ManifestPort, SwapOptions } from './skill-swap.types.js'
@@ -103,6 +103,7 @@ function parkState(
     published: null,
     moveSources: new Map(),
     owner: null,
+    self: processOwnerNow(),
     newIdentity: null,
     postTree: null,
     postRecord: null,

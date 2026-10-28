@@ -27,7 +27,9 @@
  * cleanup, `skill-swap.abort.ts`, which removes nothing: it parks OP with an
  * unchanged staged tree, keeps a changed or partial one, and reports which in
  * `staged`; a step-2 `busy` first waits once more for lock 1, UD16. The
- * refusals before OP exists, `ensureSkillsRoot`'s, `bindSkillsRoot`'s and a
+ * refusals before OP exists, `ensureSkillsRoot`'s, `bindSkillsRoot`'s, the
+ * park intent's precheck (`staging-unsafe`, on any device: an intent this
+ * update could write that the reader would refuse, `intentPrecheck`) and a
  * failed `mkdir` of OP, return `staged: 'none'`; a `createOp` refusal after its
  * `mkdir` runs abort cleanup like any other), `stopped` after rename 1
  * with the record kept, `undone`, or `committed` (with `incomplete` when a step
@@ -66,6 +68,7 @@ import { warnForeignChange } from './skill-swap.sidecar.js'
 import { finishOp } from './skill-swap.finish.js'
 import { abortUnderLock, describe, noneResult } from './skill-swap.abort.js'
 import { abortAfterBusy, abortBeforeLock } from './skill-swap.abort.wait.js'
+import { intentPrecheck } from './skill-swap.intent.js'
 import { buildNewFolder, createOp, writeOwner, writeRecord } from './skill-swap.staging.js'
 import { refuseIfRecorded } from './skill-swap.scan.js'
 import { assertSwapInput, newState } from './skill-swap.state.js'
@@ -331,6 +334,21 @@ export async function swapInPlace(
   for (const w of binding.warnings)
     warnings.push({ code: 'mode', path: binding.stagingDir, detail: w })
   const st = newState(input, options, binding, warnings)
+
+  // Before OP exists, on any device: a park intent this update could write that
+  // the reader would refuse (a state root deep enough to reach its cap) refuses
+  // the update. Whether the backup crosses devices is learned only from `EXDEV`,
+  // after the commit, so this cannot wait for it.
+  const unreadable =
+    options.skipIntentPrecheck === true
+      ? null
+      : (intentPrecheck(st, 'move-source') ?? intentPrecheck(st, 'abort-new'))
+  if (unreadable !== null) {
+    return withHint(
+      noneResult(st, 'staging-unsafe', `${unreadable}; the update was not started`),
+      await stagingHintBeforeLock(binding)
+    )
+  }
 
   try {
     await createOp(st)

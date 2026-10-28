@@ -21,6 +21,7 @@
  * @module @skillsmith/core/services/skill-swap.ops
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { LockOrderError } from '../config/lock-tracker.js'
 import { syncDirectory } from '../install/dir-sync.js'
@@ -95,6 +96,12 @@ export interface SwapState {
   moveSources: Map<string, { identity: BoundIdentity; dest: string }>
   /** What `owner.json` says, once this run published it (the park intent copies it). */
   owner: { pid: number; host: string; uid: number } | null
+  /**
+   * This process as an owner, read once when the state is made
+   * (`processOwnerNow`): `owner.json`, the park intent's precheck and its write
+   * all name this one value, so a host name that changes mid-run cannot split them.
+   */
+  self: { pid: number; host: string; uid: number }
   newIdentity: BoundIdentity | null
   postTree: string | null
   postRecord: TreeRecord | null
@@ -277,3 +284,10 @@ export async function lstatOrNull(p: string): Promise<fs.BigIntStats | null> {
     throw err
   }
 }
+
+/** This process as `owner.json` and a park intent name it; read once per state (`SwapState.self`). */
+export const processOwnerNow = (): { pid: number; host: string; uid: number } => ({
+  pid: process.pid,
+  host: os.hostname(),
+  uid: process.geteuid?.() ?? -1,
+})

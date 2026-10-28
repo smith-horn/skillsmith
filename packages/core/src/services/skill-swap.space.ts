@@ -148,3 +148,14 @@ export async function spaceFirst(st: SwapState, src: string, record: TreeRecord 
     )
   }
 }
+
+/** The device of `p` read at its nearest existing ancestor (an area not made yet sits on its parent's), with that ancestor; null when none reads. */
+export function nearestDevice(p: string): { at: string; dev: bigint } | null {
+  for (let at = p; ; at = path.dirname(at)) {
+    try {
+      return { at, dev: fs.lstatSync(at, { bigint: true }).dev }
+    } catch {
+      if (path.dirname(at) === at) return null
+    }
+  }
+}

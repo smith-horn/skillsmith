@@ -25,13 +25,30 @@
  * the copy's own space check runs, so the user can remove it by hand. Like that
  * check, it is a first-attempt filter.
  *
+ * **The intent block** (`intentBlock`). At the same point, whenever the plan
+ * keeps a tree (whatever the device: a keep may cross devices, and then the
+ * finish writes a park intent; a bind mount of one filesystem shares `st_dev`
+ * yet its rename fails `EXDEV`, so `st_dev` cannot rule that out), the worst
+ * case of that intent is put through the reader's acceptance first
+ * (`intentPrecheck`, `skill-swap.intent.ts`). One the reader would refuse (a
+ * state root so deep the intent reaches `INTENT_CAP`) refuses `staging-unsafe`
+ * with nothing changed, instead of stopping after the keeps at the intent's
+ * write.
+ *
  * @module @skillsmith/core/services/skill-recovery.mark
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { messageOf, renameChecked, SwapFault, syncDir, writeNewFile } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { bytesNeeded, FREE_SPACE_REMEDY, inodesNeeded, shapeOf } from './skill-swap.space.js'
+import { intentPrecheck } from './skill-swap.intent.js'
+import {
+  bytesNeeded,
+  FREE_SPACE_REMEDY,
+  inodesNeeded,
+  nearestDevice,
+  shapeOf,
+} from './skill-swap.space.js'
 import { sealRecord } from './skill-swap.staging.js'
 import type { FullDeviceMarker, SwapRecord } from './skill-swap.types.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
@@ -71,30 +88,23 @@ export async function rewriteMarkerAdopted(
   }
 }
 
-/** The device and the path to `statfs` for `p`: its nearest existing ancestor. */
-function nearest(p: string): { at: string; dev: bigint } | null {
-  for (let at = p; ; at = path.dirname(at)) {
-    try {
-      return { at, dev: fs.lstatSync(at, { bigint: true }).dev }
-    } catch {
-      if (path.dirname(at) === at) return null
-    }
-  }
-}
-
 /**
  * What the space block reads: the roles, and T when the plan keeps it (a
  * no-record op dir, 6b-ii `--clean-staging`, has no T and keeps none).
  */
 type SpaceFacts = Pick<OpFacts, 'roles'> & Partial<Pick<OpFacts, 't' | 'tPath'>>
 
-/** The trees the plan keeps that still need a cross-device copy, by path. */
-function toCopy(st: SwapState, f: SpaceFacts, steps: readonly PlanStep[]): string[] {
-  const out: string[] = []
+/** The trees the plan keeps from a source, by path, each with whether its copy already started (P2-P4). */
+function keptSources(
+  st: SwapState,
+  f: SpaceFacts,
+  steps: readonly PlanStep[]
+): Array<{ src: string; copied: boolean }> {
+  const out: Array<{ src: string; copied: boolean }> = []
   for (const s of steps) {
     if (s.disposition.kind !== 'kept') continue
     if (s.tree === 'T') {
-      if (f.t?.present === true && f.tPath !== undefined) out.push(f.tPath)
+      if (f.t?.present === true && f.tPath !== undefined) out.push({ src: f.tPath, copied: false })
       continue
     }
     // `OP` (6b-i) is `--park`'s whole op dir: a rename within ST, never a copy.
@@ -102,10 +112,32 @@ function toCopy(st: SwapState, f: SpaceFacts, steps: readonly PlanStep[]): strin
     const res = f.roles[s.tree]
     if (res.kind !== 'source') continue
     const g = res.started
-    if (g !== null && (g.copyTmp.present || g.dest.present)) continue
-    out.push(path.join(st.opDir, ROLE_DIR[s.tree]))
+    const copied = g !== null && (g.copyTmp.present || g.dest.present)
+    out.push({ src: path.join(st.opDir, ROLE_DIR[s.tree]), copied })
   }
   return out
+}
+
+/** The trees the plan keeps that still need a cross-device copy, by path. */
+const toCopy = (st: SwapState, f: SpaceFacts, steps: readonly PlanStep[]): string[] =>
+  keptSources(st, f, steps)
+    .filter((k) => !k.copied)
+    .map((k) => k.src)
+
+/**
+ * Why a plan that keeps a tree is refused (the precheck's reason, no suffix):
+ * the `move-source` intent its finish could write is one the reader would
+ * refuse; else null (see the module comment). Run before the first mutation,
+ * beside `spaceBlock`.
+ */
+export function intentBlock(
+  st: SwapState,
+  f: SpaceFacts,
+  steps: readonly PlanStep[]
+): string | null {
+  // Whatever the device: a bind mount of one filesystem shares st_dev, yet its
+  // rename still fails EXDEV, so no device guess says the keep stays a rename.
+  return keptSources(st, f, steps).length > 0 ? intentPrecheck(st, 'move-source') : null
 }
 
 /** `state-root-full` naming the free-space remedy when a copy the plan needs cannot fit; else null. */
@@ -114,7 +146,7 @@ export async function spaceBlock(
   f: SpaceFacts,
   steps: readonly PlanStep[]
 ): Promise<string | null> {
-  const area = nearest(st.areaPath)
+  const area = nearestDevice(st.areaPath)
   if (area === null) return null
   for (const src of toCopy(st, f, steps)) {
     let dev: bigint

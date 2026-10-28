@@ -31,7 +31,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
   }
 })
 
-import { withSkillWriteLock } from '@skillsmith/core'
+import { MOVE_SOURCE_NO_RECORD_ORIGIN, withSkillWriteLock } from '@skillsmith/core'
 import { createDoctorCommand } from './doctor.js'
 import { runRecoveryAction } from './doctor.recovery.action.js'
 import { runDoctorRecovery } from './doctor.recovery.js'
@@ -251,6 +251,73 @@ describe('the listing', () => {
     const line = out.find((l) => l.includes(`--clean-staging: \``)) ?? ''
     expect(line).toContain(`skillsmith doctor recovery --clean-staging ${OP}`)
     expect(line).not.toContain('not available yet')
+  })
+
+  it('a stray file in the op dir with a live owner: refused whatever the flag, so the suffix is not printed', async () => {
+    const u = plantNoRecord(process.pid)
+    fs.writeFileSync(path.join(u.opDir, 'stray.txt'), 'x')
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    // Presence from the same run: the live owner is read, and --clean-staging is refused.
+    expect(text).toContain('owner verdict: same-host-alive')
+    expect(text).toContain('--clean-staging: not offered (recovery-not-offered)')
+    expect(text).toContain('so doctor cannot prove it wrote it')
+    expect(text).not.toContain('needs --unsafe-unverified-owner')
+  })
+
+  /** A park intent that verifies for the op dir as planted (its identity is read from the dir). */
+  function plantIntent(opDir: string, kind: 'abort-new' | 'move-source'): void {
+    const s = fs.lstatSync(opDir, { bigint: true })
+    const intent = {
+      schema: 1,
+      kind,
+      opId: OP,
+      owner: { pid: process.pid, host: os.hostname(), uid: process.geteuid?.() ?? -1 },
+      opIdentity: {
+        dev: s.dev.toString(),
+        ino: s.ino.toString(),
+        birthtimeNs: s.birthtimeNs.toString(),
+        fmt: (s.mode & 0o170000n).toString(),
+      },
+      ...(kind === 'move-source' ? { backupPath: path.join(base, '.skillsmith', 'kept', OP) } : {}),
+    }
+    fs.writeFileSync(path.join(opDir, 'park-intent.json'), JSON.stringify(intent))
+  }
+
+  const OLD_WORDS = ['a crash before the update began', 'killed after its record was removed']
+
+  it('no record and no intent: the update stopped before writing it, or after removing it', async () => {
+    plantNoRecord(process.pid)
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(
+      'no record.json (the update stopped before writing it, or after removing it)'
+    )
+    expect(text).not.toContain('before writing its record')
+    for (const w of OLD_WORDS) expect(text).not.toContain(w)
+  })
+
+  it('a verifying abort-new intent: the update aborted and was setting it aside', async () => {
+    const u = plantNoRecord(process.pid)
+    plantIntent(u.opDir, 'abort-new')
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(
+      'no record.json: the update aborted and was setting it aside (an abort-new park intent)'
+    )
+    expect(text).toContain('an abort-new park intent is present and verifies')
+    for (const w of OLD_WORDS) expect(text).not.toContain(w)
+  })
+
+  it('a verifying move-source intent: both origins are named, not only an update that removed its record', async () => {
+    const u = plantNoRecord(process.pid)
+    plantIntent(u.opDir, 'move-source')
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(`no record.json: ${MOVE_SOURCE_NO_RECORD_ORIGIN}`)
+    // Every origin that writes the intent is named, doctor's own --apply and --undo included.
+    expect(text).toContain('a cross-device --apply, --undo or --clean-staging by doctor')
+    for (const w of OLD_WORDS) expect(text).not.toContain(w)
   })
 })
 

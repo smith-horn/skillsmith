@@ -14,7 +14,13 @@
  * `op-not-empty` / `staging-unsafe` stop with the record kept). Then:
  *
  *  1. `park-intent.json` (kind `move-source`), durably, before `owner.json`
- *     goes, so a crash after it leaves an ownerless op dir doctor can verify;
+ *     goes, so a crash after it leaves an ownerless op dir doctor can verify.
+ *     Only bytes the reader accepts are written (`writeParkIntent`'s round
+ *     trip). The move learns it crosses devices only from `EXDEV`, after the
+ *     commit, so the update refused before creating OP, on any device, when
+ *     the worst case of this intent would not read back (`intentPrecheck` in
+ *     `swapInPlace`); a `staging-unsafe` stop here, record kept and nothing
+ *     written, is the backstop;
  *  2. unlink `record.json`, sync OP; unlink `owner.json`;
  *  3. OP holds exactly the sources and the intent (UD40), then the park of OP
  *     from ST (`skill-swap.park-op.ts`, caller `move-source`, kind

@@ -30,7 +30,8 @@
  * Across devices (6a-iii): before the first mutation, a keep that still has
  * to be copied and would not fit refuses `state-root-full` naming
  * `FREE_SPACE_REMEDY`, free space by hand (`spaceBlock`; the prune command is
- * not available yet). A keep's verified
+ * not available yet), and a park intent the finish would write that the
+ * reader would refuse refuses `staging-unsafe` (`intentBlock`). A keep's verified
  * source stays in OP, and the finish parks OP whole once its metadata is
  * unlinked (`skill-recovery.park.ts`, UD28); a park that does not finish is a
  * `removal-not-done` warning (exit 4, UD32). Doctor's own full-device stop
@@ -42,7 +43,7 @@
 import path from 'node:path'
 import { appendJournalRecordOnce } from '../journal/writer.js'
 import { finishRecovered, sweepRoot } from './skill-recovery.finish.js'
-import { rewriteMarkerAdopted, spaceBlock } from './skill-recovery.mark.js'
+import { intentBlock, rewriteMarkerAdopted, spaceBlock } from './skill-recovery.mark.js'
 import { finishRecoveredAcross } from './skill-recovery.park.js'
 import { installAt, keepRole } from './skill-recovery.resume.js'
 import type { KeepContext } from './skill-recovery.resume.js'
@@ -60,6 +61,7 @@ import type { OpFacts, PlanStep, ReadTranscript, RecoveryClass } from './skill-r
 import { commit, journalInput } from './skill-swap.commit.js'
 import { hook, opPaths, rethrowLockOrder, SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { RECORDED_STATE_ROOT_NOTE } from './skill-swap.intent.js'
 import { publishTree } from './skill-swap.publish.js'
 import { describe } from './skill-swap.abort.js'
 import { undoAside } from './skill-swap.undo.js'
@@ -352,6 +354,12 @@ export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
     // Before the first mutation: a cross-device copy that cannot fit refuses, nothing changed.
     const full = await spaceBlock(st, f, planned.plan.steps)
     if (full !== null) return refused('state-root-full', full, planned.opDir)
+    // And a park intent the finish would write that the reader would refuse (none is written when one is reused).
+    const unreadable = adopted.intent === null ? intentBlock(st, f, planned.plan.steps) : null
+    if (unreadable !== null) {
+      const detail = `${unreadable}; nothing was changed; ${RECORDED_STATE_ROOT_NOTE}`
+      return refused('staging-unsafe', detail, planned.opDir)
+    }
     if ((await runRow(row, action)) === 'plan-changed') {
       return refused(
         'plan-changed',
@@ -382,7 +390,7 @@ export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
 
 /** A refusal with zero mutation, naming the op dir. */
 export function refused(
-  reason: 'plan-changed' | 'state-root-full',
+  reason: 'plan-changed' | 'state-root-full' | 'staging-unsafe',
   detail: string,
   opDir: string
 ): RecoveryRefusal {

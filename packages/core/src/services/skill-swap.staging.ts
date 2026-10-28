@@ -24,7 +24,6 @@
  * @module @skillsmith/core/services/skill-swap.staging
  */
 import fs from 'node:fs'
-import os from 'node:os'
 import { bindIdentity, identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { S_IFDIR } from '../install/park-tree.perms.js'
@@ -138,7 +137,7 @@ export async function publishBytes(
  * validates before it files a no-record op dir's trees (`skill-swap.attribution.ts`).
  */
 export async function writeOwner(st: SwapState): Promise<void> {
-  const owner = { pid: process.pid, host: os.hostname(), uid: process.geteuid?.() ?? -1 }
+  const owner = st.self
   await publishJson(st, opPaths(st).owner, {
     ...owner,
     createdAt: new Date().toISOString(),
@@ -283,9 +282,9 @@ export async function writeRecord(st: SwapState): Promise<void> {
     schema: 1,
     op: 'update',
     opId: st.opId,
-    pid: process.pid,
-    host: os.hostname(),
-    uid: process.geteuid?.() ?? -1,
+    pid: st.self.pid,
+    host: st.self.host,
+    uid: st.self.uid,
     target: {
       comparedPath: input.comparedPath,
       realDir: input.realDir,

@@ -16,7 +16,10 @@
  *       identity the re-plan saw. Its manifest port refuses: nothing commits.
  *    2. Adopt `owner.json` and the provable temps from the re-plan's transcript.
  *    3. `spaceBlock`: a cross-device copy that cannot fit refuses
- *       `state-root-full` with nothing changed.
+ *       `state-root-full` with nothing changed; `intentBlock`: when `new/` is
+ *       kept, on any device, a park intent the reader would refuse
+ *       (`intentPrecheck`) refuses `staging-unsafe` with nothing changed,
+ *       naming `SHORTER_STATE_ROOT_REMEDY`.
  *    4. `new/`: a keep abort cleanup started resumes with its own kind
  *       (`keepRole` → `resumeGroup`); otherwise `lstat(new)` must still have
  *       the re-plan's identity (else `staging-unsafe`), then `publishTree(new,
@@ -25,7 +28,8 @@
  *       `rmdir`, sync ST). Across devices (the verified `new/` stays in OP,
  *       UD28): OP holds exactly the source and the adopted metadata; a
  *       provable `park-intent.json.tmp` is unlinked; the park intent
- *       (`move-source`, `backupPath` the kept copy) is written durably; the
+ *       (`move-source`, `backupPath` the kept copy, the owner `owner.json`'s
+ *       when the reader accepts that intent, else doctor's) is written durably; the
  *       other temps, then `owner.json`, are unlinked and OP synced; OP holds
  *       exactly the source and the intent; then the park of OP. A kill after
  *       the intent is durable leaves case (a), which the same command finishes.
@@ -42,7 +46,7 @@ import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { keepSidecarOf, routeRootOf } from './skill-recovery.attribution.js'
 import { finishNoRecord } from './skill-recovery.finish.js'
 import { finishFromIntent } from './skill-recovery.intent-park.js'
-import { spaceBlock } from './skill-recovery.mark.js'
+import { intentBlock, spaceBlock } from './skill-recovery.mark.js'
 import { keepRole } from './skill-recovery.resume.js'
 import type { KeepContext } from './skill-recovery.resume.js'
 import { adoptSidecarsInto } from './skill-recovery.run.js'
@@ -54,8 +58,8 @@ import type {
   RecoveryClass,
   TreePosition,
 } from './skill-recovery.types.js'
-import { writeParkIntent } from './skill-swap.intent.js'
-import { check, hook, opPaths, SwapFault, syncDir } from './skill-swap.ops.js'
+import { SHORTER_STATE_ROOT_REMEDY, writeParkIntent } from './skill-swap.intent.js'
+import { processOwnerNow, check, hook, opPaths, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
@@ -71,6 +75,20 @@ const refusingPort: ManifestPort = {
       'doctor recovery --clean-staging never commits the manifest'
     )
   },
+}
+
+/**
+ * What `owner.json` says, when it parses whole: the park intent a cross-device
+ * finish writes names it, so the intent names the update's own owner and not
+ * doctor's process. Whether it may is not decided here: the write's round trip
+ * (`readableIntentOf`) falls back to doctor's process for any owner whose
+ * intent the reader would refuse (a pid of 1.5, a host long enough to reach
+ * the cap). Null when there is no `owner.json` or a field is missing.
+ */
+function ownerOf(cls: NoRecord): SwapState['owner'] {
+  const o = cls.owner
+  if (o === null || o.pid === null || o.host === null || o.uid === null) return null
+  return { pid: o.pid, host: o.host, uid: o.uid }
 }
 
 /** The state a keep of a no-record op dir needs (see the module comment). */
@@ -111,7 +129,8 @@ function noRecordState(ctx: SkillWriteContext, cls: NoRecord, options: SwapOptio
     buildIdentity: null,
     published: null,
     moveSources: new Map(),
-    owner: null,
+    owner: ownerOf(cls),
+    self: processOwnerNow(),
     newIdentity: null,
     postTree: null,
     postRecord: null,
@@ -132,8 +151,8 @@ interface CleanResult {
   kept: Array<{ tree: TreePosition; kind: string; path: string }>
   /** Across devices, where the op dir (holding the verified source) was parked. */
   extraCopy: string | null
-  /** `state-root-full`: a copy would not fit; nothing changed. */
-  full: string | null
+  /** A refusal before the first mutation: a copy would not fit, or its park intent would not read back. */
+  refusal: { reason: 'state-root-full' | 'staging-unsafe'; detail: string } | null
 }
 
 /** What the run needs from `executeRecovery`'s prologue (lock 1 held, the re-plan matched). */
@@ -159,7 +178,7 @@ export async function cleanStaging(a: CleanRun): Promise<CleanResult> {
       st: r.st,
       kept,
       extraCopy: cls.intent.kind === 'abort-new' ? null : r.extraCopy,
-      full: null,
+      refusal: null,
     }
   }
   const c = cls.clean
@@ -181,8 +200,22 @@ export async function cleanStaging(a: CleanRun): Promise<CleanResult> {
     partials: [],
   }
   const full = await spaceBlock(st, k.facts, a.steps)
-  if (full !== null) return { st, kept: [], extraCopy: null, full }
-  const out: CleanResult = { st, kept: [], extraCopy: null, full: null }
+  if (full !== null) {
+    return { st, kept: [], extraCopy: null, refusal: { reason: 'state-root-full', detail: full } }
+  }
+  const unreadable = intentBlock(st, k.facts, a.steps)
+  if (unreadable !== null) {
+    return {
+      st,
+      kept: [],
+      extraCopy: null,
+      refusal: {
+        reason: 'staging-unsafe',
+        detail: `${unreadable}; nothing was changed; ${SHORTER_STATE_ROOT_REMEDY}`,
+      },
+    }
+  }
+  const out: CleanResult = { st, kept: [], extraCopy: null, refusal: null }
   if (c.n.kind === 'source') {
     const newDir = opPaths(st).newDir
     if (c.n.started === null) {
