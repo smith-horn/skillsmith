@@ -31,7 +31,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
   }
 })
 
-import { withSkillWriteLock } from '@skillsmith/core'
+import { MOVE_SOURCE_NO_RECORD_ORIGIN, withSkillWriteLock } from '@skillsmith/core'
 import { createDoctorCommand } from './doctor.js'
 import { runRecoveryAction } from './doctor.recovery.action.js'
 import { runDoctorRecovery } from './doctor.recovery.js'
@@ -286,11 +286,14 @@ describe('the listing', () => {
 
   const OLD_WORDS = ['a crash before the update began', 'killed after its record was removed']
 
-  it('no record and no intent: the update stopped before writing its record', async () => {
+  it('no record and no intent: the update stopped before writing it, or after removing it', async () => {
     plantNoRecord(process.pid)
     await runDoctorRecovery({})
     const text = out.join('\n')
-    expect(text).toContain('no record.json (the update stopped before writing its record)')
+    expect(text).toContain(
+      'no record.json (the update stopped before writing it, or after removing it)'
+    )
+    expect(text).not.toContain('before writing its record')
     for (const w of OLD_WORDS) expect(text).not.toContain(w)
   })
 
@@ -311,9 +314,9 @@ describe('the listing', () => {
     plantIntent(u.opDir, 'move-source')
     await runDoctorRecovery({})
     const text = out.join('\n')
-    expect(text).toContain(
-      'no record.json: a finish that had written its move-source intent (an update after its record was removed, or a cross-device --clean-staging)'
-    )
+    expect(text).toContain(`no record.json: ${MOVE_SOURCE_NO_RECORD_ORIGIN}`)
+    // Every origin that writes the intent is named, doctor's own --apply and --undo included.
+    expect(text).toContain('a cross-device --apply, --undo or --clean-staging by doctor')
     for (const w of OLD_WORDS) expect(text).not.toContain(w)
   })
 })

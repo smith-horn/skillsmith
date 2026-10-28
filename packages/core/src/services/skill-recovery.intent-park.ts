@@ -7,7 +7,8 @@
  * Two intents, two callers:
  *  - **`move-source`**, the state a cross-device finish leaves once it has
  *    written its intent, then is killed: an update after it unlinked
- *    `record.json`, or doctor's own cross-device `--clean-staging` (which
+ *    `record.json`, or doctor's own cross-device `--apply`/`--undo` (each
+ *    unlinks `record.json` after the intent) or `--clean-staging` (which
  *    never had a record): `--apply` and `--undo` finish it
  *    (6a-iii), and so does `--clean-staging` (6b-ii). The intent's
  *    `backupPath` must be this root's backup area plus `<opId>` or

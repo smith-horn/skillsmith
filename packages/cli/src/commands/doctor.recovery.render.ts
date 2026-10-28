@@ -17,7 +17,7 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
-import { GUARD_WORD, PERFORMED, planAction } from '@skillsmith/core'
+import { GUARD_WORD, MOVE_SOURCE_NO_RECORD_ORIGIN, PERFORMED, planAction } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
@@ -107,12 +107,12 @@ function noRecordWord(cls: NoRecordClass): string {
   const entries = `entries: ${cls.entries.join(', ') || 'none'}`
   const i = cls.intent
   if (i !== null && i.valid && i.kind === 'move-source') {
-    return `    no record.json: a finish that had written its move-source intent (an update after its record was removed, or a cross-device --clean-staging), before its op dir was set aside; ${entries}`
+    return `    no record.json: ${MOVE_SOURCE_NO_RECORD_ORIGIN}, before its op dir was set aside; ${entries}`
   }
   if (i !== null && i.valid && i.kind === 'abort-new') {
     return `    no record.json: the update aborted and was setting it aside (an abort-new park intent); ${entries}`
   }
-  return `    no record.json (the update stopped before writing its record); ${entries}`
+  return `    no record.json (the update stopped before writing it, or after removing it); ${entries}`
 }
 
 function noteOf(cls: RecoveryClass): string[] {

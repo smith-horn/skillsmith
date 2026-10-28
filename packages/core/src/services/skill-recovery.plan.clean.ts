@@ -30,7 +30,13 @@
 import path from 'node:path'
 import { parkClientOf, parkIndexOf } from './skill-recovery.attribution.js'
 import type { Attribution } from './skill-recovery.attribution.js'
-import { kept, offer, refuse, step } from './skill-recovery.plan.actions.js'
+import {
+  kept,
+  MOVE_SOURCE_NO_RECORD_ORIGIN,
+  offer,
+  refuse,
+  step,
+} from './skill-recovery.plan.actions.js'
 import type {
   ActionPlan,
   NoRecordIntent,
@@ -103,7 +109,7 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
       kind === 'abort-new'
         ? `the update that made it aborted and was setting it aside (park-intent.json, kind abort-new); ` +
           `it is parked as client ${parkClientOf(c.attribution)}, ${index === null ? 'with no parked-index line' : `indexed in ${index}`}`
-        : `there is no record (a finish that had written its move-source intent: an update after its record was removed, or a cross-device --clean-staging); the intent records the verified copy's path as ${i.backupPath}`,
+        : `there is no record (${MOVE_SOURCE_NO_RECORD_ORIGIN}); the intent records the verified copy's path as ${i.backupPath}`,
       ...(kind === 'abort-new' ? [routeWords(c.attribution)] : []),
       ...(owner ? ownerNotes(cls, unsafe) : [`owner ${c.verdict}: ${c.verdictWhy}`]),
       UNTOUCHED_NOTE,
@@ -114,30 +120,38 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
 const tempLine = (t: string): string => `unlink the metadata temp ${t}`
 const isIntentTemp = (t: string): boolean => path.basename(t) === `${PARK_INTENT_FILE}.tmp`
 
+const SYNC_OP = 'sync the op dir'
+
 /**
- * What `finishNoRecord` does after the keep, in its order: the temps, then
- * `owner.json` (only when the op dir holds it), then the `rmdir`.
+ * What `finishNoRecord` does after the keep, in its order, every sync included:
+ * the temps, a sync of the op dir (made even when there are no temps), then
+ * `owner.json` and a sync of the op dir (only when the op dir holds it), the
+ * `rmdir` and a sync of the staging dir.
  */
 function oneDeviceSteps(temps: readonly string[], owner: boolean): string[] {
   return [
     ...temps.map(tempLine),
-    ...(owner ? ['unlink owner.json'] : []),
-    'rmdir the emptied op dir and sync the staging dir',
+    SYNC_OP,
+    ...(owner ? ['unlink owner.json', SYNC_OP] : []),
+    'rmdir the emptied op dir',
+    'sync the staging dir',
   ]
 }
 
 /**
- * What `finishAcross` does after the keep, in its order: a `park-intent.json.tmp`
- * of this op, the intent, the other temps, `owner.json` (only when the op dir
+ * What `finishAcross` does after the keep, in its order, every sync included: a
+ * `park-intent.json.tmp` of this op and a sync of the op dir (only when there
+ * is one), the intent, the other temps, `owner.json` (only when the op dir
  * holds it), a sync of the op dir, then the park of the op dir whole.
  */
 function acrossSteps(temps: readonly string[], owner: boolean): string[] {
+  const intentTemps = temps.filter(isIntentTemp)
   return [
-    ...temps.filter(isIntentTemp).map(tempLine),
+    ...intentTemps.flatMap((t) => [tempLine(t), SYNC_OP]),
     'write park-intent.json (kind move-source) durably',
     ...temps.filter((t) => !isIntentTemp(t)).map(tempLine),
     ...(owner ? ['unlink owner.json'] : []),
-    'sync the op dir',
+    SYNC_OP,
     'park the op dir whole with the verified new/ and the intent (no rmdir)',
   ]
 }

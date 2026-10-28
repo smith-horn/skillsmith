@@ -22,6 +22,7 @@ import type { Event } from '../skill-swap.abort.helpers.js'
 import { areaOf, hashOf, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { useOtherDeviceCleanup } from '../skill-swap.xdev.helpers.js'
 import { act, done, killAt } from './recovery.act.helpers.js'
+import { opReport } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import {
   abortLeft,
@@ -116,33 +117,57 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     return line.slice(label.length).split(', then ')
   }
 
-  /** A plan step as the tag the trace shows for it; null for a sync, which has no tag. */
-  function tagOfStep(step: string): string | null {
+  /** A plan step as the tag the trace shows for it. */
+  function tagOfStep(step: string): string {
     if (step.startsWith('write park-intent.json')) return 'intent'
     if (step === 'unlink owner.json') return 'owner'
     const temp = 'unlink the metadata temp '
     if (step.startsWith(temp)) return `temp:${path.basename(step.slice(temp.length))}`
-    if (step.startsWith('rmdir the emptied op dir')) return 'rmdir'
+    if (step === 'rmdir the emptied op dir') return 'rmdir'
     if (step.startsWith('park the op dir whole')) return 'park'
-    if (step.startsWith('sync ')) return null
+    if (step === 'sync the op dir') return 'sync:op'
+    if (step === 'sync the staging dir') return 'sync:st'
     throw new Error(`a plan step the test does not know: ${step}`)
   }
 
-  const plannedTags = (steps: readonly string[]): string[] =>
-    steps.map(tagOfStep).filter((t): t is string => t !== null)
+  const plannedTags = (steps: readonly string[]): string[] => steps.map(tagOfStep)
 
-  /** What the run did to the op dir, in order, in the same tags. */
+  /**
+   * What the run did to the op dir after its keep, in order, in the same tags
+   * (syncs of the op dir and the staging dir included). The window opens after
+   * the keep's last `rename`; on one device the keep's own sync of the op dir
+   * follows that rename and is not the finish's, so it is skipped. The intent's
+   * publish temp and its own sync are part of the `intent` step. Across devices
+   * the window ends at the park, whose own syncs are not the plan's.
+   */
   function observedTags(trace: readonly TraceOp[], opDir: string): string[] {
+    const staging = path.dirname(opDir)
     const out: string[] = []
-    for (const t of trace) {
-      if (t.op === 'link' && t.dest === path.join(opDir, 'park-intent.json')) out.push('intent')
-      else if (t.op === 'unlink' && path.dirname(t.path) === opDir) {
+    const from = trace.map((t) => t.op).lastIndexOf('rename') + 1
+    const crossed = trace.some((t) => t.op === 'park')
+    let skipOpSync = !crossed
+    let intentSync = false
+    for (const t of trace.slice(from)) {
+      if (t.op === 'dirsync' && t.path === opDir) {
+        if (skipOpSync) skipOpSync = false
+        else if (intentSync) intentSync = false
+        else out.push('sync:op')
+      } else if (t.op === 'dirsync' && t.path === staging) {
+        if (out.includes('rmdir')) out.push('sync:st')
+      } else if (t.op === 'link' && t.dest === path.join(opDir, 'park-intent.json')) {
+        out.push('intent')
+        intentSync = true
+      } else if (t.op === 'unlink' && path.dirname(t.path) === opDir) {
+        skipOpSync = false
         const name = path.basename(t.path)
         // The intent's own publish temp goes right after the link: part of "write", not a temp step.
         if (name === 'park-intent.json.tmp' && out.includes('intent')) continue
         out.push(name === 'owner.json' ? 'owner' : `temp:${name}`)
       } else if (t.op === 'rmdir' && t.path === opDir) out.push('rmdir')
-      else if (t.op === 'park') out.push('park')
+      else if (t.op === 'park') {
+        out.push('park')
+        break
+      }
     }
     return out
   }
@@ -152,9 +177,11 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     const across = stepsOf(remaining, ACROSS)
     expect(plannedTags(across)).toEqual([
       'temp:park-intent.json.tmp',
+      'sync:op',
       'intent',
       'temp:record.json.tmp',
       'owner',
+      'sync:op',
       'park',
     ])
     expect(plannedTags(across)).toEqual(observedTags(a.trace, st.opDir))
@@ -169,8 +196,11 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     expect(plannedTags(one)).toEqual([
       'temp:park-intent.json.tmp',
       'temp:record.json.tmp',
+      'sync:op',
       'owner',
+      'sync:op',
       'rmdir',
+      'sync:st',
     ])
     expect(plannedTags(one)).toEqual(observedTags(a.trace, st.opDir))
     expect(a.trace.some((t) => t.op === 'park')).toBe(false)
@@ -192,8 +222,12 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
         'owner absent'
       )
       // Presence from the same run: both sequences are there and end in their real last step.
-      expect(plannedTags(stepsOf(remaining, ONE))).toEqual(['rmdir'])
-      expect(plannedTags(stepsOf(remaining, ACROSS))).toEqual(['intent', 'park'])
+      expect(plannedTags(stepsOf(remaining, ONE))).toEqual(['sync:op', 'rmdir', 'sync:st'])
+      expect(plannedTags(stepsOf(remaining, ACROSS))).toEqual(['intent', 'sync:op', 'park'])
+      // The syncs the plan names are the syncs the run made, with no temps and no owner.json too.
+      expect(plannedTags(stepsOf(remaining, label === 'one device' ? ONE : ACROSS))).toEqual(
+        observedTags(a.trace, st.opDir)
+      )
       expect(remaining.join('\n')).not.toMatch(/owner\.json/)
       expect(observedTags(a.trace, st.opDir)).not.toContain('owner')
     })
@@ -215,6 +249,26 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     ) as { kind: string; owner: { pid: number; host: string; uid: number } }
     expect(intent.kind).toBe('move-source')
     expect(intent.owner).toEqual({ pid: own.pid, host: own.host, uid: own.uid })
+  })
+
+  it('an owner.json owner the intent would refuse (pid 1.5) is not copied: the killed run leaves an intent that verifies, and the same command finishes the park', async () => {
+    const st = await abortLeft('abortAfterCheck', {}, xfile())
+    editOwner(st, { pid: 1.5 })
+    const unsafe = { ...dead, unsafeUnverifiedOwner: true }
+    const first = await act(st, 'clean-staging', unsafe, killAt('afterIntent'))
+    expect(first.result.status).toBe('stopped')
+    const cls = (await opReport(st, unsafe)).cls
+    if (cls.kind !== 'no-record') throw new Error(`expected no-record, got ${cls.kind}`)
+    expect(cls.intent).not.toBeNull()
+    expect(cls.intent?.valid).toBe(true)
+    // The intent names doctor's process, not the unusable pid.
+    const intent = JSON.parse(fs.readFileSync(path.join(st.opDir, 'park-intent.json'), 'utf8')) as {
+      owner: { pid: number }
+    }
+    expect(intent.owner.pid).toBe(process.pid)
+    await done(st, 'clean-staging', unsafe)
+    expect(fs.existsSync(st.opDir)).toBe(false)
+    expect(fs.readdirSync(theParkedCopy(st.fx)).sort()).toEqual(['new', 'park-intent.json'])
   })
 
   const POINTS: SwapHookPoint[] = [

@@ -17,7 +17,8 @@
  * 6a-iii: `analyzeParkIntent` judges a `park-intent.json` (and its temp) found
  * beside a record, which a cross-device finish that stopped leaves behind;
  * `noRecordIntent` judges one in an op dir with no record (an update that
- * removed it, or a cross-device `--clean-staging`, which never had one), which
+ * removed it, or doctor's own cross-device `--apply`/`--undo`, which unlink
+ * `record.json` after the intent, or `--clean-staging`, which never had one), which
  * `--apply`/`--undo` then finish by parking the op dir as the intent says.
  *
  * All reads go through the reader. This module has no `fs`.

@@ -46,6 +46,22 @@ function isRecordIdentity(v: unknown): v is RecordIdentity {
 }
 
 /**
+ * True when `value` is an owner a park intent may carry: exactly `host`, `pid`
+ * and `uid`, a string host and integer pid and uid. The one rule: the intent's
+ * own check (`isParkIntentFor`) and whatever copies an `owner.json` owner into
+ * an intent (doctor's cross-device finish) both call it, so a copied owner can
+ * never fail the check of the intent it was written into.
+ */
+export function isIntentOwner(value: unknown): value is ParkIntent['owner'] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const owner = value as Record<string, unknown>
+  if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false
+  return (
+    Number.isInteger(owner.pid) && typeof owner.host === 'string' && Number.isInteger(owner.uid)
+  )
+}
+
+/**
  * True when `value` is a park intent for `opId` with `opIdentity` (the
  * acceptance doctor's `--clean-staging` applies, step 6). Exact keys, exact
  * types, and a kind of `abort-new` or `move-source` (the park doctor then
@@ -70,11 +86,7 @@ export function isParkIntentFor(
   if (o.opId !== opId || !KINDS.has(o.kind)) return false
   if (o.kind === 'move-source' && !isBackupPath(o.backupPath)) return false
   if (o.schema === 2 && !hasAttributionStrings(o)) return false
-  const owner = o.owner as Record<string, unknown> | null
-  if (owner === null || typeof owner !== 'object' || Array.isArray(owner)) return false
-  if (Object.keys(owner).sort().join(',') !== 'host,pid,uid') return false
-  if (!Number.isInteger(owner.pid) || typeof owner.host !== 'string') return false
-  if (!Number.isInteger(owner.uid)) return false
+  if (!isIntentOwner(o.owner)) return false
   if (!isRecordIdentity(o.opIdentity)) return false
   const id = o.opIdentity
   return (

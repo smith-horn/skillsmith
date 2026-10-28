@@ -10,7 +10,9 @@ All notable changes to `@skillsmith/core` are documented here.
   keeps `new/` through `publishTree` as `unrecorded-new` (a keep abort cleanup started resumes
   with its own kind), unlinks the provable temps and then `owner.json` last, and `rmdir`s the
   folder; across devices the verified `new/` stays and the folder is parked whole behind a
-  `move-source` intent that names the folder's own `owner.json` owner. Whether `new/` crosses
+  `move-source` intent that names the folder's own `owner.json` owner (doctor's own process
+  when there is no `owner.json`, when its owner fails the intent's own check, or when the
+  intent is written by a cross-device `--apply` or `--undo`). Whether `new/` crosses
   devices is decided when the copy runs, so the keep plan's `remaining` lines state both
   finishes, each in the order its executor takes: on one device the temps, `owner.json` and
   the `rmdir`; across devices the intent, the other temps, `owner.json`, and the park of the

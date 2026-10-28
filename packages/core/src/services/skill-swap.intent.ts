@@ -45,8 +45,11 @@ export function parkIntentOf(
   if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
   // `owner.json` is written before anything else in OP. An update that
   // published it has `st.owner` set; doctor's `--clean-staging` sets it from
-  // the op dir's own `owner.json` when that parses whole. Only a run with
-  // neither (no owner.json was ever published or readable) names this process.
+  // the op dir's own `owner.json` when that parses whole and passes the intent's
+  // own owner check (`isIntentOwner`). Every other run names this process: one
+  // with no `owner.json`, one whose owner fails that check, and doctor's
+  // cross-device `--apply`/`--undo` finish (`recoveryState` sets `owner: null`,
+  // even when `owner.json` was readable).
   const owner = st.owner ?? {
     pid: process.pid,
     host: os.hostname(),

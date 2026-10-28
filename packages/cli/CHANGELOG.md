@@ -5,7 +5,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Added**: SMI-6531 -- A1 step 6b-ii: `skillsmith doctor recovery --clean-staging <opId>`
-  finishes an operation folder an update left before it wrote its record: it keeps the staged
+  finishes an operation folder with no `record.json` (an update stopped before writing it, or
+  after removing it): it keeps the staged
   `new/` folder in the backup area (or finishes the set-aside the update had begun), then
   removes only the folder's metadata and the emptied folder (across devices it sets the
   folder aside whole with the verified copy). It runs only when the folder's

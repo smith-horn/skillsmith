@@ -23,6 +23,7 @@ import {
   FINISH,
   INSTALLED,
   kept,
+  MOVE_SOURCE_NO_RECORD_ORIGIN,
   offer,
   parkWord,
   refuse,
@@ -316,7 +317,8 @@ function swappedPlan(
 /**
  * 6a-iii: an op dir with no record whose move-source park intent verifies (a
  * finish that had written its intent: an update after its record was removed,
- * or a cross-device `--clean-staging`). `--apply` and `--undo`
+ * or doctor's own cross-device `--apply`, `--undo` or `--clean-staging`;
+ * `MOVE_SOURCE_NO_RECORD_ORIGIN`). `--apply` and `--undo`
  * finish that park as the uninterrupted run would: each source goes with OP.
  * 6b-ii: the metadata temps the classifier proved this op's (`temps`) are
  * unlinked first, so the plan names each one (and the digest covers them).
@@ -342,7 +344,7 @@ function intentParkPlan(
       `park the op dir (kind ${i.kind}), checked against a fresh hash of its contents`,
     ],
     [
-      `there is no record (a finish that had written its move-source intent: an update after its record was removed, or a cross-device --clean-staging); the intent records the verified copy's path as ${i.backupPath}`,
+      `there is no record (${MOVE_SOURCE_NO_RECORD_ORIGIN}); the intent records the verified copy's path as ${i.backupPath}`,
       '`--apply` and `--undo` are the same here: they finish the park',
     ]
   )
