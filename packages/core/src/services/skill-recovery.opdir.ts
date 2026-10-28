@@ -31,7 +31,7 @@ import type { ClassifierReader } from './skill-recovery.reader.js'
 import type { FileType, NoRecordIntent, OpFacts } from './skill-recovery.types.js'
 import { KIND_ROLE } from './skill-recovery.pstate.js'
 import { backupAreaPath, rootKeyOf } from './skill-swap.area.js'
-import { INTENT_CAP, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
+import { intentCap, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
 import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 
@@ -77,13 +77,13 @@ export function listStaging(r: ClassifierReader, stagingDir: string): StagingVie
 
 /** The reader's value of an intent file: its JSON, or null (unreadable, at the cap, not JSON). */
 function readIntent(r: ClassifierReader, p: string): unknown {
-  const read = r.readFile(p, INTENT_CAP)
+  const read = r.readFile(p, intentCap())
   return read.fact.ok ? intentValueOf(read.bytes) : null
 }
 
 /** One read of an intent file: whether it is this op's `move-source` intent, and whether it is empty. */
 function intentFile(r: ClassifierReader, p: string, rec: SwapRecord) {
-  const read = r.readFile(p, INTENT_CAP)
+  const read = r.readFile(p, intentCap())
   const st = r.stat(p)
   const value = read.fact.ok ? intentValueOf(read.bytes) : null
   const valid =

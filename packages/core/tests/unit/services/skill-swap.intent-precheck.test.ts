@@ -9,11 +9,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  INTENT_CAP,
   intentValueOf,
   isParkIntentFor,
+  setIntentCapForTest,
 } from '../../../src/services/skill-swap.intent-schema.js'
 import {
   intentPrecheck,
@@ -41,6 +41,15 @@ import { parkedCopies, useOtherDeviceCleanup, xdevFixture } from './skill-swap.x
 
 useTmpCleanup()
 useOtherDeviceCleanup()
+
+/**
+ * The default cap is 64 KiB (SMI-7205), which no real path reaches. These
+ * refusals are proven at the cap the seam lowers for the writer and the reader
+ * together; `skill-swap.intent-cap.default.test.ts` pins the default itself.
+ */
+const INTENT_CAP = 4096
+beforeEach(() => setIntentCapForTest(INTENT_CAP))
+afterEach(() => setIntentCapForTest(null))
 
 const FILES = { 'SKILL.md': '# v1\n', 'a.txt': 'a\n', 'sub/b.txt': 'b\n' }
 

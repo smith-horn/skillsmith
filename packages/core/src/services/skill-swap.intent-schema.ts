@@ -12,18 +12,44 @@ import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.ty
 const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-source'])
 
 /**
- * The reader's byte cap for `park-intent.json` and its temp: a read that fills
- * the cap may be cut off, so it is not parsed. The one constant both the
- * classifier's reads and the writer's round trip use.
+ * The default byte cap for `park-intent.json` and its temp (64 KiB, as the
+ * sidecar's). A path cannot exceed about 4 KiB (`PATH_MAX`), so every real
+ * intent fits and no state root is too deep to finish a recorded op (SMI-7205).
+ * Read the cap in force with `intentCap()`, never this constant.
  */
-export const INTENT_CAP = 4096
+export const INTENT_CAP = 64 * 1024
+
+let capInForce = INTENT_CAP
 
 /**
- * What the reader makes of an intent file's bytes, read with `INTENT_CAP`: the
+ * The reader's byte cap for `park-intent.json` and its temp: a read that fills
+ * the cap may be cut off, so it is not parsed. The one value both the
+ * classifier's reads and the writer's round trip use.
+ */
+export function intentCap(): number {
+  return capInForce
+}
+
+/**
+ * @internal Test seam: lowers (or, with `null`, restores) the cap for the
+ * writer and the reader together, so a refusal test needs no 64 KiB path. Not
+ * exported by the package (`exports` lists no deep path to this module and the
+ * barrels do not re-export it), and it throws unless the process is a vitest
+ * worker (`VITEST=true`, set by vitest itself), so no production caller can
+ * move the cap.
+ */
+export function setIntentCapForTest(cap: number | null): void {
+  if (process.env.VITEST !== 'true') throw new Error('setIntentCapForTest is for tests only')
+  if (cap !== null && (!Number.isInteger(cap) || cap < 1)) throw new Error(`bad intent cap ${cap}`)
+  capInForce = cap ?? INTENT_CAP
+}
+
+/**
+ * What the reader makes of an intent file's bytes, read with `intentCap()`: the
  * parsed JSON, or null when the read reached the cap or the bytes are not JSON.
  */
 export function intentValueOf(bytes: Buffer | null): unknown {
-  if (bytes === null || bytes.length >= INTENT_CAP) return null
+  if (bytes === null || bytes.length >= capInForce) return null
   try {
     return JSON.parse(bytes.toString('utf8')) as unknown
   } catch {
@@ -69,7 +95,7 @@ function isRecordIdentity(v: unknown): v is RecordIdentity {
  * True when `value` is an owner a park intent may carry: exactly `host`, `pid`
  * and `uid`, a string host and integer pid and uid. Part of `isParkIntentFor`.
  * Passing it does not make an intent readable: a long `host` can still push the
- * intent past `INTENT_CAP`. What a writer may write is decided only by the
+ * intent past `intentCap()`. What a writer may write is decided only by the
  * round trip (`readableIntentBytes`, `skill-swap.intent.ts`), which runs this
  * check and the cap on the exact bytes.
  */

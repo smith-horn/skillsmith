@@ -15,7 +15,7 @@
  * **No path writes an intent the reader would not accept.** The bytes are
  * produced in one place (`readableIntentOf`): serialized exactly as
  * `publishJson` would, then put through the reader's own acceptance (under
- * `INTENT_CAP`, then `isParkIntentFor` on what the reader would parse). The
+ * `intentCap()`, then `isParkIntentFor` on what the reader would parse). The
  * owner is the op's own (`st.owner`) when that intent is readable, else this
  * process's; when neither is, nothing is written and the write stops
  * `staging-unsafe` naming the size. Each writer also runs the same rule before
@@ -35,7 +35,7 @@ import path from 'node:path'
 import { S_IFMT } from '../install/park-tree.perms.js'
 import { KIND_ROLE } from './skill-recovery.pstate.js'
 import { attributionOf } from './skill-swap.attribution.js'
-import { INTENT_CAP, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
+import { intentCap, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { jsonBytes, publishBytes, recordIdentity } from './skill-swap.staging.js'
@@ -85,7 +85,7 @@ export type IntentBytes =
 
 /**
  * The round trip: `intent` serialized exactly as written, then the reader's
- * own acceptance of those bytes (`INTENT_CAP`, then `isParkIntentFor` on the
+ * own acceptance of those bytes (`intentCap()`, then `isParkIntentFor` on the
  * value `intentValueOf` parses, as `skill-recovery.opdir.ts` reads it).
  */
 export function readableIntentBytes(
@@ -94,10 +94,10 @@ export function readableIntentBytes(
   opIdentity: RecordIdentity
 ): IntentBytes {
   const bytes = jsonBytes(intent)
-  if (bytes.length >= INTENT_CAP) {
+  if (bytes.length >= intentCap()) {
     return {
       ok: false,
-      reason: `the park intent would be ${bytes.length} bytes, at or over the reader's ${INTENT_CAP}-byte cap`,
+      reason: `the park intent would be ${bytes.length} bytes, at or over the reader's ${intentCap()}-byte cap`,
       size: bytes.length,
     }
   }
@@ -194,7 +194,7 @@ export function intentPrecheck(st: SwapState, kind: ParkIntentKind): string | nu
     if (r.ok) continue
     return r.size === null
       ? r.reason
-      : `the park intent could be up to ${r.size} bytes, at or over the reader's ${INTENT_CAP}-byte cap`
+      : `the park intent could be up to ${r.size} bytes, at or over the reader's ${intentCap()}-byte cap`
   }
   return null
 }

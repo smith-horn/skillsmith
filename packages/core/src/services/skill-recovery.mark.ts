@@ -32,7 +32,7 @@
  * yet its rename fails `EXDEV`, so `st_dev` cannot rule that out), the worst
  * case of that intent is put through the reader's acceptance first
  * (`intentPrecheck`, `skill-swap.intent.ts`). One the reader would refuse (a
- * state root so deep the intent reaches `INTENT_CAP`) refuses `staging-unsafe`
+ * state root so deep the intent reaches `intentCap()`) refuses `staging-unsafe`
  * with nothing changed, instead of stopping after the keeps at the intent's
  * write.
  *
