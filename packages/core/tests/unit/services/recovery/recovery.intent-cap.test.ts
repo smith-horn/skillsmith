@@ -1,6 +1,6 @@
 /**
  * SMI-6531 (#3202 retro, round 2): no path writes a park intent the reader
- * would refuse. The reader reads `park-intent.json` with `INTENT_CAP` and
+ * would refuse. The reader reads `park-intent.json` with `intentCap()` and
  * refuses a read that fills it; nothing bounded what was written. Two ways
  * past the cap, each proven with a real fixture across devices (`/dev/shm`):
  *

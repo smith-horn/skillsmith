@@ -9,9 +9,9 @@ All notable changes to `@skillsmith/core` are documented here.
   doctor's reader) is now 64 KiB, as the sidecar's: a path cannot exceed about 4 KiB, and even
   its worst JSON escaping is about 24 KiB, so every real intent fits. `--apply` and `--undo`
   finish a recorded operation, and `--clean-staging` an unrecorded one, under any state root
-  instead of refusing `staging-unsafe`. The update's, abort cleanup's and
-  doctor's up-front prechecks are unchanged; they now size against the new cap, and their
-  refusal names it. No released version reads a park intent.
+  instead of refusing `staging-unsafe`. The update's, abort cleanup's and doctor's up-front
+  prechecks are unchanged; they now size against the new cap, and their refusal names it, so
+  no real path reaches that refusal any more. No released version reads a park intent.
 - **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to
   `skill-recovery.mark.ts` again (it was never a package export), and the recovery modules'
   comments now describe the park-intent precheck as running on any device. No behaviour change.
@@ -54,7 +54,7 @@ All notable changes to `@skillsmith/core` are documented here.
   `--undo`, none (the record fixes the backup area). `swapInPlace` runs it before it makes
   its operation folder, on any device, for both intents an update could write (its step-13
   `move-source` and abort cleanup's `abort-new`): an update whose state root is too deep is
-  refused `staging-unsafe`, `staged: 'none'`, "the update was not started", with no
+  refused `staging-unsafe` (since SMI-7205's 64 KiB cap, no real path reaches this), `staged: 'none'`, "the update was not started", with no
   operation folder, record, backup or manifest change. It cannot wait to learn whether the
   backup crosses devices: that is known only from `EXDEV`, after the commit. The update's
   process owner is read once, so `owner.json`, `record.json` and the intent name one host. A
