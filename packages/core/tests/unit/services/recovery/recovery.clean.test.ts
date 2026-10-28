@@ -21,7 +21,15 @@ import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import { contentOf } from '../skill-swap.abort.helpers.js'
 import { areaOf, hashOf, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { attempt, opIdN } from '../skill-swap.scan.helpers.js'
-import { act, contentSnapshot, done, killAt, removedBy, requestOf } from './recovery.act.helpers.js'
+import {
+  act,
+  areaNames,
+  contentSnapshot,
+  done,
+  killAt,
+  removedBy,
+  requestOf,
+} from './recovery.act.helpers.js'
 import { opReport } from './recovery.helpers.js'
 import type { State } from './recovery.helpers.js'
 import {
@@ -324,6 +332,45 @@ describe('T-X18 (e) and T-J12 under --clean-staging', () => {
       requestOf(a, 'clean-staging', { ...dead, roots, stateRoots, root: b.fx.skillsDir })
     )
     expect(picked).toMatchObject({ status: 'planned', opDir: b.opDir })
+  })
+})
+
+describe('new/ replaced between the locked re-plan and the keep', () => {
+  it('a different folder at new/ is refused as staging-unsafe: nothing kept, the replacement and owner.json stay', async () => {
+    const st = await abortLeft('abortAfterCheck')
+    const n = path.join(st.opDir, 'new')
+    const aside = path.join(st.fx.base, 'new.original-aside')
+    const originalContent = contentOf(n)
+    const originalHash = hashOf(n)
+    const replacementFiles = { 'planted.txt': 'not the tree the plan saw\n' }
+    let swapped = false
+    const a = await act(st, 'clean-staging', dead, {
+      afterReplan: () => {
+        // The op dir's identity is unchanged; only new/ is swapped, so the re-plan's digest holds.
+        fs.renameSync(n, aside)
+        fs.mkdirSync(n)
+        for (const [f, body] of Object.entries(replacementFiles)) {
+          fs.writeFileSync(path.join(n, f), body)
+        }
+        swapped = true
+      },
+    })
+    // The hook ran (a swap that never happened would pass every assertion below).
+    expect(swapped).toBe(true)
+    expect(a.result).toMatchObject({ status: 'stopped', reason: 'staging-unsafe' })
+    const detail = a.result.status === 'stopped' ? a.result.detail : ''
+    expect(detail).toContain('nothing was kept')
+    // Nothing was kept: no tree, no sidecar, and no area at all.
+    expect(areaNames(st.fx)).toEqual([])
+    expect(fs.existsSync(keptAt(st.fx, 'unrecorded-new'))).toBe(false)
+    // The replacement is still at the op dir, byte for byte, with owner.json beside it.
+    expect(opNames(st)).toEqual(['new', 'owner.json'])
+    expect(contentOf(n)).toEqual({ 'planted.txt': replacementFiles['planted.txt'] })
+    // The original tree is untouched where the test put it.
+    expect(contentOf(aside)).toEqual(originalContent)
+    expect(hashOf(aside)).toBe(originalHash)
+    // No removal of any kind ran.
+    expect(removedBy(a.trace)).toEqual([])
   })
 })
 
