@@ -30,8 +30,9 @@
  * Across devices (6a-iii): before the first mutation, a keep that still has
  * to be copied and would not fit refuses `state-root-full` naming
  * `FREE_SPACE_REMEDY`, free space by hand (`spaceBlock`; the prune command is
- * not available yet), and a park intent the finish would write that the
- * reader would refuse refuses `staging-unsafe` (`intentBlock`). A keep's verified
+ * not available yet). On any device, before the first mutation, a kept tree
+ * whose park intent the reader would refuse (and no intent is reused) refuses
+ * `staging-unsafe` (`intentBlock`, `RECORDED_STATE_ROOT_NOTE`). A keep's verified
  * source stays in OP, and the finish parks OP whole once its metadata is
  * unlinked (`skill-recovery.park.ts`, UD28); a park that does not finish is a
  * `removal-not-done` warning (exit 4, UD32). Doctor's own full-device stop

@@ -5,8 +5,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Added**: SMI-6531 -- A1 step 6b-ii: `skillsmith doctor recovery --clean-staging <opId>`
-  finishes an operation folder with no `record.json` (an update stopped before writing it, or
-  after removing it): it keeps the staged
+  finishes an operation folder with no `record.json` (an update stopped before writing it or
+  after removing it, or doctor's own cross-device `--apply`, `--undo` or `--clean-staging`
+  stopped after writing its park intent): it keeps the staged
   `new/` folder in the backup area (or finishes the set-aside the update had begun), then
   removes only the folder's metadata and the emptied folder (across devices it sets the
   folder aside whole with the verified copy). It runs only when the folder's
@@ -18,6 +19,15 @@ All notable changes to `@skillsmith/cli` are documented here.
   and exit codes as `--apply`, `--undo` and `--park`. The listing shows each such folder's
   owner verdict and whether the flag is needed, and now judges park intents and keep areas
   against the discovered state roots.
+
+- **Fixed**: SMI-6531 -- no path writes a park intent that `doctor recovery` would later refuse
+  to read. `doctor recovery --apply`, `--undo` and `--clean-staging` now check this before
+  changing anything, whenever they keep a tree, and can refuse `staging-unsafe` ("the park
+  intent could be up to N bytes", "nothing was changed"). For `--clean-staging` the refusal
+  suggests running it again with `--state-root` naming a state directory with a shorter path;
+  for `--apply` and `--undo` there is no remedy, because the record fixes the backup area. An
+  update whose state root is too deep is now refused with "the update was not started", with
+  no operation folder, backup or manifest change.
 
 - **Internal**: SMI-6531 -- the `doctor recovery` listing marks actions "(not available yet)" from
   core's own `PERFORMED` set, so an action enabled in core is listed as available without a

@@ -201,8 +201,9 @@ export async function runCleanup(
     const differs = await opDiffers(st, expected)
     if (differs !== null) return leftWith(st, reason, detail, undefined, differs)
     const kind = built ? await keepKindOf(st, newDir) : undefined
-    // Before the first mutation: N is parked (with an intent) when unchanged or kept across devices.
-    // Whenever N will be parked or kept: a keep's EXDEV is not predictable from st_dev.
+    // Before the first mutation, whenever N was built (parked or kept, on any
+    // device: a keep's EXDEV is not predictable from st_dev): precheck the
+    // abort-new intent step 6 could write.
     const intent = built ? intentPrecheck(st, 'abort-new') : null
     if (intent !== null) {
       return leftWith(st, reason, detail, undefined, {
