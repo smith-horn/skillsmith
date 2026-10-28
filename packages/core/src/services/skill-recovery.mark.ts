@@ -86,7 +86,7 @@ function nearest(p: string): { at: string; dev: bigint } | null {
  * What the space block reads: the roles, and T when the plan keeps it (a
  * no-record op dir, 6b-ii `--clean-staging`, has no T and keeps none).
  */
-export type SpaceFacts = Pick<OpFacts, 'roles'> & Partial<Pick<OpFacts, 't' | 'tPath'>>
+type SpaceFacts = Pick<OpFacts, 'roles'> & Partial<Pick<OpFacts, 't' | 'tPath'>>
 
 /** The trees the plan keeps that still need a cross-device copy, by path. */
 function toCopy(st: SwapState, f: SpaceFacts, steps: readonly PlanStep[]): string[] {

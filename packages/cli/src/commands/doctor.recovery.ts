@@ -23,7 +23,12 @@
 
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import { discoverRoots, listRecovery, type DiscoverOptions } from '@skillsmith/core'
+import {
+  discoverRoots,
+  listRecovery,
+  type DiscoverOptions,
+  type ListOptions,
+} from '@skillsmith/core'
 import { recoveryJson, renderRecovery } from './doctor.recovery.render.js'
 
 export interface DoctorRecoveryOptions {
@@ -33,6 +38,8 @@ export interface DoctorRecoveryOptions {
   json?: boolean
   /** @internal Test seam: overrides for root discovery (the nine paths, the home directory, `cwd`). */
   discovery?: Partial<DiscoverOptions>
+  /** @internal Test seam (6b-ii): the listing's owner probe. */
+  listOptions?: Pick<ListOptions, 'ownerProbe'>
 }
 
 export async function runDoctorRecovery(options: DoctorRecoveryOptions): Promise<void> {
@@ -45,7 +52,7 @@ export async function runDoctorRecovery(options: DoctorRecoveryOptions): Promise
   // state root are judged against them, as `--clean-staging`, `--apply` and `--undo` do.
   const reports = await listRecovery(
     found.roots.map((r) => r.root),
-    { stateRoots: found.stateRoots }
+    { ...options.listOptions, stateRoots: found.stateRoots }
   )
   if (options.json === true) {
     console.log(JSON.stringify(recoveryJson(found, reports), null, 2))

@@ -127,7 +127,7 @@ function noRecordState(ctx: SkillWriteContext, cls: NoRecord, options: SwapOptio
   }
 }
 
-export interface CleanResult {
+interface CleanResult {
   st: SwapState
   kept: Array<{ tree: TreePosition; kind: string; path: string }>
   /** Across devices, where the op dir (holding the verified source) was parked. */
@@ -137,7 +137,7 @@ export interface CleanResult {
 }
 
 /** What the run needs from `executeRecovery`'s prologue (lock 1 held, the re-plan matched). */
-export interface CleanRun {
+interface CleanRun {
   ctx: SkillWriteContext
   cls: NoRecord
   transcript: ReadTranscript

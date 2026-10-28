@@ -40,7 +40,12 @@
  */
 import path from 'node:path'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
-import { parkClientOf, parkIndexOf, routeRootOf } from './skill-recovery.attribution.js'
+import {
+  keepSidecarOf,
+  parkClientOf,
+  parkIndexOf,
+  routeRootOf,
+} from './skill-recovery.attribution.js'
 import { check, hook, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
@@ -102,7 +107,8 @@ function intentState(
     input: {
       skillsDir: ctx.root,
       client: r.client,
-      scope: 'user',
+      // O1's scope when attributed, else the client-`none` layout's (`none`): never a guessed one.
+      scope: keepSidecarOf(cls.clean.attribution, cls.opId).scope,
       stateRoot: r.stateRoot,
       manifestPath: path.join(r.stateRoot, 'manifest.json'),
       manifestKey: r.dirName,

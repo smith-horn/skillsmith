@@ -136,7 +136,7 @@ export function sidecarFor(
     },
     client: 'claude-code',
     skillsDir: fs.realpathSync(st.fx.skillsDir),
-    scope: 'user',
+    scope: 'global',
     manifestKey: st.fx.dirName,
     ...over,
   }

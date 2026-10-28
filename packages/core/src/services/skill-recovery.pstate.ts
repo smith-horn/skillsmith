@@ -157,7 +157,7 @@ function parseSidecar(bytes: Buffer): ParsedSidecar | { ok: false; why: string }
  * client-`none` layout when it has none (`keepExpectOf`). `from` words the
  * mismatch ("the record", "the op dir's attribution").
  */
-export interface SidecarExpect {
+interface SidecarExpect {
   dirName: string
   client: string
   skillsDir: string

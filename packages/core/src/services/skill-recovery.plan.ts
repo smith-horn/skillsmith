@@ -317,8 +317,14 @@ function swappedPlan(
  * 6a-iii: an op dir whose record is gone but whose park intent verifies (a
  * cross-device finish killed after the record went). `--apply` and `--undo`
  * finish that park as the uninterrupted run would: each source goes with OP.
+ * 6b-ii: the metadata temps the classifier proved this op's (`temps`) are
+ * unlinked first, so the plan names each one (and the digest covers them).
  */
-function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan {
+function intentParkPlan(
+  i: NoRecordIntent,
+  temps: readonly string[],
+  action: 'apply' | 'undo'
+): ActionPlan {
   return offer(
     action,
     i.sources.map((s) =>
@@ -330,6 +336,7 @@ function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan
     ),
     'untouched',
     [
+      ...temps.map((t) => `unlink the metadata temp ${t}`),
       'unlink owner.json if it is there',
       `park the op dir (kind ${i.kind}), checked against a fresh hash of its contents`,
     ],
@@ -368,7 +375,7 @@ export function planAction(
   if (action === 'apply' || action === 'undo') {
     if (cls.kind === 'state') return rowPlan(cls, action)
     if (cls.kind === 'no-record' && cls.intent !== null && cls.intent.blocked === null) {
-      return intentParkPlan(cls.intent, action)
+      return intentParkPlan(cls.intent, cls.clean.temps, action)
     }
     if (cls.kind === 'moved') {
       return refuse(

@@ -43,9 +43,6 @@ export function parkIntentOf(
   backupPath?: string
 ): ParkIntent {
   if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
-  if (kind === 'move-source' && backupPath === undefined) {
-    throw new SwapFault('staging-unsafe', 'a move-source park intent needs the backup path')
-  }
   // `owner.json` is written before anything else in OP; if this run never
   // published it, the owner is still this process.
   const owner = st.owner ?? {
@@ -57,11 +54,12 @@ export function parkIntentOf(
     opId: st.opId,
     owner: { pid: owner.pid, host: owner.host, uid: owner.uid },
     opIdentity: recordIdentity(st.op.identity),
-    kind,
   }
-  return kind === 'move-source'
-    ? { schema: 1, ...base, backupPath }
-    : { schema: 2, ...base, ...attributionOf(st) }
+  if (kind === 'abort-new') return { schema: 2, ...base, kind, ...attributionOf(st) }
+  if (backupPath === undefined) {
+    throw new SwapFault('staging-unsafe', 'a move-source park intent needs the backup path')
+  }
+  return { schema: 1, ...base, kind, backupPath }
 }
 
 /** Publishes `park-intent.json` durably. Kill points: `afterIntentTemp`, `afterIntent`. */

@@ -13,7 +13,9 @@
  * Validation is all or nothing. The attribution is accepted only when every
  * check passes:
  *  - `client` is one of `CLIENT_IDS`;
- *  - `scope` is `user` or `workspace`;
+ *  - `scope` is an install scope, `global` or `workspace` (`InstallScope`, the
+ *    update target's scope the swap records; 6b-i's design said `user`, which
+ *    no writer produces);
  *  - `dirName` and `manifestKey` are single path components;
  *  - `stateRoot` is a state root doctor discovered or was given (the set
  *    `RecoveryRequest.stateRoots` carries);
@@ -38,13 +40,14 @@ import path from 'node:path'
 import { CLIENT_IDS } from '../install/client-ids.js'
 import { PARKED_INDEX_FILE } from '../install/parked-index.name.js'
 import { backupAreaPath } from './skill-swap.area.js'
+import { INSTALL_SCOPES } from '../install/scope-ids.js'
+import type { InstallScope } from '../install/workspace-scope.js'
 import { ATTRIBUTION_FIELDS } from './skill-swap.attribution.js'
-
-export { ATTRIBUTION_FIELDS }
 
 export interface AttributionFields {
   client: string
-  scope: 'user' | 'workspace'
+  /** The update target's install scope (`InstallScope`: `global` or `workspace`). */
+  scope: InstallScope
   dirName: string
   manifestKey: string
   stateRoot: string
@@ -76,8 +79,11 @@ function validate(
   if (typeof client !== 'string' || !(CLIENT_IDS as readonly string[]).includes(client)) {
     return { ok: false, why: `client ${JSON.stringify(client)} is not a known client` }
   }
-  if (scope !== 'user' && scope !== 'workspace') {
-    return { ok: false, why: `scope ${JSON.stringify(scope)} is not user or workspace` }
+  if (typeof scope !== 'string' || !(INSTALL_SCOPES as readonly string[]).includes(scope)) {
+    return {
+      ok: false,
+      why: `scope ${JSON.stringify(scope)} is not an install scope (${INSTALL_SCOPES.join(' or ')})`,
+    }
   }
   for (const [name, v] of [
     ['dirName', dirName],
@@ -97,7 +103,7 @@ function validate(
     ok: true,
     fields: {
       client,
-      scope,
+      scope: scope as InstallScope,
       dirName: dirName as string,
       manifestKey: manifestKey as string,
       stateRoot,

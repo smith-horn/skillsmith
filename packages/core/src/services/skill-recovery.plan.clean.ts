@@ -95,7 +95,7 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
     ),
     'untouched',
     [
-      ...(c.temps.length > 0 ? [`unlink the metadata temps ${c.temps.join(', ')}`] : []),
+      ...c.temps.map((t) => `unlink the metadata temp ${t}`),
       ...(owner ? ['unlink owner.json'] : []),
       `park the op dir (kind ${kind}), checked against a fresh hash of its contents`,
     ],
@@ -134,7 +134,8 @@ function keepPlan(cls: NoRecord, area: string, unsafe: boolean): ActionPlan {
     steps.push(step('N', kept(n.keep.kind), `already kept at ${n.keep.destPath}`))
   }
   remaining.push(
-    `${c.temps.length > 0 ? 'unlink the metadata temps, then ' : ''}unlink owner.json last, then rmdir the op dir and sync the staging dir`
+    ...c.temps.map((t) => `unlink the metadata temp ${t}`),
+    'unlink owner.json last, then rmdir the op dir and sync the staging dir'
   )
   return offer('clean-staging', steps, 'untouched', remaining, [
     `kept into ${area}; ${routeWords(c.attribution)}`,
@@ -149,7 +150,7 @@ function keepPlan(cls: NoRecord, area: string, unsafe: boolean): ActionPlan {
 }
 
 /** `--clean-staging` for a no-record op dir (see the module comment). */
-export function cleanPlan(cls: NoRecord, unsafe: boolean): ActionPlan {
+function cleanPlan(cls: NoRecord, unsafe: boolean): ActionPlan {
   const c = cls.clean
   const i = cls.intent
   if (c.unprovable !== null) {

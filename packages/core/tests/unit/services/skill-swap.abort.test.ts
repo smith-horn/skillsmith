@@ -285,7 +285,7 @@ describe('T-PI2 (swap half): the park intent', () => {
         opIdentity: opId,
         kind: 'abort-new',
         client: 'claude-code',
-        scope: 'user',
+        scope: 'global',
         dirName: run.fx.dirName,
         manifestKey: run.fx.dirName,
         stateRoot: fs.realpathSync.native(run.fx.stateRoot),

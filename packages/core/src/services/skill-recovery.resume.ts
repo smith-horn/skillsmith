@@ -58,7 +58,7 @@ import type { AcrossKeep } from './skill-recovery.xdev.js'
 import type { KeepGroup, OpFacts, ReadTranscript, Role } from './skill-recovery.types.js'
 
 /** The facts a keep reads: each role's resolution, this op's groups, the full-device marker. */
-export type KeepFacts = Pick<OpFacts, 'roles' | 'groups' | 'fullDevice'>
+type KeepFacts = Pick<OpFacts, 'roles' | 'groups' | 'fullDevice'>
 
 /** A kind `publishTree` can write, else a stop: a name this module cannot keep. */
 function publishKindOf(kind: string): PublishKind {

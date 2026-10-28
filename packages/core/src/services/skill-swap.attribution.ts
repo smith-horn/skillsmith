@@ -27,7 +27,7 @@ export const ATTRIBUTION_FIELDS = [
   'stateRoot',
 ] as const
 
-export type AttributionField = (typeof ATTRIBUTION_FIELDS)[number]
+type AttributionField = (typeof ATTRIBUTION_FIELDS)[number]
 
 /** The attribution as written: one string per field, unvalidated. */
 export type AttributionHint = { readonly [K in AttributionField]: string }

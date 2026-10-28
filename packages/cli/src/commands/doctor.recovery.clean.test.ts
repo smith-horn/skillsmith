@@ -6,12 +6,12 @@
  * `--clean-staging`), the listing's owner verdict, and the registration.
  *
  * The op dir is planted the way a swap leaves one before its record: `new/`
- * and an `owner.json` carrying O1's attribution. Its owner is a real pid: a
- * child that has exited (dead) or this process (alive). Each refusal asserts
+ * and an `owner.json` carrying O1's attribution. A dead owner is stood for by
+ * an injected probe (the request seam, `doctorRecovery`'s list seam); the
+ * real probe judges only the alive case, this process. Each refusal asserts
  * nothing changed (a snapshot of the whole temp home) and that no lock was
  * taken (`executeRecovery` was not called), beside a positive that acts.
  */
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -62,12 +62,11 @@ afterEach(() => {
   fs.rmSync(base, { recursive: true, force: true })
 })
 
-/** A pid that existed and has exited: a child run to completion. */
-function deadPid(): number {
-  const r = spawnSync(process.execPath, ['-e', ''])
-  if (typeof r.pid !== 'number') throw new Error('no child pid')
-  return r.pid
-}
+/** The pid `owner.json` names when the owner stands for a dead one (the probe decides, not the pid). */
+const GONE_PID = 424242
+/** This host, every pid gone: injected through the request seam, so no reaped pid can be reused. */
+const DEAD = { host: os.hostname(), alive: (): boolean => false }
+const dead = { request: { ownerProbe: DEAD } }
 
 interface Planted {
   root: string
@@ -93,7 +92,7 @@ function plantNoRecord(pid: number): Planted {
       uid: process.geteuid?.() ?? -1,
       createdAt: new Date().toISOString(),
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName: 'my-skill',
       manifestKey: 'my-skill',
       stateRoot: fs.realpathSync.native(stateRoot),
@@ -120,8 +119,8 @@ const tty = (answer: PromptAnswer) => ({ isTTY: () => true, prompt: async () => 
 
 describe('T-J15 (--clean-staging half): the confirmation contract', () => {
   it('--yes: the plan is printed, then done; N kept, the op dir gone, exit 0', async () => {
-    const u = plantNoRecord(deadPid())
-    await runRecoveryAction({ cleanStaging: OP, yes: true })
+    const u = plantNoRecord(GONE_PID)
+    await runRecoveryAction({ cleanStaging: OP, yes: true, ...dead })
     expect(process.exitCode).toBeUndefined()
     const text = out.join('\n')
     expect(text).toContain(`Plan for --clean-staging ${OP}`)
@@ -141,9 +140,9 @@ describe('T-J15 (--clean-staging half): the confirmation contract', () => {
   ]
   for (const [name, opts, code] of NO) {
     it(`${name}: exit ${code}, nothing changed, no lock`, async () => {
-      const u = plantNoRecord(deadPid())
+      const u = plantNoRecord(GONE_PID)
       const before = snapshot(base)
-      await runRecoveryAction({ cleanStaging: OP, ...opts })
+      await runRecoveryAction({ cleanStaging: OP, ...opts, ...dead })
       expect(process.exitCode).toBe(code)
       expect(snapshot(base)).toEqual(before)
       expect(calls.executes).toBe(0)
@@ -152,19 +151,20 @@ describe('T-J15 (--clean-staging half): the confirmation contract', () => {
   }
 
   it('yes at the prompt acts (the positive for the cases above)', async () => {
-    const u = plantNoRecord(deadPid())
-    await runRecoveryAction({ cleanStaging: OP, ...tty('yes') })
+    const u = plantNoRecord(GONE_PID)
+    await runRecoveryAction({ cleanStaging: OP, ...tty('yes'), ...dead })
     expect(process.exitCode).toBeUndefined()
     expect(fs.existsSync(u.opDir)).toBe(false)
     expect(calls.executes).toBe(1)
   })
 
   it('the prompt is never shown while lock 1 is held: asking under it throws', async () => {
-    const u = plantNoRecord(deadPid())
+    const u = plantNoRecord(GONE_PID)
     let asked = false
     const r = await withSkillWriteLock(u.root, 'test holder', async () =>
       runRecoveryAction({
         cleanStaging: OP,
+        ...dead,
         isTTY: () => true,
         prompt: async () => {
           asked = true
@@ -182,10 +182,11 @@ describe('T-J15 (--clean-staging half): the confirmation contract', () => {
   })
 
   it('plan-changed: a file added inside new/ between confirmation and lock: exit 1, nothing kept', async () => {
-    const u = plantNoRecord(deadPid())
+    const u = plantNoRecord(GONE_PID)
     let before: string[] = []
     await runRecoveryAction({
       cleanStaging: OP,
+      ...dead,
       yes: true,
       afterConfirm: () => {
         fs.writeFileSync(path.join(u.opDir, 'new', 'late.txt'), 'late\n')
@@ -241,8 +242,8 @@ describe('the listing', () => {
   })
 
   it('a dead owner: the verdict, and --clean-staging offered without the flag', async () => {
-    plantNoRecord(deadPid())
-    await runDoctorRecovery({})
+    plantNoRecord(GONE_PID)
+    await runDoctorRecovery({ listOptions: { ownerProbe: DEAD } })
     const text = out.join('\n')
     expect(text).toContain('owner verdict: same-host-dead')
     expect(text).not.toContain('needs --unsafe-unverified-owner')
@@ -254,11 +255,20 @@ describe('the listing', () => {
 })
 
 describe('through commander', () => {
-  it('`doctor recovery --clean-staging <opId> --yes` runs the action', async () => {
-    const u = plantNoRecord(deadPid())
+  it('`doctor recovery --clean-staging <opId> --unsafe-unverified-owner --yes` runs the action', async () => {
+    // The real probe, the alive case: this process owns it, so the flag is what lets it act.
+    const u = plantNoRecord(process.pid)
     const cmd = createDoctorCommand()
     cmd.exitOverride()
-    await cmd.parseAsync(['node', 'doctor', 'recovery', '--clean-staging', OP, '--yes'])
+    await cmd.parseAsync([
+      'node',
+      'doctor',
+      'recovery',
+      '--clean-staging',
+      OP,
+      '--unsafe-unverified-owner',
+      '--yes',
+    ])
     expect(fs.existsSync(u.opDir)).toBe(false)
     expect(calls.executes).toBe(1)
   })

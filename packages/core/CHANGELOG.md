@@ -11,15 +11,18 @@ All notable changes to `@skillsmith/core` are documented here.
   with its own kind), unlinks the provable temps and then `owner.json` last, and `rmdir`s the
   folder; across devices the verified `new/` stays and the folder is parked whole behind a
   `move-source` intent. It is offered only when `owner.json` names a process on this host that
-  is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`; the
-  owner verdict is in the serialized plan, so a change before the lock is `plan-changed`. An
+  is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`, except
+  that a verifying intent with no `owner.json` left needs neither; the owner verdict is in the
+  serialized plan, so a change before the lock is `plan-changed`. The provable temps finished
+  with an intent (by `--clean-staging`, `--apply` or `--undo`) are named in the plan. An
   entry doctor cannot prove it wrote (a partial temp, an intent that does not verify, `old/`
   without a record, a stray file) refuses with zero mutation, naming it. Nothing is deleted:
   only metadata and the emptied folder go.
 - **Changed**: SMI-6531 -- A1 step 6b-ii (O1): the swap writes `client`, `scope`, `dirName`,
   `manifestKey` and `stateRoot` into `owner.json`, and an `abort-new` park intent carries them
   as schema 2 (schema 1 is still accepted; `move-source` intents stay schema 1). Doctor uses
-  them as routing hints only, validated all or nothing, else the client-`none` layout. A
+  them as routing hints only, validated all or nothing (`scope` against `InstallScope`,
+  `global` or `workspace`), else the client-`none` layout. A
   `--park` of an unreadable record now names the attributed client. `CLIENT_IDS` and
   `PARKED_INDEX_FILE` are defined in modules with no filesystem import (still re-exported from
   their old homes), so the classifier can resolve the attribution.

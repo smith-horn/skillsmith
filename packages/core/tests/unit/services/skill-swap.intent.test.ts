@@ -110,7 +110,7 @@ describe('isParkIntentFor: known-positive and known-negatives', () => {
 // 6b-ii (O1): an abort-new intent is schema 2, carrying the attribution's five strings.
 const ATTR = {
   client: 'claude-code',
-  scope: 'user',
+  scope: 'global',
   dirName: 'my-skill',
   manifestKey: 'my-skill',
   stateRoot: '/state',
@@ -181,7 +181,7 @@ describe('parkIntentOf', () => {
     const intent = parkIntentOf(st, 'move-source', '/state/backup')
     expect(intent.kind).toBe('move-source')
     expect(intent.schema).toBe(1)
-    expect(intent.backupPath).toBe('/state/backup')
+    expect(intent.kind === 'move-source' ? intent.backupPath : null).toBe('/state/backup')
     expect(intent).not.toHaveProperty('client')
     expect(isParkIntentFor(intent, OP, intent.opIdentity)).toBe(true)
   })

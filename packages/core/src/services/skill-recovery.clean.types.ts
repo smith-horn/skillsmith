@@ -9,10 +9,13 @@ import type { KeepGroup, RoleRes, StatFact } from './skill-recovery.types.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 /**
- * Whether `owner.json`'s owner can be shown gone. Only `same-host-dead` lets
- * `--clean-staging` act without `--unsafe-unverified-owner`: a pid that
- * `kill(pid, 0)` answers `ESRCH` on this host. `EPERM` (the process exists,
- * owned by someone else) and every other answer count as alive.
+ * Whether `owner.json`'s owner can be shown gone. Where `owner.json` is
+ * present, only `same-host-dead` lets `--clean-staging` act without
+ * `--unsafe-unverified-owner`: a pid that `kill(pid, 0)` answers `ESRCH` on
+ * this host. `EPERM` (the process exists, owned by someone else) and every
+ * other answer count as alive. The one exception: an op dir with a verifying
+ * `park-intent.json` and no `owner.json` (`absent`) needs neither, because
+ * the writer made the intent durable before it unlinked `owner.json`.
  */
 export type OwnerVerdict =
   | 'same-host-dead'

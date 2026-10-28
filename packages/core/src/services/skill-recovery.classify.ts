@@ -67,7 +67,9 @@ export interface ClassifyContext {
   /**
    * 6b-ii: how `owner.json`'s owner is judged (this host's name and the pid
    * liveness probe), injected so the classifier imports no process or
-   * filesystem module. Absent, no owner is shown gone (`same-host-alive`).
+   * filesystem module. Absent, no owner is shown gone: an owner that names a
+   * pid and host is `other-host` (this host's name is unknown), as
+   * `ownerVerdict` decides.
    */
   ownerProbe?: OwnerProbe
 }

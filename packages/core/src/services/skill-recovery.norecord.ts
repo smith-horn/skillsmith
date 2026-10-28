@@ -67,7 +67,7 @@ function objectOf(bytes: Buffer | null): Record<string, unknown> | null {
 }
 
 /** The verdict on `owner.json`'s owner (see the module comment), with its words. */
-export function ownerVerdict(
+function ownerVerdict(
   present: boolean,
   o: Record<string, unknown> | null,
   probe: OwnerProbe | undefined

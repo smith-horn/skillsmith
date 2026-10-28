@@ -8,7 +8,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   finishes an operation folder an update left before it wrote its record: it keeps the staged
   `new/` folder in the backup area (or finishes the set-aside the update had begun), then
   removes only the folder's metadata and the emptied folder. It runs only when the folder's
-  `owner.json` names a process on this host that has exited; `--unsafe-unverified-owner`
+  `owner.json` names a process on this host that has exited, or when the update had already
+  made its set-aside durable and removed `owner.json` (a verifying park intent with no
+  `owner.json` left needs nothing more); `--unsafe-unverified-owner`
   (accepted only with `--clean-staging`, and never implied by `--yes`) acts past an owner it
   cannot verify gone, and the plan names the claim and why first. Same confirmation contract
   and exit codes as `--apply`, `--undo` and `--park`. The listing shows each such folder's

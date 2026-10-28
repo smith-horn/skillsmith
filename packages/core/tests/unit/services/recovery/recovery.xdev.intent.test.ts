@@ -118,6 +118,55 @@ describe('a no-record op dir with a verifying intent: the same command finishes 
   })
 })
 
+describe('6b-ii: a provable metadata temp beside the intent is named in the plan and unlinked first', () => {
+  const PROVABLE: Array<[string, (st: State) => string]> = [
+    [
+      'an empty record.json.tmp (one link)',
+      (st) => {
+        const t = path.join(st.opDir, 'record.json.tmp')
+        fs.writeFileSync(t, '')
+        return t
+      },
+    ],
+    [
+      'a park-intent.json.tmp linked to the intent (same inode)',
+      (st) => {
+        const t = `${intentOf(st)}.tmp`
+        fs.linkSync(intentOf(st), t)
+        return t
+      },
+    ],
+  ]
+  for (const [label, plant] of PROVABLE) {
+    it(`--apply with ${label}: planned with it named, finishes, and it is gone`, async () => {
+      const st = await doctorLeft()
+      const tmpFile = plant(st)
+      const planned = await planRecovery(requestOf(st, 'apply'))
+      expect(planned.status).toBe('planned')
+      if (planned.status !== 'planned') return
+      expect(planned.plan.remaining).toContain(`unlink the metadata temp ${tmpFile}`)
+      const a = await done(st, 'apply')
+      expect(a.trace.filter((t) => t.op === 'unlink').map((t) => t.path)).toEqual([tmpFile])
+      const parked = theParkedCopy(st.fx)
+      expect(fs.readdirSync(parked).sort()).toEqual(['old', 'park-intent.json'])
+      expect(fs.existsSync(tmpFile)).toBe(false)
+      expect(fs.existsSync(st.opDir)).toBe(false)
+    })
+  }
+
+  it('--apply with an unprovable record.json.tmp (a partial record): still refused, zero mutation', async () => {
+    const st = await doctorLeft()
+    fs.writeFileSync(path.join(st.opDir, 'record.json.tmp'), '{"schema":1,"op":"upd')
+    await refusedWith(st, 'recovery-not-offered', 'record.json.tmp')
+  })
+
+  it('--apply with an unprovable park-intent.json.tmp (another op’s bytes): still refused, zero mutation', async () => {
+    const st = await doctorLeft()
+    fs.writeFileSync(`${intentOf(st)}.tmp`, '{"kind":"move-source"}')
+    await refusedWith(st, 'recovery-not-offered', 'park-intent.json.tmp')
+  })
+})
+
 describe('refused, with zero mutation', () => {
   it("another user's: the intent's uid", async () => {
     const st = await doctorLeft()

@@ -139,7 +139,7 @@ const result = await swapInPlace(
   {
     skillsDir: cfg.skillsDir,
     client: 'claude-code',
-    scope: 'user',
+    scope: 'global',
     stateRoot: cfg.stateRoot,
     manifestPath: join(cfg.stateRoot, 'manifest.json'),
     manifestKey: cfg.dirName,

@@ -74,7 +74,8 @@ function parkState(
     input: {
       skillsDir: ctx.root,
       client: parkClientOf(attribution),
-      scope: attribution.kind === 'attributed' ? attribution.scope : 'user',
+      // O1's scope when attributed, else the client-`none` layout's (`none`).
+      scope: attribution.kind === 'attributed' ? attribution.scope : 'none',
       stateRoot,
       manifestPath: path.join(stateRoot, 'manifest.json'),
       manifestKey: dirName,

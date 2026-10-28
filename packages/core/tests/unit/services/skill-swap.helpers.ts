@@ -142,7 +142,7 @@ export function plan(fx: Fixture, writeSet: SwapWriteEntry[]): Planned {
   const input: SwapInput = {
     skillsDir: fx.skillsDir,
     client: 'claude-code',
-    scope: 'user',
+    scope: 'global',
     stateRoot: fx.stateRoot,
     manifestPath: path.join(fx.stateRoot, 'manifest.json'),
     manifestKey: fx.dirName,

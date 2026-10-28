@@ -42,7 +42,7 @@ describe('O1 writer: the swap writes the attribution from step 1', () => {
       uid: expect.any(Number),
       createdAt: expect.any(String),
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName: st.fx.dirName,
       manifestKey: st.fx.dirName,
       stateRoot: stateReal(st),
@@ -70,7 +70,7 @@ describe('O1 accepted: the keep is routed by the attribution', () => {
     expect(a.result.kept).toEqual([{ tree: 'N', kind: 'unrecorded-new', path: dest }])
     expect(sidecarAt(dest)).toMatchObject({
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName: st.fx.dirName,
       manifestKey: st.fx.dirName,
       skillsDir: rootReal(st),
@@ -88,6 +88,30 @@ describe('O1 accepted: the keep is routed by the attribution', () => {
     expect(sidecarAt(parked)).toMatchObject({ kind: 'abort-new', client: 'cursor' })
     const index = fs.readFileSync(path.join(stateReal(st), 'parked-index.jsonl'), 'utf8')
     expect(index).toContain('"client":"cursor"')
+  })
+})
+
+describe("O1 scope: the update target's install scope (global or workspace), not 6b-i's 'user'", () => {
+  it("a swap whose input scope is 'global' (the real InstallScope) is accepted and routed by its client", async () => {
+    const st = await abortLeft('abortAfterCheck')
+    expect(st.p.input.scope).toBe('global')
+    expect(json(path.join(st.opDir, 'owner.json')).scope).toBe('global')
+    const a = await done(st, 'clean-staging', dead)
+    expect(a.result.kept[0]!.path).toBe(path.join(areaOf(st.fx), `${OP_ID}.unrecorded-new`))
+    expect(sidecarAt(a.result.kept[0]!.path)).toMatchObject({
+      client: 'claude-code',
+      scope: 'global',
+    })
+  })
+
+  it("the pair: scope 'user' (no writer produces it) is invalid, so the whole attribution falls back", async () => {
+    const st = await abortLeft('abortAfterCheck')
+    editOwner(st, { scope: 'user' })
+    const a = await done(st, 'clean-staging', dead)
+    expect(a.result.kept[0]!.path).toBe(
+      path.join(noneArea(st.fx, stateReal(st)), `${OP_ID}.unrecorded-new`)
+    )
+    expect(sidecarAt(a.result.kept[0]!.path)).toMatchObject({ client: 'none', scope: 'none' })
   })
 })
 
@@ -111,12 +135,12 @@ describe('O1 all or nothing: one invalid field discards the whole attribution', 
       expect(a.result.kept).toEqual([{ tree: 'N', kind: 'unrecorded-new', path: dest }])
       const side = sidecarAt(dest)
       expect(side).toMatchObject({ client: 'none', scope: 'none', manifestKey: '', dirName: OP_ID })
-      // The valid fields (client claude-code, scope user, dirName my-skill) appear nowhere.
+      // The valid fields (client claude-code, scope global, dirName my-skill) appear nowhere.
       for (const v of ['claude-code', st.fx.dirName]) {
         expect(dest).not.toContain(v)
         expect(JSON.stringify(side)).not.toContain(`"${v}"`)
       }
-      expect(side.scope).not.toBe('user')
+      expect(side.scope).not.toBe('global')
       // Nothing was made in the attributed area, nor beside it (`../x`).
       expect(fs.existsSync(path.join(stateReal(st), 'backups', 'update', 'claude-code'))).toBe(
         false

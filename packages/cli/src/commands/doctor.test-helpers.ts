@@ -116,7 +116,7 @@ export function plantCrashedUpdate(
       manifestPath: join(realpathSync(stateRoot), 'manifest.json'),
       manifestKey: 'my-skill',
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName: 'my-skill',
     },
     rootIdentity: identityOf(root),
