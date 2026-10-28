@@ -1,7 +1,13 @@
 /**
- * SMI-6531 (A1 step 6a-ii): the lock-free half of `doctor recovery --apply
- * <opId>` / `--undo <opId>`: targeting and the plan shown before the prompt
- * (A1 plan §3.9 "Targeting", confirmation contract item 1).
+ * SMI-6531 (A1 steps 6a-ii, 6b-i): the lock-free half of every `doctor
+ * recovery` action (`--apply`, `--undo`, `--park`, and the targeting of
+ * `--abandon` and `--clean-staging`): targeting and the plan shown before the
+ * prompt (A1 plan §3.9 "Targeting", confirmation contract item 1). Targeting
+ * is shared by all five actions (design Q1): `already-parked` (O3a), the
+ * ambiguity rules and `--root`, and the empty-target plan (one `rmdir`).
+ * `--park`'s uid refusal (O3b) is the plan table's, so it is here too, before
+ * any lock. `--abandon` and `--clean-staging` on a non-empty op dir are
+ * refused here ("not performed by this version yet") until 6b-ii and 6b-iii.
  *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
  * write: `listRoot`), finds every op dir named `opId`, and:
@@ -29,7 +35,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { listRoot } from './skill-recovery.listing.js'
 import type { RootReport } from './skill-recovery.listing.js'
-import type { ActionPlan, RecoveryRefuseReason } from './skill-recovery.types.js'
+import type { ActionPlan, RecoveryAction, RecoveryRefuseReason } from './skill-recovery.types.js'
 import type { SweepEntry } from './skill-recovery.finish.js'
 import type {
   PlannedRecovery,
@@ -38,6 +44,7 @@ import type {
   RecoveryRequest,
 } from './skill-recovery.run.types.js'
 import { planAction } from './skill-recovery.plan.js'
+import { PERFORMED } from './skill-recovery.plan.actions.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const refusal = (
@@ -85,7 +92,7 @@ function sweepOf(r: RootReport, target: string): SweepEntry[] {
 }
 
 /** The plan offered for an empty target: the op dir goes, nothing else changes. */
-function emptyPlan(action: 'apply' | 'undo'): Extract<ActionPlan, { offered: true }> {
+function emptyPlan(action: RecoveryAction): Extract<ActionPlan, { offered: true }> {
   return {
     offered: true,
     action,
@@ -196,6 +203,14 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
   }
   const plan = planAction(op.cls, request.action)
   if (!plan.offered) return refusal(plan.reason, plan.detail, [op.opDir])
+  if (!PERFORMED.has(request.action)) {
+    // 6b-i: `--abandon` and `--clean-staging` are planned (the listing shows them) but not yet run.
+    return refusal(
+      'recovery-not-offered',
+      `--${request.action} is not performed by this version yet; nothing was changed`,
+      [op.opDir]
+    )
+  }
   return { ...base, plan, emptyTarget: null }
 }
 

@@ -268,7 +268,7 @@ export function createDoctorCommand(): Command {
   doctor
     .command('recovery')
     .description(
-      'List what a crashed update left in each skills root, or finish or undo one with --apply or --undo'
+      'List what a crashed update left in each skills root; finish or undo one with --apply or --undo, or set an unreadable one aside with --park'
     )
     .option('--root <dir>', 'Also scan this skills root (repeatable)', collectRoot, [] as string[])
     .option('--state-root <dir>', 'State root to read instead of the discovered ones')
@@ -276,13 +276,18 @@ export function createDoctorCommand(): Command {
     // SMI-6531 6a-iii: the supported endpoint, on one device and across devices.
     .option('--apply <opId>', 'Finish an unfinished update (shows the plan, then asks)')
     .option('--undo <opId>', 'Undo an unfinished update (shows the plan, then asks)')
+    // SMI-6531 6b-i: the only remedy for a record that cannot be read, which blocks the whole root.
+    .option(
+      '--park <opId>',
+      'Set aside the whole op dir of a record that cannot be read (shows the plan, then asks)'
+    )
     .option(
       '--accept-identity',
       'With --apply or --undo: waive the identity check only (each tree must still hash to its role)'
     )
-    .option('--yes', 'With --apply or --undo: proceed without the prompt (waives no check)')
+    .option('--yes', 'With --apply, --undo or --park: proceed without the prompt (waives no check)')
     .action((opts: RecoveryActionOptions & DoctorRecoveryOptions) =>
-      opts.apply !== undefined || opts.undo !== undefined
+      opts.apply !== undefined || opts.undo !== undefined || opts.park !== undefined
         ? doctorRecoveryApplyAction(opts)
         : doctorRecoveryAction(opts)
     )

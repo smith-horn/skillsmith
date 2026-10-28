@@ -35,6 +35,7 @@ import { readEntryState } from './skill-manifest.entry.js'
 import { createManifestPort } from './skill-manifest.port.js'
 import type { ManifestPortTarget } from './skill-manifest.port.js'
 import { isAreaEntryOf, KEPT_KINDS } from './skill-swap.fullmark.js'
+import type { TreeRecord } from '../install/tree-hash.js'
 import { treeHashOf } from './skill-tree.js'
 import { SHARED_METHODS } from './skill-recovery.types.js'
 import type {
@@ -116,6 +117,13 @@ function keep(rule: ListRule, names: string[]): string[] {
     return isAreaEntryOf(n, rule.opId, RECOGNIZED_KINDS)
   })
   return kept.sort()
+}
+
+/** The sum of the regular files' sizes in a walked tree record. */
+function bytesOf(record: TreeRecord): number {
+  let n = 0
+  for (const e of record.values()) if (e.type === 'file') n += Number(e.size)
+  return n
 }
 
 const ruleKey = (rule: ListRule): string =>
@@ -236,7 +244,7 @@ export class ClassifierReader {
       const st = fs.lstatSync(p, { bigint: true })
       const h = treeHashOf(p)
       fact = h.ok
-        ? { ok: true, hash: h.hash, identity: identityOf(st) }
+        ? { ok: true, hash: h.hash, identity: identityOf(st), bytes: bytesOf(h.record) }
         : { ok: false, reason: h.reason, path: h.path, errno: h.errno }
     } catch (err) {
       fact = { ok: false, reason: 'unreadable', path: p, errno: errnoOf(err) }

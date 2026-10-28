@@ -11,22 +11,31 @@
  * `--apply` and `--undo` are offered for the §3.3 rows and their post-keep
  * forms; every other class gets its own words (`recovery-moved`,
  * `recovery-identity-changed`, `recovery-conflict`, `recovery-other-user`,
- * `recovery-not-offered`). `--abandon`, `--clean-staging` and `--park` are
- * 6b's: here they say whether they would be offered.
+ * `recovery-not-offered`). The words for `--abandon`, `--clean-staging` and
+ * `--park` (6b), and the table's building blocks, are in
+ * `skill-recovery.plan.actions.ts`.
  *
  * @module @skillsmith/core/services/skill-recovery.plan
  */
 import { canonicalJson } from './skill-recovery.digest.js'
+import {
+  FINISH,
+  INSTALLED,
+  kept,
+  offer,
+  parkWord,
+  refuse,
+  sixBActions,
+  step,
+  UNTOUCHED,
+} from './skill-recovery.plan.actions.js'
 import { FREE_SPACE_REMEDY } from './skill-swap.types.js'
 import type {
   ActionPlan,
-  Disposition,
   NoRecordIntent,
   OpFacts,
-  PlanStep,
   RecoveryAction,
   RecoveryClass,
-  RecoveryRefuseReason,
   RowState,
 } from './skill-recovery.types.js'
 
@@ -67,30 +76,6 @@ export function classLabel(cls: RecoveryClass): string {
   }
 }
 
-const kept = (as: string): Disposition => ({ kind: 'kept', as })
-const INSTALLED: Disposition = { kind: 'installed' }
-const UNTOUCHED: Disposition = { kind: 'untouched' }
-
-const refuse = (
-  action: RecoveryAction,
-  reason: RecoveryRefuseReason,
-  detail: string
-): ActionPlan => ({ offered: false, action, reason, detail })
-
-const offer = (
-  action: RecoveryAction,
-  steps: PlanStep[],
-  manifest: 'untouched' | 'committed-to-post',
-  remaining: string[],
-  notes: string[] = []
-): ActionPlan => ({ offered: true, action, steps, manifest, remaining, notes })
-
-const step = (tree: PlanStep['tree'], disposition: Disposition, note: string): PlanStep => ({
-  tree,
-  disposition,
-  note,
-})
-
 /** The kind a staged or set-aside tree is kept as: a started keep's own kind, else by its hash. */
 function keptKindOf(
   role: 'N' | 'U',
@@ -113,8 +98,6 @@ function resumes(f: OpFacts): string[] {
     .filter((g) => g.state !== null && g.state !== 'P5')
     .map((g) => `resume the keep of ${g.base} from ${g.state}`)
 }
-
-const FINISH = 'unlink the metadata files, then rmdir the op dir and sync the staging dir'
 
 /** Notes every row of the plan states: where the old folder is kept, and what a cross-device keep needs. */
 function commonNotes(f: OpFacts): string[] {
@@ -355,68 +338,6 @@ function intentParkPlan(i: NoRecordIntent, action: 'apply' | 'undo'): ActionPlan
   )
 }
 
-/** The words for `--abandon`, `--clean-staging` and `--park`, which 6b performs. */
-function otherActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | null {
-  const only = (word: string): ActionPlan =>
-    refuse(action, 'recovery-not-offered', `offered here: ${word}`)
-  switch (cls.kind) {
-    case 'empty-op-dir':
-      return refuse(
-        action,
-        'recovery-not-offered',
-        "it holds nothing; any doctor action holding this root's lock removes it with one rmdir"
-      )
-    case 'no-record':
-      return action === 'clean-staging'
-        ? offer(
-            action,
-            [
-              step('O', kept('unrecorded-new'), 'kept if present'),
-              step('N', kept('unrecorded-new'), 'kept if present'),
-            ],
-            'untouched',
-            [FINISH]
-          )
-        : refuse(
-            action,
-            'recovery-not-offered',
-            `offered here: --clean-staging${
-              cls.intent?.blocked == null ? '' : ` (${cls.intent.blocked})`
-            }`
-          )
-    case 'unreadable':
-      return action === 'park'
-        ? offer(action, [], 'untouched', ['park the whole op dir'])
-        : only('--park')
-    case 'other-user':
-      return refuse(
-        action,
-        'recovery-other-user',
-        `the op dir belongs to uid ${cls.ownerUid ?? 'unknown'}: run doctor as that user`
-      )
-    case 'moved':
-    case 'identity-changed':
-    case 'ab':
-    case 'anything-else':
-      return action === 'abandon'
-        ? offer(
-            action,
-            [
-              step('O', kept('abandoned-old'), 'if present'),
-              step('N', kept('abandoned-new'), 'if present'),
-              step('U', kept('abandoned-undone'), 'if present'),
-            ],
-            'untouched',
-            [FINISH]
-          )
-        : null
-    case 'state':
-      return action === 'abandon' || action === 'clean-staging' || action === 'park'
-        ? refuse(action, 'recovery-not-offered', 'offered here: --apply or --undo')
-        : null
-  }
-}
-
 /** What `action` would do to `cls`: the steps and where each tree ends, or why it is not offered. */
 export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPlan {
   const uid = foreignUid(cls)
@@ -450,11 +371,11 @@ export function planAction(cls: RecoveryClass, action: RecoveryAction): ActionPl
       return refuse(
         action,
         'recovery-record-unreadable',
-        'the record cannot be trusted: --park is offered'
+        `the record cannot be trusted: ${parkWord(cls)}`
       )
     }
   }
-  const other = otherActions(cls, action)
+  const other = sixBActions(cls, action)
   if (other !== null) return other
   if (cls.kind === 'other-user') {
     return refuse(

@@ -146,9 +146,9 @@ export {
   RECOVERY_ACTIONS,
 } from '../services/skill-recovery.plan.js'
 export { rootLockEntries, type RootLockEntry } from '../services/skill-recovery.locks.js'
-// SMI-6531 A1 step 6a-ii: one-device `--apply` / `--undo` (an internal milestone; no supported command yet).
+// SMI-6531 A1 steps 6a-ii, 6b-i: targeting and the run under lock 1 for every action.
 export { planRecovery } from '../services/skill-recovery.target.js'
-export { executeRecovery } from '../services/skill-recovery.run.js'
+export { executeRecovery } from '../services/skill-recovery.exec.js'
 export type {
   AuditOutcome,
   PlannedRecovery,
@@ -170,4 +170,5 @@ export type {
   RecoveryClass,
   RecoveryRefuseReason,
   RowState,
+  UnreadableObservation,
 } from '../services/skill-recovery.types.js'

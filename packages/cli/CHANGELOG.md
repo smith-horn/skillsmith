@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6b-i: `skillsmith doctor recovery --park <opId>` sets aside the
+  whole operation folder of an update record that cannot be read, the only remedy for
+  `recovery-record-unreadable`, which blocks every write in its skills root. Like `--apply` and
+  `--undo` it prints the plan (the folder's entries, their bytes and the parked path) and asks
+  once; `--yes` skips the question and waives no check. It is offered only when the record file
+  itself failed, the folder belongs to this user, and every file in it can be read for the
+  guard hash; otherwise it refuses with nothing changed, naming the failure, its path and errno,
+  and saying to fix the device or move the folder aside by hand. A park that does not finish
+  (kept, stopped or held) reports `removal-not-done` and exits 4. The listing now names
+  `--park` without "not available yet" (`--abandon` and `--clean-staging` keep it) and shows an
+  unreadable record's entries and guard hash. `--abandon` and `--clean-staging` are not options
+  yet.
+
 - **Added**: SMI-6531 -- A1 step 6a-iii: `skillsmith doctor recovery --apply <opId>` and
   `--undo <opId>` are supported, with `--accept-identity` and `--yes`, on one device and across
   devices. Each prints the plan and asks once (default No); `--yes` skips the question and waives

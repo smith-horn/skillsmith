@@ -1,7 +1,7 @@
 /**
- * SMI-6531 (A1 steps 6a-ii, 6a-iii): the types of doctor's `--apply` and
- * `--undo` (`skill-recovery.target.ts` plans and targets, `skill-recovery.run.ts`
- * acts under lock 1).
+ * SMI-6531 (A1 steps 6a-ii, 6a-iii, 6b-i): the types of doctor's actions
+ * (`skill-recovery.target.ts` plans and targets any of the five,
+ * `skill-recovery.exec.ts` acts under lock 1).
  *
  * @module @skillsmith/core/services/skill-recovery.run.types
  */
@@ -10,12 +10,17 @@ import type { JournalRecordInput } from '../journal/types.js'
 import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { OpReport } from './skill-recovery.listing.js'
 import type { SweepEntry, SweepResult } from './skill-recovery.finish.js'
-import type { ActionPlan, RecoveryRefuseReason, TreePosition } from './skill-recovery.types.js'
+import type {
+  ActionPlan,
+  RecoveryAction,
+  RecoveryRefuseReason,
+  TreePosition,
+} from './skill-recovery.types.js'
 import type { ManifestPort, SwapOptions, SwapWarning } from './skill-swap.types.js'
 import type { SkillWriteStopCode } from './skill-write-lock.types.js'
 
 export interface RecoveryRequest {
-  action: 'apply' | 'undo'
+  action: RecoveryAction
   opId: string
   /** The skills roots discovery found (native real paths); the op is looked for in each. */
   roots: readonly string[]
@@ -32,6 +37,9 @@ export interface RecoveryRequest {
   /**
    * The state roots doctor discovered or was given (`--state-root`), as native
    * real paths: a park intent's `backupPath` must lie in one (governance S4).
+   * The first is O1's primary (the `--state-root` given, else the first one
+   * discovered): `--park` writes its parked-index line there when the op dir
+   * carries no attribution that validates.
    */
   stateRoots?: readonly string[]
 }
@@ -76,10 +84,11 @@ export type AuditOutcome =
 export interface RecoveryDone {
   status: 'done'
   opId: string
-  action: 'apply' | 'undo'
+  action: RecoveryAction
   /** The class label the action ran from. */
   from: string
   installed: TreePosition | null
+  /** What was kept, and where. `--park` (6b-i): `{ tree: 'OP', kind: 'unreadable-record' }` at its parked path. */
   kept: Array<{ tree: TreePosition; kind: string; path: string }>
   /**
    * 6a-iii: across devices, where the op dir (holding the verified sources)

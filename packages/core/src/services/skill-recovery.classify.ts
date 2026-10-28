@@ -25,6 +25,7 @@
  */
 import path from 'node:path'
 import { canonicalJson } from './skill-recovery.digest.js'
+import { observeUnreadable, OWNER_CAP } from './skill-recovery.observe.js'
 import { analyzeParkIntent, noRecordIntent } from './skill-recovery.opdir.js'
 import { observeGroups, ROLE_DIR } from './skill-recovery.pstate.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
@@ -37,8 +38,10 @@ import type {
   RoleRes,
   RowState,
   TreeObs,
+  StatFact,
   TreePosition,
   TState,
+  UnreadableWhy,
 } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
@@ -61,7 +64,6 @@ export interface ClassifyContext {
   stateRoots?: readonly string[]
 }
 
-const OWNER_CAP = 4096
 const DENIED = new Set(['EACCES', 'EPERM'])
 
 /** One path component: not empty, not `.`/`..`, no separator or NUL. */
@@ -284,6 +286,7 @@ async function classifyRecorded(
         ...base,
         why: 'inconsistent-record',
         detail: `${recordTmp.path} carries a full-device marker but is not this record's body`,
+        observed: null,
       }
     } else if (!recordTmp.bodyMatches && !recordTmp.emptySingleLink) {
       return elseWith(`${recordTmp.path} is not provably this operation's`)
@@ -345,6 +348,7 @@ export async function classifyOp(
           why: 'open-failed',
           errno: dir.errno,
           detail: 'the op dir cannot be inspected',
+          observed: null,
         }
   }
   if (dir.type !== 'dir') {
@@ -365,20 +369,38 @@ export async function classifyOp(
           why: 'open-failed',
           errno: listed.errno,
           detail: 'the op dir cannot be listed',
+          observed: null,
         }
   }
   if (listed.names.length === 0) return { kind: 'empty-op-dir', ...base }
+  const cls = await classifyListed(r, ctx, base, dir, listed.names)
+  // 6b-i: the record file failed in a listed op dir: read what `--park` would move.
+  return cls.kind === 'unreadable' ? observeUnreadable(r, ctx.euid, cls, dir, listed.names) : cls
+}
 
+/** An op dir that was `lstat`ed as a directory and listed, with at least one entry. */
+async function classifyListed(
+  r: ClassifierReader,
+  ctx: ClassifyContext,
+  base: { opId: string; opDir: string },
+  dir: Extract<StatFact, { ok: true }>,
+  names: readonly string[]
+): Promise<RecoveryClass> {
+  const { opId, opDir } = base
   const read = r.readFile(path.join(opDir, RECORD_FILE), MAX_RECORD_BYTES + 1)
+  const unreadable = (
+    why: UnreadableWhy,
+    more: { errno?: string; detail?: string } = {}
+  ): RecoveryClass => ({ kind: 'unreadable', ...base, why, ...more, observed: null })
   if (!read.fact.ok) {
     const errno = read.fact.errno
-    if (errno === 'ENOENT') return noRecord(r, ctx, base, listed.names, dir.identity)
+    if (errno === 'ENOENT') return noRecord(r, ctx, base, names, dir.identity)
     if (DENIED.has(errno)) return { kind: 'other-user', ...base, ownerUid: dir.uid, errno }
-    if (errno === 'NOT_A_FILE') return { kind: 'unreadable', ...base, why: 'not-a-file' }
-    return { kind: 'unreadable', ...base, why: 'open-failed', errno }
+    if (errno === 'NOT_A_FILE') return unreadable('not-a-file')
+    return unreadable('open-failed', { errno })
   }
   const parsed = parseRecordBytes(read.bytes!)
-  if (!parsed.ok) return { kind: 'unreadable', ...base, why: parsed.why }
+  if (!parsed.ok) return unreadable(parsed.why)
   const rec = parsed.record
 
   // A record that verifies but belongs elsewhere is `moved`: only its owner root or op dir can finish it.
@@ -404,10 +426,8 @@ export async function classifyOp(
     return moved('op-dir-identity', 'the op dir is not the one the record was written for')
   }
   const why = inconsistency(r, ctx.root, rec)
-  if (why !== null) {
-    return { kind: 'unreadable', ...base, why: 'inconsistent-record', detail: why }
-  }
-  return classifyRecorded(r, ctx, opId, opDir, rec, listed.names)
+  if (why !== null) return unreadable('inconsistent-record', { detail: why })
+  return classifyRecorded(r, ctx, opId, opDir, rec, names)
 }
 
 /** An op dir with no `record.json`: its owner (if any), its entries, whether a park intent is there. */

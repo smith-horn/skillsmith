@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- the remediation mirrored from core for an unreadable recovery record now points to `skillsmith doctor recovery` (it pointed to fixing permissions), as core's now names `--park`.
+
 - **Changed**: SMI-6531 -- the remediation mirrored from core for a moved recovery record and for a changed identity now points to `skillsmith doctor recovery` (it pointed to the manifest reconcile tool), and the moved record's text no longer says the target needs relinking.
 
 ## v0.7.13

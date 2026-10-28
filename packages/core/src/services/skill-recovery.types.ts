@@ -49,7 +49,8 @@ export type ListFact =
   | { ok: false; errno: string }
 
 export type TreeHashFact =
-  | { ok: true; hash: string; identity: RecordIdentity }
+  /** `bytes`: the sum of the regular files' sizes the walk hashed (6b-i: what `--park` moves). */
+  | { ok: true; hash: string; identity: RecordIdentity; bytes: number }
   | { ok: false; reason: string; path: string; errno: string | null }
 
 export type RealpathFact = { ok: true; path: string } | { ok: false; errno: string }
@@ -114,7 +115,8 @@ export type ReadTranscript = readonly TranscriptEntry[]
 
 /** The three trees an update holds in its op dir: `old/`, `new/`, `undone/`. */
 export type Role = 'O' | 'N' | 'U'
-export type TreePosition = 'T' | Role
+/** `OP` (6b-i): the whole op dir, which `--park` sets aside as one tree. */
+export type TreePosition = 'T' | Role | 'OP'
 
 /** What a tree observed at a path is (T or a role's source). */
 export type TreeObs =
@@ -276,6 +278,33 @@ export interface NoRecordIntent {
 
 export type UnreadableWhy = RecordParseWhy | 'open-failed' | 'not-a-file' | 'inconsistent-record'
 
+/**
+ * 6b-i: what the classifier read of an op dir whose record file failed (OP
+ * itself was `lstat`ed as a directory and listed), so `--park`'s plan states
+ * what it moves and the digest covers it (design § 1.1).
+ */
+export interface UnreadableObservation {
+  /** OP's identity and owner, from its `lstat`. */
+  identity: RecordIdentity
+  uid: number
+  /** OP's uid when it is not the effective uid: `--park` refuses `recovery-other-user` (O3b). */
+  otherUid: number | null
+  /** Every entry of OP, each with its no-follow `lstat`. */
+  entries: Array<{ name: string; stat: StatFact }>
+  /**
+   * `treeHash(OP)`: the walk and hash function the park's guard uses
+   * (`pathTreeRecord` + `computeTreeHash`). OP is guardable exactly when this
+   * is `ok`; `--park` is offered only then (bf-1k0 Major 1).
+   */
+  hash: TreeHashFact
+  /**
+   * `owner.json`'s parsed object (read through the reader), or null when it is
+   * absent, unreadable or not a JSON object: the source of O1's attribution,
+   * which `skill-recovery.attribution.ts` validates (all or nothing).
+   */
+  owner: Record<string, unknown> | null
+}
+
 export type MovedWhy = 'foreign-root' | 'foreign-op-dir' | 'root-identity' | 'op-dir-identity'
 
 export type RecoveryClass =
@@ -303,6 +332,11 @@ export type RecoveryClass =
       why: UnreadableWhy
       errno?: string
       detail?: string
+      /**
+       * 6b-i: set when the record file failed and OP was listed; null when OP's
+       * own `lstat` or listing failed (C3: then there is nothing to guard).
+       */
+      observed: UnreadableObservation | null
     }
   | { kind: 'other-user'; opId: string; opDir: string; ownerUid: number | null; errno: string }
   | {

@@ -4,6 +4,32 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6b-i: `planRecovery` and `executeRecovery` (now in
+  `skill-recovery.exec.ts`) take any of the five recovery actions. Targeting is shared: an
+  empty target operation folder is removed with one `rmdir` by any action, and
+  `already-parked` is report-only for all of them. `--park` is performed: for an `unreadable`
+  record whose folder was listed, the classifier also reads each entry's `lstat` and the
+  folder's tree hash (the park guard's own walk), so the plan states what moves and the
+  re-plan under lock 1 covers it. `--park` is offered only when that hash can be computed and
+  the folder's uid is the effective uid (else `recovery-other-user`); a folder whose own
+  `lstat` or listing failed, or that the walk cannot read (a persistent `EIO`, a FIFO, socket
+  or device), is refused at plan time with nothing changed, naming the walk's reason, path and
+  errno. The park runs through `parkOpFromStaging` as caller `doctor-park`, kind
+  `unreadable-record`; a hash failure between the check and the park ends `stopped/bind-failed`
+  (the gate) or `stopped/guard-unreadable` (the park's own walk) with nothing moved. O1's reader
+  (`skill-recovery.attribution.ts`) validates an operation folder's attribution all or nothing
+  and otherwise uses the client `none` layout, which supplies `--park`'s client and parked-index
+  path. `--abandon` and `--clean-staging` are planned and listed but refused before the prompt
+  ("not performed by this version yet").
+
+- **Changed**: SMI-6531 -- A1 step 6b-i: the write path's refusal for a record this user may
+  not open (`EACCES`/`EPERM`) now says it is another user's update and to run
+  `skillsmith doctor recovery` as that user, instead of naming `--park`, which doctor refuses
+  there. `remediationFor` maps `recovery-record-unreadable` to `doctor recovery` with action
+  `park` (was `fix-permissions`), `recovery-conflict` to action `undo`, and
+  `recovery-ambiguous` to `doctor recovery` with `pickRoot` (`--root`); the `'quarantine'`
+  action literal is renamed `'park'`.
+
 - **Internal**: SMI-6531 -- #3198 retro: `skill-update.owner.ts`'s header no longer claims A2
   fills `plan.identityMismatch` from `manifestKeyOwner` (nothing produces it yet), and the step 7b
   entry below says which `installPath` errors are `manifest-key-conflict` and which are

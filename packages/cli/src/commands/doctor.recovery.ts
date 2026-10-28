@@ -11,8 +11,9 @@
  * staging directory is reported as having none, never given one.
  *
  * The listing names what each action would do and which are offered.
- * `--apply` and `--undo` are supported (`doctor.recovery.action.ts`, SMI-6531
- * step 6a-iii); `--abandon`, `--clean-staging` and `--park` are later steps.
+ * `--apply`, `--undo` and `--park` are supported (`doctor.recovery.action.ts`,
+ * SMI-6531 steps 6a-iii and 6b-i); `--abandon` and `--clean-staging` are listed
+ * with what they would do, but this version does not perform them yet.
  * Exit status: 0 when listed; 1 when a `--root` could not be used or on an
  * unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.recovery
