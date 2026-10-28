@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to
+  `skill-recovery.mark.ts` again (it was never a package export), and the recovery modules'
+  comments now describe the park-intent precheck as running on any device. No behaviour change.
 - **Added**: SMI-6531 -- A1 step 6b-ii: `--clean-staging` is performed for an operation
   folder with no `record.json`. With a verifying `park-intent.json` it finishes that park
   (`abort-new` with caller `abort-cleanup`, or `move-source` as `--apply` does). Without one it
