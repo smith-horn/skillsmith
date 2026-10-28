@@ -26,6 +26,14 @@ All notable changes to `@skillsmith/core` are documented here.
   `--park` of an unreadable record now names the attributed client. `CLIENT_IDS` and
   `PARKED_INDEX_FILE` are defined in modules with no filesystem import (still re-exported from
   their old homes), so the classifier can resolve the attribution.
+- **Changed**: SMI-6531 -- A1 step 6b-ii: the `--clean-staging` keep plan's last `remaining` line
+  now states both finishes, because whether `new/` crosses devices is decided when the copy
+  runs: on one device `owner.json` is unlinked last and the folder is `rmdir`ed; across devices
+  the move-source intent is written, `owner.json` goes last, and the folder is parked whole,
+  with no `rmdir`. A move-source intent's park takes its scope from `owner.json`'s attribution
+  only when that attribution names the same client, state root and folder as the intent's own
+  target, else `none`. `UpdateTarget.scope` and `BuildUpdateTargetInput.scope` are typed
+  `InstallScope`.
 
 - **Internal**: SMI-6531 -- #3201 retro: `PERFORMED` (the recovery actions this version performs)
   is exported, so the CLI listing reads core's set instead of a hand copy; two comments and a

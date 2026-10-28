@@ -20,7 +20,15 @@ import { areaOf, hashOf, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { useOtherDeviceCleanup } from '../skill-swap.xdev.helpers.js'
 import { act, done, killAt } from './recovery.act.helpers.js'
 import type { State } from './recovery.helpers.js'
-import { abortLeft, ALIVE, dead, keptAt, opNames, sidecarAt } from './recovery.clean.helpers.js'
+import {
+  abortLeft,
+  ALIVE,
+  dead,
+  file,
+  keptAt,
+  opNames,
+  sidecarAt,
+} from './recovery.clean.helpers.js'
 import {
   contentSet,
   killed,
@@ -73,6 +81,47 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     expect(intentLink).toBeGreaterThan(-1)
     expect(ownerGone).toBeGreaterThan(intentLink)
     expect(park).toBeGreaterThan(ownerGone)
+  })
+
+  /** The plan's `remaining` text of a run that finished, and its trace. */
+  async function planAndRun(fx: ReturnType<typeof xfile>) {
+    const st = await abortLeft('abortAfterCheck', {}, fx)
+    const a = await done(st, 'clean-staging', dead)
+    if (a.planned.status !== 'planned') throw new Error('expected a plan')
+    return { st, a, text: a.planned.plan.remaining.join('\n') }
+  }
+
+  it('the plan states the cross-device finish in the order the run takes it (no rmdir)', async () => {
+    const { st, a, text } = await planAndRun(xfile())
+    const at = text.indexOf('if the copy crosses devices')
+    expect(at).toBeGreaterThan(-1)
+    const clause = text.slice(at)
+    const planned = ['write park-intent.json', 'owner.json last', 'park the op dir whole'].map(
+      (w) => clause.indexOf(w)
+    )
+    expect(planned.every((i) => i > -1)).toBe(true)
+    expect(planned).toEqual([...planned].sort((x, y) => x - y))
+    expect(clause).toContain('no rmdir')
+    // What the run did, in the same order, and no rmdir of the op dir.
+    const trace = a.trace
+    const intentLink = trace.findIndex(
+      (t) => t.op === 'link' && t.dest === path.join(st.opDir, 'park-intent.json')
+    )
+    const ownerGone = trace.findIndex(
+      (t) => t.op === 'unlink' && t.path === path.join(st.opDir, 'owner.json')
+    )
+    const park = trace.findIndex((t) => t.op === 'park')
+    expect(intentLink).toBeGreaterThan(-1)
+    expect(ownerGone).toBeGreaterThan(intentLink)
+    expect(park).toBeGreaterThan(ownerGone)
+    expect(trace.some((t) => t.op === 'rmdir' && t.path === st.opDir)).toBe(false)
+  })
+
+  it('the same plan states the one-device finish, which the one-device run takes (rmdir, no park)', async () => {
+    const { st, a, text } = await planAndRun(file())
+    expect(text).toContain('on one device, unlink owner.json last, then rmdir the op dir')
+    expect(a.trace.some((t) => t.op === 'rmdir' && t.path === st.opDir)).toBe(true)
+    expect(a.trace.some((t) => t.op === 'park')).toBe(false)
   })
 
   const POINTS: SwapHookPoint[] = [

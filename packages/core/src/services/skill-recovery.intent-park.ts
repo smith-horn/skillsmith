@@ -65,28 +65,46 @@ const refusingPort: ManifestPort = {
   },
 }
 
-/** Where the park goes: its client, the state root (its parked index) and the folder name. */
+/** Where the park goes: its client and scope, the state root (its parked index) and the folder name. */
 interface Route {
   client: string
+  /** The install scope the park names; `none` when no validated attribution backs the client. */
+  scope: string
   stateRoot: string
   dirName: string
   backupPath: string | null
 }
 
-/** A move-source intent's route is its `backupPath`'s; an abort-new one's is O1's. */
-function routeOf(cls: NoRecord, i: NoRecordIntent): Route {
+/**
+ * A move-source intent's route is its `backupPath`'s (`target`); an abort-new
+ * one's is O1's. The scope has one rule with the client: it is O1's only when
+ * O1 validated and names the very park the client names. For a move-source
+ * intent that means the attribution's client, state root and folder name all
+ * equal `target`'s; otherwise the scope is `none`, never a field of another
+ * park's attribution next to this park's client.
+ *
+ * @internal Exported for its test only; the park scope is not observable from a finished park.
+ */
+export function routeOf(cls: NoRecord, i: NoRecordIntent): Route {
+  const a = cls.clean.attribution
   if (i.kind === 'move-source') {
     const t = i.target!
+    const agrees =
+      a.kind === 'attributed' &&
+      a.client === t.client &&
+      a.stateRoot === t.stateRoot &&
+      a.dirName === t.dirName
     return {
       client: t.client,
+      scope: agrees ? a.scope : 'none',
       stateRoot: t.stateRoot,
       dirName: t.dirName,
       backupPath: i.backupPath!,
     }
   }
-  const a = cls.clean.attribution
   return {
     client: parkClientOf(a),
+    scope: keepSidecarOf(a, cls.opId).scope,
     stateRoot: routeRootOf(a) ?? '',
     dirName: a.kind === 'attributed' ? a.dirName : cls.opId,
     backupPath: null,
@@ -107,8 +125,8 @@ function intentState(
     input: {
       skillsDir: ctx.root,
       client: r.client,
-      // O1's scope when attributed, else the client-`none` layout's (`none`): never a guessed one.
-      scope: keepSidecarOf(cls.clean.attribution, cls.opId).scope,
+      // `routeOf`'s scope: O1's only when O1 backs the client named above, else `none`.
+      scope: r.scope,
       stateRoot: r.stateRoot,
       manifestPath: path.join(r.stateRoot, 'manifest.json'),
       manifestKey: r.dirName,

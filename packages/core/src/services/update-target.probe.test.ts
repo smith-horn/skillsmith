@@ -124,7 +124,7 @@ function putRecord(opId: string, realDir: string, comparedPath: string = realDir
       manifestPath: path.join(root, 'manifest.json'),
       manifestKey: path.basename(realDir),
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName: path.basename(comparedPath),
     },
     rootIdentity: identity,

@@ -60,7 +60,7 @@ function bodyOf(root: string, opId: string, dirName = 'skill', over: Partial<Bod
       manifestPath: path.join(root, 'manifest.json'),
       manifestKey: dirName,
       client: 'claude-code',
-      scope: 'user',
+      scope: 'global',
       dirName,
     },
     rootIdentity: { ...identity },

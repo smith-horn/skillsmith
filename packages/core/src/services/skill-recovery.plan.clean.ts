@@ -111,6 +111,24 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
   )
 }
 
+/**
+ * How the op dir is finished. Only a `new/` that is still to be kept can cross
+ * devices, and whether it does is decided when the copy runs (its rename fails
+ * `EXDEV`), not by anything the plan reads, so the plan states both finishes:
+ * a plan that named one would be wrong for the other, and a text that changed
+ * with the device would be `plan-changed` at lock 1.
+ */
+function finishWords(n: NoRecord['clean']['n']['kind']): string {
+  const oneDevice = 'unlink owner.json last, then rmdir the op dir and sync the staging dir'
+  if (n !== 'source') return oneDevice
+  return (
+    `then finish the op dir by whichever way new/'s copy decides: on one device, ${oneDevice}; ` +
+    'if the copy crosses devices (the verified new/ stays in the op dir), unlink a park-intent.json.tmp ' +
+    'of this op first, write park-intent.json (kind move-source) durably, unlink the other temps and ' +
+    'then owner.json last, sync the op dir, and park the op dir whole with new/ and the intent: no rmdir'
+  )
+}
+
 /** (b): keep `new/`, then the metadata, `owner.json` last. */
 function keepPlan(cls: NoRecord, area: string, unsafe: boolean): ActionPlan {
   const c = cls.clean
@@ -133,10 +151,7 @@ function keepPlan(cls: NoRecord, area: string, unsafe: boolean): ActionPlan {
   } else if (n.kind === 'kept') {
     steps.push(step('N', kept(n.keep.kind), `already kept at ${n.keep.destPath}`))
   }
-  remaining.push(
-    ...c.temps.map((t) => `unlink the metadata temp ${t}`),
-    'unlink owner.json last, then rmdir the op dir and sync the staging dir'
-  )
+  remaining.push(...c.temps.map((t) => `unlink the metadata temp ${t}`), finishWords(n.kind))
   return offer('clean-staging', steps, 'untouched', remaining, [
     `kept into ${area}; ${routeWords(c.attribution)}`,
     ...(n.kind === 'source'
