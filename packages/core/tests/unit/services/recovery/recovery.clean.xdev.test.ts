@@ -124,7 +124,7 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     const temp = 'unlink the metadata temp '
     if (step.startsWith(temp)) return `temp:${path.basename(step.slice(temp.length))}`
     if (step === 'rmdir the emptied op dir') return 'rmdir'
-    if (step.startsWith('park the op dir whole')) return 'park'
+    if (step.startsWith('park the op dir')) return 'park'
     if (step === 'sync the op dir') return 'sync:op'
     if (step === 'sync the staging dir') return 'sync:st'
     throw new Error(`a plan step the test does not know: ${step}`)
@@ -188,6 +188,31 @@ describe('cross-device --clean-staging: copy, verify, intent, park; no tree dele
     expect(across[across.length - 1]).toContain('(no rmdir)')
     expect(a.trace.some((t) => t.op === 'rmdir' && t.path === st.opDir)).toBe(false)
     expect(remaining.some((l) => l.startsWith('then'))).toBe(false)
+  })
+
+  it('a verifying intent (--clean-staging case a): its temps, owner.json, the op dir sync, then the park, in the order the run takes them', async () => {
+    const st = await abortLeft('abortAfterCheck', {}, xfile())
+    const first = await act(st, 'clean-staging', dead, killAt('afterIntent'))
+    expect(first.result.status).toBe('stopped')
+    fs.writeFileSync(path.join(st.opDir, 'record.json.tmp'), '')
+    expect(opNames(st)).toEqual(['new', 'owner.json', 'park-intent.json', 'record.json.tmp'])
+    const a = await done(st, 'clean-staging', dead)
+    if (a.planned.status !== 'planned') throw new Error('expected a plan')
+    const remaining = a.planned.plan.remaining
+    expect(plannedTags(remaining)).toEqual(['temp:record.json.tmp', 'owner', 'sync:op', 'park'])
+    expect(plannedTags(remaining)).toEqual(observedTags(a.trace, st.opDir))
+  })
+
+  it('a no-record move-source intent under --apply: its temps, the op dir sync, then the park, in the order the run takes them', async () => {
+    const st = await xs3({ hooks: { afterBackupMove: () => killed('afterBackupMove') } })
+    expect((await act(st, 'apply', {}, killAt('afterRecordUnlink'))).result.status).toBe('done')
+    fs.writeFileSync(path.join(st.opDir, 'record.json.tmp'), '')
+    expect(opNames(st)).toEqual(['old', 'park-intent.json', 'record.json.tmp'])
+    const a = await done(st, 'apply', { ownerProbe: ALIVE })
+    if (a.planned.status !== 'planned') throw new Error('expected a plan')
+    const remaining = a.planned.plan.remaining
+    expect(plannedTags(remaining)).toEqual(['temp:record.json.tmp', 'sync:op', 'park'])
+    expect(plannedTags(remaining)).toEqual(observedTags(a.trace, st.opDir))
   })
 
   it('the same plan states the one-device finish in the order the one-device run takes it (rmdir, no park)', async () => {

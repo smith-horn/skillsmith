@@ -23,6 +23,11 @@
  *     `unrecorded-new` (`check`, then `publishTree`); equal stays to be parked.
  *     Across devices (4c) a keep copies N and leaves the verified N in OP
  *     (`st.moveSources`), so N is parked as well: a kept tree's source.
+ *     Before that keep (the first mutation), when N will be parked (unchanged,
+ *     or kept across devices: `crossesDevices`), the intent step 6 would write
+ *     is put through the reader's acceptance (`intentPrecheck`); one the
+ *     reader would refuse ends `left` with `stopped/staging-unsafe` and
+ *     nothing changed.
  *  6. Metadata, then the park. Unlink `record.json` if this run published it
  *     (sync OP); if N is to be parked, write `park-intent.json` durably;
  *     unlink `record.json.tmp`, `owner.json.tmp` and `owner.json` where this
@@ -61,7 +66,7 @@ import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { S_IFDIR } from '../install/park-tree.perms.js'
 import { treeHashOf } from './skill-tree.js'
 import { SkillWriteStop } from './skill-write-lock.types.js'
-import { writeParkIntent } from './skill-swap.intent.js'
+import { intentPrecheck, writeParkIntent } from './skill-swap.intent.js'
 import {
   hook,
   messageOf,
@@ -77,6 +82,7 @@ import type { SwapState } from './skill-swap.ops.js'
 import { checkTraced, opDiffers, parkOpFromStaging, say } from './skill-swap.park-op.js'
 import type { Expected, NotDone } from './skill-swap.park-op.js'
 import { publishTree } from './skill-swap.publish.js'
+import { crossesDevices } from './skill-swap.space.js'
 import { cleanStagingHint } from './skill-swap.staging.js'
 import { NEW_DIR, PARK_INTENT_FILE } from './skill-swap.types.js'
 import type {
@@ -195,7 +201,23 @@ export async function runCleanup(
     if (built && st.buildIdentity !== null) expected.set(NEW_DIR, st.buildIdentity)
     const differs = await opDiffers(st, expected)
     if (differs !== null) return leftWith(st, reason, detail, undefined, differs)
-    if (built) keptAs = await keepIfNeeded(st, newDir)
+    const kind = built ? await keepKindOf(st, newDir) : undefined
+    // Before the first mutation: N is parked (with an intent) when unchanged or kept across devices.
+    const intent =
+      built && (kind === undefined || crossesDevices(newDir, st.areaPath))
+        ? intentPrecheck(st, 'abort-new')
+        : null
+    if (intent !== null) {
+      return leftWith(st, reason, detail, undefined, {
+        status: 'stopped',
+        reason: 'staging-unsafe',
+        detail: intent,
+      })
+    }
+    if (kind !== undefined) {
+      checkTraced(st)
+      keptAs = { kind, path: await publishTree(st, newDir, kind) }
+    }
     // Parked: an unchanged N, or a kept N's verified source left in OP across devices (4c).
     const parkN = built && (keptAs === undefined || st.moveSources.has(NEW_DIR))
     return await metadataThenPark(st, reason, detail, keptAs, parkN)
@@ -246,21 +268,15 @@ function notTheBuild(
   return null
 }
 
-/** Step 5: keep a partial or changed N through `publishTree`; undefined to park it. */
-async function keepIfNeeded(st: SwapState, newDir: string): Promise<Kept> {
-  let kind: AbortKeptKind
-  if (st.postTree === null) {
-    // UD17: nothing about a partial tree is compared (E40).
-    kind = 'failed-build'
-  } else {
-    const h = treeHashOf(newDir)
-    trace(st, { op: 'compare', path: newDir, equal: h.ok ? h.hash === st.postTree : null })
-    await hook(st, 'abortAfterCompare')
-    if (h.ok && h.hash === st.postTree) return undefined
-    kind = h.ok ? 'edited-new' : 'unrecorded-new'
-  }
-  checkTraced(st)
-  return { kind, path: await publishTree(st, newDir, kind) }
+/** Step 5's decision, with no mutation: the kind to keep a partial or changed N as; undefined to park it. */
+async function keepKindOf(st: SwapState, newDir: string): Promise<AbortKeptKind | undefined> {
+  // UD17: nothing about a partial tree is compared (E40).
+  if (st.postTree === null) return 'failed-build'
+  const h = treeHashOf(newDir)
+  trace(st, { op: 'compare', path: newDir, equal: h.ok ? h.hash === st.postTree : null })
+  await hook(st, 'abortAfterCompare')
+  if (h.ok && h.hash === st.postTree) return undefined
+  return h.ok ? 'edited-new' : 'unrecorded-new'
 }
 
 /** Step 6 and the report. Throws for the caller to report as `left`. */

@@ -11,12 +11,15 @@ All notable changes to `@skillsmith/core` are documented here.
   with its own kind), unlinks the provable temps and then `owner.json` last, and `rmdir`s the
   folder; across devices the verified `new/` stays and the folder is parked whole behind a
   `move-source` intent that names the folder's own `owner.json` owner (doctor's own process
-  when there is no `owner.json`, when its owner fails the intent's own check, or when the
-  intent is written by a cross-device `--apply` or `--undo`). Whether `new/` crosses
+  when there is no `owner.json`, or when the intent naming that owner is one the reader would
+  refuse). A cross-device `--apply` or `--undo` writes its intent naming doctor's own process,
+  whatever `owner.json` holds. Whether `new/` crosses
   devices is decided when the copy runs, so the keep plan's `remaining` lines state both
   finishes, each in the order its executor takes: on one device the temps, `owner.json` and
-  the `rmdir`; across devices the intent, the other temps, `owner.json`, and the park of the
-  whole folder with no `rmdir`. It is offered only when `owner.json` names a process on this host that
+  the `rmdir`; across devices the unlink of a provable `park-intent.json.tmp` first, then the
+  intent, the other temps, `owner.json`, and the park of the whole folder with no `rmdir`. The
+  plan for finishing a verifying intent (`--clean-staging`, `--apply`, `--undo`) also names the
+  sync of the folder made after its temps or `owner.json` are unlinked. It is offered only when `owner.json` names a process on this host that
   is gone (`probePidAlive`: `EPERM` counts as alive), or with `unsafeUnverifiedOwner`, except
   that a verifying intent with no `owner.json` left needs neither; the owner verdict is in the
   serialized plan, so a change before the lock is `plan-changed`. The provable temps finished
@@ -24,6 +27,21 @@ All notable changes to `@skillsmith/core` are documented here.
   entry doctor cannot prove it wrote (a partial temp, an intent that does not verify, `old/`
   without a record, a stray file) refuses with zero mutation, naming it. Nothing is deleted:
   only metadata and the emptied folder go.
+- **Fixed**: SMI-6531 -- no path writes a `park-intent.json` that doctor's reader would refuse.
+  The intent's bytes are produced in one place and put through the reader's own acceptance
+  first (its 4096-byte cap, `INTENT_CAP`, shared by the reader and the writer, then the schema
+  check): an intent naming the op's own owner is written when the reader accepts it, else one
+  naming this process, else nothing (`staging-unsafe`, naming the size). The same check, on
+  the worst case of the intent (the longest kept name and the longest identity), runs before
+  the first mutation of doctor's `--apply`/`--undo` and `--clean-staging` (when a keep will
+  cross devices) and of abort cleanup (when the staged folder will be parked), refusing
+  `staging-unsafe` with nothing changed. `swapInPlace` runs it before it makes its operation
+  folder, on any device, for both intents an update could write (its step-13 `move-source`
+  and abort cleanup's `abort-new`): an update whose state root is too deep is refused
+  `staging-unsafe`, `staged: 'none'`, with no operation folder, record, backup or manifest
+  change. It cannot wait to learn whether the backup crosses devices: that is known only
+  from `EXDEV`, after the commit. A move-source intent under the state root `/` now resolves
+  its target instead of being blocked.
 - **Changed**: SMI-6531 -- A1 step 6b-ii (O1): the swap writes `client`, `scope`, `dirName`,
   `manifestKey` and `stateRoot` into `owner.json`, and an `abort-new` park intent carries them
   as schema 2 (schema 1 is still accepted; `move-source` intents stay schema 1). Doctor uses

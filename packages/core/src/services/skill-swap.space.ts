@@ -148,3 +148,30 @@ export async function spaceFirst(st: SwapState, src: string, record: TreeRecord 
     )
   }
 }
+
+/** The device of `p` read at its nearest existing ancestor (an area not made yet sits on its parent's), with that ancestor; null when none reads. */
+export function nearestDevice(p: string): { at: string; dev: bigint } | null {
+  for (let at = p; ; at = path.dirname(at)) {
+    try {
+      return { at, dev: fs.lstatSync(at, { bigint: true }).dev }
+    } catch {
+      if (path.dirname(at) === at) return null
+    }
+  }
+}
+
+/**
+ * Whether a keep of `src` into `areaPath` will cross devices, predicted before
+ * anything moves: `src` is on another device than the area (read at its nearest
+ * existing ancestor). The same inference doctor's space block makes. False
+ * when either cannot be read; the keep itself still learns it from `EXDEV`.
+ */
+export function crossesDevices(src: string, areaPath: string): boolean {
+  const area = nearestDevice(areaPath)
+  if (area === null) return false
+  try {
+    return fs.lstatSync(src, { bigint: true }).dev !== area.dev
+  } catch {
+    return false
+  }
+}

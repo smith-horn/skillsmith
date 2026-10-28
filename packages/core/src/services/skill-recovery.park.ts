@@ -12,7 +12,10 @@
  *  2. the park intent (kind `move-source`) is made durable: a provable
  *     `park-intent.json.tmp` an earlier run left is unlinked, then the intent
  *     an earlier run published is reused, or a new one is published (temp
- *     synced, linked, temp unlinked, OP synced);
+ *     synced, linked, temp unlinked, OP synced). The new one is only ever
+ *     bytes the reader accepts (`writeParkIntent`); `runRecorded` already ran
+ *     the same check before the first mutation (`intentBlock`), so its stop
+ *     here is a backstop;
  *  3. the other metadata (`owner.json`, an adopted `record.json.tmp`) is
  *     unlinked, each through `unlinkAdopted`, then OP synced;
  *  4. `record.json` last (§7), then OP synced. A kill before this leaves an op

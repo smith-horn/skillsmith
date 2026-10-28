@@ -11,6 +11,26 @@ import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.ty
 
 const KINDS: ReadonlySet<unknown> = new Set<ParkIntentKind>(['abort-new', 'move-source'])
 
+/**
+ * The reader's byte cap for `park-intent.json` and its temp: a read that fills
+ * the cap may be cut off, so it is not parsed. The one constant both the
+ * classifier's reads and the writer's round trip use.
+ */
+export const INTENT_CAP = 4096
+
+/**
+ * What the reader makes of an intent file's bytes, read with `INTENT_CAP`: the
+ * parsed JSON, or null when the read reached the cap or the bytes are not JSON.
+ */
+export function intentValueOf(bytes: Buffer | null): unknown {
+  if (bytes === null || bytes.length >= INTENT_CAP) return null
+  try {
+    return JSON.parse(bytes.toString('utf8')) as unknown
+  } catch {
+    return null
+  }
+}
+
 const DECIMAL = /^(0|[1-9][0-9]*)$/
 const ABORT_KEYS = 'kind,opId,opIdentity,owner,schema'
 /** Schema 2 (6b-ii, O1): an `abort-new` intent that also carries the attribution's five strings. */
@@ -47,10 +67,11 @@ function isRecordIdentity(v: unknown): v is RecordIdentity {
 
 /**
  * True when `value` is an owner a park intent may carry: exactly `host`, `pid`
- * and `uid`, a string host and integer pid and uid. The one rule: the intent's
- * own check (`isParkIntentFor`) and whatever copies an `owner.json` owner into
- * an intent (doctor's cross-device finish) both call it, so a copied owner can
- * never fail the check of the intent it was written into.
+ * and `uid`, a string host and integer pid and uid. Part of `isParkIntentFor`.
+ * Passing it does not make an intent readable: a long `host` can still push the
+ * intent past `INTENT_CAP`. What a writer may write is decided only by the
+ * round trip (`readableIntentBytes`, `skill-swap.intent.ts`), which runs this
+ * check and the cap on the exact bytes.
  */
 export function isIntentOwner(value: unknown): value is ParkIntent['owner'] {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false

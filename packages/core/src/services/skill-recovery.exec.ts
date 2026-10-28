@@ -203,7 +203,7 @@ async function underLock(
         steps: planned.plan.steps,
         options: opts.swap ?? {},
       })
-      if (r.full !== null) return refused('state-root-full', r.full, planned.opDir)
+      if (r.refusal !== null) return refused(r.refusal.reason, r.refusal.detail, planned.opDir)
       out.warnings = r.st.warnings
       out.kept = r.kept
       out.extraCopy = r.extraCopy

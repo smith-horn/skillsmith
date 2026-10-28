@@ -12,7 +12,18 @@
  * matches this schema, names this op dir's `opId`, and OP's current identity
  * equals the recorded one (`isParkIntentFor`).
  *
- * It is published like the other metadata (`publishJson`): a temp, synced,
+ * **No path writes an intent the reader would not accept.** The bytes are
+ * produced in one place (`readableIntentOf`): serialized exactly as
+ * `publishJson` would, then put through the reader's own acceptance (under
+ * `INTENT_CAP`, then `isParkIntentFor` on what the reader would parse). The
+ * owner is the op's own (`st.owner`) when that intent is readable, else this
+ * process's; when neither is, nothing is written and the write stops
+ * `staging-unsafe` naming the size. Each writer also runs the same rule before
+ * its first mutation (`intentPrecheck`, on the worst case of the intent it
+ * could write), so that stop is a backstop. The update runs it before it
+ * creates its op dir, on any device (`swapInPlace`).
+ *
+ * It is published like the other metadata (`publishBytes`): a temp, synced,
  * `link`ed to `park-intent.json` (never replacing an entry there), the temp
  * unlinked after a check that it is the file this run wrote, then OP synced.
  * It stays in OP, so the guard hash of OP covers it and it travels into the
@@ -21,44 +32,46 @@
  * @module @skillsmith/core/services/skill-swap.intent
  */
 import os from 'node:os'
+import path from 'node:path'
+import { S_IFMT } from '../install/park-tree.perms.js'
+import { KIND_ROLE } from './skill-recovery.pstate.js'
 import { attributionOf } from './skill-swap.attribution.js'
+import { INTENT_CAP, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { publishJson, recordIdentity } from './skill-swap.staging.js'
-import type { ParkIntent, ParkIntentKind } from './skill-swap.types.js'
+import { jsonBytes, publishBytes, recordIdentity } from './skill-swap.staging.js'
+import type { ParkIntent, ParkIntentKind, RecordIdentity } from './skill-swap.types.js'
+
+type Owner = ParkIntent['owner']
+
+/** This process, as an intent names it. */
+const processOwner = (): Owner => ({
+  pid: process.pid,
+  host: os.hostname(),
+  uid: process.geteuid?.() ?? -1,
+})
 
 /**
- * The intent this run writes: OP's identity as `createOp` bound it, and the
- * owner it recorded. A `move-source` intent also names `backupPath`, the
- * verified copy the park's held message names (6a-iii: doctor finishes the
- * park from the intent alone once the record is gone). An `abort-new` intent
- * is schema 2 (6b-ii, O1): it copies `owner.json`'s attribution, so doctor's
- * `--clean-staging` can name the park's client and parked index once
- * `owner.json` is gone. A `move-source` intent stays schema 1: its
- * `backupPath` already names the state root, client and folder.
+ * The intent for `owner` (by default the op's own, else this process): OP's
+ * identity as `createOp` bound it. A `move-source` intent also names
+ * `backupPath`, the verified copy the park's held message names (6a-iii:
+ * doctor finishes the park from the intent alone once the record is gone). An
+ * `abort-new` intent is schema 2 (6b-ii, O1): it copies `owner.json`'s
+ * attribution, so doctor's `--clean-staging` can name the park's client and
+ * parked index once `owner.json` is gone. A `move-source` intent stays schema
+ * 1: its `backupPath` already names the state root, client and folder.
  */
 export function parkIntentOf(
   st: SwapState,
   kind: ParkIntentKind = 'abort-new',
-  backupPath?: string
+  backupPath?: string,
+  owner: Owner = st.owner ?? processOwner(),
+  opIdentity: RecordIdentity = opIdentityOf(st)
 ): ParkIntent {
-  if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
-  // `owner.json` is written before anything else in OP. An update that
-  // published it has `st.owner` set; doctor's `--clean-staging` sets it from
-  // the op dir's own `owner.json` when that parses whole and passes the intent's
-  // own owner check (`isIntentOwner`). Every other run names this process: one
-  // with no `owner.json`, one whose owner fails that check, and doctor's
-  // cross-device `--apply`/`--undo` finish (`recoveryState` sets `owner: null`,
-  // even when `owner.json` was readable).
-  const owner = st.owner ?? {
-    pid: process.pid,
-    host: os.hostname(),
-    uid: process.geteuid?.() ?? -1,
-  }
   const base = {
     opId: st.opId,
     owner: { pid: owner.pid, host: owner.host, uid: owner.uid },
-    opIdentity: recordIdentity(st.op.identity),
+    opIdentity,
   }
   if (kind === 'abort-new') return { schema: 2, ...base, kind, ...attributionOf(st) }
   if (backupPath === undefined) {
@@ -67,14 +80,134 @@ export function parkIntentOf(
   return { schema: 1, ...base, kind, backupPath }
 }
 
-/** Publishes `park-intent.json` durably. Kill points: `afterIntentTemp`, `afterIntent`. */
+/** OP's identity as `createOp` bound it, as the intent records it. */
+function opIdentityOf(st: SwapState): RecordIdentity {
+  if (st.op === null) throw new SwapFault('staging-unsafe', 'the park intent needs a bound OP')
+  return recordIdentity(st.op.identity)
+}
+
+/** The bytes to write, or why the reader would refuse them. */
+export type IntentBytes = { ok: true; bytes: Buffer } | { ok: false; reason: string }
+
+/**
+ * The round trip: `intent` serialized exactly as written, then the reader's
+ * own acceptance of those bytes (`INTENT_CAP`, then `isParkIntentFor` on the
+ * value `intentValueOf` parses, as `skill-recovery.opdir.ts` reads it).
+ */
+export function readableIntentBytes(
+  intent: ParkIntent,
+  opId: string,
+  opIdentity: RecordIdentity
+): IntentBytes {
+  const bytes = jsonBytes(intent)
+  if (bytes.length >= INTENT_CAP) {
+    return {
+      ok: false,
+      reason: `the park intent would be ${bytes.length} bytes, at or over the reader's ${INTENT_CAP}-byte cap`,
+    }
+  }
+  if (!isParkIntentFor(intentValueOf(bytes), opId, opIdentity)) {
+    return { ok: false, reason: 'the park intent would not verify for this op dir' }
+  }
+  return { ok: true, bytes }
+}
+
+/**
+ * The one place intent bytes are produced: with the op's own owner
+ * (`st.owner`: the update's, or one doctor's `--clean-staging` copied from
+ * `owner.json`) when the reader accepts that intent, else with this process's
+ * owner. When neither is readable, the reason for the last one tried.
+ */
+export function readableIntentOf(
+  st: SwapState,
+  kind: ParkIntentKind,
+  backupPath?: string,
+  opIdentity: RecordIdentity = opIdentityOf(st)
+): IntentBytes {
+  const owners = st.owner === null ? [processOwner()] : [st.owner, processOwner()]
+  let out: IntentBytes = { ok: false, reason: 'no owner to name' }
+  for (const owner of owners) {
+    const intent = parkIntentOf(st, kind, backupPath, owner, opIdentity)
+    out = readableIntentBytes(intent, st.opId, opIdentity)
+    if (out.ok) return out
+  }
+  return out
+}
+
+/** The longest name a keep in KIND_ROLE's kinds can take (`<opId>.<kind>.<k>`). */
+const LONGEST_KIND = Object.keys(KIND_ROLE).reduce((a, b) => (b.length > a.length ? b : a))
+
+/** 2^64 - 1: `dev` and `ino` are unsigned 64-bit, and `birthtimeNs` fits until 2554. */
+const U64_MAX = ((1n << 64n) - 1n).toString()
+
+/**
+ * The longest identity an intent can record: each field is the decimal string
+ * of a non-negative bigint (`recordIdentity`; the schema accepts nothing else),
+ * `dev` and `ino` at most `U64_MAX`, `birthtimeNs` at most `U64_MAX` until the
+ * year 2554, and `fmt` is `mode & S_IFMT`, so at most `S_IFMT`. A decimal of a
+ * smaller number has no more digits, so every real identity's JSON is no longer.
+ */
+export const WORST_OP_IDENTITY: RecordIdentity = {
+  dev: U64_MAX,
+  ino: U64_MAX,
+  birthtimeNs: U64_MAX,
+  fmt: S_IFMT.toString(),
+}
+
+/** `<opId>.<longest kind>.<Number.MAX_SAFE_INTEGER>`: no kept copy's name is longer (`destFor`). */
+export const longestKeptName = (opId: string): string =>
+  `${opId}.${LONGEST_KIND}.${Number.MAX_SAFE_INTEGER}`
+
+/**
+ * Every `backupPath` a move-source intent of this op could name, as the
+ * longest of its shape: the backup's fixed `backupDest`, and
+ * `<area>/<opId>.<kind>.<k>` with the longest kind and `k` at
+ * `Number.MAX_SAFE_INTEGER` (`destFor` counts `k` up from 1). A real
+ * `<area>/<opId>.<kind>[.<k>]` differs from the second only in a shorter ASCII
+ * suffix, so its intent is never larger.
+ */
+function backupPathBounds(st: SwapState): string[] {
+  return [st.backupDest, path.join(st.areaPath, longestKeptName(st.opId))]
+}
+
+/**
+ * The precheck each writer runs before its first mutation (the reason, or
+ * null): the round trip on the worst case of the intent this op could write,
+ * with every `backupPath` it could name (`backupPathBounds`) and the longest
+ * identity (`WORST_OP_IDENTITY`). It needs no OP, so the update runs it before
+ * `createOp`.
+ *
+ * Why a pass means the write passes: the real intent has the same opId,
+ * owner chain (`readableIntentOf`), kind and attribution; its `backupPath` is
+ * one of the bounds or shorter by an ASCII suffix only; each identity field is
+ * a decimal with no more digits than the worst. JSON escapes each character
+ * the same way wherever it sits, so the real bytes are never more than the
+ * worst case's, and the schema check passes for both alike. The gap: a
+ * `birthtimeNs` past `U64_MAX` (a clock after 2554); the write's own round
+ * trip still refuses that intent, as a stop.
+ */
+export function intentPrecheck(st: SwapState, kind: ParkIntentKind): string | null {
+  const paths = kind === 'move-source' ? backupPathBounds(st) : [undefined]
+  for (const p of paths) {
+    const r = readableIntentOf(st, kind, p, WORST_OP_IDENTITY)
+    if (!r.ok) return `${r.reason}; nothing was changed`
+  }
+  return null
+}
+
+/**
+ * Publishes `park-intent.json` durably: the bytes `readableIntentOf` accepted,
+ * or a `staging-unsafe` stop with nothing written. Kill points:
+ * `afterIntentTemp`, `afterIntent`.
+ */
 export async function writeParkIntent(
   st: SwapState,
   kind: ParkIntentKind = 'abort-new',
   backupPath?: string
 ): Promise<void> {
-  const intent = parkIntentOf(st, kind, backupPath)
-  await publishJson(st, opPaths(st).intent, intent, 'afterIntentTemp')
+  const r = readableIntentOf(st, kind, backupPath)
+  if (!r.ok) throw new SwapFault('staging-unsafe', `${r.reason}; it was not written`)
+  await publishBytes(st, opPaths(st).intent, r.bytes, 'afterIntentTemp')
   await hook(st, 'afterIntent')
 }
 

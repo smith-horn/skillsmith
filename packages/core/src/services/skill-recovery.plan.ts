@@ -32,7 +32,7 @@ import {
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
-import { FREE_SPACE_REMEDY } from './skill-swap.types.js'
+import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
 import type {
   ActionPlan,
   NoRecordIntent,
@@ -321,11 +321,14 @@ function swappedPlan(
  * `MOVE_SOURCE_NO_RECORD_ORIGIN`). `--apply` and `--undo`
  * finish that park as the uninterrupted run would: each source goes with OP.
  * 6b-ii: the metadata temps the classifier proved this op's (`temps`) are
- * unlinked first, so the plan names each one (and the digest covers them).
+ * unlinked first, so the plan names each one (and the digest covers them),
+ * then `owner.json` when the op dir holds it, then the sync of the op dir
+ * `finishFromIntent` makes when either was unlinked.
  */
 function intentParkPlan(
   i: NoRecordIntent,
   temps: readonly string[],
+  owner: boolean,
   action: 'apply' | 'undo'
 ): ActionPlan {
   return offer(
@@ -340,7 +343,8 @@ function intentParkPlan(
     'untouched',
     [
       ...temps.map((t) => `unlink the metadata temp ${t}`),
-      'unlink owner.json if it is there',
+      ...(owner ? ['unlink owner.json'] : []),
+      ...(owner || temps.length > 0 ? ['sync the op dir'] : []),
       `park the op dir (kind ${i.kind}), checked against a fresh hash of its contents`,
     ],
     [
@@ -378,7 +382,7 @@ export function planAction(
   if (action === 'apply' || action === 'undo') {
     if (cls.kind === 'state') return rowPlan(cls, action)
     if (cls.kind === 'no-record' && cls.intent !== null && cls.intent.blocked === null) {
-      return intentParkPlan(cls.intent, cls.clean.temps, action)
+      return intentParkPlan(cls.intent, cls.clean.temps, cls.entries.includes(OWNER_FILE), action)
     }
     if (cls.kind === 'moved') {
       return refuse(

@@ -84,7 +84,9 @@ function ownerNotes(cls: NoRecord, unsafe: boolean): string[] {
 const roleOf = (name: string): PlanStep['tree'] =>
   name === 'old' ? 'O' : name === 'new' ? 'N' : 'U'
 
-/** (a): finish the intent's park. */
+const SYNC_OP = 'sync the op dir'
+
+/** (a): finish the intent's park, in `finishFromIntent`'s order (its op-dir sync only after an unlink). */
 function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPlan {
   const c = cls.clean
   const kind = i.kind === 'abort-new' ? 'abort-new' : 'move-source'
@@ -103,6 +105,7 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
     [
       ...c.temps.map((t) => `unlink the metadata temp ${t}`),
       ...(owner ? ['unlink owner.json'] : []),
+      ...(owner || c.temps.length > 0 ? [SYNC_OP] : []),
       `park the op dir (kind ${kind}), checked against a fresh hash of its contents`,
     ],
     [
@@ -119,8 +122,6 @@ function intentPlan(cls: NoRecord, i: NoRecordIntent, unsafe: boolean): ActionPl
 
 const tempLine = (t: string): string => `unlink the metadata temp ${t}`
 const isIntentTemp = (t: string): boolean => path.basename(t) === `${PARK_INTENT_FILE}.tmp`
-
-const SYNC_OP = 'sync the op dir'
 
 /**
  * What `finishNoRecord` does after the keep, in its order, every sync included:
