@@ -300,6 +300,31 @@ describe('SMI-7205: at the default cap a deep state root no longer strands a rec
     expect(fs.existsSync(st.opDir)).toBe(false)
     expect(fs.existsSync(path.join(theParkedCopy(st.fx), 'park-intent.json'))).toBe(true)
   })
+
+  it('a big intent BESIDE record.json (a finish killed after its intent, before the record unlink) classifies valid and the same command finishes it', async () => {
+    const st = await xs3({ hooks: { afterSidecar: () => killed('afterSidecar') } }, deepXfile(DEEP))
+    const backup = path.join(areaOf(st.fx), OP_ID)
+    expect(intentSize(st.opDir, backup)).toBeGreaterThanOrEqual(INTENT_CAP)
+    // Stopped once park-intent.json is durable and record.json is still there.
+    const first = await act(st, 'apply', {}, killAt('afterIntent'))
+    expect(first.result.status).toBe('stopped')
+    const recordFile = path.join(st.opDir, 'record.json')
+    const intentFile = path.join(st.opDir, 'park-intent.json')
+    expect(fs.existsSync(recordFile)).toBe(true)
+    expect(fs.statSync(intentFile).size).toBeGreaterThanOrEqual(INTENT_CAP)
+    // The classifier reads it beside the record (analyzeParkIntent) at the default cap, not 4096.
+    const cls = (await opReport(st)).cls
+    expect(cls.kind, JSON.stringify(cls).slice(0, 600)).not.toBe('no-record')
+    const facts = (cls as { facts?: { parkIntent: { valid: boolean } | null } }).facts
+    expect(facts?.parkIntent).not.toBeNull()
+    expect(facts?.parkIntent?.valid).toBe(true)
+    // The same command finishes it from that intent: parked, nothing lost.
+    const last = await done(st, 'apply')
+    expect(last.result.status).toBe('done')
+    expect(fs.existsSync(st.opDir)).toBe(false)
+    expect(fs.existsSync(path.join(theParkedCopy(st.fx), 'park-intent.json'))).toBe(true)
+    expect(fs.existsSync(path.join(areaOf(st.fx), OP_ID))).toBe(true)
+  })
 })
 
 describe('intentTarget under the state root /', () => {
