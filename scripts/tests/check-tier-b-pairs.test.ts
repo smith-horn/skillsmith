@@ -502,49 +502,33 @@ describe('check-tier-b-pairs', () => {
     })
   })
 
+  // npm: aliases are deliberately not judged (owner decision, SMI-7201): every alias spec,
+  // including ones that look healthy, is NOT-EVALUATED -- never CLEAN and never a mismatch.
   describe('npm alias specs', () => {
     const ALIAS = nm('native-alias')
-    const aliasFx = (spec: string, installedName: string, installedVersion: string): Fixture => ({
-      packages: {
-        [nm('host')]: parent('1.0.0', { 'native-alias': spec }),
-        [ALIAS]: native('1.2.3', { name: '@vendor/native-linux' }),
-      },
-      files: {
-        [nm('host')]: parent('1.0.0', { 'native-alias': spec }),
-        [ALIAS]: installed(installedName, installedVersion),
-      },
-    })
-
-    it('a healthy alias is evaluated and clean: exit 0, one pair checked', () => {
-      const { exit, lines } = run(
-        aliasFx('npm:@vendor/native-linux@^1.2.0', '@vendor/native-linux', '1.2.3')
-      )
-      expect(exit).toBe(0)
-      expect(lines.join('\n')).toContain('1 pairs checked')
-    })
-
-    it('an alias whose version is outside its range: exit 1, the alias path named', () => {
-      const { exit, lines } = run(
-        aliasFx('npm:@vendor/native-linux@^1.3.0', '@vendor/native-linux', '1.2.3')
-      )
-      expect(exit).toBe(1)
-      expect(mismatches(lines).map((m) => [m.path, m.parent])).toEqual([[ALIAS, nm('host')]])
-    })
-
-    it('an alias slot holding a different package: exit 1 even when the version satisfies', () => {
-      const { exit, lines } = run(
-        aliasFx('npm:@vendor/native-linux@^1.2.0', '@other/native-linux', '1.2.3')
-      )
-      expect(exit).toBe(1)
-      expect(paths(lines)).toEqual([ALIAS])
-    })
-
-    it('an alias with no version or range: exit 2, not a mismatch', () => {
-      const { exit, lines } = run(
-        aliasFx('npm:@vendor/native-linux', '@vendor/native-linux', '1.2.3')
-      )
+    it.each([
+      ['a healthy-looking alias', 'npm:@vendor/native-linux@^1.2.0', '@vendor/native-linux'],
+      [
+        'an alias with a trailing @ and no range',
+        'npm:@vendor/native-linux@',
+        '@vendor/native-linux',
+      ],
+      ['an alias to an invalid package name', 'npm:foo/bar@1.2.3', 'foo/bar'],
+      ['an alias with no range at all', 'npm:@vendor/native-linux', '@vendor/native-linux'],
+    ])('%s: exit 2, not evaluated, never CLEAN', (_label, spec, installedName) => {
+      const { exit, lines } = run({
+        packages: {
+          [nm('host')]: parent('1.0.0', { 'native-alias': spec }),
+          [ALIAS]: native('1.2.3', { name: installedName }),
+        },
+        files: {
+          [nm('host')]: parent('1.0.0', { 'native-alias': spec }),
+          [ALIAS]: installed(installedName, '1.2.3'),
+        },
+      })
       expect(exit).toBe(2)
       expect(mismatches(lines)).toEqual([])
+      expect(lines.some((l) => l.includes('CLEAN'))).toBe(false)
       expect(notEvaluated(lines, `path=${ALIAS} parent=${nm('host')}`)).toBe(true)
     })
   })
@@ -720,13 +704,12 @@ describe('check-tier-b-pairs', () => {
     // other libc makes that package applicable-and-missing and the case fails.
     it('real libc detection checks the host libc package and skips the other one', () => {
       const ldd = spawnSync('ldd', ['--version'], { encoding: 'utf8' })
+      expect(ldd.status).toBe(0)
       const banner = `${ldd.stdout ?? ''}${ldd.stderr ?? ''}`
-      const hostLibc = /GLIBC|GNU libc/i.test(banner)
-        ? 'glibc'
-        : /musl/i.test(banner)
-          ? 'musl'
-          : 'unknown'
-      expect(hostLibc).not.toBe('unknown')
+      const isGlibc = /GLIBC|GNU libc/i.test(banner)
+      const isMusl = /musl/i.test(banner)
+      expect(isGlibc !== isMusl).toBe(true) // exactly one: an ambiguous banner is no oracle
+      const hostLibc = isGlibc ? 'glibc' : 'musl'
       const name = { glibc: '@img/sharp-linux-x', musl: '@img/sharp-linuxmusl-x' }
       const od = { [name.glibc]: '1.0.0', [name.musl]: '1.0.0' }
       const own = hostLibc === 'glibc' ? name.glibc : name.musl
