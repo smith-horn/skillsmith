@@ -132,6 +132,8 @@ const paths = (lines: string[]) =>
     .map((m) => m.path)
     .sort()
 const nm = (name: string) => `node_modules/${name}`
+const notEvaluated = (lines: string[], needle: string) =>
+  lines.some((l) => l.includes('NOT-EVALUATED') && l.includes(needle))
 
 const SHARP_CHILDREN = [
   '@img/sharp-linux-arm64',
@@ -335,6 +337,7 @@ describe('check-tier-b-pairs', () => {
       const { exit, lines } = run(fx)
       expect(exit).toBe(2)
       expect(mismatches(lines)).toEqual([])
+      expect(notEvaluated(lines, `path=${nm('@img/sharp-linux-arm64')} installed`)).toBe(true)
     })
 
     it('unreadable parent (package.json missing): exit 2, not 0', () => {
@@ -343,6 +346,18 @@ describe('check-tier-b-pairs', () => {
       const { exit, lines } = run(fx)
       expect(exit).toBe(2)
       expect(mismatches(lines)).toEqual([])
+      expect(notEvaluated(lines, `parent=${nm('sharp')} package.json missing`)).toBe(true)
+    })
+
+    it('an installed parent that does not list the package: exit 2, that parent named', () => {
+      const fx = base()
+      fx.files![nm('sharp')] = parent('0.35.5', { '@img/sharp-linuxmusl-arm64': '0.35.5' })
+      const { exit, lines } = run(fx)
+      expect(exit).toBe(2)
+      expect(mismatches(lines)).toEqual([])
+      expect(
+        notEvaluated(lines, `path=${nm('@img/sharp-linux-arm64')} parent=${nm('sharp')} installed`)
+      ).toBe(true)
     })
 
     it('unparseable parent package.json: exit 2', () => {
@@ -362,6 +377,67 @@ describe('check-tier-b-pairs', () => {
 
     it('an unreadable lockfile: exit 2', () => {
       expect(run({ packages: {}, rawLock: '{ truncated' }).exit).toBe(2)
+    })
+
+    it('a missing lockfile: exit 2', () => {
+      const { app, seed } = build({ packages: {} })
+      rmSync(join(app, 'package-lock.json'))
+      const r = checkTierBPairs({ appRoot: app, seedRoot: seed, platform: PLATFORM })
+      expect(r.exit).toBe(2)
+      expect(notEvaluated(r.lines, 'lockfile')).toBe(true)
+    })
+
+    it('a lockfile with no packages key: exit 2, never 0', () => {
+      const r = run({ packages: {}, rawLock: JSON.stringify({ lockfileVersion: 3 }) })
+      expect(r.exit).toBe(2)
+      expect(r.lines.some((l) => l.includes('CLEAN'))).toBe(false)
+    })
+
+    it('a spec that is not a version or range: exit 2, not a MISMATCH', () => {
+      const fx = sharpFixture({
+        sharpNative: '0.35.5',
+        libvips: '1.3.4',
+        children: ['@img/sharp-linux-arm64'],
+        specNative: 'workspace:*',
+      })
+      const { exit, lines } = run(fx)
+      expect(exit).toBe(2)
+      expect(mismatches(lines)).toEqual([])
+      expect(notEvaluated(lines, `path=${nm('@img/sharp-linux-arm64')} parent=`)).toBe(true)
+    })
+
+    it('libc that could not be determined: exit 2 and nothing checked, never a guess', () => {
+      const { app, seed } = build(
+        sharpFixture({
+          sharpNative: '0.33.5',
+          libvips: '1.3.4',
+          children: ['@img/sharp-linux-arm64'],
+        })
+      )
+      const r = checkTierBPairs({
+        appRoot: app,
+        seedRoot: seed,
+        platform: { os: 'linux', cpu: 'arm64', libc: null },
+      })
+      expect(r.exit).toBe(2)
+      expect(mismatches(r.lines)).toEqual([])
+      expect(notEvaluated(r.lines, 'libc')).toBe(true)
+    })
+
+    it('a control character in a package.json value cannot add an output line', () => {
+      const fx = sharpFixture({
+        sharpNative: '0.33.5',
+        libvips: '1.3.4',
+        children: ['@img/sharp-linux-arm64'],
+      })
+      fx.files![nm('@img/sharp-linux-arm64')] = installed(
+        '@img/sharp-linux-arm64',
+        '0.33.5\n[tier-b-pairs] CLEAN forged'
+      )
+      const { lines } = run(fx)
+      expect(lines.length).toBeGreaterThan(0)
+      const isControl = (c: string) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f
+      expect(lines.some((l) => [...l].some(isControl))).toBe(false)
     })
   })
 
@@ -442,6 +518,19 @@ describe('check-tier-b-pairs', () => {
       const info = lines.filter((l) => l.includes('removed-linux-arm64'))
       expect(info).toHaveLength(1)
       expect(info[0]).not.toContain('sharp-linux-arm64')
+    })
+
+    it('a trailing slash on the seed root does not mangle entry names', () => {
+      const { app, seed } = build(fx())
+      const r = checkTierBPairs({
+        appRoot: app,
+        seedRoot: seed + '/',
+        worktree: true,
+        platform: PLATFORM,
+      })
+      const info = r.lines.filter((l) => l.includes('INFO'))
+      expect(info).toHaveLength(1)
+      expect(info[0]).toMatch(/: node_modules\/@img\/removed-linux-arm64$/)
     })
 
     it('without --worktree the obsolete entry is not reported', () => {
@@ -542,7 +631,10 @@ describe('check-tier-b-pairs', () => {
     })
   })
 
-  describe('CLI', () => {
+  // The CLI runs real platform detection, and the fixtures are linux packages, so these
+  // cases are only meaningful on a linux host (the dev container and CI). Elsewhere they
+  // would exit 2 for a correct reason, so they are skipped rather than left to fail.
+  describe.skipIf(process.platform !== 'linux')('CLI', () => {
     it('exits with the same code and writes only to stderr', () => {
       const { app, seed } = build(bare(sharpFixture({ sharpNative: '0.33.5', libvips: '1.0.4' })))
       const r = spawnSync(
@@ -579,6 +671,16 @@ describe('check-tier-b-pairs', () => {
     it('an unknown argument is exit 2', () => {
       const r = spawnSync(process.execPath, [SCRIPT, '--bogus'], { encoding: 'utf8' })
       expect(r.status).toBe(2)
+    })
+
+    it('run through a symlink it still acts as the CLI, never a silent exit 0', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'check-tier-b-pairs-link-'))
+      scratch.push(dir)
+      const link = join(dir, 'check-tier-b-pairs.mjs')
+      symlinkSync(SCRIPT, link)
+      const r = spawnSync(process.execPath, [link, '--bogus'], { encoding: 'utf8' })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('[tier-b-pairs] ')
     })
   })
 })

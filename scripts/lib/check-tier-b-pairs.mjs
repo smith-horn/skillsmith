@@ -24,7 +24,7 @@
 
 import { readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { deriveLinuxOptionalPackagePaths } from './linux-optional-packages.mjs'
 
@@ -121,7 +121,7 @@ function listSeedEntries(seedRoot) {
     for (const e of entries) {
       const full = join(dir, e.name)
       if (e.isFile() && e.name.endsWith('.version')) {
-        out.push(full.slice(seedRoot.length + 1, -'.version'.length))
+        out.push(relative(seedRoot, full).slice(0, -'.version'.length))
       } else if (e.isDirectory() && !names.has(e.name + '.version')) {
         walk(full)
       }
@@ -156,25 +156,32 @@ function listAdmits(list, value) {
   return hasAllow ? allow : true
 }
 
-/** @returns {string} */
+/**
+ * glibc when the runtime reports a glibc version, musl when the report exists
+ * without one, null when no report could be produced (unknown, not guessed).
+ * @returns {string | null}
+ */
 function detectLibc() {
   try {
     const report = /** @type {any} */ (process.report)?.getReport()
-    return report?.header?.glibcVersionRuntime ? 'glibc' : 'musl'
+    if (!report || !report.header) return null
+    return report.header.glibcVersionRuntime ? 'glibc' : 'musl'
   } catch {
-    return 'musl'
+    return null
   }
 }
 
 /**
- * @param {{appRoot?: string, seedRoot?: string, worktree?: boolean, platform?: {os: string, cpu: string, libc: string}}} [opts]
+ * @param {{appRoot?: string, seedRoot?: string, worktree?: boolean, platform?: {os: string, cpu: string, libc: string | null}}} [opts]
  * @returns {{exit: 0|1|2, lines: string[]}}
  */
 export function checkTierBPairs(opts = {}) {
   const appRoot = opts.appRoot ?? DEFAULT_APP_ROOT
   const seedRoot = opts.seedRoot ?? DEFAULT_SEED_ROOT
   const lines = []
-  const say = (/** @type {string} */ s) => lines.push(PREFIX + s)
+  // One record per line: control characters from package.json values cannot forge a line.
+  const say = (/** @type {string} */ s) =>
+    lines.push(PREFIX + s.replace(/[\u0000-\u001f\u007f]/g, '?'))
   const lockPath = join(appRoot, 'package-lock.json')
 
   let expected
@@ -207,6 +214,13 @@ export function checkTierBPairs(opts = {}) {
     cpu: process.arch,
     libc: detectLibc(),
   }
+  if (platform.libc === null) {
+    say(
+      `NOT-EVALUATED libc could not be determined, so platform applicability is unknown; ${expected.length} packages expected, none checked`
+    )
+    return { exit: 2, lines }
+  }
+
   const applicable = expected.filter((p) => {
     const e = packages[p] || {}
     return (
@@ -261,12 +275,16 @@ export function checkTierBPairs(opts = {}) {
       }
       let ok
       if (semver) {
+        if (!semver.validRange(spec)) {
+          unevaluated(`path=${pkgPath} parent=${label} spec=${spec} is not a version or range`)
+          continue
+        }
         ok = semver.satisfies(version, spec)
       } else if (EXACT_VERSION.test(spec)) {
         ok = version === spec
       } else {
         unevaluated(
-          `path=${pkgPath} parent=${label} spec=${spec} is a range and semver is unavailable`
+          `path=${pkgPath} parent=${label} spec=${spec} is not an exact version and semver is unavailable`
         )
         continue
       }
