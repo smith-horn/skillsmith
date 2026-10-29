@@ -42,6 +42,14 @@ All notable changes to `@skillsmith/core` are documented here.
   instead of refusing `staging-unsafe`. The update's, abort cleanup's and doctor's up-front
   prechecks are unchanged; they now size against the new cap, and their refusal names it, so
   no real path reaches that refusal any more. No released version reads a park intent.
+- **Changed**: SMI-6531 -- #3208 retro: where only `--abandon` could act (a moved operation,
+  or a class with no other action), the refusal of `--apply` and `--undo` now says "only
+  --abandon could act" instead of "only --abandon is offered", since `--abandon` can itself
+  refuse (a stray entry, an unprovable temp, an ambiguous partial-copy keep). The rule that
+  names where a pending partial-copy keep finishes (`pendingOf`) lives in one place (the
+  pending module) instead of three, and two internal exports nothing imported
+  (`ABANDONED_KIND`, `isChangedAfterCopy`) are private. Comments now say that an orphan copy temp named by a pending
+  partial-copy keep is finished by its rename. No other behaviour change.
 - **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to
   `skill-recovery.mark.ts` again (it was never a package export), and the recovery modules'
   comments now describe the park-intent precheck as running on any device. No behaviour change.
@@ -103,10 +111,6 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Changed**: SMI-6531 -- A1 step 6b-ii: `UpdateTarget.scope` and
   `BuildUpdateTargetInput.scope` are typed `InstallScope`.
 
-- **Internal**: SMI-6531 -- #3201 retro: `PERFORMED` (the recovery actions this version performs)
-  is exported, so the CLI listing reads core's set instead of a hand copy; two comments and a
-  CHANGELOG line are corrected. No behaviour change.
-
 - **Added**: SMI-6531 -- A1 step 6b-i: `planRecovery` and `executeRecovery` (now in
   `skill-recovery.exec.ts`) take any of the five recovery actions. Targeting is shared: an
   empty target operation folder is removed with one `rmdir` by any action, and
@@ -124,9 +128,7 @@ All notable changes to `@skillsmith/core` are documented here.
   and otherwise uses the client `none` layout, which supplies `--park`'s client and parked-index
   path. A folder entry whose own `lstat` failed is refused the same way, naming it. A `--park`
   that stops reports whether the folder is still where it was (`opDir.stillThere`) instead of
-  saying the record is gone. `--abandon` and `--clean-staging` are planned and listed; where
-  the plan would offer them, `planRecovery` refuses them before the prompt ("not performed by
-  this version yet"), and elsewhere the plan's own reason is the refusal.
+  saying the record is gone.
 
 - **Changed**: SMI-6531 -- A1 step 6b-i: the write path's refusal for a record this user may
   not open (`EACCES`/`EPERM`) now says it is another user's update and to run

@@ -17,6 +17,7 @@ import {
   RECOVERY_ACTIONS,
   serializePlan,
 } from '../../../../src/services/skill-recovery.plan.js'
+import { onlyAbandonWord } from '../../../../src/services/skill-recovery.plan.abandon.js'
 import type {
   ActionPlan,
   RecoveryAction,
@@ -392,6 +393,9 @@ describe('what every other class says', () => {
     const moved = (await opReport(renamedOp(await s2(file())))).cls
     expect(moved).toMatchObject({ kind: 'moved', why: 'foreign-op-dir' })
     expect(planAction(moved, 'apply')).toMatchObject({ offered: false, reason: 'recovery-moved' })
+    // --abandon can itself refuse, so the words say it is the only action that could act, not that it is offered.
+    const movedApply = planAction(moved, 'apply')
+    expect(movedApply.offered ? '' : movedApply.detail).toContain('only --abandon could act')
     expect(planAction(moved, 'abandon').offered).toBe(true)
     const st = await s2(file())
     const copy = path.join(st.opDir, 'old')
@@ -404,6 +408,20 @@ describe('what every other class says', () => {
     expect(apply).toMatchObject({ offered: false, reason: 'recovery-identity-changed' })
     expect(apply.offered ? '' : apply.detail).toContain('--accept-identity')
     expect(planAction(cls, 'abandon').offered).toBe(true)
+  })
+
+  it('onlyAbandonWord: says only --abandon could act, keeping the classifier reason as the prefix', () => {
+    const cls: RecoveryClass = {
+      kind: 'anything-else',
+      opId: 'x',
+      opDir: '/st/x',
+      reason: 'an ambiguous partial',
+      facts: null,
+    }
+    expect(onlyAbandonWord(cls)).toBe('an ambiguous partial; only --abandon could act')
+    expect(onlyAbandonWord({ ...cls, kind: 'moved' } as unknown as RecoveryClass)).toBe(
+      'only --abandon could act'
+    )
   })
 
   it('unreadable: --park only when guardable (6b-i); no record: --clean-staging only, with its owner gone (6b-ii); empty: nothing; AB: --abandon finishes it', async () => {

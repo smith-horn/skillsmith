@@ -26,8 +26,9 @@
  *     source must still have the re-plan's identity (else `staging-unsafe`,
  *     the record kept), then `publishTree(src, 'abandoned-old|new|undone')`
  *     (each such sidecar records OP's identity, O4).
- *  5. Each orphan copy temp of this op (no sidecar) is kept as `partial-copy`,
- *     before step 4's keeps (so a fresh keep's copy temp name is free).
+ *  5. Each orphan copy temp of this op (no sidecar) is kept as `partial-copy`
+ *     (or, when a pending partial-copy keep names it, finished by its
+ *     rename), before step 4's keeps (so a fresh keep's copy temp name is free).
  *  6. The finish: on one device `finishRecovered` (the metadata, `record.json`
  *     last, `rmdir`); across devices, where each verified source stayed in OP,
  *     `finishRecoveredAcross` (the `move-source` intent, the record last, the
@@ -48,6 +49,7 @@ import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import { adoptAll, adoptInto, listedNames, preMutationBlocks } from './skill-recovery.adopt.js'
 import { finishRecovered, sweepRoot } from './skill-recovery.finish.js'
 import { finishRecoveredAcross } from './skill-recovery.park.js'
+import { pendingOf } from './skill-recovery.pending.js'
 import { isOrphanCopyTemp } from './skill-recovery.plan.abandon.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
 import { keepRole } from './skill-recovery.resume.js'
@@ -255,7 +257,7 @@ export async function runAbandon(a: AbandonRun): Promise<RecoveryRunResult> {
     // the cross-device copy temp of a fresh keep named `<base>` (`taken` sees no temp).
     for (const g of f.groups.filter(isOrphanCopyTemp)) {
       if (s.area === null) await ensureBackupArea(s)
-      const pending = f.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null
+      const pending = pendingOf(f, g)
       const at = await keepOrphanCopyTemp(s, g, k.partials, pending)
       // A copy temp of a kind that names no role is the op's, not a role's.
       out.kept.push({ tree: g.role ?? 'OP', kind: 'partial-copy', path: at })
