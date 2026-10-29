@@ -530,6 +530,7 @@ describe('check-tier-b-pairs', () => {
       expect(mismatches(lines)).toEqual([])
       expect(lines.some((l) => l.includes('CLEAN'))).toBe(false)
       expect(notEvaluated(lines, `path=${ALIAS} parent=${nm('host')}`)).toBe(true)
+      expect(notEvaluated(lines, 'npm alias')).toBe(true) // named as an alias, not a generic bad spec
     })
   })
 
@@ -729,9 +730,50 @@ describe('check-tier-b-pairs', () => {
       )
     })
 
+    it('--worktree through the CLI reports an obsolete seed entry; without it, nothing', () => {
+      const { app, seed } = build({
+        ...bare(
+          sharpFixture({
+            sharpNative: '0.35.5',
+            libvips: '1.3.4',
+            children: ['@img/sharp-linux-arm64'],
+          })
+        ),
+        seed: [nm('@img/sharp-linux-arm64'), nm('@img/removed-linux-arm64')],
+      })
+      const cli = (extra: string[]) =>
+        spawnSync(process.execPath, [SCRIPT, '--app-root', app, '--seed-root', seed, ...extra], {
+          encoding: 'utf8',
+        })
+      const withFlag = cli(['--worktree'])
+      expect(withFlag.status).toBe(0)
+      expect(withFlag.stderr).toMatch(/INFO .*removed-linux-arm64/)
+      const without = cli([])
+      expect(without.status).toBe(0)
+      expect(without.stderr).not.toContain('removed-linux-arm64')
+    })
+
     it('an unknown argument is exit 2', () => {
       const r = spawnSync(process.execPath, [SCRIPT, '--bogus'], { encoding: 'utf8' })
       expect(r.status).toBe(2)
+    })
+
+    it.each([
+      ['an empty --app-root= value', ['--app-root=']],
+      ['an empty --seed-root= value', ['--seed-root=']],
+      ['an empty spaced value', ['--app-root', '']],
+      ['a root flag with no value', ['--app-root']],
+      ['a flag given as a root value', ['--app-root', '--worktree']],
+      ['a value on the boolean flag', ['--worktree=1']],
+      ['a positional argument', ['stray']],
+      ['a repeated --app-root', ['--app-root', '/broken-tree', '--app-root=/clean-tree']],
+      ['a repeated --seed-root', ['--seed-root=/a', '--seed-root', '/b']],
+      ['a repeated --worktree', ['--worktree', '--worktree']],
+      ['a bare --', ['--']],
+    ])('%s is a bad argument: exit 2, never a run', (_label, args) => {
+      const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('bad arguments')
     })
 
     it('run through a symlink it still acts as the CLI, never a silent exit 0', () => {
