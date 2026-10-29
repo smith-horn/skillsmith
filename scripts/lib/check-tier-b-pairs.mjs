@@ -5,14 +5,15 @@
  * expects and that applies to this platform (npm's os/cpu/libc rule; an
  * undetermined libc stops the check as not evaluated), verify the INSTALLED
  * copy satisfies the version spec that each of its INSTALLED JS parents
- * declares in optionalDependencies. The seed is not
- * consulted for the verdict: the question is "does the installed native half
- * match what the installed JS half expects", not "does it match the seed".
+ * declares in optionalDependencies. The seed is not consulted for the verdict:
+ * the question is "does the installed native half match what the installed JS
+ * half expects", not "does it match the seed".
  *
  * See docs/internal/implementation/smi-7201-tier-b-seed-pair-drift.md
  * (What Changes 1, Wave 1).
  *
  * Usage: node check-tier-b-pairs.mjs [--app-root <dir>] [--seed-root <dir>] [--worktree]
+ * (each option at most once; --opt=value is also accepted)
  *
  * Exit: 1 MISMATCH (a version outside a parent's spec, or an expected
  *       package missing); else 2 NOT-EVALUATED; else 0 CLEAN.
@@ -343,17 +344,21 @@ export function checkTierBPairs(opts = {}) {
 /**
  * Node's strict parser rejects an unknown option, a positional, a missing value,
  * a flag given as a value (`--app-root --worktree`) and a value on a boolean.
- * An empty root is rejected here, so a run is never aimed at the cwd by accident.
+ * Rejected here as well: an empty root (a run is never aimed at the cwd by
+ * accident), any option given twice (a later value must not silently redirect the
+ * check away from the tree the caller named first), and a bare `--`.
  * @param {string[]} argv
  * @returns {{appRoot: string, seedRoot: string, worktree: boolean} | null}
  */
 function parseArgs(argv) {
   let values
+  let tokens
   try {
-    ;({ values } = parseCliArgs({
+    ;({ values, tokens } = parseCliArgs({
       args: argv,
       strict: true,
       allowPositionals: false,
+      tokens: true,
       options: {
         'app-root': { type: 'string' },
         'seed-root': { type: 'string' },
@@ -362,6 +367,11 @@ function parseArgs(argv) {
     }))
   } catch {
     return null
+  }
+  const seen = new Set()
+  for (const tok of tokens) {
+    if (tok.kind !== 'option' || seen.has(tok.name)) return null
+    seen.add(tok.name)
   }
   if (values['app-root'] === '' || values['seed-root'] === '') return null
   return {
@@ -386,7 +396,7 @@ if (isMain()) {
   if (!opts) {
     process.stderr.write(
       PREFIX +
-        'NOT-EVALUATED bad arguments; usage: [--app-root <dir>] [--seed-root <dir>] [--worktree]\n'
+        'NOT-EVALUATED bad arguments; usage: [--app-root <dir>] [--seed-root <dir>] [--worktree], each at most once\n'
     )
     process.exit(2)
   }
