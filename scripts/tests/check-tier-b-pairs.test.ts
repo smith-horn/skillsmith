@@ -530,6 +530,7 @@ describe('check-tier-b-pairs', () => {
       expect(mismatches(lines)).toEqual([])
       expect(lines.some((l) => l.includes('CLEAN'))).toBe(false)
       expect(notEvaluated(lines, `path=${ALIAS} parent=${nm('host')}`)).toBe(true)
+      expect(notEvaluated(lines, 'npm alias')).toBe(true) // named as an alias, not a generic bad spec
     })
   })
 
@@ -733,6 +734,15 @@ describe('check-tier-b-pairs', () => {
       const r = spawnSync(process.execPath, [SCRIPT, '--bogus'], { encoding: 'utf8' })
       expect(r.status).toBe(2)
     })
+
+    it.each(['--app-root=', '--seed-root='])(
+      'an empty %s value is exit 2, like the spaced form',
+      (arg) => {
+        const r = spawnSync(process.execPath, [SCRIPT, arg], { encoding: 'utf8' })
+        expect(r.status).toBe(2)
+        expect(r.stderr).toContain('bad arguments')
+      }
+    )
 
     it('run through a symlink it still acts as the CLI, never a silent exit 0', () => {
       const dir = mkdtempSync(join(tmpdir(), 'check-tier-b-pairs-link-'))

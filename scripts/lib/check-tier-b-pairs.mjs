@@ -2,7 +2,8 @@
  * SMI-7201 Wave 1 -- Tier-B pair check.
  *
  * For every Tier-B (linux-only optional) native package the LIVE lockfile
- * expects, verify the INSTALLED copy satisfies the version spec that each of
+ * expects and that applies to this platform (npm's os/cpu/libc rule; an
+ * undetermined libc stops the check as not evaluated), verify the INSTALLED copy satisfies the version spec that each of
  * its INSTALLED JS parents declares in optionalDependencies. The seed is not
  * consulted for the verdict: the question is "does the installed native half
  * match what the installed JS half expects", not "does it match the seed".
@@ -162,11 +163,8 @@ function listAdmits(list, value) {
  * (npm: alias, dist-tag, git, file, url, workspace) is not evaluated rather than
  * called a mismatch or a pass.
  *
- * npm: aliases are deliberately not judged (owner decision, SMI-7201): none of the
- * lockfile's 253 optionalDependencies specs is an alias (measured 2026-10-29), and a
- * hand-written alias parser
- * drew two silent-pass findings in review. If one ever appears, the check names it
- * and stops at exit 2, and support is added then.
+ * npm: aliases are not judged (owner decision, SMI-7201): an alias spec is reported
+ * as an alias and not evaluated, so the check exits 2 and names it.
  * @param {string} spec
  * @param {any} installed the installed package.json
  * @param {any} semver the semver module, or null
@@ -351,9 +349,12 @@ function parseArgs(argv) {
       if (!v) return null
       if (a === '--app-root') opts.appRoot = v
       else opts.seedRoot = v
-    } else if (a.startsWith('--app-root=')) opts.appRoot = a.slice('--app-root='.length)
-    else if (a.startsWith('--seed-root=')) opts.seedRoot = a.slice('--seed-root='.length)
-    else return null
+    } else if (a.startsWith('--app-root=') || a.startsWith('--seed-root=')) {
+      const v = a.slice(a.indexOf('=') + 1)
+      if (!v) return null
+      if (a.startsWith('--app-root=')) opts.appRoot = v
+      else opts.seedRoot = v
+    } else return null
   }
   return opts
 }
