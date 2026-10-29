@@ -735,14 +735,19 @@ describe('check-tier-b-pairs', () => {
       expect(r.status).toBe(2)
     })
 
-    it.each(['--app-root=', '--seed-root='])(
-      'an empty %s value is exit 2, like the spaced form',
-      (arg) => {
-        const r = spawnSync(process.execPath, [SCRIPT, arg], { encoding: 'utf8' })
-        expect(r.status).toBe(2)
-        expect(r.stderr).toContain('bad arguments')
-      }
-    )
+    it.each([
+      ['an empty --app-root= value', ['--app-root=']],
+      ['an empty --seed-root= value', ['--seed-root=']],
+      ['an empty spaced value', ['--app-root', '']],
+      ['a root flag with no value', ['--app-root']],
+      ['a flag given as a root value', ['--app-root', '--worktree']],
+      ['a value on the boolean flag', ['--worktree=1']],
+      ['a positional argument', ['stray']],
+    ])('%s is a bad argument: exit 2, never a run', (_label, args) => {
+      const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
+      expect(r.status).toBe(2)
+      expect(r.stderr).toContain('bad arguments')
+    })
 
     it('run through a symlink it still acts as the CLI, never a silent exit 0', () => {
       const dir = mkdtempSync(join(tmpdir(), 'check-tier-b-pairs-link-'))

@@ -3,8 +3,9 @@
  *
  * For every Tier-B (linux-only optional) native package the LIVE lockfile
  * expects and that applies to this platform (npm's os/cpu/libc rule; an
- * undetermined libc stops the check as not evaluated), verify the INSTALLED copy satisfies the version spec that each of
- * its INSTALLED JS parents declares in optionalDependencies. The seed is not
+ * undetermined libc stops the check as not evaluated), verify the INSTALLED
+ * copy satisfies the version spec that each of its INSTALLED JS parents
+ * declares in optionalDependencies. The seed is not
  * consulted for the verdict: the question is "does the installed native half
  * match what the installed JS half expects", not "does it match the seed".
  *
@@ -27,6 +28,7 @@ import { readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { parseArgs as parseCliArgs } from 'node:util'
 import { deriveLinuxOptionalPackagePaths } from './linux-optional-packages.mjs'
 
 const PREFIX = '[tier-b-pairs] '
@@ -338,25 +340,35 @@ export function checkTierBPairs(opts = {}) {
   return { exit: 0, lines }
 }
 
-/** @param {string[]} argv */
+/**
+ * Node's strict parser rejects an unknown option, a positional, a missing value,
+ * a flag given as a value (`--app-root --worktree`) and a value on a boolean.
+ * An empty root is rejected here, so a run is never aimed at the cwd by accident.
+ * @param {string[]} argv
+ * @returns {{appRoot: string, seedRoot: string, worktree: boolean} | null}
+ */
 function parseArgs(argv) {
-  const opts = { appRoot: DEFAULT_APP_ROOT, seedRoot: DEFAULT_SEED_ROOT, worktree: false }
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]
-    if (a === '--worktree') opts.worktree = true
-    else if (a === '--app-root' || a === '--seed-root') {
-      const v = argv[++i]
-      if (!v) return null
-      if (a === '--app-root') opts.appRoot = v
-      else opts.seedRoot = v
-    } else if (a.startsWith('--app-root=') || a.startsWith('--seed-root=')) {
-      const v = a.slice(a.indexOf('=') + 1)
-      if (!v) return null
-      if (a.startsWith('--app-root=')) opts.appRoot = v
-      else opts.seedRoot = v
-    } else return null
+  let values
+  try {
+    ;({ values } = parseCliArgs({
+      args: argv,
+      strict: true,
+      allowPositionals: false,
+      options: {
+        'app-root': { type: 'string' },
+        'seed-root': { type: 'string' },
+        worktree: { type: 'boolean' },
+      },
+    }))
+  } catch {
+    return null
   }
-  return opts
+  if (values['app-root'] === '' || values['seed-root'] === '') return null
+  return {
+    appRoot: values['app-root'] ?? DEFAULT_APP_ROOT,
+    seedRoot: values['seed-root'] ?? DEFAULT_SEED_ROOT,
+    worktree: values.worktree === true,
+  }
 }
 
 function isMain() {
