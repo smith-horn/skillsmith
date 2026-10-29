@@ -39,7 +39,14 @@
  * @module @skillsmith/core/services/skill-recovery.plan.abandon
  */
 import path from 'node:path'
-import { kept, offer, refuse, step, UNTOUCHED } from './skill-recovery.plan.actions.js'
+import {
+  kept,
+  offer,
+  RECORD_VERIFIES,
+  refuse,
+  step,
+  UNTOUCHED,
+} from './skill-recovery.plan.actions.js'
 import { finishLines, strayDetail } from './skill-recovery.plan.finish.js'
 import { pendingOf } from './skill-recovery.pending.js'
 import { isProvableTemp, ROLE_DIR } from './skill-recovery.pstate.js'
@@ -285,20 +292,20 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
 }
 
 /**
- * Why another action is not offered where only `--abandon` could act: an
- * abandon that began, or (anything else) the classifier's own reason, so each
- * refusal names what is wrong (an ambiguous partial-copy keep, say). An
- * anything-else class with no verified record is the exception: `--abandon`
- * refuses it too (see `abandonPlan`), so its words say that instead.
+ * Why an action other than `--abandon` is refused for a class no other row
+ * plans: an abandon that began, or (anything else) the classifier's own
+ * reason, so each refusal names what is wrong (an ambiguous partial-copy keep,
+ * say), and for one with no verified record that none verifies. Otherwise
+ * (`--clean-staging` or `--park` of a moved or identity-changed op) the
+ * record verifies. None of these names an action: whether `--abandon` (or any
+ * other) is offered is the hint's to say (`skill-recovery.plan.hint.ts`).
  */
-export function onlyAbandonWord(cls: RecoveryClass): string {
-  if (cls.kind === 'ab') return 'an abandon began: --abandon finishes it'
+export function refusedWord(cls: RecoveryClass): string {
+  if (cls.kind === 'ab') return 'an abandon began'
   if (cls.kind === 'anything-else') {
-    return cls.facts === null
-      ? `${cls.reason}, so no record verifies: --abandon acts only on a verified record`
-      : `${cls.reason}; only --abandon could act`
+    return cls.facts === null ? `${cls.reason}, so no record verifies` : cls.reason
   }
-  return 'only --abandon could act'
+  return RECORD_VERIFIES
 }
 
 /**

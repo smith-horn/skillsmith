@@ -35,6 +35,19 @@ import type {
   RecoveryRefuseReason,
 } from './skill-recovery.types.js'
 
+/** Every action, in the order the listing shows them (and a refusal's hint names them). */
+export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
+  'apply',
+  'undo',
+  'abandon',
+  'clean-staging',
+  'park',
+]
+
+/** Why `--clean-staging` and `--park` refuse an op dir whose record verified. */
+export const RECORD_VERIFIES =
+  'its record verifies; this action acts only on an op dir with no record or an unreadable record'
+
 export const kept = (as: string): Disposition => ({ kind: 'kept', as })
 export const INSTALLED: Disposition = { kind: 'installed' }
 export const UNTOUCHED: Disposition = { kind: 'untouched' }
@@ -135,16 +148,12 @@ export function parkPlan(cls: Unreadable): ActionPlan {
   )
 }
 
-/** What the other actions say of an unreadable record: `--park` when it is offered, else why not. */
-export function parkWord(cls: Unreadable): string {
-  const p = parkPlan(cls)
-  return p.offered ? '--park is offered' : `--park is not offered either (${p.reason}: ${p.detail})`
-}
-
 /**
  * The words for `--clean-staging` and `--park` (and an empty op dir's for
  * every action); null when the class says nothing. `--abandon` is planned
- * before this is reached (`skill-recovery.plan.abandon.ts`).
+ * before this is reached (`skill-recovery.plan.abandon.ts`). No refusal here
+ * names another action: which ones are offered is the hint `planAction` adds
+ * (`skill-recovery.plan.hint.ts`).
  */
 export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | null {
   switch (cls.kind) {
@@ -152,7 +161,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
       return refuse(
         action,
         'recovery-not-offered',
-        "it holds nothing; any doctor action holding this root's lock removes it with one rmdir"
+        "nothing to act on; the next doctor action holding this root's lock removes it with one rmdir"
       )
     case 'no-record':
       // 6b-ii: `planAction` plans it in `skill-recovery.plan.clean.ts` (C2) and never gets here.
@@ -160,7 +169,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
     case 'unreadable':
       return action === 'park'
         ? parkPlan(cls)
-        : refuse(action, 'recovery-not-offered', `the record cannot be trusted: ${parkWord(cls)}`)
+        : refuse(action, 'recovery-not-offered', 'the record cannot be trusted')
     case 'other-user':
       return refuse(
         action,
@@ -174,14 +183,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
       return null
     case 'state':
       return action === 'clean-staging' || action === 'park'
-        ? refuse(
-            action,
-            'recovery-not-offered',
-            // The one row `--abandon` is offered in (`rowAbandon`): neither of the others runs there.
-            cls.state === 'S2prime' && cls.postKeep
-              ? 'offered here: --abandon'
-              : 'offered here: --apply or --undo'
-          )
+        ? refuse(action, 'recovery-not-offered', RECORD_VERIFIES)
         : null
   }
 }

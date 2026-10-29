@@ -127,7 +127,7 @@ export function analyzeParkIntent(
 }
 
 /** `blocked` for an abort-new intent whose entries are its own: `--apply`/`--undo` never finish it. */
-export const ABORT_NEW_BLOCK = 'an abort-new intent: --clean-staging finishes it'
+export const ABORT_NEW_BLOCK = "its park intent is abort cleanup's (kind abort-new)"
 
 /** The directories a recorded op keeps its trees in: what a no-record park may carry. */
 const SOURCE_NAMES: ReadonlySet<string> = new Set(['old', 'new', 'undone'])

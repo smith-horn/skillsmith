@@ -16,7 +16,8 @@
  * record (`--clean-staging`, 6b-ii) is `skill-recovery.plan.clean.ts`'s;
  * `--abandon` (6b-iii) is `skill-recovery.plan.abandon.ts`'s, but for the one
  * row it is offered in (`rowAbandon`). Each finish is stated as its executor
- * takes it (`skill-recovery.plan.finish.ts`).
+ * takes it (`skill-recovery.plan.finish.ts`). A refusal names no other
+ * action itself: its hint is derived from this table (`.plan.hint.ts`).
  *
  * @module @skillsmith/core/services/skill-recovery.plan
  */
@@ -26,13 +27,14 @@ import {
   kept,
   MOVE_SOURCE_NO_RECORD_ORIGIN,
   offer,
-  parkWord,
+  RECOVERY_ACTIONS,
   refuse,
   sixBActions,
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
-import { abandonOf, abandonPlan, onlyAbandonWord } from './skill-recovery.plan.abandon.js'
+import { abandonOf, abandonPlan, refusedWord } from './skill-recovery.plan.abandon.js'
+import { withHint } from './skill-recovery.plan.hint.js'
 import { pendingOf } from './skill-recovery.pending.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
 import { finishLines, keepsSource, strayRefusal } from './skill-recovery.plan.finish.js'
@@ -42,19 +44,15 @@ import type {
   ManifestEffect,
   NoRecordIntent,
   OpFacts,
+  PlanOptions,
   PlanStep,
   RecoveryAction,
   RecoveryClass,
   RowState,
 } from './skill-recovery.types.js'
 
-export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
-  'apply',
-  'undo',
-  'abandon',
-  'clean-staging',
-  'park',
-]
+export { RECOVERY_ACTIONS } from './skill-recovery.plan.actions.js'
+export type { PlanOptions } from './skill-recovery.types.js'
 
 const ROW_LABEL: Record<RowState, string> = {
   S0: 'S0 not swapped',
@@ -203,7 +201,7 @@ function rowPlan(
           return refuse(
             'apply',
             'recovery-conflict',
-            'the new folder no longer hashes to what was built: --undo is offered'
+            'the new folder no longer hashes to what was built'
           )
         }
         return rowOffer(
@@ -311,7 +309,7 @@ function swappedPlan(
       'recovery-conflict',
       cls.state === 'S2prime'
         ? 'the manifest entry is neither the planned nor the updated one'
-        : 'the live folder was removed or replaced: --undo is offered'
+        : 'the live folder was removed or replaced'
     )
   }
   if (cls.postKeep) {
@@ -390,37 +388,23 @@ function intentParkPlan(
  * `--abandon` for a §3.3 row: offered in post-keep S2′ and no other row, an
  * enumerated row and not a computed "both refused" (bf-1k0 Major 2): there
  * `--apply` refuses `recovery-conflict` and `--undo` finds the old folder
- * already kept. Every other row refuses it and names the action that runs
- * there (E34: abandoning S1 would leave the skill path empty).
+ * already kept. Every other row refuses it; the hint names the action that
+ * runs there (E34: abandoning S1 would leave the skill path empty).
  */
 function rowAbandon(cls: Extract<RecoveryClass, { kind: 'state' }>): ActionPlan {
   if (cls.state === 'S2prime' && cls.postKeep) return abandonOf(cls.opId, cls.facts)
-  const runs = (['apply', 'undo'] as const).filter((a) => rowPlan(cls, a).offered)
   return refuse(
     'abandon',
     'recovery-not-offered',
-    `${runs.length === 0 ? 'neither --apply nor --undo runs here' : `offered here: ${runs.map((a) => `--${a}`).join(' or ')}`}; ` +
-      'among the rows, --abandon is offered only once the old folder is kept and the manifest entry is neither the planned nor the updated one'
+    'among the rows, --abandon is offered only once the old folder is kept and the manifest entry is neither the planned nor the updated one'
   )
 }
 
-/** What a plan may take from the request besides the class (6b-ii). */
-export interface PlanOptions {
-  /** `--unsafe-unverified-owner`: `--clean-staging` acts past an owner it cannot show gone. */
-  unsafeUnverifiedOwner?: boolean
-}
-
 /**
- * What `action` would do to `cls`: the steps and where each tree ends, or why
- * it is not offered. The listing and the digest plan without `opts` (the
- * owner verdict is in those words, so the digest covers it); the targeted
- * action plans with the request's flags.
+ * What `action` would do to `cls`, before any hint: the steps and where each
+ * tree ends, or why it is not offered, naming no other action and no flag.
  */
-export function planAction(
-  cls: RecoveryClass,
-  action: RecoveryAction,
-  opts: PlanOptions = {}
-): ActionPlan {
+function planBase(cls: RecoveryClass, action: RecoveryAction, opts: PlanOptions): ActionPlan {
   const uid = foreignUid(cls)
   if (uid !== null) {
     return refuse(
@@ -448,22 +432,18 @@ export function planAction(
       return refuse(
         action,
         'recovery-moved',
-        'the root or op dir is not the one the record was written for: only --abandon could act; moving the root back to its recorded path makes --apply possible'
+        'the root or op dir is not the one the record was written for; moved back to its recorded path, its update can be finished there'
       )
     }
     if (cls.kind === 'identity-changed') {
       return refuse(
         action,
         'recovery-identity-changed',
-        'a tree has the right content but is not the folder that was written (a copy, or a remount): --accept-identity waives this check'
+        'a tree has the right content but is not the folder that was written (a copy, or a remount)'
       )
     }
     if (cls.kind === 'unreadable') {
-      return refuse(
-        action,
-        'recovery-record-unreadable',
-        `the record cannot be trusted: ${parkWord(cls)}`
-      )
+      return refuse(action, 'recovery-record-unreadable', 'the record cannot be trusted')
     }
   }
   // 6b-ii: `--clean-staging` and the other actions' words for an op dir with no record.
@@ -478,7 +458,22 @@ export function planAction(
       `the op dir belongs to uid ${cls.ownerUid ?? 'unknown'}`
     )
   }
-  return refuse(action, 'recovery-not-offered', onlyAbandonWord(cls))
+  return refuse(action, 'recovery-not-offered', refusedWord(cls))
+}
+
+/**
+ * What `action` would do to `cls`: the steps and where each tree ends, or why
+ * it is not offered, ending with the hint of what is (`skill-recovery.plan.hint.ts`).
+ * The listing and the digest plan without `opts` (the owner verdict is in
+ * those words, so the digest covers it); the targeted action plans with the
+ * request's flags. The hint never reads them, so both say the same.
+ */
+export function planAction(
+  cls: RecoveryClass,
+  action: RecoveryAction,
+  opts: PlanOptions = {}
+): ActionPlan {
+  return withHint(planBase, cls, action, opts)
 }
 
 /** Every action's plan for `cls`, in the order the listing shows them. */
