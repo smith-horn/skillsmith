@@ -157,6 +157,48 @@ function listAdmits(list, value) {
 }
 
 /**
+ * Does an installed package satisfy one parent's spec, read the way npm reads it?
+ * - `npm:<name>@<range>` is an alias: the installed package must BE <name>, and its
+ *   version must satisfy <range>.
+ * - Anything else must be a version or range (with semver), or an exact version
+ *   (without it).
+ * Every other spec form (dist-tag, git, file, url, workspace) cannot be judged from
+ * the installed files, so it is not evaluated rather than called a mismatch.
+ * @param {string} spec
+ * @param {any} installed the installed package.json
+ * @param {any} semver the semver module, or null
+ * @returns {{result: 'ok'|'mismatch'|'unevaluated', why: string}}
+ */
+function judgeSpec(spec, installed, semver) {
+  let range = spec
+  if (spec.startsWith('npm:')) {
+    const target = spec.slice('npm:'.length)
+    const at = target.lastIndexOf('@')
+    if (at <= 0) return { result: 'unevaluated', why: 'is an alias with no version or range' }
+    const aliasName = target.slice(0, at)
+    range = target.slice(at + 1)
+    if (typeof installed.name !== 'string') {
+      return { result: 'unevaluated', why: 'is an alias and the installed package has no name' }
+    }
+    if (installed.name !== aliasName) {
+      return {
+        result: 'mismatch',
+        why: `(installed package is ${installed.name}, not ${aliasName})`,
+      }
+    }
+  }
+  if (semver) {
+    if (!semver.validRange(range))
+      return { result: 'unevaluated', why: 'is not a version or range' }
+    return { result: semver.satisfies(installed.version, range) ? 'ok' : 'mismatch', why: '' }
+  }
+  if (EXACT_VERSION.test(range)) {
+    return { result: installed.version === range ? 'ok' : 'mismatch', why: '' }
+  }
+  return { result: 'unevaluated', why: 'is not an exact version and semver is unavailable' }
+}
+
+/**
  * glibc when the runtime reports a glibc version, musl when the report exists
  * without one, null when no report could be produced (unknown, not guessed).
  * @returns {string | null}
@@ -273,24 +315,18 @@ export function checkTierBPairs(opts = {}) {
         unevaluated(`path=${pkgPath} parent=${label} installed package.json does not list it`)
         continue
       }
-      let ok
-      if (semver) {
-        if (!semver.validRange(spec)) {
-          unevaluated(`path=${pkgPath} parent=${label} spec=${spec} is not a version or range`)
-          continue
-        }
-        ok = semver.satisfies(version, spec)
-      } else if (EXACT_VERSION.test(spec)) {
-        ok = version === spec
-      } else {
-        unevaluated(
-          `path=${pkgPath} parent=${label} spec=${spec} is not an exact version and semver is unavailable`
-        )
+      const verdict = judgeSpec(spec, installed.value, semver)
+      if (verdict.result === 'unevaluated') {
+        unevaluated(`path=${pkgPath} parent=${label} spec=${spec} ${verdict.why}`)
         continue
       }
       evaluated++
       pairs++
-      if (!ok) mismatch(`path=${pkgPath} installed=${version} parent=${label} spec=${spec}`)
+      if (verdict.result === 'mismatch') {
+        mismatch(
+          `path=${pkgPath} installed=${version} parent=${label} spec=${spec}${verdict.why ? ' ' + verdict.why : ''}`
+        )
+      }
     }
     if (evaluated === 0) {
       unevaluated(`path=${pkgPath} has no evaluated parent (${parents.length} found)`)

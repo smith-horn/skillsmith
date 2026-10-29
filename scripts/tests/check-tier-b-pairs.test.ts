@@ -502,6 +502,53 @@ describe('check-tier-b-pairs', () => {
     })
   })
 
+  describe('npm alias specs', () => {
+    const ALIAS = nm('native-alias')
+    const aliasFx = (spec: string, installedName: string, installedVersion: string): Fixture => ({
+      packages: {
+        [nm('host')]: parent('1.0.0', { 'native-alias': spec }),
+        [ALIAS]: native('1.2.3', { name: '@vendor/native-linux' }),
+      },
+      files: {
+        [nm('host')]: parent('1.0.0', { 'native-alias': spec }),
+        [ALIAS]: installed(installedName, installedVersion),
+      },
+    })
+
+    it('a healthy alias is evaluated and clean: exit 0, one pair checked', () => {
+      const { exit, lines } = run(
+        aliasFx('npm:@vendor/native-linux@^1.2.0', '@vendor/native-linux', '1.2.3')
+      )
+      expect(exit).toBe(0)
+      expect(lines.join('\n')).toContain('1 pairs checked')
+    })
+
+    it('an alias whose version is outside its range: exit 1, the alias path named', () => {
+      const { exit, lines } = run(
+        aliasFx('npm:@vendor/native-linux@^1.3.0', '@vendor/native-linux', '1.2.3')
+      )
+      expect(exit).toBe(1)
+      expect(mismatches(lines).map((m) => [m.path, m.parent])).toEqual([[ALIAS, nm('host')]])
+    })
+
+    it('an alias slot holding a different package: exit 1 even when the version satisfies', () => {
+      const { exit, lines } = run(
+        aliasFx('npm:@vendor/native-linux@^1.2.0', '@other/native-linux', '1.2.3')
+      )
+      expect(exit).toBe(1)
+      expect(paths(lines)).toEqual([ALIAS])
+    })
+
+    it('an alias with no version or range: exit 2, not a mismatch', () => {
+      const { exit, lines } = run(
+        aliasFx('npm:@vendor/native-linux', '@vendor/native-linux', '1.2.3')
+      )
+      expect(exit).toBe(2)
+      expect(mismatches(lines)).toEqual([])
+      expect(notEvaluated(lines, `path=${ALIAS} parent=${nm('host')}`)).toBe(true)
+    })
+  })
+
   describe('obsolete seed entries', () => {
     const fx = (): Fixture => ({
       ...sharpFixture({
@@ -665,6 +712,38 @@ describe('check-tier-b-pairs', () => {
       expect(r.status).toBe(0)
       expect(r.stderr).toContain(
         '1 packages expected (1 applicable, 0 skipped for another platform), 1 pairs checked'
+      )
+    })
+
+    // Real libc detection, judged against an oracle independent of the code: ldd's own
+    // banner. Only the host's own libc variant is installed, so a detector that reports the
+    // other libc makes that package applicable-and-missing and the case fails.
+    it('real libc detection checks the host libc package and skips the other one', () => {
+      const ldd = spawnSync('ldd', ['--version'], { encoding: 'utf8' })
+      const banner = `${ldd.stdout ?? ''}${ldd.stderr ?? ''}`
+      const hostLibc = /GLIBC|GNU libc/i.test(banner)
+        ? 'glibc'
+        : /musl/i.test(banner)
+          ? 'musl'
+          : 'unknown'
+      expect(hostLibc).not.toBe('unknown')
+      const name = { glibc: '@img/sharp-linux-x', musl: '@img/sharp-linuxmusl-x' }
+      const od = { [name.glibc]: '1.0.0', [name.musl]: '1.0.0' }
+      const own = hostLibc === 'glibc' ? name.glibc : name.musl
+      const { app, seed } = build({
+        packages: {
+          [nm('sharp')]: parent('0.35.5', od),
+          [nm(name.glibc)]: native('1.0.0', { cpu: [process.arch], libc: ['glibc'] }),
+          [nm(name.musl)]: native('1.0.0', { cpu: [process.arch], libc: ['musl'] }),
+        },
+        files: { [nm('sharp')]: parent('0.35.5', od), [nm(own)]: installed(own, '1.0.0') },
+      })
+      const r = spawnSync(process.execPath, [SCRIPT, '--app-root', app, '--seed-root', seed], {
+        encoding: 'utf8',
+      })
+      expect(r.status).toBe(0)
+      expect(r.stderr).toContain(
+        '2 packages expected (1 applicable, 1 skipped for another platform), 1 pairs checked'
       )
     })
 
