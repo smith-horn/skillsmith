@@ -12,8 +12,10 @@
  *  - `--unsafe-unverified-owner` is computed: for a no-record op dir, the
  *    actions offered only with it are named under its own clause;
  *  - `--accept-identity` is not computed (it changes the class, not the
- *    plan): an `identity-changed` class carries a fixed clause that names no
- *    action.
+ *    plan): a refusal of `--apply` or `--undo` for an `identity-changed`
+ *    class carries a fixed clause that names no other action. The CLI takes
+ *    the flag only with those two, so no other action's refusal names it,
+ *    and an other-user refusal never does: no flag gets past it.
  *
  * The hint is computed without the request's flags, so the listing and a
  * targeted re-plan say the same thing. The base planner is passed in, so this
@@ -30,14 +32,10 @@ import type {
 } from './skill-recovery.types.js'
 
 /** A planner that never adds a hint (`planBase`). */
-export type BasePlanner = (
-  cls: RecoveryClass,
-  action: RecoveryAction,
-  opts: PlanOptions
-) => ActionPlan
+type BasePlanner = (cls: RecoveryClass, action: RecoveryAction, opts: PlanOptions) => ActionPlan
 
 /** What is offered for a class: without any flag, and only with `--unsafe-unverified-owner`. */
-export interface Offers {
+interface Offers {
   plain: RecoveryAction[]
   unsafeOnly: RecoveryAction[]
 }
@@ -45,11 +43,14 @@ export interface Offers {
 const UNSAFE_OWNER =
   'with --unsafe-unverified-owner (only if you are sure no update is still using this op dir)'
 const IDENTITY =
-  "add --accept-identity to the action you want to run: it waives the identity check, and that action's plan is printed before any change"
+  'with --accept-identity this action waives the identity check, and its plan is printed before any change'
 const NOTHING = 'no other action is offered here'
 
+/** The actions `--accept-identity` is accepted with (`doctor recovery`'s option). */
+const IDENTITY_ACTIONS: ReadonlySet<RecoveryAction> = new Set(['apply', 'undo'])
+
 /** Every action's offeredness for `cls`, in `RECOVERY_ACTIONS` order. */
-export function offersOf(base: BasePlanner, cls: RecoveryClass): Offers {
+function offersOf(base: BasePlanner, cls: RecoveryClass): Offers {
   const plain = RECOVERY_ACTIONS.filter((a) => base(cls, a, {}).offered)
   // Only a no-record op dir's plan reads the flag (`--clean-staging`'s owner check).
   const unsafeOnly =
@@ -67,15 +68,28 @@ const flags = (actions: readonly RecoveryAction[]): string =>
 /**
  * The hint for a refusal of `refused`: the other actions offered, then those
  * offered only with `--unsafe-unverified-owner` (the refused one included),
- * or else that none is; then, for `identity-changed`, the identity clause.
+ * or else that none is; then, for `--apply` or `--undo` of an
+ * `identity-changed` class, the identity clause, unless the refusal is
+ * `recovery-other-user` (waiving the identity check would not let it act).
  */
-export function renderHint(refused: RecoveryAction, offers: Offers, cls: RecoveryClass): string {
-  const others = offers.plain.filter((a) => a !== refused)
+function renderHint(
+  refused: Extract<ActionPlan, { offered: false }>,
+  offers: Offers,
+  cls: RecoveryClass
+): string {
+  const action = refused.action
+  const others = offers.plain.filter((a) => a !== action)
   const parts: string[] = []
   if (others.length > 0) parts.push(`offered here: ${flags(others)}`)
   if (offers.unsafeOnly.length > 0) parts.push(`${UNSAFE_OWNER}: ${flags(offers.unsafeOnly)}`)
   if (parts.length === 0) parts.push(NOTHING)
-  if (cls.kind === 'identity-changed') parts.push(IDENTITY)
+  if (
+    cls.kind === 'identity-changed' &&
+    IDENTITY_ACTIONS.has(action) &&
+    refused.reason !== 'recovery-other-user'
+  ) {
+    parts.push(IDENTITY)
+  }
   return parts.join('; ')
 }
 
@@ -88,5 +102,5 @@ export function withHint(
 ): ActionPlan {
   const plan = base(cls, action, opts)
   if (plan.offered) return plan
-  return { ...plan, detail: `${plan.detail}; ${renderHint(action, offersOf(base, cls), cls)}` }
+  return { ...plan, detail: `${plan.detail}; ${renderHint(plan, offersOf(base, cls), cls)}` }
 }

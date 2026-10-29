@@ -458,7 +458,7 @@ function planBase(cls: RecoveryClass, action: RecoveryAction, opts: PlanOptions)
       `the op dir belongs to uid ${cls.ownerUid ?? 'unknown'}`
     )
   }
-  return refuse(action, 'recovery-not-offered', refusedWord(cls))
+  return refuse(action, 'recovery-not-offered', refusedWord(cls, action))
 }
 
 /**

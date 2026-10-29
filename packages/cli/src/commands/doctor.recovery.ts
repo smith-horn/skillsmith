@@ -13,8 +13,9 @@
  * The listing names what each action would do and which are offered. Every
  * action is supported (`doctor.recovery.action.ts`): `--apply`, `--undo`,
  * `--park`, `--clean-staging` and `--abandon` (SMI-6531 steps 6a-iii, 6b-i,
- * 6b-ii and 6b-iii; a no-record op dir shows its owner verdict and whether
- * `--clean-staging` needs `--unsafe-unverified-owner`).
+ * 6b-ii and 6b-iii; a no-record op dir shows its owner verdict, and the
+ * `--clean-staging` line's derived hint says when `--unsafe-unverified-owner`
+ * would let it act).
  * Exit status: 0 when listed; 1 when a `--root` could not be used or on an
  * unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.recovery

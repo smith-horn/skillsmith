@@ -4,7 +4,9 @@
  * (`recovery.plan.hint.test.ts`).
  *
  * Every fixture is built through the real classifier (`opReport`) from a real
- * crash, moved the way a user, a copy or a kill would move it. Two are typed
+ * crash, moved the way a user, a copy or a kill would move it (two of them
+ * also through the reader's `statOverride` seam, for a race and an `EIO`
+ * the container cannot produce on demand). Two are typed
  * literals, because the state cannot be produced in the container: C3 (an op
  * dir whose own `lstat` or listing failed) and `other-user` (an op dir this
  * user may not open: `EACCES` needs another uid, and tests run as root).
@@ -19,7 +21,7 @@ import path from 'node:path'
 import { expect } from 'vitest'
 import type { RecoveryClass, StatFact } from '../../../../src/services/skill-recovery.types.js'
 import type { ListOptions } from '../../../../src/services/skill-recovery.listing.js'
-import { makeFixture } from '../skill-swap.helpers.js'
+import { areaOf, makeFixture } from '../skill-swap.helpers.js'
 import { renamedOp } from './recovery.abandon.helpers.js'
 import { act, killAt } from './recovery.act.helpers.js'
 import { abortLeft, ALIVE, DEAD } from './recovery.clean.helpers.js'
@@ -113,6 +115,16 @@ export const GROUPS = {
       build: async () => classOf(keepNew(await s0(file()))),
     },
     { name: 'S1', want: row('S1', false), build: () => classOf(s1(file())) },
+    {
+      // --apply refuses: the staged copy no longer hashes to what was built.
+      name: 'S1, new/ edited after the build',
+      want: { ...row('S1', false), facts: { nHashesToPost: false } },
+      build: async () => {
+        const st = await s1(file())
+        fs.appendFileSync(path.join(st.opDir, 'new', 'SKILL.md'), 'edited\n')
+        return classOf(st)
+      },
+    },
     { name: 'S2', want: row('S2', false), build: () => classOf(s2(file())) },
     {
       name: 'S2 post-keep',
@@ -174,6 +186,11 @@ export const GROUPS = {
       name: 'identity-changed S2 + stray',
       want: { facts: { strays: ['.DS_Store'] } },
       build: async () => classOf(stray(copyOld(await s2(file())))),
+    },
+    {
+      name: 'identity-changed S2, another uid',
+      build: async () =>
+        classOf(copyOld(await s2(file())), { euid: (process.geteuid?.() ?? 0) + 1 }),
     },
   ],
   ab: [
@@ -238,13 +255,26 @@ export const GROUPS = {
     },
     {
       name: 'unreadable (a FIFO at record.json)',
-      want: { why: 'not-a-file' },
+      // The park guard's walk fails on the FIFO: --park refuses (parkPlan's guard-walk branch).
+      want: { why: 'not-a-file', observed: { hash: { ok: false, reason: 'unsupported-entry' } } },
       build: async () => {
         const st = await s2(file())
         const rec = path.join(st.opDir, 'record.json')
         fs.rmSync(rec)
         execFileSync('mkfifo', [rec])
         return classOf(st)
+      },
+    },
+    {
+      // --park refuses: the park binds every entry's identity, and old/'s lstat fails (parkPlan's lstat branch).
+      name: 'unreadable (an entry whose lstat fails)',
+      want: { why: 'hash-mismatch' },
+      build: async () => {
+        const st = await corrupt()
+        const old = path.join(st.opDir, 'old')
+        const statOverride = (p: string, real: StatFact): StatFact =>
+          p === old ? { ok: false, errno: 'EIO' } : real
+        return classOf(st, { reader: { statOverride } })
       },
     },
     {
@@ -285,6 +315,42 @@ export const GROUPS = {
       name: 'no-record, an abort-new intent',
       want: { intent: { valid: true, kind: 'abort-new' } },
       build: async () => classOf(abortLeft('afterIntent'), { ownerProbe: DEAD }),
+    },
+    {
+      // A verifying move-source intent whose state root doctor was not given: its park is blocked.
+      name: 'no-record, a blocked move-source intent',
+      want: {
+        intent: {
+          valid: true,
+          kind: 'move-source',
+          blocked: expect.stringContaining('is not one doctor discovered or was given'),
+        },
+        clean: { intentBlocked: expect.stringContaining('is not one doctor discovered') },
+      },
+      build: async () => classOf(doctorLeft(), { ownerProbe: DEAD, stateRoots: [] }),
+    },
+    {
+      // No state root given or discovered: nowhere to keep new/ into (clean.area null).
+      name: 'no-record, no state root',
+      want: { intent: null, clean: { area: null, groupsBlocked: null } },
+      build: async () =>
+        classOf(abortLeft('abortAfterCheck'), { ownerProbe: DEAD, stateRoots: [] }),
+    },
+    {
+      // The backup area is a regular file: it cannot be listed (clean.groupsBlocked).
+      name: 'no-record, the backup area cannot be listed',
+      want: {
+        intent: null,
+        clean: { groupsBlocked: expect.stringContaining('could not be listed') },
+      },
+      build: async () => {
+        const st = await abortLeft('abortAfterCheck')
+        const area = areaOf(st.fx)
+        expect(fs.existsSync(area)).toBe(false)
+        fs.mkdirSync(path.dirname(area), { recursive: true })
+        fs.writeFileSync(area, 'not a directory\n')
+        return classOf(st, { ownerProbe: DEAD })
+      },
     },
   ],
   'empty-op-dir': [

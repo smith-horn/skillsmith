@@ -42,7 +42,7 @@ import path from 'node:path'
 import {
   kept,
   offer,
-  RECORD_VERIFIES,
+  recordVerifies,
   refuse,
   step,
   UNTOUCHED,
@@ -56,6 +56,7 @@ import type {
   KeepGroup,
   OpFacts,
   PlanStep,
+  RecoveryAction,
   RecoveryClass,
   Role,
 } from './skill-recovery.types.js'
@@ -297,15 +298,16 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
  * reason, so each refusal names what is wrong (an ambiguous partial-copy keep,
  * say), and for one with no verified record that none verifies. Otherwise
  * (`--clean-staging` or `--park` of a moved or identity-changed op) the
- * record verifies. None of these names an action: whether `--abandon` (or any
- * other) is offered is the hint's to say (`skill-recovery.plan.hint.ts`).
+ * record verifies, and what `action` acts on instead. None of these names
+ * another action: whether `--abandon` (or any other) is offered is the hint's
+ * to say (`skill-recovery.plan.hint.ts`).
  */
-export function refusedWord(cls: RecoveryClass): string {
+export function refusedWord(cls: RecoveryClass, action: RecoveryAction): string {
   if (cls.kind === 'ab') return 'an abandon began'
   if (cls.kind === 'anything-else') {
     return cls.facts === null ? `${cls.reason}, so no record verifies` : cls.reason
   }
-  return RECORD_VERIFIES
+  return recordVerifies(action)
 }
 
 /**

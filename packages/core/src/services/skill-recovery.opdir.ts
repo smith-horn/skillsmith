@@ -206,7 +206,7 @@ export function noRecordIntent(
     else sources.push({ name: n, identity: st.identity })
   }
   if (!valid) blocked = 'its park-intent.json does not verify for this op dir'
-  // 6b-ii: an abort-new intent's entry checks stand (`--clean-staging` reads them); unblocked, it says who finishes it.
+  // 6b-ii: an abort-new intent's entry checks stand (`--clean-staging` reads them); when they pass, `blocked` is ABORT_NEW_BLOCK.
   else if (v.kind !== 'move-source') blocked ??= ABORT_NEW_BLOCK
   else if (target === null) blocked = `its backupPath ${backupPath} is not this root's backup area`
   else if (!a.stateRoots.includes(target.stateRoot)) {

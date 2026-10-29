@@ -44,9 +44,15 @@ export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
   'park',
 ]
 
-/** Why `--clean-staging` and `--park` refuse an op dir whose record verified. */
-export const RECORD_VERIFIES =
-  'its record verifies; this action acts only on an op dir with no record or an unreadable record'
+/** Why `--clean-staging` or `--park` refuses an op dir whose record verified: what each acts on. */
+const RECORD_VERIFIES: Readonly<Record<'clean-staging' | 'park', string>> = {
+  'clean-staging': 'its record verifies; --clean-staging acts only on an op dir with no record',
+  park: 'its record verifies; --park acts only on an unreadable record',
+}
+
+/** `RECORD_VERIFIES` for `action`, naming only that action (any other: that its record verifies). */
+export const recordVerifies = (action: RecoveryAction): string =>
+  action === 'clean-staging' || action === 'park' ? RECORD_VERIFIES[action] : 'its record verifies'
 
 export const kept = (as: string): Disposition => ({ kind: 'kept', as })
 export const INSTALLED: Disposition = { kind: 'installed' }
@@ -183,7 +189,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
       return null
     case 'state':
       return action === 'clean-staging' || action === 'park'
-        ? refuse(action, 'recovery-not-offered', RECORD_VERIFIES)
+        ? refuse(action, 'recovery-not-offered', recordVerifies(action))
         : null
   }
 }

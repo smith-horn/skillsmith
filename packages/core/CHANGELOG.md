@@ -8,15 +8,22 @@ All notable changes to `@skillsmith/core` are documented here.
   what is offered. A refusal's detail ends with a hint computed from the plan table for the
   same class: `offered here: --a or --b` naming every other action offered, then the actions
   offered only with `--unsafe-unverified-owner` under their own clause, or `no other action is
-  offered here`; an `identity-changed` class adds that `--accept-identity`, added to the action to run,
-  waives the identity check and that action's plan is printed before any change (that flag is
-  named, not computed: the listing never reads it). No refusal names another action by hand any more,
+  offered here`; a refusal of `--apply` or `--undo` for an `identity-changed` class (the two
+  actions `--accept-identity` is taken with) adds "with --accept-identity this action waives the
+  identity check, and its plan is printed before any change" (that flag is named, not computed:
+  the listing never reads it), except when the refusal is `recovery-other-user`, which no flag
+  gets past. A refusal of `--clean-staging` or `--park` for a verified record now says what that
+  action acts on (`--clean-staging`: an op dir with no record; `--park`: an unreadable record).
+  No refusal names another action by hand any more,
   so none can name one that refuses (a stray entry used to leave "offered here: --abandon" on a
   row where `--abandon` refused too). `planAction` is a thin wrapper over the hint-free table;
   `RECOVERY_ACTIONS` now lives in `skill-recovery.plan.actions.ts` and `PlanOptions` in
   `skill-recovery.types.ts`, both still re-exported from `skill-recovery.plan.ts`. The detail
   text is in the listing digest, so a listing digest taken before upgrading comes back
-  `plan-changed` afterwards: list again.
+  `plan-changed` afterwards: list again. There is no change to the `--json` shape; one field's
+  text changes: `NoRecordIntent.blocked` for an abort-new intent (`ABORT_NEW_BLOCK`) was "an
+  abort-new intent: --clean-staging finishes it" and is now "its park intent is abort cleanup's
+  (kind abort-new)", so `doctor recovery --json`'s `class.intent.blocked` changes for those ops.
 - **Added**: SMI-6531 -- A1 step 6b-iii: `--abandon` is performed, for a verified record no
   normal recovery action can act on: a moved operation (another root or folder, or a copy),
   one whose trees are the right content in the wrong folders, one whose abandon began (AB),
