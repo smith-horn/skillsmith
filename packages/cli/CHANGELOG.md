@@ -13,7 +13,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   verified copies). It never changes the skill folder, the manifest or the audit journal, and is
   refused, naming `--apply` or `--undo`, wherever one of those runs. Same confirmation contract,
   `--yes` and exit codes as the other actions. The listing no longer marks any action "not
-  available yet".
+  available yet". An operation folder holding a file doctor did not put there (a `.DS_Store`)
+  is now refused by `--abandon`, `--apply` and `--undo` before anything changes, naming the
+  file and saying to move it out by hand; the listing shows why.
 - **Added**: SMI-6531 -- A1 step 6b-ii: `skillsmith doctor recovery --clean-staging <opId>`
   finishes an operation folder with no `record.json` (an update stopped before writing it or
   after removing it, or doctor's own cross-device `--apply`, `--undo` or `--clean-staging`

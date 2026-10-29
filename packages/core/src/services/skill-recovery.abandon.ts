@@ -26,7 +26,8 @@
  *     source must still have the re-plan's identity (else `staging-unsafe`,
  *     the record kept), then `publishTree(src, 'abandoned-old|new|undone')`
  *     (each such sidecar records OP's identity, O4).
- *  5. Each orphan copy temp of this op (no sidecar) is kept as `partial-copy`.
+ *  5. Each orphan copy temp of this op (no sidecar) is kept as `partial-copy`,
+ *     before step 4's keeps (so a fresh keep's copy temp name is free).
  *  6. The finish: on one device `finishRecovered` (the metadata, `record.json`
  *     last, `rmdir`); across devices, where each verified source stayed in OP,
  *     `finishRecoveredAcross` (the `move-source` intent, the record last, the
@@ -217,44 +218,51 @@ export interface AbandonRun {
 /** `--abandon` under lock 1 (see the module comment). Called by `executeRecovery`. */
 export async function runAbandon(a: AbandonRun): Promise<RecoveryRunResult> {
   const { planned, opts, ctx, cls, transcript, out } = a
-  const f = factsOf(cls)
   const steps = planned.plan.steps
-  const st = abandonState({
-    record: f.record,
-    opId: cls.opId,
-    opIdentity: f.opIdentity,
-    binding: ctx,
-    ctx,
-    options: opts.swap ?? {},
-  })
-  out.warnings = st.warnings
-  const k: KeepContext = { facts: f, transcript, partials: [] }
+  let st: SwapState | null = null
   try {
+    // Inside the try: a class with no verified record is a stop, not a throw.
+    const f = factsOf(cls)
+    const s = abandonState({
+      record: f.record,
+      opId: cls.opId,
+      opIdentity: f.opIdentity,
+      binding: ctx,
+      ctx,
+      options: opts.swap ?? {},
+    })
+    st = s
+    out.warnings = s.warnings
+    const k: KeepContext = { facts: f, transcript, partials: [] }
     const adopted = adoptAll(f, listedNames(transcript, f.opDir), transcript)
-    adoptInto(st, transcript, adopted)
-    const blocked = await preMutationBlocks(st, f, steps, adopted)
+    adoptInto(s, transcript, adopted)
+    const blocked = await preMutationBlocks(s, f, steps, adopted)
     if (blocked !== null) return refused(blocked.reason, blocked.detail, planned.opDir)
-    for (const role of ['O', 'N', 'U'] as const) await keepOne(st, f, role, steps, k, out)
+    // Orphan copy temps first: one at `.tmp-<base>` would otherwise collide with
+    // the cross-device copy temp of a fresh keep named `<base>` (`taken` sees no temp).
     for (const g of f.groups.filter(isOrphanCopyTemp)) {
-      if (st.area === null) await ensureBackupArea(st)
-      const at = await keepOrphanCopyTemp(st, g, k.partials)
-      out.kept.push({ tree: g.role ?? 'O', kind: 'partial-copy', path: at })
+      if (s.area === null) await ensureBackupArea(s)
+      const at = await keepOrphanCopyTemp(s, g, k.partials)
+      // A copy temp of a kind that names no role is the op's, not a role's.
+      out.kept.push({ tree: g.role ?? 'OP', kind: 'partial-copy', path: at })
     }
-    if (st.moveSources.size > 0) {
-      out.extraCopy = await finishRecoveredAcross(st, adopted.files, adopted.intent)
+    for (const role of ['O', 'N', 'U'] as const) await keepOne(s, f, role, steps, k, out)
+    if (s.moveSources.size > 0) {
+      out.extraCopy = await finishRecoveredAcross(s, adopted.files, adopted.intent)
     } else {
-      await finishRecovered(st, [...adopted.files, ...(adopted.intent ? [adopted.intent] : [])])
+      await finishRecovered(s, [...adopted.files, ...(adopted.intent ? [adopted.intent] : [])])
     }
   } catch (err) {
     rethrowLockOrder(err)
     const d = describe(err)
+    const done: SwapState | null = st
     return {
       status: 'stopped',
       opId: cls.opId,
       reason: d.reason,
       detail: d.detail,
-      recordPath: st.recordRemoved ? null : opPaths(st).record,
-      warnings: st.warnings,
+      recordPath: done === null || done.recordRemoved ? null : opPaths(done).record,
+      warnings: done === null ? [] : done.warnings,
     }
   }
   out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)

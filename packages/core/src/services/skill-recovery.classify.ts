@@ -57,7 +57,7 @@ import type {
 } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
-import { OWNER_FILE, RECORD_FILE } from './skill-swap.types.js'
+import { OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
 import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 import type { EntryState } from './skill-manifest.entry.js'
 
@@ -85,6 +85,16 @@ export interface ClassifyContext {
 }
 
 const DENIED = new Set(['EACCES', 'EPERM'])
+
+/** What a recorded op dir may hold: the role trees and the metadata files its finish adopts. */
+const OP_ENTRIES: ReadonlySet<string> = new Set([
+  ...Object.values(ROLE_DIR),
+  RECORD_FILE,
+  `${RECORD_FILE}.tmp`,
+  OWNER_FILE,
+  PARK_INTENT_FILE,
+  `${PARK_INTENT_FILE}.tmp`,
+])
 
 /** A `record.json.tmp` beside the record: its inode, marker and body, as facts. */
 function analyzeRecordTmp(
@@ -269,6 +279,7 @@ async function classifyRecorded(
     moved: moved?.why ?? null,
     opIdentity: v.opIdentity,
     hasOwnerFile: names.includes(OWNER_FILE),
+    strays: names.filter((n) => !OP_ENTRIES.has(n)).sort(),
     journal: journal.ok ? journal : null,
     otherUid: rec.uid !== ctx.euid ? rec.uid : null,
     // A moved op's marker names the record's own area; it is followed only when that is this one.

@@ -170,6 +170,8 @@ describe('the offered classes: every tree kept, only metadata removed', () => {
     expect(plan.remaining).toContain(`keep the copy temp ${temp} as partial-copy`)
     const a = await done(st, 'abandon')
     const kept = a.result.kept.find((k) => k.kind === 'partial-copy')
+    // The temp of the backup's name is O's.
+    expect(kept?.tree).toBe('O')
     expect(kept?.path).toBe(destOf(st, 'partial-copy'))
     expect(hashOf(kept!.path)).toBe(tempHash)
     expect(idOf(kept!.path)).toEqual(tempId)

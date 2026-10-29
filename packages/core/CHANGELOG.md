@@ -21,7 +21,10 @@ All notable changes to `@skillsmith/core` are documented here.
   now checked for consistency (else it is unreadable, for `--park`) and carries the facts the
   plan reads. The `abandoned-*` kinds are kept even when a tree cannot be hashed. The plans of
   `--apply`, `--undo` and `--abandon` now state their finish step for step, every metadata file
-  and sync by name, both finishes while a source is still to be kept.
+  and sync by name, both finishes while a source is still to be kept. An op dir holding an
+  entry that is neither a role's tree nor a metadata file doctor adopts (a `.DS_Store`) is now
+  refused at plan time by `--abandon`, `--apply` and `--undo`, naming it, with nothing changed
+  (`OpFacts.strays`); before, the run kept trees and then stopped `op-not-empty` on every rerun.
 - **Removed (internal, unreleased)**: SMI-6531 -- `PERFORMED` is gone: every recovery action is
   performed, so the set equalled `RECOVERY_ACTIONS`.
 - **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer

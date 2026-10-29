@@ -96,7 +96,8 @@ export function resultLines(r: RecoveryRunResult): string[] {
   if (r.installed !== null) lines.push(`  installed: ${r.installed}`)
   for (const k of r.kept) {
     lines.push(
-      k.tree === 'OP'
+      // A partial-copy at OP is a copy temp of the op (no role), not the op dir itself.
+      k.tree === 'OP' && k.kind !== 'partial-copy'
         ? `  the whole op dir was set aside as ${k.kind} at ${k.path}`
         : `  kept ${k.tree} as ${k.kind} at ${k.path}`
     )

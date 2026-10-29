@@ -24,9 +24,14 @@
  * for `--clean-staging`: each role that is still in the op dir is one step
  * (a keep that had started resumes with its own kind, PLAN:1536; any other
  * source is kept as `abandoned-old|new|undone`); a role already kept says so;
- * an absent role has no step. Then what is left, in run order: each resume,
- * each orphan copy temp, and the finish as `skill-recovery.plan.finish.ts`
- * states it (both finishes while a source is still to be kept).
+ * an absent role has no step. Each fresh keep is named as `destFor` will name
+ * it: the first of `<opId>.<kind>`, `.1`, `.2`... that no tree, sidecar or
+ * sidecar temp in the area holds (`freeKeptName`; the listing is in the
+ * digest). Then what is left, in run order: each orphan copy temp (kept
+ * first, so a fresh keep's own copy temp name is free), then per role O, N, U
+ * the resume of its started keep or the unlink of its provable P0 temp, then
+ * the finish as `skill-recovery.plan.finish.ts` states it (both finishes while
+ * a source is still to be kept).
  *
  * Pure: no filesystem access.
  *
@@ -34,7 +39,7 @@
  */
 import path from 'node:path'
 import { kept, offer, refuse, step, UNTOUCHED } from './skill-recovery.plan.actions.js'
-import { finishLines } from './skill-recovery.plan.finish.js'
+import { finishLines, strayDetail } from './skill-recovery.plan.finish.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
 import { sameId } from './skill-recovery.trees.js'
 import type {
@@ -92,6 +97,8 @@ export function isChangedAfterCopy(g: KeepGroup): boolean {
 
 /** Why `--abandon` cannot act on what the classifier saw, naming the entry (O2); null when it can. */
 function blockOf(f: OpFacts): string | null {
+  const stray = strayDetail(f)
+  if (stray !== null) return stray
   const t = f.recordTmp
   // `adoptAll`'s rule: a marked temp whose body matches the record is this op's.
   if (t !== null && !t.sameInode && !t.emptySingleLink && !t.bodyMatches) {
@@ -118,6 +125,34 @@ function blockOf(f: OpFacts): string | null {
   return null
 }
 
+/**
+ * Where a fresh keep of `kind` goes: `<area>/<opId>.<kind>`, or the first
+ * `.<k>` suffix free of a tree, sidecar or sidecar temp in the area, as
+ * `destFor` (`taken`) chooses it. A copy temp does not take a name; the
+ * executor keeps orphan copy temps first, so it is free by then; nor does a
+ * P0 temp of a role still to be kept, which `keepRole` unlinks before that
+ * role's publish (its name's kind is that role's).
+ */
+export function freeKeptName(
+  f: Pick<OpFacts, 'area' | 'opId' | 'groups' | 'roles'>,
+  kind: string
+): string {
+  const base = `${f.opId}.${kind}`
+  const unlinkedFirst = (g: KeepGroup): boolean => {
+    const res = g.role === null ? null : f.roles[g.role]
+    return g.state === 'P0' && res?.kind === 'source' && res.started === null
+  }
+  const taken = new Set(
+    f.groups
+      .filter((g) => g.dest.present || g.sidecar !== null || g.sidecarTmp !== null)
+      .filter((g) => !unlinkedFirst(g))
+      .map((g) => g.base)
+  )
+  let name = base
+  for (let k = 1; taken.has(name); k++) name = `${base}.${k}`
+  return path.join(f.area, name)
+}
+
 /** The one step for `role`, or none when it is absent. */
 function roleStep(f: OpFacts, role: Role): PlanStep[] {
   const res = f.roles[role]
@@ -133,7 +168,7 @@ function roleStep(f: OpFacts, role: Role): PlanStep[] {
   }
   const kind = ABANDONED_KIND[role]
   return [
-    step(role, kept(kind), `${ROLE_DIR[role]}/ is kept as ${kind} at ${f.area}/${f.opId}.${kind}`),
+    step(role, kept(kind), `${ROLE_DIR[role]}/ is kept as ${kind} at ${freeKeptName(f, kind)}`),
   ]
 }
 
@@ -143,7 +178,24 @@ function oldWhere(f: OpFacts): string | null {
   if (o.kind === 'absent') return null
   if (o.kind === 'kept') return o.keep.destPath
   if (o.started !== null) return o.started.destPath
-  return `${f.area}/${f.opId}.${ABANDONED_KIND.O}`
+  return freeKeptName(f, ABANDONED_KIND.O)
+}
+
+/** Per role, as `keepOne` takes it: a started keep's resume, else the unlink of a provable P0 temp. */
+function roleLines(f: OpFacts): string[] {
+  const out: string[] = []
+  for (const role of ['O', 'N', 'U'] as const) {
+    const res = f.roles[role]
+    if (res.kind !== 'source') continue
+    if (res.started !== null) {
+      out.push(`resume the keep of ${res.started.base} from ${res.started.state}`)
+      continue
+    }
+    for (const g of f.groups.filter((x) => x.role === role && x.state === 'P0')) {
+      out.push(`unlink the provable sidecar temp of ${g.base} (P0)`)
+    }
+  }
+  return out
 }
 
 /** `--abandon` of a verified op whose facts are `f` (see the module comment). */
@@ -159,12 +211,10 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
   const source = (['O', 'N', 'U'] as const).some((r) => f.roles[r].kind === 'source')
   const orphans = f.groups.filter(isOrphanCopyTemp)
   const remaining = [
-    ...f.groups
-      .filter((g) => !g.otherCopy && g.state !== null && g.state !== 'P5')
-      .map((g) => `resume the keep of ${g.base} from ${g.state}`),
     ...orphans.map(
       (g) => `keep the copy temp ${path.join(f.area, `.tmp-${g.base}`)} as partial-copy`
     ),
+    ...roleLines(f),
     ...finishLines(f, source),
   ]
   const old = oldWhere(f)

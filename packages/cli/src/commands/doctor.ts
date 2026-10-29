@@ -279,7 +279,7 @@ export function createDoctorCommand(): Command {
     // SMI-6531 6b-iii: a verified op --apply and --undo can't act on; its trees are kept, never removed.
     .option(
       '--abandon <opId>',
-      "Keep the trees of an update --apply and --undo can't act on, then remove its op dir (shows the plan, then asks)"
+      "Keep the trees of an update --apply and --undo can't act on, then remove (or, across devices, set aside) its op dir (shows the plan, then asks)"
     )
     // SMI-6531 6b-i: the only remedy for a record that cannot be read, which blocks the whole root.
     .option(

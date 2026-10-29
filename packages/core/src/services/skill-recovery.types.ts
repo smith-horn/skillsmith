@@ -243,6 +243,8 @@ export interface OpFacts {
   opIdentity: RecordIdentity
   /** OP holds `owner.json` (a metadata file the finish unlinks). */
   hasOwnerFile: boolean
+  /** OP's entries that are neither a role's tree nor a metadata file doctor adopts (a `.DS_Store`), sorted. */
+  strays: string[]
   journal: Extract<JournalFact, { ok: true }> | null
   /** The record's `uid` is not the effective uid: `--apply`/`--undo` refuse (Q8). */
   otherUid: number | null

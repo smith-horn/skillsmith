@@ -34,7 +34,7 @@ import {
 } from './skill-recovery.plan.actions.js'
 import { abandonOf, abandonPlan } from './skill-recovery.plan.abandon.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
-import { finishLines, keepsSource } from './skill-recovery.plan.finish.js'
+import { finishLines, keepsSource, strayRefusal } from './skill-recovery.plan.finish.js'
 import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
 import type {
   ActionPlan,
@@ -424,6 +424,9 @@ export function planAction(
     )
   }
   if (action === 'apply' || action === 'undo' || action === 'abandon') {
+    // O2 (2026-10-28): a stray entry no finish can remove refuses before any mutation.
+    const stray = cls.kind === 'state' ? strayRefusal(action, cls.facts) : null
+    if (stray !== null) return stray
     if (cls.kind === 'no-record' && cls.intent !== null && cls.intent.blocked === null) {
       return intentParkPlan(cls.intent, cls.clean.temps, cls.entries.includes(OWNER_FILE), action)
     }

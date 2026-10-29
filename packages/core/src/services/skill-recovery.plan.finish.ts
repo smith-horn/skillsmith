@@ -23,7 +23,9 @@
  *
  * @module @skillsmith/core/services/skill-recovery.plan.finish
  */
-import type { OpFacts, PlanStep } from './skill-recovery.types.js'
+import path from 'node:path'
+import { refuse } from './skill-recovery.plan.actions.js'
+import type { ActionPlan, OpFacts, PlanStep, RecoveryAction } from './skill-recovery.types.js'
 import { OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
 
 /** What the finish reads of the facts: the metadata files the op dir holds. */
@@ -78,6 +80,31 @@ export function keepsSource(f: Pick<OpFacts, 'roles' | 't'>, steps: readonly Pla
     if (s.tree === 'OP') return false
     return f.roles[s.tree].kind === 'source'
   })
+}
+
+/**
+ * Why no finish can empty the op dir (owner decision 2026-10-28, O2): it holds
+ * an entry that is neither a role's tree nor a metadata file doctor adopts (a
+ * `.DS_Store`), so `finishRecovered` would stop `op-not-empty` (and
+ * `opDiffers` across devices) after the keeps, every time. Named, so the
+ * plan refuses before any mutation instead; null when there is none.
+ */
+export function strayDetail(f: Pick<OpFacts, 'strays' | 'opDir'>): string | null {
+  const first = f.strays[0]
+  if (first === undefined) return null
+  return (
+    `${path.join(f.opDir, first)} is not a file or folder doctor knows in an op dir, so the ` +
+    'op dir could not be emptied after the keeps; move it out of the op dir by hand, and run the command again'
+  )
+}
+
+/** `--apply`, `--undo` or `--abandon` refused at plan time for a stray entry (`strayDetail`), else null. */
+export function strayRefusal(
+  action: RecoveryAction,
+  f: Pick<OpFacts, 'strays' | 'opDir'>
+): ActionPlan | null {
+  const detail = strayDetail(f)
+  return detail === null ? null : refuse(action, 'recovery-not-offered', detail)
 }
 
 /** The finish lines a plan states (see the module comment). */
