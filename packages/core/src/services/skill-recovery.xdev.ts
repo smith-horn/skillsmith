@@ -156,8 +156,15 @@ export async function resumeCopyTemp(st: SwapState, k: AcrossKeep): Promise<stri
   const id = boundSource(k.src, k.named)
   const th = treeHashOf(temp)
   const sh = treeHashOf(k.src)
-  if (th.ok && sh.ok && th.hash === sh.hash) return finishCopy(st, k, temp, id, sh)
-  await keepPartial(st, k, temp, tempId, th, sh)
+  if (k.pending !== null) {
+    // This temp's partial-copy keep was killed after its sidecar: it is that keep's tree,
+    // whatever it hashes to, so its rename is finished first; then the copy starts again.
+    await finishPendingPartial(st, temp, tempId, k.pending, k.partials)
+  } else if (th.ok && sh.ok && th.hash === sh.hash) {
+    return finishCopy(st, k, temp, id, sh)
+  } else {
+    await keepPartial(st, k, temp, tempId, th, sh)
+  }
   await hook(st, 'afterPartialKeep')
   await moveAcross(st, {
     src: k.src,
@@ -210,10 +217,6 @@ async function keepPartial(
   th: TreeHashResult,
   sh: TreeHashResult
 ): Promise<void> {
-  if (k.pending !== null) {
-    await finishPendingPartial(st, temp, tempId, k.pending, k.partials)
-    return
-  }
   // Plan §3.5 `partial-copy`: true only when the source still matches its sidecar and the
   // temp holds no bytes the source does not (every entry of the temp's tree is the source's).
   const sourceUnchanged =
@@ -259,9 +262,11 @@ async function keepTempAsPartial(
 
 /**
  * The rest of a `partial-copy` keep killed after its sidecar was published
- * (`KeepGroup.pendingTemp`): the temp must still be the tree the sidecar
- * names (`tempId`, checked against it by the classifier) and `dest` free;
- * then the rename and the area sync. Nothing is written a second time.
+ * (`KeepGroup.pendingTemp`). It makes its own fresh check that the temp is
+ * still the tree the plan saw: it binds the temp now and compares that with
+ * `tempId` (the plan's identity, which the classifier matched to the
+ * sidecar's), and it requires `dest` to be free; then the rename and the area
+ * sync. Nothing is written a second time.
  */
 export async function finishPendingPartial(
   st: SwapState,

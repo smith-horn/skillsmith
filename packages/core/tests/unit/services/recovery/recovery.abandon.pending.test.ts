@@ -61,6 +61,8 @@ async function refusesThenActs(st: State, action: RecoveryAction, temp: string):
   const a = await act(st, action)
   expect(world(st)).toBe(before)
   expect(a.result.status).toBe('refused')
+  // Each refusal names its reason: the ambiguous pair (for --apply and --undo too).
+  expect(a.result.status === 'refused' ? a.result.detail : '').toContain(AMBIGUOUS_PARTIAL)
   for (const p of [first, second, temp]) expect(fs.existsSync(p), p).toBe(true)
   // Why: the pair is ambiguous, and --abandon says so (it refuses too).
   const abandon = planAction((await opReport(st)).cls, 'abandon')
@@ -118,6 +120,9 @@ describe('a sidecar pairs only with the temp its identity names (PR-16 M2, M3)',
     const a = await act(st, 'abandon')
     expect(world(st)).toBe(before)
     expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+    expect(a.result.status === 'refused' ? a.result.detail : '').toContain(
+      `${st.dest} is kept but its tree is nowhere`
+    )
     expect(fs.existsSync(theirs)).toBe(true)
   })
 })
@@ -183,11 +188,13 @@ describe('two sidecars naming one copy temp are not a pending keep: refused, not
     await refusesThenActs(st, 'apply', path.join(areaOf(st.fx), `.tmp-${OP_ID}`))
   })
 
-  it('(b) --undo, beside a P2 copy temp (UN1 across devices, U kept)', async () => {
+  it('(b) --undo, beside a P2 copy temp (UN2 across devices: an undo from UN1 stopped while keeping U)', async () => {
     const st = await un1(xfile())
     const first = await act(st, 'undo', {}, { swap: { duringBackupCopy: () => killed('copy') } })
     expect(first.result.status).toBe('stopped')
     await killInPartialWindow(st, 'undo')
+    // The state the title names: O is back at the skill path, U still to be kept.
+    expect((await opReport(st)).cls).toMatchObject({ kind: 'state', state: 'UN2' })
     await refusesThenActs(st, 'undo', path.join(areaOf(st.fx), `.tmp-${OP_ID}.undone`))
   })
 })

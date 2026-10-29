@@ -284,6 +284,17 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
 }
 
 /**
+ * Why another action is not offered where only `--abandon` could act: an
+ * abandon that began, or (anything else) the classifier's own reason, so each
+ * refusal names what is wrong (an ambiguous partial-copy keep, say).
+ */
+export function onlyAbandonWord(cls: RecoveryClass): string {
+  if (cls.kind === 'ab') return 'an abandon began: --abandon finishes it'
+  if (cls.kind === 'anything-else') return `${cls.reason}; offered here: --abandon`
+  return 'offered here: --abandon'
+}
+
+/**
  * `--abandon` for the classes that carry a verified record's facts (all but
  * a §3.3 row, which `rowAbandon` plans); null when the class says nothing here.
  */

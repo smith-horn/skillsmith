@@ -32,7 +32,12 @@ import {
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
-import { abandonOf, abandonPlan, pendingOf } from './skill-recovery.plan.abandon.js'
+import {
+  abandonOf,
+  abandonPlan,
+  onlyAbandonWord,
+  pendingOf,
+} from './skill-recovery.plan.abandon.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
 import { finishLines, keepsSource, strayRefusal } from './skill-recovery.plan.finish.js'
 import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
@@ -477,11 +482,7 @@ export function planAction(
       `the op dir belongs to uid ${cls.ownerUid ?? 'unknown'}`
     )
   }
-  return refuse(
-    action,
-    'recovery-not-offered',
-    cls.kind === 'ab' ? 'an abandon began: --abandon finishes it' : 'offered here: --abandon'
-  )
+  return refuse(action, 'recovery-not-offered', onlyAbandonWord(cls))
 }
 
 /** Every action's plan for `cls`, in the order the listing shows them. */

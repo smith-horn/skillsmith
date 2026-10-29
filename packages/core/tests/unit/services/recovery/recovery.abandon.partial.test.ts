@@ -130,4 +130,65 @@ describe('Major 2: a kill between the partial-copy sidecar and the rename', () =
     ).toEqual([`${OP_ID}.partial-copy`, `${OP_ID}.partial-copy.json`])
     expect(fs.existsSync(path.join(area, OP_ID))).toBe(true)
   })
+
+  it('--apply across devices: a P2 temp equal to the source (changed after its sidecar), paired with a pending sidecar', async () => {
+    const st = await s3(xfile())
+    const first = await act(
+      st,
+      'apply',
+      {},
+      { swap: { duringBackupCopy: () => killed('mid-copy') } }
+    )
+    expect(first.result.status).toBe('stopped')
+    const area = areaOf(st.fx)
+    const temp = path.join(area, `.tmp-${OP_ID}`)
+    const dest = path.join(area, `${OP_ID}.partial-copy`)
+    const planned = await planRecovery(requestOf(st, 'apply'))
+    if (planned.status !== 'planned') throw new Error(JSON.stringify(planned))
+    let linked = false
+    const second = await executeRecovery(planned, {
+      swap: {
+        trace: (t) => {
+          if (t.op === 'link' && t.dest === `${dest}.json`) linked = true
+          else if (linked && t.op === 'dirsync' && t.path === area) killed('partial window')
+        },
+      },
+    })
+    expect(second.status).toBe('stopped')
+    // The source changes after its sidecar into exactly what the temp holds: the temp equals it.
+    const old = path.join(st.opDir, 'old')
+    for (const n of fs.readdirSync(old)) fs.rmSync(path.join(old, n), { recursive: true })
+    for (const n of fs.readdirSync(temp)) {
+      fs.cpSync(path.join(temp, n), path.join(old, n), { recursive: true })
+    }
+    // The tree hash covers modes too: give each entry of old/ (its root included) the temp's mode.
+    const modes = (from: string, to: string): void => {
+      fs.chmodSync(to, fs.lstatSync(from).mode & 0o7777)
+      if (fs.lstatSync(from).isDirectory()) {
+        for (const n of fs.readdirSync(from)) modes(path.join(from, n), path.join(to, n))
+      }
+    }
+    modes(temp, old)
+    const tempHash = hashOf(temp)
+    const cls = (await opReport(st)).cls
+    if (cls.kind !== 'state') throw new Error(`expected a row, got ${cls.kind}`)
+    const g = cls.facts.groups.find((x) => x.base === OP_ID)
+    // Reproduced: P2 (the sidecar's hash is neither), with the temp's hash the source's.
+    expect(g?.state).toBe('P2')
+    expect(g?.copyTmp.present && g.src.present && g.copyTmp.hash === g.src.hash).toBe(true)
+    expect(cls.facts.groups.find((x) => x.base === `${OP_ID}.partial-copy`)?.pendingTemp).toBe(
+      OP_ID
+    )
+    await done(st, 'apply')
+    // The pending keep finished: its sidecar has its tree, and the temp it named is that tree.
+    expect(hashOf(dest)).toBe(tempHash)
+    expect(
+      fs
+        .readdirSync(area)
+        .filter((n) => n.includes('.partial-copy'))
+        .sort()
+    ).toEqual([`${OP_ID}.partial-copy`, `${OP_ID}.partial-copy.json`])
+    expect(fs.existsSync(path.join(area, OP_ID))).toBe(true)
+    expect(fs.existsSync(temp)).toBe(false)
+  })
 })
