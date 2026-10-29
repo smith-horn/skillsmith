@@ -49,7 +49,7 @@ import { finishFromIntent } from './skill-recovery.intent-park.js'
 import { intentBlock, spaceBlock } from './skill-recovery.mark.js'
 import { keepRole } from './skill-recovery.resume.js'
 import type { KeepContext } from './skill-recovery.resume.js'
-import { adoptSidecarsInto } from './skill-recovery.run.js'
+import { adoptSidecarsInto } from './skill-recovery.adopt.js'
 import { adoptMetadata, boundOf, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
 import type {

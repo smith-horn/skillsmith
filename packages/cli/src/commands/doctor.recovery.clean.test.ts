@@ -247,10 +247,11 @@ describe('the listing', () => {
     const text = out.join('\n')
     expect(text).toContain('owner verdict: same-host-dead')
     expect(text).not.toContain('needs --unsafe-unverified-owner')
-    // PERFORMED now holds clean-staging: its line is not marked "(not available yet)".
+    // The offered action's line is its command, whole: nothing follows it.
     const line = out.find((l) => l.includes(`--clean-staging: \``)) ?? ''
-    expect(line).toContain(`skillsmith doctor recovery --clean-staging ${OP}`)
-    expect(line).not.toContain('not available yet')
+    expect(line.trim()).toBe(
+      `--clean-staging: \`skillsmith doctor recovery --clean-staging ${OP}\``
+    )
   })
 
   it('a stray file in the op dir with a live owner: refused whatever the flag, so the suffix is not printed', async () => {

@@ -4,6 +4,26 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6b-iii: `--abandon` is performed, for a verified record no
+  normal recovery action can act on: a moved operation (another root or folder, or a copy),
+  one whose trees are the right content in the wrong folders, one whose abandon began (AB),
+  "anything else" with a record, and the post-keep S2′ row, the one row it is offered in. Every
+  other row refuses it and names the action that runs there. It keeps each of `old/`, `new/`
+  and `undone/` still in the folder through `publishTree` as `abandoned-old`,
+  `abandoned-new` or `abandoned-undone` (a keep that had started resumes with its own kind), and
+  each copy temp of the operation with no sidecar as `partial-copy`, into the backup area of the
+  root being scanned, named with the folder's own name; each `abandoned-*` sidecar records the
+  folder's identity (`opDirIdentity`), so a copy's abandon in the same area never makes the
+  original look abandoned. Then only metadata goes, `record.json` last, and the folder is
+  `rmdir`ed, or across devices parked whole behind a `move-source` intent naming the folder
+  itself, which `--abandon`, `--apply` and `--undo` finish after a kill. The space block and the
+  park-intent precheck run before any change, as for `--apply` and `--undo`. A moved record is
+  now checked for consistency (else it is unreadable, for `--park`) and carries the facts the
+  plan reads. The `abandoned-*` kinds are kept even when a tree cannot be hashed. The plans of
+  `--apply`, `--undo` and `--abandon` now state their finish step for step, every metadata file
+  and sync by name, both finishes while a source is still to be kept.
+- **Removed (internal, unreleased)**: SMI-6531 -- `PERFORMED` is gone: every recovery action is
+  performed, so the set equalled `RECOVERY_ACTIONS`.
 - **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer
   strands an operation. The cap on `park-intent.json` (`INTENT_CAP`, shared by the writer and
   doctor's reader) is now 64 KiB, as the sidecar's: a path cannot exceed about 4 KiB, and even

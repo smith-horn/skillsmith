@@ -204,9 +204,13 @@ describe('T-J12 for the 6b actions: the same opId in two roots is ambiguous; --r
       if (action === 'park') {
         expect(picked).toMatchObject({ status: 'planned', opDir: b.opDir })
       } else {
-        // Not performed in 6b-i, but targeted: the refusal names only the picked root's op dir.
-        expect(picked).toMatchObject({ status: 'refused', paths: [b.opDir] })
-        expect(picked.status === 'refused' ? picked.reason : '').not.toBe('recovery-ambiguous')
+        // Targeted to the picked root's op dir, which is unreadable: only --park acts on it.
+        expect(picked).toMatchObject({
+          status: 'refused',
+          reason: 'recovery-not-offered',
+          paths: [b.opDir],
+        })
+        expect(picked.status === 'refused' ? picked.detail : '').toContain('--park is offered')
       }
     })
   }

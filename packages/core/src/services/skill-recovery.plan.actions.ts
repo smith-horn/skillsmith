@@ -19,9 +19,9 @@
  *    park. An entry whose own `lstat` failed is refused the same way, naming
  *    it and its errno: the park binds every entry's identity (UD40).
  *
- * `--clean-staging` (6b-ii) is planned in `skill-recovery.plan.clean.ts`.
- * `--abandon` keeps 6a's words here until 6b-iii; `planRecovery` does not
- * perform it yet (`PERFORMED`).
+ * `--clean-staging` (6b-ii) is planned in `skill-recovery.plan.clean.ts`, and
+ * `--abandon` (6b-iii) in `skill-recovery.plan.abandon.ts`. Every action is
+ * performed (`executeRecovery`).
  *
  * @module @skillsmith/core/services/skill-recovery.plan.actions
  */
@@ -70,16 +70,6 @@ export const step = (tree: PlanStep['tree'], disposition: Disposition, note: str
  */
 export const MOVE_SOURCE_NO_RECORD_ORIGIN =
   'a finish that had written its move-source intent (an update after its record was removed, or a cross-device --apply, --undo or --clean-staging by doctor)'
-
-export const FINISH = 'unlink the metadata files, then rmdir the op dir and sync the staging dir'
-
-/** The actions `planRecovery` performs today; the others are planned but refused before the prompt. */
-export const PERFORMED: ReadonlySet<RecoveryAction> = new Set<RecoveryAction>([
-  'apply',
-  'undo',
-  'park',
-  'clean-staging',
-])
 
 type Unreadable = Extract<RecoveryClass, { kind: 'unreadable' }>
 
@@ -151,7 +141,11 @@ export function parkWord(cls: Unreadable): string {
   return p.offered ? '--park is offered' : `--park is not offered either (${p.reason}: ${p.detail})`
 }
 
-/** The words for `--abandon`, `--clean-staging` and `--park`; null when the class says nothing. */
+/**
+ * The words for `--clean-staging` and `--park` (and an empty op dir's for
+ * every action); null when the class says nothing. `--abandon` is planned
+ * before this is reached (`skill-recovery.plan.abandon.ts`).
+ */
 export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | null {
   switch (cls.kind) {
     case 'empty-op-dir':
@@ -177,21 +171,17 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
     case 'identity-changed':
     case 'ab':
     case 'anything-else':
-      return action === 'abandon'
-        ? offer(
-            action,
-            [
-              step('O', kept('abandoned-old'), 'if present'),
-              step('N', kept('abandoned-new'), 'if present'),
-              step('U', kept('abandoned-undone'), 'if present'),
-            ],
-            'untouched',
-            [FINISH]
-          )
-        : null
+      return null
     case 'state':
-      return action === 'abandon' || action === 'clean-staging' || action === 'park'
-        ? refuse(action, 'recovery-not-offered', 'offered here: --apply or --undo')
+      return action === 'clean-staging' || action === 'park'
+        ? refuse(
+            action,
+            'recovery-not-offered',
+            // The one row `--abandon` is offered in (`rowAbandon`): neither of the others runs there.
+            cls.state === 'S2prime' && cls.postKeep
+              ? 'offered here: --abandon'
+              : 'offered here: --apply or --undo'
+          )
         : null
   }
 }

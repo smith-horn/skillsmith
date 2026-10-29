@@ -34,6 +34,7 @@
 import path from 'node:path'
 import { S_IFMT } from '../install/park-tree.perms.js'
 import { KIND_ROLE } from './skill-recovery.pstate.js'
+import { KEPT_KINDS } from './skill-swap.fullmark.js'
 import { attributionOf } from './skill-swap.attribution.js'
 import { intentCap, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { hook, opPaths, SwapFault } from './skill-swap.ops.js'
@@ -129,8 +130,15 @@ export function readableIntentOf(
   return out
 }
 
-/** The longest name a keep in KIND_ROLE's kinds can take (`<opId>.<kind>.<k>`). */
-const LONGEST_KIND = Object.keys(KIND_ROLE).reduce((a, b) => (b.length > a.length ? b : a))
+/**
+ * The longest kind a keep can be named with (`<opId>.<kind>.<k>`): every kind
+ * `destFor` can write (`KEPT_KINDS`, which the compiler keeps in step with
+ * `PublishKind`), plus the kinds doctor resolves to a role (`KIND_ROLE`).
+ * @internal Exported for its test.
+ */
+export const LONGEST_KIND = [...KEPT_KINDS, ...Object.keys(KIND_ROLE)].reduce((a, b) =>
+  b.length > a.length ? b : a
+)
 
 /** 2^64 - 1: `dev` and `ino` are unsigned 64-bit, and `birthtimeNs` fits until 2554. */
 const U64_MAX = ((1n << 64n) - 1n).toString()
@@ -169,7 +177,7 @@ function backupPathBounds(st: SwapState): string[] {
  * The precheck each writer runs before its first mutation: the reason, with
  * no suffix (each caller says what is true of its own state), or null. The
  * callers' suffixes: the update, "the update was not started"; abort cleanup,
- * "abort cleanup changed nothing"; doctor's `--apply`/`--undo`, "nothing was
+ * "abort cleanup changed nothing"; doctor's `--apply`/`--undo`/`--abandon`, "nothing was
  * changed" and `RECORDED_STATE_ROOT_NOTE`; doctor's `--clean-staging`,
  * "nothing was changed" and `SHORTER_STATE_ROOT_REMEDY`. The size it names is
  * the worst case's, so it says "could be up to N bytes"; the write's own stop
@@ -209,9 +217,9 @@ export const SHORTER_STATE_ROOT_REMEDY =
   'run this command again with `--state-root` naming a state directory with a shorter path (the kept copy then goes there, in the client-`none` layout)'
 
 /**
- * `--apply`/`--undo`'s: none exists. The record fixes the backup area under
- * the state root its update used (`recoveryState`: `dirname(manifestPath)`),
- * so no `--state-root` changes it.
+ * `--apply`/`--undo`/`--abandon`'s: none exists. The record fixes the backup
+ * area under the state root its update used (`recoveryState`, `abandonState`:
+ * `dirname(manifestPath)`), so no `--state-root` changes it.
  */
 export const RECORDED_STATE_ROOT_NOTE =
   "this op's record fixes its backup area under the state root its update used, so `--state-root` does not shorten it; no command in this version finishes it"

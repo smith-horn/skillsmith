@@ -11,16 +11,17 @@
  * `--apply` and `--undo` are offered for the §3.3 rows and their post-keep
  * forms; every other class gets its own words (`recovery-moved`,
  * `recovery-identity-changed`, `recovery-conflict`, `recovery-other-user`,
- * `recovery-not-offered`). The words for `--abandon` and `--park` (6b), and
- * the table's building blocks, are in `skill-recovery.plan.actions.ts`; an op
- * dir with no record (`--clean-staging`, 6b-ii) is
- * `skill-recovery.plan.clean.ts`'s.
+ * `recovery-not-offered`). The words for `--park` (6b), and the table's
+ * building blocks, are in `skill-recovery.plan.actions.ts`; an op dir with no
+ * record (`--clean-staging`, 6b-ii) is `skill-recovery.plan.clean.ts`'s;
+ * `--abandon` (6b-iii) is `skill-recovery.plan.abandon.ts`'s, but for the one
+ * row it is offered in (`rowAbandon`). Each finish is stated as its executor
+ * takes it (`skill-recovery.plan.finish.ts`).
  *
  * @module @skillsmith/core/services/skill-recovery.plan
  */
 import { canonicalJson } from './skill-recovery.digest.js'
 import {
-  FINISH,
   INSTALLED,
   kept,
   MOVE_SOURCE_NO_RECORD_ORIGIN,
@@ -31,12 +32,16 @@ import {
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
+import { abandonOf, abandonPlan } from './skill-recovery.plan.abandon.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
+import { finishLines, keepsSource } from './skill-recovery.plan.finish.js'
 import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
 import type {
   ActionPlan,
+  ManifestEffect,
   NoRecordIntent,
   OpFacts,
+  PlanStep,
   RecoveryAction,
   RecoveryClass,
   RowState,
@@ -141,6 +146,24 @@ function foreignUid(cls: RecoveryClass): number | null {
   }
 }
 
+/** `offer` for a row: what is left, then the finish its executor takes (`skill-recovery.plan.finish.ts`). */
+function rowOffer(
+  f: OpFacts,
+  action: RecoveryAction,
+  steps: PlanStep[],
+  manifest: ManifestEffect,
+  before: string[],
+  notes: string[] = []
+): ActionPlan {
+  return offer(
+    action,
+    steps,
+    manifest,
+    [...before, ...finishLines(f, keepsSource(f, steps))],
+    notes
+  )
+}
+
 /** `--apply` and `--undo` for a §3.3 row; null when the row says nothing about this action. */
 function rowPlan(
   cls: Extract<RecoveryClass, { kind: 'state' }>,
@@ -157,14 +180,15 @@ function rowPlan(
 
   switch (state) {
     case 'S0':
-      return offer(
+      return rowOffer(
+        f,
         action,
         [
           step('T', UNTOUCHED, 'the skill folder was never swapped'),
           step('N', kept(nKind), `the staged copy is kept as ${nKind}`),
         ],
         'untouched',
-        [...resumes(f), FINISH],
+        [...resumes(f)],
         ['`--apply` and `--undo` are the same here: nothing was swapped']
       )
     case 'S1':
@@ -176,7 +200,8 @@ function rowPlan(
             'the new folder no longer hashes to what was built: --undo is offered'
           )
         }
-        return offer(
+        return rowOffer(
+          f,
           'apply',
           [
             step('N', INSTALLED, 'claim the skill path and rename the new folder over it'),
@@ -189,19 +214,19 @@ function rowPlan(
             'append the audit record',
             'keep the old folder as backup',
             ...resumes(f),
-            FINISH,
           ],
           fixed
         )
       }
-      return offer(
+      return rowOffer(
+        f,
         'undo',
         [
           step('O', INSTALLED, 'claim the skill path and rename the old folder over it'),
           step('N', kept(nKind), `the staged copy is kept as ${nKind}`),
         ],
         'untouched',
-        ['claim the skill path and rename the old folder over it', ...resumes(f), FINISH]
+        ['claim the skill path and rename the old folder over it', ...resumes(f)]
       )
     case 'S2':
     case 'S2prime':
@@ -211,7 +236,8 @@ function rowPlan(
       if (action === 'undo') {
         return refuse('undo', 'recovery-not-offered', `the update is complete: ${manual}`)
       }
-      return offer(
+      return rowOffer(
+        f,
         'apply',
         [step('T', UNTOUCHED, 'the new folder stays'), step('O', kept('backup'), oNote)],
         'untouched',
@@ -221,13 +247,13 @@ function rowPlan(
             : 'append the audit record (none carries this opId)',
           ...(postKeep ? [] : ['keep the old folder as backup']),
           ...resumes(f),
-          FINISH,
         ],
         fixed
       )
     case 'UN1':
     case 'UN2':
-      return offer(
+      return rowOffer(
+        f,
         action,
         [
           ...(state === 'UN1'
@@ -239,7 +265,6 @@ function rowPlan(
         [
           ...(state === 'UN1' ? ['claim the skill path and rename the old folder over it'] : []),
           ...resumes(f),
-          FINISH,
         ],
         ['`--apply` and `--undo` are the same here: they finish the undo']
       )
@@ -256,7 +281,8 @@ function swappedPlan(
   if (action === 'apply') {
     if (cls.state === 'S2') {
       const changed = f.t.present && f.t.hash !== f.record.postTree
-      return offer(
+      return rowOffer(
+        f,
         'apply',
         [step('T', UNTOUCHED, 'the new folder stays'), step('O', kept('backup'), w.oNote)],
         'committed-to-post',
@@ -265,7 +291,6 @@ function swappedPlan(
           'append the audit record',
           ...(cls.postKeep ? [] : ['keep the old folder as backup']),
           ...resumes(f),
-          FINISH,
         ],
         [
           ...w.fixed,
@@ -290,7 +315,8 @@ function swappedPlan(
       `the old folder is already in the backup area: ${w.manual}`
     )
   }
-  return offer(
+  return rowOffer(
+    f,
     'undo',
     [
       step('O', INSTALLED, 'the old folder goes back to the skill path'),
@@ -309,7 +335,6 @@ function swappedPlan(
       ...(f.t.present ? ['set the folder at the skill path aside'] : []),
       'claim the skill path and rename the old folder over it',
       ...resumes(f),
-      FINISH,
     ]
   )
 }
@@ -318,8 +343,9 @@ function swappedPlan(
  * 6a-iii: an op dir with no record whose move-source park intent verifies (a
  * finish that had written its intent: an update after its record was removed,
  * or doctor's own cross-device `--apply`, `--undo` or `--clean-staging`;
- * `MOVE_SOURCE_NO_RECORD_ORIGIN`). `--apply` and `--undo`
- * finish that park as the uninterrupted run would: each source goes with OP.
+ * `MOVE_SOURCE_NO_RECORD_ORIGIN`; 6b-iii: also doctor's own cross-device
+ * `--abandon`). `--apply`, `--undo` and `--abandon` finish that park as the
+ * uninterrupted run would: each source goes with OP.
  * 6b-ii: the metadata temps the classifier proved this op's (`temps`) are
  * unlinked first, so the plan names each one (and the digest covers them),
  * then `owner.json` when the op dir holds it, then the sync of the op dir
@@ -329,7 +355,7 @@ function intentParkPlan(
   i: NoRecordIntent,
   temps: readonly string[],
   owner: boolean,
-  action: 'apply' | 'undo'
+  action: 'apply' | 'undo' | 'abandon'
 ): ActionPlan {
   return offer(
     action,
@@ -349,8 +375,26 @@ function intentParkPlan(
     ],
     [
       `there is no record (${MOVE_SOURCE_NO_RECORD_ORIGIN}); the intent records the verified copy's path as ${i.backupPath}`,
-      '`--apply` and `--undo` are the same here: they finish the park',
+      '`--apply`, `--undo` and `--abandon` are the same here: they finish the park',
     ]
+  )
+}
+
+/**
+ * `--abandon` for a §3.3 row: offered in post-keep S2′ and no other row, an
+ * enumerated row and not a computed "both refused" (bf-1k0 Major 2): there
+ * `--apply` refuses `recovery-conflict` and `--undo` finds the old folder
+ * already kept. Every other row refuses it and names the action that runs
+ * there (E34: abandoning S1 would leave the skill path empty).
+ */
+function rowAbandon(cls: Extract<RecoveryClass, { kind: 'state' }>): ActionPlan {
+  if (cls.state === 'S2prime' && cls.postKeep) return abandonOf(cls.opId, cls.facts)
+  const runs = (['apply', 'undo'] as const).filter((a) => rowPlan(cls, a).offered)
+  return refuse(
+    'abandon',
+    'recovery-not-offered',
+    `${runs.length === 0 ? 'neither --apply nor --undo runs here' : `offered here: ${runs.map((a) => `--${a}`).join(' or ')}`}; ` +
+      'among the rows, --abandon is offered only once the old folder is kept and the manifest entry is neither the planned nor the updated one'
   )
 }
 
@@ -379,11 +423,18 @@ export function planAction(
       `the update was started by uid ${uid}, not this user: run doctor as that user`
     )
   }
-  if (action === 'apply' || action === 'undo') {
-    if (cls.kind === 'state') return rowPlan(cls, action)
+  if (action === 'apply' || action === 'undo' || action === 'abandon') {
     if (cls.kind === 'no-record' && cls.intent !== null && cls.intent.blocked === null) {
       return intentParkPlan(cls.intent, cls.clean.temps, cls.entries.includes(OWNER_FILE), action)
     }
+  }
+  if (action === 'abandon') {
+    if (cls.kind === 'state') return rowAbandon(cls)
+    const a = abandonPlan(cls)
+    if (a !== null) return a
+  }
+  if (action === 'apply' || action === 'undo') {
+    if (cls.kind === 'state') return rowPlan(cls, action)
     if (cls.kind === 'moved') {
       return refuse(
         action,

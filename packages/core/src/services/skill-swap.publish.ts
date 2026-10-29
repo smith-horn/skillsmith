@@ -56,7 +56,14 @@ import { destFor, sidecarOf, taken, warnForeignChange, writeSidecar } from './sk
 import type { PublishKind } from './skill-swap.sidecar.js'
 import { moveAcross } from './skill-swap.xdev.js'
 
-const HASH_OPTIONAL: ReadonlySet<PublishKind> = new Set(['failed-build', 'unrecorded-new'])
+/** The kinds kept even when the tree cannot be hashed (the sidecar then carries `treeHashError`). */
+const HASH_OPTIONAL: ReadonlySet<PublishKind> = new Set([
+  'failed-build',
+  'unrecorded-new',
+  'abandoned-old',
+  'abandoned-new',
+  'abandoned-undone',
+])
 
 /** One path component: not empty, not `.`/`..`, no separator or NUL. */
 const oneComponent = (s: string): boolean =>

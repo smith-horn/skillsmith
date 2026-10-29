@@ -1,6 +1,7 @@
 /**
  * @fileoverview `skillsmith doctor recovery --apply <opId>` / `--undo <opId>` /
- * `--park <opId>` / `--clean-staging <opId>`, under the confirmation contract (A1 plan §3.9; SMI-6531
+ * `--abandon <opId>` / `--park <opId>` / `--clean-staging <opId>`, under the
+ * confirmation contract (A1 plan §3.9; SMI-6531
  * steps 6a-ii and 6a-iii: one device and across devices, where the op dir
  * holding the verified sources is parked once its metadata is unlinked, UD28;
  * 6b-i: `--park`, which sets aside the whole op dir of a record that cannot be
@@ -9,7 +10,9 @@
  * only when its `owner.json` owner is same-host and gone, or with
  * `--unsafe-unverified-owner`, which the plan explains and `--yes` never
  * stands in for; the one exception is a verifying park intent with no
- * `owner.json` left, which needs neither a gone owner nor the flag). Every action runs
+ * `owner.json` left, which needs neither a gone owner nor the flag; 6b-iii:
+ * `--abandon`, which keeps the trees of a verified op that `--apply` and
+ * `--undo` can't act on and removes only its metadata). Every action runs
  * the same contract; the plan and result lines are
  * `doctor.recovery.action.render.ts`'s.
  *
@@ -37,8 +40,8 @@
  * takes no action), 1 refused or stopped, 3 not confirmed
  * (no terminal), 4 done but the op dir's park did not finish
  * (`removal-not-done`, UD32; 1 wins over 4: `--park` itself ending `kept`,
- * `stopped` or `held`, or the op dir's park of `--apply`, `--undo` or
- * `--clean-staging`),
+ * `stopped` or `held`, or the op dir's park of `--apply`, `--undo`,
+ * `--abandon` or `--clean-staging`),
  * 130 interrupted.
  * @module @skillsmith/cli/commands/doctor.recovery.action
  */
@@ -67,6 +70,8 @@ export interface RecoveryActionOptions {
   park?: string
   /** `--clean-staging <opId>` (6b-ii): keep or park what an op dir with no record holds. */
   cleanStaging?: string
+  /** `--abandon <opId>` (6b-iii): set aside a verified op that `--apply` and `--undo` can't act on. */
+  abandon?: string
   /**
    * `--unsafe-unverified-owner` (6b-ii): with `--clean-staging` only, act past
    * an `owner.json` whose owner is not shown gone. `--yes` never stands in for it.
@@ -144,14 +149,11 @@ const printJson = (plan: unknown, result: unknown): void => {
   console.log(JSON.stringify({ plan, result }, null, 2))
 }
 
-/**
- * The actions this command dispatches, in flag order, each with the option
- * commander gives it. `--abandon` is a core action too, but not registered
- * yet (6b-iii), so commander never passes it.
- */
+/** Every action this command dispatches, in flag order, each with the option commander gives it. */
 const DISPATCHED = [
   ['apply', 'apply'],
   ['undo', 'undo'],
+  ['abandon', 'abandon'],
   ['park', 'park'],
   ['clean-staging', 'cleanStaging'],
 ] as const satisfies ReadonlyArray<readonly [RecoveryAction, keyof RecoveryActionOptions]>
@@ -164,14 +166,14 @@ function actionOf(options: RecoveryActionOptions): { action: RecoveryAction; opI
   return { action, opId: options[key]! }
 }
 
-/** `--apply` / `--undo` / `--park` / `--clean-staging`: plan, confirm, then act under lock 1. */
+/** `--apply` / `--undo` / `--abandon` / `--park` / `--clean-staging`: plan, confirm, then act under lock 1. */
 export async function runRecoveryAction(options: RecoveryActionOptions): Promise<void> {
   const json = options.json === true
   const chosen = actionOf(options)
   if (chosen === null) {
     console.error(
       chalk.red(
-        'Give exactly one of --apply <opId>, --undo <opId>, --park <opId> and --clean-staging <opId>.'
+        'Give exactly one of --apply <opId>, --undo <opId>, --abandon <opId>, --park <opId> and --clean-staging <opId>.'
       )
     )
     process.exitCode = 1

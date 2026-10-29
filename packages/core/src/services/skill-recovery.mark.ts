@@ -26,7 +26,8 @@
  * the copy's own space check runs, so the user can remove it by hand. Like that
  * check, it is a first-attempt filter.
  *
- * **The intent block** (`intentBlock`). At the same point, whenever the plan
+ * **The intent block** (`intentBlock`). At the same point (`--apply`, `--undo`,
+ * `--clean-staging`, `--abandon`), whenever the plan
  * keeps a tree (whatever the device: a keep may cross devices, and then the
  * finish writes a park intent; a bind mount of one filesystem shares `st_dev`
  * yet its rename fails `EXDEV`, so `st_dev` cannot rule that out), the worst
@@ -175,9 +176,9 @@ export async function spaceBlock(
     const need = bytesNeeded(shape, s.bsize)
     const inodes = inodesNeeded(shape)
     // "Run this command again" is true only here: this check refuses before any
-    // mutation and is reached only by `doctor recovery --apply`, `--undo` and
-    // (6b-ii) `--clean-staging` (C10), so the same command can simply be rerun
-    // once space is freed.
+    // mutation and is reached only by `doctor recovery --apply`, `--undo`,
+    // (6b-ii) `--clean-staging` and (6b-iii) `--abandon` (C10), so the same
+    // command can simply be rerun once space is freed.
     const next = `${FREE_SPACE_REMEDY}, then run this command again`
     if (free < need) {
       return `${area.at} has ${free} bytes free and the backup of ${src} needs about ${need}; nothing was changed; ${next}`

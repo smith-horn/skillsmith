@@ -18,7 +18,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { adoptInto } from '../../../../src/services/skill-recovery.run.js'
+import { adoptInto } from '../../../../src/services/skill-recovery.adopt.js'
 import type { SwapState } from '../../../../src/services/skill-swap.ops.js'
 import { bytesNeeded, shapeOf } from '../../../../src/services/skill-swap.space.js'
 import { computeRecordSha256 } from '../../../../src/services/skill-swap.js'

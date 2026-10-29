@@ -15,11 +15,10 @@
  *     - `--clean-staging` (6b-ii): `cleanStaging`
  *       (`skill-recovery.clean.ts`): a verifying intent's park, or `new/`
  *       kept and the metadata unlinked, `owner.json` last;
- *     - `--abandon` on a non-empty op dir: refused "not performed by this
- *       version yet" with zero mutation (a backstop: `planRecovery` already
- *       refuses it before the prompt, until 6b-iii);
- *     - `--apply` / `--undo` of a no-record op dir whose intent verifies:
- *       `finishFromIntent` (6a-iii);
+ *     - `--apply` / `--undo` / `--abandon` (6b-iii) of a no-record op dir
+ *       whose `move-source` intent verifies: `finishFromIntent` (6a-iii);
+ *     - `--abandon` of a verified record: `runAbandon`
+ *       (`skill-recovery.abandon.ts`);
  *     - `--apply` / `--undo` of a §3.3 row: `runRecorded`
  *       (`skill-recovery.run.ts`);
  *  4. after a finished action, `sweepRoot` removes the probes and empty op
@@ -44,6 +43,8 @@ import { parkUnreadable } from './skill-recovery.park-unreadable.js'
 import { serializePlan } from './skill-recovery.plan.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import { refused, runRecorded } from './skill-recovery.run.js'
+import { runAbandon } from './skill-recovery.abandon.js'
+import type { AbandonClass } from './skill-recovery.abandon.js'
 import type {
   PlannedRecovery,
   RecoveryDone,
@@ -213,15 +214,9 @@ async function underLock(
     out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
     return out
   }
-  if (req.action !== 'apply' && req.action !== 'undo') {
-    return refused(
-      'plan-changed',
-      `--${req.action} is not performed by this version yet`,
-      planned.opDir
-    )
-  }
   if (cls.kind === 'no-record') {
-    // 6a-iii: the record is gone and the park intent verifies: finish the park from it.
+    // 6a-iii: the record is gone and the park intent verifies: finish the park from it
+    // (`--apply`, `--undo`, and since 6b-iii `--abandon`: the plan offered only that).
     try {
       const r = await finishFromIntent(ctx, cls, transcript, opts.swap ?? {})
       out.warnings = r.st.warnings
@@ -232,8 +227,26 @@ async function underLock(
     out.swept = await sweepRoot(ctx, planned.sweep, opts.swap?.trace)
     return out
   }
+  if (req.action === 'abandon') {
+    // 6b-iii: a verified record no normal action can act on (the plan offered only those).
+    if (!isAbandonClass(cls)) {
+      return refused('plan-changed', `the op is now ${cls.kind}`, planned.opDir)
+    }
+    return runAbandon({ planned, opts, ctx, cls, transcript, out })
+  }
   if (cls.kind !== 'state') {
     return refused('plan-changed', `the op is now ${cls.kind}`, planned.opDir)
   }
   return runRecorded({ planned, opts, ctx, cls, transcript, journalFile, out })
+}
+
+/** A class `--abandon` acts on with its record (`runAbandon`). */
+function isAbandonClass(cls: RecoveryClass): cls is AbandonClass {
+  return (
+    cls.kind === 'moved' ||
+    cls.kind === 'identity-changed' ||
+    cls.kind === 'ab' ||
+    cls.kind === 'anything-else' ||
+    cls.kind === 'state'
+  )
 }

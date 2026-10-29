@@ -93,6 +93,10 @@ const CLASSIFIER = [
   'skill-recovery.pstate.ts',
   'skill-recovery.classify.ts',
   'skill-recovery.plan.ts',
+  // 6b-iii: the moved record's checks, `--abandon`'s plan and the finish text it shares.
+  'skill-recovery.consistency.ts',
+  'skill-recovery.plan.abandon.ts',
+  'skill-recovery.plan.finish.ts',
 ]
 const READER = 'skill-recovery.reader.ts'
 

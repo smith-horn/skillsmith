@@ -94,27 +94,15 @@ function identityOf(st: fs.BigIntStats): RecordIdentity {
   }
 }
 
-/**
- * The kinds doctor recognizes in a backup area: the producers' (`KEPT_KINDS`,
- * which the compiler keeps in step with `PublishKind`) and the ones doctor
- * itself makes, `unused-new` (a staged tree no one installed, 6a-ii) and the
- * `abandoned-*` kinds (`--abandon`, 6b). A set union, so a producer that later
- * adds one of them changes nothing here.
- */
-const RECOGNIZED_KINDS: ReadonlySet<string> = new Set([
-  ...KEPT_KINDS,
-  'unused-new',
-  'abandoned-old',
-  'abandoned-new',
-  'abandoned-undone',
-])
-
 /** The entries a rule keeps, sorted. */
 function keep(rule: ListRule, names: string[]): string[] {
   const kept = names.filter((n) => {
     if (rule.name === 'all') return true
     if (rule.name === 'stagingEntries') return !n.startsWith('.') || PROBE_NAME.test(n)
-    return isAreaEntryOf(n, rule.opId, RECOGNIZED_KINDS)
+    // The kinds doctor recognizes in a backup area are the producers' own
+    // (`KEPT_KINDS`, which the compiler keeps in step with `PublishKind`):
+    // doctor's `unused-new` and `abandoned-*` are among them.
+    return isAreaEntryOf(n, rule.opId, KEPT_KINDS)
   })
   return kept.sort()
 }

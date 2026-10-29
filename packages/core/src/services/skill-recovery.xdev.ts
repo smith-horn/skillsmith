@@ -218,6 +218,18 @@ async function keepPartial(
       : th.ok
         ? 'mismatch'
         : 'copy-failed'
+  await keepTempAsPartial(st, temp, tempId, th, { sourceUnchanged, partialCause }, k)
+}
+
+/** Keeps `temp` as `partial-copy`: its own sidecar first, then a rename within the area, then the area synced. */
+async function keepTempAsPartial(
+  st: SwapState,
+  temp: string,
+  tempId: BoundIdentity,
+  th: TreeHashResult,
+  why: Pick<Sidecar, 'sourceUnchanged' | 'partialCause'>,
+  k: Pick<AcrossKeep, 'partials'> & { group: Pick<KeepGroup, 'destPath'> }
+): Promise<void> {
   const progress: MoveProgress = { stage: 'partial-keep' }
   try {
     const dest = await destFor(st, 'partial-copy')
@@ -226,15 +238,38 @@ async function keepPartial(
     if (!now.ok || !sameIdentity(tempId, now)) {
       throw new SwapFault('backup-unsafe', `${temp} changed before it was kept; left untouched`)
     }
-    await writeSidecar(
-      st,
-      dest,
-      sidecarOf(st, 'partial-copy', th, now, { sourceUnchanged, partialCause })
-    )
+    await writeSidecar(st, dest, sidecarOf(st, 'partial-copy', th, now, why))
     await renameChecked(st, temp, dest)
     await syncDir(st, st.areaPath)
     k.partials.push(dest)
   } catch (err) {
     throw await markIfFullDevice(st, err, k.group.destPath, progress)
   }
+}
+
+/**
+ * 6b-iii (`--abandon`): a copy temp of this op with no sidecar (an orphan, a
+ * copy that never published) is kept as `partial-copy`, never removed: its
+ * own identity and hash in its sidecar, `sourceUnchanged` false (there is no
+ * sidecar to compare a source with) and `partialCause` `copy-failed`. The
+ * temp must still be the one the plan observed. Returns where it was kept.
+ * The area must be bound first.
+ */
+export async function keepOrphanCopyTemp(
+  st: SwapState,
+  group: KeepGroup,
+  partials: string[]
+): Promise<string> {
+  const temp = path.join(st.areaPath, `.tmp-${group.base}`)
+  const planned = group.copyTmp.present ? group.copyTmp.identity : null
+  const tempId = bindIdentity(temp)
+  if (planned === null || !tempId.ok || !sameIdentity(boundOf(planned), tempId)) {
+    throw new SwapFault(
+      'backup-unsafe',
+      `${temp} is not the copy temp the plan observed; it was left untouched`
+    )
+  }
+  const why = { sourceUnchanged: false, partialCause: 'copy-failed' } as const
+  await keepTempAsPartial(st, temp, tempId, treeHashOf(temp), why, { partials, group })
+  return partials[partials.length - 1]!
 }

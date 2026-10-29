@@ -163,6 +163,8 @@ export interface SidecarFacts {
   kind: string | null
   identity: RecordIdentity | null
   treeHash: string | null
+  /** 6b-iii (O4): an `abandoned-*` sidecar's op dir identity, when it names one. */
+  opDirIdentity: RecordIdentity | null
 }
 
 /** One backup-area entry group (`<base>` with its sidecar, sidecar temp and copy temp) of this op. */
@@ -200,6 +202,11 @@ export interface KeepGroup {
   hashChanged: boolean
   /** P2-P4, or a sidecar-rewrite state beside a copy temp: a keep across devices. */
   crossDevice: boolean
+  /**
+   * 6b-iii (O4): an `abandoned-*` keep whose sidecar names another op dir (a
+   * copy's abandon in the same area): listed, never a sub-state, an AB or a role.
+   */
+  otherCopy: boolean
 }
 
 export type RoleRes =
@@ -228,8 +235,14 @@ export interface OpFacts {
   roles: { O: RoleRes; N: RoleRes; U: RoleRes }
   /** Every keep group of this op in its area, in name order. */
   groups: KeepGroup[]
-  /** The area (`dirname(record.backupDest)`). */
+  /** The area: `dirname(record.backupDest)`; for a moved op (6b-iii), the scanned root's area. */
   area: string
+  /** 6b-iii: why the record belongs elsewhere (`--abandon` only), or null. */
+  moved: MovedWhy | null
+  /** OP's identity as listed now (for a recorded op, `record.opDirIdentity`). */
+  opIdentity: RecordIdentity
+  /** OP holds `owner.json` (a metadata file the finish unlinks). */
+  hasOwnerFile: boolean
   journal: Extract<JournalFact, { ok: true }> | null
   /** The record's `uid` is not the effective uid: `--apply`/`--undo` refuse (Q8). */
   otherUid: number | null
@@ -354,6 +367,8 @@ export type RecoveryClass =
       detail: string
       /** The record's uid when it is not the effective uid: another user started this. */
       otherUid: number | null
+      /** 6b-iii: what `--abandon` acts on, observed in this root (roles, the R-keyed area). */
+      facts: OpFacts
     }
   | {
       kind: 'identity-changed'
