@@ -25,6 +25,12 @@ All notable changes to `@skillsmith/core` are documented here.
   entry that is neither a role's tree nor a metadata file doctor adopts (a `.DS_Store`) is now
   refused at plan time by `--abandon`, `--apply` and `--undo`, naming it, with nothing changed
   (`OpFacts.strays`); before, the run kept trees and then stopped `op-not-empty` on every rerun.
+  `--abandon` likewise refuses a sidecar temp it would have to unlink but cannot prove is the
+  operation's (a P0 temp, or a started R1 or R2), and checks every source's identity before
+  its first change. A copy temp's `partial-copy` keep killed after its sidecar and before the
+  rename (`KeepGroup.pendingTemp`) is now finished by the resume (`--abandon`, `--apply` or
+  `--undo`) with that rename, instead of leaving a sidecar with no tree that no action could
+  pass.
 - **Removed (internal, unreleased)**: SMI-6531 -- `PERFORMED` is gone: every recovery action is
   performed, so the set equalled `RECOVERY_ACTIONS`.
 - **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer

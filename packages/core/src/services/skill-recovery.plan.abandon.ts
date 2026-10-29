@@ -40,7 +40,7 @@
 import path from 'node:path'
 import { kept, offer, refuse, step, UNTOUCHED } from './skill-recovery.plan.actions.js'
 import { finishLines, strayDetail } from './skill-recovery.plan.finish.js'
-import { ROLE_DIR } from './skill-recovery.pstate.js'
+import { isProvableTemp, ROLE_DIR } from './skill-recovery.pstate.js'
 import { sameId } from './skill-recovery.trees.js'
 import type {
   ActionPlan,
@@ -95,6 +95,30 @@ export function isChangedAfterCopy(g: KeepGroup): boolean {
   )
 }
 
+/**
+ * A sidecar temp the run would have to unlink but cannot prove is this op's
+ * (`isProvableTemp`): a P0 temp of a source role no keep has started (`keepRole`
+ * unlinks it first), or the temp of a started R1 or R2 (`resumeGroup`: R1
+ * unlinks it unless it finishes the rewrite; R2 links it and needs it to name
+ * the source). Its path, or null.
+ */
+function unprovableTemp(f: OpFacts): string | null {
+  for (const role of ['O', 'N', 'U'] as const) {
+    const res = f.roles[role]
+    if (res.kind !== 'source') continue
+    const g = res.started
+    if (g === null) {
+      const p0 = f.groups.find((x) => x.role === role && x.state === 'P0' && !isProvableTemp(x))
+      if (p0 !== undefined) return `${p0.destPath}.json.tmp`
+    } else if (g.state === 'R1' && !isProvableTemp(g)) {
+      return `${g.destPath}.json.tmp`
+    } else if (g.state === 'R2' && (!isProvableTemp(g) || g.sidecarTmp?.emptySingleLink === true)) {
+      return `${g.destPath}.json.tmp`
+    }
+  }
+  return null
+}
+
 /** Why `--abandon` cannot act on what the classifier saw, naming the entry (O2); null when it can. */
 function blockOf(f: OpFacts): string | null {
   const stray = strayDetail(f)
@@ -115,6 +139,10 @@ function blockOf(f: OpFacts): string | null {
     if (res.kind === 'source' && res.obs.type !== 'dir') {
       return `${path.join(f.opDir, ROLE_DIR[role])} is not a directory, so it is not kept; ${BY_HAND}`
     }
+  }
+  const unprovable = unprovableTemp(f)
+  if (unprovable !== null) {
+    return `${unprovable} is not provably this operation's sidecar temp, so it is not unlinked; ${BY_HAND}`
   }
   const odd = f.groups.find(
     (g) => g.unclassified !== null && !isOrphanCopyTemp(g) && !isChangedAfterCopy(g)
@@ -181,6 +209,11 @@ function oldWhere(f: OpFacts): string | null {
   return freeKeptName(f, ABANDONED_KIND.O)
 }
 
+/** Where a `partial-copy` keep of `g`'s copy temp, killed after its sidecar, finishes (`pendingTemp`); else null. */
+export function pendingOf(f: Pick<OpFacts, 'groups'>, g: KeepGroup): string | null {
+  return f.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null
+}
+
 /** Per role, as `keepOne` takes it: a started keep's resume, else the unlink of a provable P0 temp. */
 function roleLines(f: OpFacts): string[] {
   const out: string[] = []
@@ -188,11 +221,15 @@ function roleLines(f: OpFacts): string[] {
     const res = f.roles[role]
     if (res.kind !== 'source') continue
     if (res.started !== null) {
-      out.push(`resume the keep of ${res.started.base} from ${res.started.state}`)
+      const pending = pendingOf(f, res.started)
+      out.push(
+        `resume the keep of ${res.started.base} from ${res.started.state}` +
+          (pending === null ? '' : `, finishing its copy temp's partial-copy keep as ${pending}`)
+      )
       continue
     }
     for (const g of f.groups.filter((x) => x.role === role && x.state === 'P0')) {
-      out.push(`unlink the provable sidecar temp of ${g.base} (P0)`)
+      out.push(`unlink the empty (or this op's own) sidecar temp of ${g.base} (P0)`)
     }
   }
   return out
@@ -211,9 +248,13 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
   const source = (['O', 'N', 'U'] as const).some((r) => f.roles[r].kind === 'source')
   const orphans = f.groups.filter(isOrphanCopyTemp)
   const remaining = [
-    ...orphans.map(
-      (g) => `keep the copy temp ${path.join(f.area, `.tmp-${g.base}`)} as partial-copy`
-    ),
+    ...orphans.map((g) => {
+      const temp = path.join(f.area, `.tmp-${g.base}`)
+      const pending = pendingOf(f, g)
+      return pending === null
+        ? `keep the copy temp ${temp} as partial-copy`
+        : `finish keeping the copy temp ${temp} as ${pending} (its partial-copy sidecar is published; only the rename is left)`
+    }),
     ...roleLines(f),
     ...finishLines(f, source),
   ]

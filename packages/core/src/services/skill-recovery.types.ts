@@ -207,6 +207,12 @@ export interface KeepGroup {
    * copy's abandon in the same area): listed, never a sub-state, an AB or a role.
    */
   otherCopy: boolean
+  /**
+   * A `partial-copy` sidecar with no tree whose identity is a copy temp's
+   * (`.tmp-<base>`, this field's value): a keep killed between its sidecar and
+   * the temp's rename, which the resume finishes by that rename.
+   */
+  pendingTemp: string | null
 }
 
 export type RoleRes =

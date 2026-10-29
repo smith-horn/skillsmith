@@ -59,8 +59,11 @@ describe('a stray entry in the op dir refuses at plan time, the world unchanged 
       expect(world(st)).toBe(before)
       expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
       const detail = a.result.status === 'refused' ? a.result.detail : ''
-      expect(detail).toContain(stray)
-      expect(detail).toContain('move it out of the op dir by hand, and run the command again')
+      // The same words for every action: nothing in them is --abandon's alone.
+      expect(detail).toBe(
+        `${stray} is not a file or folder doctor knows in an op dir, so the action could not ` +
+          'empty the op dir when it finishes; move it out of the op dir by hand, and run the command again'
+      )
       // The listing still shows the op as its class, with the facts naming the stray.
       const cls = (await opReport(st)).cls
       expect('facts' in cls && cls.facts !== null ? cls.facts.strays : null).toEqual(['.DS_Store'])
@@ -103,6 +106,92 @@ describe('--abandon lists only the resumes it runs', () => {
     expect(plan.remaining.filter((r) => r.startsWith('resume '))).toEqual([
       `resume the keep of ${OP_ID} from P1`,
     ])
+    // Run-side: the run resumes that same group (O lands at the backup's name), and no other.
+    const a = await done(st, 'abandon')
+    expect(a.result.kept.filter((k) => k.tree === 'O')).toEqual([
+      { tree: 'O', kind: 'backup', path: destOf(st, 'backup') },
+    ])
+    expect(fs.existsSync(destOf(st, 'abandoned-old'))).toBe(false)
+  })
+})
+
+describe('a sidecar temp the run could not prove is refused at plan time (O2)', () => {
+  it('a non-empty invalid <opId>.abandoned-new.json.tmp beside N (P0): recovery-not-offered, nothing changed', async () => {
+    // S1 with a foreign U: O is kept before N, so a run that reached N's temp would have changed things.
+    const st = await s1(file())
+    fs.mkdirSync(path.join(st.opDir, 'undone'))
+    const tmp = `${destOf(st, 'abandoned-new')}.json.tmp`
+    fs.mkdirSync(path.dirname(tmp), { recursive: true })
+    fs.writeFileSync(tmp, 'not a sidecar\n')
+    const cls = (await opReport(st)).cls
+    const groups = 'facts' in cls && cls.facts !== null ? cls.facts.groups : []
+    expect(groups.find((g) => g.base === `${OP_ID}.abandoned-new`)?.state).toBe('P0')
+    const before = world(st)
+    const a = await act(st, 'abandon')
+    expect(world(st)).toBe(before)
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+    expect(a.result.status === 'refused' ? a.result.detail : '').toBe(
+      `${tmp} is not provably this operation's sidecar temp, so it is not unlinked; ` +
+        'move it out of the op dir by hand, and run the command again'
+    )
+    // The positive: moved out by hand, the same command acts.
+    fs.rmSync(tmp)
+    expect((await done(st, 'abandon')).result.status).toBe('done')
+  })
+})
+
+describe('a started R1 whose sidecar temp is not provable is refused at plan time (O2)', () => {
+  it("N's started abandoned-new keep at R1 with a foreign temp: recovery-not-offered naming it, nothing changed", async () => {
+    // S1 with a foreign U: O is kept before N, so a run that reached N's resume would have changed things.
+    const st = await s1(file())
+    fs.mkdirSync(path.join(st.opDir, 'undone'))
+    keepTree(st, 'new', 'abandoned-new', { move: false })
+    const tmp = `${destOf(st, 'abandoned-new')}.json.tmp`
+    fs.writeFileSync(tmp, 'not a sidecar\n')
+    const cls = (await opReport(st)).cls
+    expect(cls.kind).toBe('ab')
+    if (cls.kind !== 'ab') return
+    expect(cls.facts.roles.N.kind === 'source' ? cls.facts.roles.N.started?.state : null).toBe('R1')
+    const before = world(st)
+    const a = await act(st, 'abandon')
+    expect(world(st)).toBe(before)
+    expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
+    expect(a.result.status === 'refused' ? a.result.detail : '').toBe(
+      `${tmp} is not provably this operation's sidecar temp, so it is not unlinked; ` +
+        'move it out of the op dir by hand, and run the command again'
+    )
+    // The positive: moved out by hand, the same command acts (the keep resumes from P1).
+    fs.rmSync(tmp)
+    expect((await done(st, 'abandon')).result.status).toBe('done')
+  })
+})
+
+describe('every source is checked before the first mutation (the orphan keeps included)', () => {
+  it('a source swapped after the re-plan stops staging-unsafe with nothing changed', async () => {
+    const st = await twoSources()
+    const area = areaOf(st.fx)
+    fs.mkdirSync(area, { recursive: true })
+    fs.mkdirSync(path.join(area, `.tmp-${OP_ID}`))
+    fs.writeFileSync(path.join(area, `.tmp-${OP_ID}`, 'x.md'), 'x\n')
+    const u = path.join(st.opDir, 'undone')
+    let atReplan = ''
+    const a = await act(
+      st,
+      'abandon',
+      {},
+      {
+        afterReplan: () => {
+          fs.renameSync(u, `${u}.aside`)
+          fs.cpSync(`${u}.aside`, u, { recursive: true })
+          fs.rmSync(`${u}.aside`, { recursive: true })
+          atReplan = world(st)
+        },
+      }
+    )
+    expect(atReplan).not.toBe('')
+    expect(world(st)).toBe(atReplan)
+    expect(a.result).toMatchObject({ status: 'stopped', reason: 'staging-unsafe' })
+    expect(a.result.status === 'stopped' ? a.result.detail : '').toContain(u)
   })
 })
 

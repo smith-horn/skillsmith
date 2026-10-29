@@ -221,6 +221,27 @@ describe('the listing and commander', () => {
     expect(lines.filter((l) => l.includes('the whole op dir was set aside'))).toEqual([])
   })
 
+  it("another user's row with nothing offered prints no --apply/--undo lines (only a stray does)", async () => {
+    const u = plantCrashedUpdate(base)
+    vi.spyOn(process, 'geteuid').mockReturnValue((process.geteuid?.() ?? 0) + 1)
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(`${u.opId}  S2 swapped`)
+    expect(text).toContain('nothing is offered here (recovery-other-user)')
+    expect(text).not.toContain('--apply: not offered')
+    expect(text).not.toContain('--undo: not offered')
+  })
+
+  it('a moved op whose op dir holds a .DS_Store prints the --abandon refusal naming it', async () => {
+    const u = plantMoved()
+    const stray = path.join(u.opDir, '.DS_Store')
+    fs.writeFileSync(stray, 'finder\n')
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(`${u.opId}  moved (foreign-op-dir)`)
+    expect(text).toContain(`--abandon: not offered (recovery-not-offered): ${stray} is not a file`)
+  })
+
   it('the --abandon help says the op dir is removed, or set aside across devices', () => {
     const recovery = createDoctorCommand().commands.find((c) => c.name() === 'recovery')!
     expect(recovery.options.find((o) => o.long === '--abandon')?.description).toContain(

@@ -175,6 +175,27 @@ function kindIn(steps: readonly PlanStep[], role: Role): string | null {
   return s !== undefined && s.disposition.kind === 'kept' ? s.disposition.as : null
 }
 
+/**
+ * Each source in `roles` that no keep has started must still be the folder the
+ * plan saw (its identity), else `staging-unsafe`. Run for every role before the
+ * first mutation, so a source swapped after the re-plan stops with nothing
+ * changed (the orphan copy temps are kept before the roles).
+ */
+function assertSourcesAsPlanned(st: SwapState, f: OpFacts, roles: readonly Role[]): void {
+  for (const role of roles) {
+    const res = f.roles[role]
+    if (res.kind !== 'source' || res.started !== null) continue
+    const src = path.join(st.opDir, ROLE_DIR[role])
+    const now = bindIdentity(src)
+    if (!now.ok || !sameIdentity(boundOf(res.obs.identity), now)) {
+      throw new SwapFault(
+        'staging-unsafe',
+        `${src} is not the folder the plan saw; it was not kept`
+      )
+    }
+  }
+}
+
 /** Keeps one role still in OP as the plan says (step 4), recording where. */
 async function keepOne(
   st: SwapState,
@@ -187,17 +208,8 @@ async function keepOne(
   const res = f.roles[role]
   const kind = kindIn(steps, role)
   if (res.kind !== 'source' || kind === null) return
-  if (res.started === null) {
-    // Nothing of this keep began: the source must be the folder the plan saw.
-    const src = path.join(st.opDir, ROLE_DIR[role])
-    const now = bindIdentity(src)
-    if (!now.ok || !sameIdentity(boundOf(res.obs.identity), now)) {
-      throw new SwapFault(
-        'staging-unsafe',
-        `${src} is not the folder the plan saw; it was not kept`
-      )
-    }
-  }
+  // Checked once before any mutation (`assertSourcesAsPlanned`), and again here, nearest the keep.
+  assertSourcesAsPlanned(st, f, [role])
   const before = k.partials.length
   const dest = await keepRole(st, role, kind, k)
   for (const p of k.partials.slice(before))
@@ -238,11 +250,13 @@ export async function runAbandon(a: AbandonRun): Promise<RecoveryRunResult> {
     adoptInto(s, transcript, adopted)
     const blocked = await preMutationBlocks(s, f, steps, adopted)
     if (blocked !== null) return refused(blocked.reason, blocked.detail, planned.opDir)
+    assertSourcesAsPlanned(s, f, ['O', 'N', 'U'])
     // Orphan copy temps first: one at `.tmp-<base>` would otherwise collide with
     // the cross-device copy temp of a fresh keep named `<base>` (`taken` sees no temp).
     for (const g of f.groups.filter(isOrphanCopyTemp)) {
       if (s.area === null) await ensureBackupArea(s)
-      const at = await keepOrphanCopyTemp(s, g, k.partials)
+      const pending = f.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null
+      const at = await keepOrphanCopyTemp(s, g, k.partials, pending)
       // A copy temp of a kind that names no role is the op's, not a role's.
       out.kept.push({ tree: g.role ?? 'OP', kind: 'partial-copy', path: at })
     }

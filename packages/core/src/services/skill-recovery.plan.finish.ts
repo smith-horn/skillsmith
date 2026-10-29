@@ -94,7 +94,7 @@ export function strayDetail(f: Pick<OpFacts, 'strays' | 'opDir'>): string | null
   if (first === undefined) return null
   return (
     `${path.join(f.opDir, first)} is not a file or folder doctor knows in an op dir, so the ` +
-    'op dir could not be emptied after the keeps; move it out of the op dir by hand, and run the command again'
+    'action could not empty the op dir when it finishes; move it out of the op dir by hand, and run the command again'
   )
 }
 

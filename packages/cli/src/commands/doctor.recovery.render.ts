@@ -203,11 +203,11 @@ function opLines(op: OpReport): string[] {
     // 6b-ii: a no-record op dir says why --clean-staging is not offered (the owner, an entry, the intent).
     const clean = op.plans.find((p) => p.action === 'clean-staging')
     if (op.cls.kind === 'no-record' && clean !== undefined) lines.push(...planLines(clean, op.opId))
-    // A row whose op dir holds a stray entry (2026-10-28): --apply and --undo say why, naming it.
-    if (op.cls.kind === 'state') {
-      for (const p of op.plans) {
-        if (p.action === 'apply' || p.action === 'undo') lines.push(...planLines(p, op.opId))
-      }
+    // An op dir holding a stray entry (2026-10-28): the actions that would act say why, naming it
+    // (a row's --apply and --undo; --abandon for the classes only it acts on).
+    if (f !== null && f.strays.length > 0) {
+      const named = op.cls.kind === 'state' ? ['apply', 'undo'] : ['abandon']
+      for (const p of op.plans) if (named.includes(p.action)) lines.push(...planLines(p, op.opId))
     }
   } else {
     for (const p of offered) lines.push(...planLines(p, op.opId))

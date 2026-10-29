@@ -203,6 +203,27 @@ export const expectOfMoved = (rec: SwapRecord, root: string): SidecarExpect => (
   from: 'the record (in this root)',
 })
 
+/**
+ * Q10: a group's sidecar temp parses as this op's sidecar for `dest` with the
+ * source's identity, or is an empty file with one link: the only temp a
+ * resume unlinks (`skill-recovery.resume.ts`), and so the only one a plan may
+ * promise to unlink (`skill-recovery.plan.abandon.ts`).
+ */
+export function isProvableTemp(g: Pick<KeepGroup, 'sidecarTmp' | 'src'>): boolean {
+  const t = g.sidecarTmp
+  if (t === null) return false
+  if (t.emptySingleLink) return true
+  return (
+    t.thisOps &&
+    t.identity !== null &&
+    g.src.present &&
+    t.identity.dev === g.src.identity.dev &&
+    t.identity.ino === g.src.identity.ino &&
+    t.identity.birthtimeNs === g.src.identity.birthtimeNs &&
+    t.identity.fmt === g.src.identity.fmt
+  )
+}
+
 /** The sub-states of a keep that began and did not finish: a resume continues it with its kind. */
 export const STARTED_STATES: ReadonlySet<string> = new Set([
   'P1',
@@ -397,6 +418,7 @@ export function observeGroups(
       hashChanged: false,
       crossDevice: false,
       otherCopy: false,
+      pendingTemp: null,
     }
     if (otherCopyOf(group, a.opIdentity)) {
       // Not this op dir's keep: no sub-state, no role, never unclassified.
@@ -416,7 +438,31 @@ export function observeGroups(
       group.src.hash !== sidecar?.treeHash
     groups.push(group)
   }
+  markPendingPartials(groups)
   return { groups, listError: null }
+}
+
+/**
+ * A copy temp kept as `partial-copy` publishes its sidecar, then renames the
+ * temp to that name (`keepTempAsPartial`, and the update's own partial keep).
+ * A kill between the two leaves a valid `partial-copy` sidecar with no tree
+ * whose identity is the temp's. That pair is a keep to finish (its rename),
+ * not a leftover no sub-state names: the sidecar's group records the temp's
+ * group (`pendingTemp`) and is not unclassified. The temp's own group keeps
+ * its state (an orphan, or P2 beside its own sidecar).
+ */
+function markPendingPartials(groups: KeepGroup[]): void {
+  for (const g of groups) {
+    const sc = g.sidecar
+    if (g.kind !== 'partial-copy' || g.otherCopy || g.state !== null || sc === null) continue
+    if (!sc.validForOp || g.dest.present || g.copyTmp.present || g.sidecarTmp !== null) continue
+    const temp = groups.find(
+      (o) => o !== g && o.copyTmp.present && !o.otherCopy && sameId(o.copyTmp.identity, sc.identity)
+    )
+    if (temp === undefined) continue
+    g.pendingTemp = temp.base
+    g.unclassified = null
+  }
 }
 
 /** A sidecar temp: does it parse as this op's sidecar for `dest`, and is it the sidecar's inode or empty? */

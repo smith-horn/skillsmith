@@ -32,7 +32,7 @@ import {
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
-import { abandonOf, abandonPlan } from './skill-recovery.plan.abandon.js'
+import { abandonOf, abandonPlan, pendingOf } from './skill-recovery.plan.abandon.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
 import { finishLines, keepsSource, strayRefusal } from './skill-recovery.plan.finish.js'
 import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
@@ -104,7 +104,12 @@ function keptKindOf(
 function resumes(f: OpFacts): string[] {
   return f.groups
     .filter((g) => g.state !== null && g.state !== 'P5')
-    .map((g) => `resume the keep of ${g.base} from ${g.state}`)
+    .map((g) => {
+      const pending = pendingOf(f, g)
+      const tail =
+        pending === null ? '' : `, finishing its copy temp's partial-copy keep as ${pending}`
+      return `resume the keep of ${g.base} from ${g.state}${tail}`
+    })
 }
 
 /** Notes every row of the plan states: where the old folder is kept, and what a cross-device keep needs. */

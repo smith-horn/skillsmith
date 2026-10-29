@@ -52,7 +52,7 @@ import { KEPT_KINDS } from './skill-swap.fullmark.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 import { adoptMetadata, boundOf, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
-import { ROLE_DIR } from './skill-recovery.pstate.js'
+import { isProvableTemp as provable, ROLE_DIR } from './skill-recovery.pstate.js'
 import { acrossFor, resumeCopied, resumeCopyTemp } from './skill-recovery.xdev.js'
 import type { AcrossKeep } from './skill-recovery.xdev.js'
 import type { KeepGroup, OpFacts, ReadTranscript, Role } from './skill-recovery.types.js'
@@ -166,22 +166,6 @@ async function ensureArea(st: SwapState): Promise<void> {
 const tmpOf = (g: KeepGroup): string => `${g.destPath}.json.tmp`
 const sidecarPathOf = (g: KeepGroup): string => `${g.destPath}.json`
 
-/** Q10: the temp parses as this op's sidecar for `dest` with the source's identity, or is empty. */
-function provable(g: KeepGroup): boolean {
-  const t = g.sidecarTmp
-  if (t === null) return false
-  if (t.emptySingleLink) return true
-  return (
-    t.thisOps &&
-    t.identity !== null &&
-    g.src.present &&
-    t.identity.dev === g.src.identity.dev &&
-    t.identity.ino === g.src.identity.ino &&
-    t.identity.birthtimeNs === g.src.identity.birthtimeNs &&
-    t.identity.fmt === g.src.identity.fmt
-  )
-}
-
 /** Unlinks a group's sidecar temp only if provable (else stops naming it), then syncs the area. */
 async function unlinkProvableTemp(st: SwapState, g: KeepGroup, k: KeepContext): Promise<void> {
   if (g.sidecarTmp === null) return
@@ -225,6 +209,8 @@ async function resumeGroup(
     sidecarHash,
     marker: k.facts.fullDevice,
     partials: k.partials,
+    // A partial keep of this temp killed after its sidecar: finish its rename (pstate).
+    pending: k.facts.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null,
   })
   if (g.state === 'P4') return resumeCopied(st, across(g.sidecar!.identity, g.sidecar!.treeHash))
   if (g.state === 'P2' || g.state === 'P3') {
