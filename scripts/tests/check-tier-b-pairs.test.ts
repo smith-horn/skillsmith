@@ -704,11 +704,10 @@ describe('check-tier-b-pairs', () => {
     // other libc makes that package applicable-and-missing and the case fails.
     it('real libc detection checks the host libc package and skips the other one', () => {
       const ldd = spawnSync('ldd', ['--version'], { encoding: 'utf8' })
-      expect(ldd.status).toBe(0)
       const banner = `${ldd.stdout ?? ''}${ldd.stderr ?? ''}`
       const isGlibc = /GLIBC|GNU libc/i.test(banner)
       const isMusl = /musl/i.test(banner)
-      expect(isGlibc !== isMusl).toBe(true) // exactly one: an ambiguous banner is no oracle
+      expect(isGlibc !== isMusl).toBe(true) // exactly one: an empty or ambiguous banner is no oracle
       const hostLibc = isGlibc ? 'glibc' : 'musl'
       const name = { glibc: '@img/sharp-linux-x', musl: '@img/sharp-linuxmusl-x' }
       const od = { [name.glibc]: '1.0.0', [name.musl]: '1.0.0' }

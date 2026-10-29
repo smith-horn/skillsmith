@@ -162,14 +162,15 @@ function listAdmits(list, value) {
  * (npm: alias, dist-tag, git, file, url, workspace) is not evaluated rather than
  * called a mismatch or a pass.
  *
- * npm: aliases are deliberately not judged (owner decision, SMI-7201): no Tier-B
- * spec uses one (0 of 97, measured 2026-10-29), and a hand-written alias parser
+ * npm: aliases are deliberately not judged (owner decision, SMI-7201): none of the
+ * lockfile's 253 optionalDependencies specs is an alias (measured 2026-10-29), and a
+ * hand-written alias parser
  * drew two silent-pass findings in review. If one ever appears, the check names it
  * and stops at exit 2, and support is added then.
  * @param {string} spec
  * @param {any} installed the installed package.json
  * @param {any} semver the semver module, or null
- * @returns {{result: 'ok'|'mismatch'|'unevaluated', why: string}}
+ * @returns {{result: 'ok'|'mismatch'} | {result: 'unevaluated', why: string}}
  */
 function judgeSpec(spec, installed, semver) {
   if (spec.startsWith('npm:')) {
@@ -177,10 +178,10 @@ function judgeSpec(spec, installed, semver) {
   }
   if (semver) {
     if (!semver.validRange(spec)) return { result: 'unevaluated', why: 'is not a version or range' }
-    return { result: semver.satisfies(installed.version, spec) ? 'ok' : 'mismatch', why: '' }
+    return { result: semver.satisfies(installed.version, spec) ? 'ok' : 'mismatch' }
   }
   if (EXACT_VERSION.test(spec)) {
-    return { result: installed.version === spec ? 'ok' : 'mismatch', why: '' }
+    return { result: installed.version === spec ? 'ok' : 'mismatch' }
   }
   return { result: 'unevaluated', why: 'is not an exact version and semver is unavailable' }
 }
