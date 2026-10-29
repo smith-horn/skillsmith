@@ -27,7 +27,10 @@ export interface RecoveryRequest {
   roots: readonly string[]
   /** `--root`: only the root this resolves to is searched (compared by native real path). */
   root?: string
-  /** `--accept-identity`: waives check 5 only; each present tree must hash to its role's hash. */
+  /**
+   * `--accept-identity`: waives check 5 only; each present tree must hash to its role's hash.
+   * Only with an action in `ACCEPT_IDENTITY_ACTIONS`: `planRecovery` refuses it with any other.
+   */
   acceptIdentity?: boolean
   /** @internal Test seam: the effective uid (default `process.geteuid()`). */
   euid?: number

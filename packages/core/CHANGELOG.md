@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- `planRecovery` now refuses a request carrying `acceptIdentity: true`
+  with any action but `apply` and `undo` (`recovery-not-offered`, "--accept-identity applies
+  only with --apply or --undo, not --<action>", no paths), before it lists or classifies any
+  root, so nothing is changed. Before, `--abandon`, `--park` and `--clean-staging` accepted it
+  and planned against an identity-changed class the waiver had rewritten. `executeRecovery`
+  refuses a plan whose request carries it for such an action the same way, before binding or
+  locking the root. The listing takes no action, so `listRecovery` no longer takes
+  `acceptIdentity` (it is left out of its options' type) and throws a `RangeError` ("... not the
+  listing") before classifying anything if it is passed anyway; `listRoot` keeps it for
+  `planRecovery`. The actions it applies to are one exported table, `ACCEPT_IDENTITY_ACTIONS`
+  (with `acceptsIdentity` and the shared refusal words `acceptIdentityRefused`), which the CLI
+  and the refusal hint's identity clause read too.
 - **Changed**: SMI-6531 -- #3209 retro: `doctor recovery` refusal hints are now derived from
   what is offered. A refusal's detail ends with a hint computed from the plan table for the
   same class: `offered here: --a or --b` naming every other action offered, then the actions

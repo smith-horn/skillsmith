@@ -9,6 +9,10 @@
  * any lock, and so is `--clean-staging`'s owner verdict, planned with the
  * request's `--unsafe-unverified-owner`.
  *
+ * A request is refused before any root is listed when its `opId` is not one
+ * path component, or when it carries `acceptIdentity` with an action outside
+ * `ACCEPT_IDENTITY_ACTIONS` (both `recovery-not-offered`, naming no path).
+ *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
  * write: `listRoot`), finds every op dir named `opId`, and:
  *  - none: `recovery-not-offered` ("no operation directory named it"), except:
@@ -43,7 +47,7 @@ import type {
   RecoveryRefusal,
   RecoveryRequest,
 } from './skill-recovery.run.types.js'
-import { planAction } from './skill-recovery.plan.js'
+import { acceptIdentityRefused, acceptsIdentity, planAction } from './skill-recovery.plan.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const refusal = (
@@ -109,6 +113,11 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       'recovery-not-offered',
       `${JSON.stringify(request.opId)} is not an operation id (one path component)`
     )
+  }
+  // `--accept-identity` reclassifies an identity-changed op, so with an action
+  // outside its table it is refused before any root is listed or classified.
+  if (request.acceptIdentity === true && !acceptsIdentity(request.action)) {
+    return refusal('recovery-not-offered', acceptIdentityRefused(request.action))
   }
   const wanted = request.root === undefined ? null : realOf(request.root)
   const roots = request.roots.filter((r) => wanted === null || realOf(r) === wanted)

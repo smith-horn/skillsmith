@@ -4,6 +4,9 @@
  * `step6b-design.md` § 1, generalised from 6a's `apply | undo`).
  *
  * `executeRecovery(planned)`:
+ *  0. refuses a plan whose request carries `acceptIdentity` for an action
+ *     outside `ACCEPT_IDENTITY_ACTIONS` (`recovery-not-offered`), before
+ *     binding the root, so nothing is locked or changed;
  *  1. binds the root read-only and takes lock 1 (`withSkillWriteLock`);
  *  2. re-plans with a fresh `ClassifierReader` and compares
  *     `digestOf(transcript, serializePlan(cls))` with the confirmed plan's.
@@ -40,7 +43,7 @@ import { digestOf } from './skill-recovery.digest.js'
 import { removeEmptyOp, sweepRoot } from './skill-recovery.finish.js'
 import { finishFromIntent } from './skill-recovery.intent-park.js'
 import { parkUnreadable } from './skill-recovery.park-unreadable.js'
-import { serializePlan } from './skill-recovery.plan.js'
+import { acceptIdentityRefused, acceptsIdentity, serializePlan } from './skill-recovery.plan.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import { refused, runRecorded } from './skill-recovery.run.js'
 import { runAbandon } from './skill-recovery.abandon.js'
@@ -64,6 +67,16 @@ export async function executeRecovery(
   opts: RecoveryRunOptions = {}
 ): Promise<RecoveryRunResult> {
   const req = planned.request
+  // A plan carrying `--accept-identity` for an action outside its table is not
+  // one `planRecovery` makes: refused before the root is bound or locked.
+  if (req.acceptIdentity === true && !acceptsIdentity(req.action)) {
+    return {
+      status: 'refused',
+      reason: 'recovery-not-offered',
+      detail: acceptIdentityRefused(req.action),
+      paths: [planned.opDir],
+    }
+  }
   const binding = await bindSkillsRootReadOnly(planned.root).catch(() => null)
   if (binding === null)
     return refused('plan-changed', `${planned.root} has no staging dir now`, planned.opDir)

@@ -3,13 +3,19 @@
  * for the property suite over the plan table's refusal hints
  * (`recovery.plan.hint.test.ts`).
  *
- * Every fixture is built through the real classifier (`opReport`) from a real
- * crash, moved the way a user, a copy or a kill would move it (two of them
- * also through the reader's `statOverride` seam, for a race and an `EIO`
- * the container cannot produce on demand). Two are typed
- * literals, because the state cannot be produced in the container: C3 (an op
- * dir whose own `lstat` or listing failed) and `other-user` (an op dir this
- * user may not open: `EACCES` needs another uid, and tests run as root).
+ * Every `RecoveryClass` kind is built through the real classifier (`opReport`)
+ * from a real crash, moved the way a user, a copy or a kill would move it,
+ * some also through the reader's `statOverride` seam for a race or an errno
+ * the container cannot produce on demand: C3 (the op dir's own `lstat` failing
+ * with `EIO`, or its listing failing with `ENOTDIR`) and `other-user` (its
+ * `lstat` denied with `EACCES`) are built that way.
+ *
+ * Two variants are extra typed literals beside those, because the seam
+ * replaces `stat` only and the listing reads the real filesystem, where a root
+ * test process is refused nothing:
+ *  - C3 with the op dir's listing failing with `EIO`;
+ *  - `other-user` with a known owner uid: the op dir `lstat`ed, then its
+ *    listing denied with `EACCES`, which needs a second user.
  *
  * The groups are keyed by class kind with `satisfies`, so a new kind fails to
  * compile here until it has fixtures; `allFixtures` requires every group to be
@@ -102,6 +108,15 @@ async function replaced(make: (opDir: string) => void): Promise<State> {
   fs.rmSync(st.opDir, { recursive: true })
   make(st.opDir)
   return st
+}
+
+/**
+ * A stat seam failing `target` with `errno` from its second stat on: the first is the
+ * staging listing's (which would drop a failed entry), the next is the classifier's own.
+ */
+function afterFirstStat(target: string, errno: string): (p: string, real: StatFact) => StatFact {
+  let seen = 0
+  return (p, real) => (p === target && seen++ > 0 ? { ok: false, errno } : real)
 }
 
 const row = (state: string, postKeep: boolean) => ({ state, postKeep })
@@ -278,7 +293,39 @@ export const GROUPS = {
       },
     },
     {
-      // C3 (typed literal): OP's own lstat or listing failed, which a root test process cannot be refused.
+      // C3 through the classifier: OP's own lstat fails (EIO) once the staging listing has kept it.
+      name: 'unreadable (C3: the op dir cannot be inspected, through the seam)',
+      want: {
+        why: 'open-failed',
+        errno: 'EIO',
+        detail: 'the op dir cannot be inspected',
+        observed: null,
+      },
+      build: async () => {
+        const st = await s2(file())
+        return classOf(st, { reader: { statOverride: afterFirstStat(st.opDir, 'EIO') } })
+      },
+    },
+    {
+      // C3 through the classifier: a file at OP's path that every stat calls a directory, so
+      // the listing of OP itself fails (ENOTDIR).
+      name: 'unreadable (C3: the op dir cannot be listed, through the seam)',
+      want: {
+        why: 'open-failed',
+        errno: 'ENOTDIR',
+        detail: 'the op dir cannot be listed',
+        observed: null,
+      },
+      build: async () => {
+        const st = await replaced((p) => fs.writeFileSync(p, 'not a directory\n'))
+        const statOverride = (p: string, real: StatFact): StatFact =>
+          p === st.opDir && real.ok ? { ...real, type: 'dir' } : real
+        return classOf(st, { reader: { statOverride } })
+      },
+    },
+    {
+      // C3 (extra typed literal): the listing of a real op dir fails with EIO. The seam
+      // replaces stat only, the listing reads the real filesystem, and root lists any directory.
       name: 'unreadable (C3: the op dir cannot be listed)',
       build: async () => ({
         kind: 'unreadable',
@@ -358,7 +405,18 @@ export const GROUPS = {
   ],
   'other-user': [
     {
-      // Typed literal: EACCES on another uid's op dir needs a second user.
+      // Through the classifier: OP's own lstat is denied once the staging listing has kept it,
+      // so no owner uid is known.
+      name: 'other-user (EACCES on the op dir, through the seam)',
+      want: { ownerUid: null, errno: 'EACCES' },
+      build: async () => {
+        const st = await s2(file())
+        return classOf(st, { reader: { statOverride: afterFirstStat(st.opDir, 'EACCES') } })
+      },
+    },
+    {
+      // Extra typed literal: the listing of an op dir lstat'ed with a known owner uid is denied.
+      // That needs a second user (the seam replaces stat only, and tests run as root).
       name: 'other-user (EACCES)',
       build: async () => ({
         kind: 'other-user',

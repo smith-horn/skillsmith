@@ -13,8 +13,9 @@
  *    actions offered only with it are named under its own clause;
  *  - `--accept-identity` is not computed (it changes the class, not the
  *    plan): a refusal of `--apply` or `--undo` for an `identity-changed`
- *    class carries a fixed clause that names no other action. The CLI takes
- *    the flag only with those two, so no other action's refusal names it,
+ *    class carries a fixed clause that names no other action. The flag
+ *    applies only to `ACCEPT_IDENTITY_ACTIONS` (the CLI and `planRecovery`
+ *    both refuse it with any other), so no other action's refusal names it,
  *    and an other-user refusal never does: no flag gets past it.
  *
  * The hint is computed without the request's flags, so the listing and a
@@ -23,7 +24,7 @@
  *
  * @module @skillsmith/core/services/skill-recovery.plan.hint
  */
-import { RECOVERY_ACTIONS } from './skill-recovery.plan.actions.js'
+import { acceptsIdentity, RECOVERY_ACTIONS } from './skill-recovery.plan.actions.js'
 import type {
   ActionPlan,
   PlanOptions,
@@ -45,9 +46,6 @@ const UNSAFE_OWNER =
 const IDENTITY =
   'with --accept-identity this action waives the identity check, and its plan is printed before any change'
 const NOTHING = 'no other action is offered here'
-
-/** The actions `--accept-identity` is accepted with (`doctor recovery`'s option). */
-const IDENTITY_ACTIONS: ReadonlySet<RecoveryAction> = new Set(['apply', 'undo'])
 
 /** Every action's offeredness for `cls`, in `RECOVERY_ACTIONS` order. */
 function offersOf(base: BasePlanner, cls: RecoveryClass): Offers {
@@ -85,7 +83,7 @@ function renderHint(
   if (parts.length === 0) parts.push(NOTHING)
   if (
     cls.kind === 'identity-changed' &&
-    IDENTITY_ACTIONS.has(action) &&
+    acceptsIdentity(action) &&
     refused.reason !== 'recovery-other-user'
   ) {
     parts.push(IDENTITY)

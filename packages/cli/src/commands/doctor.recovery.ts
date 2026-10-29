@@ -16,8 +16,9 @@
  * 6b-ii and 6b-iii; a no-record op dir shows its owner verdict, and the
  * `--clean-staging` line's derived hint says when `--unsafe-unverified-owner`
  * would let it act).
- * Exit status: 0 when listed; 1 when a `--root` could not be used or on an
- * unexpected filesystem error.
+ * Exit status: 0 when listed; 1 when a `--root` could not be used, when
+ * `--accept-identity` is given (it applies only to `--apply` and `--undo`; nothing
+ * is scanned), or on an unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.recovery
  */
 
@@ -29,6 +30,7 @@ import {
   type DiscoverOptions,
   type ListOptions,
 } from '@skillsmith/core'
+import { refuseAcceptIdentity } from './doctor.recovery.action.js'
 import { recoveryJson, renderRecovery } from './doctor.recovery.render.js'
 
 export interface DoctorRecoveryOptions {
@@ -36,6 +38,8 @@ export interface DoctorRecoveryOptions {
   root?: string[]
   stateRoot?: string
   json?: boolean
+  /** `--accept-identity`: refused here (exit 1, nothing scanned); it applies only to `--apply` and `--undo`. */
+  acceptIdentity?: boolean
   /** @internal Test seam: overrides for root discovery (the nine paths, the home directory, `cwd`). */
   discovery?: Partial<DiscoverOptions>
   /** @internal Test seam (6b-ii): the listing's owner probe. */
@@ -43,6 +47,11 @@ export interface DoctorRecoveryOptions {
 }
 
 export async function runDoctorRecovery(options: DoctorRecoveryOptions): Promise<void> {
+  // The listing takes no action, so `--accept-identity` does not apply to it.
+  if (options.acceptIdentity === true) {
+    refuseAcceptIdentity()
+    return
+  }
   const found = await discoverRoots({
     ...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
     ...(options.root === undefined || options.root.length === 0 ? {} : { roots: options.root }),

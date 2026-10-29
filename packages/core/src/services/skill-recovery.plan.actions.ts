@@ -44,6 +44,28 @@ export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
   'park',
 ]
 
+/**
+ * The actions `--accept-identity` applies to (A1 plan §3.9: it is given with
+ * `--apply` or `--undo`). The one table both sides read: the CLI refuses the
+ * flag with any other action before discovery, `planRecovery` refuses such a
+ * request before it classifies anything, and the refusal hint's identity
+ * clause (`skill-recovery.plan.hint.ts`) names the flag only for these.
+ */
+export const ACCEPT_IDENTITY_ACTIONS: readonly RecoveryAction[] = ['apply', 'undo']
+
+/** Whether `--accept-identity` applies to `action` (`ACCEPT_IDENTITY_ACTIONS`). */
+export const acceptsIdentity = (action: RecoveryAction): boolean =>
+  ACCEPT_IDENTITY_ACTIONS.includes(action)
+
+/**
+ * Why `--accept-identity` is refused with `action` (null: the listing, which
+ * takes no action), in the words every core refusal of it shares.
+ */
+export function acceptIdentityRefused(action: RecoveryAction | null): string {
+  const allowed = ACCEPT_IDENTITY_ACTIONS.map((a) => `--${a}`).join(' or ')
+  return `--accept-identity applies only with ${allowed}, not ${action === null ? 'the listing' : `--${action}`}`
+}
+
 /** Why `--clean-staging` or `--park` refuses an op dir whose record verified: what each acts on. */
 const RECORD_VERIFIES: Readonly<Record<'clean-staging' | 'park', string>> = {
   'clean-staging': 'its record verifies; --clean-staging acts only on an op dir with no record',

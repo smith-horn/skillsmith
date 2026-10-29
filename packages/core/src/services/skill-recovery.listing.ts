@@ -20,7 +20,12 @@ import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import { listStaging } from './skill-recovery.opdir.js'
 import { defaultOwnerProbe } from './skill-recovery.owner.js'
 import type { ProbeFact } from './skill-recovery.opdir.js'
-import { classLabel, plansFor, serializePlan } from './skill-recovery.plan.js'
+import {
+  acceptIdentityRefused,
+  classLabel,
+  plansFor,
+  serializePlan,
+} from './skill-recovery.plan.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { ActionPlan, RecoveryClass } from './skill-recovery.types.js'
@@ -161,11 +166,20 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
   }
 }
 
-/** `listRoot` for every root, in the order given. */
+/**
+ * `listRoot` for every root, in the order given. The listing takes no action,
+ * so `--accept-identity` does not apply to it: it is not in the options' type,
+ * and a caller passing `acceptIdentity: true` anyway gets a `RangeError` before
+ * any root is listed or classified (`listRoot` keeps the option for
+ * `planRecovery`, which passes it only for an action that takes it).
+ */
 export async function listRecovery(
   roots: readonly string[],
-  options: ListOptions = {}
+  options: Omit<ListOptions, 'acceptIdentity'> = {}
 ): Promise<RootReport[]> {
+  if ((options as ListOptions).acceptIdentity === true) {
+    throw new RangeError(acceptIdentityRefused(null))
+  }
   const reports: RootReport[] = []
   for (const root of roots) reports.push(await listRoot(root, options))
   return reports

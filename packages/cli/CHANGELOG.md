@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- `skillsmith doctor recovery --accept-identity` is now refused with any
+  action but `--apply` and `--undo`: with `--abandon`, `--park` or `--clean-staging`, or with no
+  action (the listing), it prints "--accept-identity applies only with --apply <opId> or --undo
+  <opId>." and exits 1 before looking at any skills root, so nothing is changed. Before, those
+  three actions accepted the flag and planned as if the identity check had been waived, and the
+  listing ignored it silently. Core refuses the same requests too.
 - **Changed**: SMI-6531 -- #3209 retro: `skillsmith doctor recovery`'s refusal hints are now
   derived from what is offered. Every refusal ends by naming the other actions that are
   offered for that operation ("offered here: --apply or --undo"), the ones offered only with

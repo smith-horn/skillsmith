@@ -3,8 +3,8 @@
  * that action is offered for the same class, names every action that is, and
  * says so when none is (owner decision 2026-10-29: `--unsafe-unverified-owner`
  * is computed; `--accept-identity` is named by a fixed clause, not computed,
- * and only on a refusal of `--apply` or `--undo`, the actions the CLI takes it
- * with).
+ * and only on a refusal of `--apply` or `--undo`, the only actions it applies
+ * to: the CLI and `planRecovery` refuse it with any other).
  *
  * Every property runs over every fixture (`recovery.plan.fixtures.ts`, built
  * through the real classifier) and every action it refuses, through the public
@@ -12,7 +12,12 @@
  * change to them fails these tests.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
-import { planAction, RECOVERY_ACTIONS } from '../../../../src/services/skill-recovery.plan.js'
+import {
+  ACCEPT_IDENTITY_ACTIONS,
+  acceptsIdentity,
+  planAction,
+  RECOVERY_ACTIONS,
+} from '../../../../src/services/skill-recovery.plan.js'
 import type {
   ActionPlan,
   PlanOptions,
@@ -162,7 +167,52 @@ beforeAll(async () => {
   fixtures = await allFixtures()
 }, 120_000)
 
+describe('the action tables the properties iterate, written out', () => {
+  // Every property below iterates `RECOVERY_ACTIONS`, so an action dropped from
+  // it would shrink the suite silently: these literals are the independent oracle.
+  it('RECOVERY_ACTIONS is exactly the five actions, in listing order', () => {
+    expect(RECOVERY_ACTIONS).toEqual(['apply', 'undo', 'abandon', 'clean-staging', 'park'])
+  })
+
+  it('ACCEPT_IDENTITY_ACTIONS is exactly --apply and --undo, and acceptsIdentity agrees', () => {
+    expect(ACCEPT_IDENTITY_ACTIONS).toEqual(['apply', 'undo'])
+    expect(IDENTITY_ACTIONS).toEqual(['apply', 'undo'])
+    const literal: RecoveryAction[] = ['apply', 'undo', 'abandon', 'clean-staging', 'park']
+    expect(literal.filter(acceptsIdentity)).toEqual(['apply', 'undo'])
+  })
+})
+
 describe('derived refusal hints: every fixture, every refused action', () => {
+  it('the properties run over the seam-built C3 and other-user fixtures, beside the two literals', () => {
+    const kinds = new Map(fixtures.map((f) => [f.name, f.kind]))
+    expect(
+      Object.fromEntries(
+        [
+          'unreadable (C3: the op dir cannot be inspected, through the seam)',
+          'unreadable (C3: the op dir cannot be listed, through the seam)',
+          'unreadable (C3: the op dir cannot be listed)',
+          'other-user (EACCES on the op dir, through the seam)',
+          'other-user (EACCES)',
+        ].map((n) => [n, kinds.get(n)])
+      )
+    ).toEqual({
+      'unreadable (C3: the op dir cannot be inspected, through the seam)': 'unreadable',
+      'unreadable (C3: the op dir cannot be listed, through the seam)': 'unreadable',
+      'unreadable (C3: the op dir cannot be listed)': 'unreadable',
+      'other-user (EACCES on the op dir, through the seam)': 'other-user',
+      'other-user (EACCES)': 'other-user',
+    })
+    // Every action is refused for each, so each contributes refusals to P1-P3.
+    for (const n of kinds.keys()) {
+      if (!/C3|EACCES/.test(n)) continue
+      const f = fixtures.find((x) => x.name === n)!
+      expect(
+        RECOVERY_ACTIONS.filter((a) => planAction(f.cls, a).offered),
+        n
+      ).toEqual([])
+    }
+  })
+
   it('P1: every hint segment is well formed, and every action a refusal names is offered (under the unsafe-owner clause: only with it)', () => {
     const bad: string[] = []
     for (const { f, a, detail, p } of refusals(fixtures)) {

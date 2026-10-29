@@ -51,7 +51,12 @@ import type {
   RowState,
 } from './skill-recovery.types.js'
 
-export { RECOVERY_ACTIONS } from './skill-recovery.plan.actions.js'
+export {
+  ACCEPT_IDENTITY_ACTIONS,
+  acceptIdentityRefused,
+  acceptsIdentity,
+  RECOVERY_ACTIONS,
+} from './skill-recovery.plan.actions.js'
 export type { PlanOptions } from './skill-recovery.types.js'
 
 const ROW_LABEL: Record<RowState, string> = {
