@@ -29,8 +29,17 @@
  * @module @skillsmith/core/services/skill-recovery.pending
  */
 import { sameId } from './skill-recovery.trees.js'
-import type { KeepGroup } from './skill-recovery.types.js'
+import type { KeepGroup, OpFacts } from './skill-recovery.types.js'
 import type { RecordIdentity } from './skill-swap.types.js'
+
+/**
+ * Where a `partial-copy` keep of `g`'s copy temp, killed after its sidecar,
+ * finishes (the sidecar group's `destPath`, found by `pendingTemp`); else null.
+ * The one rule the plan, `--abandon` and the resume all use.
+ */
+export function pendingOf(f: Pick<OpFacts, 'groups'>, g: KeepGroup): string | null {
+  return f.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null
+}
 
 /** Why an ambiguous pair is left for the user: the words a refusal names. */
 export const AMBIGUOUS_PARTIAL =

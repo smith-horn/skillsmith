@@ -32,12 +32,8 @@ import {
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
-import {
-  abandonOf,
-  abandonPlan,
-  onlyAbandonWord,
-  pendingOf,
-} from './skill-recovery.plan.abandon.js'
+import { abandonOf, abandonPlan, onlyAbandonWord } from './skill-recovery.plan.abandon.js'
+import { pendingOf } from './skill-recovery.pending.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
 import { finishLines, keepsSource, strayRefusal } from './skill-recovery.plan.finish.js'
 import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
@@ -452,7 +448,7 @@ export function planAction(
       return refuse(
         action,
         'recovery-moved',
-        'the root or op dir is not the one the record was written for: only --abandon is offered; moving the root back to its recorded path makes --apply possible'
+        'the root or op dir is not the one the record was written for: only --abandon could act; moving the root back to its recorded path makes --apply possible'
       )
     }
     if (cls.kind === 'identity-changed') {

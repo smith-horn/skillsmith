@@ -17,6 +17,7 @@ import {
   RECOVERY_ACTIONS,
   serializePlan,
 } from '../../../../src/services/skill-recovery.plan.js'
+import { onlyAbandonWord } from '../../../../src/services/skill-recovery.plan.abandon.js'
 import type {
   ActionPlan,
   RecoveryAction,
@@ -392,6 +393,11 @@ describe('what every other class says', () => {
     const moved = (await opReport(renamedOp(await s2(file())))).cls
     expect(moved).toMatchObject({ kind: 'moved', why: 'foreign-op-dir' })
     expect(planAction(moved, 'apply')).toMatchObject({ offered: false, reason: 'recovery-moved' })
+    // --abandon can itself refuse, so the words say it is the only action that could act, not that it is offered.
+    const movedApply = planAction(moved, 'apply')
+    expect(movedApply.offered ? '' : movedApply.detail).toBe(
+      'the root or op dir is not the one the record was written for: only --abandon could act; moving the root back to its recorded path makes --apply possible'
+    )
     expect(planAction(moved, 'abandon').offered).toBe(true)
     const st = await s2(file())
     const copy = path.join(st.opDir, 'old')
@@ -404,6 +410,35 @@ describe('what every other class says', () => {
     expect(apply).toMatchObject({ offered: false, reason: 'recovery-identity-changed' })
     expect(apply.offered ? '' : apply.detail).toContain('--accept-identity')
     expect(planAction(cls, 'abandon').offered).toBe(true)
+  })
+
+  it('onlyAbandonWord: a verified record keeps "only --abandon could act"; no verified record says --abandon refuses too', async () => {
+    const moved = (await opReport(renamedOp(await s2(file())))).cls
+    if (moved.kind !== 'moved') throw new Error('fixture must classify as moved')
+    // anything-else WITH facts: --abandon acts on them, so the classifier reason is the prefix.
+    const withFacts: RecoveryClass = {
+      kind: 'anything-else',
+      opId: 'x',
+      opDir: '/st/x',
+      reason: 'an ambiguous partial',
+      facts: moved.facts,
+    }
+    expect(onlyAbandonWord(withFacts)).toBe('an ambiguous partial; only --abandon could act')
+    // anything-else WITHOUT facts: abandonPlan refuses, so the words must not claim --abandon could act.
+    const noFacts: RecoveryClass = { ...withFacts, facts: null }
+    expect(onlyAbandonWord(noFacts)).toBe(
+      'an ambiguous partial, so no record verifies: --abandon acts only on a verified record'
+    )
+    const abandon = planAction(noFacts, 'abandon')
+    expect(abandon).toMatchObject({ offered: false, reason: 'recovery-not-offered' })
+    expect(abandon.offered ? '' : abandon.detail).toContain(
+      '--abandon acts only on a verified record'
+    )
+    const apply = planAction(noFacts, 'apply')
+    expect(apply.offered ? '' : apply.detail).toBe(onlyAbandonWord(noFacts))
+    expect(onlyAbandonWord({ ...withFacts, kind: 'moved' } as unknown as RecoveryClass)).toBe(
+      'only --abandon could act'
+    )
   })
 
   it('unreadable: --park only when guardable (6b-i); no record: --clean-staging only, with its owner gone (6b-ii); empty: nothing; AB: --abandon finishes it', async () => {

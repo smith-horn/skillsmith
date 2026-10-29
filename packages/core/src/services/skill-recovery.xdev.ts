@@ -12,8 +12,11 @@
  *    `sourceUnchanged` true only when the source still matches its sidecar
  *    and the temp is a subset of it), never removed, then the copy starts again
  *    with the space check (`moveAcross`). A temp can hold the only copy of a
- *    file version, so it is kept even when it looks complete.
- *  - **P3** (the same call, when the temp hashes to the source): the sidecar
+ *    file version, so it is kept even when it looks complete. A temp that a
+ *    `pending` partial-copy keep names (its sidecar published, the rename
+ *    killed) has that rename finished first (`finishPendingPartial`), whatever
+ *    the temp hashes to, and the copy then starts again.
+ *  - **P3** (the same call, when nothing is pending and the temp hashes to the source): the sidecar
  *    is rewritten first if the source changed after it was published (the
  *    cross-device rewrite, the same order as `rewriteSidecar`), then `check`,
  *    the name still free, `rename(temp, dest)`, sync the area.
@@ -294,8 +297,11 @@ export async function finishPendingPartial(
  * copy that never published) is kept as `partial-copy`, never removed: its
  * own identity and hash in its sidecar, `sourceUnchanged` false (there is no
  * sidecar to compare a source with) and `partialCause` `copy-failed`. The
- * temp must still be the one the plan observed. Returns where it was kept.
- * The area must be bound first.
+ * temp must still be the one the plan observed. With `pendingDest` the
+ * sidecar is already there, written by the earlier keep that was killed
+ * before its rename (its own `sourceUnchanged` and `partialCause` stand, not
+ * these), so only the rename is done. Returns where it was kept. The area
+ * must be bound first.
  */
 export async function keepOrphanCopyTemp(
   st: SwapState,

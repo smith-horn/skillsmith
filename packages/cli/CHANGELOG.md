@@ -16,6 +16,16 @@ All notable changes to `@skillsmith/cli` are documented here.
   available yet". An operation folder holding a file doctor did not put there (a `.DS_Store`)
   is now refused by `--abandon`, `--apply` and `--undo` before anything changes, naming the
   file and saying to move it out by hand; the listing shows why.
+- **Changed**: SMI-6531 -- #3208 retro: where only `--abandon` could act (a moved operation,
+  or an operation folder that matches no known state but has a verified record),
+  `doctor recovery --apply` and `--undo` now refuse with "only --abandon could act" instead
+  of "only --abandon is offered" or "offered here: --abandon". `--abandon` can itself refuse
+  (a stray entry doctor did not put there, a sidecar temp it cannot prove is the operation's,
+  an ambiguous partial-copy keep), so the old words promised more than the plan could
+  deliver. An operation folder that matches no known state and has no verified record is
+  refused by `--abandon` too, so there the refusal says "so no record verifies: --abandon
+  acts only on a verified record". The text comes from core;
+  the exit codes and the listing's layout are unchanged.
 - **Added**: SMI-6531 -- A1 step 6b-ii: `skillsmith doctor recovery --clean-staging <opId>`
   finishes an operation folder with no `record.json` (an update stopped before writing it or
   after removing it, or doctor's own cross-device `--apply`, `--undo` or `--clean-staging`
@@ -41,10 +51,6 @@ All notable changes to `@skillsmith/cli` are documented here.
   update whose state root is too deep is now refused with "the update was not started", with
   no operation folder, backup or manifest change.
 
-- **Internal**: SMI-6531 -- the `doctor recovery` listing marks actions "(not available yet)" from
-  core's own `PERFORMED` set, so an action enabled in core is listed as available without a
-  second edit here. No behaviour change.
-
 - **Added**: SMI-6531 -- A1 step 6b-i: `skillsmith doctor recovery --park <opId>` sets aside the
   whole operation folder of an update record that cannot be read, the only remedy for
   `recovery-record-unreadable`, which blocks every write in its skills root. Like `--apply` and
@@ -54,16 +60,13 @@ All notable changes to `@skillsmith/cli` are documented here.
   guard hash; otherwise it refuses with nothing changed, naming the failure, its path and errno,
   and saying to fix the device or move the folder aside by hand. A park that does not finish
   (kept, stopped or held) reports `removal-not-done` and exits 4; a run that stops says whether
-  anything was moved and where the folder is. The listing now names
-  `--park` without "not available yet" (`--abandon` and `--clean-staging` keep it) and shows an
-  unreadable record's entries and guard hash. `--abandon` and `--clean-staging` are not options
-  yet.
+  anything was moved and where the folder is. The listing shows an
+  unreadable record's entries and guard hash.
 
 - **Added**: SMI-6531 -- A1 step 6a-iii: `skillsmith doctor recovery --apply <opId>` and
   `--undo <opId>` are supported, with `--accept-identity` and `--yes`, on one device and across
   devices. Each prints the plan and asks once (default No); `--yes` skips the question and waives
-  no check. The help lists the options, and the listing names `--apply` and `--undo` without
-  "not available yet" (`--abandon`, `--clean-staging` and `--park` keep it). A finished action
+  no check. The help lists the options. A finished action
   that could not set its operation folder aside reports `removal-not-done` and exits 4. An
   operation already set aside is reported as such, in the listing and by `--apply`/`--undo`,
   which change nothing and exit 0; a set-aside copy together with a skills root whose staging
@@ -81,8 +84,7 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Added**: SMI-6531 -- A1 step 6a-i: `skillsmith doctor recovery` lists what a crashed update
   left in each skills root, read-only. It takes `--root <dir>` (repeatable), `--state-root <dir>`
   and `--json`. For each operation folder it prints the state the update stopped in, the
-  identities and hashes it compared, the backup path, and what each repair would do (marked not
-  available yet); it also
+  identities and hashes it compared, the backup path, and what each repair would do; it also
   lists folders with no record, records it cannot read, and leftover clock-check probes. A root
   with no staging folder is reported as having none and is never given one. `skillsmith doctor
   locks` now also lists each skills root's write lock and its reclaim lock, and takes

@@ -52,6 +52,7 @@ import { KEPT_KINDS } from './skill-swap.fullmark.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 import { adoptMetadata, boundOf, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
+import { pendingOf } from './skill-recovery.pending.js'
 import { isProvableTemp as provable, ROLE_DIR } from './skill-recovery.pstate.js'
 import { acrossFor, resumeCopied, resumeCopyTemp } from './skill-recovery.xdev.js'
 import type { AcrossKeep } from './skill-recovery.xdev.js'
@@ -210,7 +211,7 @@ async function resumeGroup(
     marker: k.facts.fullDevice,
     partials: k.partials,
     // A partial keep of this temp killed after its sidecar: finish its rename (pstate).
-    pending: k.facts.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null,
+    pending: pendingOf(k.facts, g),
   })
   if (g.state === 'P4') return resumeCopied(st, across(g.sidecar!.identity, g.sidecar!.treeHash))
   if (g.state === 'P2' || g.state === 'P3') {

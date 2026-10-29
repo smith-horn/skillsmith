@@ -17,7 +17,8 @@
  * provably this op's (O2: move it out by hand and run the command again); a
  * keep in the area no sub-state names, until the user resolves it, except
  * the two this action keeps itself: an orphan copy temp (kept as
- * `partial-copy`) and a P4 copy whose source changed after it (PLAN:1559: the
+ * `partial-copy`, or, when a pending partial-copy keep names it, finished by
+ * its rename) and a P4 copy whose source changed after it (PLAN:1559: the
  * changed source is kept fresh and the copy becomes P5).
  *
  * The plan mirrors the executor (`skill-recovery.abandon.ts`), as #3204 did
@@ -40,6 +41,7 @@
 import path from 'node:path'
 import { kept, offer, refuse, step, UNTOUCHED } from './skill-recovery.plan.actions.js'
 import { finishLines, strayDetail } from './skill-recovery.plan.finish.js'
+import { pendingOf } from './skill-recovery.pending.js'
 import { isProvableTemp, ROLE_DIR } from './skill-recovery.pstate.js'
 import { sameId } from './skill-recovery.trees.js'
 import type {
@@ -54,13 +56,17 @@ import type {
 const BY_HAND = 'move it out of the op dir by hand, and run the command again'
 
 /** The kind a source no keep has started is kept as. */
-export const ABANDONED_KIND: Readonly<Record<Role, string>> = {
+const ABANDONED_KIND: Readonly<Record<Role, string>> = {
   O: 'abandoned-old',
   N: 'abandoned-new',
   U: 'abandoned-undone',
 }
 
-/** A copy temp with no sidecar, sidecar temp or tree: a copy that never published (kept as `partial-copy`). */
+/**
+ * A copy temp with no sidecar, sidecar temp or tree: a copy that never
+ * published (kept as `partial-copy`, or, when a pending partial-copy keep
+ * names it, finished by its rename).
+ */
 export function isOrphanCopyTemp(g: KeepGroup): boolean {
   return (
     !g.otherCopy &&
@@ -77,7 +83,7 @@ export function isOrphanCopyTemp(g: KeepGroup): boolean {
  * `dest` matches its sidecar and the source no longer does. The copy stays as
  * it is (P5 once the source leaves), and the source is kept fresh.
  */
-export function isChangedAfterCopy(g: KeepGroup): boolean {
+function isChangedAfterCopy(g: KeepGroup): boolean {
   const sc = g.sidecar
   return (
     !g.otherCopy &&
@@ -209,11 +215,6 @@ function oldWhere(f: OpFacts): string | null {
   return freeKeptName(f, ABANDONED_KIND.O)
 }
 
-/** Where a `partial-copy` keep of `g`'s copy temp, killed after its sidecar, finishes (`pendingTemp`); else null. */
-export function pendingOf(f: Pick<OpFacts, 'groups'>, g: KeepGroup): string | null {
-  return f.groups.find((p) => p.pendingTemp === g.base)?.destPath ?? null
-}
-
 /** Per role, as `keepOne` takes it: a started keep's resume, else the unlink of a provable P0 temp. */
 function roleLines(f: OpFacts): string[] {
   const out: string[] = []
@@ -286,12 +287,18 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
 /**
  * Why another action is not offered where only `--abandon` could act: an
  * abandon that began, or (anything else) the classifier's own reason, so each
- * refusal names what is wrong (an ambiguous partial-copy keep, say).
+ * refusal names what is wrong (an ambiguous partial-copy keep, say). An
+ * anything-else class with no verified record is the exception: `--abandon`
+ * refuses it too (see `abandonPlan`), so its words say that instead.
  */
 export function onlyAbandonWord(cls: RecoveryClass): string {
   if (cls.kind === 'ab') return 'an abandon began: --abandon finishes it'
-  if (cls.kind === 'anything-else') return `${cls.reason}; offered here: --abandon`
-  return 'offered here: --abandon'
+  if (cls.kind === 'anything-else') {
+    return cls.facts === null
+      ? `${cls.reason}, so no record verifies: --abandon acts only on a verified record`
+      : `${cls.reason}; only --abandon could act`
+  }
+  return 'only --abandon could act'
 }
 
 /**
