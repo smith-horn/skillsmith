@@ -21,6 +21,7 @@
 import path from 'node:path'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
+import { markPendingPartials } from './skill-recovery.pending.js'
 import type { KeepGroup, PState, Role, SidecarFacts } from './skill-recovery.types.js'
 import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 
@@ -438,31 +439,9 @@ export function observeGroups(
       group.src.hash !== sidecar?.treeHash
     groups.push(group)
   }
+  // One-to-one only (owner decision 2026-10-29): `skill-recovery.pending.ts`.
   markPendingPartials(groups)
   return { groups, listError: null }
-}
-
-/**
- * A copy temp kept as `partial-copy` publishes its sidecar, then renames the
- * temp to that name (`keepTempAsPartial`, and the update's own partial keep).
- * A kill between the two leaves a valid `partial-copy` sidecar with no tree
- * whose identity is the temp's. That pair is a keep to finish (its rename),
- * not a leftover no sub-state names: the sidecar's group records the temp's
- * group (`pendingTemp`) and is not unclassified. The temp's own group keeps
- * its state (an orphan, or P2 beside its own sidecar).
- */
-function markPendingPartials(groups: KeepGroup[]): void {
-  for (const g of groups) {
-    const sc = g.sidecar
-    if (g.kind !== 'partial-copy' || g.otherCopy || g.state !== null || sc === null) continue
-    if (!sc.validForOp || g.dest.present || g.copyTmp.present || g.sidecarTmp !== null) continue
-    const temp = groups.find(
-      (o) => o !== g && o.copyTmp.present && !o.otherCopy && sameId(o.copyTmp.identity, sc.identity)
-    )
-    if (temp === undefined) continue
-    g.pendingTemp = temp.base
-    g.unclassified = null
-  }
 }
 
 /** A sidecar temp: does it parse as this op's sidecar for `dest`, and is it the sidecar's inode or empty? */

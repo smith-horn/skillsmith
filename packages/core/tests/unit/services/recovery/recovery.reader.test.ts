@@ -97,6 +97,8 @@ const CLASSIFIER = [
   'skill-recovery.consistency.ts',
   'skill-recovery.plan.abandon.ts',
   'skill-recovery.plan.finish.ts',
+  // The one-to-one pairing of a partial-copy keep killed before its rename.
+  'skill-recovery.pending.ts',
 ]
 const READER = 'skill-recovery.reader.ts'
 

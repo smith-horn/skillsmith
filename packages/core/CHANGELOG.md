@@ -30,7 +30,8 @@ All notable changes to `@skillsmith/core` are documented here.
   its first change. A copy temp's `partial-copy` keep killed after its sidecar and before the
   rename (`KeepGroup.pendingTemp`) is now finished by the resume (`--abandon`, `--apply` or
   `--undo`) with that rename, instead of leaving a sidecar with no tree that no action could
-  pass.
+  pass. Only a one-to-one pair is finished: when several sidecars name one copy temp, or one
+  names several, every action refuses before any change, naming the ambiguity.
 - **Removed (internal, unreleased)**: SMI-6531 -- `PERFORMED` is gone: every recovery action is
   performed, so the set equalled `RECOVERY_ACTIONS`.
 - **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer

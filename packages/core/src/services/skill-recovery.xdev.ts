@@ -301,14 +301,20 @@ export async function keepOrphanCopyTemp(
 ): Promise<string> {
   const temp = path.join(st.areaPath, `.tmp-${group.base}`)
   const planned = group.copyTmp.present ? group.copyTmp.identity : null
+  if (planned === null) {
+    throw new SwapFault('backup-unsafe', `${temp} was not observed by the plan; left untouched`)
+  }
+  // The pending finish checks the temp against the plan's identity itself (the sidecar's).
+  if (pendingDest !== null) {
+    return finishPendingPartial(st, temp, boundOf(planned), pendingDest, partials)
+  }
   const tempId = bindIdentity(temp)
-  if (planned === null || !tempId.ok || !sameIdentity(boundOf(planned), tempId)) {
+  if (!tempId.ok || !sameIdentity(boundOf(planned), tempId)) {
     throw new SwapFault(
       'backup-unsafe',
       `${temp} is not the copy temp the plan observed; it was left untouched`
     )
   }
-  if (pendingDest !== null) return finishPendingPartial(st, temp, tempId, pendingDest, partials)
   const why = { sourceUnchanged: false, partialCause: 'copy-failed' } as const
   await keepTempAsPartial(st, temp, tempId, treeHashOf(temp), why, { partials, group })
   return partials[partials.length - 1]!
