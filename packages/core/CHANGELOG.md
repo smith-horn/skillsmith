@@ -43,9 +43,12 @@ All notable changes to `@skillsmith/core` are documented here.
   prechecks are unchanged; they now size against the new cap, and their refusal names it, so
   no real path reaches that refusal any more. No released version reads a park intent.
 - **Changed**: SMI-6531 -- #3208 retro: where only `--abandon` could act (a moved operation,
-  or a class with no other action), the refusal of `--apply` and `--undo` now says "only
-  --abandon could act" instead of "only --abandon is offered", since `--abandon` can itself
-  refuse (a stray entry, an unprovable temp, an ambiguous partial-copy keep). The rule that
+  or an "anything else" class with a verified record), the refusal of `--apply` and `--undo`
+  now says "only --abandon could act" instead of "only --abandon is offered", since
+  `--abandon` can itself refuse (a stray entry, an unprovable temp, an ambiguous partial-copy
+  keep). For an "anything else" class with no verified record, `--abandon` refuses too, so
+  that refusal says "so no record verifies: --abandon acts only on a verified record"
+  instead. The rule that
   names where a pending partial-copy keep finishes (`pendingOf`) lives in one place (the
   pending module) instead of three, and two internal exports nothing imported
   (`ABANDONED_KIND`, `isChangedAfterCopy`) are private. Comments now say that an orphan copy temp named by a pending

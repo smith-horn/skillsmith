@@ -17,11 +17,14 @@ All notable changes to `@skillsmith/cli` are documented here.
   is now refused by `--abandon`, `--apply` and `--undo` before anything changes, naming the
   file and saying to move it out by hand; the listing shows why.
 - **Changed**: SMI-6531 -- #3208 retro: where only `--abandon` could act (a moved operation,
-  or an operation folder no other action fits), `doctor recovery --apply` and `--undo` now
-  refuse with "only --abandon could act" instead of "only --abandon is offered" or
-  "offered here: --abandon". `--abandon` can itself refuse (a stray entry doctor did not put
-  there, a sidecar temp it cannot prove is the operation's, an ambiguous partial-copy keep),
-  so the old words promised more than the plan could deliver. The text comes from core;
+  or an operation folder that matches no known state but has a verified record),
+  `doctor recovery --apply` and `--undo` now refuse with "only --abandon could act" instead
+  of "only --abandon is offered" or "offered here: --abandon". `--abandon` can itself refuse
+  (a stray entry doctor did not put there, a sidecar temp it cannot prove is the operation's,
+  an ambiguous partial-copy keep), so the old words promised more than the plan could
+  deliver. An operation folder that matches no known state and has no verified record is
+  refused by `--abandon` too, so there the refusal says "so no record verifies: --abandon
+  acts only on a verified record". The text comes from core;
   the exit codes and the listing's layout are unchanged.
 - **Added**: SMI-6531 -- A1 step 6b-ii: `skillsmith doctor recovery --clean-staging <opId>`
   finishes an operation folder with no `record.json` (an update stopped before writing it or
