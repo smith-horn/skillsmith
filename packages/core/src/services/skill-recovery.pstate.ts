@@ -21,6 +21,7 @@
 import path from 'node:path'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
+import { markPendingPartials } from './skill-recovery.pending.js'
 import type { KeepGroup, PState, Role, SidecarFacts } from './skill-recovery.types.js'
 import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 
@@ -56,7 +57,13 @@ const SIDECAR_REQUIRED = [
   'scope',
   'manifestKey',
 ] as const
-const SIDECAR_OPTIONAL = ['treeHashError', 'sourceUnchanged', 'partialCause'] as const
+const SIDECAR_OPTIONAL = [
+  'treeHashError',
+  'sourceUnchanged',
+  'partialCause',
+  // 6b-iii (O4): an `abandoned-*` keep names the op dir that abandoned it.
+  'opDirIdentity',
+] as const
 const IDENTITY_KEYS = ['dev', 'ino', 'birthtimeNs', 'fmt'] as const
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -90,6 +97,18 @@ type ParsedSidecar = {
   manifestKey: string
   treeHash: string | null
   identity: RecordIdentity
+  opDirIdentity: RecordIdentity | null
+}
+
+/** An identity object of four decimal strings, or null. */
+function identityOf(id: unknown): RecordIdentity | null {
+  if (!isObject(id) || !IDENTITY_KEYS.every((k) => typeof id[k] === 'string')) return null
+  return {
+    dev: id.dev as string,
+    ino: id.ino as string,
+    birthtimeNs: id.birthtimeNs as string,
+    fmt: id.fmt as string,
+  }
 }
 
 /** The strict schema of a sidecar (`skill-swap.sidecar.ts`): exactly its keys and types. */
@@ -122,9 +141,11 @@ function parseSidecar(bytes: Buffer): ParsedSidecar | { ok: false; why: string }
   if (v.treeHash !== null && typeof v.treeHash !== 'string') {
     return { ok: false, why: 'treeHash is neither a string nor null' }
   }
-  const id = v.identity
-  if (!isObject(id) || !IDENTITY_KEYS.every((k) => typeof id[k] === 'string')) {
-    return { ok: false, why: 'identity is malformed' }
+  const id = identityOf(v.identity)
+  if (id === null) return { ok: false, why: 'identity is malformed' }
+  const opDirId = v.opDirIdentity === undefined ? null : identityOf(v.opDirIdentity)
+  if (v.opDirIdentity !== undefined && opDirId === null) {
+    return { ok: false, why: 'opDirIdentity is malformed' }
   }
   if (v.treeHashError !== undefined && typeof v.treeHashError !== 'string') {
     return { ok: false, why: 'treeHashError is not a string' }
@@ -142,12 +163,8 @@ function parseSidecar(bytes: Buffer): ParsedSidecar | { ok: false; why: string }
     scope: v.scope as string,
     manifestKey: v.manifestKey as string,
     treeHash: v.treeHash as string | null,
-    identity: {
-      dev: id.dev as string,
-      ino: id.ino as string,
-      birthtimeNs: id.birthtimeNs as string,
-      fmt: id.fmt as string,
-    },
+    identity: id,
+    opDirIdentity: opDirId,
   }
 }
 
@@ -175,6 +192,38 @@ export const expectOfRecord = (rec: SwapRecord): SidecarExpect => ({
   manifestKey: rec.target.manifestKey,
   from: 'the record',
 })
+
+/**
+ * 6b-iii: a moved op's sidecar expectations in the scanned root `root` (R):
+ * the record's skill, with `skillsDir` R, which is what `--abandon` keeps
+ * into (its sidecar names `st.binding.root`) and the area is keyed by.
+ */
+export const expectOfMoved = (rec: SwapRecord, root: string): SidecarExpect => ({
+  ...expectOfRecord(rec),
+  skillsDir: root,
+  from: 'the record (in this root)',
+})
+
+/**
+ * Q10: a group's sidecar temp parses as this op's sidecar for `dest` with the
+ * source's identity, or is an empty file with one link: the only temp a
+ * resume unlinks (`skill-recovery.resume.ts`), and so the only one a plan may
+ * promise to unlink (`skill-recovery.plan.abandon.ts`).
+ */
+export function isProvableTemp(g: Pick<KeepGroup, 'sidecarTmp' | 'src'>): boolean {
+  const t = g.sidecarTmp
+  if (t === null) return false
+  if (t.emptySingleLink) return true
+  return (
+    t.thisOps &&
+    t.identity !== null &&
+    g.src.present &&
+    t.identity.dev === g.src.identity.dev &&
+    t.identity.ino === g.src.identity.ino &&
+    t.identity.birthtimeNs === g.src.identity.birthtimeNs &&
+    t.identity.fmt === g.src.identity.fmt
+  )
+}
 
 /** The sub-states of a keep that began and did not finish: a resume continues it with its kind. */
 export const STARTED_STATES: ReadonlySet<string> = new Set([
@@ -212,6 +261,7 @@ function sidecarFacts(
     kind: null,
     identity: null,
     treeHash: null,
+    opDirIdentity: null,
   })
   if (read.bytes === null || !read.fact.ok) {
     return dead(`could not be read (${read.fact.ok ? 'no bytes' : read.fact.errno})`)
@@ -227,6 +277,7 @@ function sidecarFacts(
     kind: parsed.kind,
     identity: parsed.identity,
     treeHash: parsed.treeHash,
+    opDirIdentity: parsed.opDirIdentity,
   }
 }
 
@@ -295,10 +346,35 @@ export interface AreaView {
   listError: string | null
 }
 
-/** This op's keep groups in `area`, each checked against its source in OP and classified. */
+/**
+ * An `abandoned-*` keep whose valid sidecar names an op dir other than
+ * `opIdentity` (O4): another copy's abandon in the same area. A sidecar that
+ * names none counts as this op dir's, the conservative reading (AB).
+ */
+function otherCopyOf(g: KeepGroup, opIdentity: RecordIdentity | undefined): boolean {
+  const named = g.sidecar?.validForOp === true ? g.sidecar.opDirIdentity : null
+  return (
+    g.kind.startsWith('abandoned-') &&
+    opIdentity !== undefined &&
+    named !== null &&
+    !sameId(named, opIdentity)
+  )
+}
+
+/**
+ * This op's keep groups in `area`, each checked against its source in OP and
+ * classified. `opIdentity` (6b-iii, O4): OP's identity now, so an
+ * `abandoned-*` keep another copy of this op dir made is `otherCopy`.
+ */
 export function observeGroups(
   r: ClassifierReader,
-  a: { opDir: string; opId: string; area: string; expect: SidecarExpect }
+  a: {
+    opDir: string
+    opId: string
+    area: string
+    expect: SidecarExpect
+    opIdentity?: RecordIdentity
+  }
 ): AreaView {
   const list = r.list(a.area, { name: 'areaForOp', opId: a.opId })
   if (!list.ok) {
@@ -342,6 +418,13 @@ export function observeGroups(
       verified: false,
       hashChanged: false,
       crossDevice: false,
+      otherCopy: false,
+      pendingTemp: null,
+    }
+    if (otherCopyOf(group, a.opIdentity)) {
+      // Not this op dir's keep: no sub-state, no role, never unclassified.
+      groups.push({ ...group, otherCopy: true })
+      continue
     }
     const c = classifyGroup(group)
     group.state = c.state
@@ -356,6 +439,8 @@ export function observeGroups(
       group.src.hash !== sidecar?.treeHash
     groups.push(group)
   }
+  // One-to-one only (owner decision 2026-10-29): `skill-recovery.pending.ts`.
+  markPendingPartials(groups)
   return { groups, listError: null }
 }
 

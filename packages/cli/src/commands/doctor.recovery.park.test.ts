@@ -332,17 +332,24 @@ describe("the listing names a guard failure in the guard walk's own word", () =>
 })
 
 describe('through commander', () => {
-  it('registers --park and (6b-ii) --clean-staging visibly, and not --abandon yet', () => {
+  it('registers --park, (6b-ii) --clean-staging and (6b-iii) --abandon visibly', () => {
     const recovery = createDoctorCommand().commands.find((c) => c.name() === 'recovery')!
     const flags = recovery.options.map((o) => o.long ?? '')
     expect(flags).toContain('--park')
     expect(flags).toContain('--clean-staging')
     expect(flags).toContain('--unsafe-unverified-owner')
-    expect(flags).not.toContain('--abandon')
-    expect(recovery.options.find((o) => o.long === '--park')?.hidden).toBe(false)
-    expect(recovery.options.find((o) => o.long === '--clean-staging')?.hidden).toBe(false)
-    expect(recovery.helpInformation()).toContain('--park <opId>')
-    expect(recovery.helpInformation()).toContain('--clean-staging <opId>')
+    expect(flags).toContain('--abandon')
+    for (const flag of ['--park', '--clean-staging', '--abandon']) {
+      expect(recovery.options.find((o) => o.long === flag)?.hidden, flag).toBe(false)
+    }
+    const help = recovery.helpInformation()
+    expect(help).toContain('--park <opId>')
+    expect(help).toContain('--clean-staging <opId>')
+    expect(help).toContain('--abandon <opId>')
+    // --yes names every action it confirms.
+    expect(recovery.options.find((o) => o.long === '--yes')?.description).toContain(
+      'With --apply, --undo, --abandon, --park or --clean-staging'
+    )
   })
 
   it('`doctor recovery --park <opId> --yes` runs the action', async () => {

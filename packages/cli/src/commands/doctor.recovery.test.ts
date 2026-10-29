@@ -78,13 +78,12 @@ describe('skillsmith doctor recovery', () => {
     expect(text).toContain('1 operation directory found')
     expect(text).toContain(u.root)
     expect(text).toContain(`${u.opId}  S2 swapped`)
-    expect(text).toContain(`backup: ${u.backupDest}`)
+    // A recorded op's backup line is its record's backupDest, the whole line.
+    expect(text).toContain(`    backup: ${u.backupDest}\n`)
     expect(text).toContain('manifest entry: pre')
-    // 6a-iii: --apply and --undo are supported; the listing names them without a caveat.
+    // 6a-iii: --apply and --undo are supported; each offered line is its command, ending there.
     expect(text).toContain(`--apply: \`skillsmith doctor recovery --apply ${u.opId}\`\n`)
     expect(text).toContain(`--undo: \`skillsmith doctor recovery --undo ${u.opId}\`\n`)
-    expect(text).not.toContain(`--apply ${u.opId}\` (not available yet)`)
-    expect(text).not.toContain(`--undo ${u.opId}\` (not available yet)`)
     expect(text).toContain('O: kept as backup')
     expect(text).toContain('O: installed')
     // The identities and hashes it compared are printed.
@@ -312,6 +311,8 @@ describe('the doctor command', () => {
       '--json',
       '--apply',
       '--undo',
+      // 6b-iii: --abandon, beside the two it stands in for.
+      '--abandon',
       '--park',
       // 6b-ii: --clean-staging and the flag only it takes.
       '--clean-staging',
@@ -327,6 +328,7 @@ describe('the doctor command', () => {
     for (const f of [
       '--apply <opId>',
       '--undo <opId>',
+      '--abandon <opId>',
       '--park <opId>',
       '--clean-staging <opId>',
       '--unsafe-unverified-owner',

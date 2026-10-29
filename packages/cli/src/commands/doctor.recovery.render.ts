@@ -9,6 +9,7 @@
  * unreadable records and the leftover probes.
  * @module @skillsmith/cli/commands/doctor.recovery.render
  */
+import path from 'node:path'
 import type {
   ActionPlan,
   Discovery,
@@ -17,7 +18,7 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
-import { GUARD_WORD, MOVE_SOURCE_NO_RECORD_ORIGIN, PERFORMED, planAction } from '@skillsmith/core'
+import { GUARD_WORD, MOVE_SOURCE_NO_RECORD_ORIGIN, planAction } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
@@ -64,11 +65,15 @@ function factsLines(f: OpFacts): string[] {
   }
   lines.push(
     `    manifest entry: ${f.manifest ?? `unreadable (${f.manifestRefusal})`}`,
-    `    backup: ${f.record.backupDest}`
+    // The area the classifier reads this op dir's keeps from (core's `facts.area`): the record's own
+    // for a recorded op, where this is `record.backupDest`; the scanned root's for a moved one (6b-iii).
+    `    backup: ${path.join(f.area, f.opId)}`
   )
   for (const g of f.groups) {
     lines.push(
-      `    keep ${g.base}: ${g.state ?? `not classified (${g.unclassified})`}${g.verified ? ', verified' : ''}`
+      g.otherCopy
+        ? `    keep ${g.base}: another copy's keep (an abandon of another op dir with this id); not this op's`
+        : `    keep ${g.base}: ${g.state ?? `not classified (${g.unclassified})`}${g.verified ? ', verified' : ''}`
     )
   }
   if (f.fullDevice !== null) {
@@ -167,10 +172,8 @@ function noteOf(cls: RecoveryClass): string[] {
 function planLines(p: ActionPlan, opId: string): string[] {
   const flag = `--${p.action}`
   if (!p.offered) return [`    ${flag}: not offered (${p.reason}): ${p.detail}`]
-  // `--apply`, `--undo` (6a-iii), `--park` (6b-i) and `--clean-staging` (6b-ii) are supported; `--abandon` is 6b-iii's.
-  // Core's own set, read at call time (not module load); the listing marks the others `(not available yet)`.
-  const later = PERFORMED.has(p.action) ? '' : ' (not available yet)'
-  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\`${later}`]
+  // Every action is supported (6a-iii, 6b-i, 6b-ii, 6b-iii): an offered plan names its command.
+  const lines = [`    ${flag}: \`skillsmith doctor recovery ${flag} ${opId}\``]
   for (const s of p.steps) {
     const d = s.disposition
     lines.push(`      ${s.tree}: ${d.kind === 'kept' ? `kept as ${d.as}` : d.kind}; ${s.note}`)
@@ -200,6 +203,12 @@ function opLines(op: OpReport): string[] {
     // 6b-ii: a no-record op dir says why --clean-staging is not offered (the owner, an entry, the intent).
     const clean = op.plans.find((p) => p.action === 'clean-staging')
     if (op.cls.kind === 'no-record' && clean !== undefined) lines.push(...planLines(clean, op.opId))
+    // An op dir holding a stray entry (2026-10-28): the actions that would act say why, naming it
+    // (a row's --apply and --undo; --abandon for the classes only it acts on).
+    if (f !== null && f.strays.length > 0) {
+      const named = op.cls.kind === 'state' ? ['apply', 'undo'] : ['abandon']
+      for (const p of op.plans) if (named.includes(p.action)) lines.push(...planLines(p, op.opId))
+    }
   } else {
     for (const p of offered) lines.push(...planLines(p, op.opId))
     for (const p of op.plans) {

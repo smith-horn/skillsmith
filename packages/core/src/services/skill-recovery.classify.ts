@@ -7,7 +7,9 @@
  *
  *  - without a verified record: `empty-op-dir`, `no-record`, `unreadable`
  *    (including `inconsistent-record`), `other-user`, or `moved` (a record that
- *    verifies but belongs to another root or op dir);
+ *    verifies but belongs to another root or op dir; since 6b-iii it is
+ *    checked for consistency and carries the facts `--abandon` acts on, or is
+ *    `ab` once its abandon began);
  *  - with one: `identity-changed`, `ab` (an abandon began), a §3.3 row (`S0`,
  *    `S1`, `S2`, `S2'`, `S2x`, `S3`, `UN1`, `UN2`, each with its post-keep
  *    form) matched on **logical roles**, or `anything-else`.
@@ -25,13 +27,21 @@
  */
 import path from 'node:path'
 import { canonicalJson } from './skill-recovery.digest.js'
+import { inconsistency, movedOf, stateRealOf } from './skill-recovery.consistency.js'
+import type { MovedVerdict } from './skill-recovery.consistency.js'
 import { noRecord } from './skill-recovery.norecord.js'
 import { observeUnreadable, OWNER_CAP } from './skill-recovery.observe.js'
 import { analyzeParkIntent } from './skill-recovery.opdir.js'
-import { expectOfRecord, observeGroups, ROLE_DIR, STARTED_STATES } from './skill-recovery.pstate.js'
+import {
+  expectOfMoved,
+  expectOfRecord,
+  observeGroups,
+  ROLE_DIR,
+  STARTED_STATES,
+} from './skill-recovery.pstate.js'
 import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
-import { observeTree, sameId, sourceCheck, tStateOf } from './skill-recovery.trees.js'
+import { observeTree, sourceCheck, tStateOf } from './skill-recovery.trees.js'
 import type {
   KeepGroup,
   OpFacts,
@@ -47,8 +57,8 @@ import type {
 } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
-import { OWNER_FILE, RECORD_FILE } from './skill-swap.types.js'
-import type { SwapRecord } from './skill-swap.types.js'
+import { OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
+import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 import type { EntryState } from './skill-manifest.entry.js'
 
 export interface ClassifyContext {
@@ -76,45 +86,15 @@ export interface ClassifyContext {
 
 const DENIED = new Set(['EACCES', 'EPERM'])
 
-/** One path component: not empty, not `.`/`..`, no separator or NUL. */
-const oneComponent = (s: string): boolean =>
-  s !== '' && s !== '.' && s !== '..' && !s.includes('/') && !s.includes('\\') && !s.includes('\0')
-
-/** `record.json` is internally consistent (plan §3.3 `inconsistent-record`); the reason, or null. */
-function inconsistency(r: ClassifierReader, root: string, rec: SwapRecord): string | null {
-  const t = rec.target
-  if (rec.op !== 'update') return `its op is ${JSON.stringify(rec.op)}, not "update"`
-  for (const [name, v] of [
-    ['client', t.client],
-    ['scope', t.scope],
-    ['dirName', t.dirName],
-  ] as const) {
-    if (!oneComponent(v)) return `${name} ${JSON.stringify(v)} is not a single path component`
-  }
-  if (t.dirName !== path.basename(t.comparedPath)) return 'dirName is not the name of comparedPath'
-  if (!path.isAbsolute(t.manifestPath) || path.basename(t.manifestPath) !== 'manifest.json') {
-    return 'manifestPath is not an absolute path to a manifest.json'
-  }
-  if (path.dirname(t.realDir) !== root) return 'realDir is not directly inside the skills root'
-  const stateDir = path.dirname(t.manifestPath)
-  const real = r.realpath(stateDir)
-  const stateReal = real.ok ? real.path : path.resolve(stateDir)
-  const area = backupAreaPath(stateReal, t.client, root, t.dirName)
-  if (rec.backupDest !== path.join(area, rec.opId)) {
-    return 'backupDest is not the backup area the update computes for it, plus its opId'
-  }
-  if (
-    !r.portAccepts({
-      manifestPath: t.manifestPath,
-      manifestKey: t.manifestKey,
-      preEntry: rec.preEntry,
-      postEntry: rec.postEntry,
-    }).ok
-  ) {
-    return 'the manifest port rejects its preEntry and postEntry'
-  }
-  return null
-}
+/** What a recorded op dir may hold: the role trees and the metadata files its finish adopts. */
+const OP_ENTRIES: ReadonlySet<string> = new Set([
+  ...Object.values(ROLE_DIR),
+  RECORD_FILE,
+  `${RECORD_FILE}.tmp`,
+  OWNER_FILE,
+  PARK_INTENT_FILE,
+  `${PARK_INTENT_FILE}.tmp`,
+])
 
 /** A `record.json.tmp` beside the record: its inode, marker and body, as facts. */
 function analyzeRecordTmp(
@@ -163,7 +143,9 @@ function resolveRoles(
   opDir: string,
   rec: SwapRecord,
   groups: readonly KeepGroup[],
-  acceptIdentity: boolean
+  acceptIdentity: boolean,
+  /** False for a moved op (6b-iii): its trees are kept as they are, so no role identity is checked. */
+  checkSources = true
 ): RoleResolution {
   const conflicts: string[] = []
   const changed: TreePosition[] = []
@@ -171,7 +153,7 @@ function resolveRoles(
     const obs = observeTree(r, path.join(opDir, ROLE_DIR[role]))
     const keeps = groups.filter((g) => g.role === role && g.verified)
     if (obs.present) {
-      const chk = sourceCheck(role, obs, rec, acceptIdentity)
+      const chk = checkSources ? sourceCheck(role, obs, rec, acceptIdentity) : 'ok'
       if (chk === 'not-directory') conflicts.push(`${role} is not a directory`)
       else if (chk === 'foreign') conflicts.push(`${role} has neither its identity nor its hash`)
       else if (chk === 'identity-changed') changed.push(role)
@@ -229,18 +211,42 @@ function matchRow(
   return null
 }
 
-/** A verified record: observe everything, then match a row. */
+/** What a verified record's classification starts from. */
+interface Verified {
+  opId: string
+  opDir: string
+  rec: SwapRecord
+  names: readonly string[]
+  /** OP's identity, from its `lstat`. */
+  opIdentity: RecordIdentity
+  /**
+   * 6b-iii: the record belongs to another root or op dir. Its trees are then
+   * observed in this root as they are (no role identity check), its keeps in
+   * the scanned root's area (`rootKey` over R, PLAN:1069) with the op dir's
+   * own name, and its intent is the op dir's own: `--abandon` acts on it.
+   */
+  moved: MovedVerdict | null
+}
+
+/** A verified record: observe everything, then match a row (or, moved, say so with the facts). */
 async function classifyRecorded(
   r: ClassifierReader,
   ctx: ClassifyContext,
-  opId: string,
-  opDir: string,
-  rec: SwapRecord,
-  names: readonly string[]
+  v: Verified
 ): Promise<RecoveryClass> {
+  const { opId, opDir, rec, names, moved } = v
   const accept = ctx.acceptIdentity === true
-  const tPath = rec.target.realDir
-  const area = path.dirname(rec.backupDest)
+  const tPath = moved === null ? rec.target.realDir : path.join(ctx.root, rec.target.dirName)
+  const area =
+    moved === null
+      ? path.dirname(rec.backupDest)
+      : backupAreaPath(stateRealOf(r, rec), rec.target.client, ctx.root, rec.target.dirName)
+  const expect = moved === null ? expectOfRecord(rec) : expectOfMoved(rec, ctx.root)
+  // The op dir the intent must name: the record's, or (moved) this op dir as it is now.
+  const intentOp =
+    moved === null
+      ? { opId: rec.opId, opIdentity: rec.opDirIdentity }
+      : { opId, opIdentity: v.opIdentity }
   const entry = await r.manifestEntry(
     rec.target.manifestPath,
     rec.target.manifestKey,
@@ -248,8 +254,8 @@ async function classifyRecorded(
     rec.postEntry
   )
   const t: TreeObs = observeTree(r, tPath)
-  const view = observeGroups(r, { opDir, opId, area, expect: expectOfRecord(rec) })
-  const resolved = resolveRoles(r, opDir, rec, view.groups, accept)
+  const view = observeGroups(r, { opDir, opId, area, expect, opIdentity: v.opIdentity })
+  const resolved = resolveRoles(r, opDir, rec, view.groups, accept, moved === null)
   const tmpRead = analyzeRecordTmp(r, opDir, names, rec)
   // `owner.json` is a metadata file doctor unlinks: read through the reader so
   // its identity and bytes are in the digest, which is what adoption checks.
@@ -270,14 +276,28 @@ async function classifyRecorded(
     roles: resolved.roles,
     groups: view.groups,
     area,
+    moved: moved?.why ?? null,
+    opIdentity: v.opIdentity,
+    hasOwnerFile: names.includes(OWNER_FILE),
+    strays: names.filter((n) => !OP_ENTRIES.has(n)).sort(),
     journal: journal.ok ? journal : null,
     otherUid: rec.uid !== ctx.euid ? rec.uid : null,
-    fullDevice: rec.fullDevice ?? null,
+    // A moved op's marker names the record's own area; it is followed only when that is this one.
+    fullDevice: moved === null || rec.fullDevice?.area === area ? (rec.fullDevice ?? null) : null,
     recordTmp,
     nHashesToPost: nSource === null ? null : nSource.hash === rec.postTree,
-    ...analyzeParkIntent(r, opDir, names, rec),
+    ...analyzeParkIntent(r, opDir, names, intentOp),
   }
   const base = { opId, opDir }
+  // O4: only this op dir's own abandon makes AB, never another copy's keeps.
+  const abandoned = view.groups
+    .filter((g) => !g.otherCopy && g.kind.startsWith('abandoned-'))
+    .map((g) => g.base)
+  if (moved !== null) {
+    // Only `--abandon` acts on it; its plan refuses any entry it cannot act on.
+    if (abandoned.length > 0) return { kind: 'ab', ...base, facts, abandoned }
+    return { kind: 'moved', ...base, ...moved, otherUid: facts.otherUid, facts }
+  }
   const elseWith = (reason: string): RecoveryClass => ({
     kind: 'anything-else',
     ...base,
@@ -321,7 +341,6 @@ async function classifyRecorded(
   if (cp.ok && t.present && cp.path !== tPath) {
     return elseWith(`comparedPath now resolves to ${cp.path}, not ${tPath}`)
   }
-  const abandoned = view.groups.filter((g) => g.kind.startsWith('abandoned-')).map((g) => g.base)
   if (abandoned.length > 0) return { kind: 'ab', ...base, facts, abandoned }
   const unclassified = view.groups.find((g) => g.unclassified !== null)
   if (unclassified !== undefined) {
@@ -412,29 +431,11 @@ async function classifyListed(
   if (!parsed.ok) return unreadable(parsed.why)
   const rec = parsed.record
 
-  // A record that verifies but belongs elsewhere is `moved`: only its owner root or op dir can finish it.
-  const moved = (
-    why: 'foreign-root' | 'foreign-op-dir' | 'root-identity' | 'op-dir-identity',
-    detail: string
-  ): RecoveryClass => ({
-    kind: 'moved',
-    ...base,
-    why,
-    detail,
-    otherUid: rec.uid !== ctx.euid ? rec.uid : null,
-  })
-  if (rec.opId !== opId) return moved('foreign-op-dir', `the record names operation ${rec.opId}`)
-  if (rec.target.skillsDir !== ctx.root) {
-    return moved('foreign-root', `the record names the skills root ${rec.target.skillsDir}`)
-  }
-  const rootNow = r.stat(ctx.root)
-  if (!rootNow.ok || !sameId(rec.rootIdentity, rootNow.identity)) {
-    return moved('root-identity', 'the skills root is not the one the record was written for')
-  }
-  if (!sameId(rec.opDirIdentity, dir.identity)) {
-    return moved('op-dir-identity', 'the op dir is not the one the record was written for')
-  }
-  const why = inconsistency(r, ctx.root, rec)
+  // A record that verifies but belongs elsewhere is `moved`: only its owner root or op
+  // dir could finish it, so here only `--abandon` acts on it (6b-iii), from facts it observes.
+  const moved = movedOf(r, ctx.root, opId, rec, dir.identity)
+  // The consistency checks need no root of the scan, so a moved record gets them too.
+  const why = inconsistency(r, rec)
   if (why !== null) return unreadable('inconsistent-record', { detail: why })
-  return classifyRecorded(r, ctx, opId, opDir, rec, names)
+  return classifyRecorded(r, ctx, { opId, opDir, rec, names, opIdentity: dir.identity, moved })
 }

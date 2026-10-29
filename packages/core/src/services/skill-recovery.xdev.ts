@@ -67,6 +67,12 @@ export interface AcrossKeep {
   marker: FullDeviceMarker | null
   /** Where each `partial-copy` this resume keeps is recorded. */
   partials: string[]
+  /**
+   * A `partial-copy` keep of this group's copy temp killed after its sidecar
+   * and before the rename (`KeepGroup.pendingTemp`): its `dest`, which the
+   * resume finishes by the rename instead of keeping the temp a second time.
+   */
+  pending: string | null
 }
 
 /** The sidecar `moveAcross` carries: the source's, with the tree hash `<dest>.json` holds. */
@@ -150,8 +156,15 @@ export async function resumeCopyTemp(st: SwapState, k: AcrossKeep): Promise<stri
   const id = boundSource(k.src, k.named)
   const th = treeHashOf(temp)
   const sh = treeHashOf(k.src)
-  if (th.ok && sh.ok && th.hash === sh.hash) return finishCopy(st, k, temp, id, sh)
-  await keepPartial(st, k, temp, tempId, th, sh)
+  if (k.pending !== null) {
+    // This temp's partial-copy keep was killed after its sidecar: it is that keep's tree,
+    // whatever it hashes to, so its rename is finished first; then the copy starts again.
+    await finishPendingPartial(st, temp, tempId, k.pending, k.partials)
+  } else if (th.ok && sh.ok && th.hash === sh.hash) {
+    return finishCopy(st, k, temp, id, sh)
+  } else {
+    await keepPartial(st, k, temp, tempId, th, sh)
+  }
   await hook(st, 'afterPartialKeep')
   await moveAcross(st, {
     src: k.src,
@@ -218,6 +231,18 @@ async function keepPartial(
       : th.ok
         ? 'mismatch'
         : 'copy-failed'
+  await keepTempAsPartial(st, temp, tempId, th, { sourceUnchanged, partialCause }, k)
+}
+
+/** Keeps `temp` as `partial-copy`: its own sidecar first, then a rename within the area, then the area synced. */
+async function keepTempAsPartial(
+  st: SwapState,
+  temp: string,
+  tempId: BoundIdentity,
+  th: TreeHashResult,
+  why: Pick<Sidecar, 'sourceUnchanged' | 'partialCause'>,
+  k: Pick<AcrossKeep, 'partials'> & { group: Pick<KeepGroup, 'destPath'> }
+): Promise<void> {
   const progress: MoveProgress = { stage: 'partial-keep' }
   try {
     const dest = await destFor(st, 'partial-copy')
@@ -226,15 +251,76 @@ async function keepPartial(
     if (!now.ok || !sameIdentity(tempId, now)) {
       throw new SwapFault('backup-unsafe', `${temp} changed before it was kept; left untouched`)
     }
-    await writeSidecar(
-      st,
-      dest,
-      sidecarOf(st, 'partial-copy', th, now, { sourceUnchanged, partialCause })
-    )
+    await writeSidecar(st, dest, sidecarOf(st, 'partial-copy', th, now, why))
     await renameChecked(st, temp, dest)
     await syncDir(st, st.areaPath)
     k.partials.push(dest)
   } catch (err) {
     throw await markIfFullDevice(st, err, k.group.destPath, progress)
   }
+}
+
+/**
+ * The rest of a `partial-copy` keep killed after its sidecar was published
+ * (`KeepGroup.pendingTemp`). It makes its own fresh check that the temp is
+ * still the tree the plan saw: it binds the temp now and compares that with
+ * `tempId` (the plan's identity, which the classifier matched to the
+ * sidecar's), and it requires `dest` to be free; then the rename and the area
+ * sync. Nothing is written a second time.
+ */
+export async function finishPendingPartial(
+  st: SwapState,
+  temp: string,
+  tempId: BoundIdentity,
+  dest: string,
+  partials: string[]
+): Promise<string> {
+  check(st)
+  const now = bindIdentity(temp)
+  if (!now.ok || !sameIdentity(tempId, now)) {
+    throw new SwapFault('backup-unsafe', `${temp} changed before it was kept; left untouched`)
+  }
+  if (await present(dest)) {
+    throw new SwapFault('backup-unsafe', `${dest} already exists; it was left untouched`)
+  }
+  await renameChecked(st, temp, dest)
+  await syncDir(st, st.areaPath)
+  partials.push(dest)
+  return dest
+}
+
+/**
+ * 6b-iii (`--abandon`): a copy temp of this op with no sidecar (an orphan, a
+ * copy that never published) is kept as `partial-copy`, never removed: its
+ * own identity and hash in its sidecar, `sourceUnchanged` false (there is no
+ * sidecar to compare a source with) and `partialCause` `copy-failed`. The
+ * temp must still be the one the plan observed. Returns where it was kept.
+ * The area must be bound first.
+ */
+export async function keepOrphanCopyTemp(
+  st: SwapState,
+  group: KeepGroup,
+  partials: string[],
+  /** Its `partial-copy` sidecar is already published here (`pendingTemp`): only the rename is left. */
+  pendingDest: string | null = null
+): Promise<string> {
+  const temp = path.join(st.areaPath, `.tmp-${group.base}`)
+  const planned = group.copyTmp.present ? group.copyTmp.identity : null
+  if (planned === null) {
+    throw new SwapFault('backup-unsafe', `${temp} was not observed by the plan; left untouched`)
+  }
+  // The pending finish checks the temp against the plan's identity itself (the sidecar's).
+  if (pendingDest !== null) {
+    return finishPendingPartial(st, temp, boundOf(planned), pendingDest, partials)
+  }
+  const tempId = bindIdentity(temp)
+  if (!tempId.ok || !sameIdentity(boundOf(planned), tempId)) {
+    throw new SwapFault(
+      'backup-unsafe',
+      `${temp} is not the copy temp the plan observed; it was left untouched`
+    )
+  }
+  const why = { sourceUnchanged: false, partialCause: 'copy-failed' } as const
+  await keepTempAsPartial(st, temp, tempId, treeHashOf(temp), why, { partials, group })
+  return partials[partials.length - 1]!
 }

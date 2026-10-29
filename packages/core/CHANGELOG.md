@@ -4,14 +4,44 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6b-iii: `--abandon` is performed, for a verified record no
+  normal recovery action can act on: a moved operation (another root or folder, or a copy),
+  one whose trees are the right content in the wrong folders, one whose abandon began (AB),
+  "anything else" with a record, and the post-keep S2′ row, the one row it is offered in. Every
+  other row refuses it and names the action that runs there. It keeps each of `old/`, `new/`
+  and `undone/` still in the folder through `publishTree` as `abandoned-old`,
+  `abandoned-new` or `abandoned-undone` (a keep that had started resumes with its own kind), and
+  each copy temp of the operation with no sidecar as `partial-copy`, into the backup area of the
+  root being scanned, named with the folder's own name; each `abandoned-*` sidecar records the
+  folder's identity (`opDirIdentity`), so a copy's abandon in the same area never makes the
+  original look abandoned. Then only metadata goes, `record.json` last, and the folder is
+  `rmdir`ed, or across devices parked whole behind a `move-source` intent naming the folder
+  itself, which `--abandon`, `--apply` and `--undo` finish after a kill. The space block and the
+  park-intent precheck run before any change, as for `--apply` and `--undo`. A moved record is
+  now checked for consistency (else it is unreadable, for `--park`) and carries the facts the
+  plan reads. The `abandoned-*` kinds are kept even when a tree cannot be hashed. The plans of
+  `--apply`, `--undo` and `--abandon` now state their finish step for step, every metadata file
+  and sync by name, both finishes while a source is still to be kept. An op dir holding an
+  entry that is neither a role's tree nor a metadata file doctor adopts (a `.DS_Store`) is now
+  refused at plan time by `--abandon`, `--apply` and `--undo`, naming it, with nothing changed
+  (`OpFacts.strays`); before, the run kept trees and then stopped `op-not-empty` on every rerun.
+  `--abandon` likewise refuses a sidecar temp it would have to unlink but cannot prove is the
+  operation's (a P0 temp, or a started R1 or R2), and checks every source's identity before
+  its first change. A copy temp's `partial-copy` keep killed after its sidecar and before the
+  rename (`KeepGroup.pendingTemp`) is now finished by the resume (`--abandon`, `--apply` or
+  `--undo`) with that rename, instead of leaving a sidecar with no tree that no action could
+  pass. Only a one-to-one pair is finished: when several sidecars name one copy temp, or one
+  names several, every action refuses before any change, naming the ambiguity.
+- **Removed (internal, unreleased)**: SMI-6531 -- `PERFORMED` is gone: every recovery action is
+  performed, so the set equalled `RECOVERY_ACTIONS`.
 - **Fixed**: SMI-7205 -- a state root deep enough that a park intent passed 4096 bytes no longer
   strands an operation. The cap on `park-intent.json` (`INTENT_CAP`, shared by the writer and
   doctor's reader) is now 64 KiB, as the sidecar's: a path cannot exceed about 4 KiB, and even
   its worst JSON escaping is about 24 KiB, so every real intent fits. `--apply` and `--undo`
   finish a recorded operation, and `--clean-staging` an unrecorded one, under any state root
-  instead of refusing `staging-unsafe`. The update's, abort cleanup's and
-  doctor's up-front prechecks are unchanged; they now size against the new cap, and their
-  refusal names it. No released version reads a park intent.
+  instead of refusing `staging-unsafe`. The update's, abort cleanup's and doctor's up-front
+  prechecks are unchanged; they now size against the new cap, and their refusal names it, so
+  no real path reaches that refusal any more. No released version reads a park intent.
 - **Changed**: SMI-6531 -- #3204 retro: the internal `nearestDevice` helper is private to
   `skill-recovery.mark.ts` again (it was never a package export), and the recovery modules'
   comments now describe the park-intent precheck as running on any device. No behaviour change.
@@ -54,7 +84,7 @@ All notable changes to `@skillsmith/core` are documented here.
   `--undo`, none (the record fixes the backup area). `swapInPlace` runs it before it makes
   its operation folder, on any device, for both intents an update could write (its step-13
   `move-source` and abort cleanup's `abort-new`): an update whose state root is too deep is
-  refused `staging-unsafe`, `staged: 'none'`, "the update was not started", with no
+  refused `staging-unsafe` (since SMI-7205's 64 KiB cap, no real path reaches this), `staged: 'none'`, "the update was not started", with no
   operation folder, record, backup or manifest change. It cannot wait to learn whether the
   backup crosses devices: that is known only from `EXDEV`, after the commit. The update's
   process owner is read once, so `owner.json`, `record.json` and the intent name one host. A

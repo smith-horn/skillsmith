@@ -30,12 +30,15 @@ import type { RecordIdentity, SwapHookPoint } from './skill-swap.types.js'
 
 /**
  * A kept tree's kind (plan §3.5): 4a's three, abort cleanup's three (4b),
- * `partial-copy` (4c: a cross-device copy temp that did not verify), and
+ * `partial-copy` (4c: a cross-device copy temp that did not verify),
  * `unused-new` (6a-ii: doctor's keep of a staged tree no one installed, which
- * still hashes to `postTree`).
- * `failed-build`, `unrecorded-new` and `partial-copy` are kept even when the
- * tree cannot be hashed (the sidecar's `treeHash` is then null, with
- * `treeHashError`). Every other kind needs the hash.
+ * still hashes to `postTree`), and the three `abandoned-*` (6b-iii:
+ * `doctor recovery --abandon` setting aside O, N and U).
+ * `failed-build`, `unrecorded-new`, `partial-copy` and the `abandoned-*` kinds
+ * are kept even when the tree cannot be hashed (the sidecar's `treeHash` is
+ * then null, with `treeHashError`; `HASH_OPTIONAL` in `skill-swap.publish.ts`,
+ * and a `partial-copy` is kept by doctor's resume, not `publishTree`). Every
+ * other kind needs the hash.
  */
 export type PublishKind =
   | 'backup'
@@ -46,6 +49,9 @@ export type PublishKind =
   | 'unrecorded-new'
   | 'partial-copy'
   | 'unused-new'
+  | 'abandoned-old'
+  | 'abandoned-new'
+  | 'abandoned-undone'
 
 /** A sidecar, in its fixed key order. */
 export interface Sidecar {
@@ -70,6 +76,13 @@ export interface Sidecar {
    * `copy-failed` (any other copy error). Nothing blocks on it any more.
    */
   partialCause?: PartialCause
+  /**
+   * `abandoned-*` only (6b-iii, O4): the identity of the op dir whose
+   * `--abandon` kept the tree. The classifier counts an abandon as begun only
+   * from keeps of the op dir it sees now, so a copy's keeps in the same area
+   * never make the original's op look abandoned.
+   */
+  opDirIdentity?: RecordIdentity
 }
 
 export type PartialCause = 'enospc' | 'mismatch' | 'copy-failed'
@@ -97,6 +110,9 @@ export function sidecarOf(
     scope: st.input.scope,
     manifestKey: st.input.manifestKey,
     ...extra,
+    ...(kind.startsWith('abandoned-') && st.op !== null
+      ? { opDirIdentity: recordIdentity(st.op.identity) }
+      : {}),
   }
 }
 

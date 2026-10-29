@@ -32,7 +32,8 @@
  * `FREE_SPACE_REMEDY`, free space by hand (`spaceBlock`; the prune command is
  * not available yet). On any device, before the first mutation, a kept tree
  * whose park intent the reader would refuse (and no intent is reused) refuses
- * `staging-unsafe` (`intentBlock`, `RECORDED_STATE_ROOT_NOTE`). A keep's verified
+ * `staging-unsafe` (`intentBlock`, `RECORDED_STATE_ROOT_NOTE`); both run in
+ * `preMutationBlocks` (`skill-recovery.adopt.ts`), shared with `--abandon`. A keep's verified
  * source stays in OP, and the finish parks OP whole once its metadata is
  * unlinked (`skill-recovery.park.ts`, UD28); a park that does not finish is a
  * `removal-not-done` warning (exit 4, UD32). Doctor's own full-device stop
@@ -41,15 +42,13 @@
  *
  * @module @skillsmith/core/services/skill-recovery.run
  */
-import path from 'node:path'
 import { appendJournalRecordOnce } from '../journal/writer.js'
 import { finishRecovered, sweepRoot } from './skill-recovery.finish.js'
-import { intentBlock, rewriteMarkerAdopted, spaceBlock } from './skill-recovery.mark.js'
+import { adoptAll, adoptInto, listedNames, preMutationBlocks } from './skill-recovery.adopt.js'
 import { finishRecoveredAcross } from './skill-recovery.park.js'
 import { installAt, keepRole } from './skill-recovery.resume.js'
 import type { KeepContext } from './skill-recovery.resume.js'
-import { adoptMetadata, recoveryState, unlinkAdopted } from './skill-recovery.state.js'
-import type { Adopted } from './skill-recovery.state.js'
+import { recoveryState } from './skill-recovery.state.js'
 import type {
   AuditOutcome,
   PlannedRecovery,
@@ -62,11 +61,9 @@ import type { OpFacts, PlanStep, ReadTranscript, RecoveryClass } from './skill-r
 import { commit, journalInput } from './skill-swap.commit.js'
 import { hook, opPaths, rethrowLockOrder, SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
-import { RECORDED_STATE_ROOT_NOTE } from './skill-swap.intent.js'
 import { publishTree } from './skill-swap.publish.js'
 import { describe } from './skill-swap.abort.js'
 import { undoAside } from './skill-swap.undo.js'
-import { OWNER_FILE, RECORD_FILE } from './skill-swap.types.js'
 import type { SkillWriteContext } from './skill-write-lock.types.js'
 
 type RowClass = Extract<RecoveryClass, { kind: 'state' }>
@@ -75,89 +72,6 @@ type RowClass = Extract<RecoveryClass, { kind: 'state' }>
 function kindIn(steps: readonly PlanStep[], tree: PlanStep['tree']): string | null {
   const s = steps.find((x) => x.tree === tree)
   return s !== undefined && s.disposition.kind === 'kept' ? s.disposition.as : null
-}
-
-/**
- * The metadata files finish may unlink: `owner.json`, a provable
- * `record.json.tmp`, a provable `park-intent.json.tmp`, and `record.json`
- * (last); plus a verifying `park-intent.json`, which a cross-device finish
- * reuses (and a one-device one unlinks).
- */
-function adoptAll(
-  f: OpFacts,
-  names: readonly string[],
-  t: ReadTranscript
-): { files: Adopted[]; intent: Adopted | null; tmp: Adopted | null } {
-  const out: Adopted[] = []
-  const at = (n: string): string => path.join(f.opDir, n)
-  if (names.includes(OWNER_FILE)) out.push(adoptMetadata(t, at(OWNER_FILE)))
-  const tmp = f.recordTmp
-  let recordTmp: Adopted | null = null
-  if (tmp !== null) {
-    // A marked temp whose body matches the record is this op's (a marker rewrite that crashed).
-    if (!tmp.sameInode && !tmp.emptySingleLink && !tmp.bodyMatches) {
-      throw new SwapFault('staging-unsafe', `${tmp.path} is not provably this operation's`)
-    }
-    recordTmp = adoptMetadata(t, tmp.path)
-    out.push(recordTmp)
-  }
-  if (f.parkIntentTmp !== null) {
-    if (!f.parkIntentTmp.provable) {
-      throw new SwapFault(
-        'staging-unsafe',
-        `${f.parkIntentTmp.path} is not provably this operation's`
-      )
-    }
-    out.push(adoptMetadata(t, f.parkIntentTmp.path))
-  }
-  let intent: Adopted | null = null
-  if (f.parkIntent !== null) {
-    if (!f.parkIntent.valid) {
-      throw new SwapFault('staging-unsafe', `${f.parkIntent.path} is not this operation's`)
-    }
-    intent = adoptMetadata(t, f.parkIntent.path)
-  }
-  out.push(adoptMetadata(t, at(RECORD_FILE)))
-  return { files: out, intent, tmp: recordTmp }
-}
-
-/**
- * Doctor's seams on the state: the adopted sidecar unlink and its own marker
- * rewrite. Exported for its unit test (the area-path guard).
- * @internal
- */
-export function adoptInto(st: SwapState, t: ReadTranscript, a: ReturnType<typeof adoptAll>): void {
-  adoptSidecarsInto(st, t)
-  const record = a.files[a.files.length - 1]!
-  st.rewriteMarker = (marker) => rewriteMarkerAdopted(st, record, a.tmp, marker)
-}
-
-/**
- * The adopted sidecar unlink alone (6b-ii `--clean-staging` too, which has no
- * record to mark): a sidecar or its temp in this op's area, read whole by the
- * re-plan, may be replaced by a resumed rewrite.
- * @internal
- */
-export function adoptSidecarsInto(st: SwapState, t: ReadTranscript): void {
-  st.unlinkAdopted = async (p, reason) => {
-    // Only a sidecar or its temp in this op's area, read whole by the re-plan.
-    if (path.dirname(p) !== st.areaPath) return false
-    let adopted: Adopted
-    try {
-      adopted = adoptMetadata(t, p)
-    } catch {
-      return false
-    }
-    await unlinkAdopted(st, adopted, reason)
-    return true
-  }
-}
-
-/** The names the re-plan listed in OP. */
-function listedNames(t: ReadTranscript, opDir: string): string[] {
-  const e = t.find((x) => x.method === 'list' && x.key === `${opDir}\0all`)
-  const fact = e?.fact as { ok: boolean; names?: string[] } | undefined
-  return fact?.ok === true && fact.names !== undefined ? fact.names : []
 }
 
 interface Row {
@@ -352,15 +266,9 @@ export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
   try {
     const adopted = adoptAll(f, listedNames(transcript, f.opDir), transcript)
     adoptInto(st, transcript, adopted)
-    // Before the first mutation: a cross-device copy that cannot fit refuses, nothing changed.
-    const full = await spaceBlock(st, f, planned.plan.steps)
-    if (full !== null) return refused('state-root-full', full, planned.opDir)
-    // And a park intent the finish would write that the reader would refuse (none is written when one is reused).
-    const unreadable = adopted.intent === null ? intentBlock(st, f, planned.plan.steps) : null
-    if (unreadable !== null) {
-      const detail = `${unreadable}; nothing was changed; ${RECORDED_STATE_ROOT_NOTE}`
-      return refused('staging-unsafe', detail, planned.opDir)
-    }
+    // Before the first mutation, shared with `--abandon`: the space block, then the intent precheck.
+    const blocked = await preMutationBlocks(st, f, planned.plan.steps, adopted)
+    if (blocked !== null) return refused(blocked.reason, blocked.detail, planned.opDir)
     if ((await runRow(row, action)) === 'plan-changed') {
       return refused(
         'plan-changed',

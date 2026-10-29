@@ -33,7 +33,7 @@ import { KIND_ROLE } from './skill-recovery.pstate.js'
 import { backupAreaPath, rootKeyOf } from './skill-swap.area.js'
 import { intentCap, intentValueOf, isParkIntentFor } from './skill-swap.intent-schema.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
-import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
+import type { RecordIdentity } from './skill-swap.types.js'
 
 /** A leftover clock-gate probe in ST. */
 export interface ProbeFact {
@@ -81,34 +81,46 @@ function readIntent(r: ClassifierReader, p: string): unknown {
   return read.fact.ok ? intentValueOf(read.bytes) : null
 }
 
+/** The op dir an intent must name: its opId and identity. */
+export interface IntentOwnerOp {
+  opId: string
+  opIdentity: RecordIdentity
+}
+
 /** One read of an intent file: whether it is this op's `move-source` intent, and whether it is empty. */
-function intentFile(r: ClassifierReader, p: string, rec: SwapRecord) {
+function intentFile(r: ClassifierReader, p: string, op: IntentOwnerOp) {
   const read = r.readFile(p, intentCap())
   const st = r.stat(p)
   const value = read.fact.ok ? intentValueOf(read.bytes) : null
   const valid =
-    isParkIntentFor(value, rec.opId, rec.opDirIdentity) &&
+    isParkIntentFor(value, op.opId, op.opIdentity) &&
     (value as { kind: string }).kind === 'move-source'
   const empty =
     st.ok && st.type === 'file' && st.nlink === 1 && read.fact.ok && read.fact.size === 0
   return { valid, empty }
 }
 
-/** `park-intent.json` and its temp beside a record (6a-iii: a cross-device finish that stopped). */
+/**
+ * `park-intent.json` and its temp beside a record (6a-iii: a cross-device
+ * finish that stopped). `op` is the op dir the intent must name: a recorded
+ * op's `record.opId` and `record.opDirIdentity`; a moved op's (6b-iii) own
+ * name and the identity it has now, which is what `--abandon` writes into its
+ * intent (a moved op's record names another op dir or identity).
+ */
 export function analyzeParkIntent(
   r: ClassifierReader,
   opDir: string,
   names: readonly string[],
-  rec: SwapRecord
+  op: IntentOwnerOp
 ): Pick<OpFacts, 'parkIntent' | 'parkIntentTmp'> {
   const at = (n: string) => path.join(opDir, n)
   const intent = names.includes(PARK_INTENT_FILE)
-    ? { path: at(PARK_INTENT_FILE), valid: intentFile(r, at(PARK_INTENT_FILE), rec).valid }
+    ? { path: at(PARK_INTENT_FILE), valid: intentFile(r, at(PARK_INTENT_FILE), op).valid }
     : null
   const tmpName = `${PARK_INTENT_FILE}.tmp`
   let tmp: OpFacts['parkIntentTmp'] = null
   if (names.includes(tmpName)) {
-    const f = intentFile(r, at(tmpName), rec)
+    const f = intentFile(r, at(tmpName), op)
     tmp = { path: at(tmpName), provable: f.valid || f.empty }
   }
   return { parkIntent: intent, parkIntentTmp: tmp }

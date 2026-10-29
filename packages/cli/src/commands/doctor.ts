@@ -268,7 +268,7 @@ export function createDoctorCommand(): Command {
   doctor
     .command('recovery')
     .description(
-      'List what a crashed update left in each skills root; finish or undo one with --apply or --undo, set an unreadable one aside with --park, or clean one with no record with --clean-staging'
+      'List what a crashed update left in each skills root; finish or undo one with --apply or --undo, set aside one neither can act on with --abandon, set an unreadable one aside with --park, or clean one with no record with --clean-staging'
     )
     .option('--root <dir>', 'Also scan this skills root (repeatable)', collectRoot, [] as string[])
     .option('--state-root <dir>', 'State root to read instead of the discovered ones')
@@ -276,6 +276,11 @@ export function createDoctorCommand(): Command {
     // SMI-6531 6a-iii: the supported endpoint, on one device and across devices.
     .option('--apply <opId>', 'Finish an unfinished update (shows the plan, then asks)')
     .option('--undo <opId>', 'Undo an unfinished update (shows the plan, then asks)')
+    // SMI-6531 6b-iii: a verified op --apply and --undo can't act on; its trees are kept, never removed.
+    .option(
+      '--abandon <opId>',
+      "Keep the trees of an update --apply and --undo can't act on, then remove (or, across devices, set aside) its op dir (shows the plan, then asks)"
+    )
     // SMI-6531 6b-i: the only remedy for a record that cannot be read, which blocks the whole root.
     .option(
       '--park <opId>',
@@ -296,11 +301,12 @@ export function createDoctorCommand(): Command {
     )
     .option(
       '--yes',
-      'With --apply, --undo, --park or --clean-staging: proceed without the prompt (waives no check)'
+      'With --apply, --undo, --abandon, --park or --clean-staging: proceed without the prompt (waives no check)'
     )
     .action((opts: RecoveryActionOptions & DoctorRecoveryOptions) =>
       opts.apply !== undefined ||
       opts.undo !== undefined ||
+      opts.abandon !== undefined ||
       opts.park !== undefined ||
       opts.cleanStaging !== undefined ||
       opts.unsafeUnverifiedOwner === true

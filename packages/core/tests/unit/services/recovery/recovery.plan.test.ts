@@ -21,6 +21,7 @@ import type {
   ActionPlan,
   RecoveryAction,
   RecoveryClass,
+  RowState,
 } from '../../../../src/services/skill-recovery.types.js'
 import { computeRecordSha256 } from '../../../../src/services/skill-swap.js'
 import type { SwapRecord } from '../../../../src/services/skill-swap.js'
@@ -37,6 +38,8 @@ import {
   writeEntry,
   writeJournalLine,
 } from './recovery.helpers.js'
+import type { State } from './recovery.helpers.js'
+import { renamedOp } from './recovery.abandon.helpers.js'
 
 useTmpCleanup()
 
@@ -105,10 +108,8 @@ describe('the invariant: installed, kept or untouched, and nothing else', () => 
       return st
     })
     classes.push(['empty', { kind: 'empty-op-dir', opId: 'x', opDir: '/x' }])
-    classes.push([
-      'moved',
-      { kind: 'moved', opId: 'x', opDir: '/x', why: 'foreign-root', detail: 'd', otherUid: null },
-    ])
+    // 6b-iii: a moved op carries facts, so it is built from a real crash (its op dir renamed).
+    await add('moved', async () => renamedOp(await s2(file())))
     classes.push([
       'other-user',
       { kind: 'other-user', opId: 'x', opDir: '/x', ownerUid: 7, errno: 'EACCES' },
@@ -353,13 +354,23 @@ describe('the post-keep rows resume only what is left', () => {
     const b = await s0(file())
     keepTree(b, 'new', 'unused-new')
     const bRemaining = offered(planAction((await opReport(b)).cls, 'undo')).remaining
-    expect(bRemaining).toHaveLength(1)
-    expect(bRemaining[0]).toContain('unlink the metadata files')
+    // 6b-iii: nothing is left to keep, so only `finishRecovered` is stated, as it runs:
+    // each metadata file by name, every sync, the record last (`skill-recovery.plan.finish.ts`).
+    const oneDevice = [
+      'unlink owner.json',
+      'sync the op dir',
+      'unlink record.json',
+      'sync the op dir',
+      'rmdir the emptied op dir',
+      'sync the staging dir',
+    ]
+    expect(fs.readdirSync(b.opDir).sort()).toEqual(['owner.json', 'record.json'])
+    expect(bRemaining).toEqual(oneDevice)
 
     const c = await un2(file())
     keepTree(c, 'undone', 'undone')
     const cRemaining = offered(planAction((await opReport(c)).cls, 'apply')).remaining
-    expect(cRemaining).toHaveLength(1)
+    expect(cRemaining).toEqual(oneDevice)
   })
 })
 
@@ -377,14 +388,9 @@ describe('what every other class says', () => {
   })
 
   it('moved: only --abandon; identity-changed: --abandon, and --accept-identity names the way out', async () => {
-    const moved: RecoveryClass = {
-      kind: 'moved',
-      opId: 'x',
-      opDir: '/x',
-      why: 'foreign-root',
-      detail: '',
-      otherUid: null,
-    }
+    // A classified fixture with its facts (6b-iii): the op dir renamed, so the record names another.
+    const moved = (await opReport(renamedOp(await s2(file())))).cls
+    expect(moved).toMatchObject({ kind: 'moved', why: 'foreign-op-dir' })
     expect(planAction(moved, 'apply')).toMatchObject({ offered: false, reason: 'recovery-moved' })
     expect(planAction(moved, 'abandon').offered).toBe(true)
     const st = await s2(file())
@@ -525,13 +531,90 @@ describe('what every other class says', () => {
     })
   })
 
-  it('a row refuses --abandon, --clean-staging and --park and names --apply or --undo', async () => {
-    const cls = await classOf(() => s2(file()))
-    for (const action of ['abandon', 'clean-staging', 'park'] as RecoveryAction[]) {
-      const plan = planAction(cls, action)
-      expect(plan).toMatchObject({ offered: false, reason: 'recovery-not-offered' })
-      expect(plan.offered ? '' : plan.detail).toContain('--apply')
+  it('every row but post-keep S2′ refuses --abandon naming the action that runs; post-keep S2′ alone offers it (C1)', async () => {
+    const keepOld = (st: State) => (keepTree(st, 'old', 'backup'), st)
+    const keepNew = (st: State) => (keepTree(st, 'new', 'unused-new'), st)
+    const keepUndone = (st: State) => (keepTree(st, 'undone', 'undone'), st)
+    const primed = async (pk: boolean) => {
+      const fx = file()
+      const st = await s2(fx)
+      if (pk) keepTree(st, 'old', 'backup')
+      writeEntry(fx, { version: '9.9.9' })
+      return st
     }
+    // Every RowState, each with and without its keep where the row has one; a new row fails to compile here.
+    const rows = {
+      S0: [
+        [false, () => s0(file())],
+        [true, async () => keepNew(await s0(file()))],
+      ],
+      S1: [[false, () => s1(file())]],
+      S2: [
+        [false, () => s2(file())],
+        [true, async () => keepOld(await s2(file()))],
+      ],
+      S2prime: [
+        [false, () => primed(false)],
+        [true, () => primed(true)],
+      ],
+      S2x: [
+        [
+          false,
+          async () => {
+            const st = await s2(file())
+            fs.rmSync(st.fx.realDir, { recursive: true })
+            return st
+          },
+        ],
+      ],
+      S3: [
+        [false, () => s3(file())],
+        [true, async () => keepOld(await s3(file()))],
+      ],
+      UN1: [[false, () => un1(file())]],
+      UN2: [
+        [false, () => un2(file())],
+        [true, async () => keepUndone(await un2(file()))],
+      ],
+    } satisfies Record<RowState, Array<[boolean, () => Promise<State>]>>
+    const offeredAbandon: string[] = []
+    let checked = 0
+    for (const [row, cases] of Object.entries(rows)) {
+      for (const [pk, build] of cases) {
+        const cls = (await opReport(await build())).cls
+        expect(cls, `${row} ${pk}`).toMatchObject({ kind: 'state', state: row, postKeep: pk })
+        checked++
+        const abandon = planAction(cls, 'abandon')
+        const runs = (['apply', 'undo'] as const).filter((a) => planAction(cls, a).offered)
+        if (row === 'S2prime' && pk) {
+          expect(abandon.offered, 'post-keep S2′ offers --abandon').toBe(true)
+        }
+        if (row === 'S2prime' && !pk) {
+          // Ordinary S2′ refuses by name and names --undo (the enumerated row, not a computed predicate).
+          expect(abandon).toMatchObject({ offered: false, reason: 'recovery-not-offered' })
+          expect(abandon.offered ? '' : abandon.detail).toContain('--undo')
+        }
+        if (abandon.offered) {
+          offeredAbandon.push(`${row}:${pk}`)
+          expect(abandon.steps.some((s) => s.disposition.kind === 'installed')).toBe(false)
+        } else {
+          expect(abandon.reason).toBe('recovery-not-offered')
+          // It names an action that does run in this row.
+          expect(runs.length).toBeGreaterThan(0)
+          for (const a of runs) expect(abandon.detail).toContain(`--${a}`)
+        }
+        // Never offered where --apply or --undo is.
+        expect(abandon.offered).toBe(runs.length === 0)
+        for (const other of ['clean-staging', 'park'] as RecoveryAction[]) {
+          expect(planAction(cls, other)).toMatchObject({
+            offered: false,
+            reason: 'recovery-not-offered',
+          })
+        }
+      }
+    }
+    expect(checked).toBe(13)
+    expect(offeredAbandon).toEqual(['S2prime:true'])
   })
 })
 

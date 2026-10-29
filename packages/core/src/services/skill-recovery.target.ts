@@ -1,14 +1,13 @@
 /**
- * SMI-6531 (A1 steps 6a-ii, 6b-i, 6b-ii): the lock-free half of every
- * `doctor recovery` action (`--apply`, `--undo`, `--park`, `--clean-staging`,
- * and the targeting of `--abandon`): targeting and the plan shown before the
+ * SMI-6531 (A1 steps 6a-ii, 6b-i, 6b-ii, 6b-iii): the lock-free half of every
+ * `doctor recovery` action (`--apply`, `--undo`, `--park`, `--clean-staging`
+ * and `--abandon`): targeting and the plan shown before the
  * prompt (A1 plan §3.9 "Targeting", confirmation contract item 1). Targeting
  * is shared by all five actions (design Q1): `already-parked` (O3a), the
  * ambiguity rules and `--root`, and the empty-target plan (one `rmdir`).
  * `--park`'s uid refusal (O3b) is the plan table's, so it is here too, before
  * any lock, and so is `--clean-staging`'s owner verdict, planned with the
- * request's `--unsafe-unverified-owner`. `--abandon` on a non-empty op dir is
- * refused here ("not performed by this version yet") until 6b-iii.
+ * request's `--unsafe-unverified-owner`.
  *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
  * write: `listRoot`), finds every op dir named `opId`, and:
@@ -45,7 +44,6 @@ import type {
   RecoveryRequest,
 } from './skill-recovery.run.types.js'
 import { planAction } from './skill-recovery.plan.js'
-import { PERFORMED } from './skill-recovery.plan.actions.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const refusal = (
@@ -207,14 +205,6 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
     ...(request.unsafeUnverifiedOwner === true ? { unsafeUnverifiedOwner: true } : {}),
   })
   if (!plan.offered) return refusal(plan.reason, plan.detail, [op.opDir])
-  if (!PERFORMED.has(request.action)) {
-    // `--abandon` is planned (the listing shows it) but not yet run (6b-iii).
-    return refusal(
-      'recovery-not-offered',
-      `--${request.action} is not performed by this version yet; nothing was changed`,
-      [op.opDir]
-    )
-  }
   return { ...base, plan, emptyTarget: null }
 }
 
