@@ -35,6 +35,73 @@ import type {
   RecoveryRefuseReason,
 } from './skill-recovery.types.js'
 
+/** Every action, in the order the listing shows them (and a refusal's hint names them). */
+export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
+  'apply',
+  'undo',
+  'abandon',
+  'clean-staging',
+  'park',
+]
+
+/** An action `--accept-identity` may be given with. */
+export type IdentityWaivedAction = Extract<RecoveryAction, 'apply' | 'undo'>
+
+/**
+ * The actions `--accept-identity` applies to (A1 plan §3.9: it is given with
+ * `--apply` or `--undo`). The one table both sides read: the CLI refuses the
+ * flag with any other action before discovery, `planRecovery` and
+ * `executeRecovery` refuse such a request (no waiver is made for it), and the
+ * refusal hint's identity clause (`skill-recovery.plan.hint.ts`) names the
+ * flag only for these.
+ */
+export const ACCEPT_IDENTITY_ACTIONS: readonly IdentityWaivedAction[] = ['apply', 'undo']
+
+/** Whether `--accept-identity` applies to `action` (`ACCEPT_IDENTITY_ACTIONS`). */
+export const acceptsIdentity = (action: RecoveryAction): boolean =>
+  (ACCEPT_IDENTITY_ACTIONS as readonly RecoveryAction[]).includes(action)
+
+/** Why `--accept-identity` is refused with `action`, in the words every core refusal of it shares. */
+export function acceptIdentityRefused(action: RecoveryAction): string {
+  const allowed = ACCEPT_IDENTITY_ACTIONS.map((a) => `--${a}`).join(' or ')
+  return `--accept-identity applies only with ${allowed}, not --${action}`
+}
+
+/** The key only this module holds, so no object literal elsewhere is a waiver. */
+const WAIVER: unique symbol = Symbol('IdentityWaiver')
+
+/**
+ * `--accept-identity` as a value the classifier reads: identity is waived and
+ * each present tree must hash to its role's recorded hash. Only
+ * `identityWaiverFor` makes one, and only for an action in
+ * `ACCEPT_IDENTITY_ACTIONS`, so no listing or action outside them can carry
+ * it. It is not exported from the package.
+ */
+export interface IdentityWaiver {
+  readonly action: IdentityWaivedAction
+  readonly [WAIVER]: true
+}
+
+/** The waiver for `action`, or null when `--accept-identity` does not apply to it. */
+export function identityWaiverFor(action: RecoveryAction): IdentityWaiver | null {
+  const taken = ACCEPT_IDENTITY_ACTIONS.find((a) => a === action)
+  return taken === undefined ? null : Object.freeze({ action: taken, [WAIVER]: true as const })
+}
+
+/** Whether `w` is a waiver `identityWaiverFor` made (a forged object without the key is not). */
+export const waives = (w: IdentityWaiver | null | undefined): boolean =>
+  w !== null && w !== undefined && w[WAIVER] === true
+
+/** Why `--clean-staging` or `--park` refuses an op dir whose record verified: what each acts on. */
+const RECORD_VERIFIES: Readonly<Record<'clean-staging' | 'park', string>> = {
+  'clean-staging': 'its record verifies; --clean-staging acts only on an op dir with no record',
+  park: 'its record verifies; --park acts only on an unreadable record',
+}
+
+/** `RECORD_VERIFIES` for `action`, naming only that action (any other: that its record verifies). */
+export const recordVerifies = (action: RecoveryAction): string =>
+  action === 'clean-staging' || action === 'park' ? RECORD_VERIFIES[action] : 'its record verifies'
+
 export const kept = (as: string): Disposition => ({ kind: 'kept', as })
 export const INSTALLED: Disposition = { kind: 'installed' }
 export const UNTOUCHED: Disposition = { kind: 'untouched' }
@@ -135,16 +202,12 @@ export function parkPlan(cls: Unreadable): ActionPlan {
   )
 }
 
-/** What the other actions say of an unreadable record: `--park` when it is offered, else why not. */
-export function parkWord(cls: Unreadable): string {
-  const p = parkPlan(cls)
-  return p.offered ? '--park is offered' : `--park is not offered either (${p.reason}: ${p.detail})`
-}
-
 /**
  * The words for `--clean-staging` and `--park` (and an empty op dir's for
  * every action); null when the class says nothing. `--abandon` is planned
- * before this is reached (`skill-recovery.plan.abandon.ts`).
+ * before this is reached (`skill-recovery.plan.abandon.ts`). No refusal here
+ * names another action: which ones are offered is the hint `planAction` adds
+ * (`skill-recovery.plan.hint.ts`).
  */
 export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionPlan | null {
   switch (cls.kind) {
@@ -152,7 +215,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
       return refuse(
         action,
         'recovery-not-offered',
-        "it holds nothing; any doctor action holding this root's lock removes it with one rmdir"
+        "nothing to act on; the next doctor action holding this root's lock removes it with one rmdir"
       )
     case 'no-record':
       // 6b-ii: `planAction` plans it in `skill-recovery.plan.clean.ts` (C2) and never gets here.
@@ -160,7 +223,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
     case 'unreadable':
       return action === 'park'
         ? parkPlan(cls)
-        : refuse(action, 'recovery-not-offered', `the record cannot be trusted: ${parkWord(cls)}`)
+        : refuse(action, 'recovery-not-offered', 'the record cannot be trusted')
     case 'other-user':
       return refuse(
         action,
@@ -174,14 +237,7 @@ export function sixBActions(cls: RecoveryClass, action: RecoveryAction): ActionP
       return null
     case 'state':
       return action === 'clean-staging' || action === 'park'
-        ? refuse(
-            action,
-            'recovery-not-offered',
-            // The one row `--abandon` is offered in (`rowAbandon`): neither of the others runs there.
-            cls.state === 'S2prime' && cls.postKeep
-              ? 'offered here: --abandon'
-              : 'offered here: --apply or --undo'
-          )
+        ? refuse(action, 'recovery-not-offered', recordVerifies(action))
         : null
   }
 }

@@ -140,6 +140,8 @@ export {
   type RootReport,
 } from '../services/skill-recovery.listing.js'
 export {
+  ACCEPT_IDENTITY_ACTIONS,
+  acceptsIdentity,
   classLabel,
   planAction,
   plansFor,

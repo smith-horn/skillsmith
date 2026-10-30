@@ -237,8 +237,15 @@ describe('the listing', () => {
     await runDoctorRecovery({})
     const text = out.join('\n')
     expect(text).toContain('owner verdict: same-host-alive')
-    expect(text).toContain('--clean-staging needs --unsafe-unverified-owner')
-    expect(text).toContain('--clean-staging: not offered (recovery-not-offered)')
+    // The flag is named once, by core's derived hint on the --clean-staging line (UD57).
+    const line = out.find((l) => l.includes('--clean-staging: not offered')) ?? ''
+    expect(line).toContain('--clean-staging: not offered (recovery-not-offered)')
+    expect(
+      line.endsWith(
+        'with --unsafe-unverified-owner (only if you are sure no update is still using this op dir): --clean-staging'
+      )
+    ).toBe(true)
+    expect(text.split('--unsafe-unverified-owner').length - 1).toBe(1)
   })
 
   it('a dead owner: the verdict, and --clean-staging offered without the flag', async () => {
@@ -246,7 +253,7 @@ describe('the listing', () => {
     await runDoctorRecovery({ listOptions: { ownerProbe: DEAD } })
     const text = out.join('\n')
     expect(text).toContain('owner verdict: same-host-dead')
-    expect(text).not.toContain('needs --unsafe-unverified-owner')
+    expect(text).not.toContain('--unsafe-unverified-owner')
     // The offered action's line is its command, whole: nothing follows it.
     const line = out.find((l) => l.includes(`--clean-staging: \``)) ?? ''
     expect(line.trim()).toBe(
@@ -263,7 +270,7 @@ describe('the listing', () => {
     expect(text).toContain('owner verdict: same-host-alive')
     expect(text).toContain('--clean-staging: not offered (recovery-not-offered)')
     expect(text).toContain('so doctor cannot prove it wrote it')
-    expect(text).not.toContain('needs --unsafe-unverified-owner')
+    expect(text).not.toContain('--unsafe-unverified-owner')
   })
 
   /** A park intent that verifies for the op dir as planted (its identity is read from the dir). */
@@ -306,7 +313,11 @@ describe('the listing', () => {
     expect(text).toContain(
       'no record.json: the update aborted and was setting it aside (an abort-new park intent)'
     )
-    expect(text).toContain('an abort-new park intent is present and verifies')
+    // The note states the fact and names no action: the owner is alive, so --clean-staging is
+    // refused here, and only its own line (with the derived hint) says what is offered (UD57).
+    const note = out.find((l) => l.includes('an abort-new park intent is present')) ?? ''
+    expect(note.trim()).toBe('an abort-new park intent is present and verifies')
+    expect(text).toContain('--clean-staging: not offered (recovery-not-offered)')
     for (const w of OLD_WORDS) expect(text).not.toContain(w)
   })
 
@@ -318,6 +329,13 @@ describe('the listing', () => {
     expect(text).toContain(`no record.json: ${MOVE_SOURCE_NO_RECORD_ORIGIN}`)
     // Every origin that writes the intent is named, doctor's own --apply and --undo included.
     expect(text).toContain('a cross-device --apply, --undo or --clean-staging by doctor')
+    // This fixture's backupPath is outside the root's backup area, so the intent is blocked: the
+    // note says why as a fact and names no action (UD57).
+    const note = out.find((l) => l.includes('park intent is present')) ?? ''
+    expect(note.trim()).toMatch(
+      /^a park intent is present: its backupPath .* is not this root's backup area$/
+    )
+    expect(note).not.toMatch(/--(apply|undo|abandon|clean-staging|park)\b/)
     for (const w of OLD_WORDS) expect(text).not.toContain(w)
   })
 })

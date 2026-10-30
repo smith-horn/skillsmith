@@ -17,6 +17,10 @@
  * `doctor.recovery.action.render.ts`'s.
  *
  * The contract, in order:
+ *  0. A flag given with an action it does not apply to exits 1 before any
+ *     discovery or planning: `--unsafe-unverified-owner` without
+ *     `--clean-staging`, and `--accept-identity` with an action outside
+ *     core's `ACCEPT_IDENTITY_ACTIONS` (`--apply`, `--undo`).
  *  1. Plan without any lock (`planRecovery`) and print it (`--json`: as JSON).
  *     A refusal (`recovery-other-user` first, then targeting and the row's own
  *     words) prints why and exits 1, except `already-parked` (report only),
@@ -49,6 +53,8 @@
 import { createInterface } from 'node:readline'
 import chalk from 'chalk'
 import {
+  ACCEPT_IDENTITY_ACTIONS,
+  acceptsIdentity,
   assertSkillWriteLockNotHeld,
   discoverRoots,
   executeRecovery,
@@ -149,6 +155,16 @@ const printJson = (plan: unknown, result: unknown): void => {
   console.log(JSON.stringify({ plan, result }, null, 2))
 }
 
+/**
+ * `--accept-identity` given where it does not apply (another action, or the
+ * listing): says which actions take it, from core's table, and exits 1.
+ */
+export function refuseAcceptIdentity(): void {
+  const allowed = ACCEPT_IDENTITY_ACTIONS.map((a) => `--${a} <opId>`).join(' or ')
+  console.error(chalk.red(`--accept-identity applies only with ${allowed}.`))
+  process.exitCode = 1
+}
+
 /** Every action this command dispatches, in flag order, each with the option commander gives it. */
 const DISPATCHED = [
   ['apply', 'apply'],
@@ -183,6 +199,10 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
   if (options.unsafeUnverifiedOwner === true && action !== 'clean-staging') {
     console.error(chalk.red('--unsafe-unverified-owner applies only with --clean-staging <opId>.'))
     process.exitCode = 1
+    return
+  }
+  if (options.acceptIdentity === true && !acceptsIdentity(action)) {
+    refuseAcceptIdentity()
     return
   }
   const found = await discoverRoots({

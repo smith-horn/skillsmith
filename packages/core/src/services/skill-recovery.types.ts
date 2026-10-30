@@ -434,6 +434,12 @@ export interface PlanStep {
 
 export type ManifestEffect = 'untouched' | 'committed-to-post'
 
+/** What a plan may take from the request besides the class (6b-ii). */
+export interface PlanOptions {
+  /** `--unsafe-unverified-owner`: `--clean-staging` acts past an owner it cannot show gone. */
+  unsafeUnverifiedOwner?: boolean
+}
+
 export type ActionPlan =
   | {
       offered: true

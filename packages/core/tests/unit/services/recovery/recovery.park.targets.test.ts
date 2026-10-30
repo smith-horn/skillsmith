@@ -210,7 +210,7 @@ describe('T-J12 for the 6b actions: the same opId in two roots is ambiguous; --r
           reason: 'recovery-not-offered',
           paths: [b.opDir],
         })
-        expect(picked.status === 'refused' ? picked.detail : '').toContain('--park is offered')
+        expect(picked.status === 'refused' ? picked.detail : '').toContain('offered here: --park')
       }
     })
   }

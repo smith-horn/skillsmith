@@ -21,6 +21,7 @@ import { listStaging } from './skill-recovery.opdir.js'
 import { defaultOwnerProbe } from './skill-recovery.owner.js'
 import type { ProbeFact } from './skill-recovery.opdir.js'
 import { classLabel, plansFor, serializePlan } from './skill-recovery.plan.js'
+import type { IdentityWaiver } from './skill-recovery.plan.actions.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { ActionPlan, RecoveryClass } from './skill-recovery.types.js'
@@ -57,10 +58,14 @@ export interface RootReport {
   stagingDigest: string | null
 }
 
+/**
+ * The listing's options. There is no `--accept-identity` here: the listing
+ * takes no action, so it cannot express the identity waiver (only
+ * `planRecovery` and `executeRecovery` make one, for `--apply` or `--undo`).
+ */
 export interface ListOptions {
   euid?: number
   journalFile?: string
-  acceptIdentity?: boolean
   /** @internal Test seam passed to every reader. */
   reader?: ReaderOptions
   /** The state roots discovered or given (6a-iii): a park intent's `backupPath` must lie in one. */
@@ -89,6 +94,21 @@ export async function reportOp(
 
 /** The op dirs and probes of one skills root. Throws nothing for a root it cannot bind: it says so. */
 export async function listRoot(root: string, options: ListOptions = {}): Promise<RootReport> {
+  return listRootWith(root, options, null)
+}
+
+/**
+ * `listRoot`, classified with `waiver` when one is given. `planRecovery` calls
+ * it with the waiver it made for its request's action; the waiver is a
+ * separate argument, never read from `options`.
+ *
+ * @internal Not exported from the package: exported for `planRecovery` and the tests.
+ */
+export async function listRootWith(
+  root: string,
+  options: ListOptions,
+  waiver: IdentityWaiver | null
+): Promise<RootReport> {
   let binding: Awaited<ReturnType<typeof bindSkillsRootReadOnly>>
   try {
     binding = await bindSkillsRootReadOnly(root)
@@ -144,7 +164,7 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
     stagingDir: binding.stagingDir,
     euid: options.euid ?? process.geteuid?.() ?? -1,
     journalFile: options.journalFile ?? getJournalFilePath(),
-    ...(options.acceptIdentity === undefined ? {} : { acceptIdentity: options.acceptIdentity }),
+    ...(waiver === null ? {} : { waiver }),
     ...(options.stateRoots === undefined ? {} : { stateRoots: options.stateRoots }),
     ownerProbe: options.ownerProbe ?? defaultOwnerProbe(),
   }
@@ -161,7 +181,7 @@ export async function listRoot(root: string, options: ListOptions = {}): Promise
   }
 }
 
-/** `listRoot` for every root, in the order given. */
+/** `listRoot` for every root, in the order given, with no identity waiver. */
 export async function listRecovery(
   roots: readonly string[],
   options: ListOptions = {}

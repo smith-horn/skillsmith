@@ -49,6 +49,8 @@ import { finishRecoveredAcross } from './skill-recovery.park.js'
 import { installAt, keepRole } from './skill-recovery.resume.js'
 import type { KeepContext } from './skill-recovery.resume.js'
 import { recoveryState } from './skill-recovery.state.js'
+import { waives } from './skill-recovery.plan.actions.js'
+import type { IdentityWaiver } from './skill-recovery.plan.actions.js'
 import type {
   AuditOutcome,
   PlannedRecovery,
@@ -229,6 +231,8 @@ export interface RecordedRun {
   transcript: ReadTranscript
   journalFile: string
   out: RecoveryDone
+  /** The identity waiver the re-plan classified with (null: none). */
+  waiver: IdentityWaiver | null
 }
 
 /**
@@ -237,7 +241,7 @@ export interface RecordedRun {
  * devices) and the sweep. Called by `executeRecovery` (`skill-recovery.exec.ts`).
  */
 export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
-  const { planned, opts, ctx, cls, transcript, journalFile, out } = a
+  const { planned, opts, ctx, cls, transcript, journalFile, out, waiver } = a
   const req = planned.request
   const action = req.action
   // Type narrowing only: `executeRecovery` calls this for `--apply`/`--undo` alone.
@@ -250,7 +254,7 @@ export async function runRecorded(a: RecordedRun): Promise<RecoveryRunResult> {
     binding: ctx,
     ctx,
     options: opts.swap ?? {},
-    ...(req.acceptIdentity === true ? { identities: acceptedIdentities(f) } : {}),
+    ...(waives(waiver) ? { identities: acceptedIdentities(f) } : {}),
     ...(opts.manifestPort === undefined ? {} : { manifest: opts.manifestPort }),
   })
   out.warnings = st.warnings

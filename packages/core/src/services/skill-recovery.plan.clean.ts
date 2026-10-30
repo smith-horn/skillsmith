@@ -58,14 +58,17 @@ function routeWords(a: Attribution): string {
     : `filed under client none: no attribution validated (${a.why})`
 }
 
-/** The owner refusal: what `owner.json` claims and why it is not enough. */
+/**
+ * The owner refusal: what `owner.json` claims and why it is not enough. That
+ * `--unsafe-unverified-owner` would act past it is the hint's to say
+ * (`skill-recovery.plan.hint.ts`), computed from this table.
+ */
 function ownerRefusal(cls: NoRecord): ActionPlan {
   return refuse(
     'clean-staging',
     'recovery-not-offered',
     `owner ${cls.clean.verdict}: ${cls.clean.verdictWhy}. --clean-staging acts only when owner.json ` +
-      'names a process on this host that is not running; if you are sure no update is still using ' +
-      'this op dir, add --unsafe-unverified-owner'
+      'names a process on this host that is not running'
   )
 }
 
@@ -248,17 +251,18 @@ function cleanPlan(cls: NoRecord, unsafe: boolean): ActionPlan {
   return keepPlan(cls, c.area, unsafe)
 }
 
-/** Every action's plan for a no-record op dir but `--apply`/`--undo` of a verifying move-source intent. */
+/**
+ * Every action's plan for a no-record op dir but `--apply`/`--undo` of a
+ * verifying move-source intent. The other actions refuse saying there is no
+ * record (and why its intent's park cannot be finished, when it cannot);
+ * whether `--clean-staging` is offered is the hint's to say.
+ */
 export function noRecordPlan(cls: NoRecord, action: RecoveryAction, unsafe: boolean): ActionPlan {
   if (action === 'clean-staging') return cleanPlan(cls, unsafe)
-  const p = cleanPlan(cls, false)
-  const word = p.offered
-    ? 'offered here: --clean-staging'
-    : `--clean-staging is not offered either (${p.reason}: ${p.detail})`
   const blocked = cls.intent?.blocked
   return refuse(
     action,
     'recovery-not-offered',
-    `${word}${blocked === undefined || blocked === null ? '' : ` (${blocked})`}`
+    `there is no record${blocked === undefined || blocked === null ? '' : ` (${blocked})`}`
   )
 }

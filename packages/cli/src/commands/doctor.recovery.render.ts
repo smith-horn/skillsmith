@@ -18,7 +18,7 @@ import type {
   RecoveryClass,
   RootReport,
 } from '@skillsmith/core'
-import { GUARD_WORD, MOVE_SOURCE_NO_RECORD_ORIGIN, planAction } from '@skillsmith/core'
+import { GUARD_WORD, MOVE_SOURCE_NO_RECORD_ORIGIN } from '@skillsmith/core'
 
 const short = (h: string | null): string => (h === null ? 'unhashable' : h.slice(0, 12))
 
@@ -95,18 +95,6 @@ function factsOf(cls: RecoveryClass): OpFacts | null {
 
 type NoRecordClass = Extract<RecoveryClass, { kind: 'no-record' }>
 
-/**
- * Whether `--clean-staging` is refused now and would be offered with
- * `--unsafe-unverified-owner`: decided from core's own plan table, so these
- * words never copy its rule for when the owner stands in the way.
- */
-function needsUnsafeFlag(cls: NoRecordClass): boolean {
-  return (
-    !planAction(cls, 'clean-staging').offered &&
-    planAction(cls, 'clean-staging', { unsafeUnverifiedOwner: true }).offered
-  )
-}
-
 /** How an op dir with no `record.json` came to be, from the park intent it holds (W1). */
 function noRecordWord(cls: NoRecordClass): string {
   const entries = `entries: ${cls.entries.join(', ') || 'none'}`
@@ -130,24 +118,21 @@ function noteOf(cls: RecoveryClass): string[] {
         cls.owner === null
           ? '    owner: no owner.json'
           : `    owner: pid ${cls.owner.pid ?? '?'} on ${cls.owner.host ?? '?'}, uid ${cls.owner.uid ?? '?'}`,
-        // 6b-ii: the owner verdict, and whether --clean-staging needs --unsafe-unverified-owner.
-        `    owner verdict: ${cls.clean.verdict} (${cls.clean.verdictWhy})${
-          needsUnsafeFlag(cls) ? '; --clean-staging needs --unsafe-unverified-owner' : ''
-        }`,
+        // The owner verdict as a fact. Which action is offered, and with which flag, is the
+        // --clean-staging line's derived hint (UD57), never words written here.
+        `    owner verdict: ${cls.clean.verdict} (${cls.clean.verdictWhy})`,
         ...(cls.intent === null
           ? []
           : !cls.intent.valid
             ? [`    a park intent is present: ${cls.intent.blocked}`]
             : cls.intent.kind === 'abort-new'
               ? [
-                  `    an abort-new park intent is present and verifies: ${
-                    cls.clean.intentBlocked ?? '--clean-staging finishes the park'
+                  `    an abort-new park intent is present and verifies${
+                    cls.clean.intentBlocked === null ? '' : `: ${cls.clean.intentBlocked}`
                   }`,
                 ]
               : cls.intent.blocked === null
-                ? [
-                    '    a park intent is present and verifies: --apply, --undo or --clean-staging finishes the park',
-                  ]
+                ? ['    a move-source park intent is present and verifies']
                 : [`    a park intent is present: ${cls.intent.blocked}`]),
         ...(cls.recordTmp === null ? [] : [`    ${cls.recordTmp} is present`]),
       ]
