@@ -2,8 +2,13 @@
 # scripts/lib/entrypoint-tier-b-pairs.sh
 # SMI-7201 Wave 2: container-boot Tier-B pair check. docker-entrypoint.sh runs
 # this file as its own process after the Tier-B restore block, so a missing or
-# broken copy cannot stop boot (the entrypoint reports UNAVAILABLE on any
-# non-zero exit). Tests source it to call the function directly.
+# broken copy cannot stop boot. Run directly, it exits 42 when it has run to
+# completion, and the entrypoint reports UNAVAILABLE for any other status: an
+# empty or truncated copy exits 0 having done nothing, so success must be
+# proven, not assumed. Tests source it to call the function directly.
+#
+# The checker gets SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS (default 60) seconds;
+# a hang is reported as not evaluated instead of blocking boot.
 #
 #   bash entrypoint-tier-b-pairs.sh <checker-path> <flag-path> <checkout-kind>
 #   check_tier_b_pairs <checker-path> <flag-path> <checkout-kind>   (sourced)
@@ -85,7 +90,7 @@ check_tier_b_pairs() {
     [ "$kind" = "worktree" ] && args=(--worktree)
     # stdout is discarded: the checker writes everything to stderr. Status is
     # taken from the command itself, never inferred through a pipe.
-    out="$(node "$checker" "${args[@]}" 2>&1 >/dev/null)" || rc=$?
+    out="$(timeout "${SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS:-60}" node "$checker" "${args[@]}" 2>&1 >/dev/null)" || rc=$?
 
     case "$rc" in
         0)
@@ -122,6 +127,10 @@ ${out}"
             _tbp_say "$y" "$(_tbp_lines "$out" "] NOT-EVALUATED")"
             _tbp_record "$flag" not-evaluated "$out"
             ;;
+        124)
+            _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check timed out after ${SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS:-60}s, so native/JS pairs are NOT verified."
+            _tbp_record "$flag" not-evaluated "[tier-b-pairs] NOT-EVALUATED checker timed out"
+            ;;
         *)
             _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check exited with status ${rc} (node missing or a crash), so native/JS pairs are NOT verified."
             [ -z "$out" ] || _tbp_say "$y" "${out}"
@@ -132,8 +141,9 @@ ${out}"
     return 0
 }
 
-# Run directly (not sourced): check, then exit 0 so the caller reads success.
+# Run directly (not sourced): check, then exit 42, the entrypoint's proof that
+# the check ran to completion (exit 0 would also be what an empty file gives).
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     check_tier_b_pairs "$@"
-    exit 0
+    exit 42
 fi

@@ -271,6 +271,19 @@ describe('check_tier_b_pairs (boot)', () => {
     expect(statSync(flag).mode & 0o777).toBe(0o644)
   })
 
+  it('a checker that hangs is cut off by the timeout and reported as not evaluated', () => {
+    const d = tmp()
+    const flag = join(d, 'state')
+    const hang = join(d, 'hang.mjs')
+    writeFileSync(hang, 'setTimeout(() => {}, 60_000)\n')
+    const started = Date.now()
+    const r = runCheck(hang, flag, 'main', { SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS: '1' })
+    expect(Date.now() - started).toBeLessThan(15_000)
+    expect(r.stdout).toContain('FUNCTION_STATUS=0')
+    expect(r.out).toContain('timed out after 1s')
+    expect(readFileSync(flag, 'utf8').split('\n')[0]).toBe('state=not-evaluated')
+  })
+
   it('exit 1 without a MISMATCH line (a crash) is not evaluated, shows the output, gives no rebuild remedy', () => {
     const d = tmp()
     const flag = join(d, 'state')
@@ -298,7 +311,7 @@ describe('docker-entrypoint.sh call site', () => {
     )
     expect(marker).toBeGreaterThan(-1)
     const start = marker + 1
-    expect(lines[start]).toMatch(/^if /)
+    expect(lines[start]).toMatch(/^tbp_rc=0; /)
     const end = lines.findIndex((l, i) => i > start && l === 'fi')
     expect(end).toBeGreaterThan(start)
     return lines.slice(start, end + 1).join('\n')
@@ -316,12 +329,14 @@ describe('docker-entrypoint.sh call site', () => {
     expect(block).not.toContain('entrypoint-tier-b-pairs.sh') // not inside the if/elif/fi
     expect(callAt).toBeGreaterThan(blockEnd)
     expect(callAt).toBeLessThan(execAt)
-    // Between the restore block's closing `fi` and the call, the only branch opened is the
-    // call site's own `if !`: the call is not inside the restore block's if/elif/fi.
+    // Between the restore block's closing `fi` and the call, no branch is opened: the call
+    // runs unconditionally, outside the restore block's if/elif/fi.
     const between = src.slice(blockEnd, callAt)
     const openers = between.match(/^\s*(if|while|for)\b/gm) ?? []
-    expect(openers).toHaveLength(1)
-    expect(between).toMatch(/^if ! RED=/m)
+    expect(openers).toHaveLength(0)
+    expect(between).toMatch(/^tbp_rc=0; RED=/m)
+    // Success needs the lib's completion status, not just a zero exit.
+    expect(callSite()).toContain('if [ "$tbp_rc" != 42 ]; then')
     expect(between).not.toMatch(/^\s*(elif|else)\b/m)
     // Its own process, never sourced: a broken lib cannot stop the entrypoint.
     expect(callSite()).not.toContain('source ')
@@ -400,6 +415,8 @@ describe('docker-entrypoint.sh call site', () => {
   it.each([
     ['a syntax error', 'check_tier_b_pairs() {\n  if then\n}\n'],
     ['a top-level exit', 'exit 3\n'],
+    ['no content (0 bytes)', ''],
+    ['its run guard cut off', 'check_tier_b_pairs() { :; }\n'],
   ])('a lib with %s: boot continues, prints UNAVAILABLE, writes state=unavailable', (_l, body) => {
     const root = fixture(false, true)
     writeFileSync(join(root, 'app', 'scripts', 'lib', 'entrypoint-tier-b-pairs.sh'), body)
@@ -429,6 +446,11 @@ describe('docker-entrypoint.sh call site', () => {
     const rWt = runCallSite(wt)
     expect(rWt.stdout).toContain('SITE_DONE')
     expect(rWt.out).toContain(MISMATCH_LINE)
+    // The lib proved it completed (exit 42): no UNAVAILABLE fallback, and its own flag stands.
+    expect(rWt.out).not.toContain('UNAVAILABLE')
+    expect(
+      readFileSync(join(wt, 'run', 'skillsmith', 'tier-b-pairs.state'), 'utf8').split('\n')[0]
+    ).toBe('state=mismatch')
     expect(readFileSync(join(wt, 'app', 'scripts', 'lib', 'ran'), 'utf8').trim()).toBe('--worktree')
 
     const main = fixture(true, false)

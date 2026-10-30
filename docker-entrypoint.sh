@@ -488,7 +488,8 @@ elif [ -f "/app/.git" ]; then
 fi
 
 # SMI-7201 pair check, run as its own process: a missing or broken lib cannot stop boot.
-if ! RED="$RED" YELLOW="$YELLOW" GREEN="$GREEN" NC="$NC" bash /app/scripts/lib/entrypoint-tier-b-pairs.sh /app/scripts/lib/check-tier-b-pairs.mjs /run/skillsmith/tier-b-pairs.state "$([ -f /app/.git ] && echo worktree || echo main)"; then
+tbp_rc=0; RED="$RED" YELLOW="$YELLOW" GREEN="$GREEN" NC="$NC" bash /app/scripts/lib/entrypoint-tier-b-pairs.sh /app/scripts/lib/check-tier-b-pairs.mjs /run/skillsmith/tier-b-pairs.state "$([ -f /app/.git ] && echo worktree || echo main)" || tbp_rc=$?
+if [ "$tbp_rc" != 42 ]; then # 42 = the lib ran to completion; any other status (missing, empty, broken) is UNAVAILABLE
     echo -e "${YELLOW}[entrypoint] Tier-B pair check UNAVAILABLE (SMI-7201): scripts/lib/entrypoint-tier-b-pairs.sh is missing or failed; pairs NOT verified.${NC}"
     { mkdir -p /run/skillsmith && printf 'state=unavailable\nsource=boot\n[tier-b-pairs] UNAVAILABLE entrypoint library missing or failed\n' >/run/skillsmith/.tier-b-pairs.tmp && chmod 644 /run/skillsmith/.tier-b-pairs.tmp && mv -f /run/skillsmith/.tier-b-pairs.tmp /run/skillsmith/tier-b-pairs.state; } 2>/dev/null || echo -e "${RED}[entrypoint] Tier-B pair check: could not write the state flag /run/skillsmith/tier-b-pairs.state (state=unavailable).${NC}"
 fi
