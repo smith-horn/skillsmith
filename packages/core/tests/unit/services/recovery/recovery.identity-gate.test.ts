@@ -47,6 +47,7 @@ vi.mock('../../../../src/services/skill-recovery.listing.js', async (importOrigi
 
 import { executeRecovery } from '../../../../src/services/skill-recovery.exec.js'
 import { listRecovery, listRoot } from '../../../../src/services/skill-recovery.listing.js'
+import { identityWaiverFor, waives } from '../../../../src/services/skill-recovery.plan.actions.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import type { RecoveryAction } from '../../../../src/services/skill-recovery.types.js'
 import { makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
@@ -158,6 +159,25 @@ describe('the public listing cannot express the waiver', () => {
     const [r] = await listRecovery([fs.realpathSync(st.fx.skillsDir)])
     expect(calls.classify).toBe(1)
     expect(r?.ops.map((o) => o.cls.kind)).toEqual(['identity-changed'])
+  })
+})
+
+describe('a waiver cannot be forged: only identityWaiverFor makes one', () => {
+  // A structural copy lacks the module-private symbol key. The real waiver beside each
+  // forgery is the control: the same path does waive when the value is genuine.
+  const forged = { action: 'apply' } as never
+
+  it('waives() rejects a structural forgery and accepts the real waiver', () => {
+    expect(waives(forged)).toBe(false)
+    expect(waives(identityWaiverFor('apply'))).toBe(true)
+    expect(waives(null)).toBe(false)
+    expect(waives(undefined)).toBe(false)
+  })
+
+  it('a forged waiver passed into classification leaves the op identity-changed', async () => {
+    const st = await identityChanged()
+    expect((await opReport(st, {}, forged)).cls.kind).toBe('identity-changed')
+    expect((await opReport(st, {}, identityWaiverFor('apply'))).cls.kind).toBe('state')
   })
 })
 
