@@ -29,7 +29,9 @@ export interface RecoveryRequest {
   root?: string
   /**
    * `--accept-identity`: waives check 5 only; each present tree must hash to its role's hash.
-   * Only with an action in `ACCEPT_IDENTITY_ACTIONS`: `planRecovery` refuses it with any other.
+   * Only with an action in `ACCEPT_IDENTITY_ACTIONS`: `planRecovery` and `executeRecovery`
+   * refuse it with any other. Both turn it into the waiver the classifier reads
+   * (`identityWaiverFor(action)`); nothing else does.
    */
   acceptIdentity?: boolean
   /** @internal Test seam: the effective uid (default `process.geteuid()`). */

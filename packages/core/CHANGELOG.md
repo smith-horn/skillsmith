@@ -10,12 +10,13 @@ All notable changes to `@skillsmith/core` are documented here.
   root, so nothing is changed. Before, `--abandon`, `--park` and `--clean-staging` accepted it
   and planned against an identity-changed class the waiver had rewritten. `executeRecovery`
   refuses a plan whose request carries it for such an action the same way, before binding or
-  locking the root. The listing takes no action, so `listRecovery` no longer takes
-  `acceptIdentity` (it is left out of its options' type) and throws a `RangeError` ("... not the
-  listing") before classifying anything if it is passed anyway; `listRoot` keeps it for
-  `planRecovery`. The actions it applies to are one exported table, `ACCEPT_IDENTITY_ACTIONS`
-  (with `acceptsIdentity` and the shared refusal words `acceptIdentityRefused`), which the CLI
-  and the refusal hint's identity clause read too.
+  locking the root. The listing takes no action, so `listRoot` and `listRecovery` no longer
+  take `acceptIdentity` (`ListOptions` has no such field), and `ClassifyContext` (what
+  `reportOp` classifies with) no longer has it either: a JS caller passing it anyway has no
+  effect, and the op is classified as it is. The waiver is now an internal value only
+  `planRecovery` and `executeRecovery` make, from the request's flag and an action that takes
+  it. The actions it applies to are one exported table, `ACCEPT_IDENTITY_ACTIONS` (with
+  `acceptsIdentity`), which the CLI and the refusal hint's identity clause read too.
 - **Changed**: SMI-6531 -- #3209 retro: `doctor recovery` refusal hints are now derived from
   what is offered. A refusal's detail ends with a hint computed from the plan table for the
   same class: `offered here: --a or --b` naming every other action offered, then the actions

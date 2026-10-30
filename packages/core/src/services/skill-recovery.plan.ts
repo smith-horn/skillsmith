@@ -53,7 +53,6 @@ import type {
 
 export {
   ACCEPT_IDENTITY_ACTIONS,
-  acceptIdentityRefused,
   acceptsIdentity,
   RECOVERY_ACTIONS,
 } from './skill-recovery.plan.actions.js'

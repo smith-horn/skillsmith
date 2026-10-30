@@ -3,17 +3,19 @@
  * given with `--apply` or `--undo` only (A1 plan §3.9), and core enforces it.
  * `planRecovery` refuses a request carrying `acceptIdentity: true` with any
  * other action before it lists or classifies a root, with zero mutation; with
- * `--apply` or `--undo` it plans, the waiver applied. The listing
- * (`listRecovery`) takes no action, so it throws on the flag before
- * classifying anything, and `executeRecovery` refuses a plan carrying it for
- * another action before binding the root.
+ * `--apply` or `--undo` it plans, the waiver applied, and `executeRecovery`
+ * performs it, its re-plan classified with the same waiver. `executeRecovery`
+ * refuses a plan carrying the flag for another action before binding the root.
+ * The public listing (`listRoot`, `listRecovery`) takes no action, so it
+ * cannot express the waiver: its options have no such field (a type-level
+ * test), and a JS caller passing `acceptIdentity: true` anyway has no effect.
  *
  * The op is identity-changed (its `old/` replaced by a copy of itself), the
  * one class the flag reclassifies, so a missing guard would let `--abandon`,
  * `--park` and `--clean-staging` plan against a class the flag rewrote. The
  * listing and the classifier are counted through pass-through mocks of
- * `listRoot` and `classifyOp`, so "nothing was classified" and "planning ran"
- * come from the same counters.
+ * `listRootWith` (what `planRecovery` lists through) and `classifyOp`, so
+ * "nothing was classified" and "planning ran" come from the same counters.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -36,16 +38,15 @@ vi.mock('../../../../src/services/skill-recovery.listing.js', async (importOrigi
     await importOriginal<typeof import('../../../../src/services/skill-recovery.listing.js')>()
   return {
     ...actual,
-    listRoot: (...a: Parameters<typeof actual.listRoot>) => {
+    listRootWith: (...a: Parameters<typeof actual.listRootWith>) => {
       calls.listRoot++
-      return actual.listRoot(...a)
+      return actual.listRootWith(...a)
     },
   }
 })
 
 import { executeRecovery } from '../../../../src/services/skill-recovery.exec.js'
-import { listRecovery } from '../../../../src/services/skill-recovery.listing.js'
-import type { ListOptions } from '../../../../src/services/skill-recovery.listing.js'
+import { listRecovery, listRoot } from '../../../../src/services/skill-recovery.listing.js'
 import { planRecovery } from '../../../../src/services/skill-recovery.target.js'
 import type { RecoveryAction } from '../../../../src/services/skill-recovery.types.js'
 import { makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
@@ -125,16 +126,29 @@ describe('planRecovery: --accept-identity outside --apply and --undo', () => {
   }
 })
 
-describe('listRecovery: the listing takes no action, so --accept-identity does not apply', () => {
-  it('acceptIdentity: true throws before any op dir is classified', async () => {
+describe('the public listing cannot express the waiver', () => {
+  it('acceptIdentity is not an option of listRoot or listRecovery (type level)', async () => {
     const st = await identityChanged()
+    const root = fs.realpathSync(st.fx.skillsDir)
+    // A regression that re-adds the field leaves these directives unused, which fails typecheck.
+    // @ts-expect-error -- the listing takes no action, so it has no acceptIdentity
+    const one = await listRoot(root, { acceptIdentity: true })
+    // @ts-expect-error -- the listing takes no action, so it has no acceptIdentity
+    const all = await listRecovery([root], { acceptIdentity: true })
+    expect(one.ops.map((o) => o.cls.kind)).toEqual(['identity-changed'])
+    expect(all.flatMap((r) => r.ops.map((o) => o.cls.kind))).toEqual(['identity-changed'])
+  })
+
+  it('an untyped acceptIdentity: true has no effect: the op stays identity-changed', async () => {
+    const st = await identityChanged()
+    const root = fs.realpathSync(st.fx.skillsDir)
     reset()
     const before = world(st)
-    const options = { acceptIdentity: true } as ListOptions
-    await expect(listRecovery([fs.realpathSync(st.fx.skillsDir)], options)).rejects.toThrow(
-      new RangeError('--accept-identity applies only with --apply or --undo, not the listing')
-    )
-    expect(calls.classify).toBe(0)
+    const one = await listRoot(root, { acceptIdentity: true } as never)
+    const [all] = await listRecovery([root], { acceptIdentity: true } as never)
+    expect(calls.classify).toBe(2)
+    expect(one.ops.map((o) => o.cls.kind)).toEqual(['identity-changed'])
+    expect(all?.ops.map((o) => o.cls.kind)).toEqual(['identity-changed'])
     expect(world(st)).toBe(before)
   })
 
@@ -145,6 +159,21 @@ describe('listRecovery: the listing takes no action, so --accept-identity does n
     expect(calls.classify).toBe(1)
     expect(r?.ops.map((o) => o.cls.kind)).toEqual(['identity-changed'])
   })
+})
+
+describe('executeRecovery: --apply and --undo with --accept-identity re-plan with the waiver', () => {
+  for (const action of TAKEN) {
+    it(`--${action}: the re-plan under lock classifies with the waiver, and the plan is performed`, async () => {
+      const st = await identityChanged()
+      const planned = await planRecovery(requestOf(st, action, { acceptIdentity: true }))
+      if (planned.status !== 'planned') throw new Error(`not planned: ${JSON.stringify(planned)}`)
+      reset()
+      const r = await executeRecovery(planned)
+      // Without the waiver the re-plan is identity-changed and its digest differs: plan-changed.
+      expect(r, JSON.stringify(r)).toMatchObject({ status: 'done', action })
+      expect(calls.classify).toBe(1)
+    })
+  }
 })
 
 describe('executeRecovery: a plan carrying --accept-identity outside --apply and --undo', () => {

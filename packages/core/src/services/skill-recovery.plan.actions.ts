@@ -44,27 +44,53 @@ export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
   'park',
 ]
 
+/** An action `--accept-identity` may be given with. */
+export type IdentityWaivedAction = Extract<RecoveryAction, 'apply' | 'undo'>
+
 /**
  * The actions `--accept-identity` applies to (A1 plan §3.9: it is given with
  * `--apply` or `--undo`). The one table both sides read: the CLI refuses the
- * flag with any other action before discovery, `planRecovery` refuses such a
- * request before it classifies anything, and the refusal hint's identity
- * clause (`skill-recovery.plan.hint.ts`) names the flag only for these.
+ * flag with any other action before discovery, `planRecovery` and
+ * `executeRecovery` refuse such a request (no waiver is made for it), and the
+ * refusal hint's identity clause (`skill-recovery.plan.hint.ts`) names the
+ * flag only for these.
  */
-export const ACCEPT_IDENTITY_ACTIONS: readonly RecoveryAction[] = ['apply', 'undo']
+export const ACCEPT_IDENTITY_ACTIONS: readonly IdentityWaivedAction[] = ['apply', 'undo']
 
 /** Whether `--accept-identity` applies to `action` (`ACCEPT_IDENTITY_ACTIONS`). */
 export const acceptsIdentity = (action: RecoveryAction): boolean =>
-  ACCEPT_IDENTITY_ACTIONS.includes(action)
+  (ACCEPT_IDENTITY_ACTIONS as readonly RecoveryAction[]).includes(action)
+
+/** Why `--accept-identity` is refused with `action`, in the words every core refusal of it shares. */
+export function acceptIdentityRefused(action: RecoveryAction): string {
+  const allowed = ACCEPT_IDENTITY_ACTIONS.map((a) => `--${a}`).join(' or ')
+  return `--accept-identity applies only with ${allowed}, not --${action}`
+}
+
+/** The key only this module holds, so no object literal elsewhere is a waiver. */
+const WAIVER: unique symbol = Symbol('IdentityWaiver')
 
 /**
- * Why `--accept-identity` is refused with `action` (null: the listing, which
- * takes no action), in the words every core refusal of it shares.
+ * `--accept-identity` as a value the classifier reads: identity is waived and
+ * each present tree must hash to its role's recorded hash. Only
+ * `identityWaiverFor` makes one, and only for an action in
+ * `ACCEPT_IDENTITY_ACTIONS`, so no listing or action outside them can carry
+ * it. It is not exported from the package.
  */
-export function acceptIdentityRefused(action: RecoveryAction | null): string {
-  const allowed = ACCEPT_IDENTITY_ACTIONS.map((a) => `--${a}`).join(' or ')
-  return `--accept-identity applies only with ${allowed}, not ${action === null ? 'the listing' : `--${action}`}`
+export interface IdentityWaiver {
+  readonly action: IdentityWaivedAction
+  readonly [WAIVER]: true
 }
+
+/** The waiver for `action`, or null when `--accept-identity` does not apply to it. */
+export function identityWaiverFor(action: RecoveryAction): IdentityWaiver | null {
+  const taken = ACCEPT_IDENTITY_ACTIONS.find((a) => a === action)
+  return taken === undefined ? null : Object.freeze({ action: taken, [WAIVER]: true as const })
+}
+
+/** Whether `w` is a waiver `identityWaiverFor` made (a forged object without the key is not). */
+export const waives = (w: IdentityWaiver | null | undefined): boolean =>
+  w !== null && w !== undefined && w[WAIVER] === true
 
 /** Why `--clean-staging` or `--park` refuses an op dir whose record verified: what each acts on. */
 const RECORD_VERIFIES: Readonly<Record<'clean-staging' | 'park', string>> = {

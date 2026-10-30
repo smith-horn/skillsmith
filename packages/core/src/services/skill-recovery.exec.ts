@@ -4,9 +4,11 @@
  * `step6b-design.md` § 1, generalised from 6a's `apply | undo`).
  *
  * `executeRecovery(planned)`:
- *  0. refuses a plan whose request carries `acceptIdentity` for an action
- *     outside `ACCEPT_IDENTITY_ACTIONS` (`recovery-not-offered`), before
- *     binding the root, so nothing is locked or changed;
+ *  0. makes the identity waiver from the request (`identityWaiverFor`, as
+ *     `planRecovery` does), and refuses a plan whose request carries
+ *     `acceptIdentity` for an action outside `ACCEPT_IDENTITY_ACTIONS` (no
+ *     waiver is made for it: `recovery-not-offered`), before binding the
+ *     root, so nothing is locked or changed;
  *  1. binds the root read-only and takes lock 1 (`withSkillWriteLock`);
  *  2. re-plans with a fresh `ClassifierReader` and compares
  *     `digestOf(transcript, serializePlan(cls))` with the confirmed plan's.
@@ -43,7 +45,8 @@ import { digestOf } from './skill-recovery.digest.js'
 import { removeEmptyOp, sweepRoot } from './skill-recovery.finish.js'
 import { finishFromIntent } from './skill-recovery.intent-park.js'
 import { parkUnreadable } from './skill-recovery.park-unreadable.js'
-import { acceptIdentityRefused, acceptsIdentity, serializePlan } from './skill-recovery.plan.js'
+import { serializePlan } from './skill-recovery.plan.js'
+import { acceptIdentityRefused, identityWaiverFor } from './skill-recovery.plan.actions.js'
 import { ClassifierReader } from './skill-recovery.reader.js'
 import { refused, runRecorded } from './skill-recovery.run.js'
 import { runAbandon } from './skill-recovery.abandon.js'
@@ -67,9 +70,12 @@ export async function executeRecovery(
   opts: RecoveryRunOptions = {}
 ): Promise<RecoveryRunResult> {
   const req = planned.request
-  // A plan carrying `--accept-identity` for an action outside its table is not
-  // one `planRecovery` makes: refused before the root is bound or locked.
-  if (req.acceptIdentity === true && !acceptsIdentity(req.action)) {
+  // The waiver is made here from the request, as `planRecovery` made it, so it
+  // names this action. A plan carrying `--accept-identity` for an action
+  // outside its table is not one `planRecovery` makes: refused before the root
+  // is bound or locked.
+  const waiver = req.acceptIdentity === true ? identityWaiverFor(req.action) : null
+  if (req.acceptIdentity === true && waiver === null) {
     return {
       status: 'refused',
       reason: 'recovery-not-offered',
@@ -86,7 +92,7 @@ export async function executeRecovery(
     stagingDir: binding.stagingDir,
     euid: req.euid ?? process.geteuid?.() ?? -1,
     journalFile,
-    ...(req.acceptIdentity === undefined ? {} : { acceptIdentity: req.acceptIdentity }),
+    ...(waiver === null ? {} : { waiver }),
     stateRoots: req.stateRoots ?? [],
     ownerProbe: req.ownerProbe ?? defaultOwnerProbe(),
   }
@@ -250,7 +256,8 @@ async function underLock(
   if (cls.kind !== 'state') {
     return refused('plan-changed', `the op is now ${cls.kind}`, planned.opDir)
   }
-  return runRecorded({ planned, opts, ctx, cls, transcript, journalFile, out })
+  const waiver = classifyCtx.waiver ?? null
+  return runRecorded({ planned, opts, ctx, cls, transcript, journalFile, out, waiver })
 }
 
 /** A class `--abandon` acts on with its record (`runAbandon`). */
