@@ -284,6 +284,36 @@ describe('check_tier_b_pairs (boot)', () => {
     expect(readFileSync(flag, 'utf8').split('\n')[0]).toBe('state=not-evaluated')
   })
 
+  it.each([
+    ['unset', undefined, '60'],
+    ['0 (GNU timeout would read it as no limit)', '0', '60'],
+    ['a leading zero', '05', '60'],
+    ['not a number', 'abc', '60'],
+    ['negative', '-5', '60'],
+    ['a positive whole number', '7', '7'],
+  ])('the timeout value when the variable is %s', (_l, value, want) => {
+    const env: Record<string, string> = { PATH: process.env['PATH'] ?? '/usr/bin:/bin' }
+    if (value !== undefined) env['SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS'] = value
+    const r = spawnSync('bash', ['-c', `source '${LIB}'; _tbp_timeout_secs`], {
+      encoding: 'utf8',
+      env,
+    })
+    expect(r.stdout.trim()).toBe(want)
+  })
+
+  it('a checker that ignores SIGTERM is killed (SIGKILL) and reported as not evaluated', () => {
+    const d = tmp()
+    const flag = join(d, 'state')
+    const stubborn = join(d, 'stubborn.mjs')
+    writeFileSync(stubborn, "process.on('SIGTERM', () => {})\nsetInterval(() => {}, 1000)\n")
+    const started = Date.now()
+    const r = runCheck(stubborn, flag, 'main', { SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS: '1' })
+    expect(Date.now() - started).toBeLessThan(15_000)
+    expect(r.stdout).toContain('FUNCTION_STATUS=0')
+    expect(r.out).toContain('NOT EVALUATED')
+    expect(readFileSync(flag, 'utf8').split('\n')[0]).toBe('state=not-evaluated')
+  })
+
   it('exit 1 without a MISMATCH line (a crash) is not evaluated, shows the output, gives no rebuild remedy', () => {
     const d = tmp()
     const flag = join(d, 'state')

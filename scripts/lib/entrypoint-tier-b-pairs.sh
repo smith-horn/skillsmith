@@ -7,8 +7,10 @@
 # empty or truncated copy exits 0 having done nothing, so success must be
 # proven, not assumed. Tests source it to call the function directly.
 #
-# The checker gets SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS (default 60) seconds;
-# a hang is reported as not evaluated instead of blocking boot.
+# The checker gets SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS seconds (a positive
+# whole number; anything else, including 0, which GNU timeout reads as "no limit",
+# uses 60), then SIGTERM, then SIGKILL 5s later; a hang is reported as not
+# evaluated instead of blocking boot.
 #
 #   bash entrypoint-tier-b-pairs.sh <checker-path> <flag-path> <checkout-kind>
 #   check_tier_b_pairs <checker-path> <flag-path> <checkout-kind>   (sourced)
@@ -65,6 +67,14 @@ _tbp_record() {
     fi
 }
 
+# _tbp_timeout_secs: the checker's time limit; only a positive whole number counts.
+_tbp_timeout_secs() {
+    case "${SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS:-}" in
+        '' | *[!0-9]* | 0*) echo 60 ;;
+        *) echo "$SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS" ;;
+    esac
+}
+
 # _tbp_lines <output> <needle>: the output lines containing <needle>.
 _tbp_lines() {
     printf '%s\n' "$1" | grep -F -- "$2" || true
@@ -73,7 +83,7 @@ _tbp_lines() {
 check_tier_b_pairs() {
     local checker="$1" flag="$2" kind="$3"
     local r="${RED:-}" y="${YELLOW:-}" g="${GREEN:-}"
-    local out="" rc=0 clean_line="" info_lines="" args=()
+    local out="" rc=0 clean_line="" info_lines="" secs="" args=()
 
     if [ "${SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE:-}" = "1" ]; then
         _tbp_say "$y" "[entrypoint] Tier-B pair check DISABLED via SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE=1 (SMI-7201): native/JS pairs NOT verified."
@@ -90,7 +100,8 @@ check_tier_b_pairs() {
     [ "$kind" = "worktree" ] && args=(--worktree)
     # stdout is discarded: the checker writes everything to stderr. Status is
     # taken from the command itself, never inferred through a pipe.
-    out="$(timeout "${SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS:-60}" node "$checker" "${args[@]}" 2>&1 >/dev/null)" || rc=$?
+    secs="$(_tbp_timeout_secs)"
+    out="$(timeout -k 5 "$secs" node "$checker" "${args[@]}" 2>&1 >/dev/null)" || rc=$?
 
     case "$rc" in
         0)
@@ -128,7 +139,7 @@ ${out}"
             _tbp_record "$flag" not-evaluated "$out"
             ;;
         124)
-            _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check timed out after ${SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS:-60}s, so native/JS pairs are NOT verified."
+            _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check timed out after ${secs}s, so native/JS pairs are NOT verified."
             _tbp_record "$flag" not-evaluated "[tier-b-pairs] NOT-EVALUATED checker timed out"
             ;;
         *)
