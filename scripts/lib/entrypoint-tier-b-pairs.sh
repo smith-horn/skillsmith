@@ -142,6 +142,12 @@ ${out}"
             _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check timed out after ${secs}s, so native/JS pairs are NOT verified."
             _tbp_record "$flag" not-evaluated "[tier-b-pairs] NOT-EVALUATED checker timed out"
             ;;
+        137)
+            # SIGKILL: timeout's -k follow-up after an ignored SIGTERM, or the kernel
+            # (out of memory). Not necessarily a timeout, so the message names both.
+            _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check was killed (status 137: it ignored the ${secs}s timeout's SIGTERM, or ran out of memory), so native/JS pairs are NOT verified."
+            _tbp_record "$flag" not-evaluated "[tier-b-pairs] NOT-EVALUATED checker was killed (status 137)"
+            ;;
         *)
             _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check exited with status ${rc} (node missing or a crash), so native/JS pairs are NOT verified."
             [ -z "$out" ] || _tbp_say "$y" "${out}"

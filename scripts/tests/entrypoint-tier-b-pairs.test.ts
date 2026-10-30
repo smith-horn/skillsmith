@@ -311,6 +311,8 @@ describe('check_tier_b_pairs (boot)', () => {
     expect(Date.now() - started).toBeLessThan(15_000)
     expect(r.stdout).toContain('FUNCTION_STATUS=0')
     expect(r.out).toContain('NOT EVALUATED')
+    expect(r.out).toContain('the check was killed (status 137')
+    expect(r.out).not.toContain('node missing or a crash')
     expect(readFileSync(flag, 'utf8').split('\n')[0]).toBe('state=not-evaluated')
   })
 
