@@ -482,9 +482,17 @@ elif [ -f "/app/.git" ] && [ -d "/opt/native-seed/tier-b" ]; then
         fi
     done < <(find /opt/native-seed/tier-b -type f -name '*.version' 2>/dev/null | sort)
 
-    echo -e "${GREEN}[entrypoint] Tier-B restore: ${tier_b_restored} restored, ${tier_b_current} already current, ${tier_b_failed} skipped (read-only target, non-fatal) (SMI-6050)${NC}"
+    echo -e "${GREEN}[entrypoint] Tier-B restore: ${tier_b_restored} restored, ${tier_b_current} seed marker current, ${tier_b_failed} skipped (read-only target, non-fatal) (SMI-6050)${NC}"
 elif [ -f "/app/.git" ]; then
     echo -e "${YELLOW}[entrypoint] No Tier-B seed found at /opt/native-seed/tier-b — image predates SMI-6050 Wave 2; rebuild the image (docker compose build) to pick up the seed.${NC}"
+fi
+
+if [ -r /app/scripts/lib/entrypoint-tier-b-pairs.sh ]; then # SMI-7201 pair check; always returns 0
+    source /app/scripts/lib/entrypoint-tier-b-pairs.sh
+    check_tier_b_pairs /app/scripts/lib/check-tier-b-pairs.mjs /run/skillsmith/tier-b-pairs.state "$([ -f /app/.git ] && echo worktree || echo main)" || true
+else
+    echo -e "${YELLOW}[entrypoint] Tier-B pair check UNAVAILABLE (SMI-7201): scripts/lib/entrypoint-tier-b-pairs.sh is missing; pairs NOT verified.${NC}"
+    mkdir -p /run/skillsmith 2>/dev/null && printf 'state=unavailable\nsource=boot\n[tier-b-pairs] UNAVAILABLE entrypoint library missing\n' >/run/skillsmith/tier-b-pairs.state 2>/dev/null || true
 fi
 
 # Execute the main command

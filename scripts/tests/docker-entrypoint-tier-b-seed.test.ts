@@ -10,7 +10,7 @@
  *   1. First-boot restore from a synthetic Tier-B seed (empty target gets
  *      restored, marker written).
  *   2. No-op when the target's marker already matches the seed's version
- *      marker (idempotent — "already current").
+ *      marker (idempotent — "seed marker current").
  *   3. Re-seed when the target's marker does NOT match the seed's version
  *      marker (the staleness-detection fix plan-review caught — a plain
  *      "copy only if empty" check would miss a version bump into an
@@ -89,7 +89,7 @@ describe('docker-entrypoint.sh Tier-B platform-binary restore loop (SMI-6050 Wav
 
     expect(status).toBe(0)
     expect(output).toContain(`Restored tier-b ${relPath}@1.2.3 (SMI-6050)`)
-    expect(output).toContain('1 restored, 0 already current, 0 skipped')
+    expect(output).toContain('1 restored, 0 seed marker current, 0 skipped')
     expect(existsSync(join(target, 'binary.node'))).toBe(true)
     expect(readFileSync(join(target, 'binary.node'), 'utf8')).toBe('fake-elf-binary\n')
     expect(readFileSync(fixture.targetVersionMarker(relPath), 'utf8')).toBe('1.2.3')
@@ -121,7 +121,7 @@ describe('docker-entrypoint.sh Tier-B platform-binary restore loop (SMI-6050 Wav
 
     expect(status).toBe(0)
     expect(output).not.toContain('Restored tier-b')
-    expect(output).toContain('0 restored, 1 already current, 0 skipped')
+    expect(output).toContain('0 restored, 1 seed marker current, 0 skipped')
     // Content must be untouched — proves the no-op path never re-copied.
     expect(readFileSync(join(target, 'binary.node'), 'utf8')).toBe('already-restored-content\n')
   })
@@ -149,7 +149,7 @@ describe('docker-entrypoint.sh Tier-B platform-binary restore loop (SMI-6050 Wav
 
     expect(status).toBe(0)
     expect(output).toContain(`Restored tier-b ${relPath}@2.0.0 (SMI-6050)`)
-    expect(output).toContain('1 restored, 0 already current, 0 skipped')
+    expect(output).toContain('1 restored, 0 seed marker current, 0 skipped')
     expect(readFileSync(join(target, 'binary.node'), 'utf8')).toBe('fake-elf-binary-v2\n')
     expect(readFileSync(fixture.targetVersionMarker(relPath), 'utf8')).toBe('2.0.0')
   })
