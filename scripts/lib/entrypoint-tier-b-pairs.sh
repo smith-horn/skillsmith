@@ -158,9 +158,15 @@ ${out}"
     return 0
 }
 
-# Run directly (not sourced): check, then exit 42, the entrypoint's proof that
-# the check ran to completion (exit 0 would also be what an empty file gives).
+# Run directly (not sourced): check, then prove completion to the entrypoint,
+# which requires BOTH exit 42 and this boot's nonce (TBP_NONCE) written to
+# <flag dir>/.tier-b-pairs.done as the last act. Exit 0 is what an empty file
+# gives, and a bare "exit 42" proves nothing, so neither counts alone.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     check_tier_b_pairs "$@"
+    if [ -n "${TBP_NONCE:-}" ]; then
+        mkdir -p "$(dirname "$2")" 2>/dev/null
+        printf '%s\n' "$TBP_NONCE" >"$(dirname "$2")/.tier-b-pairs.done" 2>/dev/null
+    fi
     exit 42
 fi

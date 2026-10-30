@@ -240,6 +240,53 @@ describe('check-tier-b-pairs-prepush.sh real route (fake container helper)', () 
 describe('.husky/pre-push wiring', () => {
   const src = readFileSync(PRE_PUSH, 'utf8')
 
+  /** The hook's pair-guard block, from its assignment to the closing column-0 `fi`. */
+  function guardBlock(): string {
+    const lines = src.split('\n')
+    const start = lines.findIndex((l) => l.startsWith('TIER_B_PAIRS_LIB='))
+    expect(start).toBeGreaterThan(-1)
+    const end = lines.findIndex((l, i) => i > start && l === 'fi')
+    expect(end).toBeGreaterThan(start)
+    return lines.slice(start, end + 1).join('\n')
+  }
+
+  /** Run the block as a hook living in <root>/.husky/pre-push; lib: absent, or a body. */
+  function runGuard(lib: string | null, env: Record<string, string> = {}) {
+    const root = tmp()
+    mkdirSync(join(root, '.husky'))
+    mkdirSync(join(root, 'scripts', 'lib'), { recursive: true })
+    if (lib !== null)
+      writeFileSync(join(root, 'scripts', 'lib', 'check-tier-b-pairs-prepush.sh'), lib)
+    const hook = join(root, '.husky', 'pre-push')
+    writeFileSync(hook, ['#!/bin/sh', guardBlock(), 'echo GUARD_PASSED', ''].join('\n'))
+    const r = spawnSync('sh', [hook], {
+      encoding: 'utf8',
+      env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', ...env },
+    })
+    return { status: r.status ?? -1, out: (r.stdout ?? '') + (r.stderr ?? '') }
+  }
+
+  it('lib missing: blocks the push with an explicit NOT RUN', () => {
+    const r = runGuard(null)
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('NOT RUN')
+    expect(r.out).not.toContain('GUARD_PASSED')
+  })
+
+  it('lib missing under the disable variable: a loud warning, and the push continues', () => {
+    const r = runGuard(null, { SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE: '1' })
+    expect(r.status).toBe(0)
+    expect(r.out).toContain('did NOT run')
+    expect(r.out).toContain('GUARD_PASSED')
+  })
+
+  it('lib present: its failure blocks and its success continues', () => {
+    expect(runGuard('exit 1\n').status).toBe(1)
+    const ok = runGuard('exit 0\n')
+    expect(ok.status).toBe(0)
+    expect(ok.out).toContain('GUARD_PASSED')
+  })
+
   it('invokes the lib after the native-binding guard and exits 1 when it fails', () => {
     const nativeAt = src.indexOf('if ! sh "$NATIVE_LIB" </dev/null; then')
     const callAt = src.indexOf('if ! sh "$TIER_B_PAIRS_LIB" </dev/null; then')

@@ -10,6 +10,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -301,6 +302,27 @@ describe('check_tier_b_pairs (boot)', () => {
     expect(r.stdout.trim()).toBe(want)
   })
 
+  it('invokes timeout with -k 5 and the effective limit', () => {
+    const d = tmp()
+    const bin = join(d, 'bin')
+    mkdirSync(bin)
+    const rec = join(d, 'timeout-args')
+    const fake = join(bin, 'timeout')
+    writeFileSync(fake, `#!/bin/sh\nprintf '%s ' "$@" >'${rec}'\nshift 3\nexec "$@"\n`)
+    chmodSync(fake, 0o755)
+    const flag = join(d, 'state')
+    runCheck(fakeChecker(d, [CLEAN_LINE], 0), flag, 'main', {
+      PATH: `${bin}:${process.env['PATH'] ?? '/usr/bin:/bin'}`,
+      SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS: '7',
+    })
+    expect(readFileSync(rec, 'utf8').trim().split(' ').slice(0, 4)).toEqual([
+      '-k',
+      '5',
+      '7',
+      'node',
+    ])
+  })
+
   it('a checker that ignores SIGTERM is killed (SIGKILL) and reported as not evaluated', () => {
     const d = tmp()
     const flag = join(d, 'state')
@@ -343,7 +365,7 @@ describe('docker-entrypoint.sh call site', () => {
     )
     expect(marker).toBeGreaterThan(-1)
     const start = marker + 1
-    expect(lines[start]).toMatch(/^tbp_rc=0; /)
+    expect(lines[start]).toMatch(/^tbp_nonce=.*; tbp_rc=0; /)
     const end = lines.findIndex((l, i) => i > start && l === 'fi')
     expect(end).toBeGreaterThan(start)
     return lines.slice(start, end + 1).join('\n')
@@ -366,9 +388,11 @@ describe('docker-entrypoint.sh call site', () => {
     const between = src.slice(blockEnd, callAt)
     const openers = between.match(/^\s*(if|while|for)\b/gm) ?? []
     expect(openers).toHaveLength(0)
-    expect(between).toMatch(/^tbp_rc=0; RED=/m)
+    expect(between).toMatch(/^tbp_nonce=.*; tbp_rc=0; TBP_NONCE="\$tbp_nonce" RED=/m)
     // Success needs the lib's completion status, not just a zero exit.
-    expect(callSite()).toContain('if [ "$tbp_rc" != 42 ]; then')
+    expect(callSite()).toContain(
+      'if [ "$tbp_rc" != 42 ] || [ "$(cat /run/skillsmith/.tier-b-pairs.done 2>/dev/null)" != "$tbp_nonce" ]; then'
+    )
     expect(between).not.toMatch(/^\s*(elif|else)\b/m)
     // Its own process, never sourced: a broken lib cannot stop the entrypoint.
     expect(callSite()).not.toContain('source ')
@@ -449,6 +473,7 @@ describe('docker-entrypoint.sh call site', () => {
     ['a top-level exit', 'exit 3\n'],
     ['no content (0 bytes)', ''],
     ['its run guard cut off', 'check_tier_b_pairs() { :; }\n'],
+    ['only "exit 42" (the status alone proves nothing)', 'exit 42\n'],
   ])('a lib with %s: boot continues, prints UNAVAILABLE, writes state=unavailable', (_l, body) => {
     const root = fixture(false, true)
     writeFileSync(join(root, 'app', 'scripts', 'lib', 'entrypoint-tier-b-pairs.sh'), body)
