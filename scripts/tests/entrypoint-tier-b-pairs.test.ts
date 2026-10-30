@@ -11,11 +11,13 @@
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -248,41 +250,82 @@ describe('check_tier_b_pairs (boot)', () => {
     expect(readFileSync(flag, 'utf8')).toContain(MISMATCH_LINE)
     expect(readdirSync(flagDir)).toEqual(['tier-b-pairs.state'])
   })
+
+  it('replaces the flag by rename, not in place: a hard link to the old flag keeps its content', () => {
+    const d = tmp()
+    const flagDir = join(d, 'run')
+    mkdirSync(flagDir)
+    const flag = join(flagDir, 'tier-b-pairs.state')
+    writeFileSync(flag, 'state=disabled\nsource=boot\n')
+    const other = join(d, 'old-link')
+    linkSync(flag, other) // same inode: an in-place write would change both
+    runCheck(fakeChecker(d, [MISMATCH_LINE], 1), flag, 'main')
+    expect(readFileSync(flag, 'utf8').split('\n')[0]).toBe('state=mismatch')
+    expect(readFileSync(other, 'utf8')).toBe('state=disabled\nsource=boot\n')
+  })
+
+  it('the flag is readable by any user (mode 644)', () => {
+    const d = tmp()
+    const flag = join(d, 'run', 'tier-b-pairs.state')
+    runCheck(fakeChecker(d, [MISMATCH_LINE], 1), flag, 'main')
+    expect(statSync(flag).mode & 0o777).toBe(0o644)
+  })
+
+  it('exit 1 without a MISMATCH line (a crash) is not evaluated, shows the output, gives no rebuild remedy', () => {
+    const d = tmp()
+    const flag = join(d, 'state')
+    const r = runCheck(fakeChecker(d, ['Error: boom'], 1), flag, 'worktree')
+    expect(r.stdout).toContain('FUNCTION_STATUS=0')
+    expect(r.out).toContain('without naming a mismatch')
+    expect(r.out).toContain('Error: boom')
+    expect(r.out).not.toContain('Remedy')
+    expect(r.out).not.toContain('Tier-B pair check: MISMATCH')
+    expect(readFileSync(flag, 'utf8').split('\n')[0]).toBe('state=not-evaluated')
+  })
 })
 
 describe('docker-entrypoint.sh call site', () => {
   const src = readFileSync(ENTRYPOINT, 'utf8')
   const lines = src.split('\n')
 
-  /** The call-site `if ... fi` block, from its `[ -r` test to its column-0 `fi`. */
+  /**
+   * The call-site `if ... fi` block, located by its comment line (which no mutation of the
+   * call itself changes), from the `if` after it to its column-0 `fi`.
+   */
   function callSite(): string {
-    const start = lines.findIndex((l) =>
-      l.startsWith('if [ -r /app/scripts/lib/entrypoint-tier-b-pairs.sh ]')
+    const marker = lines.findIndex((l) =>
+      l.startsWith('# SMI-7201 pair check, run as its own process')
     )
-    expect(start).toBeGreaterThan(-1)
+    expect(marker).toBeGreaterThan(-1)
+    const start = marker + 1
+    expect(lines[start]).toMatch(/^if /)
     const end = lines.findIndex((l, i) => i > start && l === 'fi')
     expect(end).toBeGreaterThan(start)
     return lines.slice(start, end + 1).join('\n')
   }
 
-  it('calls check_tier_b_pairs after the restore block closes and before exec, outside it', () => {
+  it('runs the lib after the restore block closes and before exec, outside it', () => {
     const block = extractTierBRestoreBlock(src)
     const blockEnd = src.indexOf(block) + block.length
-    const callAt = src.indexOf('check_tier_b_pairs /app/scripts/lib/check-tier-b-pairs.mjs')
+    const callAt = src.indexOf(
+      'bash /app/scripts/lib/entrypoint-tier-b-pairs.sh /app/scripts/lib/check-tier-b-pairs.mjs'
+    )
     const execAt = src.lastIndexOf('exec "$@"')
     expect(src.indexOf(block)).toBeGreaterThan(-1)
     expect(callAt).toBeGreaterThan(-1)
-    expect(block).not.toContain('check_tier_b_pairs') // not inside the if/elif/fi
+    expect(block).not.toContain('entrypoint-tier-b-pairs.sh') // not inside the if/elif/fi
     expect(callAt).toBeGreaterThan(blockEnd)
     expect(callAt).toBeLessThan(execAt)
     // Between the restore block's closing `fi` and the call, the only branch opened is the
-    // call site's own readability guard: the call is not inside the restore block's if/elif/fi.
+    // call site's own `if !`: the call is not inside the restore block's if/elif/fi.
     const between = src.slice(blockEnd, callAt)
     const openers = between.match(/^\s*(if|while|for)\b/gm) ?? []
     expect(openers).toHaveLength(1)
-    expect(between).toMatch(/^if \[ -r \/app\/scripts\/lib\/entrypoint-tier-b-pairs\.sh \]; then/m)
+    expect(between).toMatch(/^if ! RED=/m)
     expect(between).not.toMatch(/^\s*(elif|else)\b/m)
-    expect(callSite()).toContain('source /app/scripts/lib/entrypoint-tier-b-pairs.sh')
+    // Its own process, never sourced: a broken lib cannot stop the entrypoint.
+    expect(callSite()).not.toContain('source ')
+    expect(callSite()).toContain('bash /app/scripts/lib/entrypoint-tier-b-pairs.sh ')
     expect(callSite()).toContain('/run/skillsmith/tier-b-pairs.state')
   })
 
@@ -304,7 +347,12 @@ describe('docker-entrypoint.sh call site', () => {
       .join(`${root}/run/skillsmith`)
     const r = spawnSync(
       'bash',
-      ['-c', ['set -e', "YELLOW=''", "NC=''", body, 'echo "SITE_DONE"', ''].join('\n')],
+      [
+        '-c',
+        ['set -e', "RED=''", "GREEN=''", "YELLOW=''", "NC=''", body, 'echo "SITE_DONE"', ''].join(
+          '\n'
+        ),
+      ],
       {
         encoding: 'utf8',
         env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin' },
@@ -347,6 +395,33 @@ describe('docker-entrypoint.sh call site', () => {
         .split('\n')
         .slice(0, 2)
     ).toEqual(['state=unavailable', 'source=boot'])
+  })
+
+  it.each([
+    ['a syntax error', 'check_tier_b_pairs() {\n  if then\n}\n'],
+    ['a top-level exit', 'exit 3\n'],
+  ])('a lib with %s: boot continues, prints UNAVAILABLE, writes state=unavailable', (_l, body) => {
+    const root = fixture(false, true)
+    writeFileSync(join(root, 'app', 'scripts', 'lib', 'entrypoint-tier-b-pairs.sh'), body)
+    const r = runCallSite(root)
+    expect(r.stdout).toContain('SITE_DONE')
+    expect(r.out).toContain('UNAVAILABLE')
+    const flag = join(root, 'run', 'skillsmith', 'tier-b-pairs.state')
+    expect(readFileSync(flag, 'utf8').split('\n').slice(0, 2)).toEqual([
+      'state=unavailable',
+      'source=boot',
+    ])
+    expect(statSync(flag).mode & 0o777).toBe(0o644)
+  })
+
+  it('lib missing and the fallback flag write fails: the failure is printed, boot continues', () => {
+    const root = fixture(false, true)
+    mkdirSync(join(root, 'run'), { recursive: true })
+    writeFileSync(join(root, 'run', 'skillsmith'), 'a file, so mkdir -p fails')
+    const r = runCallSite(root)
+    expect(r.stdout).toContain('SITE_DONE')
+    expect(r.out).toContain('UNAVAILABLE')
+    expect(r.out).toContain('could not write the state flag')
   })
 
   it('lib present: kind comes from /app/.git being a file (worktree) or not (main)', () => {

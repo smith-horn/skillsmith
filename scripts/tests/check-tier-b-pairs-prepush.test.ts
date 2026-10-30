@@ -147,12 +147,16 @@ describe('check-tier-b-pairs-prepush.sh real route (fake container helper)', () 
     if (detect !== null) writeFileSync(join(lib, 'hook-docker-detect.sh'), detect)
     return { script: join(lib, 'check-tier-b-pairs-prepush.sh'), rec: join(dir, 'rec'), dir }
   }
-  const fakeDetect = (rec: string, useDocker: string): string =>
+  const fakeDetect = (
+    rec: string,
+    useDocker: string,
+    line = '[tier-b-pairs] MISMATCH path=p installed=1.0.0 parent=q spec=^2.0.0'
+  ): string =>
     [
       `USE_DOCKER=${useDocker}`,
       'run_cmd() {',
       `  printf '%s\\n' "$*" >"${rec}"`,
-      '  printf "%s\\n" "[tier-b-pairs] MISMATCH path=p installed=1.0.0 parent=q spec=^2.0.0" >&2',
+      `  printf "%s\\n" "${line}" >&2`,
       '  return "${FAKE_RC:-1}"',
       '}',
       '',
@@ -207,6 +211,20 @@ describe('check-tier-b-pairs-prepush.sh real route (fake container helper)', () 
     )
     expect(r.out).toContain(WORKTREE_REMEDY)
     expect(r.out).not.toContain(MAIN_REMEDY)
+  })
+
+  it('USE_DOCKER=1, exit 1 without a MISMATCH line (a crash) blocks as not evaluated, no rebuild remedy', () => {
+    const s = stage('')
+    writeFileSync(
+      join(dirname(s.script), 'hook-docker-detect.sh'),
+      fakeDetect(s.rec, '1', 'Error: boom')
+    )
+    const r = run({ FAKE_RC: '1' }, s.script, s.dir)
+    expect(r.status).toBe(1)
+    expect(r.out).toContain('without a MISMATCH line')
+    expect(r.out).toContain('Error: boom')
+    expect(r.out).toContain('must be fixed')
+    expect(r.out).not.toContain('Remedy')
   })
 
   it('USE_DOCKER=1, a clean status with no CLEAN line is not reported as clean', () => {

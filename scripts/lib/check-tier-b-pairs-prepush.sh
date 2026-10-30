@@ -94,10 +94,19 @@ case "$RC" in
         FIX="the checker's output must be fixed"
         ;;
     1)
-        RESULT="MISMATCH"
-        say "[tier-b-pairs] Tier-B native/JS pair MISMATCH (SMI-7201):"
-        lines_with "] MISMATCH" >&2
-        say "The native half no longer matches its JS parent; for example sharp then fails to load, and EmbeddingService silently serves mock embeddings."
+        # A MISMATCH only when the check named one: node also exits 1 on an uncaught
+        # exception, and a failed docker exec returns 1.
+        if [ -z "$(lines_with "] MISMATCH path=")" ]; then
+            RESULT="NOT-EVALUATED (the check exited 1 without naming a mismatch)"
+            say "[tier-b-pairs] Tier-B native/JS pair check did not complete: exit status 1 without a MISMATCH line (SMI-7201)."
+            [ -z "$OUT" ] || printf '%s\n' "$OUT" >&2
+            FIX="the checker's input or environment must be fixed (a crash, or the container exec failed), because a broken state cannot be excluded"
+        else
+            RESULT="MISMATCH"
+            say "[tier-b-pairs] Tier-B native/JS pair MISMATCH (SMI-7201):"
+            lines_with "] MISMATCH" >&2
+            say "The native half no longer matches its JS parent; for example sharp then fails to load, and EmbeddingService silently serves mock embeddings."
+        fi
         ;;
     2)
         RESULT="NOT-EVALUATED"
@@ -121,7 +130,7 @@ if [ "$DISABLED" = "1" ]; then
     exit 0
 fi
 
-if [ "$RC" = "1" ]; then
+if [ "$RESULT" = "MISMATCH" ]; then
     remedy
 else
     say "Fix: $FIX."

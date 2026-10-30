@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # scripts/lib/entrypoint-tier-b-pairs.sh
-# SMI-7201 Wave 2: container-boot Tier-B pair check. Sourced by
-# docker-entrypoint.sh after the Tier-B restore block.
+# SMI-7201 Wave 2: container-boot Tier-B pair check. docker-entrypoint.sh runs
+# this file as its own process after the Tier-B restore block, so a missing or
+# broken copy cannot stop boot (the entrypoint reports UNAVAILABLE on any
+# non-zero exit). Tests source it to call the function directly.
 #
-#   check_tier_b_pairs <checker-path> <flag-path> <checkout-kind>
+#   bash entrypoint-tier-b-pairs.sh <checker-path> <flag-path> <checkout-kind>
+#   check_tier_b_pairs <checker-path> <flag-path> <checkout-kind>   (sourced)
 #
 # kind is "worktree" or "main". Runs scripts/lib/check-tier-b-pairs.mjs (the
 # Wave 1 check), prints a block saying what it found, and records the state in
@@ -41,6 +44,7 @@ _tbp_write_flag() {
     if mkdir -p "$dir" 2>/dev/null \
         && tmp="$(mktemp "$dir/.tier-b-pairs.XXXXXX" 2>/dev/null)" \
         && { printf 'state=%s\nsource=boot\n' "$state"; [ -z "$body" ] || printf '%s\n' "$body"; } >"$tmp" 2>/dev/null \
+        && chmod 644 "$tmp" 2>/dev/null \
         && mv -f "$tmp" "$flag" 2>/dev/null; then
         return 0
     fi
@@ -98,6 +102,15 @@ check_tier_b_pairs() {
             _tbp_record "$flag" not-evaluated "$out"
             ;;
         1)
+            # Exit 1 is a MISMATCH only when the check named one: node also exits 1
+            # on an uncaught exception, which is not a pair verdict.
+            if [ -z "$(_tbp_lines "$out" "] MISMATCH path=")" ]; then
+                _tbp_say "$y" "[entrypoint] Tier-B pair check NOT EVALUATED (SMI-7201): the check exited 1 without naming a mismatch (a crash?), so native/JS pairs are NOT verified."
+                [ -z "$out" ] || _tbp_say "$y" "${out}"
+                _tbp_record "$flag" not-evaluated "[tier-b-pairs] NOT-EVALUATED checker exited 1 without a MISMATCH line
+${out}"
+                return 0
+            fi
             _tbp_say "$r" "[entrypoint] Tier-B pair check: MISMATCH (SMI-7201)"
             _tbp_say "$r" "$(_tbp_lines "$out" "] MISMATCH")"
             _tbp_say "$r" "  The native half no longer matches its JS parent; for example sharp then fails to load, and EmbeddingService silently serves mock embeddings."
@@ -118,3 +131,9 @@ ${out}"
     esac
     return 0
 }
+
+# Run directly (not sourced): check, then exit 0 so the caller reads success.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    check_tier_b_pairs "$@"
+    exit 0
+fi
