@@ -162,6 +162,13 @@ ${out}"
 # which requires BOTH exit 42 and this boot's nonce (TBP_NONCE) written to
 # <flag dir>/.tier-b-pairs.done as the last act. Exit 0 is what an empty file
 # gives, and a bare "exit 42" proves nothing, so neither counts alone.
+#
+# Scope of that proof (owner decision, SMI-7201, 2026-10-30): it catches
+# accidental damage to this file (missing, empty, truncated, a syntax error, a
+# stray top-level exit). It cannot catch a deliberate edit that keeps only this
+# epilogue, since any proof this file produces, this file could also forge; an
+# edit of that kind could equally change docker-entrypoint.sh, so it is out of
+# scope here rather than defended against.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     check_tier_b_pairs "$@"
     if [ -n "${TBP_NONCE:-}" ]; then

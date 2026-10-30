@@ -498,6 +498,36 @@ describe('docker-entrypoint.sh call site', () => {
     expect(r.out).toContain('could not write the state flag')
   })
 
+  it("a done file left by an earlier boot is not accepted as this boot's proof", () => {
+    const root = fixture(false, true)
+    writeFileSync(join(root, 'app', 'scripts', 'lib', 'entrypoint-tier-b-pairs.sh'), 'exit 42\n')
+    mkdirSync(join(root, 'run', 'skillsmith'), { recursive: true })
+    writeFileSync(
+      join(root, 'run', 'skillsmith', '.tier-b-pairs.done'),
+      'nonce-from-an-earlier-boot\n'
+    )
+    const r = runCallSite(root)
+    expect(r.stdout).toContain('SITE_DONE')
+    expect(r.out).toContain('UNAVAILABLE')
+  })
+
+  it('without /proc, the fallback nonce differs between boots', () => {
+    const line = callSite().split('\n')[0]
+    const m = line.match(/^tbp_nonce="(.*)"; tbp_rc=0;/)
+    expect(m).not.toBeNull()
+    const expr = (m as RegExpMatchArray)[1].replace(
+      '/proc/sys/kernel/random/uuid',
+      '/nonexistent/uuid'
+    )
+    expect(expr).toContain('/nonexistent/uuid') // the /proc read was really redirected
+    const gen = () =>
+      spawnSync('bash', ['-c', `printf '%s' "${expr}"`], { encoding: 'utf8' }).stdout
+    const a = gen()
+    const b = gen()
+    expect(a).not.toBe('')
+    expect(a).not.toBe(b)
+  })
+
   it('lib present: kind comes from /app/.git being a file (worktree) or not (main)', () => {
     const wt = fixture(true, true)
     const rWt = runCallSite(wt)
