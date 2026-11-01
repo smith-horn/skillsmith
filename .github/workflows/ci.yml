@@ -203,7 +203,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -338,7 +338,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Verify implementation
@@ -435,7 +435,7 @@ jobs:
       # SMI-3471: Verify workspace dependency versions are consistent
       # Catches: exact-pinned deps, version drift, unpublished dep versions
       - name: Verify workspace dependency versions
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
@@ -479,7 +479,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Path filter -- only run if ranking/eval files changed
@@ -611,7 +611,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -944,7 +944,7 @@ jobs:
       - name: Log in to ghcr.io
         id: ghcr-login
         if: (steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true') && github.event.pull_request.head.repo.fork != true
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1008,7 +1008,7 @@ jobs:
           fi
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: docker-image
           path: /tmp/skillsmith-ci.tar.zst
@@ -1101,7 +1101,7 @@ jobs:
           du -sh .turbo packages/*/.turbo 2>/dev/null || echo "No turbo cache yet"
 
       - name: Upload node_modules artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: node-modules
           path: /tmp/node_modules.tar.zst
@@ -1174,7 +1174,7 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -1248,7 +1248,7 @@ jobs:
       - name: Upload audit report
         if: always() && steps.audit.outcome != 'skipped'
         continue-on-error: true # audit:allow-continue-on-error -- report only; the verdict is steps.audit
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: audit-report
           path: audit-report.json
@@ -1469,7 +1469,7 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         id: download-docker
         continue-on-error: true
         with:
@@ -1477,7 +1477,7 @@ jobs:
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         id: download-modules
         continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
@@ -1505,7 +1505,7 @@ jobs:
       # SMI-2240: Fallback to native npm ci when Docker unavailable
       - name: Setup Node.js (fallback)
         if: steps.load-image.outcome != 'success'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -1617,13 +1617,13 @@ jobs:
       # Note: No npm ci fallback for test-root - these tests require Docker environment
       # for consistent behavior with root-level scripts and supabase functions
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules
           path: /tmp
@@ -1703,13 +1703,13 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules
           path: /tmp
@@ -1839,13 +1839,13 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules
           path: /tmp
@@ -1928,13 +1928,13 @@ jobs:
       # Note: No npm ci fallback for security - audit requires Docker for reproducible results
       # and consistent dependency resolution across environments
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules
           path: /tmp
@@ -2038,14 +2038,14 @@ jobs:
       # Node environment provided by Docker
       - name: Download Docker image
         if: steps.changes.outputs.website == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
         if: steps.changes.outputs.website == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules
           path: /tmp
@@ -2167,7 +2167,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         id: download-docker
         continue-on-error: true
         with:
@@ -2175,7 +2175,7 @@ jobs:
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         id: download-modules
         continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
@@ -2203,7 +2203,7 @@ jobs:
       # SMI-2240: Fallback to native npm ci when Docker unavailable
       - name: Setup Node.js (fallback)
         if: steps.load-image.outcome != 'success'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -2239,7 +2239,7 @@ jobs:
           cp -r packages/*/dist build-output/ 2>/dev/null || true
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: build-output
           path: build-output/
@@ -2267,20 +2267,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       # Note: No npm ci fallback for fresh-install-test - this job specifically tests
       # the packaged artifacts, not the development environment
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules
           path: /tmp

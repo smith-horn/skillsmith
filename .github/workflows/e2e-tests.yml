@@ -74,7 +74,7 @@ jobs:
       - name: Log in to ghcr.io
         id: ghcr-login
         if: github.event.pull_request.head.repo.fork != true
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -139,7 +139,7 @@ jobs:
           echo "✓ Saved image with tag: ${{ github.sha }} (${SAVED_BYTES} bytes)"
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: docker-image-e2e
           path: /tmp/skillsmith-e2e.tar.zst
@@ -177,7 +177,7 @@ jobs:
           zstd -d --stdout /tmp/node_modules.tar.zst | tar -tf - | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: node-modules-e2e
           path: /tmp/node_modules.tar.zst
@@ -206,13 +206,13 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image-e2e
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules-e2e
           path: /tmp
@@ -254,7 +254,7 @@ jobs:
 
       - name: Upload CLI test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: cli-e2e-results
           path: |
@@ -287,13 +287,13 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image-e2e
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules-e2e
           path: /tmp
@@ -335,7 +335,7 @@ jobs:
 
       - name: Upload MCP test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: mcp-e2e-results
           path: |
@@ -362,13 +362,13 @@ jobs:
       # transpiles on the fly) and touches no encrypted supabase/** files. The
       # extracted node_modules already carry the prebuilt better-sqlite3 binary.
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image-e2e
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules-e2e
           path: /tmp
@@ -422,7 +422,7 @@ jobs:
 
       - name: Upload security test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: security-e2e-results
           path: test-results/security-results.json
@@ -451,13 +451,13 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image-e2e
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules-e2e
           path: /tmp
@@ -481,14 +481,14 @@ jobs:
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Download CLI results
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: cli-e2e-results
           path: test-results/cli
         continue-on-error: true # audit:allow-continue-on-error — test artifacts may not exist
 
       - name: Download MCP results
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: mcp-e2e-results
           path: test-results/mcp
@@ -516,7 +516,7 @@ jobs:
 
       - name: Upload combined reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-combined-reports
           path: |
@@ -576,13 +576,13 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: docker-image-e2e
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: node-modules-e2e
           path: /tmp
@@ -606,7 +606,7 @@ jobs:
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Download all results
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: test-results/all
 
@@ -619,7 +619,7 @@ jobs:
             npm run test:e2e:baseline
 
       - name: Upload baseline report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: performance-baselines
           path: test-results/combined-report.json

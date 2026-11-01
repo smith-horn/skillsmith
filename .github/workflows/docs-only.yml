@@ -123,7 +123,7 @@ jobs:
       # rather than assume it satisfies the helper's regex-lookbehind
       # requirement (Node >= 10).
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: '22'
 
@@ -139,7 +139,7 @@ jobs:
       # docs/** files are in a private submodule (not available in CI).
       # .claude/development/ and .claude/templates/ are unencrypted dev docs.
       - name: Lint markdown files
-        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff
+        uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34
         with:
           globs: |
             *.md
