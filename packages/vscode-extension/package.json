@@ -384,7 +384,7 @@
   "dependencies": {
     "cross-spawn": "7.0.6",
     "marked": "15.0.7",
-    "sanitize-html": "2.18.0"
+    "sanitize-html": "2.18.1"
   },
   "devDependencies": {
     "@types/cross-spawn": "6.0.6",
