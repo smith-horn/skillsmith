@@ -8,7 +8,10 @@
  *
  * A present flag means the embedding stack may be serving mock vectors for a
  * reason the model-load warning does not explain, so EmbeddingService reads
- * it on every mock path and reports it loudly.
+ * it on every mock path and reports it loudly. That includes a deliberately
+ * configured fallback (useFallback: true): the vector is a mock either way, and
+ * the plan reports every mock-serving call. Such callers are noisy while the
+ * flag exists, by design; the fix is the remedy, not a quieter report.
  */
 
 import { readFileSync } from 'node:fs'
