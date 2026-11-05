@@ -20,7 +20,7 @@ export type {
   FeatureExtractionPipeline,
 } from './embedding-types.js'
 
-import type { FeatureExtractionPipeline } from './embedding-types.js'
+import type { FeatureExtractionPipeline, EmbeddingServiceOptions } from './embedding-types.js'
 
 import {
   shouldUseFallback,
@@ -40,6 +40,7 @@ import {
 // env-var check (see utils/quiet-mode.ts for the original cycle-avoidance
 // rationale, which still applies to this module's own probe.ts import).
 import { isQuietModeEnabled } from '../utils/quiet-mode.js'
+import { TIER_B_PAIRS_FLAG_PATH, reportMockUnderTierBFlag } from './tier-b-flag.js'
 
 // SMI-4577: HNSW backend for findSimilar — see docs/internal/adr/009-embedding-service-fallback.md
 import {
@@ -66,6 +67,7 @@ export class EmbeddingService {
   private readonly modelName = 'Xenova/all-MiniLM-L6-v2'
   private readonly embeddingDim = 384
   private readonly useFallback: boolean
+  private readonly tierBFlagPath: string // SMI-7201
 
   // SMI-4577: HNSW backend state.
   private hnswHandle: HnswHandle | null = null
@@ -82,7 +84,7 @@ export class EmbeddingService {
    *
    * @param optionsOrDbPath - Options object or legacy dbPath string (dbPath throws)
    */
-  constructor(optionsOrDbPath?: string | { dbPath?: string; useFallback?: boolean }) {
+  constructor(optionsOrDbPath?: string | EmbeddingServiceOptions) {
     const options =
       typeof optionsOrDbPath === 'string' ? { dbPath: optionsOrDbPath } : (optionsOrDbPath ?? {})
 
@@ -94,6 +96,7 @@ export class EmbeddingService {
     }
 
     this.useFallback = shouldUseFallback(options.useFallback)
+    this.tierBFlagPath = options.tierBFlagPath ?? TIER_B_PAIRS_FLAG_PATH
   }
 
   /**
@@ -103,12 +106,12 @@ export class EmbeddingService {
    * @returns Fully initialised EmbeddingService instance
    */
   static async create(
-    optionsOrDbPath?: string | { dbPath?: string; useFallback?: boolean }
+    optionsOrDbPath?: string | EmbeddingServiceOptions
   ): Promise<EmbeddingService> {
     const options =
       typeof optionsOrDbPath === 'string' ? { dbPath: optionsOrDbPath } : (optionsOrDbPath ?? {})
-    // Bypass the throwing constructor by omitting dbPath
-    const instance = new EmbeddingService({ useFallback: options.useFallback })
+    const { useFallback, tierBFlagPath } = options // omit dbPath: the constructor throws on it
+    const instance = new EmbeddingService({ useFallback, tierBFlagPath })
     if (options.dbPath) {
       instance.db = await createDatabaseAsync(options.dbPath)
       instance.initEmbeddingTable()
@@ -194,17 +197,23 @@ export class EmbeddingService {
     }
   }
 
+  /** SMI-7201: the only mock-vector producer; reports on every call while the Tier-B flag is set. */
+  private mockEmbedding(text: string): Float32Array {
+    reportMockUnderTierBFlag(this.tierBFlagPath)
+    return generateMockEmbedding(text, this.embeddingDim)
+  }
+
   /** Generate embedding for a single text */
   async embed(text: string): Promise<Float32Array> {
     const truncated = text.slice(0, 1000)
 
     if (this.useFallback || this.modelLoadFailed) {
-      return generateMockEmbedding(truncated, this.embeddingDim)
+      return this.mockEmbedding(truncated)
     }
 
     const model = await this.loadModel()
     if (!model) {
-      return generateMockEmbedding(truncated, this.embeddingDim)
+      return this.mockEmbedding(truncated)
     }
 
     const output = await model(truncated, { pooling: 'mean', normalize: true })
@@ -228,7 +237,7 @@ export class EmbeddingService {
     if (this.useFallback || this.modelLoadFailed) {
       for (const { id, text } of texts) {
         const truncated = text.slice(0, 1000)
-        const embedding = generateMockEmbedding(truncated, this.embeddingDim)
+        const embedding = this.mockEmbedding(truncated)
         results.push({ skillId: id, embedding, text })
       }
       return results
