@@ -7,10 +7,10 @@
 # empty or truncated copy exits 0 having done nothing, so success must be
 # proven, not assumed. Tests source it to call the function directly.
 #
-# The checker gets SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS seconds (a positive
-# whole number; anything else, including 0, which GNU timeout reads as "no limit",
-# uses 60), then SIGTERM, then SIGKILL 5s later; a hang is reported as not
-# evaluated instead of blocking boot.
+# The checker gets SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS seconds (a whole
+# number with no leading zero; anything else, including 0, which GNU timeout
+# reads as "no limit", and 05, uses 60), then SIGTERM, then SIGKILL 5s later;
+# a hang is reported as not evaluated instead of blocking boot.
 #
 #   bash entrypoint-tier-b-pairs.sh <checker-path> <flag-path> <checkout-kind>
 #   check_tier_b_pairs <checker-path> <flag-path> <checkout-kind>   (sourced)
@@ -67,7 +67,7 @@ _tbp_record() {
     fi
 }
 
-# _tbp_timeout_secs: the checker's time limit; only a positive whole number counts.
+# _tbp_timeout_secs: the checker's time limit; only a whole number with no leading zero counts.
 _tbp_timeout_secs() {
     case "${SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS:-}" in
         '' | *[!0-9]* | 0*) echo 60 ;;
