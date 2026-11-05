@@ -10,7 +10,8 @@
 # The checker gets SKILLSMITH_TIER_B_PAIR_CHECK_TIMEOUT_SECS seconds (a whole
 # number with no leading zero; anything else, including 0, which GNU timeout
 # reads as "no limit", and 05, uses 60), then SIGTERM, then SIGKILL 5s later;
-# a hang is reported as not evaluated instead of blocking boot.
+# a hang is reported as not evaluated instead of blocking boot. A very large
+# value is accepted as given and is in effect no limit.
 #
 #   bash entrypoint-tier-b-pairs.sh <checker-path> <flag-path> <checkout-kind>
 #   check_tier_b_pairs <checker-path> <flag-path> <checkout-kind>   (sourced)
