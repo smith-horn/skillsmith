@@ -68,6 +68,8 @@ describe('local readTierBPairsState', () => {
     expect(readTierBPairsState(flagPath)).toBe('unreadable')
     writeFileSync(flagPath, 'state=\n')
     expect(readTierBPairsState(flagPath)).toBe('unreadable')
+    writeFileSync(flagPath, '')
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
     mkdirSync(join(dir, 'd'))
     expect(readTierBPairsState(join(dir, 'd'))).toBe('unreadable')
   })

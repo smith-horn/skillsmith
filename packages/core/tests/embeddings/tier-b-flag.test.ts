@@ -177,6 +177,24 @@ describe('reporting never throws into the caller', () => {
   })
 })
 
+describe('reporting never throws into the caller (both sinks fail)', () => {
+  it('console.error and process.stderr.write both throw: the mock vectors are still returned', async () => {
+    writeFlag('mismatch')
+    errSpy.mockImplementation(() => {
+      throw new Error('console unavailable')
+    })
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => {
+      throw new Error('stderr unavailable')
+    })
+    const svc = new EmbeddingService({ useFallback: true, tierBFlagPath: flagPath })
+    const v = await svc.embed('hello')
+    expect(Array.from(v)).toEqual(Array.from(testUtils.generateMockEmbedding('hello', 384)))
+    const batch = await svc.embedBatch([{ id: 'x', text: 'y' }])
+    expect(batch).toHaveLength(1)
+    expect(writeSpy).toHaveBeenCalled() // the fallback was attempted, so the swallow is what saved the call
+  })
+})
+
 describe('mock vectors without the flag', () => {
   it('prints no Tier-B report and returns the unchanged mock vector', async () => {
     const svc = new EmbeddingService({ useFallback: true, tierBFlagPath: join(dir, 'absent') })
