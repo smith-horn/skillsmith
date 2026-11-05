@@ -14,7 +14,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { expect } from 'vitest'
-import { listRoot } from '../../../../src/services/skill-recovery.listing.js'
+import { listRootWith } from '../../../../src/services/skill-recovery.listing.js'
+import type { IdentityWaiver } from '../../../../src/services/skill-recovery.plan.actions.js'
 import type {
   ListOptions,
   OpReport,
@@ -187,19 +188,35 @@ export function copyTree(from: string, to: string): void {
 
 export const journalOf = (fx: Fixture): string => path.join(fx.base, 'journal', 'journal.jsonl')
 
-/** Lists the fixture's skills root and returns its report. */
-export async function report(st: Pick<State, 'fx'>, over: ListOptions = {}): Promise<RootReport> {
-  return listRoot(st.fx.skillsDir, {
-    euid: process.geteuid?.() ?? 0,
-    journalFile: journalOf(st.fx),
-    stateRoots: [fs.realpathSync(st.fx.stateRoot)],
-    ...over,
-  })
+/**
+ * Lists the fixture's skills root and returns its report. `waiver` (from
+ * `identityWaiverFor`) classifies as `--accept-identity` does, through the
+ * internal `listRootWith`: the public `listRoot` takes no waiver.
+ */
+export async function report(
+  st: Pick<State, 'fx'>,
+  over: ListOptions = {},
+  waiver: IdentityWaiver | null = null
+): Promise<RootReport> {
+  return listRootWith(
+    st.fx.skillsDir,
+    {
+      euid: process.geteuid?.() ?? 0,
+      journalFile: journalOf(st.fx),
+      stateRoots: [fs.realpathSync(st.fx.stateRoot)],
+      ...over,
+    },
+    waiver
+  )
 }
 
 /** The report of one op of the fixture. */
-export async function opReport(st: State, over: ListOptions = {}): Promise<OpReport> {
-  const root = await report(st, over)
+export async function opReport(
+  st: State,
+  over: ListOptions = {},
+  waiver: IdentityWaiver | null = null
+): Promise<OpReport> {
+  const root = await report(st, over, waiver)
   const op = root.ops.find((o) => o.opId === st.opId)
   if (op === undefined) throw new Error(`no op ${st.opId} listed: ${JSON.stringify(root)}`)
   return op

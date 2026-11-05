@@ -40,6 +40,8 @@ import {
   STARTED_STATES,
 } from './skill-recovery.pstate.js'
 import type { OwnerProbe } from './skill-recovery.clean.types.js'
+import { waives } from './skill-recovery.plan.actions.js'
+import type { IdentityWaiver } from './skill-recovery.plan.actions.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sourceCheck, tStateOf } from './skill-recovery.trees.js'
 import type {
@@ -70,8 +72,12 @@ export interface ClassifyContext {
   euid: number
   /** The audit journal checked for this op's `update` line. */
   journalFile: string
-  /** `--accept-identity`: identity is waived and each present tree must hash to its role's recorded hash. */
-  acceptIdentity?: boolean
+  /**
+   * `--accept-identity`: identity is waived and each present tree must hash to
+   * its role's recorded hash. Only `identityWaiverFor` makes one, for
+   * `--apply` or `--undo`; absent, nothing is waived.
+   */
+  waiver?: IdentityWaiver
   /** The state roots discovered or given (6a-iii, governance S4); a park intent's must be one. */
   stateRoots?: readonly string[]
   /**
@@ -235,7 +241,7 @@ async function classifyRecorded(
   v: Verified
 ): Promise<RecoveryClass> {
   const { opId, opDir, rec, names, moved } = v
-  const accept = ctx.acceptIdentity === true
+  const accept = waives(ctx.waiver)
   const tPath = moved === null ? rec.target.realDir : path.join(ctx.root, rec.target.dirName)
   const area =
     moved === null

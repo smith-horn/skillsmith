@@ -62,7 +62,8 @@ describe('a stray entry in the op dir refuses at plan time, the world unchanged 
       // The same words for every action: nothing in them is --abandon's alone.
       expect(detail).toBe(
         `${stray} is not a file or folder doctor knows in an op dir, so the action could not ` +
-          'empty the op dir when it finishes; move it out of the op dir by hand, and run the command again'
+          'empty the op dir when it finishes; move it out of the op dir by hand, and run the command again; ' +
+          'no other action is offered here'
       )
       // The listing still shows the op as its class, with the facts naming the stray.
       const cls = (await opReport(st)).cls
@@ -132,7 +133,7 @@ describe('a sidecar temp the run could not prove is refused at plan time (O2)', 
     expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
     expect(a.result.status === 'refused' ? a.result.detail : '').toBe(
       `${tmp} is not provably this operation's sidecar temp, so it is not unlinked; ` +
-        'move it out of the op dir by hand, and run the command again'
+        'move it out of the op dir by hand, and run the command again; no other action is offered here'
     )
     // The positive: moved out by hand, the same command acts.
     fs.rmSync(tmp)
@@ -158,7 +159,7 @@ describe('a started R1 whose sidecar temp is not provable is refused at plan tim
     expect(a.result).toMatchObject({ status: 'refused', reason: 'recovery-not-offered' })
     expect(a.result.status === 'refused' ? a.result.detail : '').toBe(
       `${tmp} is not provably this operation's sidecar temp, so it is not unlinked; ` +
-        'move it out of the op dir by hand, and run the command again'
+        'move it out of the op dir by hand, and run the command again; no other action is offered here'
     )
     // The positive: moved out by hand, the same command acts (the keep resumes from P1).
     fs.rmSync(tmp)

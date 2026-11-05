@@ -4,6 +4,39 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- `planRecovery` now refuses a request carrying `acceptIdentity: true`
+  with any action but `apply` and `undo` (`recovery-not-offered`, "--accept-identity applies
+  only with --apply or --undo, not --<action>", no paths), before it lists or classifies any
+  root, so nothing is changed. Before, `--abandon`, `--park` and `--clean-staging` accepted it
+  and planned against an identity-changed class the waiver had rewritten. `executeRecovery`
+  refuses a plan whose request carries it for such an action the same way, before binding or
+  locking the root. The listing takes no action, so `listRoot` and `listRecovery` no longer
+  take `acceptIdentity` (`ListOptions` has no such field), and `ClassifyContext` (what
+  `reportOp` classifies with) no longer has it either: a JS caller passing it anyway has no
+  effect, and the op is classified as it is. The waiver is now an internal value only
+  `planRecovery` and `executeRecovery` make, from the request's flag and an action that takes
+  it. The actions it applies to are one exported table, `ACCEPT_IDENTITY_ACTIONS` (with
+  `acceptsIdentity`), which the CLI and the refusal hint's identity clause read too.
+- **Changed**: SMI-6531 -- #3209 retro: `doctor recovery` refusal hints are now derived from
+  what is offered. A refusal's detail ends with a hint computed from the plan table for the
+  same class: `offered here: --a or --b` naming every other action offered, then the actions
+  offered only with `--unsafe-unverified-owner` under their own clause, or `no other action is
+  offered here`; a refusal of `--apply` or `--undo` for an `identity-changed` class (the two
+  actions `--accept-identity` is taken with) adds "with --accept-identity this action waives the
+  identity check, and its plan is printed before any change" (that flag is named, not computed:
+  the listing never reads it), except when the refusal is `recovery-other-user`, which no flag
+  gets past. A refusal of `--clean-staging` or `--park` for a verified record now says what that
+  action acts on (`--clean-staging`: an op dir with no record; `--park`: an unreadable record).
+  No refusal names another action by hand any more,
+  so none can name one that refuses (a stray entry used to leave "offered here: --abandon" on a
+  row where `--abandon` refused too). `planAction` is a thin wrapper over the hint-free table;
+  `RECOVERY_ACTIONS` now lives in `skill-recovery.plan.actions.ts` and `PlanOptions` in
+  `skill-recovery.types.ts`, both still re-exported from `skill-recovery.plan.ts`. The detail
+  text is in the listing digest, so a listing digest taken before upgrading comes back
+  `plan-changed` afterwards: list again. There is no change to the `--json` shape; one field's
+  text changes: `NoRecordIntent.blocked` for an abort-new intent (`ABORT_NEW_BLOCK`) was "an
+  abort-new intent: --clean-staging finishes it" and is now "its park intent is abort cleanup's
+  (kind abort-new)", so `doctor recovery --json`'s `class.intent.blocked` changes for those ops.
 - **Added**: SMI-6531 -- A1 step 6b-iii: `--abandon` is performed, for a verified record no
   normal recovery action can act on: a moved operation (another root or folder, or a copy),
   one whose trees are the right content in the wrong folders, one whose abandon began (AB),

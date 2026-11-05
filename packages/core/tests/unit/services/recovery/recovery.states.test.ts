@@ -10,6 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { identityWaiverFor } from '../../../../src/services/skill-recovery.plan.actions.js'
 import type { RecoveryClass, RowState } from '../../../../src/services/skill-recovery.types.js'
 import { makeFixture, OP_ID, useTmpCleanup } from '../skill-swap.helpers.js'
 import { opDirOf, opIdN } from '../skill-swap.scan.helpers.js'
@@ -226,7 +227,7 @@ describe('T-J5: identity is part of what makes a tree its role', () => {
     fs.rmSync(fx.realDir, { recursive: true })
     fs.renameSync(tmpCopy, fx.realDir)
     expect((await opReport(st)).cls.kind).toBe('identity-changed')
-    expect(stateOf((await opReport(st, { acceptIdentity: true })).cls).state).toBe('S2')
+    expect(stateOf((await opReport(st, {}, identityWaiverFor('apply'))).cls).state).toBe('S2')
   })
 
   it('a copy with other content has neither identity nor hash: foreign, not identity-changed', async () => {
