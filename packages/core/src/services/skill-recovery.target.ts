@@ -9,8 +9,14 @@
  * any lock, and so is `--clean-staging`'s owner verdict, planned with the
  * request's `--unsafe-unverified-owner`.
  *
+ * A request is refused before any root is listed when its `opId` is not one
+ * path component, or when it carries `acceptIdentity` with an action outside
+ * `ACCEPT_IDENTITY_ACTIONS`, for which no waiver is made (both
+ * `recovery-not-offered`, naming no path). With an action in it, the listing
+ * classifies with `identityWaiverFor(action)`, its only source.
+ *
  * `planRecovery(request)` lists each discovered root read-only (no lock, no
- * write: `listRoot`), finds every op dir named `opId`, and:
+ * write: `listRootWith`), finds every op dir named `opId`, and:
  *  - none: `recovery-not-offered` ("no operation directory named it"), except:
  *    a parked area `ST/.skillsmith-parked/<opId>` in a root is `already-parked`
  *    (report only: nothing is acted on, the CLI exits 0), unless a scanned root's
@@ -33,7 +39,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { listRoot } from './skill-recovery.listing.js'
+import { listRootWith } from './skill-recovery.listing.js'
 import type { RootReport } from './skill-recovery.listing.js'
 import type { ActionPlan, RecoveryAction, RecoveryRefuseReason } from './skill-recovery.types.js'
 import type { SweepEntry } from './skill-recovery.finish.js'
@@ -44,6 +50,7 @@ import type {
   RecoveryRequest,
 } from './skill-recovery.run.types.js'
 import { planAction } from './skill-recovery.plan.js'
+import { acceptIdentityRefused, identityWaiverFor } from './skill-recovery.plan.actions.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 const refusal = (
@@ -110,6 +117,13 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
       `${JSON.stringify(request.opId)} is not an operation id (one path component)`
     )
   }
+  // `--accept-identity` reclassifies an identity-changed op, so with an action
+  // outside its table (no waiver is made for it) it is refused before any root
+  // is listed or classified.
+  const waiver = request.acceptIdentity === true ? identityWaiverFor(request.action) : null
+  if (request.acceptIdentity === true && waiver === null) {
+    return refusal('recovery-not-offered', acceptIdentityRefused(request.action))
+  }
   const wanted = request.root === undefined ? null : realOf(request.root)
   const roots = request.roots.filter((r) => wanted === null || realOf(r) === wanted)
   if (wanted !== null && roots.length === 0) {
@@ -121,14 +135,17 @@ export async function planRecovery(request: RecoveryRequest): Promise<RecoveryPl
   const found: Array<{ root: RootReport; op: RootReport['ops'][number] }> = []
   const reports: RootReport[] = []
   for (const root of roots) {
-    const r = await listRoot(root, {
-      ...(request.euid === undefined ? {} : { euid: request.euid }),
-      ...(request.journalFile === undefined ? {} : { journalFile: request.journalFile }),
-      ...(request.acceptIdentity === undefined ? {} : { acceptIdentity: request.acceptIdentity }),
-      ...(request.reader === undefined ? {} : { reader: request.reader }),
-      ...(request.ownerProbe === undefined ? {} : { ownerProbe: request.ownerProbe }),
-      stateRoots: request.stateRoots ?? [],
-    })
+    const r = await listRootWith(
+      root,
+      {
+        ...(request.euid === undefined ? {} : { euid: request.euid }),
+        ...(request.journalFile === undefined ? {} : { journalFile: request.journalFile }),
+        ...(request.reader === undefined ? {} : { reader: request.reader }),
+        ...(request.ownerProbe === undefined ? {} : { ownerProbe: request.ownerProbe }),
+        stateRoots: request.stateRoots ?? [],
+      },
+      waiver
+    )
     reports.push(r)
     for (const op of r.ops) if (op.opId === request.opId) found.push({ root: r, op })
   }
