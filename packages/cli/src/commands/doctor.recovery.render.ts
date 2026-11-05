@@ -200,6 +200,11 @@ function opLines(op: OpReport): string[] {
       if (!p.offered && (p.action === 'apply' || p.action === 'undo')) {
         lines.push(...planLines(p, op.opId))
       }
+      // A no-record op dir's refused --clean-staging says why here too, as in the branch above:
+      // its derived hint is the only line naming --unsafe-unverified-owner (UD57).
+      if (!p.offered && p.action === 'clean-staging' && op.cls.kind === 'no-record') {
+        lines.push(...planLines(p, op.opId))
+      }
     }
   }
   return lines

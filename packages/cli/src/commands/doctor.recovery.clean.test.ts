@@ -12,6 +12,7 @@
  * nothing changed (a snapshot of the whole temp home) and that no lock was
  * taken (`executeRecovery` was not called), beside a positive that acts.
  */
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -274,7 +275,11 @@ describe('the listing', () => {
   })
 
   /** A park intent that verifies for the op dir as planted (its identity is read from the dir). */
-  function plantIntent(opDir: string, kind: 'abort-new' | 'move-source'): void {
+  function plantIntent(
+    opDir: string,
+    kind: 'abort-new' | 'move-source',
+    backupPath = path.join(base, '.skillsmith', 'kept', OP)
+  ): void {
     const s = fs.lstatSync(opDir, { bigint: true })
     const intent = {
       schema: 1,
@@ -287,7 +292,7 @@ describe('the listing', () => {
         birthtimeNs: s.birthtimeNs.toString(),
         fmt: (s.mode & 0o170000n).toString(),
       },
-      ...(kind === 'move-source' ? { backupPath: path.join(base, '.skillsmith', 'kept', OP) } : {}),
+      ...(kind === 'move-source' ? { backupPath } : {}),
     }
     fs.writeFileSync(path.join(opDir, 'park-intent.json'), JSON.stringify(intent))
   }
@@ -337,6 +342,32 @@ describe('the listing', () => {
     )
     expect(note).not.toMatch(/--(apply|undo|abandon|clean-staging|park)\b/)
     for (const w of OLD_WORDS) expect(text).not.toContain(w)
+  })
+
+  it('a verifying move-source intent with a live owner: --clean-staging still names the unsafe-owner flag', async () => {
+    const u = plantNoRecord(process.pid)
+    // backupAreaPath: <stateRoot>/backups/update/<client>/<rootKey of R>/<dirName>/<opId>.
+    const key = crypto.createHash('sha256').update(u.root).digest('hex').slice(0, 16)
+    const area = path.join(fs.realpathSync.native(u.stateRoot), 'backups', 'update')
+    plantIntent(u.opDir, 'move-source', path.join(area, 'claude-code', key, 'my-skill', OP))
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain('owner verdict: same-host-alive')
+    // The intent verifies, so the note says so, in these words and no others.
+    const note = out.find((l) => l.includes('park intent is present')) ?? ''
+    expect(note).toBe('    a move-source park intent is present and verifies')
+    // Presence from the same run: the intent's finish is offered (the offered branch is taken).
+    expect(text).toContain(`--abandon: \`skillsmith doctor recovery --abandon ${OP}\``)
+    // --clean-staging is refused, once, and its derived hint names the flag that would offer it.
+    const lines = out.filter((l) => l.includes('--clean-staging: not offered'))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('--clean-staging: not offered (recovery-not-offered)')
+    expect(
+      lines[0]!.endsWith(
+        'with --unsafe-unverified-owner (only if you are sure no update is still using this op dir): --clean-staging'
+      )
+    ).toBe(true)
+    expect(text.split('--unsafe-unverified-owner').length - 1).toBe(1)
   })
 })
 

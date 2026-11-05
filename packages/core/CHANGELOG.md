@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed (internal, unreleased)**: SMI-6531 -- #3213 retro: `skill-recovery.plan.ts` no
+  longer re-exports the `PlanOptions` type, which nothing imported from it (it is declared in
+  `skill-recovery.types.ts`; the package's public exports are unchanged), and the docblocks of
+  `skill-recovery.plan.abandon.ts` and `skill-recovery.plan.actions.ts` now say that no waiver
+  reaches `--abandon` and what tables the actions file holds.
 - **Fixed**: SMI-6531 -- `planRecovery` now refuses a request carrying `acceptIdentity: true`
   with any action but `apply` and `undo` (`recovery-not-offered`, "--accept-identity applies
   only with --apply or --undo, not --<action>", no paths), before it lists or classifies any
@@ -30,13 +35,16 @@ All notable changes to `@skillsmith/core` are documented here.
   No refusal names another action by hand any more,
   so none can name one that refuses (a stray entry used to leave "offered here: --abandon" on a
   row where `--abandon` refused too). `planAction` is a thin wrapper over the hint-free table;
-  `RECOVERY_ACTIONS` now lives in `skill-recovery.plan.actions.ts` and `PlanOptions` in
-  `skill-recovery.types.ts`, both still re-exported from `skill-recovery.plan.ts`. The detail
+  `RECOVERY_ACTIONS` now lives in `skill-recovery.plan.actions.ts` and is still re-exported
+  from `skill-recovery.plan.ts`; `PlanOptions` lives in `skill-recovery.types.ts`. The detail
   text is in the listing digest, so a listing digest taken before upgrading comes back
-  `plan-changed` afterwards: list again. There is no change to the `--json` shape; one field's
-  text changes: `NoRecordIntent.blocked` for an abort-new intent (`ABORT_NEW_BLOCK`) was "an
-  abort-new intent: --clean-staging finishes it" and is now "its park intent is abort cleanup's
-  (kind abort-new)", so `doctor recovery --json`'s `class.intent.blocked` changes for those ops.
+  `plan-changed` afterwards: list again. There is no change to the `--json` shape, but the text
+  of several fields changes: every refused plan's `detail` (the listing's `plans[].detail`,
+  and the plan and result an action prints with `--json`), the listing's `digest`, which
+  hashes it, and `NoRecordIntent.blocked` for an abort-new intent (`ABORT_NEW_BLOCK`), which
+  was "an abort-new intent: --clean-staging finishes it" and is now "its park intent is abort
+  cleanup's (kind abort-new)", so `doctor recovery --json`'s `class.intent.blocked` changes
+  for those ops.
 - **Added**: SMI-6531 -- A1 step 6b-iii: `--abandon` is performed, for a verified record no
   normal recovery action can act on: a moved operation (another root or folder, or a copy),
   one whose trees are the right content in the wrong folders, one whose abandon began (AB),

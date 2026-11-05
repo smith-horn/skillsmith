@@ -56,7 +56,6 @@ export {
   acceptsIdentity,
   RECOVERY_ACTIONS,
 } from './skill-recovery.plan.actions.js'
-export type { PlanOptions } from './skill-recovery.types.js'
 
 const ROW_LABEL: Record<RowState, string> = {
   S0: 'S0 not swapped',
