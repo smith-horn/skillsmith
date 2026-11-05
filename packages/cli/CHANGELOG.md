@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- #3213 retro: the `skillsmith doctor recovery` listing now prints the
+  refused `--clean-staging` line for an operation folder with no record even when another
+  action is offered there (a verifying move-source park intent offers `--apply`, `--undo` and
+  `--abandon`). Before, that line was left out, and with it the only mention of
+  `--unsafe-unverified-owner` when the folder's owner could not be verified gone.
 - **Fixed**: SMI-6531 -- `skillsmith doctor recovery --accept-identity` is now refused with any
   action but `--apply` and `--undo`: with `--abandon`, `--park` or `--clean-staging`, or with no
   action (the listing), it prints "--accept-identity applies only with --apply <opId> or --undo
@@ -14,7 +19,7 @@ All notable changes to `@skillsmith/cli` are documented here.
   derived from what is offered. Every refusal ends by naming the other actions that are
   offered for that operation ("offered here: --apply or --undo"), the ones offered only with
   `--unsafe-unverified-owner`, or "no other action is offered here"; for an operation whose trees
-  are copies, a refusal of `--apply` or `--undo` also says that with `--accept-identity` this
+  are copies or remounts, a refusal of `--apply` or `--undo` also says that with `--accept-identity` this
   action waives the identity check, and its plan is printed before any change (not when the
   operation belongs to another user, which no flag gets past). A refusal no longer names
   an action that would itself refuse. The text comes from core; the exit codes are unchanged.
@@ -22,10 +27,12 @@ All notable changes to `@skillsmith/cli` are documented here.
   "--clean-staging needs --unsafe-unverified-owner" (the `--clean-staging` line's hint says
   it), and a park-intent note no longer says which action finishes the park. A listing digest taken before
   upgrading comes back `plan-changed` afterwards, because the refusal text is part of the
-  digest: list again. There is no change to the `--json` shape; one field's text changes:
-  `class.intent.blocked` for an op dir an aborted update was setting aside (an abort-new park
-  intent) was "an abort-new intent: --clean-staging finishes it" and is now "its park intent is
-  abort cleanup's (kind abort-new)".
+  digest: list again. There is no change to the `--json` shape, but the text of several fields
+  changes: each refused plan's `detail` (the listing's `plans[].detail`, and the plan and
+  result `--apply`, `--undo` and the other actions print with `--json`), the listing's
+  `digest`, and `class.intent.blocked` for an op dir an aborted update was setting aside (an
+  abort-new park intent), which was "an abort-new intent: --clean-staging finishes it" and is
+  now "its park intent is abort cleanup's (kind abort-new)".
 - **Added**: SMI-6531 -- A1 step 6b-iii: `skillsmith doctor recovery --abandon <opId>` sets
   aside an unfinished update that `--apply` and `--undo` can't act on (an operation folder
   that was moved or copied, one whose abandon began, one that matches no known state, or one

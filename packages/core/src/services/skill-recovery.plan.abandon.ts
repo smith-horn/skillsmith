@@ -5,8 +5,9 @@
  *
  * Offered only where no normal recovery action can run, for a verified
  * record: `moved` (any why, with the facts it observes in this root),
- * `identity-changed` (without `--accept-identity`; with it the classifier
- * returns the row), `ab` (an abandon began), `anything-else` with facts, and
+ * `identity-changed` (`--accept-identity` is refused with `--abandon`, in core
+ * and the CLI, so no waiver ever reaches this table), `ab` (an abandon
+ * began), `anything-else` with facts, and
  * post-keep S2′ (`rowAbandon` in `skill-recovery.plan.ts`). A no-record op
  * dir whose `move-source` intent verifies is finished as `--apply` does
  * (`intentParkPlan`); an empty op dir is one `rmdir` (`emptyPlan`).

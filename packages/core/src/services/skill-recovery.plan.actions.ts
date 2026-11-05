@@ -2,7 +2,12 @@
  * SMI-6531 (A1 step 6b-i): the plan table's building blocks and the words for
  * the three 6b actions, `--abandon`, `--clean-staging` and `--park` (A1 plan
  * §3.9; design `step6b-design.md` § 1, § 5), moved out of
- * `skill-recovery.plan.ts`, which keeps `--apply` and `--undo`.
+ * `skill-recovery.plan.ts`, which keeps `--apply` and `--undo`. It also holds
+ * the tables every action reads: `RECOVERY_ACTIONS` (the listing's order),
+ * `ACCEPT_IDENTITY_ACTIONS` (the actions `--accept-identity` is taken with)
+ * and the `IdentityWaiver` only `identityWaiverFor` makes from it, and
+ * `recordVerifies`, the words a refusal of `--clean-staging` or `--park` uses
+ * for a record that verified.
  *
  * Pure, like the rest of the table: no row removes a tree, and the
  * `Disposition` type has no case for it (UD13).
