@@ -55,7 +55,7 @@ describe('getStatus degraded field (SMI-7201)', () => {
   it('a malformed flag still sets degraded', async () => {
     writeFileSync(flagPath, 'junk\n')
     const status = await getStatus(configPath, { tierBFlagPath: flagPath })
-    expect(status.degraded).toMatch(/^tier-b-pairs \S+/)
+    expect(status.degraded).toBe('tier-b-pairs unreadable')
   })
 })
 
@@ -65,8 +65,10 @@ describe('local readTierBPairsState', () => {
     expect(readTierBPairsState(flagPath)).toBe('unavailable')
     expect(readTierBPairsState(join(dir, 'absent'))).toBeNull()
     writeFileSync(flagPath, 'nope\n')
-    expect(readTierBPairsState(flagPath)).not.toBeNull()
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
+    writeFileSync(flagPath, 'state=\n')
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
     mkdirSync(join(dir, 'd'))
-    expect(readTierBPairsState(join(dir, 'd'))).not.toBeNull()
+    expect(readTierBPairsState(join(dir, 'd'))).toBe('unreadable')
   })
 })

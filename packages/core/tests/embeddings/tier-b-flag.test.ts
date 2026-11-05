@@ -59,20 +59,19 @@ describe('readTierBPairsState', () => {
 
   it('returns a non-null state for a file without a state= first line', () => {
     writeFileSync(flagPath, 'garbage\nstate=mismatch\n')
-    expect(readTierBPairsState(flagPath)).not.toBeNull()
-    expect(readTierBPairsState(flagPath)).not.toBe('mismatch')
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
   })
 
   it('returns a non-null state for an empty file and an empty value', () => {
     writeFileSync(flagPath, '')
-    expect(readTierBPairsState(flagPath)).not.toBeNull()
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
     writeFileSync(flagPath, 'state=\n')
-    expect(readTierBPairsState(flagPath)).not.toBeNull()
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
   })
 
   it('returns a non-null state when the path is a directory', () => {
     mkdirSync(flagPath)
-    expect(readTierBPairsState(flagPath)).not.toBeNull()
+    expect(readTierBPairsState(flagPath)).toBe('unreadable')
   })
 
   it('defaults to the boot-time flag location', () => {
@@ -155,6 +154,26 @@ describe('mock vectors with the flag set (SKILLSMITH_QUIET=true)', () => {
     const svc = new EmbeddingService({ useFallback: true, tierBFlagPath: dirFlag })
     await svc.embed('a')
     expect(tierBCalls()).toHaveLength(1)
+  })
+})
+
+describe('reporting never throws into the caller', () => {
+  it('a console.error that throws: embed() and embedBatch() still return the mock vectors', async () => {
+    writeFlag('mismatch')
+    errSpy.mockImplementation(() => {
+      throw new Error('stderr unavailable')
+    })
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const svc = new EmbeddingService({ useFallback: true, tierBFlagPath: flagPath })
+    const v = await svc.embed('hello')
+    expect(Array.from(v)).toEqual(Array.from(testUtils.generateMockEmbedding('hello', 384)))
+    const batch = await svc.embedBatch([{ id: 'x', text: 'y' }])
+    expect(batch).toHaveLength(1)
+    // the report fell back to a direct stderr write instead of disappearing
+    const fallback = writeSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((m) => m.includes('SMI-7201'))
+    expect(fallback).toHaveLength(2)
   })
 })
 

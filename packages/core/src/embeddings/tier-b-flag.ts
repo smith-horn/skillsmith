@@ -45,13 +45,24 @@ export function readTierBPairsState(path: string = TIER_B_PAIRS_FLAG_PATH): stri
 /**
  * Report on stderr, on every call, that a mock vector is being served while
  * the Tier-B flag is set. Deliberately not gated on SKILLSMITH_QUIET or any
- * other suppression. No-op when the flag is absent.
+ * other suppression. No-op when the flag is absent. Never throws: if
+ * console.error throws (a replaced or broken console), it falls back to a
+ * direct stderr write, and a failure there is swallowed, so reporting can
+ * never make embed() or embedBatch() reject.
  */
 export function reportMockUnderTierBFlag(flagPath: string): void {
   const state = readTierBPairsState(flagPath)
   if (state === null) return
-  console.error(
+  const message =
     `[EmbeddingService] serving a MOCK embedding (no real model): Tier-B native/JS pairs are ${state} ` +
-      `(SMI-7201, see ${flagPath}). Rebuild per the container boot output's Remedy line.`
-  )
+    `(SMI-7201, see ${flagPath}). Rebuild per the container boot output's Remedy line.`
+  try {
+    console.error(message)
+  } catch {
+    try {
+      process.stderr.write(message + '\n')
+    } catch {
+      // nothing left to report with; the caller still gets its vector
+    }
+  }
 }
