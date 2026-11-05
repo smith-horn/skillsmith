@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+// SMI-4693: every fixture `git` spawn routes through makeFixtureEnv.
+import { makeFixtureEnv } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..', '..')
@@ -196,10 +198,7 @@ describe('check-tier-b-pairs-prepush.sh real route (fake container helper)', () 
     const repo = join(s.dir, 'repo')
     const wt = join(s.dir, 'wt')
     const git = (...a: string[]) =>
-      spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', ...a], {
-        cwd: repo,
-        encoding: 'utf8',
-      })
+      spawnSync('git', a, { cwd: repo, encoding: 'utf8', env: makeFixtureEnv() })
     mkdirSync(repo)
     expect(git('init', '-q').status).toBe(0)
     expect(git('commit', '-q', '--allow-empty', '-m', 'x').status).toBe(0)
