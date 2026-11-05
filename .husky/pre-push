@@ -126,6 +126,23 @@ if [ -r "$NATIVE_LIB" ]; then
   fi
 fi
 
+# Tier-B native/JS pair guard (SMI-7201) — BLOCK (exit 1) on a pair mismatch or
+# an unevaluable result. Runs the Wave 1 check in the same container the native
+# guard above probes. STDIN-SILENT (</dev/null) / READ-ONLY like the guards
+# above. SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE=1 downgrades a block to a warning
+# but still runs the check.
+TIER_B_PAIRS_LIB="$(dirname "$0")/../scripts/lib/check-tier-b-pairs-prepush.sh"
+if [ -r "$TIER_B_PAIRS_LIB" ]; then
+  if ! sh "$TIER_B_PAIRS_LIB" </dev/null; then
+    exit 1
+  fi
+elif [ "${SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE:-}" = "1" ]; then
+  echo "[tier-b-pairs] WARNING: $TIER_B_PAIRS_LIB is missing or unreadable, so the pair check did NOT run; not blocking because SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE=1." >&2
+else
+  echo "[tier-b-pairs] NOT RUN: $TIER_B_PAIRS_LIB is missing or unreadable, so the Tier-B pair check could not run. Blocking the push: restore the file, or set SKILLSMITH_TIER_B_PAIR_CHECK_DISABLE=1 to push anyway." >&2
+  exit 1
+fi
+
 # hooksPath drift + per-tree stub-coverage guard (SMI-6334) — WARN only,
 # never blocks (core.hooksPath is repo-shared state; a false positive here
 # must never wedge every worktree's push at once). STDIN-SILENT
