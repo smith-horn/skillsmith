@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added (internal, no caller yet)**: SMI-6531 -- A1 step 6c-i: ADR-166 D-11's deletion engine
+  is ported from the SMI-6676 spike into `src/install/prune.*.ts`. A walker child re-checks one
+  approved copy, stages it with its sidecar in a private `.prune-<16 hex>` directory on the same
+  device, verifies it there (identity, mountinfo, a stable-read hash, the sidecar byte-exact) and
+  deletes it with a rename, re-check, unlink walk that never follows a link, never crosses a
+  mount and never renames anything back. It also ships the read-only leftover inspection and the
+  strict sidecar schema for parked copies and backup-area trees. Nothing in core, the CLI or the
+  MCP server calls it, and nothing is exported: `doctor backups --prune --apply` wires it in
+  6c-iii. A static fs boundary test pins which fs calls each prune module may make.
 - **Changed (internal, unreleased)**: SMI-6531 -- #3213 retro: `skill-recovery.plan.ts` no
   longer re-exports the `PlanOptions` type, which nothing imported from it (it is declared in
   `skill-recovery.types.ts`; the package's public exports are unchanged), and the docblocks of

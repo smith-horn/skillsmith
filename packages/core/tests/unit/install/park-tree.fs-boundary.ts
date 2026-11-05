@@ -1,7 +1,10 @@
 /**
- * SMI-6531: the static fs boundary of the park modules (ADR-166 D-11
+ * SMI-6531: the static fs boundary of the park and prune modules (ADR-166 D-11
  * "Enforcement in tests"), ported from the SMI-6676 spike's
  * `harness/attacks/c4-fs-boundary.mjs` from acorn to the TypeScript parser.
+ * Each check also reports which fs members a module uses (`fsMembers`), so a
+ * test can pin per module which calls it may make (6c-i: only some prune
+ * modules may unlink or rmdir).
  *
  * Interposition on the `node:fs` default export object sees only calls that
  * look a method up on that object at call time. Everything else bypasses it
@@ -29,7 +32,7 @@ const isRelative = (s: string) =>
   s === '.' || s === '..' || s.startsWith('./') || s.startsWith('../')
 
 export interface BoundaryOptions {
-  /** fs members forbidden outright in this graph (the park never deletes). */
+  /** fs members forbidden outright in this graph (the park never deletes; prune never rmSyncs). */
   forbidMembers?: string[]
 }
 
@@ -44,6 +47,8 @@ export interface ImportForm {
 export interface SourceCheck {
   violations: string[]
   fsLocals: string[]
+  /** Every member read off an fs default local (`fs.x`), sorted, each once. */
+  fsMembers: string[]
   localImports: string[]
   externalImports: string[]
   importForms: ImportForm[]
@@ -71,6 +76,7 @@ export function checkFsBoundarySource(
   const sf = ts.createSourceFile('m.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const violations: string[] = []
   const fsLocals = new Set<string>()
+  const fsMembers = new Set<string>()
   const localImports: string[] = []
   const externalImports: string[] = []
   const importForms: ImportForm[] = []
@@ -166,6 +172,7 @@ export function checkFsBoundarySource(
       const obj = node.expression.text
       const name = node.name.text
       const isCallee = ts.isCallExpression(node.parent) && node.parent.expression === node
+      fsMembers.add(name)
       if (name === 'promises') violations.push(`${obj}.promises access`)
       else if (forbidden.has(name)) violations.push(`${obj}.${name} is forbidden here`)
       else if (FS_DATA_MEMBERS.has(name)) {
@@ -194,7 +201,14 @@ export function checkFsBoundarySource(
     ts.forEachChild(node, visit)
   }
   visit(sf)
-  return { violations, fsLocals: [...fsLocals], localImports, externalImports, importForms }
+  return {
+    violations,
+    fsLocals: [...fsLocals],
+    fsMembers: [...fsMembers].sort(),
+    localImports,
+    externalImports,
+    importForms,
+  }
 }
 
 /** A relative TS specifier's file: `./x.js` names `./x.ts`; nothing else is guessed. */
@@ -217,6 +231,8 @@ export interface GraphCheck {
   files: string[]
   violations: { file: string; violation: string }[]
   fsLocalsByFile: Record<string, string[]>
+  /** `SourceCheck.fsMembers` per walked file. */
+  fsMembersByFile: Record<string, string[]>
   /** Exempt edges actually used, so a test can pin that each is still needed. */
   exemptUsed: { file: string; spec: string }[]
 }
@@ -297,6 +313,7 @@ export function checkFsBoundary(
     files: [...seen.keys()],
     violations,
     fsLocalsByFile: Object.fromEntries([...seen].map(([f, r]) => [f, r.fsLocals])),
+    fsMembersByFile: Object.fromEntries([...seen].map(([f, r]) => [f, r.fsMembers])),
     exemptUsed,
   }
 }
