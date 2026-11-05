@@ -32,6 +32,11 @@ export interface EmbeddingServiceOptions {
    * then falls back to real embeddings.
    */
   useFallback?: boolean
+  /**
+   * SMI-7201: location of the Tier-B native/JS pair flag written at container
+   * boot (default /run/skillsmith/tier-b-pairs.state). Overridable for tests.
+   */
+  tierBFlagPath?: string
 }
 
 /**
