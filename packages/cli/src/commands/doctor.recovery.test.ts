@@ -84,6 +84,9 @@ describe('skillsmith doctor recovery', () => {
     // 6a-iii: --apply and --undo are supported; each offered line is its command, ending there.
     expect(text).toContain(`--apply: \`skillsmith doctor recovery --apply ${u.opId}\`\n`)
     expect(text).toContain(`--undo: \`skillsmith doctor recovery --undo ${u.opId}\`\n`)
+    // Other actions are offered, and the op has a record: the listing names no refused
+    // --clean-staging line (only a no-record op dir gets one there, #3213 retro).
+    expect(text).not.toContain('--clean-staging: not offered')
     expect(text).toContain('O: kept as backup')
     expect(text).toContain('O: installed')
     // The identities and hashes it compared are printed.
