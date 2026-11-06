@@ -6,6 +6,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   INTENT_VERSION,
@@ -69,18 +70,27 @@ describe('the strict metadata schemas', () => {
 })
 
 describe('removeIfIdentical', () => {
+  /** A `.prune-<16 hex>` directory: the only place removeIfIdentical acts. */
+  const stagingDir = (fx: PruneFixture): string => {
+    const S = path.join(fx.root, '.prune-0123456789abcdef')
+    fs.mkdirSync(S, { mode: 0o700 })
+    return S
+  }
+
   it('removes the exact recorded file, by a random name', () => {
     f = makeParent('prune-meta-')
-    const p = path.join(f.root, 'intent.json')
+    const S = stagingDir(f)
+    const p = path.join(S, 'intent.json')
     fs.writeFileSync(p, 'ours')
     const rec = recordOf(p, 'ours')
     expect(removeIfIdentical(p, rec)).toEqual({ removed: true })
-    expect(fs.readdirSync(f.root)).toEqual(['parent'])
+    expect(fs.readdirSync(S)).toEqual([])
   })
 
   it('keeps a file whose bytes or inode differ from the record, untouched where it is', () => {
     f = makeParent('prune-meta-')
-    const p = path.join(f.root, 'intent.json')
+    const S = stagingDir(f)
+    const p = path.join(S, 'intent.json')
     fs.writeFileSync(p, 'ours')
     const rec = recordOf(p, 'ours')
     fs.writeFileSync(p, 'THEIRS')
@@ -98,16 +108,39 @@ describe('removeIfIdentical', () => {
 
   it('keeps a file it has no record for, and reports an absent one as nothing kept', () => {
     f = makeParent('prune-meta-')
-    const p = path.join(f.root, 'deleting')
+    const S = stagingDir(f)
+    const p = path.join(S, 'deleting')
     fs.writeFileSync(p, 'x')
     expect(removeIfIdentical(p, undefined)).toEqual({
       removed: false,
       kept: `${p}: not written or inspected by this run`,
     })
-    expect(removeIfIdentical(path.join(f.root, 'gone'), undefined)).toEqual({
+    expect(removeIfIdentical(path.join(S, 'intent.json'), undefined)).toEqual({
       removed: false,
       kept: null,
     })
+  })
+
+  it('(c) refuses any name but prune metadata, and any directory but a .prune-<16 hex> one', () => {
+    f = makeParent('prune-meta-')
+    const S = stagingDir(f)
+    const user = path.join(S, 'SKILL.md')
+    fs.writeFileSync(user, 'user bytes')
+    const rec = recordOf(user, 'user bytes')
+    expect(() => removeIfIdentical(user, rec)).toThrow(TypeError)
+    const outside = path.join(f.root, 'intent.json')
+    fs.writeFileSync(outside, 'ours')
+    expect(() => removeIfIdentical(outside, recordOf(outside, 'ours'))).toThrow(TypeError)
+    const foreign = path.join(f.root, '.prune-nothex')
+    fs.mkdirSync(foreign)
+    fs.writeFileSync(path.join(foreign, 'deleting'), 'x')
+    expect(() =>
+      removeIfIdentical(
+        path.join(foreign, 'deleting'),
+        recordOf(path.join(foreign, 'deleting'), 'x')
+      )
+    ).toThrow(TypeError)
+    expect([fs.existsSync(user), fs.existsSync(outside)]).toEqual([true, true])
   })
 })
 
@@ -147,6 +180,51 @@ describe('inspectLeftover is read-only and fails closed', () => {
     expect(at(f, S).state).toBe('unknown')
   })
 
+  it('m7: misplaced.json is read without following a link, and with a cap', () => {
+    f = makeParent('prune-left-')
+    const S = mk(f)
+    const secret = path.join(f.root, 'secret.json')
+    fs.writeFileSync(secret, JSON.stringify({ secret: true }))
+    fs.symlinkSync(secret, path.join(S, 'misplaced.json'))
+    fs.mkdirSync(path.join(S, 'a'))
+    const mp = path.join(S, 'misplaced.json')
+    expect(at(f, S).misplaced).toEqual({ unreadable: true, path: mp })
+    fs.unlinkSync(mp)
+    fs.writeFileSync(mp, JSON.stringify({ pad: 'x'.repeat(70 * 1024) }))
+    expect(at(f, S).misplaced).toEqual({ unreadable: true, path: mp })
+    fs.writeFileSync(mp, JSON.stringify({ path: '/x' }))
+    expect(at(f, S).misplaced).toEqual({ path: '/x' })
+  })
+
+  it('an incomplete intent temp is partial-intent with nothing to clean, never unknown', () => {
+    f = makeParent('prune-left-')
+    const S = mk(f)
+    fs.writeFileSync(path.join(S, 'intent.json.tmp'), JSON.stringify(intent()).slice(0, 40))
+    expect(at(f, S)).toMatchObject({ state: 'partial-intent', cleanup: [] })
+  })
+
+  it('m3: a finished leftover keeps its approved sidecar for cleanup; any other sidecar is unknown', () => {
+    f = makeParent('prune-left-')
+    const S = mk(f)
+    const sidecar = Buffer.from('{"the":"approved sidecar"}')
+    const sha = crypto.createHash('sha256').update(sidecar).digest('hex')
+    fs.writeFileSync(
+      path.join(S, 'intent.json'),
+      JSON.stringify(intent({ approvedSidecarSha256: sha }))
+    )
+    fs.writeFileSync(
+      path.join(S, 'deleting'),
+      JSON.stringify({ pruneId: '0123456789abcdef', pid: 1 })
+    )
+    fs.writeFileSync(path.join(S, 'sidecar.json'), sidecar)
+    expect(at(f, S)).toMatchObject({
+      state: 'finished',
+      cleanup: ['sidecar.json', 'intent.json', 'deleting'],
+    })
+    fs.writeFileSync(path.join(S, 'sidecar.json'), '{"another":"sidecar"}')
+    expect(at(f, S).state).toBe('unknown')
+  })
+
   it('a staged sidecar without its copy is unknown', () => {
     f = makeParent('prune-left-')
     const S = mk(f)
@@ -180,5 +258,59 @@ describe('the job', () => {
     ]) {
       expect(() => decodeJob(bad)).toThrow(TypeError)
     }
+  })
+
+  it('m1: a job whose paths or names do not relate is a TypeError, each named', () => {
+    f = makeParent('prune-job-')
+    const c = parkCopy(f.parent, 'tree')
+    const enc = encodeJob(jobFor(c)) as unknown as Record<string, unknown>
+    const S = path.join(c.stagingRoot, '.prune-0123456789abcdef')
+    const meta = { ino: '1', bytes: 'b3Vycw==' }
+    for (const [bad, why] of [
+      [{ ...enc, leaf: '../x' }, 'single path segment'],
+      [
+        { ...enc, leaf: 'intent.json', copyPath: path.join(c.opDir, 'intent.json') },
+        "prune's own names",
+      ],
+      [{ ...enc, leaf: 'other' }, 'leaf must be the copy name'],
+      [{ ...enc, opDir: c.stagingRoot }, "opDir must be the copy's own directory"],
+      [{ ...enc, approvedHash: 'A'.repeat(64) }, '64 lowercase hex'],
+      [{ ...enc, copyPath: 'relative/tree' }, 'copyPath must be an absolute path'],
+      [{ ...enc, S: path.join(c.stagingRoot, '.prune-xyz') }, '.prune-<16 hex> directory'],
+      [{ ...enc, S: path.join(f.root, '.prune-0123456789abcdef') }, '.prune-<16 hex> directory'],
+      [{ ...enc, S }, 'copyPath must be S/<leaf>'],
+      [{ ...enc, resume: true }, 'resume needs S'],
+      [{ ...enc, inheritedMeta: { deleting: meta } }, 'inheritedMeta needs S'],
+      [
+        {
+          ...enc,
+          S,
+          copyPath: path.join(S, String(enc.leaf)),
+          inheritedMeta: { 'SKILL.md': meta },
+        },
+        'only intent.json and deleting',
+      ],
+      [
+        {
+          ...enc,
+          S,
+          copyPath: path.join(S, String(enc.leaf)),
+          inheritedMeta: { deleting: { ino: 'x', bytes: '' } },
+        },
+        'must be {ino: decimal, bytes: base64}',
+      ],
+      [{ ...enc, rootIdentity: { ...(enc.rootIdentity as object), fmt: undefined } }, 'fmt'],
+    ] as const) {
+      expect(() => decodeJob(bad), why).toThrow(why)
+    }
+    // Control: a good resume job decodes.
+    expect(() =>
+      decodeJob({
+        ...enc,
+        S,
+        copyPath: path.join(S, String(enc.leaf)),
+        inheritedMeta: { deleting: meta },
+      })
+    ).not.toThrow()
   })
 })

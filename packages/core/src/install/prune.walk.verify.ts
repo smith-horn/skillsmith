@@ -13,6 +13,7 @@ import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { errCode, errCodeOrMessage } from './park-result.js'
+import { S_IFMT } from './park-tree.perms.js'
 import { computeTreeHash } from './tree-hash.js'
 import type { TreeRecord } from './tree-hash.js'
 import { readStable } from './prune.sidecar.js'
@@ -44,6 +45,9 @@ export function recheck(job: PruneJob): string | null {
   if (st.dev !== id.dev || st.ino !== id.ino || st.birthtimeNs !== id.birthtimeNs) {
     return 'the copy is no longer the inode that was classified'
   }
+  // A reused inode number of another file type (SMI-7130) is refused before anything moves.
+  if ((st.mode & S_IFMT) !== id.fmt)
+    return 'the copy is no longer the file type that was classified'
   const mi = mountFinding(job.copyPath)
   if (mi !== null) return mi
   if (job.sidecarRead === null) {
@@ -88,7 +92,8 @@ export function verifyAtStaging(
   if (
     top.dev !== a.rootIdentity.dev ||
     top.ino !== a.rootIdentity.ino ||
-    top.birthtimeNs !== a.rootIdentity.birthtimeNs
+    top.birthtimeNs !== a.rootIdentity.birthtimeNs ||
+    (top.mode & S_IFMT) !== a.rootIdentity.fmt
   ) {
     return no('changed-in-staging', 'the staged copy is not the inode that was approved')
   }

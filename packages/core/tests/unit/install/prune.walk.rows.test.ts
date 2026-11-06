@@ -101,11 +101,12 @@ describe('P2: an fd holder writes before the pre-touch check', () => {
     const c = parkCopy(fx.parent, 't')
     const victim = path.join(c.copyPath, 'target', 'orig-f1')
     const ino = fs.lstatSync(victim, { bigint: true }).ino
+    const sidecarText = read(c.sidecarPath)
     const fd = fs.openSync(victim, 'r+')
     try {
-      // Same size, so only the timestamps can tell; the write waits past the
-      // verify's timestamp tick (1 ms on overlayfs), since a same-size write
-      // inside that tick is the open-descriptor residual P2r measures.
+      // Same size, so only the timestamps can tell. The hook writes until the
+      // file's mtime and ctime have moved (a same-tick write is the
+      // open-descriptor residual P2r measures), and `fired` requires that.
       const data = 'ORIGINAL-CONTENT-F1'
       const run = runWalker(jobFor(c), {
         traceDir: fx.root,
@@ -115,7 +116,7 @@ describe('P2: an fd holder writes before the pre-touch check', () => {
             when: 'before',
             fn: 'lstatSync',
             a0Re: '^orig-f1$',
-            action: { kind: 'writeFd', fd: 3, data, pos: 0, waitMs: 3 },
+            action: { kind: 'writeFd', fd: 3, data, pos: 0 },
           },
         ],
       })
@@ -123,6 +124,7 @@ describe('P2: an fd holder writes before the pre-touch check', () => {
       expect(statusOf(run)).toBe('stopped/changed-during-delete')
       const found = findIno(c.stagingRoot, ino)
       expect(found !== null && read(found)).toBe(data)
+      expect(read(path.join(String(run.item?.stagingPath), 'sidecar.json'))).toBe(sidecarText)
     } finally {
       fs.closeSync(fd)
     }
@@ -183,9 +185,10 @@ describe('P3: the copy path is recreated and written by path after staging', () 
 })
 
 describe('P4: an in-tree writer adds a file mid-walk', () => {
-  it('the walk stops entry-added-during-delete, and the intruder survives', () => {
+  it('the walk stops entry-added-during-delete; the intruder and the sidecar survive', () => {
     const fx = fixture('prune-p4-')
     const c = parkCopy(fx.parent, 't')
+    const sidecarBytes = fs.readFileSync(c.sidecarPath)
     const run = runWalker(jobFor(c), {
       traceDir: fx.root,
       hooks: [
@@ -204,6 +207,9 @@ describe('P4: an in-tree writer adds a file mid-walk', () => {
       .filter((p) => path.basename(p) === 'intruder.txt')
       .map((p) => read(path.join(c.stagingRoot, p)))
     expect(hits).toEqual(['intruder-bytes'])
+    // The sidecar is deleted last, so the stopped tree keeps it, byte for byte.
+    const staged = path.join(String(run.item?.stagingPath), 'sidecar.json')
+    expect(fs.readFileSync(staged).equals(sidecarBytes)).toBe(true)
   })
 })
 
@@ -261,7 +267,7 @@ describe('P8: the sidecar rewritten in place, same size', () => {
         when: 'before',
         fn: 'writeFileSync',
         a0Re: '^deleting$',
-        action: { kind: 'rewriteInPlace', path: '$cwd/sidecar.json', waitMs: 3 },
+        action: { kind: 'rewriteInPlace', path: '$cwd/sidecar.json' },
       },
       'stopped/changed-during-delete',
     ],

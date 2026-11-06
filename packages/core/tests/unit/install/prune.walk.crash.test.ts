@@ -38,10 +38,17 @@ afterEach(() => {
 type Point = Omit<Hook, 'action'> & { expect: Leftover['state']; leafRe?: true }
 const POINTS: Record<string, Point> = {
   'after-P4b': { when: 'after', fn: 'mkdirSync', a0Re: '\\.prune-[0-9a-f]{16}$', expect: 'empty' },
-  'after-P4c': {
+  // The intent is written as a temp and renamed into place.
+  'after-P4c-temp': {
     when: 'after',
     fn: 'writeFileSync',
-    a0Re: 'intent\\.json$',
+    a0Re: 'intent\\.json\\.tmp$',
+    expect: 'partial-intent',
+  },
+  'after-P4c': {
+    when: 'after',
+    fn: 'renameSync',
+    a1Re: '/intent\\.json$',
     expect: 'intent-only',
   },
   'after-P4d': {
@@ -59,7 +66,16 @@ const POINTS: Record<string, Point> = {
     nth: 4,
     expect: 'interrupted-delete',
   },
+  // The tree is gone; the sidecar, deleted last, is not yet.
   'after-P4f': { when: 'after', fn: 'rmdirSync', leafRe: true, expect: 'finished' },
+  // 11 file entries (populate's 3 plus 2 dirs of 4), then the sidecar: the 12th unlink.
+  'after-sidecar': {
+    when: 'after',
+    fn: 'unlinkSync',
+    a0Re: '^\\.d-',
+    nth: 12,
+    expect: 'finished',
+  },
 }
 
 /** Kills the walker at `point`; returns the copy and its one leftover. */
@@ -99,7 +115,12 @@ function resumeJob(left: Leftover, approvedHash: string): PruneJob {
         ? null
         : { bytes: rs.bytes, ino: rs.ino, size: rs.size, mtimeNs: rs.mtimeNs, ctimeNs: rs.ctimeNs },
     leaf: item.name,
-    rootIdentity: { dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs },
+    rootIdentity: {
+      dev: st.dev,
+      ino: st.ino,
+      birthtimeNs: st.birthtimeNs,
+      fmt: st.mode & 0o170000n,
+    },
     approvedHash,
     klass: 'held',
     authorization: 'per-item',
@@ -122,6 +143,9 @@ describe('P5: a SIGKILL at each step leaves a leftover that is listed, then resu
     it(`${name}: the leftover reads ${point.expect}, and a confirmed re-run finishes it`, () => {
       const { c, S, left } = crashAt(point)
       expect(left.state).toBe(point.expect)
+      if (name === 'after-P4f')
+        expect(left.cleanup).toEqual(['sidecar.json', 'intent.json', 'deleting'])
+      if (name === 'after-sidecar') expect(left.cleanup).toEqual(['intent.json', 'deleting'])
       if (left.item !== undefined) {
         const run = runWalker(resumeJob(left, freshHash(left.item.copyPath)))
         expect(statusOf(run)).toBe('removed/null')
@@ -133,7 +157,7 @@ describe('P5: a SIGKILL at each step leaves a leftover that is listed, then resu
         }
         fs.rmdirSync(S)
       }
-      if (point.expect === 'empty' || point.expect === 'intent-only') {
+      if (['empty', 'intent-only', 'partial-intent'].includes(point.expect)) {
         // The copy was never staged: it is still whole where it was parked.
         expect(read(path.join(c.copyPath, 'top.txt'))).toBe('top-bytes')
       } else {

@@ -9,18 +9,24 @@
  * @module @skillsmith/core/install/prune.leftovers
  */
 import fs from 'node:fs'
-import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { errCode } from './park-result.js'
 import { readStable } from './prune.sidecar.js'
 import { parseIntentStrict, parseDeletingStrict } from './prune.metadata.js'
 import type { MetaRecord, PruneIntent } from './prune.metadata.js'
-import { META, stagingProblem } from './prune.walk.shared.js'
+import { META, resumeStagingProblem } from './prune.walk.shared.js'
+
+/** `misplaced.json` is a few hundred bytes; anything past this is not ours. */
+const MISPLACED_MAX_BYTES = 64 * 1024
+/** An intent is well under 2 KiB. */
+const INTENT_MAX_BYTES = 16 * 1024
 
 export type LeftoverState =
   | 'staging-unusable'
   | 'empty'
   | 'intent-only'
+  | 'partial-intent'
   | 'staged'
   | 'interrupted-delete'
   | 'finished'
@@ -75,22 +81,22 @@ const exists = (p: string): boolean => {
  */
 export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: string }): Leftover {
   const r: Leftover = { S, state: 'unknown', misplaced: null }
-  let sd: BigIntStats
-  let td: BigIntStats
+  let rootDev: bigint
   try {
-    sd = fs.lstatSync(S, { bigint: true })
-    td = fs.lstatSync(stagingRoot, { bigint: true })
+    rootDev = fs.lstatSync(stagingRoot, { bigint: true }).dev
   } catch (err) {
     return { ...r, state: 'staging-unusable', detail: `unreadable (${errCode(err)})` }
   }
-  const bad = stagingProblem(sd, td.dev)
+  const bad = resumeStagingProblem(S, stagingRoot, rootDev)
   if (bad !== null) return { ...r, state: 'staging-unusable', detail: bad }
 
   const names = fs.readdirSync(S).sort()
   const mp = path.join(S, 'misplaced.json')
   if (names.includes('misplaced.json')) {
+    // Stable, no-follow and capped: a planted link or a huge file is reported, never read.
+    const rs = readStable(mp, { maxBytes: MISPLACED_MAX_BYTES })
     try {
-      r.misplaced = JSON.parse(fs.readFileSync(mp, 'utf8'))
+      r.misplaced = rs.ok ? JSON.parse(rs.bytes.toString('utf8')) : { unreadable: true, path: mp }
     } catch {
       r.misplaced = { unreadable: true, path: mp }
     }
@@ -102,7 +108,7 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
   const meta: Record<string, MetaRecord> = {}
   let intent: PruneIntent | null = null
   if (names.includes('intent.json')) {
-    const rs = readStable(path.join(S, 'intent.json'))
+    const rs = readStable(path.join(S, 'intent.json'), { maxBytes: INTENT_MAX_BYTES })
     intent = rs.ok ? parseIntentStrict(rs.bytes) : null
     if (intent === null || !rs.ok) {
       return {
@@ -128,6 +134,7 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
   const trees = names.filter((n) => !META.has(n))
   const deleting = names.includes('deleting')
   if (names.length === 0) return { ...r, state: 'empty', cleanup: [] }
+  if (names.includes('intent.json.tmp')) return partialIntent(r, S, names, meta)
   if (intent === null) {
     if (trees.length === 1) {
       const leaf = trees[0] as string
@@ -164,6 +171,27 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
       state: 'finished',
       intent,
       cleanup: r.misplaced ? [] : ['intent.json', 'deleting'],
+    }
+  }
+  if (!hasLeaf && deleting && hasSidecar) {
+    // The tree is gone and the sidecar, deleted last, is not yet. It is ours
+    // to remove only if it is the sidecar the intent approved, byte for byte.
+    const rs = readStable(path.join(S, 'sidecar.json'))
+    const sha = rs.ok ? crypto.createHash('sha256').update(rs.bytes).digest('hex') : null
+    if (!rs.ok || sha === null || sha !== intent.approvedSidecarSha256) {
+      return {
+        ...r,
+        state: 'unknown',
+        intent,
+        detail: 'a staged sidecar that is not the approved one, without its copy; never touched',
+      }
+    }
+    meta['sidecar.json'] = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
+    return {
+      ...r,
+      state: 'finished',
+      intent,
+      cleanup: r.misplaced ? [] : ['sidecar.json', 'intent.json', 'deleting'],
     }
   }
   if (hasLeaf && deleting) {
@@ -216,4 +244,36 @@ function stagedItem(
     inheritedMeta: meta,
     ...(origCopy ? { schemaCopyPath: origCopy, schemaOpDir: path.dirname(origCopy) } : {}),
   }
+}
+
+/**
+ * `intent.json.tmp`: a run stopped after writing its intent's temp and before
+ * renaming it into place, so the copy was never moved (the rename into
+ * staging comes after). Removable only when the temp is a complete,
+ * strict-schema intent and nothing else is in `S`; otherwise it is reported,
+ * not `unknown`, and is never touched.
+ */
+function partialIntent(
+  r: Leftover,
+  S: string,
+  names: string[],
+  meta: Record<string, MetaRecord>
+): Leftover {
+  if (names.length !== 1) {
+    return { ...r, state: 'unknown', detail: `entries ${names.join(',')} beside an intent temp` }
+  }
+  const rs = readStable(path.join(S, 'intent.json.tmp'), { maxBytes: INTENT_MAX_BYTES })
+  const intent = rs.ok ? parseIntentStrict(rs.bytes) : null
+  if (!rs.ok || intent === null) {
+    return {
+      ...r,
+      state: 'partial-intent',
+      cleanup: [],
+      detail:
+        'an incomplete intent temp; the copy was never moved. It is not removed automatically, ' +
+        "because its bytes cannot be proven to be Skillsmith's",
+    }
+  }
+  meta['intent.json.tmp'] = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
+  return { ...r, state: 'partial-intent', intent, meta, cleanup: ['intent.json.tmp'] }
 }

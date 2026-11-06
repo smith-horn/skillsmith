@@ -112,7 +112,12 @@ export function jobFor(c: ParkedCopy, over: Partial<PruneJob> = {}): PruneJob {
       ctimeNs: rs.ctimeNs,
     },
     leaf: c.name,
-    rootIdentity: { dev: st.dev, ino: st.ino, birthtimeNs: st.birthtimeNs },
+    rootIdentity: {
+      dev: st.dev,
+      ino: st.ino,
+      birthtimeNs: st.birthtimeNs,
+      fmt: st.mode & 0o170000n,
+    },
     approvedHash: parsed.recordedHash,
     klass: 'clean',
     authorization: 'batch',
@@ -147,7 +152,10 @@ export interface WalkRun {
   status: number | null
   signal: NodeJS.Signals | null
   stderr: string
-  trace: { trace: TraceEntry[]; fired: { kind: string; hookError?: string }[] } | null
+  trace: {
+    trace: TraceEntry[]
+    fired: { kind: string; hookError?: string; moved?: boolean }[]
+  } | null
 }
 
 /**
@@ -199,8 +207,15 @@ export function runWalker(
 }
 
 /** The hook of `kind` ran without error. */
+/** Writes that must move the timestamps to count as landed (`writeUntilMoved`). */
+const MUST_MOVE: ReadonlySet<string> = new Set(['writeFd', 'rewriteInPlace'])
+
+/** The hook of `kind` ran without error and, for a timestamp-sensitive write, moved them. */
 export const fired = (run: WalkRun, kind: string): boolean =>
-  (run.trace?.fired ?? []).some((x) => x.kind === kind && x.hookError === undefined)
+  (run.trace?.fired ?? []).some(
+    (x) =>
+      x.kind === kind && x.hookError === undefined && (!MUST_MOVE.has(kind) || x.moved === true)
+  )
 
 export const statusOf = (run: WalkRun): string =>
   run.item === null

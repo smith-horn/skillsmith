@@ -25,6 +25,20 @@ import crypto from 'node:crypto'
 import { errCode } from './park-result.js'
 import { readStable } from './prune.sidecar.js'
 import type { StableRead } from './prune.sidecar.js'
+import { PRUNE_DIR_RE, renameNoReplace } from './prune.walk.shared.js'
+
+/**
+ * The only names `removeIfIdentical` may remove, and only directly in a
+ * `.prune-<16 hex>` staging directory: prune's own intent (and its temp), its
+ * `deleting` marker, and the staged sidecar of a copy whose tree a crashed
+ * run already deleted (the sidecar goes last, so that leftover keeps it).
+ */
+export const REMOVABLE_METADATA: ReadonlySet<string> = new Set([
+  'intent.json',
+  'intent.json.tmp',
+  'deleting',
+  'sidecar.json',
+])
 
 const HEX16 = /^[0-9a-f]{16}$/
 const HASH = /^[0-9a-f]{64}$/
@@ -155,9 +169,19 @@ export type RemoveResult = { removed: true } | { removed: false; kept: string | 
  * R-swap class (ADR-166 D-11), out of model.
  *
  * `kept` is null when the file is absent, and otherwise names its exact
- * current path and why it was kept.
+ * current path and why it was kept. A path that is not one of
+ * `REMOVABLE_METADATA` directly in a `.prune-<16 hex>` directory is a
+ * TypeError: this is not a general delete.
  */
 export function removeIfIdentical(p: string, expect: MetaRecord | undefined): RemoveResult {
+  if (
+    !REMOVABLE_METADATA.has(path.basename(p)) ||
+    !PRUNE_DIR_RE.test(path.basename(path.dirname(p)))
+  ) {
+    throw new TypeError(
+      `removeIfIdentical removes only prune's own metadata directly in a .prune-<16 hex> directory, not ${p}`
+    )
+  }
   const keep = (at: string, why: string): RemoveResult => ({
     removed: false,
     kept: `${at}: ${why}`,
@@ -174,7 +198,7 @@ export function removeIfIdentical(p: string, expect: MetaRecord | undefined): Re
   if (!matches(pre, expect)) return keep(p, 'not the inode and bytes recorded')
   const r = path.join(path.dirname(p), `.m-${crypto.randomBytes(8).toString('hex')}`)
   try {
-    fs.renameSync(p, r)
+    renameNoReplace(p, r)
   } catch (err) {
     return keep(p, `rename to a random name failed (${errCode(err)})`)
   }
@@ -196,6 +220,10 @@ export function removeIfIdentical(p: string, expect: MetaRecord | undefined): Re
   ) {
     return keep(r, 'changed immediately before removal')
   }
-  fs.unlinkSync(r)
+  try {
+    fs.unlinkSync(r)
+  } catch (err) {
+    return keep(r, `unlink failed (${errCode(err)})`)
+  }
   return { removed: true }
 }

@@ -9,7 +9,9 @@
  *    recorded hash is `postMoveTreeHash`;
  *  - a kept tree in the update backup area (`<area>/<dirName>/<opId>` or
  *    `<opId>.<kind>[.<k>]`, sidecar `Sidecar` from `skill-swap.sidecar.ts`),
- *    shape `B`. Its recorded hash is `treeHash`.
+ *    shape `B`, checked by the one shared strict parser
+ *    (`backup-sidecar.strict.ts`) plus where the tree sits. Its recorded hash
+ *    is `treeHash`.
  * A sidecar that fails the schema of its store counts as unverified, never
  * clean (ADR-166 D-10 item 4).
  *
@@ -25,7 +27,7 @@ import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
 import { errCode } from './park-result.js'
 import type { HeldReason } from './park-tree.verify.js'
-import type { PartialCause, PublishKind, Sidecar } from '../services/skill-swap.sidecar.js'
+import { parseBackupSidecarStrict } from './backup-sidecar.strict.js'
 
 const HASH = /^[0-9a-f]{64}$/
 const isHash = (v: unknown): v is string => typeof v === 'string' && HASH.test(v)
@@ -46,7 +48,12 @@ export type StableRead =
   | StableReadOk
   | {
       ok: false
-      reason: 'unreadable' | 'not-a-file' | 'replaced-while-reading' | 'changed-while-reading'
+      reason:
+        | 'unreadable'
+        | 'not-a-file'
+        | 'too-large'
+        | 'replaced-while-reading'
+        | 'changed-while-reading'
       errno: string | null
     }
 
@@ -58,8 +65,13 @@ export type StableRead =
  * as data.
  *
  * `afterRead` is a test seam: called after the read, before the second fstat.
+ * `maxBytes` refuses a larger file (`too-large`) before it is opened, and
+ * again from the descriptor's own size before anything is read.
  */
-export function readStable(p: string, { afterRead }: { afterRead?: () => void } = {}): StableRead {
+export function readStable(
+  p: string,
+  { afterRead, maxBytes }: { afterRead?: () => void; maxBytes?: number } = {}
+): StableRead {
   let ls: BigIntStats
   try {
     ls = fs.lstatSync(p, { bigint: true })
@@ -67,6 +79,9 @@ export function readStable(p: string, { afterRead }: { afterRead?: () => void } 
     return { ok: false, reason: 'unreadable', errno: errCode(err) }
   }
   if (!ls.isFile()) return { ok: false, reason: 'not-a-file', errno: null }
+  if (maxBytes !== undefined && ls.size > BigInt(maxBytes)) {
+    return { ok: false, reason: 'too-large', errno: null }
+  }
   let fd: number
   try {
     fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
@@ -77,6 +92,9 @@ export function readStable(p: string, { afterRead }: { afterRead?: () => void } 
     const a = fs.fstatSync(fd, { bigint: true })
     if (a.ino !== ls.ino || a.dev !== ls.dev) {
       return { ok: false, reason: 'replaced-while-reading', errno: null }
+    }
+    if (maxBytes !== undefined && a.size > BigInt(maxBytes)) {
+      return { ok: false, reason: 'too-large', errno: null }
     }
     const bytes = fs.readFileSync(fd)
     if (typeof afterRead === 'function') afterRead()
@@ -146,51 +164,6 @@ const HELD_REASON_TABLE = {
 } satisfies Record<HeldReason, true>
 const HELD_REASONS: ReadonlySet<string> = new Set(Object.keys(HELD_REASON_TABLE))
 
-/** The backup sidecar's keys (`skill-swap.sidecar.ts` `Sidecar`), required and optional. */
-const BACKUP_REQUIRED = [
-  'opId',
-  'kind',
-  'dirName',
-  'createdAt',
-  'treeHash',
-  'identity',
-  'client',
-  'skillsDir',
-  'scope',
-  'manifestKey',
-] as const satisfies readonly (keyof Sidecar)[]
-const BACKUP_OPTIONAL = [
-  'treeHashError',
-  'sourceUnchanged',
-  'partialCause',
-  'opDirIdentity',
-] as const satisfies readonly (keyof Sidecar)[]
-/** `satisfies` makes a new `PublishKind` a compile error here until it is listed. */
-const KIND_TABLE = {
-  backup: true,
-  undone: true,
-  conflict: true,
-  'failed-build': true,
-  'edited-new': true,
-  'unrecorded-new': true,
-  'partial-copy': true,
-  'unused-new': true,
-  'abandoned-old': true,
-  'abandoned-new': true,
-  'abandoned-undone': true,
-} satisfies Record<PublishKind, true>
-const KINDS: ReadonlySet<string> = new Set(Object.keys(KIND_TABLE))
-const PARTIAL_CAUSE_TABLE = {
-  enospc: true,
-  mismatch: true,
-  'copy-failed': true,
-} satisfies Record<PartialCause, true>
-const PARTIAL_CAUSES: ReadonlySet<string> = new Set(Object.keys(PARTIAL_CAUSE_TABLE))
-const DECIMAL = /^[0-9]+$/
-
-const sameKeys = (obj: object, keys: readonly string[]): boolean =>
-  Object.keys(obj).sort().join('\0') === [...keys].sort().join('\0')
-
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -199,19 +172,6 @@ function roundTrips(v: unknown): boolean {
   const d = new Date(v)
   return !Number.isNaN(d.getTime()) && d.toISOString() === v
 }
-const isSegment = (v: unknown): v is string =>
-  typeof v === 'string' &&
-  v.length > 0 &&
-  !v.startsWith('.') &&
-  !v.includes('/') &&
-  !v.includes('\\')
-const isRecordIdentity = (v: unknown): boolean =>
-  v !== null &&
-  typeof v === 'object' &&
-  !Array.isArray(v) &&
-  sameKeys(v, ['dev', 'ino', 'birthtimeNs', 'fmt']) &&
-  Object.values(v).every((x) => typeof x === 'string' && DECIMAL.test(x))
-
 type Bad = { ok: false; reason: 'schema-invalid'; detail: string }
 const bad = (detail: string): Bad => ({ ok: false, reason: 'schema-invalid', detail })
 
@@ -282,66 +242,27 @@ function parseParked(
   }
 }
 
-/** The backup-area shape (`Sidecar`): its required keys, and each optional one only where it applies. */
+/**
+ * The backup-area shape: the shared strict schema (`backup-sidecar.strict.ts`),
+ * plus where the tree sits: named `<opId>` (a backup) or `<opId>.<kind>[.<k>]`,
+ * in the area directory its `dirName` names.
+ */
 function parseBackup(
   s: Record<string, unknown>,
   copyPath: string,
   parentName: string
 ): SidecarParse {
-  const known: readonly string[] = [...BACKUP_REQUIRED, ...BACKUP_OPTIONAL]
-  const extra = Object.keys(s).find((k) => !known.includes(k))
-  if (extra !== undefined) return bad(`unknown key ${extra}`)
-  const missing = BACKUP_REQUIRED.find((k) => !Object.prototype.hasOwnProperty.call(s, k))
-  if (missing !== undefined) return bad(`${missing} missing`)
-  if (!isSegment(s.opId)) return bad('opId is not a single path segment')
-  if (typeof s.kind !== 'string' || !KINDS.has(s.kind)) {
-    return bad(`kind ${JSON.stringify(s.kind)} unknown`)
-  }
+  const r = parseBackupSidecarStrict(s)
+  if (!r.ok) return bad(r.detail)
+  const sc = r.sidecar
   const name = path.basename(copyPath)
   const nameOk =
-    s.kind === 'backup'
-      ? name === s.opId
-      : new RegExp(`^${escapeRe(s.opId)}\\.${escapeRe(s.kind)}(\\.[1-9][0-9]*)?$`).test(name)
+    sc.kind === 'backup'
+      ? name === sc.opId
+      : new RegExp(`^${escapeRe(sc.opId)}\\.${escapeRe(sc.kind)}(\\.[1-9][0-9]*)?$`).test(name)
   if (!nameOk) return bad('the copy name is not <opId> or <opId>.<kind>[.<k>] for this sidecar')
-  if (s.dirName !== parentName) return bad('dirName is not the area directory name')
-  if (!roundTrips(s.createdAt)) return bad('createdAt does not round-trip through Date')
-  if (s.treeHash !== null && !isHash(s.treeHash)) return bad('treeHash is neither a hash nor null')
-  if (!isRecordIdentity(s.identity)) return bad('identity is malformed')
-  for (const k of ['client', 'scope', 'manifestKey']) {
-    if (typeof s[k] !== 'string') return bad(`${k} is not a string`)
-  }
-  if (typeof s.skillsDir !== 'string' || !path.isAbsolute(s.skillsDir)) {
-    return bad('skillsDir is not an absolute path')
-  }
-  if (
-    s.treeHashError !== undefined &&
-    (typeof s.treeHashError !== 'string' || s.treeHash !== null)
-  ) {
-    return bad('treeHashError must be a string, and only with treeHash null')
-  }
-  const partial = s.kind === 'partial-copy'
-  if (s.sourceUnchanged !== undefined && (!partial || typeof s.sourceUnchanged !== 'boolean')) {
-    return bad('sourceUnchanged must be a boolean, on a partial-copy only')
-  }
-  if (
-    s.partialCause !== undefined &&
-    (!partial || typeof s.partialCause !== 'string' || !PARTIAL_CAUSES.has(s.partialCause))
-  ) {
-    return bad('partialCause must be a known cause, on a partial-copy only')
-  }
-  if (
-    s.opDirIdentity !== undefined &&
-    (!s.kind.startsWith('abandoned-') || !isRecordIdentity(s.opDirIdentity))
-  ) {
-    return bad('opDirIdentity must be an identity, on an abandoned-* tree only')
-  }
-  return {
-    ok: true,
-    store: 'backup',
-    shape: 'B',
-    sidecar: s,
-    recordedHash: (s.treeHash as string | null) ?? null,
-  }
+  if (sc.dirName !== parentName) return bad('dirName is not the area directory name')
+  return { ok: true, store: 'backup', shape: 'B', sidecar: s, recordedHash: sc.treeHash }
 }
 
 /**

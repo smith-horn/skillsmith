@@ -13,7 +13,10 @@
  *
  * @module @skillsmith/core/install/prune.job
  */
+import path from 'node:path'
+import { assertPathSegment } from './park-result.js'
 import type { MetaRecord } from './prune.metadata.js'
+import { META, PRUNE_DIR_RE } from './prune.walk.shared.js'
 
 /** The classes a walker may be handed. A mounted copy is never offered, so it is not one. */
 export type PruneClass = 'clean' | 'held' | 'changed' | 'unverified'
@@ -21,12 +24,19 @@ export type PruneAuthorization = 'batch' | 'per-item'
 
 const CLASSES: ReadonlySet<string> = new Set(['clean', 'held', 'changed', 'unverified'])
 const AUTHORIZATIONS: ReadonlySet<string> = new Set(['batch', 'per-item'])
+const HASH = /^[0-9a-f]{64}$/
+const DECIMAL = /^[0-9]+$/
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
+/** The metadata a resumed run may inherit from the leftover the parent inspected. */
+const INHERITABLE: ReadonlySet<string> = new Set(['intent.json', 'deleting'])
 
-/** The copy root's identity as the listing bound it. */
+/** The copy root's identity as the listing bound it, file type included (SMI-7130). */
 export interface RootIdentity {
   dev: bigint
   ino: bigint
   birthtimeNs: bigint
+  /** `mode & S_IFMT`. */
+  fmt: bigint
 }
 
 /** The sidecar as the listing stable-read it: the exact bytes and the inode they came from. */
@@ -74,7 +84,12 @@ export function encodeJob(job: PruneJob): EncodedJob {
   const sr = job.sidecarRead
   return {
     ...job,
-    rootIdentity: { dev: String(id.dev), ino: String(id.ino), birthtimeNs: String(id.birthtimeNs) },
+    rootIdentity: {
+      dev: String(id.dev),
+      ino: String(id.ino),
+      birthtimeNs: String(id.birthtimeNs),
+      fmt: String(id.fmt),
+    },
     sidecarRead:
       sr === null || sr === undefined
         ? null
@@ -99,7 +114,63 @@ const big = (o: Record<string, unknown>, k: string, label: string): bigint => {
   return BigInt(v as string)
 }
 
-/** Decodes and validates a job. Every refusal is a TypeError before any filesystem work. */
+/** The paths and names in a job, and how they must relate. */
+function checkRelations(raw: Record<string, unknown>): void {
+  for (const k of ['copyPath', 'stagingRoot', 'opDir']) {
+    if (!path.isAbsolute(raw[k] as string)) fail(`${k} must be an absolute path`)
+  }
+  if (typeof raw.sidecarPath === 'string' && !path.isAbsolute(raw.sidecarPath)) {
+    fail('sidecarPath must be an absolute path or null')
+  }
+  const leaf = raw.leaf as string
+  try {
+    assertPathSegment('leaf', leaf)
+  } catch (err) {
+    fail((err as Error).message)
+  }
+  if (META.has(leaf)) fail(`leaf ${JSON.stringify(leaf)} is one of prune's own names`)
+  if (!HASH.test(raw.approvedHash as string)) fail('approvedHash must be 64 lowercase hex')
+  const copyPath = raw.copyPath as string
+  const opDir = raw.opDir as string
+  const stagingRoot = raw.stagingRoot as string
+  if (typeof raw.S === 'string') {
+    const S = raw.S
+    if (!PRUNE_DIR_RE.test(path.basename(S)) || path.dirname(S) !== stagingRoot) {
+      fail('S must be a .prune-<16 hex> directory directly in stagingRoot')
+    }
+    if (copyPath !== path.join(S, leaf)) fail('with S, copyPath must be S/<leaf>')
+    if (opDir !== S && opDir !== stagingRoot && path.dirname(opDir) !== stagingRoot) {
+      fail('with S, opDir must be S, stagingRoot, or a directory directly in stagingRoot')
+    }
+  } else {
+    if (path.basename(copyPath) !== leaf) fail('leaf must be the copy name')
+    if (opDir !== path.dirname(copyPath)) fail("opDir must be the copy's own directory")
+    if (raw.resume === true) fail('resume needs S')
+    if (raw.inheritedMeta !== undefined) fail('inheritedMeta needs S')
+  }
+  if (raw.inheritedMeta === undefined) return
+  if (!isObj(raw.inheritedMeta)) return fail('inheritedMeta must be an object')
+  for (const [k, v] of Object.entries(raw.inheritedMeta)) {
+    if (!INHERITABLE.has(k)) fail(`inheritedMeta may hold only intent.json and deleting, not ${k}`)
+    const ok =
+      isObj(v) &&
+      Object.keys(v).sort().join(',') === 'bytes,ino' &&
+      typeof v.ino === 'string' &&
+      DECIMAL.test(v.ino) &&
+      typeof v.bytes === 'string' &&
+      BASE64.test(v.bytes)
+    if (!ok) fail(`inheritedMeta.${k} must be {ino: decimal, bytes: base64}`)
+  }
+}
+
+/**
+ * Decodes and validates a job: the type of every field the walker reads, and
+ * how its paths relate (`checkRelations`): absolute paths, a single-segment
+ * leaf that is not one of prune's own names, a 64-hex approved hash, and
+ * either a fresh copy (`leaf` its name, `opDir` its directory) or a leftover
+ * `S` (a `.prune-<16 hex>` directory directly in `stagingRoot`, holding
+ * `S/<leaf>`). Every refusal is a TypeError before any filesystem work.
+ */
 export function decodeJob(raw: unknown): PruneJob {
   if (!isObj(raw)) return fail('not an object')
   for (const k of ['copyPath', 'leaf', 'approvedHash', 'stagingRoot', 'opDir']) {
@@ -134,15 +205,14 @@ export function decodeJob(raw: unknown): PruneJob {
     fail('S must be a string, null or absent')
   }
   if (raw.resume !== undefined && typeof raw.resume !== 'boolean') fail('resume must be a boolean')
-  if (raw.inheritedMeta !== undefined && !isObj(raw.inheritedMeta)) {
-    fail('inheritedMeta must be an object')
-  }
+  checkRelations(raw)
   return {
     ...(raw as unknown as PruneJob),
     rootIdentity: {
       dev: big(ri, 'dev', 'rootIdentity'),
       ino: big(ri, 'ino', 'rootIdentity'),
       birthtimeNs: big(ri, 'birthtimeNs', 'rootIdentity'),
+      fmt: big(ri, 'fmt', 'rootIdentity'),
     },
     sidecarRead,
   }

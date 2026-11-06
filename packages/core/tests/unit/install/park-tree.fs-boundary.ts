@@ -51,6 +51,8 @@ export interface SourceCheck {
   fsMembers: string[]
   localImports: string[]
   externalImports: string[]
+  /** Every Node builtin imported (by value), named without `node:`, sorted, each once. */
+  builtinImports: string[]
   importForms: ImportForm[]
 }
 
@@ -79,12 +81,14 @@ export function checkFsBoundarySource(
   const fsMembers = new Set<string>()
   const localImports: string[] = []
   const externalImports: string[] = []
+  const builtinImports = new Set<string>()
   const importForms: ImportForm[] = []
   const isFsSource = (s: string) => FS_SPEC.test(s) || FS_SUB.test(s)
   const noteSpecifier = (src: string) => {
     if (MODULE_SPEC.test(src)) violations.push(`import of '${src}'`)
     if (isRelative(src)) localImports.push(src)
     else if (!src.startsWith('node:') && !BUILTINS.has(src)) externalImports.push(src)
+    else builtinImports.add(src.replace(/^node:/, ''))
   }
 
   // Pass 1: import and re-export declarations.
@@ -207,6 +211,7 @@ export function checkFsBoundarySource(
     fsMembers: [...fsMembers].sort(),
     localImports,
     externalImports,
+    builtinImports: [...builtinImports].sort(),
     importForms,
   }
 }

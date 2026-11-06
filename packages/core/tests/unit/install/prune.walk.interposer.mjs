@@ -67,35 +67,51 @@ function matches(h, when, fn, a0, a1) {
   return true
 }
 
-/** Busy-waits `ms`, so a write lands in a later timestamp tick than the walker's last stat. */
-function waitPast(ms) {
-  const end = process.hrtime.bigint() + BigInt(Math.round(ms * 1e6))
-  while (process.hrtime.bigint() < end) {
-    /* spin */
+/**
+ * Writes, then fstats, until the file's mtime and ctime have both moved past
+ * `before` (a same-tick write is invisible to any timestamp check), in at
+ * most 400 tries 0.25 ms apart. Throws if they never move, so the hook is
+ * recorded as failed and the row fails its precondition instead of passing.
+ */
+function writeUntilMoved(fd, write) {
+  const before = O('fstatSync', fd, { bigint: true })
+  for (let i = 0; i < 400; i += 1) {
+    write()
+    const now = O('fstatSync', fd, { bigint: true })
+    if (now.mtimeNs !== before.mtimeNs && now.ctimeNs !== before.ctimeNs) return { moved: true }
+    const end = process.hrtime.bigint() + 250000n
+    while (process.hrtime.bigint() < end) {
+      /* spin */
+    }
   }
+  throw new Error('the timestamps never moved')
 }
 
 function act(a, a0) {
-  if (a.waitMs !== undefined) waitPast(a.waitMs)
   switch (a.kind) {
+    case 'throw':
+      return Object.assign(new Error(`injected ${a.code}`), { code: a.code })
     case 'kill':
       process.kill(process.pid, 'SIGKILL')
       return null
     case 'writeFd':
-      O('writeSync', a.fd, Buffer.from(a.data), 0, Buffer.byteLength(a.data), a.pos ?? 0)
-      return null
+      return writeUntilMoved(a.fd, () =>
+        O('writeSync', a.fd, Buffer.from(a.data), 0, Buffer.byteLength(a.data), a.pos ?? 0)
+      )
     case 'writeRel':
       O('writeFileSync', path.join(realCwd(), a.name), a.data)
       return null
     case 'rewriteInPlace': {
       const p = a.path === '$cwd/sidecar.json' ? path.join(realCwd(), 'sidecar.json') : abs(a0)
       const fd = O('openSync', p, 'r+')
-      const st = O('fstatSync', fd)
-      const buf = Buffer.alloc(st.size, 'Z')
-      O('writeSync', fd, buf, 0, buf.length, 0)
-      O('closeSync', fd)
-      record(a.recordFile, { path: p })
-      return null
+      try {
+        const buf = Buffer.alloc(O('fstatSync', fd).size, 'Z')
+        const res = writeUntilMoved(fd, () => O('writeSync', fd, buf, 0, buf.length, 0))
+        record(a.recordFile, { path: p })
+        return res
+      } finally {
+        O('closeSync', fd)
+      }
     }
     case 'swap': {
       // After the walker's check of a0: move a0 away and put a replacement there.
@@ -144,14 +160,16 @@ function runHooks(when, fn, a0, a1) {
   for (const h of spec.hooks ?? []) {
     if (!matches(h, when, fn, a0, a1)) continue
     inHook = true
+    let res = null
     try {
-      act(h.action.kind === 'mount' ? { ...h.action, a1 } : h.action, a0)
-      fired.push({ fn, a0, kind: h.action.kind })
+      res = act(h.action.kind === 'mount' ? { ...h.action, a1 } : h.action, a0)
+      fired.push({ fn, a0, kind: h.action.kind, ...(res instanceof Error ? {} : (res ?? {})) })
     } catch (e) {
       fired.push({ fn, a0, kind: h.action.kind, hookError: String(e?.message ?? e) })
     } finally {
       inHook = false
     }
+    if (res instanceof Error) throw res
   }
 }
 

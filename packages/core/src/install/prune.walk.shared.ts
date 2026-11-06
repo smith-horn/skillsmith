@@ -7,6 +7,7 @@
  */
 import fs from 'node:fs'
 import type { BigIntStats } from 'node:fs'
+import path from 'node:path'
 import crypto from 'node:crypto'
 import { errCode } from './park-result.js'
 import type { ParkStatus } from './park-result.js'
@@ -18,6 +19,7 @@ export const SIDECAR_KEY = '\0sidecar'
 /** Prune's own names inside a `.prune-*` staging directory. */
 export const META: ReadonlySet<string> = new Set([
   'intent.json',
+  'intent.json.tmp',
   'deleting',
   'sidecar.json',
   'misplaced.json',
@@ -141,4 +143,47 @@ export function stagingProblem(sd: BigIntStats, dev: bigint): string | null {
   const om = opDirOwnerModeProblem(sd)
   if (om !== null) return om.replace('op directory', 'staging directory')
   return sd.dev !== dev ? 'on another device' : null
+}
+
+/** The name of a staging directory the walker makes: `.prune-<16 hex>`. */
+export const PRUNE_DIR_RE = /^\.prune-[0-9a-f]{16}$/
+
+/**
+ * Why a resumed run may not use the staging directory `S` a crashed run left,
+ * or null. The same checks a fresh `S` gets (`stagingProblem`), plus the two a
+ * fresh one has by construction: it is named `.prune-<16 hex>`, and it sits
+ * directly in `stagingRoot`.
+ */
+export function resumeStagingProblem(S: string, stagingRoot: string, dev: bigint): string | null {
+  if (!PRUNE_DIR_RE.test(path.basename(S))) return 'not named .prune-<16 hex>'
+  if (path.dirname(S) !== stagingRoot) return `not directly in ${stagingRoot}`
+  let sd: BigIntStats
+  try {
+    sd = fs.lstatSync(S, { bigint: true })
+  } catch (err) {
+    return `unreadable (${errCode(err)})`
+  }
+  return stagingProblem(sd, dev)
+}
+
+/**
+ * The only rename any prune module makes: refuses when `to` already exists,
+ * so no rename ever replaces an entry (Node has no RENAME_NOREPLACE; the lstat
+ * leaves a one-syscall window, inside the 0700 staging directory or toward a
+ * fresh random name, the R-swap class of ADR-166 D-11). Throws like rename(2):
+ * an existing `to` is `EEXIST`.
+ */
+export function renameNoReplace(from: string, to: string): void {
+  try {
+    fs.lstatSync(to)
+  } catch (err) {
+    if (errCode(err) === 'ENOENT') {
+      fs.renameSync(from, to)
+      return
+    }
+    throw err
+  }
+  throw Object.assign(new Error(`EEXIST: ${to} already exists; not renamed onto`), {
+    code: 'EEXIST',
+  })
 }
