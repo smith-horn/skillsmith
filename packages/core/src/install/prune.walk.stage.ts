@@ -1,7 +1,7 @@
 /**
- * SMI-6531 (A1 step 6c-i): the walker's writes that delete nothing, split out
- * of `prune.walk.ts` for the file-length limit: the intent (P4c) and the
- * misplacement record (R-misplace). The deletion walk itself stays
+ * SMI-6531 (A1 step 6c-i): the walker's intent (P4c), a write that deletes
+ * nothing, split out of `prune.walk.ts` for the file-length limit (the
+ * misplacement record is in `prune.misplaced.ts`). The deletion walk itself stays
  * module-private in `prune.walk.ts` (spike PR-17). fs is the DEFAULT export,
  * looked up at call time, and every write is exclusive (`wx`).
  *
@@ -10,7 +10,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { errCodeOrMessage } from './park-result.js'
 import { INTENT_VERSION, recordOf } from './prune.metadata.js'
 import type { MetaRecord, PruneIntent } from './prune.metadata.js'
 import type { PruneJob } from './prune.job.js'
@@ -50,14 +49,4 @@ export function writeIntent(S: string, intent: PruneIntent): MetaRecord {
   fs.writeFileSync(tmp, bytes, { flag: 'wx' })
   renameNoReplace(tmp, final)
   return recordOf(final, bytes)
-}
-
-/** Writes `S/misplaced.json` (`wx`). Returns null, or why it could not. */
-export function recordMisplaced(S: string, rec: object): string | null {
-  try {
-    fs.writeFileSync(path.join(S, 'misplaced.json'), JSON.stringify(rec, null, 2), { flag: 'wx' })
-    return null
-  } catch (err) {
-    return errCodeOrMessage(err)
-  }
 }

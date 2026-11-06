@@ -40,7 +40,6 @@ import {
   SIDECAR_KEY,
   rand,
   renameNoReplace,
-  resumeStagingProblem,
   typeOf,
   sameDirId,
   sameLeafPost,
@@ -48,7 +47,9 @@ import {
   stagingProblem,
 } from './prune.walk.shared.js'
 import type { Inventory, InventoryRow } from './prune.walk.shared.js'
-import { intentFor, recordMisplaced, writeIntent } from './prune.walk.stage.js'
+import { recordMisplacement } from './prune.misplaced.js'
+import { checkResume } from './prune.walk.resume.js'
+import { intentFor, writeIntent } from './prune.walk.stage.js'
 import { recheck, verifyAtStaging } from './prune.walk.verify.js'
 
 /**
@@ -99,10 +100,13 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
   if (job.klass !== 'clean' && job.authorization !== 'per-item') {
     return kept('needs-allow-changed', `a ${job.klass} copy is deleted only with a per-item yes`)
   }
-  // A resumed run gets every check a fresh staging directory gets, before anything else.
+  // A resumed run is checked first: its staging directory, any misplaced entry
+  // still present (never deleted, F1), and agreement with the intent on disk.
+  let cleared: Record<string, MetaRecord> = {}
   if (job.S != null) {
-    const bad = resumeStagingProblem(job.S, job.stagingRoot, job.rootIdentity.dev)
-    if (bad !== null) return kept('staging-unusable', `${job.S}: ${bad}`)
+    const rc = checkResume({ ...job, S: job.S })
+    if (!rc.ok) return kept(rc.reason, rc.detail)
+    cleared = rc.cleared
   }
   // P4a
   const worse = recheck(job)
@@ -156,14 +160,20 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
     try {
       renameNoReplace(job.copyPath, path.join(S, leaf))
     } catch (err) {
-      // Our own intent only, by inode and exact bytes.
-      removeIfIdentical(path.join(S, 'intent.json'), own['intent.json'])
+      // Our own intent only, by inode and exact bytes; a kept one is reported.
+      const r = removeIfIdentical(path.join(S, 'intent.json'), own['intent.json'])
       try {
         fs.rmdirSync(S)
       } catch {
         /* not empty: reported by the next listing */
       }
-      return kept('stage-failed', `rename into staging failed (${errCode(err)})`, errCode(err))
+      return out({
+        status: 'kept',
+        reason: 'stage-failed',
+        errno: errCode(err),
+        detail: `rename into staging failed (${errCode(err)})`,
+        ...(!r.removed && r.kept !== null ? { metadataKept: [r.kept] } : {}),
+      })
     }
   } else {
     S = job.S
@@ -230,30 +240,37 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
   // (or what the parent inspected for this confirmed staged copy), by inode
   // and bytes, re-checked immediately before unlink. Otherwise it is kept and
   // reported in `metadataKept`; the copy is removed either way.
+  // Misplacement records whose entries were gone when this run checked them
+  // are removed the same way.
   const metadataKept: string[] = []
-  for (const m of ['deleting', 'intent.json']) {
-    const r = removeIfIdentical(path.join(stagingPath, m), wrote[m] ?? own[m])
+  const toRemove: [string, MetaRecord | undefined][] = [
+    ['deleting', wrote.deleting ?? own.deleting],
+    ['intent.json', own['intent.json']],
+    ...Object.entries(cleared),
+  ]
+  for (const [m, rec] of toRemove) {
+    const r = removeIfIdentical(path.join(stagingPath, m), rec)
     if (!r.removed && r.kept !== null) metadataKept.push(r.kept)
   }
-  let sKept: string | null = null
-  if (fs.readdirSync(stagingPath).includes('misplaced.json')) {
-    sKept = 'misplaced.json kept for the next listing'
-  } else {
+  // Only empty directories are removed. Anything left keeps them, and is named.
+  const notes: string[] = []
+  for (const [dir, label] of [
+    [stagingPath, 'staging directory'],
+    [job.opDir, 'op directory'],
+  ] as const) {
     try {
-      fs.rmdirSync(stagingPath)
+      fs.rmdirSync(dir)
     } catch (err) {
-      sKept = `staging directory left (${errCode(err)})`
+      const code = errCode(err)
+      if (dir === stagingPath || (code !== 'ENOTEMPTY' && code !== 'ENOENT')) {
+        notes.push(`${label} left (${code})`)
+      }
     }
-  }
-  try {
-    fs.rmdirSync(job.opDir)
-  } catch {
-    /* ENOTEMPTY / ENOENT are fine */
   }
   return out({
     status: 'removed',
     deleted: del.deleted,
-    ...(sKept ? { detail: sKept } : {}),
+    ...(notes.length ? { detail: notes.join('; ') } : {}),
     ...(metadataKept.length ? { metadataKept } : {}),
   })
 }
@@ -319,7 +336,7 @@ function deleteVerified(
       /* gone */
     }
     const at = new Date().toISOString()
-    const recErr = recordMisplaced(S, {
+    const rec = recordMisplacement(S, {
       pruneId: ctx.pruneId,
       path: abs,
       originalRel,
@@ -331,7 +348,8 @@ function deleteVerified(
     return new Stop('stopped', 'entry-misplaced', `${what} was renamed to ${abs} and left there`, {
       deleted,
       misplaced: [{ path: abs, originalRel, cause }],
-      ...(recErr === null ? {} : { misplacedRecordError: recErr }),
+      ...(rec.recordError === null ? {} : { misplacedRecordError: rec.recordError }),
+      ...(rec.markerError === null ? {} : { misplacedMarkerError: rec.markerError }),
     })
   }
   const deleteLeaf = (

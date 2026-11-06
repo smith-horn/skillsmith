@@ -7,7 +7,7 @@
  * listing gave it) and `authorization` (`batch` for the batch yes, `per-item`
  * for the per-item yes that `--allow-changed <path>` asks for). The walker
  * refuses a non-clean copy whose job does not say `per-item` (`prune.walk.ts`),
- * so a batch yes never covers it, whatever the parent does.
+ * so a batch yes never covers it unless the parent labels the job per-item.
  *
  * No caller yet: 6c-iii's `--prune --apply` builds and encodes jobs.
  *
@@ -16,7 +16,7 @@
 import path from 'node:path'
 import { assertPathSegment } from './park-result.js'
 import type { MetaRecord } from './prune.metadata.js'
-import { META, PRUNE_DIR_RE } from './prune.walk.shared.js'
+import { META, PRUNE_DIR_RE, RANDOM_NAME_RE } from './prune.walk.shared.js'
 
 /** The classes a walker may be handed. A mounted copy is never offered, so it is not one. */
 export type PruneClass = 'clean' | 'held' | 'changed' | 'unverified'
@@ -128,7 +128,9 @@ function checkRelations(raw: Record<string, unknown>): void {
   } catch (err) {
     fail((err as Error).message)
   }
-  if (META.has(leaf)) fail(`leaf ${JSON.stringify(leaf)} is one of prune's own names`)
+  if (META.has(leaf) || RANDOM_NAME_RE.test(leaf) || /^misplaced-[0-9a-f]{16}\.json$/.test(leaf)) {
+    fail(`leaf ${JSON.stringify(leaf)} is one of prune's own names`)
+  }
   if (!HASH.test(raw.approvedHash as string)) fail('approvedHash must be 64 lowercase hex')
   const copyPath = raw.copyPath as string
   const opDir = raw.opDir as string
@@ -139,11 +141,16 @@ function checkRelations(raw: Record<string, unknown>): void {
       fail('S must be a .prune-<16 hex> directory directly in stagingRoot')
     }
     if (copyPath !== path.join(S, leaf)) fail('with S, copyPath must be S/<leaf>')
+    // The intent's original sidecar path and op dir are on disk, out of reach of
+    // this fs-free decode; the walker checks both against the intent (`checkResume`).
     if (opDir !== S && opDir !== stagingRoot && path.dirname(opDir) !== stagingRoot) {
       fail('with S, opDir must be S, stagingRoot, or a directory directly in stagingRoot')
     }
   } else {
     if (path.basename(copyPath) !== leaf) fail('leaf must be the copy name')
+    if (raw.sidecarPath !== null && raw.sidecarPath !== `${copyPath}.json`) {
+      fail('a fresh copy’s sidecarPath must be <copyPath>.json or null')
+    }
     if (opDir !== path.dirname(copyPath)) fail("opDir must be the copy's own directory")
     if (raw.resume === true) fail('resume needs S')
     if (raw.inheritedMeta !== undefined) fail('inheritedMeta needs S')

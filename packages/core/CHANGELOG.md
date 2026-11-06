@@ -12,7 +12,9 @@ All notable changes to `@skillsmith/core` are documented here.
   that never follows a link, never crosses a mount, never renames onto an existing name and never
   renames anything back. The tree goes first and its sidecar last, so a walk that stops part-way
   leaves the rest of the tree beside its restore metadata. A resumed run re-checks the staging
-  directory it inherits. It also ships the read-only leftover inspection and the strict sidecar
+  directory it inherits and the intent on disk. An entry the walk misplaced is never deleted: each
+  misplacement gets its own record, and while a recorded entry still exists the leftover is
+  `misplaced-pending` and no resume runs until the user moves it out by hand. It also ships the read-only leftover inspection and the strict sidecar
   schema for parked copies and backup-area trees; the backup schema is one shared fs-free parser,
   `install/backup-sidecar.strict.ts` (recovery moves onto it in SMI-7214). Nothing in core, the
   CLI or the MCP server calls it, and nothing is exported from the package:

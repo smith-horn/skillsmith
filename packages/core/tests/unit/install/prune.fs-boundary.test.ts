@@ -11,7 +11,8 @@
  * `prune*.ts` under src/install is listed with readdir, must appear in
  * `FS_MEMBERS`, and is walked as its own entry, so a module nothing imports
  * yet is still checked. Each walk is confined to src/install with no exempt
- * edge, and every module it reaches is checked too.
+ * edge, and every module it reaches (the shared strict parser and the park
+ * modules too, gate F2) is pinned by the same tables.
  *
  * Per module, the test pins:
  *  - the exact fs members it uses (`FS_MEMBERS`). The deleting calls are
@@ -39,7 +40,12 @@ const INSTALL = path.resolve(HERE, '../../../src/install')
 const PACKAGES = path.resolve(HERE, '../../../..')
 const OPTIONS = { forbidMembers: ['rmSync'] }
 
-/** Every prune module, and the exact fs members each may use ([] = no fs call). */
+/**
+ * Every module a prune entry reaches (the prune modules, the shared strict
+ * parser and the park modules they import), and the exact fs members each may
+ * use ([] = no fs call). F2: the pin covers the whole reached graph, not just
+ * `prune*.ts`; the park boundary test keeps its own rules for the park modules.
+ */
 const FS_MEMBERS: Record<string, string[]> = {
   'prune.walk.ts': [
     'lstatSync',
@@ -54,6 +60,8 @@ const FS_MEMBERS: Record<string, string[]> = {
   'prune.walk.verify.ts': ['lstatSync', 'readdirSync', 'readlinkSync'],
   'prune.walk.shared.ts': ['lstatSync', 'realpathSync', 'renameSync'],
   'prune.walk.stage.ts': ['writeFileSync'],
+  'prune.walk.resume.ts': ['readdirSync'],
+  'prune.misplaced.ts': ['lstatSync', 'writeFileSync'],
   'prune.metadata.ts': ['lstatSync', 'unlinkSync'],
   'prune.sidecar.ts': [
     'closeSync',
@@ -65,20 +73,32 @@ const FS_MEMBERS: Record<string, string[]> = {
   ],
   'prune.leftovers.ts': ['lstatSync', 'readdirSync'],
   'prune.job.ts': [],
+  'backup-sidecar.strict.ts': [],
+  'park-result.ts': [],
+  'park-callers.ts': [],
+  'park-tree.mounts.ts': ['readFileSync'],
+  'park-tree.perms.ts': [],
+  'tree-hash.ts': [],
 }
-/** Every prune module, and the exact Node builtins each imports by value. */
+/** The exact Node builtins each reached module imports by value. `child_process` is in none. */
 const BUILTINS: Record<string, string[]> = {
   'prune.walk.ts': ['crypto', 'fs', 'path', 'worker_threads'],
   'prune.walk.verify.ts': ['crypto', 'fs', 'path'],
   'prune.walk.shared.ts': ['crypto', 'fs', 'path'],
   'prune.walk.stage.ts': ['crypto', 'fs', 'path'],
+  'prune.walk.resume.ts': ['crypto', 'fs', 'path'],
+  'prune.misplaced.ts': ['crypto', 'fs', 'path'],
   'prune.metadata.ts': ['crypto', 'fs', 'path'],
   'prune.sidecar.ts': ['fs', 'path'],
   'prune.leftovers.ts': ['crypto', 'fs', 'path'],
   'prune.job.ts': ['path'],
+  'backup-sidecar.strict.ts': ['path'],
+  'park-result.ts': ['path', 'util'],
+  'park-callers.ts': ['path'],
+  'park-tree.mounts.ts': ['fs', 'path'],
+  'park-tree.perms.ts': [],
+  'tree-hash.ts': ['crypto'],
 }
-/** Builtins any module a prune walk reaches may import (the park modules' too). */
-const GRAPH_BUILTINS = new Set(['crypto', 'fs', 'path', 'util', 'worker_threads'])
 /** The only modules that may import `removeIfIdentical`, relative to packages/. */
 const REMOVE_IMPORTERS = ['core/src/install/prune.walk.ts']
 
@@ -89,37 +109,32 @@ const pruneFiles = (dir: string): string[] =>
     .sort()
 
 interface AllCheck {
+  /** Prune modules, or modules a prune entry reaches, that the tables do not list. */
   unlisted: string[]
   violations: { file: string; violation: string }[]
   members: Record<string, string[]>
   builtins: Record<string, string[]>
-  graphBuiltins: Record<string, string[]>
   shapes: Record<string, string[]>
 }
 
-/** Checks every prune module under `dir`, each as its own entry. */
+/** Checks every prune module under `dir` as its own entry, and every module each reaches. */
 function checkAll(dir: string): AllCheck {
-  const r: AllCheck = {
-    unlisted: [],
-    violations: [],
-    members: {},
-    builtins: {},
-    graphBuiltins: {},
-    shapes: {},
-  }
+  const r: AllCheck = { unlisted: [], violations: [], members: {}, builtins: {}, shapes: {} }
+  const seen = new Set<string>()
   for (const f of pruneFiles(dir)) {
-    if (!(f in FS_MEMBERS)) r.unlisted.push(f)
     const g = checkFsBoundary(path.join(dir, f), { ...OPTIONS, confineTo: dir })
-    for (const v of g.violations)
+    for (const v of g.violations) {
       r.violations.push({ file: path.relative(dir, v.file), violation: v.violation })
-    for (const file of g.files) {
-      const src = checkFsBoundarySource(fs.readFileSync(file, 'utf8'), OPTIONS)
-      r.graphBuiltins[path.relative(dir, file)] = src.builtinImports
     }
-    const self = checkFsBoundarySource(fs.readFileSync(path.join(dir, f), 'utf8'), OPTIONS)
-    r.members[f] = self.fsMembers
-    r.builtins[f] = self.builtinImports
-    r.shapes[f] = callShapeViolations(fs.readFileSync(path.join(dir, f), 'utf8'))
+    for (const file of [path.join(dir, f), ...g.files]) seen.add(path.relative(dir, file))
+  }
+  for (const rel of [...seen].sort()) {
+    if (!(rel in FS_MEMBERS)) r.unlisted.push(rel)
+    const text = fs.readFileSync(path.join(dir, rel), 'utf8')
+    const src = checkFsBoundarySource(text, OPTIONS)
+    r.members[rel] = src.fsMembers
+    r.builtins[rel] = src.builtinImports
+    r.shapes[rel] = callShapeViolations(text)
   }
   return r
 }
@@ -155,27 +170,22 @@ const importsRemove = (source: string): boolean =>
 describe('the real prune modules', () => {
   const real = checkAll(INSTALL)
 
-  it('every prune*.ts under src/install is listed, and the list names no missing file', () => {
+  it('every prune*.ts, and every module they reach, is listed; the list names nothing else', () => {
     expect(real.unlisted).toEqual([])
-    expect(pruneFiles(INSTALL)).toEqual(Object.keys(FS_MEMBERS).sort())
+    expect(Object.keys(real.members).sort()).toEqual(Object.keys(FS_MEMBERS).sort())
   })
 
   it('no module any prune entry reaches has a boundary violation', () => {
     expect(real.violations).toEqual([])
   })
 
-  it('each prune module uses exactly its allowed fs members', () => {
+  it('each reached module uses exactly its allowed fs members', () => {
     expect(real.members).toEqual(FS_MEMBERS)
   })
 
-  it('each prune module imports exactly its allowed Node builtins, and child_process nowhere', () => {
+  it('each reached module imports exactly its allowed Node builtins, and child_process nowhere', () => {
     expect(real.builtins).toEqual(BUILTINS)
-    for (const [file, b] of Object.entries(real.graphBuiltins)) {
-      expect(
-        b.filter((x) => !GRAPH_BUILTINS.has(x)),
-        file
-      ).toEqual([])
-    }
+    expect(Object.values(BUILTINS).flat()).not.toContain('child_process')
   })
 
   it('each tree-changing call has its allowed argument shape', () => {
@@ -220,9 +230,33 @@ describe('positive controls: each planted bypass is flagged', () => {
       expect(r.violations).toEqual([])
       expect(r.builtins['prune.walk.ts']).toContain('child_process')
       expect(r.builtins).not.toEqual(BUILTINS)
-      expect(r.graphBuiltins['prune.walk.ts']?.filter((x) => !GRAPH_BUILTINS.has(x))).toEqual([
-        'child_process',
-      ])
+    })
+  })
+
+  it('F2: an fs import with fs.unlinkSync appended to backup-sidecar.strict.ts is caught', () => {
+    withCopy((dir) => {
+      expect(checkAll(dir).members).toEqual(FS_MEMBERS)
+      fs.appendFileSync(
+        path.join(dir, 'backup-sidecar.strict.ts'),
+        "\nimport fs from 'node:fs'\nexport const u = (p: string) => fs.unlinkSync(p)\n"
+      )
+      const r = checkAll(dir)
+      expect(r.members['backup-sidecar.strict.ts']).toEqual(['unlinkSync'])
+      expect(r.members).not.toEqual(FS_MEMBERS)
+      expect(r.builtins['backup-sidecar.strict.ts']).toEqual(['fs', 'path'])
+    })
+  })
+
+  it('F2: a raw fs.renameSync in tree-hash.ts is caught by the prune test', () => {
+    withCopy((dir) => {
+      expect(checkAll(dir).shapes['tree-hash.ts']).toEqual([])
+      fs.appendFileSync(
+        path.join(dir, 'tree-hash.ts'),
+        "\nimport fs from 'node:fs'\nexport const mv = (a: string, b: string) => fs.renameSync(a, b)\n"
+      )
+      const r = checkAll(dir)
+      expect(r.shapes['tree-hash.ts']).toContain('fs.renameSync outside renameNoReplace')
+      expect(r.members['tree-hash.ts']).toEqual(['renameSync'])
     })
   })
 

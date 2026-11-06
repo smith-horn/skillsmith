@@ -180,20 +180,41 @@ describe('inspectLeftover is read-only and fails closed', () => {
     expect(at(f, S).state).toBe('unknown')
   })
 
-  it('m7: misplaced.json is read without following a link, and with a cap', () => {
+  it('m7/F1: a misplacement record is read without following a link, with a cap, and fails closed', () => {
     f = makeParent('prune-left-')
     const S = mk(f)
-    const secret = path.join(f.root, 'secret.json')
-    fs.writeFileSync(secret, JSON.stringify({ secret: true }))
-    fs.symlinkSync(secret, path.join(S, 'misplaced.json'))
     fs.mkdirSync(path.join(S, 'a'))
-    const mp = path.join(S, 'misplaced.json')
-    expect(at(f, S).misplaced).toEqual({ unreadable: true, path: mp })
-    fs.unlinkSync(mp)
-    fs.writeFileSync(mp, JSON.stringify({ pad: 'x'.repeat(70 * 1024) }))
-    expect(at(f, S).misplaced).toEqual({ unreadable: true, path: mp })
-    fs.writeFileSync(mp, JSON.stringify({ path: '/x' }))
-    expect(at(f, S).misplaced).toEqual({ path: '/x' })
+    const secret = path.join(f.root, 'secret.json')
+    fs.writeFileSync(secret, JSON.stringify({ path: '/gone', originalRel: 'x', cause: 'swapped' }))
+    const legacy = path.join(S, 'misplaced.json')
+    // A symlinked record is not read through: unreadable, so it blocks.
+    fs.symlinkSync(secret, legacy)
+    expect(at(f, S).state).toBe('misplaced-pending')
+    fs.unlinkSync(legacy)
+    // Past the cap: unreadable, so it blocks.
+    fs.writeFileSync(legacy, JSON.stringify({ pad: 'x'.repeat(70 * 1024) }))
+    expect(at(f, S).state).toBe('misplaced-pending')
+    // A record naming a path that exists blocks, and names it.
+    const still = path.join(f.root, 'still-here')
+    fs.writeFileSync(still, 'x')
+    fs.writeFileSync(
+      legacy,
+      JSON.stringify({ path: still, originalRel: 'top.txt', cause: 'swapped' })
+    )
+    expect(at(f, S)).toMatchObject({ state: 'misplaced-pending', misplaced: [{ path: still }] })
+    // Once that path is gone the record no longer blocks: the orphan is offered again.
+    fs.unlinkSync(still)
+    expect(at(f, S)).toMatchObject({ state: 'staged-orphan', leaf: 'a' })
+  })
+
+  it('F6: prune random names at the top of S are never offered as a staged orphan', () => {
+    f = makeParent('prune-left-')
+    const S = mk(f)
+    for (const n of ['.d-0123456789abcdef', '.m-0123456789abcdef']) {
+      fs.writeFileSync(path.join(S, n), 'x')
+      expect(at(f, S).state).toBe('unknown')
+      fs.unlinkSync(path.join(S, n))
+    }
   })
 
   it('an incomplete intent temp is partial-intent with nothing to clean, never unknown', () => {
@@ -273,6 +294,26 @@ describe('the job', () => {
         "prune's own names",
       ],
       [{ ...enc, leaf: 'other' }, 'leaf must be the copy name'],
+      [
+        { ...enc, sidecarPath: '/elsewhere/tree.json' },
+        'sidecarPath must be <copyPath>.json or null',
+      ],
+      [
+        {
+          ...enc,
+          leaf: '.d-0123456789abcdef',
+          copyPath: path.join(c.opDir, '.d-0123456789abcdef'),
+        },
+        "prune's own names",
+      ],
+      [
+        {
+          ...enc,
+          leaf: 'misplaced-0123456789abcdef.json',
+          copyPath: path.join(c.opDir, 'misplaced-0123456789abcdef.json'),
+        },
+        "prune's own names",
+      ],
       [{ ...enc, opDir: c.stagingRoot }, "opDir must be the copy's own directory"],
       [{ ...enc, approvedHash: 'A'.repeat(64) }, '64 lowercase hex'],
       [{ ...enc, copyPath: 'relative/tree' }, 'copyPath must be an absolute path'],

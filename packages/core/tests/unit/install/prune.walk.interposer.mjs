@@ -87,7 +87,19 @@ function writeUntilMoved(fd, write) {
   throw new Error('the timestamps never moved')
 }
 
-function act(a, a0) {
+// A seam for the walker's parent-alive check: `fakeOrphan` makes process.ppid
+// read as another pid from then on, as it does once the parent has died.
+let orphaned = false
+const realPpid = Object.getOwnPropertyDescriptor(process, 'ppid')
+Object.defineProperty(process, 'ppid', {
+  configurable: true,
+  get() {
+    const real = realPpid?.get ? realPpid.get.call(process) : realPpid?.value
+    return orphaned ? 1 : real
+  },
+})
+
+function act(a, a0, a1) {
   switch (a.kind) {
     case 'throw':
       return Object.assign(new Error(`injected ${a.code}`), { code: a.code })
@@ -136,6 +148,21 @@ function act(a, a0) {
       record(a.recordFile, { swapped: n })
       return null
     }
+    case 'appendA1':
+      // After a rename: change the entry at its new (random) name.
+      O('appendFileSync', abs(a1), a.data)
+      return null
+    case 'reinode': {
+      // The same bytes at a new inode, under the same name.
+      const n = abs(a0)
+      const tmp = `${n}.reinode-tmp`
+      O('copyFileSync', n, tmp)
+      O('renameSync', tmp, n)
+      return null
+    }
+    case 'fakeOrphan':
+      orphaned = true
+      return null
     case 'recreate': {
       O('mkdirSync', a.path)
       O('writeFileSync', path.join(a.path, 'new-user-file.txt'), a.data)
@@ -162,7 +189,7 @@ function runHooks(when, fn, a0, a1) {
     inHook = true
     let res = null
     try {
-      res = act(h.action.kind === 'mount' ? { ...h.action, a1 } : h.action, a0)
+      res = act(h.action.kind === 'mount' ? { ...h.action, a1 } : h.action, a0, a1)
       fired.push({ fn, a0, kind: h.action.kind, ...(res instanceof Error ? {} : (res ?? {})) })
     } catch (e) {
       fired.push({ fn, a0, kind: h.action.kind, hookError: String(e?.message ?? e) })

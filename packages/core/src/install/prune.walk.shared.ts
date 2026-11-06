@@ -24,6 +24,9 @@ export const META: ReadonlySet<string> = new Set([
   'sidecar.json',
   'misplaced.json',
 ])
+/** A random name the delete walk (`.d-`) or metadata removal (`.m-`) uses. */
+export const RANDOM_NAME_RE = /^\.[dm]-[0-9a-f]{16}$/
+
 /** A fresh random name the delete walk renames an entry to before its unlink. */
 export const rand = (): string => `.d-${crypto.randomBytes(8).toString('hex')}`
 
@@ -150,20 +153,28 @@ export const PRUNE_DIR_RE = /^\.prune-[0-9a-f]{16}$/
 
 /**
  * Why a resumed run may not use the staging directory `S` a crashed run left,
- * or null. The same checks a fresh `S` gets (`stagingProblem`), plus the two a
- * fresh one has by construction: it is named `.prune-<16 hex>`, and it sits
- * directly in `stagingRoot`.
+ * or null. Exactly these, in order: `S` is named `.prune-<16 hex>`; it sits
+ * directly in `stagingRoot` (by path); it can be lstat'd; it is a directory,
+ * not a symlink; it is owned by us and private (`opDirOwnerModeProblem`, as a
+ * fresh `S` is); it is on the device `dev` (the copy's, as a fresh `S` is);
+ * and it is on the same device as `stagingRoot` itself, which a fresh `S`
+ * made by mkdir there is by construction (F3: a mount or a symlinked staging
+ * root fails this).
  */
 export function resumeStagingProblem(S: string, stagingRoot: string, dev: bigint): string | null {
   if (!PRUNE_DIR_RE.test(path.basename(S))) return 'not named .prune-<16 hex>'
   if (path.dirname(S) !== stagingRoot) return `not directly in ${stagingRoot}`
   let sd: BigIntStats
+  let rootDev: bigint
   try {
     sd = fs.lstatSync(S, { bigint: true })
+    rootDev = fs.lstatSync(stagingRoot, { bigint: true }).dev
   } catch (err) {
     return `unreadable (${errCode(err)})`
   }
-  return stagingProblem(sd, dev)
+  const bad = stagingProblem(sd, dev)
+  if (bad !== null) return bad
+  return sd.dev !== rootDev ? 'on another device than its staging root' : null
 }
 
 /**

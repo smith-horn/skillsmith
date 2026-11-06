@@ -76,6 +76,30 @@ const POINTS: Record<string, Point> = {
     nth: 12,
     expect: 'finished',
   },
+  // F6: the sidecar renamed to its random name, before its unlink.
+  'mid-sidecar-delete': {
+    when: 'after',
+    fn: 'renameSync',
+    a0Re: '^sidecar\\.json$',
+    a1Re: '^\\.d-',
+    expect: 'finished',
+  },
+  // F6: P4g has renamed `deleting` to its random name, before its unlink.
+  'mid-P4g-rename': {
+    when: 'after',
+    fn: 'renameSync',
+    a1Re: '/\\.m-[0-9a-f]{16}$',
+    nth: 1,
+    expect: 'finished',
+  },
+  // F6: P4g removed `deleting`, not yet `intent.json`: the copy is gone, so not intent-only.
+  'after-P4g-deleting': {
+    when: 'after',
+    fn: 'unlinkSync',
+    a0Re: '/\\.m-[0-9a-f]{16}$',
+    nth: 1,
+    expect: 'finished',
+  },
 }
 
 /** Kills the walker at `point`; returns the copy and its one leftover. */
@@ -146,6 +170,15 @@ describe('P5: a SIGKILL at each step leaves a leftover that is listed, then resu
       if (name === 'after-P4f')
         expect(left.cleanup).toEqual(['sidecar.json', 'intent.json', 'deleting'])
       if (name === 'after-sidecar') expect(left.cleanup).toEqual(['intent.json', 'deleting'])
+      if (name === 'mid-sidecar-delete') {
+        expect(left.cleanup?.slice(1)).toEqual(['intent.json', 'deleting'])
+        expect(left.cleanup?.[0]).toMatch(/^\.d-[0-9a-f]{16}$/)
+      }
+      if (name === 'mid-P4g-rename') {
+        expect(left.cleanup?.[1]).toBe('intent.json')
+        expect(left.cleanup?.[0]).toMatch(/^\.m-[0-9a-f]{16}$/)
+      }
+      if (name === 'after-P4g-deleting') expect(left.cleanup).toEqual(['intent.json'])
       if (left.item !== undefined) {
         const run = runWalker(resumeJob(left, freshHash(left.item.copyPath)))
         expect(statusOf(run)).toBe('removed/null')

@@ -4,6 +4,10 @@
  * `prune.leftovers.mjs`. Prune's listing acts on the result and doctor reuses
  * it; neither is wired yet (6c-ii, 6c-iii).
  *
+ * A leftover with a misplaced entry still present is `misplaced-pending` and
+ * offers no resume (F1, owner decision 2026-11-06): a misplaced entry is never
+ * deleted, so the user moves it out by hand first (`prune.misplaced.ts`).
+ *
  * fs is the DEFAULT export, looked up at call time.
  *
  * @module @skillsmith/core/install/prune.leftovers
@@ -15,15 +19,16 @@ import { errCode } from './park-result.js'
 import { readStable } from './prune.sidecar.js'
 import { parseIntentStrict, parseDeletingStrict } from './prune.metadata.js'
 import type { MetaRecord, PruneIntent } from './prune.metadata.js'
-import { META, resumeStagingProblem } from './prune.walk.shared.js'
+import { isMisplacedRecordName, misplacedState } from './prune.misplaced.js'
+import type { MisplacedEntry } from './prune.misplaced.js'
+import { META, RANDOM_NAME_RE, resumeStagingProblem } from './prune.walk.shared.js'
 
-/** `misplaced.json` is a few hundred bytes; anything past this is not ours. */
-const MISPLACED_MAX_BYTES = 64 * 1024
 /** An intent is well under 2 KiB. */
 const INTENT_MAX_BYTES = 16 * 1024
 
 export type LeftoverState =
   | 'staging-unusable'
+  | 'misplaced-pending'
   | 'empty'
   | 'intent-only'
   | 'partial-intent'
@@ -55,7 +60,8 @@ export interface StagedItem {
 export interface Leftover {
   S: string
   state: LeftoverState
-  misplaced: unknown
+  /** Every misplaced entry a record in `S` names. */
+  misplaced: MisplacedEntry[]
   detail?: string
   intent?: PruneIntent
   leaf?: string
@@ -72,42 +78,48 @@ const exists = (p: string): boolean => {
     return false
   }
 }
+const sha256 = (b: Buffer): string => crypto.createHash('sha256').update(b).digest('hex')
+const recordOfRead = (rs: { ino: bigint; bytes: Buffer }): MetaRecord => ({
+  ino: String(rs.ino),
+  bytes: rs.bytes.toString('base64'),
+})
 
 /**
- * States: staging-unusable | empty | intent-only | staged | interrupted-delete
- * | finished | staged-orphan | unknown. `item` is a classifiable copy
- * descriptor for the three tree-bearing states; `cleanup` lists our own
- * metadata to remove.
+ * States: staging-unusable | misplaced-pending | empty | intent-only |
+ * partial-intent | staged | interrupted-delete | finished | staged-orphan |
+ * unknown. `item` is a resumable copy descriptor for the three tree-bearing
+ * states; `cleanup` lists our own metadata to remove, each by its `meta` record.
  */
 export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: string }): Leftover {
-  const r: Leftover = { S, state: 'unknown', misplaced: null }
+  const r: Leftover = { S, state: 'unknown', misplaced: [] }
   let rootDev: bigint
+  let names: string[]
   try {
     rootDev = fs.lstatSync(stagingRoot, { bigint: true }).dev
+    const bad = resumeStagingProblem(S, stagingRoot, rootDev)
+    if (bad !== null) return { ...r, state: 'staging-unusable', detail: bad }
+    names = fs.readdirSync(S).sort()
   } catch (err) {
     return { ...r, state: 'staging-unusable', detail: `unreadable (${errCode(err)})` }
   }
-  const bad = resumeStagingProblem(S, stagingRoot, rootDev)
-  if (bad !== null) return { ...r, state: 'staging-unusable', detail: bad }
-
-  const names = fs.readdirSync(S).sort()
-  const mp = path.join(S, 'misplaced.json')
-  if (names.includes('misplaced.json')) {
-    // Stable, no-follow and capped: a planted link or a huge file is reported, never read.
-    const rs = readStable(mp, { maxBytes: MISPLACED_MAX_BYTES })
-    try {
-      r.misplaced = rs.ok ? JSON.parse(rs.bytes.toString('utf8')) : { unreadable: true, path: mp }
-    } catch {
-      r.misplaced = { unreadable: true, path: mp }
+  const mp = misplacedState(S, names)
+  r.misplaced = mp.entries
+  if (mp.blocking.length > 0) {
+    return {
+      ...r,
+      state: 'misplaced-pending',
+      detail: `not resumable until each misplaced entry is moved out by hand: ${mp.blocking.join('; ')}`,
     }
   }
   // A NAME is not proof. Each metadata file is stable-read and checked against
   // the strict schema here, and its (inode, bytes) recorded in `meta`; cleanup
   // later removes only a file still identical to that record. A file that is
   // not Skillsmith's exact schema makes the leftover `unknown`.
-  const meta: Record<string, MetaRecord> = {}
+  const meta: Record<string, MetaRecord> = { ...mp.cleared }
+  const records = Object.keys(mp.cleared)
+  const rest = names.filter((n) => !isMisplacedRecordName(n))
   let intent: PruneIntent | null = null
-  if (names.includes('intent.json')) {
+  if (rest.includes('intent.json')) {
     const rs = readStable(path.join(S, 'intent.json'), { maxBytes: INTENT_MAX_BYTES })
     intent = rs.ok ? parseIntentStrict(rs.bytes) : null
     if (intent === null || !rs.ok) {
@@ -117,9 +129,9 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
         detail: "intent.json is unreadable or not Skillsmith's intent schema; never touched",
       }
     }
-    meta['intent.json'] = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
+    meta['intent.json'] = recordOfRead(rs)
   }
-  if (names.includes('deleting')) {
+  if (rest.includes('deleting')) {
     const rs = readStable(path.join(S, 'deleting'))
     if (!rs.ok || parseDeletingStrict(rs.bytes) === null) {
       return {
@@ -128,31 +140,34 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
         detail: "deleting is unreadable or not Skillsmith's marker; never touched",
       }
     }
-    meta.deleting = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
+    meta.deleting = recordOfRead(rs)
   }
   r.meta = meta
-  const trees = names.filter((n) => !META.has(n))
-  const deleting = names.includes('deleting')
-  if (names.length === 0) return { ...r, state: 'empty', cleanup: [] }
-  if (names.includes('intent.json.tmp')) return partialIntent(r, S, names, meta)
+  // Prune's own random names are never a tree, so never a staged orphan (F6).
+  const randoms = rest.filter((n) => RANDOM_NAME_RE.test(n))
+  const trees = rest.filter((n) => !META.has(n) && !RANDOM_NAME_RE.test(n))
+  const deleting = rest.includes('deleting')
+  const done = (cleanup: string[]): Leftover => ({
+    ...r,
+    state: 'finished',
+    intent: intent ?? undefined,
+    cleanup: [...cleanup, ...records],
+  })
+  if (rest.length === 0) return { ...r, state: 'empty', cleanup: records }
+  if (rest.includes('intent.json.tmp')) return partialIntent(r, S, rest, meta, records)
   if (intent === null) {
-    if (trees.length === 1) {
+    if (trees.length === 1 && randoms.length === 0) {
       const leaf = trees[0] as string
-      return {
-        ...r,
-        state: 'staged-orphan',
-        leaf,
-        item: stagedItem(S, leaf, null, false, meta),
-      }
+      return { ...r, state: 'staged-orphan', leaf, item: stagedItem(S, leaf, null, false, meta) }
     }
     return {
       ...r,
       state: 'unknown',
-      detail: `entries ${names.join(',')} without an intent; never touched`,
+      detail: `entries ${rest.join(',')} without an intent; never touched`,
     }
   }
   const leaf = intent.leaf
-  if (typeof leaf !== 'string' || trees.some((n) => n !== leaf)) {
+  if (trees.some((n) => n !== leaf)) {
     return {
       ...r,
       state: 'unknown',
@@ -161,24 +176,42 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
     }
   }
   const hasLeaf = trees.length === 1
-  const hasSidecar = names.includes('sidecar.json')
-  if (!hasLeaf && !deleting && !hasSidecar) {
-    return { ...r, state: 'intent-only', intent, cleanup: ['intent.json'] }
-  }
-  if (!hasLeaf && deleting && !hasSidecar) {
-    return {
-      ...r,
-      state: 'finished',
-      intent,
-      cleanup: r.misplaced ? [] : ['intent.json', 'deleting'],
+  if (randoms.length > 0) {
+    // P4f's sidecar (`.d-`) or P4g's metadata (`.m-`) caught mid-removal: the
+    // tree is already gone. Each is ours only if it is provably what it was.
+    if (hasLeaf) return { ...r, state: 'unknown', intent, detail: 'a random name beside the tree' }
+    for (const n of randoms) {
+      const rs = readStable(path.join(S, n), { maxBytes: INTENT_MAX_BYTES })
+      const ours =
+        rs.ok &&
+        (n.startsWith('.d-')
+          ? sha256(rs.bytes) === intent.approvedSidecarSha256
+          : parseDeletingStrict(rs.bytes) !== null || parseIntentStrict(rs.bytes) !== null)
+      if (!rs.ok || !ours) {
+        return {
+          ...r,
+          state: 'unknown',
+          intent,
+          detail: `${n} is not provably prune's; never touched`,
+        }
+      }
+      meta[n] = recordOfRead(rs)
     }
   }
-  if (!hasLeaf && deleting && hasSidecar) {
+  const hasSidecar = rest.includes('sidecar.json')
+  if (!hasLeaf && !hasSidecar && !deleting) {
+    // P4g removes `deleting` before `intent.json`, so an intent alone means
+    // "never moved" only while the copy is still at its original path.
+    if (exists(intent.copyPath))
+      return { ...r, state: 'intent-only', intent, cleanup: ['intent.json', ...records] }
+    return done([...randoms, 'intent.json'])
+  }
+  if (!hasLeaf && !hasSidecar) return done([...randoms, 'intent.json', 'deleting'])
+  if (!hasLeaf && deleting) {
     // The tree is gone and the sidecar, deleted last, is not yet. It is ours
     // to remove only if it is the sidecar the intent approved, byte for byte.
     const rs = readStable(path.join(S, 'sidecar.json'))
-    const sha = rs.ok ? crypto.createHash('sha256').update(rs.bytes).digest('hex') : null
-    if (!rs.ok || sha === null || sha !== intent.approvedSidecarSha256) {
+    if (!rs.ok || sha256(rs.bytes) !== intent.approvedSidecarSha256) {
       return {
         ...r,
         state: 'unknown',
@@ -186,25 +219,17 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
         detail: 'a staged sidecar that is not the approved one, without its copy; never touched',
       }
     }
-    meta['sidecar.json'] = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
-    return {
-      ...r,
-      state: 'finished',
-      intent,
-      cleanup: r.misplaced ? [] : ['sidecar.json', 'intent.json', 'deleting'],
-    }
-  }
-  if (hasLeaf && deleting) {
-    return {
-      ...r,
-      state: 'interrupted-delete',
-      intent,
-      leaf,
-      item: stagedItem(S, leaf, intent, true, meta),
-    }
+    meta['sidecar.json'] = recordOfRead(rs)
+    return done(['sidecar.json', ...randoms, 'intent.json', 'deleting'])
   }
   if (hasLeaf) {
-    return { ...r, state: 'staged', intent, leaf, item: stagedItem(S, leaf, intent, false, meta) }
+    return {
+      ...r,
+      state: deleting ? 'interrupted-delete' : 'staged',
+      intent,
+      leaf,
+      item: stagedItem(S, leaf, intent, deleting, meta),
+    }
   }
   return {
     ...r,
@@ -214,6 +239,11 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
   }
 }
 
+/**
+ * The resumable item. A staged `S/sidecar.json` is offered as the copy's
+ * sidecar only if it is the one the intent approved (its sha256): a sidecar
+ * swapped in before staging is left for the user, never deleted as approved.
+ */
 function stagedItem(
   S: string,
   leaf: string,
@@ -223,11 +253,12 @@ function stagedItem(
 ): StagedItem {
   const stagedSidecar = path.join(S, 'sidecar.json')
   const oldSidecar = intent?.sidecarPath ?? null
-  const sidecarPath = exists(stagedSidecar)
-    ? stagedSidecar
-    : oldSidecar !== null && exists(oldSidecar)
-      ? oldSidecar
-      : null
+  let sidecarPath: string | null = null
+  if (exists(stagedSidecar)) {
+    const rs = readStable(stagedSidecar)
+    const approved = intent === null || (rs.ok && sha256(rs.bytes) === intent.approvedSidecarSha256)
+    sidecarPath = approved ? stagedSidecar : null
+  } else if (oldSidecar !== null && exists(oldSidecar)) sidecarPath = oldSidecar
   const copyPath = path.join(S, leaf)
   const origCopy = intent?.copyPath ?? null
   return {
@@ -241,7 +272,9 @@ function stagedItem(
     staged: true,
     S,
     interruptedDelete,
-    inheritedMeta: meta,
+    inheritedMeta: Object.fromEntries(
+      Object.entries(meta).filter(([k]) => k === 'intent.json' || k === 'deleting')
+    ),
     ...(origCopy ? { schemaCopyPath: origCopy, schemaOpDir: path.dirname(origCopy) } : {}),
   }
 }
@@ -256,11 +289,12 @@ function stagedItem(
 function partialIntent(
   r: Leftover,
   S: string,
-  names: string[],
-  meta: Record<string, MetaRecord>
+  rest: string[],
+  meta: Record<string, MetaRecord>,
+  records: string[]
 ): Leftover {
-  if (names.length !== 1) {
-    return { ...r, state: 'unknown', detail: `entries ${names.join(',')} beside an intent temp` }
+  if (rest.length !== 1) {
+    return { ...r, state: 'unknown', detail: `entries ${rest.join(',')} beside an intent temp` }
   }
   const rs = readStable(path.join(S, 'intent.json.tmp'), { maxBytes: INTENT_MAX_BYTES })
   const intent = rs.ok ? parseIntentStrict(rs.bytes) : null
@@ -268,12 +302,12 @@ function partialIntent(
     return {
       ...r,
       state: 'partial-intent',
-      cleanup: [],
+      cleanup: records,
       detail:
         'an incomplete intent temp; the copy was never moved. It is not removed automatically, ' +
         "because its bytes cannot be proven to be Skillsmith's",
     }
   }
-  meta['intent.json.tmp'] = { ino: String(rs.ino), bytes: rs.bytes.toString('base64') }
-  return { ...r, state: 'partial-intent', intent, meta, cleanup: ['intent.json.tmp'] }
+  meta['intent.json.tmp'] = recordOfRead(rs)
+  return { ...r, state: 'partial-intent', intent, meta, cleanup: ['intent.json.tmp', ...records] }
 }

@@ -307,3 +307,72 @@ export function canMount(): boolean {
     fs.rmdirSync(d)
   }
 }
+
+/**
+ * A per-item resume job for the staged tree in `S`, built straight from disk:
+ * what a listing would hand the walker if it offered the leftover. Used to
+ * force a resume the listing refuses (F1), so the walker's own guard is what
+ * the test observes. `sidecarPath` overrides the sidecar it names.
+ */
+export function resumeJobAt(
+  S: string,
+  { sidecarPath }: { sidecarPath?: string | null } = {}
+): PruneJob {
+  const intentRead = readStable(path.join(S, 'intent.json'))
+  if (!intentRead.ok) throw new Error(`resumeJobAt: no intent in ${S}`)
+  const intent = JSON.parse(intentRead.bytes.toString('utf8')) as {
+    leaf: string
+    copyPath: string
+    sidecarPath: string | null
+  }
+  const copyPath = path.join(S, intent.leaf)
+  const st = fs.lstatSync(copyPath, { bigint: true })
+  const h = computePathTreeHash(copyPath)
+  if (!h.ok) throw new Error(`resumeJobAt: hash failed (${h.reason})`)
+  const staged = path.join(S, 'sidecar.json')
+  const sc =
+    sidecarPath !== undefined
+      ? sidecarPath
+      : exists(staged)
+        ? staged
+        : intent.sidecarPath !== null && exists(intent.sidecarPath)
+          ? intent.sidecarPath
+          : null
+  const rs = sc === null ? null : readStable(sc)
+  if (rs !== null && !rs.ok) throw new Error('resumeJobAt: sidecar unreadable')
+  const meta: Record<string, { ino: string; bytes: string }> = {}
+  for (const m of ['intent.json', 'deleting']) {
+    const r = readStable(path.join(S, m))
+    if (r.ok) meta[m] = { ino: String(r.ino), bytes: r.bytes.toString('base64') }
+  }
+  return {
+    copyPath,
+    sidecarPath: sc,
+    sidecarRead:
+      rs === null
+        ? null
+        : { bytes: rs.bytes, ino: rs.ino, size: rs.size, mtimeNs: rs.mtimeNs, ctimeNs: rs.ctimeNs },
+    leaf: intent.leaf,
+    rootIdentity: {
+      dev: st.dev,
+      ino: st.ino,
+      birthtimeNs: st.birthtimeNs,
+      fmt: st.mode & 0o170000n,
+    },
+    approvedHash: h.treeHash,
+    klass: 'held',
+    authorization: 'per-item',
+    stagingRoot: path.dirname(S),
+    opDir: path.dirname(intent.copyPath),
+    S,
+    resume: exists(path.join(S, 'deleting')),
+    inheritedMeta: meta,
+  }
+}
+
+/** The misplacement record files in `S`. */
+export const misplacedRecords = (S: string): string[] =>
+  fs
+    .readdirSync(S)
+    .filter((n) => /^misplaced-[0-9a-f]{16}\.json$/.test(n))
+    .sort()

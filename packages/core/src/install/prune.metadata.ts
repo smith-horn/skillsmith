@@ -38,7 +38,19 @@ export const REMOVABLE_METADATA: ReadonlySet<string> = new Set([
   'intent.json.tmp',
   'deleting',
   'sidecar.json',
+  'misplaced.json',
 ])
+/**
+ * Two name patterns are removable too (F1, F6): a misplacement record
+ * (`misplaced-<16 hex>.json`) whose entry is gone, and the approved sidecar or
+ * prune's own metadata caught mid-removal under its random `.d-<16 hex>` or
+ * `.m-<16 hex>` name (the listing proves which before offering it).
+ */
+const REMOVABLE_PATTERNS = [/^misplaced-[0-9a-f]{16}\.json$/, /^\.[dm]-[0-9a-f]{16}$/]
+
+/** A name `removeIfIdentical` may remove (inside a `.prune-<16 hex>` directory). */
+export const isRemovableMetadata = (name: string): boolean =>
+  REMOVABLE_METADATA.has(name) || REMOVABLE_PATTERNS.some((re) => re.test(name))
 
 const HEX16 = /^[0-9a-f]{16}$/
 const HASH = /^[0-9a-f]{64}$/
@@ -170,12 +182,12 @@ export type RemoveResult = { removed: true } | { removed: false; kept: string | 
  *
  * `kept` is null when the file is absent, and otherwise names its exact
  * current path and why it was kept. A path that is not one of
- * `REMOVABLE_METADATA` directly in a `.prune-<16 hex>` directory is a
+ * `isRemovableMetadata`'s names directly in a `.prune-<16 hex>` directory is a
  * TypeError: this is not a general delete.
  */
 export function removeIfIdentical(p: string, expect: MetaRecord | undefined): RemoveResult {
   if (
-    !REMOVABLE_METADATA.has(path.basename(p)) ||
+    !isRemovableMetadata(path.basename(p)) ||
     !PRUNE_DIR_RE.test(path.basename(path.dirname(p)))
   ) {
     throw new TypeError(

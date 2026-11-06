@@ -5,8 +5,12 @@
  * round-tripped through JSON and parsed; the key table is checked against what
  * the writer emits; and edits the writer never makes are refused.
  */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
+  NULL_HASH_KINDS,
   PUBLISH_KIND_TABLE,
   SIDECAR_KEYS,
   parseBackupSidecarStrict,
@@ -23,10 +27,10 @@ const HASHED = { ok: true, hash: 'a'.repeat(64), record: new Map() } as TreeHash
 const UNHASHED = { ok: false, reason: 'unreadable', path: '/x/y' } as unknown as TreeHashResult
 
 /** The parts of a swap's state `sidecarOf` reads, and nothing else. */
-const state = (withOp: boolean): SwapState =>
+const state = (withOp: boolean, dirName = 'foo'): SwapState =>
   ({
     opId: 'op-0123',
-    input: { dirName: 'foo', client: 'claude-code', scope: 'global', manifestKey: 'foo' },
+    input: { dirName, client: 'claude-code', scope: 'global', manifestKey: 'foo' },
     binding: { root: '/home/u/.claude/skills' },
     op: withOp ? { identity: OP_ID } : null,
   }) as unknown as SwapState
@@ -36,7 +40,15 @@ const KINDS = Object.keys(PUBLISH_KIND_TABLE) as PublishKind[]
 /** Each kind with every extra the writer can attach to it. */
 function variants(kind: PublishKind) {
   const out = [{ label: 'hashed', sc: sidecarOf(state(false), kind, HASHED, ID) }]
-  out.push({ label: 'unhashed', sc: sidecarOf(state(false), kind, UNHASHED, ID) })
+  // Only the kinds kept when unhashable ever record a null hash (F7).
+  if (NULL_HASH_KINDS[kind]) {
+    out.push({ label: 'unhashed', sc: sidecarOf(state(false), kind, UNHASHED, ID) })
+  }
+  // dirName is basename(comparedPath): a dot-leading folder is one component.
+  out.push({
+    label: 'dot-leading dirName',
+    sc: sidecarOf(state(false, '.hidden-skill'), kind, HASHED, ID),
+  })
   if (kind === 'partial-copy') {
     for (const partialCause of ['enospc', 'mismatch', 'copy-failed'] as const) {
       out.push({
@@ -111,4 +123,41 @@ describe('the shared strict parser refuses what the writer never writes', () => 
       expect(parseBackupSidecarStrict(edit(good())).ok).toBe(false)
     })
   }
+})
+
+describe('F7: which kinds may record a null tree hash', () => {
+  it("the table's HASH_OPTIONAL half is skill-swap.publish.ts's own set, plus partial-copy", () => {
+    const src = fs.readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../../../src/services/skill-swap.publish.ts'
+      ),
+      'utf8'
+    )
+    const m = /const HASH_OPTIONAL[^=]*= new Set\(\[([^\]]*)\]\)/.exec(src)
+    expect(m).not.toBeNull()
+    const publish = [...(m?.[1] ?? '').matchAll(/'([^']+)'/g)].map((x) => x[1]).sort()
+    expect(publish.length).toBeGreaterThan(0)
+    const nullable = Object.entries(NULL_HASH_KINDS)
+      .filter(([, v]) => v)
+      .map(([k]) => k)
+      .sort()
+    expect(nullable).toEqual([...publish, 'partial-copy'].sort())
+  })
+
+  for (const kind of KINDS.filter((k) => !NULL_HASH_KINDS[k])) {
+    it(`a null treeHash on ${kind} is refused`, () => {
+      const sc = JSON.parse(JSON.stringify(sidecarOf(state(false), kind, UNHASHED, ID))) as unknown
+      expect(parseBackupSidecarStrict(sc).ok).toBe(false)
+    })
+  }
+
+  it('a dirName of ., .., empty, or with a slash, backslash or NUL is refused', () => {
+    for (const dirName of ['.', '..', '', 'a/b', 'a\\b', 'a\u0000b']) {
+      const sc = JSON.parse(
+        JSON.stringify(sidecarOf(state(false, dirName), 'backup', HASHED, ID))
+      ) as unknown
+      expect(parseBackupSidecarStrict(sc).ok, JSON.stringify(dirName)).toBe(false)
+    }
+  })
 })

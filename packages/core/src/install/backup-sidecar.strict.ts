@@ -52,6 +52,26 @@ export const PUBLISH_KIND_TABLE = {
   'abandoned-undone': true,
 } satisfies Record<PublishKind, true>
 const KINDS: ReadonlySet<string> = new Set(Object.keys(PUBLISH_KIND_TABLE))
+/**
+ * Whether a kind's sidecar may record no tree hash (`treeHash: null`). True for
+ * `skill-swap.publish.ts`'s `HASH_OPTIONAL` (kept even when unhashable) and for
+ * `partial-copy`, whose sidecar the cross-device copy writes from a hash of the
+ * copy temp that can fail (`skill-swap.xdev.ts` `sidecarOf(st, 'partial-copy', t, ...)`).
+ * The test pins the `HASH_OPTIONAL` half against publish's own set.
+ */
+export const NULL_HASH_KINDS = {
+  backup: false,
+  undone: false,
+  conflict: false,
+  'failed-build': true,
+  'edited-new': false,
+  'unrecorded-new': true,
+  'partial-copy': true,
+  'unused-new': false,
+  'abandoned-old': true,
+  'abandoned-new': true,
+  'abandoned-undone': true,
+} satisfies Record<PublishKind, boolean>
 const PARTIAL_CAUSE_TABLE = {
   enospc: true,
   mismatch: true,
@@ -68,6 +88,19 @@ const REQUIRED = Object.entries(SIDECAR_KEYS)
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v)
+/**
+ * `dirName` is `basename(comparedPath)`, which the writer admits only as one
+ * path component (`skill-swap.publish.ts` `oneComponent`): not empty, `.` or
+ * `..`, and no `/`, `\\` or NUL. A leading dot is allowed.
+ */
+const isComponent = (v: unknown): v is string =>
+  typeof v === 'string' &&
+  v !== '' &&
+  v !== '.' &&
+  v !== '..' &&
+  !v.includes('/') &&
+  !v.includes('\\') &&
+  !v.includes('\0')
 const isSegment = (v: unknown): v is string =>
   typeof v === 'string' &&
   v.length > 0 &&
@@ -103,10 +136,13 @@ export function parseBackupSidecarStrict(v: unknown): BackupSidecarParse {
   if (typeof v.kind !== 'string' || !KINDS.has(v.kind)) {
     return bad(`kind ${JSON.stringify(v.kind)} unknown`)
   }
-  if (!isSegment(v.dirName)) return bad('dirName is not a single path segment')
+  if (!isComponent(v.dirName)) return bad('dirName is not a single path component')
   if (!roundTrips(v.createdAt)) return bad('createdAt does not round-trip through Date')
   if (v.treeHash !== null && !(typeof v.treeHash === 'string' && HASH.test(v.treeHash))) {
     return bad('treeHash is neither a hash nor null')
+  }
+  if (v.treeHash === null && !NULL_HASH_KINDS[v.kind as PublishKind]) {
+    return bad(`a ${v.kind} sidecar always records its tree hash`)
   }
   if (!isIdentity(v.identity)) return bad('identity is malformed')
   for (const k of ['client', 'scope', 'manifestKey']) {

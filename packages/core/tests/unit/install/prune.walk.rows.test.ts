@@ -23,6 +23,7 @@ import {
   fired,
   jobFor,
   makeParent,
+  misplacedRecords,
   parkCopy,
   read,
   removeFixture,
@@ -310,9 +311,10 @@ describe('P9 (R-misplace): an entry swapped between its pre-check and rename', (
     expect(`${at.dev}/${at.ino}`).toBe(`${h.dev}/${h.ino}`)
     expect(read(m[0]!.path)).toBe('replacement-bytes')
     expect([m[0]!.originalRel, m[0]!.cause]).toEqual(['top.txt', 'swapped'])
-    const file = JSON.parse(
-      fs.readFileSync(path.join(String(run.item?.stagingPath), 'misplaced.json'), 'utf8')
-    ) as { path: string }
+    const S = String(run.item?.stagingPath)
+    const records = misplacedRecords(S)
+    expect(records).toHaveLength(1)
+    const file = JSON.parse(fs.readFileSync(path.join(S, records[0]!), 'utf8')) as { path: string }
     expect(file.path).toBe(m[0]!.path)
     const trace = run.trace?.trace ?? []
     const i = trace.findIndex((e) => e.fn === 'renameSync' && e.a0 === 'top.txt')
@@ -325,6 +327,9 @@ describe('P9 (R-misplace): an entry swapped between its pre-check and rename', (
   it.skip('(ii) a darwin mount covering the cwd: darwin only (hdiutil); Linux has no cwd-capturing cover', () => {})
 })
 
+// Also mount-only, and so untested here: verifyAtStaging's in-tree st_dev check
+// (a mount below the staged root reports another device). A mutation removing it
+// is caught by no test that runs in this container; SMI-7213 tracks it.
 describe('P1: a mount lands during the prune', () => {
   const MOUNTS = canMount()
   const FILES = { 'orig-f1': 'original-content-f1' }
