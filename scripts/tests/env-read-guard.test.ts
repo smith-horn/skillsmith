@@ -32,6 +32,22 @@ function bashCall(command: string) {
   return { tool_name: 'Bash', tool_input: { command } }
 }
 
+describe('.claude/settings.json onFailure pin (SMI-7157/SMI-7179)', () => {
+  it('every env-read-guard.mjs hook entry blocks on guard failure', () => {
+    const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'))
+    const hooks: Array<Record<string, unknown>> = (settings.hooks?.PreToolUse ?? []).flatMap(
+      (e: { hooks?: Array<Record<string, unknown>> }) => e.hooks ?? []
+    )
+    const guardHooks = hooks.filter(
+      (h) => typeof h.command === 'string' && h.command.includes('scripts/env-read-guard.mjs')
+    )
+    expect(guardHooks.length).toBeGreaterThanOrEqual(1)
+    for (const hook of guardHooks) {
+      expect(hook.onFailure).toBe('block')
+    }
+  })
+})
+
 /**
  * The guard's allow verdict, whole. Round 2 of SMI-6920 (M-2) started
  * asserting this instead of `.action` alone, because the only

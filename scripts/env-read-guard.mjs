@@ -70,6 +70,7 @@
  */
 
 import { checkArgv, classifyPath } from './lib/env-read-guard-argv.mjs'
+import { isMainModule } from './lib/is-main-module.mjs'
 import { reasonFor } from './lib/env-read-guard-reasons.mjs'
 import { shellTextOperand } from './lib/shell-command-shell-text.mjs'
 import {
@@ -232,7 +233,10 @@ export function decide(toolCall, env) {
     }
   } catch (err) {
     // Fail open — a bug in this hook's own code must never become a
-    // repo-wide Bash outage in every session working in this repo.
+    // repo-wide Bash outage in every session working in this repo. This
+    // in-process catch still exits 0 and allows, while a crash or timeout of
+    // the guard process itself now blocks through the hook's
+    // `"onFailure": "block"` (SMI-7157).
     return {
       action: 'allow',
       json: null,
@@ -243,7 +247,7 @@ export function decide(toolCall, env) {
 
 // --- Runtime wrapper (thin shell around the pure decide() core) ---
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const chunks = []
   process.stdin.on('data', (chunk) => chunks.push(chunk))
   process.stdin.on('end', () => {

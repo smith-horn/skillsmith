@@ -31,6 +31,7 @@
  * @see docs/internal/implementation/smi-5846-linear-issue-creation-guard.md
  */
 import { validateIssueDescription } from './lib/linear-issue-validation.mjs'
+import { isMainModule } from './lib/is-main-module.mjs'
 
 /**
  * Dated follow-up review target for the shadow-first rollout (matches
@@ -108,7 +109,7 @@ export function decide(toolCall, env) {
 
 // --- Runtime wrapper (thin shell around the pure decide() core) ---
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const chunks = []
   process.stdin.on('data', (chunk) => chunks.push(chunk))
   process.stdin.on('end', () => {
