@@ -15,10 +15,10 @@
  * runner's shell cannot change a row's meaning.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -64,6 +64,7 @@ const GUARDS: GuardCase[] = [
 let fixtureRoot: string
 let linkScriptsDir: string
 let spaceScriptsDir: string
+let entryDir: string
 
 beforeAll(() => {
   fixtureRoot = mkdtempSync(join(tmpdir(), 'guard-launch-paths-'))
@@ -77,6 +78,16 @@ beforeAll(() => {
     cpSync(join(REAL_SCRIPTS_DIR, guard.file), join(spaceScriptsDir, guard.file))
   }
   cpSync(join(REAL_SCRIPTS_DIR, 'lib'), join(spaceScriptsDir, 'lib'), { recursive: true })
+
+  // Non-main control: an entry script with the SAME basename as a guard that only
+  // imports the real guard. The imported guard must not treat itself as main; a
+  // predicate that compared basenames would read stdin here and print a verdict.
+  entryDir = join(fixtureRoot, 'entry')
+  mkdirSync(entryDir)
+  for (const guard of GUARDS) {
+    const target = pathToFileURL(join(REAL_SCRIPTS_DIR, guard.file)).href
+    writeFileSync(join(entryDir, guard.file), `import ${JSON.stringify(target)}\n`)
+  }
 })
 
 afterAll(() => {
@@ -110,6 +121,14 @@ describe.each(GUARDS)('$name launch paths (SMI-7157/SMI-7179)', (guard) => {
 
   it('through a path with a space denies', () => {
     expectDeny(run(join(spaceScriptsDir, guard.file), guard.deny, guard.env))
+  })
+
+  it('imported by a same-named entry script: the guard does not run as main', () => {
+    // Paired with the canonical deny row above, which proves the same harness
+    // sees a verdict when the guard does run.
+    const result = run(join(entryDir, guard.file), guard.deny, guard.env)
+    expect(result.status, `stderr: ${result.stderr}`).toBe(0)
+    expect(result.stdout).toBe('')
   })
 
   it('canonical path, known-allow payload: empty stdout, exit 0', () => {
