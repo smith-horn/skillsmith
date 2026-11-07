@@ -19,16 +19,16 @@ All notable changes to `@skillsmith/cli` are documented here.
   derived from what is offered. Every refusal ends by naming the other actions that are
   offered for that operation ("offered here: --apply or --undo"), the ones offered only with
   `--unsafe-unverified-owner`, or "no other action is offered here"; for an operation whose trees
-  are copies or remounts, a refusal of `--apply` or `--undo` also says that with `--accept-identity` this
-  action waives the identity check, and its plan is printed before any change (not when the
-  operation belongs to another user, which no flag gets past). A refusal no longer names
-  an action that would itself refuse. The text comes from core; the exit codes are unchanged.
-  The listing's own notes now state facts only: the owner verdict no longer adds
+  are copies or remounts, a refusal of `--apply` or `--undo` also says that with
+  `--accept-identity` this action waives the identity check, and its plan is printed before any
+  change (not when the operation belongs to another user, which no flag gets past). A refusal no
+  longer names an action that would itself refuse. The text comes from core; the exit codes are
+  unchanged. The listing's own notes now state facts only: the owner verdict no longer adds
   "--clean-staging needs --unsafe-unverified-owner" (the `--clean-staging` line's hint says
-  it), and a park-intent note no longer says which action finishes the park. A listing digest taken before
-  upgrading comes back `plan-changed` afterwards, because the refusal text is part of the
-  digest: list again. There is no change to the `--json` shape, but the text of several fields
-  changes: each refused plan's `detail` (the listing's `plans[].detail`, and the plan and
+  it), and a park-intent note no longer says which action finishes the park. A listing digest
+  taken before upgrading comes back `plan-changed` afterwards, because the refusal text is part
+  of the digest: list again. There is no change to the `--json` shape, but the text of several
+  fields changes: each refused plan's `detail` (the listing's `plans[].detail`, and the plan and
   result `--apply`, `--undo` and the other actions print with `--json`), the listing's
   `digest`, and `class.intent.blocked` for an op dir an aborted update was setting aside (an
   abort-new park intent), which was "an abort-new intent: --clean-staging finishes it" and is
