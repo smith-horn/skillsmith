@@ -616,8 +616,9 @@ describe('SMI-7184', () => {
 describe('SMI-7185', () => {
   const FULL = `${P}memory_cleanup`
   // Any spelling a reader would take as naming the tool: `memory_cleanup`
-  // (`\b` does not fire inside it), plurals, capitals.
-  const NAMES_CLEANUP = /cleanup/i
+  // (`\b` does not fire inside it), `clean-up`, `clean up`, plurals, capitals.
+  const NAMES_CLEANUP = /clean[-_ ]?up/i
+  const CLEANUP_SPELLINGS = ['memory_cleanup', 'clean-up', 'Clean up', 'cleanups']
   /** Rewrite the memory_* row's cell and require that the doc actually changed. */
   function withMemoryCell(doc: string, cell: number, fn: (c: string) => string): string {
     const out = withCell(doc, 'memory_', cell, fn)
@@ -657,11 +658,11 @@ describe('SMI-7185', () => {
       )
       const doc = withMemoryCell(blockedOut, 1, (c) => ` \`cleanup\`,${c}`)
       applied('U4:blocked-to-allowed')
-      const f = evalReal({ doc }).findings
-      expect(f).toContain('rule A: denied "memory_cleanup" is not in the memory_* Blocked cell')
-      expect(f).toContain(
-        'rule C: denied "memory_cleanup" appears in the Allowed cell as "cleanup"'
-      )
+      // The complete set, so neither axis can be dropped or duplicated silently.
+      expect([...evalReal({ doc }).findings].sort()).toEqual([
+        'rule A: denied "memory_cleanup" is not in the memory_* Blocked cell',
+        'rule C: denied "memory_cleanup" appears in the Allowed cell as "cleanup"',
+      ])
     }
   )
 
@@ -670,11 +671,16 @@ describe('SMI-7185', () => {
   // U6 pins this change's own row instead of widening rule C.
   it.skipIf(!hasDoc)('SMI-7185 U6: the memory_* Allowed cell does not name cleanup', () => {
     expect(cellOf(docText, 'memory_', 1)).not.toMatch(NAMES_CLEANUP)
-    const doc = withMemoryCell(docText, 1, (c) => `${c}, and memory_cleanup `)
-    applied('U6:plain-prose')
-    expect(cellOf(doc, 'memory_', 1)).toMatch(NAMES_CLEANUP)
-    // Characterization of the rule C gap, not a guarantee: if rule C is ever
-    // widened to unbackticked prose, this line should flip to expect a finding.
-    expect(evalReal({ doc }).findings).toEqual([])
   })
+
+  for (const spelling of CLEANUP_SPELLINGS) {
+    it.skipIf(!hasDoc)(`SMI-7185 U6 red arm: plain "${spelling}" in Allowed is caught`, () => {
+      const doc = withMemoryCell(docText, 1, (c) => `${c}, and ${spelling} `)
+      applied(`U6:${spelling}`)
+      expect(cellOf(doc, 'memory_', 1)).toMatch(NAMES_CLEANUP)
+      // Characterization of the rule C gap, not a guarantee: if rule C is ever
+      // widened to unbackticked prose, this line should flip to expect a finding.
+      expect(evalReal({ doc }).findings).toEqual([])
+    })
+  }
 })
