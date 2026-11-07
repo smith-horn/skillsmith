@@ -214,4 +214,6 @@ export interface StatusInfo {
   /** Absolute path to the RuVector storage directory (SMI-4426 rename from `rvfPath`). */
   storagePath: string
   corpusVersion: number
+  /** SMI-7201: set (e.g. `tier-b-pairs mismatch`) only when the Tier-B pair flag exists. */
+  degraded?: string
 }

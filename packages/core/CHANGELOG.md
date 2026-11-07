@@ -29,6 +29,14 @@ All notable changes to `@skillsmith/core` are documented here.
   `doctor backups --prune --apply` wires it in 6c-iii. A static fs boundary test checks every
   `prune*.ts` module and pins the fs calls, their argument shapes and the Node builtins each may
   use.
+- **Added**: SMI-7201 -- `EmbeddingService` now reports every mock embedding it serves while the
+  dev container's Tier-B pair flag (`/run/skillsmith/tier-b-pairs.state`, written at container
+  boot when a native package and its JS parent have drifted, or the check could not run) exists:
+  one `console.error` per mock vector, naming the flag's state and the remedy, not silenced by
+  `SKILLSMITH_QUIET`. A flag that exists but cannot be read counts as `unreadable`, never as
+  healthy. Every mock vector, including a deliberately configured fallback (`useFallback: true`),
+  is reported, since it is a mock either way. With no flag, behaviour is unchanged. New optional
+  `EmbeddingServiceOptions.tierBFlagPath` (the flag's location; for tests).
 - **Changed (internal, unreleased)**: SMI-6531 -- #3213 retro: `skill-recovery.plan.ts` no
   longer re-exports the `PlanOptions` type, which nothing imported from it (it is declared in
   `skill-recovery.types.ts`; the package's public exports are unchanged), and the docblocks of

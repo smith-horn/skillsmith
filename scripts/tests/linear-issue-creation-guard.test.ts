@@ -12,6 +12,7 @@
  *      with a JSON permissionDecision on stdout.
  */
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -197,5 +198,24 @@ describe('linear-issue-creation-guard.mjs runtime wrapper (subprocess, exit-code
       encoding: 'utf8',
     })
     expect(stdout.trim()).toBe('')
+  })
+})
+
+describe('.claude/settings.json onFailure pin (SMI-7157/SMI-7179)', () => {
+  it('the linear-issue-creation-guard.mjs hook entry has NO onFailure (shadow warn exits 1; block would deny)', () => {
+    const settingsPath = join(__dirname, '..', '..', '.claude', 'settings.json')
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    const hooks: Array<Record<string, unknown>> = (settings.hooks?.PreToolUse ?? []).flatMap(
+      (e: { hooks?: Array<Record<string, unknown>> }) => e.hooks ?? []
+    )
+    const guardHooks = hooks.filter(
+      (h) =>
+        typeof h.command === 'string' &&
+        h.command.includes('scripts/linear-issue-creation-guard.mjs')
+    )
+    expect(guardHooks.length).toBeGreaterThanOrEqual(1)
+    for (const hook of guardHooks) {
+      expect(hook).not.toHaveProperty('onFailure')
+    }
   })
 })

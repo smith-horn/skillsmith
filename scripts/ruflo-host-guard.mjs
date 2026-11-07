@@ -71,6 +71,7 @@
  * docs/internal/process/guards-and-opt-outs.md.
  */
 
+import { isMainModule } from './lib/is-main-module.mjs'
 import { MAX_DEPTH, basenameOf, tokenize } from './lib/shell-command-normalize.mjs'
 import {
   envSplitCommandText,
@@ -474,7 +475,7 @@ export function decide(toolCall, _env) {
 
 // --- Runtime wrapper (thin shell around the pure decide() core) ---
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const chunks = []
   process.stdin.on('data', (chunk) => chunks.push(chunk))
   process.stdin.on('end', () => {

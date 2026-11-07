@@ -4,6 +4,11 @@ Internal MCP server (SMI-4417) wrapping `@ruvector/core` for semantic doc retrie
 
 ## [Unreleased]
 
+### Added
+- SMI-7201 — `skill_docs_status` reports `degraded: "tier-b-pairs <state>"` while the dev
+  container's Tier-B pair flag (`/run/skillsmith/tier-b-pairs.state`) exists, and omits the field
+  otherwise. `getStatus()` takes an optional second argument (`{ tierBFlagPath }`) for tests.
+
 ### Changed
 - SMI-7168 — `zod` moves from 3.25.76 to 4.6.7 (GHSA-mrhx-c7xc-m3w5, memory exhaustion when
   validating oversized constrained collections). `jsonSchemaOf()` now converts with
