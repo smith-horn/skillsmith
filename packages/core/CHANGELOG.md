@@ -12,11 +12,13 @@ All notable changes to `@skillsmith/core` are documented here.
   directory, durably and once, before its first delete. Prune deletes only approved entries: every
   delete, on the first run or a resume, must match a row of that inventory by inode and metadata,
   and on a resume by content too. Anything else (a swapped-in, moved-in or recreated entry) is kept
-  where it is and reported, and the walk goes on; that includes any entry directly in the staging
-  directory that is not prune's own metadata, and any entry that appears in a directory after the
-  walk read it. A `deleting` marker written after the inventory and before the first delete records
-  the run ID and the inventory's sha256, and a resume is offered and accepted only when the intent,
-  the marker and the inventory agree. A leftover without a valid, bound inventory deletes nothing. The walk renames, re-checks and unlinks; it never follows a link, never crosses a mount,
+  where it is and reported, and the walk goes on; a directory whose identity changed stops the walk
+  instead. That includes any entry directly in the staging directory that is not prune's own
+  metadata, and any entry that appears in a directory after the walk read it. A `deleting` marker
+  written after the inventory and before the first delete records the run ID and the inventory's
+  sha256, and a resume is offered and accepted only when the intent, the marker and the inventory
+  agree. A leftover without a valid, bound inventory deletes nothing.
+  The walk renames, re-checks and unlinks; it never follows a link, never crosses a mount,
   never renames onto an existing name and never renames anything back. A run removes a directory
   only after renaming it itself, so a resume leaves directories in place and the listing reports
   them for the user to remove. The sidecar goes last, and only once no entry is kept, so a stopped
@@ -29,6 +31,11 @@ All notable changes to `@skillsmith/core` are documented here.
   `doctor backups --prune --apply` wires it in 6c-iii. A static fs boundary test checks every
   `prune*.ts` module and pins the fs calls, their argument shapes and the Node builtins each may
   use.
+- **Changed (internal)**: SMI-6531 -- #3226 retro: `prune.leftovers.ts` no longer carries the
+  unreachable `staged` branch and `interruptedDelete` field (a leftover that gets an `item` has
+  always had its `deleting` marker, so its state is `interrupted-delete`), the unused
+  `sameLeafPre` helper is removed from `prune.walk.shared.ts`, and the prune tests' harness drops
+  hook fields and actions nothing uses. No behaviour change.
 - **Added**: SMI-7201 -- `EmbeddingService` now reports every mock embedding it serves while the
   dev container's Tier-B pair flag (`/run/skillsmith/tier-b-pairs.state`, written at container
   boot when a native package and its JS parent have drifted, or the check could not run) exists:

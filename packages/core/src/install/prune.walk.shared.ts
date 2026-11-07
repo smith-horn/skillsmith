@@ -1,7 +1,7 @@
 /**
- * SMI-6531 (A1 step 6c-i): helpers shared by the prune walker modules
- * (`prune.walk.ts`, `prune.walk.verify.ts`), ported from the SMI-6676 spike's
- * `prune.walk.shared.mjs`. fs is the DEFAULT export, looked up at call time.
+ * SMI-6531 (A1 step 6c-i): helpers shared by the prune modules, ported from
+ * the SMI-6676 spike's `prune.walk.shared.mjs`. fs is the DEFAULT export,
+ * looked up at call time.
  *
  * @module @skillsmith/core/install/prune.walk.shared
  */
@@ -122,10 +122,6 @@ export const sameLeafPost = (w: InventoryRow | undefined, s: StatLike): boolean 
   w.mode === s.mode &&
   w.size === s.size &&
   w.mtimeNs === s.mtimeNs
-
-/** A non-directory still as recorded before its rename, ctime included. */
-export const sameLeafPre = (w: InventoryRow | undefined, s: StatLike): boolean =>
-  sameLeafPost(w, s) && w !== undefined && w.ctimeNs === s.ctimeNs
 
 /** Linux: a mountinfo point at or under `abs` (its real path). Fails closed on an unreadable table. */
 export function mountFinding(abs: string): string | null {

@@ -59,7 +59,6 @@ export interface StagedItem {
   opDir: string
   /** sha256 of the inventory bytes this listing read: the resume job binds to it. */
   inventorySha256: string
-  interruptedDelete: boolean
   /** Metadata inspected here (stable read, strict schema); removable after a confirmed run only if unchanged. */
   inheritedMeta: Record<string, MetaRecord>
 }
@@ -97,9 +96,8 @@ const recordOfRead = (rs: { ino: bigint; bytes: Buffer }): MetaRecord => ({
 /**
  * States: staging-unusable | empty | intent-only | partial-intent |
  * inventory-partial | staged | interrupted-delete | skeleton | finished |
- * staged-orphan | unknown. Only `staged` and `interrupted-delete` with an
- * inventory carry an `item`; `cleanup` lists our own metadata to remove, each
- * by its `meta` record.
+ * staged-orphan | unknown. Only `interrupted-delete` carries an `item`;
+ * `cleanup` lists our own metadata to remove, each by its `meta` record.
  */
 export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: string }): Leftover {
   const r: Leftover = { S, state: 'unknown', unapproved: [] }
@@ -213,11 +211,10 @@ function withInventory(
       }
     }
     if (unbound !== null) return { ...base, state: 'unknown', detail: `${unbound}; never touched` }
-    const deleting = metaPresent.includes('deleting')
     const meta = r.meta as Record<string, MetaRecord>
     return {
       ...base,
-      state: deleting ? 'interrupted-delete' : 'staged',
+      state: 'interrupted-delete',
       remaining: diff.remaining,
       item: {
         S,
@@ -226,7 +223,6 @@ function withInventory(
         copyPath: path.join(S, leaf),
         opDir: intent !== null ? path.dirname(intent.copyPath) : S,
         inventorySha256: ld.digest,
-        interruptedDelete: deleting,
         inheritedMeta: Object.fromEntries(
           Object.entries(meta).filter(([k]) => k === 'intent.json' || k === 'deleting')
         ),
