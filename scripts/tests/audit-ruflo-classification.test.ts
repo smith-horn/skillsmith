@@ -418,13 +418,54 @@ describe('Check 79: table rule red arms', () => {
  * lacks the token it will add) and logs `applied=<arm>:<name>`. Doc arms skip
  * where docs/internal is absent (CI).
  */
+/**
+ * Real-file harness shared by the SMI-7184 and SMI-7185 blocks: the real
+ * settings and doc, read once, and an evaluator that injects one mutated copy.
+ */
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const settingsPath = join(root, '.claude', 'settings.json')
+const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
+const hasDoc = existsSync(docPath)
+const settingsText = readFileSync(settingsPath, 'utf8')
+const docText = hasDoc ? readFileSync(docPath, 'utf8') : ''
+
+function evalReal(over: { settings?: string; doc?: string; coreEntries?: string[] }) {
+  return evaluateRufloClassification({
+    settingsPath,
+    docPath,
+    readFile: (p: string) => {
+      if (p === settingsPath) return over.settings ?? settingsText
+      if (p === docPath) return over.doc ?? docText
+      throw new Error(`ENOENT ${p}`)
+    },
+    exists: (p: string) => p === settingsPath || (p === docPath && hasDoc),
+    ...(over.coreEntries ? { coreEntries: over.coreEntries } : {}),
+  })
+}
+
+const denyOf = (text: string): string[] => JSON.parse(text).permissions.deny as string[]
+const withDeny = (text: string, fn: (d: string[]) => string[]): string => {
+  const j = JSON.parse(text)
+  j.permissions.deny = fn(j.permissions.deny)
+  return JSON.stringify(j, null, 2)
+}
+
+/** Rewrite one cell (0 prefix, 1 Allowed, 2 Blocked) of the table row owning `prefix`. */
+function withCell(doc: string, prefix: string, cell: number, fn: (c: string) => string): string {
+  const lines = doc.split('\n')
+  const i = lines.findIndex((l) => l.startsWith(`| \`${prefix}*\` |`))
+  expect(i, `row for ${prefix}* must exist`).toBeGreaterThan(-1)
+  const cs = lines[i].slice(1, lines[i].lastIndexOf('|')).split('|')
+  cs[cell] = fn(cs[cell])
+  lines[i] = `|${cs.join('|')}|`
+  return lines.join('\n')
+}
+const cellOf = (doc: string, prefix: string, cell: number): string => {
+  const l = doc.split('\n').find((x) => x.startsWith(`| \`${prefix}*\` |`)) ?? ''
+  return l.slice(1, l.lastIndexOf('|')).split('|')[cell] ?? ''
+}
+
 describe('SMI-7184', () => {
-  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-  const settingsPath = join(root, '.claude', 'settings.json')
-  const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
-  const hasDoc = existsSync(docPath)
-  const settingsText = readFileSync(settingsPath, 'utf8')
-  const docText = hasDoc ? readFileSync(docPath, 'utf8') : ''
   const NAMES = ['memory_list', 'hooks_intelligence_attention', 'embeddings_search']
 
   /** The single seam every arm mutates through. */
@@ -432,45 +473,11 @@ describe('SMI-7184', () => {
     return fn(text)
   }
 
-  function evalReal(over: { settings?: string; doc?: string; coreEntries?: string[] }) {
-    return evaluateRufloClassification({
-      settingsPath,
-      docPath,
-      readFile: (p: string) => {
-        if (p === settingsPath) return over.settings ?? settingsText
-        if (p === docPath) return over.doc ?? docText
-        throw new Error(`ENOENT ${p}`)
-      },
-      exists: (p: string) => p === settingsPath || (p === docPath && hasDoc),
-      ...(over.coreEntries ? { coreEntries: over.coreEntries } : {}),
-    })
-  }
-
-  const denyOf = (text: string): string[] => JSON.parse(text).permissions.deny as string[]
-  const withDeny = (text: string, fn: (d: string[]) => string[]): string => {
-    const j = JSON.parse(text)
-    j.permissions.deny = fn(j.permissions.deny)
-    return JSON.stringify(j, null, 2)
-  }
   const splitName = (name: string) => {
     const prefix = prefixOf(name)
     return { prefix, sfx: name.slice(prefix.length) }
   }
 
-  /** Rewrite one cell (0 prefix, 1 Allowed, 2 Blocked) of the table row owning `prefix`. */
-  function withCell(doc: string, prefix: string, cell: number, fn: (c: string) => string): string {
-    const lines = doc.split('\n')
-    const i = lines.findIndex((l) => l.startsWith(`| \`${prefix}*\` |`))
-    expect(i, `row for ${prefix}* must exist`).toBeGreaterThan(-1)
-    const cs = lines[i].slice(1, lines[i].lastIndexOf('|')).split('|')
-    cs[cell] = fn(cs[cell])
-    lines[i] = `|${cs.join('|')}|`
-    return lines.join('\n')
-  }
-  const cellOf = (doc: string, prefix: string, cell: number): string => {
-    const l = doc.split('\n').find((x) => x.startsWith(`| \`${prefix}*\` |`)) ?? ''
-    return l.slice(1, l.lastIndexOf('|')).split('|')[cell] ?? ''
-  }
   /** Apply `fn` to the text inside the doc's json fence only. */
   function withFence(doc: string, fn: (f: string) => string): string {
     const a = doc.indexOf('```json')
@@ -600,59 +607,29 @@ describe('SMI-7184', () => {
 })
 
 /**
- * SMI-7185: the `memory_cleanup` deny. Same pattern as the SMI-7184 block: each
- * arm reads the REAL settings and doc, applies one in-memory mutation, asserts
- * the unmutated text holds what it removes, and logs `applied=<arm>`. Doc arms
- * skip where docs/internal is absent (CI).
+ * SMI-7185: the `memory_cleanup` deny. Same pattern and shared harness as the
+ * SMI-7184 block: each arm reads the REAL settings and doc, applies one
+ * in-memory mutation, asserts the unmutated text holds what it removes, and
+ * logs `applied=<arm>`. Doc arms skip where docs/internal is absent (CI). The
+ * known negative for the real files is SMI-7184 T8, which covers this change.
  */
 describe('SMI-7185', () => {
-  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-  const settingsPath = join(root, '.claude', 'settings.json')
-  const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
-  const hasDoc = existsSync(docPath)
-  const settingsText = readFileSync(settingsPath, 'utf8')
-  const docText = hasDoc ? readFileSync(docPath, 'utf8') : ''
   const FULL = `${P}memory_cleanup`
-  const ROW = '| `memory_*` |'
-
-  function evalReal(over: { settings?: string; doc?: string; coreEntries?: string[] }) {
-    return evaluateRufloClassification({
-      settingsPath,
-      docPath,
-      readFile: (p: string) => {
-        if (p === settingsPath) return over.settings ?? settingsText
-        if (p === docPath) return over.doc ?? docText
-        throw new Error(`ENOENT ${p}`)
-      },
-      exists: (p: string) => p === settingsPath || (p === docPath && hasDoc),
-      ...(over.coreEntries ? { coreEntries: over.coreEntries } : {}),
-    })
-  }
-  const denyOf = (text: string): string[] => JSON.parse(text).permissions.deny as string[]
-  /** Split the memory_* row into its cells (0 prefix, 1 Allowed, 2 Blocked). */
-  function memoryCells(doc: string): { lines: string[]; i: number; cs: string[] } {
-    const lines = doc.split('\n')
-    const i = lines.findIndex((l) => l.startsWith(ROW))
-    expect(i, 'memory_* row must exist').toBeGreaterThan(-1)
-    return { lines, i, cs: lines[i].slice(1, lines[i].lastIndexOf('|')).split('|') }
-  }
-  function withMemoryCells(doc: string, fn: (cs: string[]) => void): string {
-    const { lines, i, cs } = memoryCells(doc)
-    fn(cs)
-    lines[i] = `|${cs.join('|')}|`
-    const out = lines.join('\n')
+  // Any spelling a reader would take as naming the tool: `memory_cleanup`
+  // (`\b` does not fire inside it), plurals, capitals.
+  const NAMES_CLEANUP = /cleanup/i
+  /** Rewrite the memory_* row's cell and require that the doc actually changed. */
+  function withMemoryCell(doc: string, cell: number, fn: (c: string) => string): string {
+    const out = withCell(doc, 'memory_', cell, fn)
     expect(out, 'the mutation must change the doc').not.toBe(doc)
     return out
   }
 
   it('SMI-7185 U1: removed from the settings deny array -> pin-only', () => {
     expect(denyOf(settingsText)).toContain(FULL)
-    const j = JSON.parse(settingsText)
-    j.permissions.deny = j.permissions.deny.filter((x: string) => x !== FULL)
+    const settings = withDeny(settingsText, (d) => d.filter((x) => x !== FULL))
     applied('U1:settings')
-    expect(evalReal({ settings: JSON.stringify(j, null, 2) }).findings).toContain(
-      `pin-only: "${FULL}" is missing from array`
-    )
+    expect(evalReal({ settings }).findings).toContain(`pin-only: "${FULL}" is missing from array`)
   })
 
   it.skipIf(!hasDoc)('SMI-7185 U2: removed from the doc paste block -> pin-only', () => {
@@ -674,11 +651,11 @@ describe('SMI-7185', () => {
   it.skipIf(!hasDoc)(
     'SMI-7185 U4: cleanup moved from Blocked back to Allowed -> rules A, C',
     () => {
-      expect(memoryCells(docText).cs[2]).toMatch(/`cleanup`/)
-      const doc = withMemoryCells(docText, (cs) => {
-        cs[2] = cs[2].replace(/,\s*`cleanup`(\s*\([^)]*\))?/, '')
-        cs[1] = ` \`cleanup\`,${cs[1]}`
-      })
+      expect(cellOf(docText, 'memory_', 2)).toMatch(/`cleanup`/)
+      const blockedOut = withMemoryCell(docText, 2, (c) =>
+        c.replace(/,\s*`cleanup`(\s*\([^)]*\))?/, '')
+      )
+      const doc = withMemoryCell(blockedOut, 1, (c) => ` \`cleanup\`,${c}`)
       applied('U4:blocked-to-allowed')
       const f = evalReal({ doc }).findings
       expect(f).toContain('rule A: denied "memory_cleanup" is not in the memory_* Blocked cell')
@@ -688,24 +665,16 @@ describe('SMI-7185', () => {
     }
   )
 
-  it('SMI-7185 U5 (known negative): the real files are clean at 55', () => {
-    const r = evalReal({})
-    applied('U5:none')
-    expect(r.findings).toEqual([])
-    expect([r.coreCount, r.pinnedCount]).toEqual([55, 55])
-    if (hasDoc) expect(r.docCount).toBe(55)
-  })
-
   // Rule C reads only backticked tokens (the helper's header records this), so
   // a plain-prose `cleanup` left in the Allowed cell passes every Check 79 rule.
   // U6 pins this change's own row instead of widening rule C.
   it.skipIf(!hasDoc)('SMI-7185 U6: the memory_* Allowed cell does not name cleanup', () => {
-    expect(memoryCells(docText).cs[1]).not.toMatch(/\bcleanup\b/)
-    const doc = withMemoryCells(docText, (cs) => {
-      cs[1] = `${cs[1]}, and cleanup `
-    })
+    expect(cellOf(docText, 'memory_', 1)).not.toMatch(NAMES_CLEANUP)
+    const doc = withMemoryCell(docText, 1, (c) => `${c}, and memory_cleanup `)
     applied('U6:plain-prose')
-    expect(memoryCells(doc).cs[1]).toMatch(/\bcleanup\b/)
+    expect(cellOf(doc, 'memory_', 1)).toMatch(NAMES_CLEANUP)
+    // Characterization of the rule C gap, not a guarantee: if rule C is ever
+    // widened to unbackticked prose, this line should flip to expect a finding.
     expect(evalReal({ doc }).findings).toEqual([])
   })
 })
