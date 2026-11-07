@@ -38,7 +38,7 @@ import { errCode, errCodeOrMessage, shapeResult } from './park-result.js'
 import type { ParkResult, PartialParkResult } from './park-result.js'
 import { decodeJob, isResume } from './prune.job.js'
 import type { FreshJob, PruneJob, ResumeJob } from './prune.job.js'
-import { recordOf, removeIfIdentical } from './prune.metadata.js'
+import { removeIfIdentical } from './prune.metadata.js'
 import type { MetaRecord } from './prune.metadata.js'
 import {
   D_NAME_RE,
@@ -48,7 +48,13 @@ import {
   writeInventory,
 } from './prune.inventory.js'
 import type { ApprovedRow } from './prune.inventory.js'
-import { Approved, contentProblem, dirProblem, leafProblem } from './prune.inventory.match.js'
+import {
+  Approved,
+  STAGING_METADATA,
+  contentProblem,
+  dirProblem,
+  leafProblem,
+} from './prune.inventory.match.js'
 import type { FoundAt, KeptEntry } from './prune.inventory.match.js'
 import {
   Stop,
@@ -61,7 +67,14 @@ import {
 } from './prune.walk.shared.js'
 import type { InventoryRow } from './prune.walk.shared.js'
 import { checkResume } from './prune.walk.resume.js'
-import { dirMisplacedStop, intentFor, writeIntent } from './prune.walk.stage.js'
+import {
+  dirMisplacedStop,
+  intentFor,
+  notDone,
+  removeEmptyDirs,
+  writeDeleting,
+  writeIntent,
+} from './prune.walk.stage.js'
 import { recheck, verifyAtStaging } from './prune.walk.verify.js'
 
 /**
@@ -81,7 +94,6 @@ interface WalkCtx {
   pruneId: string
   alive: () => boolean
   resume: boolean
-  wrote: Record<string, MetaRecord>
 }
 
 /** What a walk that did not hard-stop did. */
@@ -114,7 +126,6 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
     pruneId,
     alive: () => process.ppid === startPpid,
     resume: isResume(job),
-    wrote: {},
   }
   const out: Out = (partial) =>
     shapeResult({
@@ -235,6 +246,15 @@ function freshRun(job: FreshJob, ctx: WalkCtx, out: Out): ParkResult {
       : held('inventory-unwritten', `${w.step} failed (${w.errno}); nothing was deleted`)
   }
   own[INVENTORY_FILE] = w.record
+  // The delete marker binds the inventory to this run (its digest and run ID) before any delete.
+  try {
+    own.deleting = writeDeleting(S, inv.pruneId, w.digest)
+  } catch (err) {
+    return held(
+      'marker-unwritten',
+      `deleting write failed (${errCodeOrMessage(err)}); nothing deleted`
+    )
+  }
   return walkAndFinish(job, S, new Approved(inv), dirIdOf(sd), ctx, own, out)
 }
 
@@ -282,41 +302,14 @@ function walkAndFinish(
       /* the child exits next */
     }
   }
-  if (o.kept.length > 0 || o.skeletons.length > 0) {
-    // Not done: the metadata stays, so the listing can say what is left and why.
-    return out({
-      status: 'stopped',
-      reason: o.kept.length > 0 ? 'unapproved-kept' : 'skeleton-left',
-      detail:
-        o.kept.length > 0
-          ? `${o.kept.length} unapproved entries kept where they are`
-          : `${o.skeletons.length} directories left holding nothing approved; a resume never removes a directory`,
-      deleted: o.deleted,
-      kept: o.kept,
-      skeletons: o.skeletons,
-      stagingPath: S,
-    })
-  }
+  // Not done: the metadata stays, so the listing can say what is left and why.
+  if (o.kept.length > 0 || o.skeletons.length > 0) return out(notDone(o, S))
   const metadataKept: string[] = []
   for (const m of ['deleting', 'intent.json', INVENTORY_FILE]) {
-    const r = removeIfIdentical(path.join(S, m), ctx.wrote[m] ?? own[m])
+    const r = removeIfIdentical(path.join(S, m), own[m])
     if (!r.removed && r.kept !== null) metadataKept.push(r.kept)
   }
-  // Only empty directories are removed. Anything left keeps them, and is named.
-  const notes: string[] = []
-  for (const [dir, label] of [
-    [S, 'staging directory'],
-    [job.opDir, 'op directory'],
-  ] as const) {
-    try {
-      fs.rmdirSync(dir)
-    } catch (err) {
-      const code = errCode(err)
-      if (dir === S || (code !== 'ENOTEMPTY' && code !== 'ENOENT')) {
-        notes.push(`${label} left (${code})`)
-      }
-    }
-  }
+  const notes = removeEmptyDirs(S, job.opDir)
   return out({
     status: 'removed',
     deleted: o.deleted,
@@ -362,8 +355,14 @@ function deleteApproved(S: string, ap: Approved, sId: DirId, ctx: WalkCtx): Walk
     s.errno = code
     return s
   }
+  // Every path the walk reported or left on purpose; anything else still there is unapproved.
+  const accounted = new Set<string>()
   const keep = (n: string, rel: string | null, why: string): void => {
+    accounted.add(here(n))
     o.kept.push({ path: here(n), rel, why })
+  }
+  const unvisited = (names: string[]): void => {
+    for (const n of names) if (!accounted.has(here(n))) keep(n, null, 'appeared during the walk')
   }
   const deleteLeaf = (n: string, row: ApprovedRow, at: FoundAt): void => {
     const s = fs.lstatSync(n, { bigint: true })
@@ -411,10 +410,13 @@ function deleteApproved(S: string, ap: Approved, sId: DirId, ctx: WalkCtx): Walk
     cwdIs(row, row.rel || 'the staged root')
     const keptBefore = o.kept.length
     walkDir(row)
-    const left = fs.readdirSync('.').length
+    const names = fs.readdirSync('.')
+    unvisited(names.sort())
+    const left = names.length
     process.chdir('..')
     segs.pop()
     cwdIs(parent, parentAt)
+    accounted.add(here(name))
     if (ctx.resume) {
       // Left in place (R2); a skeleton when nothing under it was kept.
       if (o.kept.length === keptBefore) o.skeletons.push(here(name))
@@ -457,22 +459,20 @@ function deleteApproved(S: string, ap: Approved, sId: DirId, ctx: WalkCtx): Walk
   try {
     process.chdir(S)
     cwdIs(sId, 'S')
-    if (!fs.readdirSync('.').includes('deleting')) {
-      const marker = JSON.stringify({ pruneId: ctx.pruneId, pid: process.pid })
-      fs.writeFileSync('deleting', marker, { flag: 'wx' })
-      // P4g removes this marker only if it is still these bytes at this inode.
-      ctx.wrote.deleting = recordOf(path.join(S, 'deleting'), marker)
-    }
     const rootAt = findTop(ap.inv.leaf, '')
+    const sideAt = ap.row(SIDECAR_KEY) ? findTop('sidecar.json', SIDECAR_KEY) : null
     if (rootAt !== null) visitEntry(rootAt, STAGING_KEY, sId, 'S')
-    // The sidecar last, and only once every entry of the tree is gone: empty
-    // directories a resume may not remove (R2) hold nothing it describes, but a
-    // kept entry does, so it keeps its sidecar.
-    const sidecar = ap.row(SIDECAR_KEY)
-    if (sidecar !== undefined && o.kept.length === 0) {
-      const at = findTop('sidecar.json', SIDECAR_KEY)
-      if (at !== null) visitEntry(at, STAGING_KEY, sId, 'S')
-    }
+    // Every other entry directly in S that is not prune's own metadata is unapproved.
+    const skip = new Set<string | null>([...STAGING_METADATA, rootAt, sideAt])
+    unvisited(
+      fs
+        .readdirSync('.')
+        .filter((n) => !skip.has(n))
+        .sort()
+    )
+    // The sidecar last, and only once no entry is kept: empty directories a
+    // resume may not remove (R2) hold nothing it describes, but a kept entry does.
+    if (sideAt !== null && o.kept.length === 0) visitEntry(sideAt, STAGING_KEY, sId, 'S')
     return o
   } catch (err) {
     throw errnoStop(err, 'walk')

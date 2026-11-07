@@ -120,8 +120,18 @@ function act(a, a0, a1) {
       // A file named a.name in the directory of the call's path (a0).
       O('writeFileSync', path.join(path.dirname(abs(a0)), a.name), a.data)
       return null
+    case 'mkdirBeside':
+      // A directory named a.name, holding one file, in the directory of the call's path (a0).
+      O('mkdirSync', path.join(path.dirname(abs(a0)), a.name))
+      O('writeFileSync', path.join(path.dirname(abs(a0)), a.name, 'inside.txt'), a.data)
+      return null
     case 'rewriteInPlace': {
-      const p = a.path === '$cwd/sidecar.json' ? path.join(realCwd(), 'sidecar.json') : abs(a0)
+      const p =
+        a.path === '$cwd/sidecar.json'
+          ? path.join(realCwd(), 'sidecar.json')
+          : a.path === '$a0dir/sidecar.json'
+            ? path.join(path.dirname(abs(a0)), 'sidecar.json')
+            : abs(a0)
       const fd = O('openSync', p, 'r+')
       try {
         const buf = Buffer.alloc(O('fstatSync', fd).size, 'Z')

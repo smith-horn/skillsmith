@@ -345,17 +345,13 @@ export function resumeJobAt(S: string, over: Partial<ResumeJob> = {}): ResumeJob
   }
 }
 
-/** A walk killed right after it wrote the inventory: a resumable leftover with nothing deleted yet. */
+/**
+ * A walk killed right after it wrote the inventory and its `deleting` marker,
+ * before any delete or rename: a resumable leftover with nothing deleted yet.
+ */
 export function stagedWithInventory(c: ParkedCopy): string {
   const run = runWalker(jobFor(c), {
-    hooks: [
-      {
-        when: 'after',
-        fn: 'renameSync',
-        a1Re: '/inventory\\.json$',
-        action: { kind: 'kill' },
-      },
-    ],
+    hooks: [{ when: 'after', fn: 'writeFileSync', a0Re: '/deleting$', action: { kind: 'kill' } }],
   })
   if (run.signal !== 'SIGKILL') throw new Error(`precondition: no crash (${statusOf(run)})`)
   const dirs = stagingDirs(c.stagingRoot)

@@ -269,22 +269,26 @@ describe('the write protocol: a failed durability step deletes nothing', () => {
       expect(trace.filter((e) => e.fn === 'unlinkSync' || e.fn === 'rmdirSync')).toEqual([])
       const left = inspectLeftover({ S, stagingRoot: c.stagingRoot })
       expect(left.state).toBe(listed)
-      if (step !== 'dir-fsync') expect(left.item).toBeUndefined()
+      expect(left.item).toBeUndefined()
     })
   }
 
-  it('dir-fsync (R4): the later listing accepts the final inventory by digest, and a resume deletes', () => {
+  // R4 is superseded by the run binding (owner decision 2026-11-07): a complete
+  // inventory with no deleting marker is never resumed; the copy is restored instead.
+  it('dir-fsync: the complete inventory has no marker, so no resume, and a forced one deletes nothing', () => {
     const fx = fixture('prune-inv-r4-')
     const c = parkCopy(fx.parent, 't')
     const hook = steps[4]![1]
     const first = runWalker(jobFor(c), { hooks: [hook] })
     expect(statusOf(first)).toBe('held/inventory-unwritten')
     const S = String(first.item?.stagingPath)
+    expect(parseInventoryStrict(fs.readFileSync(path.join(S, 'inventory.json')))).not.toBeNull()
     const left = inspectLeftover({ S, stagingRoot: c.stagingRoot })
-    expect(left.item?.inventorySha256).toBe(sha(fs.readFileSync(path.join(S, 'inventory.json'))))
-    const run = runWalker(jobOfItem(left.item!))
-    expect(statusOf(run)).toBe('stopped/skeleton-left')
-    expect(filesUnder(S)).not.toHaveProperty(`${c.name}/top.txt`)
+    expect([left.state, left.item]).toEqual(['staged', undefined])
+    const before = snapshotTree(S)
+    const run = runWalker(resumeJobAt(S))
+    expect(statusOf(run)).toBe('kept/inventory-unbound')
+    expect(snapshotTree(S)).toBe(before)
   })
 
   for (const [name, hook] of [

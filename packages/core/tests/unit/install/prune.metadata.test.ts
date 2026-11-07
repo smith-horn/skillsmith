@@ -58,14 +58,18 @@ describe('the strict metadata schemas', () => {
     expect(parseIntentStrict('{')).toBeNull()
   })
 
-  it('the deleting marker parses exactly', () => {
-    expect(
-      parseDeletingStrict(JSON.stringify({ pruneId: '0123456789abcdef', pid: 1 }))
-    ).not.toBeNull()
-    expect(
-      parseDeletingStrict(JSON.stringify({ pruneId: '0123456789abcdef', pid: 1, x: 1 }))
-    ).toBeNull()
-    expect(parseDeletingStrict(JSON.stringify({ pruneId: 'x', pid: 1 }))).toBeNull()
+  it('the deleting marker parses exactly: run ID, inventory digest, pid', () => {
+    const good = { pruneId: '0123456789abcdef', inventorySha256: 'a'.repeat(64), pid: 1 }
+    expect(parseDeletingStrict(JSON.stringify(good))).toEqual(good)
+    for (const bad of [
+      { ...good, x: 1 },
+      { pruneId: good.pruneId, pid: 1 },
+      { ...good, pruneId: 'x' },
+      { ...good, inventorySha256: 'A'.repeat(64) },
+      { ...good, inventorySha256: 'a'.repeat(63) },
+    ]) {
+      expect(parseDeletingStrict(JSON.stringify(bad))).toBeNull()
+    }
   })
 })
 

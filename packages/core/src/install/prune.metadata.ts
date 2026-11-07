@@ -86,9 +86,14 @@ export interface PruneIntent {
   version: string
 }
 
-/** The `deleting` marker the walker writes when the delete walk starts. */
+/**
+ * The `deleting` marker the walker writes after the inventory and before the
+ * first delete: the run ID (`pruneId`, as the intent and the inventory carry
+ * it) and the inventory's sha256, which bind the inventory to its run.
+ */
 export interface DeletingMarker {
   pruneId: string
+  inventorySha256: string
   pid: number
 }
 
@@ -147,10 +152,42 @@ export function parseIntentStrict(bytes: Buffer | string): PruneIntent | null {
 /** The `deleting` marker the walker writes, exactly, or null. */
 export function parseDeletingStrict(bytes: Buffer | string): DeletingMarker | null {
   const o = parse(bytes)
-  if (!exactKeys(o, ['pruneId', 'pid'])) return null
-  return typeof o.pruneId === 'string' && HEX16.test(o.pruneId) && Number.isSafeInteger(o.pid)
+  if (!exactKeys(o, ['pruneId', 'inventorySha256', 'pid'])) return null
+  return typeof o.pruneId === 'string' &&
+    HEX16.test(o.pruneId) &&
+    typeof o.inventorySha256 === 'string' &&
+    HASH.test(o.inventorySha256) &&
+    Number.isSafeInteger(o.pid)
     ? (o as unknown as DeletingMarker)
     : null
+}
+
+/**
+ * Why a leftover's intent, `deleting` marker and inventory are not one run's,
+ * or null (owner decision 2026-11-07). A resume is offered and accepted only
+ * when all three exist and agree: the same run ID, the marker's digest equal
+ * to the inventory's actual digest, and the intent naming the inventory's
+ * leaf. This catches a stale, mixed or replaced inventory; a deliberate
+ * same-user forgery of all three is a stated residual (ADR-166 D-0).
+ */
+export function runBindingProblem(b: {
+  intent: PruneIntent | null
+  marker: DeletingMarker | null
+  inv: { pruneId: string; leaf: string }
+  digest: string
+}): string | null {
+  if (b.intent === null) return 'no intent: the run cannot be identified'
+  if (b.marker === null) return 'no deleting marker: the delete never started'
+  if (b.intent.pruneId !== b.inv.pruneId || b.marker.pruneId !== b.inv.pruneId) {
+    return 'the intent, the deleting marker and the inventory are not from one run'
+  }
+  if (b.marker.inventorySha256 !== b.digest) {
+    return 'the inventory is not the one its deleting marker recorded'
+  }
+  if (b.intent.leaf !== b.inv.leaf || path.basename(b.intent.copyPath) !== b.inv.leaf) {
+    return "the intent does not name the inventory's leaf"
+  }
+  return null
 }
 
 /** The record a later removal is checked against. */

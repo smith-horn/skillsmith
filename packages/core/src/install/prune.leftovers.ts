@@ -20,8 +20,8 @@ import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
 import { errCode } from './park-result.js'
 import { readStable } from './prune.sidecar.js'
-import { parseIntentStrict, parseDeletingStrict } from './prune.metadata.js'
-import type { MetaRecord, PruneIntent } from './prune.metadata.js'
+import { parseIntentStrict, parseDeletingStrict, runBindingProblem } from './prune.metadata.js'
+import type { DeletingMarker, MetaRecord, PruneIntent } from './prune.metadata.js'
 import {
   INVENTORY_FILE,
   INVENTORY_TMP,
@@ -119,6 +119,7 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
   // later removes only a file still identical to that record.
   const meta: Record<string, MetaRecord> = {}
   let intent: PruneIntent | null = null
+  let marker: DeletingMarker | null = null
   if (names.includes('intent.json')) {
     const rs = readStable(path.join(S, 'intent.json'), { maxBytes: INTENT_MAX_BYTES })
     intent = rs.ok ? parseIntentStrict(rs.bytes) : null
@@ -133,7 +134,8 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
   }
   if (names.includes('deleting')) {
     const rs = readStable(path.join(S, 'deleting'))
-    if (!rs.ok || parseDeletingStrict(rs.bytes) === null) {
+    marker = rs.ok ? parseDeletingStrict(rs.bytes) : null
+    if (!rs.ok || marker === null) {
       return {
         ...r,
         state: 'unknown',
@@ -162,7 +164,7 @@ export function inspectLeftover({ S, stagingRoot }: { S: string; stagingRoot: st
     ...['deleting', 'intent.json', INVENTORY_FILE].filter((m) => names.includes(m)),
   ]
   if (names.includes(INVENTORY_FILE))
-    return withInventory(r, S, stagingRoot, sStat, intent, metaPresent)
+    return withInventory(r, S, stagingRoot, sStat, { intent, marker }, metaPresent)
   return withoutInventory(r, S, names, intent, mNames)
 }
 
@@ -172,9 +174,10 @@ function withInventory(
   S: string,
   stagingRoot: string,
   sStat: BigIntStats,
-  intent: PruneIntent | null,
+  run: { intent: PruneIntent | null; marker: DeletingMarker | null },
   metaPresent: string[]
 ): Leftover {
+  const { intent, marker } = run
   const ld = loadInventory(S)
   if (!ld.ok) return { ...r, state: 'unknown', detail: `${ld.why}; never touched` }
   if (!stagingMatches(ld.inv.staging, sStat)) {
@@ -197,6 +200,19 @@ function withInventory(
   const leaf = ld.inv.leaf
   const base = { ...r, intent: intent ?? undefined, leaf, unapproved: diff.unapproved }
   if (diff.remaining.length > 0) {
+    // A resume only for one run's intent, marker and inventory (owner decision 2026-11-07).
+    const unbound = runBindingProblem({ intent, marker, inv: ld.inv, digest: ld.digest })
+    if (unbound !== null && intent !== null && marker === null) {
+      return {
+        ...base,
+        state: 'staged',
+        remaining: diff.remaining,
+        detail:
+          'the inventory was written but the delete never started (no deleting marker): ' +
+          'nothing was deleted; restore the copy instead',
+      }
+    }
+    if (unbound !== null) return { ...base, state: 'unknown', detail: `${unbound}; never touched` }
     const deleting = metaPresent.includes('deleting')
     const meta = r.meta as Record<string, MetaRecord>
     return {
@@ -227,7 +243,15 @@ function withInventory(
         'Remove them by hand.',
     }
   }
-  // Nothing approved is left: only our metadata, and any unapproved entry, which stays.
+  // Nothing approved is left. An unapproved entry stays, and so does the inventory beside it.
+  if (diff.unapproved.length > 0) {
+    return {
+      ...base,
+      state: 'finished',
+      cleanup: metaPresent.filter((m) => m !== INVENTORY_FILE),
+      detail: 'unapproved entries are left where they are; the inventory stays beside them',
+    }
+  }
   return { ...base, state: 'finished', cleanup: metaPresent }
 }
 

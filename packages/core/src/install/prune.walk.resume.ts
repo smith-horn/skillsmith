@@ -6,10 +6,11 @@
  *  2. `S/inventory.json` reads stably, parses strictly, and its bytes have the
  *     digest the job carries (the inventory the user was shown);
  *  3. `S` is still the staging directory the inventory recorded (R1);
- *  4. the job agrees with the inventory (leaf) and with the intent on disk
- *     (leaf, op dir), when the intent is still there.
- * A leftover without a valid inventory is never resumed as a delete. Read-only;
- * nothing here deletes.
+ *  4. the intent, the `deleting` marker and the inventory are one run's
+ *     (`runBindingProblem`: run ID, the marker's digest, the leaf), and the
+ *     job's op dir is the intent's.
+ * A leftover without a valid inventory, intent and marker is never resumed as
+ * a delete. Read-only; nothing here deletes.
  *
  * @module @skillsmith/core/install/prune.walk.resume
  */
@@ -20,7 +21,7 @@ import { errCode } from './park-result.js'
 import { loadInventory, stagingMatches } from './prune.inventory.js'
 import type { PruneInventory } from './prune.inventory.js'
 import type { ResumeJob } from './prune.job.js'
-import { parseIntentStrict } from './prune.metadata.js'
+import { parseDeletingStrict, parseIntentStrict, runBindingProblem } from './prune.metadata.js'
 import type { MetaRecord } from './prune.metadata.js'
 import { readStable } from './prune.sidecar.js'
 import { resumeStagingProblem } from './prune.walk.shared.js'
@@ -52,16 +53,16 @@ export function checkResume(job: ResumeJob): ResumeCheck {
     return no('staging-unusable', `${S} is not the staging directory the inventory recorded`)
   }
   if (ld.inv.leaf !== job.leaf) return no('resume-mismatch', 'the leaf is not the inventory’s')
-  if (fs.readdirSync(S).includes('intent.json')) {
-    const rs = readStable(path.join(S, 'intent.json'), { maxBytes: INTENT_MAX_BYTES })
-    const intent = rs.ok ? parseIntentStrict(rs.bytes) : null
-    if (intent === null) return no('resume-mismatch', "intent.json is not Skillsmith's intent")
-    if (intent.leaf !== job.leaf) return no('resume-mismatch', 'the leaf is not the intent’s')
-    if (job.opDir !== path.dirname(intent.copyPath)) {
-      return no('resume-mismatch', 'opDir is not the op dir the intent recorded')
-    }
-  } else if (job.opDir !== S) {
-    return no('resume-mismatch', 'a leftover without an intent resumes with opDir S')
+  const meta = <T>(name: string, parse: (b: Buffer) => T | null): T | null => {
+    const rs = readStable(path.join(S, name), { maxBytes: INTENT_MAX_BYTES })
+    return rs.ok ? parse(rs.bytes) : null
+  }
+  const intent = meta('intent.json', parseIntentStrict)
+  const marker = meta('deleting', parseDeletingStrict)
+  const unbound = runBindingProblem({ intent, marker, inv: ld.inv, digest: ld.digest })
+  if (unbound !== null || intent === null) return no('inventory-unbound', `${S}: ${unbound}`)
+  if (job.opDir !== path.dirname(intent.copyPath)) {
+    return no('resume-mismatch', 'opDir is not the op dir the intent recorded')
   }
   return { ok: true, inv: ld.inv, record: ld.record, sStat }
 }

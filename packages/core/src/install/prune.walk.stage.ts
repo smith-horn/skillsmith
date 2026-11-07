@@ -1,15 +1,20 @@
 /**
- * SMI-6531 (A1 step 6c-i): the walker's intent (P4c), a write that deletes
- * nothing, split out of `prune.walk.ts` for the file-length limit (the
- * misplacement record is in `prune.misplaced.ts`). The deletion walk itself stays
- * module-private in `prune.walk.ts` (spike PR-17). fs is the DEFAULT export,
- * looked up at call time, and every write is exclusive (`wx`).
+ * SMI-6531 (A1 step 6c-i): the walker's writes that delete nothing (the intent
+ * at P4c, the `deleting` marker that binds the inventory to its run), the
+ * shape of a stopped result, and the removal of the empty staging and op
+ * directories once a run is done, split out of `prune.walk.ts` for the
+ * file-length limit. The deletion walk itself stays module-private in
+ * `prune.walk.ts` (spike PR-17), and only it removes metadata
+ * (`removeIfIdentical`). fs is the DEFAULT export, looked up at call time, and
+ * every write is exclusive (`wx`).
  *
  * @module @skillsmith/core/install/prune.walk.stage
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { errCode } from './park-result.js'
+import type { PartialParkResult } from './park-result.js'
 import { INTENT_VERSION, recordOf } from './prune.metadata.js'
 import type { MetaRecord, PruneIntent } from './prune.metadata.js'
 import type { FreshJob } from './prune.job.js'
@@ -72,4 +77,55 @@ export function dirMisplacedStop(
       misplaced: [{ path: at, originalRel }],
     }
   )
+}
+
+/**
+ * The `deleting` marker, written after the inventory and before the first
+ * delete: the inventory's sha256 and the run ID the intent and the inventory
+ * both carry (`pruneId`). A resume is offered and accepted only when the three
+ * agree (owner decision 2026-11-07). Returns the record P4g removes it by.
+ */
+export function writeDeleting(S: string, pruneId: string, inventorySha256: string): MetaRecord {
+  const bytes = JSON.stringify({ pruneId, inventorySha256, pid: process.pid })
+  const p = path.join(S, 'deleting')
+  fs.writeFileSync(p, bytes, { flag: 'wx' })
+  return recordOf(p, bytes)
+}
+
+/** The result of a walk that left something: kept entries, or directories a resume never removes. */
+export function notDone(
+  o: { deleted: number; kept: unknown[]; skeletons: string[] },
+  S: string
+): PartialParkResult {
+  const kept = o.kept.length > 0
+  return {
+    status: 'stopped',
+    reason: kept ? 'unapproved-kept' : 'skeleton-left',
+    detail: kept
+      ? `${o.kept.length} unapproved entries kept where they are`
+      : `${o.skeletons.length} directories left holding nothing approved; a resume never removes a directory`,
+    deleted: o.deleted,
+    kept: o.kept,
+    skeletons: o.skeletons,
+    stagingPath: S,
+  }
+}
+
+/** P4g's last step: only empty directories are removed. S left behind is named; the op dir only on an odd error. */
+export function removeEmptyDirs(S: string, opDir: string): string[] {
+  const notes: string[] = []
+  for (const [dir, label] of [
+    [S, 'staging directory'],
+    [opDir, 'op directory'],
+  ] as const) {
+    try {
+      fs.rmdirSync(dir)
+    } catch (err) {
+      const code = errCode(err)
+      if (dir === S || (code !== 'ENOTEMPTY' && code !== 'ENOENT')) {
+        notes.push(`${label} left (${code})`)
+      }
+    }
+  }
+  return notes
 }

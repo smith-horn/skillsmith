@@ -74,12 +74,19 @@ const POINTS: Record<string, Point> = {
     expect: 'staged',
   },
   "after-P4d'": { when: 'after', fn: 'renameSync', a1Re: '/sidecar\\.json$', expect: 'staged' },
-  // Inventory written, nothing deleted: the resume deletes every file, and leaves every directory (R2).
+  // Inventory written, no deleting marker yet: the delete never started, so no resume (owner decision 2026-11-07).
   'after-inventory': {
     when: 'after',
     fn: 'renameSync',
     a1Re: '/inventory\\.json$',
     expect: 'staged',
+  },
+  // The marker binds the inventory to its run: the resume deletes every file and leaves every directory (R2).
+  'after-marker': {
+    when: 'after',
+    fn: 'writeFileSync',
+    a0Re: '/deleting$',
+    expect: 'interrupted-delete',
     resumed: 'stopped/skeleton-left',
   },
   'during-P4f': {

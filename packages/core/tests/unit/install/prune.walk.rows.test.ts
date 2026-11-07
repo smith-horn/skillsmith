@@ -273,10 +273,11 @@ describe('P8: the sidecar rewritten in place, same size', () => {
     [
       '(ii) after verification',
       {
-        when: 'before',
+        // The deleting marker is written after the inventory, before the walk.
+        when: 'after',
         fn: 'writeFileSync',
-        a0Re: '^deleting$',
-        action: { kind: 'rewriteInPlace', path: '$cwd/sidecar.json' },
+        a0Re: '/deleting$',
+        action: { kind: 'rewriteInPlace', path: '$a0dir/sidecar.json' },
       },
       'stopped/unapproved-kept',
     ],
