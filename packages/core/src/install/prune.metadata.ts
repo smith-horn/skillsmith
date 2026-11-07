@@ -165,7 +165,7 @@ export function parseDeletingStrict(bytes: Buffer | string): DeletingMarker | nu
 /**
  * Why a leftover's intent, `deleting` marker and inventory are not one run's,
  * or null (owner decision 2026-11-07). A resume is offered and accepted only
- * when all three exist and agree: the same run ID, the marker's digest equal
+ * when all three exist and agree: the same run ID and writer pid, the marker's digest equal
  * to the inventory's actual digest, and the intent naming the inventory's
  * leaf. This catches a stale, mixed or replaced inventory; a deliberate
  * same-user forgery of all three is a stated residual (ADR-166 D-0).
@@ -180,6 +180,9 @@ export function runBindingProblem(b: {
   if (b.marker === null) return 'no deleting marker: the delete never started'
   if (b.intent.pruneId !== b.inv.pruneId || b.marker.pruneId !== b.inv.pruneId) {
     return 'the intent, the deleting marker and the inventory are not from one run'
+  }
+  if (b.marker.pid !== b.intent.pid) {
+    return 'the deleting marker was not written by the process that wrote the intent'
   }
   if (b.marker.inventorySha256 !== b.digest) {
     return 'the inventory is not the one its deleting marker recorded'

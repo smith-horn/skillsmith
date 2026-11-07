@@ -213,6 +213,14 @@ describe('Major 2: the inventory is bound to its run by the deleting marker', ()
       (S: string) => rewriteMarker(S, { pruneId: 'fedcba9876543210' }),
       'the intent, the deleting marker and the inventory are not from one run',
     ],
+    [
+      'a marker whose pid is not the intent’s',
+      (S: string) => {
+        const intent = JSON.parse(read(path.join(S, 'intent.json'))) as { pid: number }
+        rewriteMarker(S, { pid: intent.pid + 1 })
+      },
+      'the deleting marker was not written by the process that wrote the intent',
+    ],
   ] as const) {
     it(`${name}: no resume offered, and a forced resume deletes nothing`, () => {
       const fx = fixture('prune-bind-')
@@ -266,6 +274,34 @@ describe('Major 2: the inventory is bound to its run by the deleting marker', ()
     const run = runWalker(job)
     expect(statusOf(run)).toBe('kept/inventory-changed')
     expect(snapshotTree(S)).toBe(before)
+  })
+})
+
+describe('documented residual: ADR-166 D-11 "late staging entry"', () => {
+  // An entry created directly in S after the walk's last top-level re-read and
+  // before the sidecar's delete is not reported: the sidecar and the inventory
+  // go. The entry itself is never deleted, and S is left non-empty and named.
+  it('an entry created in S between the last re-read and the sidecar delete survives byte-identical', () => {
+    const fx = fixture('prune-late-top-')
+    const c = parkCopy(fx.parent, 't')
+    // The sidecar's first lstat (cwd S) is its visit, after the top-level re-read.
+    const run = runWalker(jobFor(c), {
+      traceDir: fx.root,
+      hooks: [
+        {
+          when: 'before',
+          fn: 'lstatSync',
+          a0Re: '^sidecar\\.json$',
+          action: { kind: 'writeRel', name: 'late-top.txt', data: 'late-top-bytes' },
+        },
+      ],
+    })
+    expect(fired(run, 'writeRel')).toBe(true)
+    expect(statusOf(run)).toBe('removed/null')
+    const S = String(run.item?.stagingPath)
+    expect(read(path.join(S, 'late-top.txt'))).toBe('late-top-bytes')
+    expect(String(run.item?.detail)).toMatch(/staging directory left \(ENOTEMPTY\)/)
+    expect(fs.readdirSync(S)).toEqual(['late-top.txt'])
   })
 })
 
