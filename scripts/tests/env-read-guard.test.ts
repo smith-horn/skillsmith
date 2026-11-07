@@ -44,6 +44,9 @@ describe('.claude/settings.json onFailure pin (SMI-7157/SMI-7179)', () => {
     expect(guardHooks.length).toBeGreaterThanOrEqual(1)
     for (const hook of guardHooks) {
       expect(hook.onFailure).toBe('block')
+      // Exact command, not a substring: a wrapper such as `|| true` would turn a
+      // crash back into exit 0 (allow) while the path and onFailure still match.
+      expect(hook.command).toBe('node "$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs"')
     }
   })
 })

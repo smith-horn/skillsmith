@@ -98,6 +98,9 @@ describe('.claude/settings.json registration (regression pin)', () => {
     expect(guardHooks.length).toBeGreaterThanOrEqual(2)
     for (const hook of guardHooks) {
       expect(hook.onFailure).toBe('block')
+      // Exact command, not a substring: a wrapper such as `|| true` would turn a
+      // crash back into exit 0 (allow) while the path and onFailure still match.
+      expect(hook.command).toBe('node "$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs"')
     }
   })
 })
