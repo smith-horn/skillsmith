@@ -85,6 +85,24 @@ describe('.claude/settings.json registration (regression pin)', () => {
     )
     expect(hasGuardHook).toBe(true)
   })
+
+  it('every ruflo-host-guard.mjs hook entry blocks on guard failure (SMI-7157/SMI-7179)', () => {
+    const settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'))
+    const hooks: Array<Record<string, unknown>> = (settings.hooks?.PreToolUse ?? []).flatMap(
+      (e: { hooks?: Array<Record<string, unknown>> }) => e.hooks ?? []
+    )
+    const guardHooks = hooks.filter(
+      (h) => typeof h.command === 'string' && h.command.includes('scripts/ruflo-host-guard.mjs')
+    )
+    // Registered on the Bash matcher and on hooks_session-start.
+    expect(guardHooks.length).toBeGreaterThanOrEqual(2)
+    for (const hook of guardHooks) {
+      expect(hook.onFailure).toBe('block')
+      // Exact command, not a substring: a wrapper such as `|| true` would turn a
+      // crash back into exit 0 (allow) while the path and onFailure still match.
+      expect(hook.command).toBe('node "$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs"')
+    }
+  })
 })
 
 // --- Full census table (58 rows: 57 H-closed deny + E1 sanctioned allow) ---

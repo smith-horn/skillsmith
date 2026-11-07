@@ -186,12 +186,14 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/env-read-guard.mjs\"",
+            "onFailure": "block"
           },
           {
             "type": "command",
             "timeout": 5,
-            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\"",
+            "onFailure": "block"
           }
         ]
       },
@@ -230,7 +232,8 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/scripts/ruflo-host-guard.mjs\"",
+            "onFailure": "block"
           }
         ]
       }
