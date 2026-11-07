@@ -46,18 +46,18 @@ describe('Check 79: live repo (presence control)', () => {
   const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
   const live = evaluateRufloClassification({ settingsPath, docPath })
 
-  it('array half: core=54 pinned=54 with no findings, always', () => {
-    expect(live.coreCount).toBe(54)
-    expect(live.pinnedCount).toBe(54)
+  it('array half: core=55 pinned=55 with no findings, always', () => {
+    expect(live.coreCount).toBe(55)
+    expect(live.pinnedCount).toBe(55)
     expect(live.findings).toEqual([])
   })
 
   it.skipIf(!existsSync(docPath))(
-    'doc half (only when docs/internal exists; CI has none): doc=54 and rules A-F and F2 are clean',
+    'doc half (only when docs/internal exists; CI has none): doc=55 and rules A-F and F2 are clean',
     () => {
       expect(live.findings).toEqual([])
       expect(live.docChecked).toBe(true)
-      expect(live.docCount).toBe(54)
+      expect(live.docCount).toBe(55)
       expect(live.rows).toBeGreaterThan(0)
     }
   )
@@ -71,14 +71,14 @@ describe('Check 79: base fixture and report denominators', () => {
   it('a correct fixture is clean and counts what it read', () => {
     const r = run(base())
     expect(r.findings).toEqual([])
-    expect([r.coreCount, r.pinnedCount, r.docCount]).toEqual([54, 54, 54])
+    expect([r.coreCount, r.pinnedCount, r.docCount]).toEqual([55, 55, 55])
     expect(r.rows).toBeGreaterThan(5)
   })
 
   it('report lines always print the denominators', () => {
     const [line] = rufloClassificationReportLines(run(base()))
     expect(line.severity).toBe('pass')
-    expect(line.message).toContain('core=54 pinned=54 doc=54')
+    expect(line.message).toContain('core=55 pinned=55 doc=55')
   })
 })
 
@@ -586,15 +586,126 @@ describe('SMI-7184', () => {
     )
     applied('T7:swap')
     expect(evalReal({ settings }).findings).toContain(
-      `array order differs from the pinned list at index 39: "${b}" vs "${a}"`
+      `array order differs from the pinned list at index 40: "${b}" vs "${a}"`
     )
   })
 
-  it('SMI-7184 T8 (known negative): the edited real files are clean at 54', () => {
+  it('SMI-7184 T8 (known negative): the edited real files are clean at 55', () => {
     const r = evalReal({})
     applied('T8:none')
     expect(r.findings).toEqual([])
-    expect([r.coreCount, r.pinnedCount]).toEqual([54, 54])
-    if (hasDoc) expect(r.docCount).toBe(54)
+    expect([r.coreCount, r.pinnedCount]).toEqual([55, 55])
+    if (hasDoc) expect(r.docCount).toBe(55)
+  })
+})
+
+/**
+ * SMI-7185: the `memory_cleanup` deny. Same pattern as the SMI-7184 block: each
+ * arm reads the REAL settings and doc, applies one in-memory mutation, asserts
+ * the unmutated text holds what it removes, and logs `applied=<arm>`. Doc arms
+ * skip where docs/internal is absent (CI).
+ */
+describe('SMI-7185', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  const settingsPath = join(root, '.claude', 'settings.json')
+  const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
+  const hasDoc = existsSync(docPath)
+  const settingsText = readFileSync(settingsPath, 'utf8')
+  const docText = hasDoc ? readFileSync(docPath, 'utf8') : ''
+  const FULL = `${P}memory_cleanup`
+  const ROW = '| `memory_*` |'
+
+  function evalReal(over: { settings?: string; doc?: string; coreEntries?: string[] }) {
+    return evaluateRufloClassification({
+      settingsPath,
+      docPath,
+      readFile: (p: string) => {
+        if (p === settingsPath) return over.settings ?? settingsText
+        if (p === docPath) return over.doc ?? docText
+        throw new Error(`ENOENT ${p}`)
+      },
+      exists: (p: string) => p === settingsPath || (p === docPath && hasDoc),
+      ...(over.coreEntries ? { coreEntries: over.coreEntries } : {}),
+    })
+  }
+  const denyOf = (text: string): string[] => JSON.parse(text).permissions.deny as string[]
+  /** Split the memory_* row into its cells (0 prefix, 1 Allowed, 2 Blocked). */
+  function memoryCells(doc: string): { lines: string[]; i: number; cs: string[] } {
+    const lines = doc.split('\n')
+    const i = lines.findIndex((l) => l.startsWith(ROW))
+    expect(i, 'memory_* row must exist').toBeGreaterThan(-1)
+    return { lines, i, cs: lines[i].slice(1, lines[i].lastIndexOf('|')).split('|') }
+  }
+  function withMemoryCells(doc: string, fn: (cs: string[]) => void): string {
+    const { lines, i, cs } = memoryCells(doc)
+    fn(cs)
+    lines[i] = `|${cs.join('|')}|`
+    const out = lines.join('\n')
+    expect(out, 'the mutation must change the doc').not.toBe(doc)
+    return out
+  }
+
+  it('SMI-7185 U1: removed from the settings deny array -> pin-only', () => {
+    expect(denyOf(settingsText)).toContain(FULL)
+    const j = JSON.parse(settingsText)
+    j.permissions.deny = j.permissions.deny.filter((x: string) => x !== FULL)
+    applied('U1:settings')
+    expect(evalReal({ settings: JSON.stringify(j, null, 2) }).findings).toContain(
+      `pin-only: "${FULL}" is missing from array`
+    )
+  })
+
+  it.skipIf(!hasDoc)('SMI-7185 U2: removed from the doc paste block -> pin-only', () => {
+    const line = `      "${FULL}",\n`
+    expect(docText).toContain(line)
+    const doc = docText.replace(line, '')
+    applied('U2:paste-block')
+    expect(evalReal({ doc }).findings).toContain(`pin-only: "${FULL}" is missing from doc`)
+  })
+
+  it('SMI-7185 U3: removed from the pinned list -> array-only', () => {
+    expect(CORE).toContain(FULL)
+    applied('U3:pin')
+    expect(evalReal({ coreEntries: CORE.filter((n) => n !== FULL) }).findings).toContain(
+      `array-only: "${FULL}" is not in the pinned list`
+    )
+  })
+
+  it.skipIf(!hasDoc)(
+    'SMI-7185 U4: cleanup moved from Blocked back to Allowed -> rules A, C',
+    () => {
+      expect(memoryCells(docText).cs[2]).toMatch(/`cleanup`/)
+      const doc = withMemoryCells(docText, (cs) => {
+        cs[2] = cs[2].replace(/,\s*`cleanup`(\s*\([^)]*\))?/, '')
+        cs[1] = ` \`cleanup\`,${cs[1]}`
+      })
+      applied('U4:blocked-to-allowed')
+      const f = evalReal({ doc }).findings
+      expect(f).toContain('rule A: denied "memory_cleanup" is not in the memory_* Blocked cell')
+      expect(f).toContain(
+        'rule C: denied "memory_cleanup" appears in the Allowed cell as "cleanup"'
+      )
+    }
+  )
+
+  it('SMI-7185 U5 (known negative): the real files are clean at 55', () => {
+    const r = evalReal({})
+    applied('U5:none')
+    expect(r.findings).toEqual([])
+    expect([r.coreCount, r.pinnedCount]).toEqual([55, 55])
+    if (hasDoc) expect(r.docCount).toBe(55)
+  })
+
+  // Rule C reads only backticked tokens (the helper's header records this), so
+  // a plain-prose `cleanup` left in the Allowed cell passes every Check 79 rule.
+  // U6 pins this change's own row instead of widening rule C.
+  it.skipIf(!hasDoc)('SMI-7185 U6: the memory_* Allowed cell does not name cleanup', () => {
+    expect(memoryCells(docText).cs[1]).not.toMatch(/\bcleanup\b/)
+    const doc = withMemoryCells(docText, (cs) => {
+      cs[1] = `${cs[1]}, and cleanup `
+    })
+    applied('U6:plain-prose')
+    expect(memoryCells(doc).cs[1]).toMatch(/\bcleanup\b/)
+    expect(evalReal({ doc }).findings).toEqual([])
   })
 })

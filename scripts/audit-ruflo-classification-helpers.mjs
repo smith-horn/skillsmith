@@ -91,6 +91,7 @@ export const RUFLO_CORE_DENY_ENTRIES = Object.freeze([
   'mcp__ruflo__memory_search',
   'mcp__ruflo__memory_search_unified',
   'mcp__ruflo__memory_store',
+  'mcp__ruflo__memory_cleanup',
   'mcp__ruflo__memory_list',
   'mcp__ruflo__embeddings_search',
   'mcp__ruflo__managed_agent_create',
