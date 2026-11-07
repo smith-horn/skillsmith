@@ -6,7 +6,6 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   INTENT_VERSION,
@@ -17,6 +16,7 @@ import {
 } from '../../../src/install/prune.metadata.js'
 import { inspectLeftover } from '../../../src/install/prune.leftovers.js'
 import { decodeJob, encodeJob } from '../../../src/install/prune.job.js'
+import type { FreshJob } from '../../../src/install/prune.job.js'
 import { jobFor, makeParent, parkCopy, removeFixture, snapshotTree } from './prune.walk.helpers.js'
 import type { PruneFixture } from './prune.walk.helpers.js'
 
@@ -180,33 +180,6 @@ describe('inspectLeftover is read-only and fails closed', () => {
     expect(at(f, S).state).toBe('unknown')
   })
 
-  it('m7/F1: a misplacement record is read without following a link, with a cap, and fails closed', () => {
-    f = makeParent('prune-left-')
-    const S = mk(f)
-    fs.mkdirSync(path.join(S, 'a'))
-    const secret = path.join(f.root, 'secret.json')
-    fs.writeFileSync(secret, JSON.stringify({ path: '/gone', originalRel: 'x', cause: 'swapped' }))
-    const legacy = path.join(S, 'misplaced.json')
-    // A symlinked record is not read through: unreadable, so it blocks.
-    fs.symlinkSync(secret, legacy)
-    expect(at(f, S).state).toBe('misplaced-pending')
-    fs.unlinkSync(legacy)
-    // Past the cap: unreadable, so it blocks.
-    fs.writeFileSync(legacy, JSON.stringify({ pad: 'x'.repeat(70 * 1024) }))
-    expect(at(f, S).state).toBe('misplaced-pending')
-    // A record naming a path that exists blocks, and names it.
-    const still = path.join(f.root, 'still-here')
-    fs.writeFileSync(still, 'x')
-    fs.writeFileSync(
-      legacy,
-      JSON.stringify({ path: still, originalRel: 'top.txt', cause: 'swapped' })
-    )
-    expect(at(f, S)).toMatchObject({ state: 'misplaced-pending', misplaced: [{ path: still }] })
-    // Once that path is gone the record no longer blocks: the orphan is offered again.
-    fs.unlinkSync(still)
-    expect(at(f, S)).toMatchObject({ state: 'staged-orphan', leaf: 'a' })
-  })
-
   it('F6: prune random names at the top of S are never offered as a staged orphan', () => {
     f = makeParent('prune-left-')
     const S = mk(f)
@@ -224,28 +197,6 @@ describe('inspectLeftover is read-only and fails closed', () => {
     expect(at(f, S)).toMatchObject({ state: 'partial-intent', cleanup: [] })
   })
 
-  it('m3: a finished leftover keeps its approved sidecar for cleanup; any other sidecar is unknown', () => {
-    f = makeParent('prune-left-')
-    const S = mk(f)
-    const sidecar = Buffer.from('{"the":"approved sidecar"}')
-    const sha = crypto.createHash('sha256').update(sidecar).digest('hex')
-    fs.writeFileSync(
-      path.join(S, 'intent.json'),
-      JSON.stringify(intent({ approvedSidecarSha256: sha }))
-    )
-    fs.writeFileSync(
-      path.join(S, 'deleting'),
-      JSON.stringify({ pruneId: '0123456789abcdef', pid: 1 })
-    )
-    fs.writeFileSync(path.join(S, 'sidecar.json'), sidecar)
-    expect(at(f, S)).toMatchObject({
-      state: 'finished',
-      cleanup: ['sidecar.json', 'intent.json', 'deleting'],
-    })
-    fs.writeFileSync(path.join(S, 'sidecar.json'), '{"another":"sidecar"}')
-    expect(at(f, S).state).toBe('unknown')
-  })
-
   it('a staged sidecar without its copy is unknown', () => {
     f = makeParent('prune-left-')
     const S = mk(f)
@@ -256,17 +207,17 @@ describe('inspectLeftover is read-only and fails closed', () => {
 })
 
 describe('the job', () => {
-  it('round-trips through JSON', () => {
+  it('a fresh job round-trips through JSON', () => {
     f = makeParent('prune-job-')
     const c = parkCopy(f.parent, 'tree')
     const job = jobFor(c)
-    const back = decodeJob(JSON.parse(JSON.stringify(encodeJob(job))))
+    const back = decodeJob(JSON.parse(JSON.stringify(encodeJob(job)))) as FreshJob
     expect(back.rootIdentity).toEqual(job.rootIdentity)
     expect(back.sidecarRead?.bytes.equals(job.sidecarRead?.bytes ?? Buffer.alloc(0))).toBe(true)
     expect(back.sidecarRead?.ino).toBe(job.sidecarRead?.ino)
   })
 
-  it('a malformed job is a TypeError, never a walk', () => {
+  it('a malformed fresh job is a TypeError, never a walk', () => {
     f = makeParent('prune-job-')
     const enc = encodeJob(jobFor(parkCopy(f.parent, 'tree'))) as unknown as Record<string, unknown>
     for (const bad of [
@@ -275,28 +226,24 @@ describe('the job', () => {
       { ...enc, stagingRoot: undefined },
       { ...enc, rootIdentity: { dev: '1', ino: 'x', birthtimeNs: '3' } },
       { ...enc, sidecarRead: undefined },
-      { ...enc, resume: 'yes' },
     ]) {
       expect(() => decodeJob(bad)).toThrow(TypeError)
     }
   })
 
-  it('m1: a job whose paths or names do not relate is a TypeError, each named', () => {
+  it('m1/F4: a fresh job whose paths or names do not relate is a TypeError, each named', () => {
     f = makeParent('prune-job-')
     const c = parkCopy(f.parent, 'tree')
     const enc = encodeJob(jobFor(c)) as unknown as Record<string, unknown>
-    const S = path.join(c.stagingRoot, '.prune-0123456789abcdef')
-    const meta = { ino: '1', bytes: 'b3Vycw==' }
     for (const [bad, why] of [
       [{ ...enc, leaf: '../x' }, 'single path segment'],
       [
         { ...enc, leaf: 'intent.json', copyPath: path.join(c.opDir, 'intent.json') },
         "prune's own names",
       ],
-      [{ ...enc, leaf: 'other' }, 'leaf must be the copy name'],
       [
-        { ...enc, sidecarPath: '/elsewhere/tree.json' },
-        'sidecarPath must be <copyPath>.json or null',
+        { ...enc, leaf: 'inventory.json', copyPath: path.join(c.opDir, 'inventory.json') },
+        "prune's own names",
       ],
       [
         {
@@ -306,52 +253,55 @@ describe('the job', () => {
         },
         "prune's own names",
       ],
+      [{ ...enc, leaf: 'other' }, 'leaf must be the copy name'],
       [
-        {
-          ...enc,
-          leaf: 'misplaced-0123456789abcdef.json',
-          copyPath: path.join(c.opDir, 'misplaced-0123456789abcdef.json'),
-        },
-        "prune's own names",
+        { ...enc, sidecarPath: '/elsewhere/tree.json' },
+        'sidecarPath must be <copyPath>.json or null',
       ],
       [{ ...enc, opDir: c.stagingRoot }, "opDir must be the copy's own directory"],
       [{ ...enc, approvedHash: 'A'.repeat(64) }, '64 lowercase hex'],
       [{ ...enc, copyPath: 'relative/tree' }, 'copyPath must be an absolute path'],
-      [{ ...enc, S: path.join(c.stagingRoot, '.prune-xyz') }, '.prune-<16 hex> directory'],
-      [{ ...enc, S: path.join(f.root, '.prune-0123456789abcdef') }, '.prune-<16 hex> directory'],
-      [{ ...enc, S }, 'copyPath must be S/<leaf>'],
-      [{ ...enc, resume: true }, 'resume needs S'],
-      [{ ...enc, inheritedMeta: { deleting: meta } }, 'inheritedMeta needs S'],
-      [
-        {
-          ...enc,
-          S,
-          copyPath: path.join(S, String(enc.leaf)),
-          inheritedMeta: { 'SKILL.md': meta },
-        },
-        'only intent.json and deleting',
-      ],
-      [
-        {
-          ...enc,
-          S,
-          copyPath: path.join(S, String(enc.leaf)),
-          inheritedMeta: { deleting: { ino: 'x', bytes: '' } },
-        },
-        'must be {ino: decimal, bytes: base64}',
-      ],
+      [{ ...enc, inventorySha256: 'a'.repeat(64) }, 'inventorySha256 needs S'],
+      [{ ...enc, inheritedMeta: {} }, 'inheritedMeta needs S'],
       [{ ...enc, rootIdentity: { ...(enc.rootIdentity as object), fmt: undefined } }, 'fmt'],
     ] as const) {
       expect(() => decodeJob(bad), why).toThrow(why)
     }
-    // Control: a good resume job decodes.
-    expect(() =>
-      decodeJob({
-        ...enc,
-        S,
-        copyPath: path.join(S, String(enc.leaf)),
-        inheritedMeta: { deleting: meta },
-      })
-    ).not.toThrow()
+  })
+
+  it('a resume job names S and the inventory digest, and approves nothing new', () => {
+    f = makeParent('prune-job-')
+    const c = parkCopy(f.parent, 'tree')
+    const S = path.join(c.stagingRoot, '.prune-0123456789abcdef')
+    const meta = { ino: '1', bytes: 'b3Vycw==' }
+    const good = {
+      S,
+      copyPath: path.join(S, c.name),
+      leaf: c.name,
+      klass: 'held',
+      authorization: 'per-item',
+      stagingRoot: c.stagingRoot,
+      opDir: c.opDir,
+      inventorySha256: 'a'.repeat(64),
+      inheritedMeta: { deleting: meta },
+    }
+    expect(decodeJob(good)).toEqual(good)
+    for (const [bad, why] of [
+      [{ ...good, S: path.join(c.stagingRoot, '.prune-xyz') }, '.prune-<16 hex> directory'],
+      [{ ...good, S: path.join(f.root, '.prune-0123456789abcdef') }, '.prune-<16 hex> directory'],
+      [{ ...good, copyPath: path.join(c.stagingRoot, c.name) }, 'copyPath must be S/<leaf>'],
+      [{ ...good, inventorySha256: undefined }, 'inventorySha256'],
+      [{ ...good, inventorySha256: 'A'.repeat(64) }, 'inventorySha256'],
+      [{ ...good, authorization: 'batch' }, 'per item only'],
+      [{ ...good, approvedHash: 'a'.repeat(64) }, 'carries no approvedHash'],
+      [{ ...good, sidecarPath: null }, 'carries no sidecarPath'],
+      [{ ...good, inheritedMeta: { 'SKILL.md': meta } }, 'only intent.json and deleting'],
+      [
+        { ...good, inheritedMeta: { deleting: { ino: 'x', bytes: '' } } },
+        'must be {ino: decimal, bytes: base64}',
+      ],
+    ] as const) {
+      expect(() => decodeJob(bad), why).toThrow(why)
+    }
   })
 })

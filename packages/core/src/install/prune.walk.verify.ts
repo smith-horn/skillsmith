@@ -17,7 +17,7 @@ import { S_IFMT } from './park-tree.perms.js'
 import { computeTreeHash } from './tree-hash.js'
 import type { TreeRecord } from './tree-hash.js'
 import { readStable } from './prune.sidecar.js'
-import type { PruneJob, RootIdentity } from './prune.job.js'
+import type { FreshJob, RootIdentity } from './prune.job.js'
 import { SIDECAR_KEY, rowOf, mountFinding } from './prune.walk.shared.js'
 import type { Inventory } from './prune.walk.shared.js'
 
@@ -34,7 +34,7 @@ function exists(p: string): boolean {
  * P4a: the copy and its sidecar are still what the listing classified and the
  * user approved. Returns why not, or null.
  */
-export function recheck(job: PruneJob): string | null {
+export function recheck(job: FreshJob): string | null {
   let st: BigIntStats
   try {
     st = fs.lstatSync(job.copyPath, { bigint: true })
@@ -115,7 +115,9 @@ export function verifyAtStaging(
       return null
     }
     if (st.isSymbolicLink()) {
-      record.set(rel, { type: 'symlink', mode, size: st.size, linkText: fs.readlinkSync(abs) })
+      const linkText = fs.readlinkSync(abs)
+      record.set(rel, { type: 'symlink', mode, size: st.size, linkText })
+      inventory.set(rel, { ...rowOf(st), linkText })
       return null
     }
     if (st.isFile()) {
@@ -134,12 +136,9 @@ export function verifyAtStaging(
       ) {
         return no('changed-in-staging', `${rel} changed while it was verified`)
       }
-      record.set(rel, {
-        type: 'file',
-        mode,
-        size: st.size,
-        contentHash: crypto.createHash('sha256').update(rs.bytes).digest('hex'),
-      })
+      const sha256 = crypto.createHash('sha256').update(rs.bytes).digest('hex')
+      record.set(rel, { type: 'file', mode, size: st.size, contentHash: sha256 })
+      inventory.set(rel, { ...rowOf(st), sha256 })
       return null
     }
     return no('unreadable-in-staging', `${rel}: unsupported entry type`)
@@ -164,15 +163,19 @@ export function verifyAtStaging(
         'the staged sidecar is not the approved inode and bytes'
       )
     }
+    // lstat for the birthtime a stable read doesn't carry; the inventory's identity needs it.
+    let ls: BigIntStats
+    try {
+      ls = fs.lstatSync(path.join(S, 'sidecar.json'), { bigint: true })
+    } catch (err) {
+      return no('sidecar-changed-in-staging', `staged sidecar unreadable (${errCode(err)})`)
+    }
+    if (ls.ino !== rs.ino || ls.ctimeNs !== rs.ctimeNs || ls.mtimeNs !== rs.mtimeNs) {
+      return no('sidecar-changed-in-staging', 'the staged sidecar changed while it was verified')
+    }
     inventory.set(SIDECAR_KEY, {
-      dev: rs.dev,
-      ino: rs.ino,
-      birthtimeNs: null,
-      type: 'file',
-      mode: rs.mode,
-      size: rs.size,
-      mtimeNs: rs.mtimeNs,
-      ctimeNs: rs.ctimeNs,
+      ...rowOf(ls),
+      sha256: crypto.createHash('sha256').update(rs.bytes).digest('hex'),
     })
   }
   return { ok: true, inventory, hash }

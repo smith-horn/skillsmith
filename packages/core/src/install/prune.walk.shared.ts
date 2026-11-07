@@ -20,9 +20,10 @@ export const SIDECAR_KEY = '\0sidecar'
 export const META: ReadonlySet<string> = new Set([
   'intent.json',
   'intent.json.tmp',
+  'inventory.json',
+  'inventory.json.tmp',
   'deleting',
   'sidecar.json',
-  'misplaced.json',
 ])
 /** A random name the delete walk (`.d-`) or metadata removal (`.m-`) uses. */
 export const RANDOM_NAME_RE = /^\.[dm]-[0-9a-f]{16}$/
@@ -63,6 +64,10 @@ export interface InventoryRow {
   size: bigint
   mtimeNs: bigint
   ctimeNs: bigint
+  /** A file's content hash, from verification's stable read. */
+  sha256?: string
+  /** A symlink's text. */
+  linkText?: string
 }
 
 export type Inventory = Map<string, InventoryRow>

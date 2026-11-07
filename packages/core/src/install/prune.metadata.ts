@@ -30,23 +30,22 @@ import { PRUNE_DIR_RE, renameNoReplace } from './prune.walk.shared.js'
 /**
  * The only names `removeIfIdentical` may remove, and only directly in a
  * `.prune-<16 hex>` staging directory: prune's own intent (and its temp), its
- * `deleting` marker, and the staged sidecar of a copy whose tree a crashed
- * run already deleted (the sidecar goes last, so that leftover keeps it).
+ * `deleting` marker and its approved inventory. User entries, the sidecar
+ * included, are deleted only by the walk, against the inventory.
  */
 export const REMOVABLE_METADATA: ReadonlySet<string> = new Set([
   'intent.json',
   'intent.json.tmp',
   'deleting',
-  'sidecar.json',
-  'misplaced.json',
+  'inventory.json',
 ])
 /**
- * Two name patterns are removable too (F1, F6): a misplacement record
- * (`misplaced-<16 hex>.json`) whose entry is gone, and the approved sidecar or
- * prune's own metadata caught mid-removal under its random `.d-<16 hex>` or
- * `.m-<16 hex>` name (the listing proves which before offering it).
+ * One name pattern is removable too (F6): prune's own metadata caught
+ * mid-removal under its random `.m-<16 hex>` name, once the listing has proved
+ * it parses as that metadata. A `.d-<16 hex>` name is never metadata: it is a
+ * user entry the walk renamed, and is kept and reported (R5).
  */
-const REMOVABLE_PATTERNS = [/^misplaced-[0-9a-f]{16}\.json$/, /^\.[dm]-[0-9a-f]{16}$/]
+const REMOVABLE_PATTERNS = [/^\.m-[0-9a-f]{16}$/]
 
 /** A name `removeIfIdentical` may remove (inside a `.prune-<16 hex>` directory). */
 export const isRemovableMetadata = (name: string): boolean =>

@@ -8,13 +8,18 @@ All notable changes to `@skillsmith/core` are documented here.
   is ported from the SMI-6676 spike into `src/install/prune.*.ts`. A walker child re-checks one
   approved copy (its file type included), stages it with its sidecar in a private
   `.prune-<16 hex>` directory on the same device, verifies it there (identity, mountinfo, a
-  stable-read hash, the sidecar byte-exact) and deletes it with a rename, re-check, unlink walk
-  that never follows a link, never crosses a mount, never renames onto an existing name and never
-  renames anything back. The tree goes first and its sidecar last, so a walk that stops part-way
-  leaves the rest of the tree beside its restore metadata. A resumed run re-checks the staging
-  directory it inherits and the intent on disk. An entry the walk misplaced is never deleted: each
-  misplacement gets its own record, and while a recorded entry still exists the leftover is
-  `misplaced-pending` and no resume runs until the user moves it out by hand. It also ships the read-only leftover inspection and the strict sidecar
+  stable-read hash, the sidecar byte-exact), then writes the approved inventory to the staging
+  directory, durably and once, before its first delete. Prune deletes only approved entries: every
+  delete, on the first run or a resume, must match a row of that inventory by inode and metadata,
+  and on a resume by content too. Anything else (a swapped-in, moved-in or recreated entry) is kept
+  where it is and reported, and the walk goes on. A leftover without a valid inventory deletes
+  nothing. The walk renames, re-checks and unlinks; it never follows a link, never crosses a mount,
+  never renames onto an existing name and never renames anything back. A run removes a directory
+  only after renaming it itself, so a resume leaves directories in place and the listing reports
+  them for the user to remove. The sidecar goes last, and only once no entry is kept, so a stopped
+  walk keeps its restore metadata. A resume re-checks the staging directory against the
+  inventory's own record of it and the intent on disk. It also ships the read-only leftover
+  inspection, which diffs a leftover against its inventory, and the strict sidecar
   schema for parked copies and backup-area trees; the backup schema is one shared fs-free parser,
   `install/backup-sidecar.strict.ts` (recovery moves onto it in SMI-7214). Nothing in core, the
   CLI or the MCP server calls it, and nothing is exported from the package:

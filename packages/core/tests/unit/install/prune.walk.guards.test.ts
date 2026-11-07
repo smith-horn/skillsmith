@@ -9,18 +9,19 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { encodeJob } from '../../../src/install/prune.job.js'
-import type { PruneJob } from '../../../src/install/prune.job.js'
+import type { ResumeJob } from '../../../src/install/prune.job.js'
 import { inspectLeftover } from '../../../src/install/prune.leftovers.js'
 import { resumeStagingProblem } from '../../../src/install/prune.walk.shared.js'
-import { readStable } from '../../../src/install/prune.sidecar.js'
 import {
   exists,
   jobFor,
   makeParent,
   parkCopy,
   removeFixture,
+  resumeJobAt,
   runWalker,
   snapshotTree,
+  stagedWithInventory,
   stagingDirs,
   statusOf,
 } from './prune.walk.helpers.js'
@@ -33,45 +34,10 @@ afterEach(() => {
   f = null
 })
 
-/** Stages a copy by killing the walker right after it moved the copy into S. */
-function stagedLeftover(c: ParkedCopy): { S: string; job: PruneJob } {
-  const base = jobFor(c)
-  const run = runWalker(base, {
-    hooks: [
-      {
-        when: 'after',
-        fn: 'renameSync',
-        a0Re: '/op-',
-        a1Re: '\\.prune-[0-9a-f]{16}/[^/]+$',
-        action: { kind: 'kill' },
-      },
-    ],
-  })
-  if (run.signal !== 'SIGKILL') throw new Error(`precondition: no crash (${statusOf(run)})`)
-  const S = stagingDirs(c.stagingRoot)[0] as string
-  const left = inspectLeftover({ S, stagingRoot: c.stagingRoot })
-  const item = left.item
-  if (left.state !== 'staged' || item === undefined) throw new Error(`precondition: ${left.state}`)
-  const st = fs.lstatSync(item.copyPath, { bigint: true })
-  if (!readStable(c.sidecarPath).ok) throw new Error('precondition: sidecar not yet staged')
-  return {
-    S,
-    job: {
-      ...base,
-      copyPath: item.copyPath,
-      rootIdentity: {
-        dev: st.dev,
-        ino: st.ino,
-        birthtimeNs: st.birthtimeNs,
-        fmt: st.mode & 0o170000n,
-      },
-      klass: 'held',
-      authorization: 'per-item',
-      opDir: item.opDir,
-      S,
-      inheritedMeta: item.inheritedMeta,
-    },
-  }
+/** A resumable leftover (killed right after its inventory was written) and its resume job. */
+function stagedLeftover(c: ParkedCopy): { S: string; job: ResumeJob; dev: bigint } {
+  const S = stagedWithInventory(c)
+  return { S, job: resumeJobAt(S), dev: fs.lstatSync(S, { bigint: true }).dev }
 }
 
 describe('M2: a resumed run checks its staging directory first', () => {
@@ -83,8 +49,9 @@ describe('M2: a resumed run checks its staging directory first', () => {
     const before = snapshotTree(S)
     const run = runWalker(job)
     expect(statusOf(run)).toBe('kept/staging-unusable')
+    // The staging check fires first; the inventory's staging record (mode included) is the second layer.
+    expect(String(run.item?.detail)).toMatch(/group- or world-accessible/)
     expect(snapshotTree(S)).toBe(before)
-    expect(exists(c.sidecarPath)).toBe(true)
   })
 
   for (const [label, move] of [
@@ -94,7 +61,7 @@ describe('M2: a resumed run checks its staging directory first', () => {
     it(`a resumed S ${label} is refused before any work, nothing moved or deleted`, () => {
       const fx = fixture('prune-resume-name-')
       const c = parkCopy(fx.parent, 't')
-      const { S, job } = stagedLeftover(c)
+      const { S, job, dev } = stagedLeftover(c)
       const moved = move(S, fx.root)
       fs.renameSync(S, moved)
       const before = snapshotTree(moved)
@@ -103,15 +70,14 @@ describe('M2: a resumed run checks its staging directory first', () => {
       // decodeJob refuses the relation; the walker's own check (below) is the second layer.
       expect(statusOf(run)).toBe('kept/invalid-job')
       expect(snapshotTree(moved)).toBe(before)
-      expect(resumeStagingProblem(moved, c.stagingRoot, job.rootIdentity.dev)).not.toBeNull()
+      expect(resumeStagingProblem(moved, c.stagingRoot, dev)).not.toBeNull()
     })
   }
 
   it('resumeStagingProblem names each failure, and passes a good S', () => {
     const fx = fixture('prune-resume-unit-')
     const c = parkCopy(fx.parent, 't')
-    const { S, job } = stagedLeftover(c)
-    const dev = job.rootIdentity.dev
+    const { S, dev } = stagedLeftover(c)
     expect(resumeStagingProblem(S, c.stagingRoot, dev)).toBeNull()
     expect(resumeStagingProblem(path.join(c.stagingRoot, '.prune-xyz'), c.stagingRoot, dev)).toBe(
       'not named .prune-<16 hex>'
@@ -146,7 +112,8 @@ describe('the entry answers a job it cannot decode', () => {
     const run = runWalker({ ...jobFor(c), approvedHash: 'not-a-hash' })
     expect(statusOf(run)).toBe('kept/invalid-job')
     expect(snapshotTree(c.copyPath)).toBe(before)
-    expect(encodeJob(jobFor(c)).rootIdentity.fmt).toBe(String(0o040000))
+    const enc = encodeJob(jobFor(c))
+    expect('rootIdentity' in enc && enc.rootIdentity.fmt).toBe(String(0o040000))
   })
 })
 

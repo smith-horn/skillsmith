@@ -23,7 +23,6 @@ import {
   fired,
   jobFor,
   makeParent,
-  misplacedRecords,
   parkCopy,
   read,
   removeFixture,
@@ -96,8 +95,11 @@ describe('T-K1 at the walker: changed trees and swapped directories', () => {
   })
 })
 
+// F1 re-derived (owner decision 2026-11-06): an entry that fails its approved
+// row is kept where it is and reported, and the walk goes on with the rest
+// (`stopped/unapproved-kept`), where it used to stop at the first mismatch.
 describe('P2: an fd holder writes before the pre-touch check', () => {
-  it('the walk stops, and the fd-written file keeps its bytes', () => {
+  it('the written file is kept with its bytes, and the rest is deleted', () => {
     const fx = fixture('prune-p2-')
     const c = parkCopy(fx.parent, 't')
     const victim = path.join(c.copyPath, 'target', 'orig-f1')
@@ -122,9 +124,12 @@ describe('P2: an fd holder writes before the pre-touch check', () => {
         ],
       })
       expect(fired(run, 'writeFd')).toBe(true)
-      expect(statusOf(run)).toBe('stopped/changed-during-delete')
+      expect(statusOf(run)).toBe('stopped/unapproved-kept')
+      const kept = run.item?.kept as { path: string; rel: string }[]
+      expect(kept.map((k) => k.rel)).toEqual(['target/orig-f1'])
       const found = findIno(c.stagingRoot, ino)
       expect(found !== null && read(found)).toBe(data)
+      expect(found).toBe(kept[0]!.path)
       expect(read(path.join(String(run.item?.stagingPath), 'sidecar.json'))).toBe(sidecarText)
     } finally {
       fs.closeSync(fd)
@@ -186,7 +191,7 @@ describe('P3: the copy path is recreated and written by path after staging', () 
 })
 
 describe('P4: an in-tree writer adds a file mid-walk', () => {
-  it('the walk stops entry-added-during-delete; the intruder and the sidecar survive', () => {
+  it('the intruder matches no approved row: kept, with the sidecar; the rest is deleted', () => {
     const fx = fixture('prune-p4-')
     const c = parkCopy(fx.parent, 't')
     const sidecarBytes = fs.readFileSync(c.sidecarPath)
@@ -202,7 +207,10 @@ describe('P4: an in-tree writer adds a file mid-walk', () => {
       ],
     })
     expect(fired(run, 'writeRel')).toBe(true)
-    expect(statusOf(run)).toBe('stopped/entry-added-during-delete')
+    expect(statusOf(run)).toBe('stopped/unapproved-kept')
+    const kept = run.item?.kept as { path: string; rel: string | null; why: string }[]
+    expect(kept).toHaveLength(1)
+    expect([path.basename(kept[0]!.path), kept[0]!.rel]).toEqual(['intruder.txt', null])
     const all = fs.readdirSync(c.stagingRoot, { recursive: true }) as string[]
     const hits = all
       .filter((p) => path.basename(p) === 'intruder.txt')
@@ -270,7 +278,7 @@ describe('P8: the sidecar rewritten in place, same size', () => {
         a0Re: '^deleting$',
         action: { kind: 'rewriteInPlace', path: '$cwd/sidecar.json' },
       },
-      'stopped/changed-during-delete',
+      'stopped/unapproved-kept',
     ],
   ] as const) {
     it(`${variant}: ${want}, and the rewritten sidecar survives`, () => {
@@ -286,7 +294,7 @@ describe('P8: the sidecar rewritten in place, same size', () => {
 })
 
 describe('P9 (R-misplace): an entry swapped between its pre-check and rename', () => {
-  it('(i) the replacement is left at a named hidden path, recorded, and never unlinked', () => {
+  it('(i) the replacement is kept at its random name, reported, and never unlinked', () => {
     const fx = fixture('prune-p9-')
     const c = parkCopy(fx.parent, 't')
     const rec = path.join(fx.root, 'hook.json')
@@ -304,18 +312,14 @@ describe('P9 (R-misplace): an entry swapped between its pre-check and rename', (
     })
     expect(fired(run, 'swap')).toBe(true)
     const h = JSON.parse(fs.readFileSync(rec, 'utf8')) as { dev: string; ino: string }
-    expect(statusOf(run)).toBe('stopped/entry-misplaced')
-    const m = run.item?.misplaced as { path: string; originalRel: string; cause: string }[]
+    expect(statusOf(run)).toBe('stopped/unapproved-kept')
+    const m = run.item?.kept as { path: string; rel: string; why: string }[]
     expect(m).toHaveLength(1)
+    expect(path.basename(m[0]!.path)).toMatch(/^\.d-[0-9a-f]{16}$/)
     const at = fs.lstatSync(m[0]!.path, { bigint: true })
     expect(`${at.dev}/${at.ino}`).toBe(`${h.dev}/${h.ino}`)
     expect(read(m[0]!.path)).toBe('replacement-bytes')
-    expect([m[0]!.originalRel, m[0]!.cause]).toEqual(['top.txt', 'swapped'])
-    const S = String(run.item?.stagingPath)
-    const records = misplacedRecords(S)
-    expect(records).toHaveLength(1)
-    const file = JSON.parse(fs.readFileSync(path.join(S, records[0]!), 'utf8')) as { path: string }
-    expect(file.path).toBe(m[0]!.path)
+    expect(m[0]!.rel).toBe('top.txt')
     const trace = run.trace?.trace ?? []
     const i = trace.findIndex((e) => e.fn === 'renameSync' && e.a0 === 'top.txt')
     expect(i).toBeGreaterThanOrEqual(0)

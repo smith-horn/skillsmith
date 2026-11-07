@@ -25,9 +25,10 @@ import {
   resumeJobAt,
   runWalker,
   snapshotTree,
-  stagingDirs,
+  stagedWithInventory,
   statusOf,
 } from './prune.walk.helpers.js'
+import type { ResumeJob } from '../../../src/install/prune.job.js'
 import type { ParkedCopy, PruneFixture } from './prune.walk.helpers.js'
 
 let f: PruneFixture | null = null
@@ -36,22 +37,8 @@ afterEach(() => {
   f = null
 })
 
-/** A staged leftover: the walker killed right after it moved the copy into S. */
-function staged(c: ParkedCopy): string {
-  const run = runWalker(jobFor(c), {
-    hooks: [
-      {
-        when: 'after',
-        fn: 'renameSync',
-        a0Re: '/op-',
-        a1Re: '\\.prune-[0-9a-f]{16}/[^/]+$',
-        action: { kind: 'kill' },
-      },
-    ],
-  })
-  if (run.signal !== 'SIGKILL') throw new Error(`precondition: no crash (${statusOf(run)})`)
-  return stagingDirs(c.stagingRoot)[0] as string
-}
+/** A resumable leftover: the walker killed right after it wrote the inventory. */
+const staged = (c: ParkedCopy): string => stagedWithInventory(c)
 
 describe('gate mutation 1: a batch yes never covers a copy that is not clean', () => {
   for (const klass of ['held', 'unverified', 'changed'] as const) {
@@ -83,8 +70,8 @@ describe('gate mutation 2: a change between the pre-check and the post-rename ls
       ],
     })
     expect(fired(run, 'appendA1')).toBe(true)
-    expect(statusOf(run)).toBe('stopped/entry-misplaced')
-    const at = (run.item?.misplaced as { path: string }[])[0]!.path
+    expect(statusOf(run)).toBe('stopped/unapproved-kept')
+    const at = (run.item?.kept as { path: string }[])[0]!.path
     expect(read(at)).toBe('top-bytes-appended-after-the-check')
   })
 })
@@ -192,13 +179,15 @@ describe('F3: a resumed staging directory is checked like a fresh one', () => {
 })
 
 describe('F4/F5: a resume must agree with the intent on disk', () => {
-  it('a sidecarPath that is neither the staged one nor the intent’s is refused', () => {
+  it('a resume job carrying a sidecar path is refused: a resume approves nothing new', () => {
     f = makeParent('prune-f4-')
     const c = parkCopy(f.parent, 't')
     const S = staged(c)
-    const job = resumeJobAt(S)
-    const run = runWalker({ ...job, sidecarPath: path.join(os.tmpdir(), 'elsewhere.json') })
-    expect(statusOf(run)).toBe('kept/resume-mismatch')
+    const before = snapshotTree(S)
+    const job = { ...resumeJobAt(S), sidecarPath: path.join(os.tmpdir(), 'elsewhere.json') }
+    const run = runWalker(job as unknown as ResumeJob)
+    expect(statusOf(run)).toBe('kept/invalid-job')
+    expect(snapshotTree(S)).toBe(before)
   })
 
   it('an opDir that is not the intent’s is refused', () => {

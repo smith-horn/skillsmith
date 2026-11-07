@@ -1,8 +1,9 @@
 /**
  * SMI-6531 (A1 step 6c-i): prune's deletion engine (ADR-166 D-11), ported from
  * the SMI-6676 spike's `prune.walk.mjs`: stage one approved copy, verify it at
- * the staging path, and delete only what verified. CHILD PROCESS ONLY: the
- * walk chdirs, and `process.chdir` changes the whole process's cwd.
+ * the staging path, write the approved inventory, and delete only entries that
+ * match it. CHILD PROCESS ONLY: the walk chdirs, and `process.chdir` changes
+ * the whole process's cwd.
  *
  * MODULE-PRIVATE AND NOT YET CALLED. This module exports nothing: the only way
  * to reach `stageVerifyDelete` and the deletion walk is to run this file as a
@@ -15,9 +16,13 @@
  * The walker takes no lock. Its caller must hold lock 1 of the copy's skills
  * root, or lock 1′, for the whole run (UD60, UD62, UD63).
  *
- * The sidecar is deleted last (owner decision 2026-11-05): a walk that stops
- * part-way leaves what remains of the tree beside its sidecar, so its origin
- * and restore metadata survive.
+ * Prune deletes only approved entries (F1, owner decision 2026-11-06). The
+ * first run writes the inventory (`prune.inventory.ts`) before its first
+ * delete; every delete, on any run, matches a row of it; anything else is kept
+ * and reported, and the walk goes on. A run removes a directory only after
+ * renaming that exact directory to its random name and verifying it itself,
+ * so a resume never removes one. The sidecar goes last, and only once no entry
+ * of the tree is kept, so a stopped walk keeps its restore metadata.
  *
  * fs is the DEFAULT export, looked up at call time, so an interposer sees
  * every call (D-11 "Enforcement in tests").
@@ -31,25 +36,32 @@ import crypto from 'node:crypto'
 import { isMainThread } from 'node:worker_threads'
 import { errCode, errCodeOrMessage, shapeResult } from './park-result.js'
 import type { ParkResult, PartialParkResult } from './park-result.js'
-import { decodeJob } from './prune.job.js'
-import type { PruneJob } from './prune.job.js'
+import { decodeJob, isResume } from './prune.job.js'
+import type { FreshJob, PruneJob, ResumeJob } from './prune.job.js'
 import { recordOf, removeIfIdentical } from './prune.metadata.js'
 import type { MetaRecord } from './prune.metadata.js'
+import {
+  D_NAME_RE,
+  INVENTORY_FILE,
+  STAGING_KEY,
+  buildInventory,
+  writeInventory,
+} from './prune.inventory.js'
+import type { ApprovedRow } from './prune.inventory.js'
+import { Approved, contentProblem, dirProblem, leafProblem } from './prune.inventory.match.js'
+import type { FoundAt, KeptEntry } from './prune.inventory.match.js'
 import {
   Stop,
   SIDECAR_KEY,
   rand,
   renameNoReplace,
-  typeOf,
   sameDirId,
   sameLeafPost,
-  sameLeafPre,
   stagingProblem,
 } from './prune.walk.shared.js'
-import type { Inventory, InventoryRow } from './prune.walk.shared.js'
-import { recordMisplacement } from './prune.misplaced.js'
+import type { InventoryRow } from './prune.walk.shared.js'
 import { checkResume } from './prune.walk.resume.js'
-import { intentFor, writeIntent } from './prune.walk.stage.js'
+import { dirMisplacedStop, intentFor, writeIntent } from './prune.walk.stage.js'
 import { recheck, verifyAtStaging } from './prune.walk.verify.js'
 
 /**
@@ -62,6 +74,7 @@ import { recheck, verifyAtStaging } from './prune.walk.verify.js'
 const IS_ENTRY = isMainThread && import.meta.main === true
 
 type DirId = Pick<InventoryRow, 'type' | 'dev' | 'ino' | 'birthtimeNs'>
+type Out = (partial: PartialParkResult) => ParkResult
 
 /** What the walk is told about its run. */
 interface WalkCtx {
@@ -71,9 +84,23 @@ interface WalkCtx {
   wrote: Record<string, MetaRecord>
 }
 
+/** What a walk that did not hard-stop did. */
+interface WalkOutcome {
+  deleted: number
+  kept: KeptEntry[]
+  skeletons: string[]
+}
+
+const dirIdOf = (st: BigIntStats): DirId => ({
+  type: 'dir',
+  dev: st.dev,
+  ino: st.ino,
+  birthtimeNs: st.birthtimeNs,
+})
+
 /**
- * P4a-g for one approved copy. Module-private: the only caller is the entry
- * below. The env check is a second guard. Returns one shaped result.
+ * P4a-g for one approved copy, or a resume. Module-private: the only caller is
+ * the entry below. The env check is a second guard. Returns one shaped result.
  */
 function stageVerifyDelete(job: PruneJob): ParkResult {
   if (!IS_ENTRY || process.env.SKILLSMITH_PRUNE_WALKER !== '1') {
@@ -82,117 +109,101 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
     )
   }
   const startPpid = process.ppid
-  const alive = (): boolean => process.ppid === startPpid
   const pruneId = crypto.randomBytes(8).toString('hex')
-  const out = (partial: PartialParkResult): ParkResult =>
+  const ctx: WalkCtx = {
+    pruneId,
+    alive: () => process.ppid === startPpid,
+    resume: isResume(job),
+    wrote: {},
+  }
+  const out: Out = (partial) =>
     shapeResult({
       path: job.copyPath,
       entry: job.leaf,
-      treeHash: job.approvedHash,
+      treeHash: isResume(job) ? null : job.approvedHash,
       pruneId,
       walkerPid: process.pid,
       ...partial,
     })
-  const kept = (reason: string, detail: string, errno: string | null = null): ParkResult =>
-    out({ status: 'kept', reason, detail, errno })
-
   // The approval is per item: a batch yes covers a clean copy only (ADR-166 D-11).
   if (job.klass !== 'clean' && job.authorization !== 'per-item') {
-    return kept('needs-allow-changed', `a ${job.klass} copy is deleted only with a per-item yes`)
+    return out({
+      status: 'kept',
+      reason: 'needs-allow-changed',
+      detail: `a ${job.klass} copy is deleted only with a per-item yes`,
+    })
   }
-  // A resumed run is checked first: its staging directory, any misplaced entry
-  // still present (never deleted, F1), and agreement with the intent on disk.
-  let cleared: Record<string, MetaRecord> = {}
-  if (job.S != null) {
-    const rc = checkResume({ ...job, S: job.S })
-    if (!rc.ok) return kept(rc.reason, rc.detail)
-    cleared = rc.cleared
-  }
+  return isResume(job) ? resumeRun(job, ctx, out) : freshRun(job, ctx, out)
+}
+
+/** P4a-P4e' for a fresh job: stage, verify, write the inventory, then delete. */
+function freshRun(job: FreshJob, ctx: WalkCtx, out: Out): ParkResult {
+  const kept = (reason: string, detail: string, errno: string | null = null): ParkResult =>
+    out({ status: 'kept', reason, detail, errno })
   // P4a
   const worse = recheck(job)
   if (worse !== null) return kept('class-worsened', worse)
-  if (!alive()) return kept('stage-failed', 'the parent process is gone')
-
-  // Metadata this child may remove at P4g: what it writes itself (recorded
-  // below), or, for a staged leftover, what the parent inspected and the user
-  // confirmed.
-  const own: Record<string, MetaRecord> = { ...(job.inheritedMeta ?? {}) }
-  const wrote: Record<string, MetaRecord> = {}
+  if (!ctx.alive()) return kept('stage-failed', 'the parent process is gone')
+  const own: Record<string, MetaRecord> = {}
   const leaf = job.leaf
-  let S: string
-  let sIdentity: DirId
-  if (job.S == null) {
-    // P4b
-    S = path.join(job.stagingRoot, `.prune-${crypto.randomBytes(8).toString('hex')}`)
-    try {
-      fs.mkdirSync(S, { mode: 0o700 })
-    } catch (err) {
-      return kept('staging-unusable', `mkdir ${S}: ${errCode(err)}`, errCode(err))
-    }
-    let sd: BigIntStats
-    try {
-      sd = fs.lstatSync(S, { bigint: true })
-    } catch (err) {
-      return kept('staging-unusable', `lstat ${S}: ${errCode(err)}`, errCode(err))
-    }
-    const bad = stagingProblem(sd, job.rootIdentity.dev)
-    if (bad !== null) {
-      try {
-        fs.rmdirSync(S)
-      } catch {
-        /* reported below */
-      }
-      return kept('staging-unusable', `${S}: ${bad}`)
-    }
-    sIdentity = { type: 'dir', dev: sd.dev, ino: sd.ino, birthtimeNs: sd.birthtimeNs }
-    // P4c
-    try {
-      own['intent.json'] = writeIntent(S, intentFor(job, pruneId))
-    } catch (err) {
-      try {
-        fs.rmdirSync(S)
-      } catch {
-        /* an intent temp is left: the listing reports it as partial-intent */
-      }
-      return kept('stage-failed', `intent write failed (${errCodeOrMessage(err)})`, errCode(err))
-    }
-    // P4d
-    try {
-      renameNoReplace(job.copyPath, path.join(S, leaf))
-    } catch (err) {
-      // Our own intent only, by inode and exact bytes; a kept one is reported.
-      const r = removeIfIdentical(path.join(S, 'intent.json'), own['intent.json'])
-      try {
-        fs.rmdirSync(S)
-      } catch {
-        /* not empty: reported by the next listing */
-      }
-      return out({
-        status: 'kept',
-        reason: 'stage-failed',
-        errno: errCode(err),
-        detail: `rename into staging failed (${errCode(err)})`,
-        ...(!r.removed && r.kept !== null ? { metadataKept: [r.kept] } : {}),
-      })
-    }
-  } else {
-    S = job.S
-    let sd: BigIntStats
-    try {
-      sd = fs.lstatSync(S, { bigint: true })
-    } catch (err) {
-      return kept('staging-unusable', `lstat ${S}: ${errCode(err)}`, errCode(err))
-    }
-    sIdentity = { type: 'dir', dev: sd.dev, ino: sd.ino, birthtimeNs: sd.birthtimeNs }
+  // P4b
+  const S = path.join(job.stagingRoot, `.prune-${crypto.randomBytes(8).toString('hex')}`)
+  try {
+    fs.mkdirSync(S, { mode: 0o700 })
+  } catch (err) {
+    return kept('staging-unusable', `mkdir ${S}: ${errCode(err)}`, errCode(err))
   }
-  const stagingPath = S
-  const leafPath = path.join(stagingPath, leaf)
+  let sd: BigIntStats
+  try {
+    sd = fs.lstatSync(S, { bigint: true })
+  } catch (err) {
+    return kept('staging-unusable', `lstat ${S}: ${errCode(err)}`, errCode(err))
+  }
+  const bad = stagingProblem(sd, job.rootIdentity.dev)
+  if (bad !== null) {
+    try {
+      fs.rmdirSync(S)
+    } catch {
+      /* reported below */
+    }
+    return kept('staging-unusable', `${S}: ${bad}`)
+  }
+  // P4c
+  try {
+    own['intent.json'] = writeIntent(S, intentFor(job, ctx.pruneId))
+  } catch (err) {
+    try {
+      fs.rmdirSync(S)
+    } catch {
+      /* an intent temp is left: the listing reports it as partial-intent */
+    }
+    return kept('stage-failed', `intent write failed (${errCodeOrMessage(err)})`, errCode(err))
+  }
+  // P4d
+  try {
+    renameNoReplace(job.copyPath, path.join(S, leaf))
+  } catch (err) {
+    // Our own intent only, by inode and exact bytes; a kept one is reported.
+    const r = removeIfIdentical(path.join(S, 'intent.json'), own['intent.json'])
+    try {
+      fs.rmdirSync(S)
+    } catch {
+      /* not empty: reported by the next listing */
+    }
+    return out({
+      status: 'kept',
+      reason: 'stage-failed',
+      errno: errCode(err),
+      detail: `rename into staging failed (${errCode(err)})`,
+      ...(!r.removed && r.kept !== null ? { metadataKept: [r.kept] } : {}),
+    })
+  }
+  const leafPath = path.join(S, leaf)
   const held = (reason: string, detail: string): ParkResult =>
-    out({ status: 'held', reason, detail, path: leafPath, heldPath: leafPath, stagingPath })
-
+    out({ status: 'held', reason, detail, path: leafPath, heldPath: leafPath, stagingPath: S })
   // P4d'
-  const stagedSidecar = path.join(stagingPath, 'sidecar.json')
-  if (job.sidecarRead !== null && job.sidecarPath !== null && job.sidecarPath !== stagedSidecar) {
+  const stagedSidecar = path.join(S, 'sidecar.json')
+  if (job.sidecarRead !== null && job.sidecarPath !== null) {
     try {
       renameNoReplace(job.sidecarPath, stagedSidecar)
     } catch (err) {
@@ -203,21 +214,57 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
     }
   }
   // P4e
-  const v = verifyAtStaging(stagingPath, leaf, {
+  const v = verifyAtStaging(S, leaf, {
     approvedHash: job.approvedHash,
     rootIdentity: job.rootIdentity,
     sidecar: job.sidecarRead ? { ino: job.sidecarRead.ino, bytes: job.sidecarRead.bytes } : null,
   })
   if (!v.ok) return held(v.reason, v.detail)
-  // P4f
-  let del: { deleted: number }
+  // P4e': the approved inventory, durably, before the first delete. Without it, nothing is deleted.
+  const inv = buildInventory({
+    pruneId: ctx.pruneId,
+    leaf,
+    treeHash: v.hash,
+    staging: sd,
+    verified: v.inventory,
+  })
+  const w = writeInventory(S, inv)
+  if (!w.ok) {
+    return w.step === 'too-large'
+      ? held('inventory-too-large', `${inv.rows.length} entries; nothing was deleted`)
+      : held('inventory-unwritten', `${w.step} failed (${w.errno}); nothing was deleted`)
+  }
+  own[INVENTORY_FILE] = w.record
+  return walkAndFinish(job, S, new Approved(inv), dirIdOf(sd), ctx, own, out)
+}
+
+/** A resume: the checks against the leftover and its inventory, then the same walk. */
+function resumeRun(job: ResumeJob, ctx: WalkCtx, out: Out): ParkResult {
+  const rc = checkResume(job)
+  if (!rc.ok) return out({ status: 'kept', reason: rc.reason, detail: rc.detail })
+  if (!ctx.alive()) {
+    return out({ status: 'kept', reason: 'stage-failed', detail: 'the parent process is gone' })
+  }
+  const own: Record<string, MetaRecord> = {
+    ...(job.inheritedMeta ?? {}),
+    [INVENTORY_FILE]: rc.record,
+  }
+  return walkAndFinish(job, job.S, new Approved(rc.inv), dirIdOf(rc.sStat), ctx, own, out)
+}
+
+/** P4f, then P4g once nothing is left: our own metadata by inode and bytes, then the empty directories. */
+function walkAndFinish(
+  job: PruneJob,
+  S: string,
+  ap: Approved,
+  sId: DirId,
+  ctx: WalkCtx,
+  own: Record<string, MetaRecord>,
+  out: Out
+): ParkResult {
+  let o: WalkOutcome
   try {
-    del = deleteVerified(stagingPath, leaf, v.inventory, sIdentity, {
-      pruneId,
-      alive,
-      resume: job.resume === true,
-      wrote,
-    })
+    o = deleteApproved(S, ap, sId, ctx)
   } catch (err) {
     if (!(err instanceof Stop)) throw err
     return out({
@@ -225,8 +272,7 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
       reason: err.reason,
       detail: err.detail,
       errno: err.errno ?? null,
-      path: leafPath,
-      stagingPath,
+      stagingPath: S,
       ...err.extra,
     })
   } finally {
@@ -236,72 +282,73 @@ function stageVerifyDelete(job: PruneJob): ParkResult {
       /* the child exits next */
     }
   }
-  // P4g: a metadata file is removed only if it is exactly what this run wrote
-  // (or what the parent inspected for this confirmed staged copy), by inode
-  // and bytes, re-checked immediately before unlink. Otherwise it is kept and
-  // reported in `metadataKept`; the copy is removed either way.
-  // Misplacement records whose entries were gone when this run checked them
-  // are removed the same way.
+  if (o.kept.length > 0 || o.skeletons.length > 0) {
+    // Not done: the metadata stays, so the listing can say what is left and why.
+    return out({
+      status: 'stopped',
+      reason: o.kept.length > 0 ? 'unapproved-kept' : 'skeleton-left',
+      detail:
+        o.kept.length > 0
+          ? `${o.kept.length} unapproved entries kept where they are`
+          : `${o.skeletons.length} directories left holding nothing approved; a resume never removes a directory`,
+      deleted: o.deleted,
+      kept: o.kept,
+      skeletons: o.skeletons,
+      stagingPath: S,
+    })
+  }
   const metadataKept: string[] = []
-  const toRemove: [string, MetaRecord | undefined][] = [
-    ['deleting', wrote.deleting ?? own.deleting],
-    ['intent.json', own['intent.json']],
-    ...Object.entries(cleared),
-  ]
-  for (const [m, rec] of toRemove) {
-    const r = removeIfIdentical(path.join(stagingPath, m), rec)
+  for (const m of ['deleting', 'intent.json', INVENTORY_FILE]) {
+    const r = removeIfIdentical(path.join(S, m), ctx.wrote[m] ?? own[m])
     if (!r.removed && r.kept !== null) metadataKept.push(r.kept)
   }
   // Only empty directories are removed. Anything left keeps them, and is named.
   const notes: string[] = []
   for (const [dir, label] of [
-    [stagingPath, 'staging directory'],
+    [S, 'staging directory'],
     [job.opDir, 'op directory'],
   ] as const) {
     try {
       fs.rmdirSync(dir)
     } catch (err) {
       const code = errCode(err)
-      if (dir === stagingPath || (code !== 'ENOTEMPTY' && code !== 'ENOENT')) {
+      if (dir === S || (code !== 'ENOTEMPTY' && code !== 'ENOENT')) {
         notes.push(`${label} left (${code})`)
       }
     }
   }
   return out({
     status: 'removed',
-    deleted: del.deleted,
+    deleted: o.deleted,
+    stagingPath: S,
     ...(notes.length ? { detail: notes.join('; ') } : {}),
     ...(metadataKept.length ? { metadataKept } : {}),
   })
 }
 
 /**
- * The deletion walk. Unlinks only an inode whose row matched one syscall
- * earlier, by a random name in a directory it has entered and re-identified.
- * Never follows a symlink, never crosses a mount, never renames onto an
- * existing name, and never renames anything back (R-misplace). The tree goes
- * first and the sidecar last. Module-private: called only from
- * `stageVerifyDelete`, which holds the guard. Returns the count deleted, or
- * throws `Stop`.
+ * The deletion walk. Deletes only an entry that matches an approved row (on a
+ * resume, by content too), by a random name in a directory it has entered and
+ * re-identified, with the post-rename re-check. Anything else is kept where it
+ * is and reported, and the walk goes on; only a directory or cwd whose
+ * identity changed stops it. Never follows a symlink, never crosses a mount,
+ * never renames onto an existing name, never renames anything back, and
+ * removes a directory only after renaming it itself (so never on a resume).
+ * Module-private: called only through `stageVerifyDelete`, which holds the guard.
  */
-function deleteVerified(
-  S: string,
-  leaf: string,
-  inventory: Inventory,
-  sIdentity: DirId,
-  ctx: WalkCtx
-): { deleted: number } {
-  let deleted = 0
+function deleteApproved(S: string, ap: Approved, sId: DirId, ctx: WalkCtx): WalkOutcome {
+  const o: WalkOutcome = { deleted: 0, kept: [], skeletons: [] }
   const segs: string[] = []
+  const here = (n: string): string => path.join(S, ...segs, n)
   const stop = (reason: string, detail: string): Stop =>
-    new Stop('stopped', reason, detail, { deleted })
+    new Stop('stopped', reason, detail, {
+      deleted: o.deleted,
+      kept: o.kept,
+      skeletons: o.skeletons,
+    })
   const cwdIs = (want: DirId | undefined, at: string): void => {
-    const s = fs.statSync('.', { bigint: true })
-    if (!sameDirId(want, s)) {
-      throw stop(
-        'mount-appeared-during-delete',
-        `the current directory is no longer ${at || 'the staged root'}`
-      )
+    if (!sameDirId(want, fs.statSync('.', { bigint: true }))) {
+      throw stop('mount-appeared-during-delete', `the current directory is no longer ${at}`)
     }
   }
   const errnoStop = (err: unknown, at: string): Stop => {
@@ -315,159 +362,118 @@ function deleteVerified(
     s.errno = code
     return s
   }
-  const misplaced = (r: string, originalRel: string, curWant: DirId | undefined): Stop => {
-    let cause = 'cwd-covered'
-    try {
-      if (sameDirId(curWant, fs.statSync('.', { bigint: true }))) cause = 'swapped'
-    } catch {
-      /* unreadable cwd: covered */
-    }
-    // The rename ran in the walker's cwd. That is S for the sidecar and for a
-    // staged root that is not a directory (originalRel ''), and S/<leaf>/<segs>
-    // for anything below a directory root, so the entry's real location
-    // follows the cwd, not the name.
-    const inS = originalRel === SIDECAR_KEY || originalRel === ''
-    const abs = inS ? path.join(S, r) : path.join(S, leaf, ...segs, r)
-    let lst: Record<string, string> | null = null
-    try {
-      const s = fs.lstatSync(r, { bigint: true })
-      lst = { dev: String(s.dev), ino: String(s.ino), type: typeOf(s), size: String(s.size) }
-    } catch {
-      /* gone */
-    }
-    const at = new Date().toISOString()
-    const rec = recordMisplacement(S, {
-      pruneId: ctx.pruneId,
-      path: abs,
-      originalRel,
-      cause,
-      at,
-      lstat: lst,
-    })
-    const what = inS ? (originalRel === '' ? 'the staged root' : 'the sidecar') : originalRel
-    return new Stop('stopped', 'entry-misplaced', `${what} was renamed to ${abs} and left there`, {
-      deleted,
-      misplaced: [{ path: abs, originalRel, cause }],
-      ...(rec.recordError === null ? {} : { misplacedRecordError: rec.recordError }),
-      ...(rec.markerError === null ? {} : { misplacedMarkerError: rec.markerError }),
-    })
+  const keep = (n: string, rel: string | null, why: string): void => {
+    o.kept.push({ path: here(n), rel, why })
   }
-  const deleteLeaf = (
-    n: string,
-    crel: string,
-    want: InventoryRow | undefined,
-    curWant: DirId | undefined
-  ): void => {
+  const deleteLeaf = (n: string, row: ApprovedRow, at: FoundAt): void => {
     const s = fs.lstatSync(n, { bigint: true })
-    if (!sameLeafPre(want, s)) {
-      throw stop('changed-during-delete', `${crel} changed after it was verified`)
-    }
+    const bad = leafProblem(row, s, at, ctx.resume) ?? (ctx.resume ? contentProblem(row, n) : null)
+    if (bad !== null) return keep(n, row.rel, bad)
     const r = rand()
     try {
       renameNoReplace(n, r)
     } catch (err) {
-      throw errnoStop(err, crel)
+      throw errnoStop(err, row.rel || '.')
     }
-    if (!sameLeafPost(want, fs.lstatSync(r, { bigint: true }))) throw misplaced(r, crel, curWant)
+    // R-misplace: an entry swapped between its check and its rename is left at its random name.
+    if (!sameLeafPost(row, fs.lstatSync(r, { bigint: true }))) {
+      return keep(r, row.rel, 'changed between its check and its rename; left at its random name')
+    }
     try {
       fs.unlinkSync(r)
     } catch (err) {
-      throw errnoStop(err, crel)
+      throw errnoStop(err, row.rel || '.')
     }
-    deleted += 1
+    ap.consume(row)
+    o.deleted += 1
   }
-  const walkDir = (rel: string): void => {
-    const curWant = inventory.get(rel)
-    for (const n of fs.readdirSync('.').sort()) {
-      if (!ctx.alive()) throw stop('delete-failed', 'the parent process is gone')
-      const crel = rel ? `${rel}/${n}` : n
-      const want = inventory.get(crel)
-      if (!want) {
-        throw stop('entry-added-during-delete', `${crel} was not in the verified inventory`)
-      }
-      cwdIs(curWant, rel)
-      const s = fs.lstatSync(n, { bigint: true })
-      if (want.type !== 'dir') {
-        deleteLeaf(n, crel, want, curWant)
-        continue
-      }
-      if (!s.isDirectory()) throw stop('changed-during-delete', `${crel} is no longer a directory`)
-      if (!sameDirId(want, s)) {
-        throw stop(
-          'mount-appeared-during-delete',
-          `${crel}: directory identity changed (a mount root or a replaced directory)`
-        )
-      }
-      const r = rand()
-      try {
-        renameNoReplace(n, r)
-      } catch (err) {
-        throw errnoStop(err, crel)
-      }
-      if (!sameDirId(want, fs.lstatSync(r, { bigint: true }))) throw misplaced(r, crel, curWant)
-      process.chdir(r)
-      segs.push(r)
-      cwdIs(want, crel)
-      walkDir(crel)
-      if (fs.readdirSync('.').length !== 0) {
-        throw stop('entry-added-during-delete', `${crel} gained an entry`)
-      }
-      process.chdir('..')
-      segs.pop()
-      cwdIs(curWant, rel)
-      try {
-        fs.rmdirSync(r)
-      } catch (err) {
-        throw errnoStop(err, crel)
-      }
-      deleted += 1
+  const enterDir = (n: string, row: ApprovedRow, parent: DirId, parentAt: string): void => {
+    const s = fs.lstatSync(n, { bigint: true })
+    if (!s.isDirectory()) return keep(n, row.rel, 'no longer a directory')
+    if (dirProblem(row, s) !== null) {
+      throw stop('mount-appeared-during-delete', `${row.rel || '.'}: directory identity changed`)
     }
-  }
-  /** The tree: a non-directory root by its name, or a directory root by the walk. */
-  const deleteTree = (root: InventoryRow): void => {
-    const s = fs.lstatSync(leaf, { bigint: true })
-    if (root.type !== 'dir') {
-      deleteLeaf(leaf, '', root, sIdentity)
+    let name = n
+    if (!ctx.resume) {
+      // Only a directory this run renamed and re-identified is ever removed (R2).
+      name = rand()
+      try {
+        renameNoReplace(n, name)
+      } catch (err) {
+        throw errnoStop(err, row.rel || '.')
+      }
+      if (!sameDirId(row, fs.lstatSync(name, { bigint: true }))) {
+        throw dirMisplacedStop(here(name), row.rel, o)
+      }
+    }
+    process.chdir(name)
+    segs.push(name)
+    cwdIs(row, row.rel || 'the staged root')
+    const keptBefore = o.kept.length
+    walkDir(row)
+    const left = fs.readdirSync('.').length
+    process.chdir('..')
+    segs.pop()
+    cwdIs(parent, parentAt)
+    if (ctx.resume) {
+      // Left in place (R2); a skeleton when nothing under it was kept.
+      if (o.kept.length === keptBefore) o.skeletons.push(here(name))
       return
     }
-    if (!sameDirId(root, s))
-      throw stop('mount-appeared-during-delete', 'the staged root changed identity')
-    process.chdir(leaf)
-    cwdIs(root, '')
-    walkDir('')
-    if (fs.readdirSync('.').length !== 0) {
-      throw stop('entry-added-during-delete', 'the staged root gained an entry')
-    }
-    process.chdir('..')
-    cwdIs(sIdentity, 'S')
+    if (left > 0) return // it holds kept entries, each already reported
     try {
-      fs.rmdirSync(leaf)
+      fs.rmdirSync(name)
     } catch (err) {
-      throw errnoStop(err, '.')
+      throw errnoStop(err, row.rel || '.')
     }
-    deleted += 1
+    ap.consume(row)
+    o.deleted += 1
+  }
+  const visitEntry = (n: string, parentRel: string, parent: DirId, parentAt: string): void => {
+    const s = fs.lstatSync(n, { bigint: true })
+    const loc = ap.locate(parentRel, n, s, ctx.resume)
+    if (loc.row === null) return keep(n, null, loc.why)
+    if (loc.row.type === 'dir') enterDir(n, loc.row, parent, parentAt)
+    else deleteLeaf(n, loc.row, loc.at)
+  }
+  const walkDir = (dirRow: ApprovedRow): void => {
+    for (const n of fs.readdirSync('.').sort()) {
+      if (!ctx.alive()) throw stop('delete-failed', 'the parent process is gone')
+      cwdIs(dirRow, dirRow.rel || 'the staged root')
+      visitEntry(n, dirRow.rel, dirRow, dirRow.rel || 'the staged root')
+    }
+  }
+  /** Where `rel` (the root or the sidecar) sits in S: its own name, or, on a resume, a `.d-` name. */
+  const findTop = (own: string, rel: string): string | null => {
+    const names = fs.readdirSync('.')
+    if (names.includes(own)) return own
+    if (!ctx.resume) return null
+    for (const n of names.filter((x) => D_NAME_RE.test(x)).sort()) {
+      const loc = ap.locate(STAGING_KEY, n, fs.lstatSync(n, { bigint: true }), true)
+      if (loc.row !== null && loc.row.rel === rel) return n
+    }
+    return null
   }
   try {
-    const root = inventory.get('')
-    if (root === undefined) {
-      // verifyAtStaging always records the root; a missing row is a bug, not a race.
-      throw new Stop('stopped', 'internal-error', 'the verified inventory has no root row', {
-        deleted,
-      })
-    }
     process.chdir(S)
-    cwdIs(sIdentity, 'S')
-    if (!ctx.resume) {
+    cwdIs(sId, 'S')
+    if (!fs.readdirSync('.').includes('deleting')) {
       const marker = JSON.stringify({ pruneId: ctx.pruneId, pid: process.pid })
       fs.writeFileSync('deleting', marker, { flag: 'wx' })
       // P4g removes this marker only if it is still these bytes at this inode.
       ctx.wrote.deleting = recordOf(path.join(S, 'deleting'), marker)
     }
-    deleteTree(root)
-    // The sidecar last, so a stop above leaves the remaining tree beside it.
-    const sc = inventory.get(SIDECAR_KEY)
-    if (sc) deleteLeaf('sidecar.json', SIDECAR_KEY, sc, sIdentity)
-    return { deleted }
+    const rootAt = findTop(ap.inv.leaf, '')
+    if (rootAt !== null) visitEntry(rootAt, STAGING_KEY, sId, 'S')
+    // The sidecar last, and only once every entry of the tree is gone: empty
+    // directories a resume may not remove (R2) hold nothing it describes, but a
+    // kept entry does, so it keeps its sidecar.
+    const sidecar = ap.row(SIDECAR_KEY)
+    if (sidecar !== undefined && o.kept.length === 0) {
+      const at = findTop('sidecar.json', SIDECAR_KEY)
+      if (at !== null) visitEntry(at, STAGING_KEY, sId, 'S')
+    }
+    return o
   } catch (err) {
     throw errnoStop(err, 'walk')
   }

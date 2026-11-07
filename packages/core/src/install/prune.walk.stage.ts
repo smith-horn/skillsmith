@@ -12,11 +12,11 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { INTENT_VERSION, recordOf } from './prune.metadata.js'
 import type { MetaRecord, PruneIntent } from './prune.metadata.js'
-import type { PruneJob } from './prune.job.js'
-import { renameNoReplace } from './prune.walk.shared.js'
+import type { FreshJob } from './prune.job.js'
+import { Stop, renameNoReplace } from './prune.walk.shared.js'
 
 /** The intent a fresh run writes into its staging directory before it moves anything. */
-export function intentFor(job: PruneJob, pruneId: string): PruneIntent {
+export function intentFor(job: FreshJob, pruneId: string): PruneIntent {
   return {
     pruneId,
     copyPath: job.copyPath,
@@ -49,4 +49,27 @@ export function writeIntent(S: string, intent: PruneIntent): MetaRecord {
   fs.writeFileSync(tmp, bytes, { flag: 'wx' })
   renameNoReplace(tmp, final)
   return recordOf(final, bytes)
+}
+
+/**
+ * The hard stop for a directory that was not itself after the walk renamed it
+ * (R-misplace for a directory): the walk can't continue into it, so it stops
+ * and names the random path it was left at. Nothing is renamed back.
+ */
+export function dirMisplacedStop(
+  at: string,
+  originalRel: string,
+  o: { deleted: number; kept: unknown[]; skeletons: string[] }
+): Stop {
+  return new Stop(
+    'stopped',
+    'entry-misplaced',
+    `${originalRel || 'the staged root'} was renamed to ${at} and left there`,
+    {
+      deleted: o.deleted,
+      kept: o.kept,
+      skeletons: o.skeletons,
+      misplaced: [{ path: at, originalRel }],
+    }
+  )
 }

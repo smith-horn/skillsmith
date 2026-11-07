@@ -8,6 +8,8 @@
 // env PRUNE_INTERPOSE = JSON {hooks:[...]}, PRUNE_TRACE = file the trace is written to at exit.
 // A hook: {when:'before'|'after', fn, a0Re?, a1Re?, a0IsDir?, a0IsFile?, nth?, action:{kind,...}}
 //   nth: fire on the nth matching call (1-based); otherwise on the first.
+//   armedBy: {fn, a0Re?}: count only calls made after one matching it returned (so a
+//   writeSync made inside an earlier writeFileSync is not the nth).
 // Hook side effects run UNRECORDED (their own fs calls are not in the trace).
 import fs from 'node:fs'
 import path from 'node:path'
@@ -48,6 +50,7 @@ const record = (file, obj) => {
 
 function matches(h, when, fn, a0, a1) {
   if (h.when !== when || h.fn !== fn) return false
+  if (h.armedBy && !h.armed) return false
   if (h.a0Re && !(a0 !== null && new RegExp(h.a0Re).test(a0))) return false
   if (h.a1Re && !(a1 !== null && new RegExp(h.a1Re).test(a1))) return false
   if (h.a0IsDir || h.a0IsFile) {
@@ -112,6 +115,10 @@ function act(a, a0, a1) {
       )
     case 'writeRel':
       O('writeFileSync', path.join(realCwd(), a.name), a.data)
+      return null
+    case 'writeBeside':
+      // A file named a.name in the directory of the call's path (a0).
+      O('writeFileSync', path.join(path.dirname(abs(a0)), a.name), a.data)
       return null
     case 'rewriteInPlace': {
       const p = a.path === '$cwd/sidecar.json' ? path.join(realCwd(), 'sidecar.json') : abs(a0)
@@ -210,6 +217,11 @@ for (const n of SYNC) {
     trace.push(e)
     try {
       const out = ORIG.get(n).apply(this, args)
+      for (const h of spec.hooks ?? []) {
+        const b = h.armedBy
+        if (b && b.fn === n && (!b.a0Re || (a0 !== null && new RegExp(b.a0Re).test(a0))))
+          h.armed = true
+      }
       runHooks('after', n, a0, a1)
       return out
     } catch (err) {
