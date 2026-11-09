@@ -46,18 +46,18 @@ describe('Check 79: live repo (presence control)', () => {
   const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
   const live = evaluateRufloClassification({ settingsPath, docPath })
 
-  it('array half: core=54 pinned=54 with no findings, always', () => {
-    expect(live.coreCount).toBe(54)
-    expect(live.pinnedCount).toBe(54)
+  it('array half: core=55 pinned=55 with no findings, always', () => {
+    expect(live.coreCount).toBe(55)
+    expect(live.pinnedCount).toBe(55)
     expect(live.findings).toEqual([])
   })
 
   it.skipIf(!existsSync(docPath))(
-    'doc half (only when docs/internal exists; CI has none): doc=54 and rules A-F and F2 are clean',
+    'doc half (only when docs/internal exists; CI has none): doc=55 and rules A-F and F2 are clean',
     () => {
       expect(live.findings).toEqual([])
       expect(live.docChecked).toBe(true)
-      expect(live.docCount).toBe(54)
+      expect(live.docCount).toBe(55)
       expect(live.rows).toBeGreaterThan(0)
     }
   )
@@ -71,14 +71,14 @@ describe('Check 79: base fixture and report denominators', () => {
   it('a correct fixture is clean and counts what it read', () => {
     const r = run(base())
     expect(r.findings).toEqual([])
-    expect([r.coreCount, r.pinnedCount, r.docCount]).toEqual([54, 54, 54])
+    expect([r.coreCount, r.pinnedCount, r.docCount]).toEqual([55, 55, 55])
     expect(r.rows).toBeGreaterThan(5)
   })
 
   it('report lines always print the denominators', () => {
     const [line] = rufloClassificationReportLines(run(base()))
     expect(line.severity).toBe('pass')
-    expect(line.message).toContain('core=54 pinned=54 doc=54')
+    expect(line.message).toContain('core=55 pinned=55 doc=55')
   })
 })
 
@@ -418,13 +418,54 @@ describe('Check 79: table rule red arms', () => {
  * lacks the token it will add) and logs `applied=<arm>:<name>`. Doc arms skip
  * where docs/internal is absent (CI).
  */
+/**
+ * Real-file harness shared by the SMI-7184 and SMI-7185 blocks: the real
+ * settings and doc, read once, and an evaluator that injects one mutated copy.
+ */
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const settingsPath = join(root, '.claude', 'settings.json')
+const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
+const hasDoc = existsSync(docPath)
+const settingsText = readFileSync(settingsPath, 'utf8')
+const docText = hasDoc ? readFileSync(docPath, 'utf8') : ''
+
+function evalReal(over: { settings?: string; doc?: string; coreEntries?: string[] }) {
+  return evaluateRufloClassification({
+    settingsPath,
+    docPath,
+    readFile: (p: string) => {
+      if (p === settingsPath) return over.settings ?? settingsText
+      if (p === docPath) return over.doc ?? docText
+      throw new Error(`ENOENT ${p}`)
+    },
+    exists: (p: string) => p === settingsPath || (p === docPath && hasDoc),
+    ...(over.coreEntries ? { coreEntries: over.coreEntries } : {}),
+  })
+}
+
+const denyOf = (text: string): string[] => JSON.parse(text).permissions.deny as string[]
+const withDeny = (text: string, fn: (d: string[]) => string[]): string => {
+  const j = JSON.parse(text)
+  j.permissions.deny = fn(j.permissions.deny)
+  return JSON.stringify(j, null, 2)
+}
+
+/** Rewrite one cell (0 prefix, 1 Allowed, 2 Blocked) of the table row owning `prefix`. */
+function withCell(doc: string, prefix: string, cell: number, fn: (c: string) => string): string {
+  const lines = doc.split('\n')
+  const i = lines.findIndex((l) => l.startsWith(`| \`${prefix}*\` |`))
+  expect(i, `row for ${prefix}* must exist`).toBeGreaterThan(-1)
+  const cs = lines[i].slice(1, lines[i].lastIndexOf('|')).split('|')
+  cs[cell] = fn(cs[cell])
+  lines[i] = `|${cs.join('|')}|`
+  return lines.join('\n')
+}
+const cellOf = (doc: string, prefix: string, cell: number): string => {
+  const l = doc.split('\n').find((x) => x.startsWith(`| \`${prefix}*\` |`)) ?? ''
+  return l.slice(1, l.lastIndexOf('|')).split('|')[cell] ?? ''
+}
+
 describe('SMI-7184', () => {
-  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-  const settingsPath = join(root, '.claude', 'settings.json')
-  const docPath = join(root, 'docs', 'internal', 'architecture', 'ruflo-tool-classification.md')
-  const hasDoc = existsSync(docPath)
-  const settingsText = readFileSync(settingsPath, 'utf8')
-  const docText = hasDoc ? readFileSync(docPath, 'utf8') : ''
   const NAMES = ['memory_list', 'hooks_intelligence_attention', 'embeddings_search']
 
   /** The single seam every arm mutates through. */
@@ -432,45 +473,11 @@ describe('SMI-7184', () => {
     return fn(text)
   }
 
-  function evalReal(over: { settings?: string; doc?: string; coreEntries?: string[] }) {
-    return evaluateRufloClassification({
-      settingsPath,
-      docPath,
-      readFile: (p: string) => {
-        if (p === settingsPath) return over.settings ?? settingsText
-        if (p === docPath) return over.doc ?? docText
-        throw new Error(`ENOENT ${p}`)
-      },
-      exists: (p: string) => p === settingsPath || (p === docPath && hasDoc),
-      ...(over.coreEntries ? { coreEntries: over.coreEntries } : {}),
-    })
-  }
-
-  const denyOf = (text: string): string[] => JSON.parse(text).permissions.deny as string[]
-  const withDeny = (text: string, fn: (d: string[]) => string[]): string => {
-    const j = JSON.parse(text)
-    j.permissions.deny = fn(j.permissions.deny)
-    return JSON.stringify(j, null, 2)
-  }
   const splitName = (name: string) => {
     const prefix = prefixOf(name)
     return { prefix, sfx: name.slice(prefix.length) }
   }
 
-  /** Rewrite one cell (0 prefix, 1 Allowed, 2 Blocked) of the table row owning `prefix`. */
-  function withCell(doc: string, prefix: string, cell: number, fn: (c: string) => string): string {
-    const lines = doc.split('\n')
-    const i = lines.findIndex((l) => l.startsWith(`| \`${prefix}*\` |`))
-    expect(i, `row for ${prefix}* must exist`).toBeGreaterThan(-1)
-    const cs = lines[i].slice(1, lines[i].lastIndexOf('|')).split('|')
-    cs[cell] = fn(cs[cell])
-    lines[i] = `|${cs.join('|')}|`
-    return lines.join('\n')
-  }
-  const cellOf = (doc: string, prefix: string, cell: number): string => {
-    const l = doc.split('\n').find((x) => x.startsWith(`| \`${prefix}*\` |`)) ?? ''
-    return l.slice(1, l.lastIndexOf('|')).split('|')[cell] ?? ''
-  }
   /** Apply `fn` to the text inside the doc's json fence only. */
   function withFence(doc: string, fn: (f: string) => string): string {
     const a = doc.indexOf('```json')
@@ -586,15 +593,117 @@ describe('SMI-7184', () => {
     )
     applied('T7:swap')
     expect(evalReal({ settings }).findings).toContain(
-      `array order differs from the pinned list at index 39: "${b}" vs "${a}"`
+      `array order differs from the pinned list at index 40: "${b}" vs "${a}"`
     )
   })
 
-  it('SMI-7184 T8 (known negative): the edited real files are clean at 54', () => {
+  it('SMI-7184 T8 (known negative): the edited real files are clean at 55', () => {
     const r = evalReal({})
     applied('T8:none')
     expect(r.findings).toEqual([])
-    expect([r.coreCount, r.pinnedCount]).toEqual([54, 54])
-    if (hasDoc) expect(r.docCount).toBe(54)
+    expect([r.coreCount, r.pinnedCount]).toEqual([55, 55])
+    if (hasDoc) expect(r.docCount).toBe(55)
   })
+})
+
+/**
+ * SMI-7185: the `memory_cleanup` deny. Same pattern and shared harness as the
+ * SMI-7184 block: each arm reads the REAL settings and doc, applies one
+ * in-memory mutation, asserts the unmutated text holds what it removes, and
+ * logs `applied=<arm>`. Doc arms skip where docs/internal is absent (CI). The
+ * known negative for the real files is SMI-7184 T8, which covers this change.
+ */
+describe('SMI-7185', () => {
+  const FULL = `${P}memory_cleanup`
+  // Does the text name the tool in any spelling? A list of spellings kept
+  // missing one (gate PR-16, then a Unicode hyphen), so this checks the
+  // property instead: fold compatibility forms, lowercase, drop every
+  // non-letter, look for "cleanup". Separators of any kind, zero-width
+  // characters and fullwidth forms all fold away. Known trade-off: letters that
+  // happen to run together ("clean, update") also match, which fails loudly.
+  const namesCleanup = (text: string): boolean =>
+    text.normalize('NFKC').toLowerCase().replace(/\P{L}/gu, '').includes('cleanup')
+  const CLEANUP_SPELLINGS = [
+    'memory_cleanup',
+    'clean-up',
+    'Clean up',
+    'cleanups',
+    'clean‑up', // non-breaking hyphen
+    'clean–up', // en dash
+    'clean​up', // zero-width space
+    'ＣＬＥＡＮＵＰ', // fullwidth CLEANUP
+  ]
+  /** Rewrite the memory_* row's cell and require that the doc actually changed. */
+  function withMemoryCell(doc: string, cell: number, fn: (c: string) => string): string {
+    const out = withCell(doc, 'memory_', cell, fn)
+    expect(out, 'the mutation must change the doc').not.toBe(doc)
+    return out
+  }
+
+  it('SMI-7185 U1: removed from the settings deny array -> pin-only', () => {
+    expect(denyOf(settingsText)).toContain(FULL)
+    const settings = withDeny(settingsText, (d) => d.filter((x) => x !== FULL))
+    applied('U1:settings')
+    expect(evalReal({ settings }).findings).toContain(`pin-only: "${FULL}" is missing from array`)
+  })
+
+  it.skipIf(!hasDoc)('SMI-7185 U2: removed from the doc paste block -> pin-only', () => {
+    const line = `      "${FULL}",\n`
+    expect(docText).toContain(line)
+    const doc = docText.replace(line, '')
+    applied('U2:paste-block')
+    expect(evalReal({ doc }).findings).toContain(`pin-only: "${FULL}" is missing from doc`)
+  })
+
+  it('SMI-7185 U3: removed from the pinned list -> array-only', () => {
+    expect(CORE).toContain(FULL)
+    applied('U3:pin')
+    expect(evalReal({ coreEntries: CORE.filter((n) => n !== FULL) }).findings).toContain(
+      `array-only: "${FULL}" is not in the pinned list`
+    )
+  })
+
+  it.skipIf(!hasDoc)(
+    'SMI-7185 U4: cleanup moved from Blocked back to Allowed -> rules A, C',
+    () => {
+      expect(cellOf(docText, 'memory_', 2)).toMatch(/`cleanup`/)
+      const blockedOut = withMemoryCell(docText, 2, (c) =>
+        c.replace(/,\s*`cleanup`(\s*\([^)]*\))?/, '')
+      )
+      const doc = withMemoryCell(blockedOut, 1, (c) => ` \`cleanup\`,${c}`)
+      applied('U4:blocked-to-allowed')
+      // The complete set, so neither axis can be dropped or duplicated silently.
+      expect([...evalReal({ doc }).findings].sort()).toEqual([
+        'rule A: denied "memory_cleanup" is not in the memory_* Blocked cell',
+        'rule C: denied "memory_cleanup" appears in the Allowed cell as "cleanup"',
+      ])
+    }
+  )
+
+  // Rule C reads only backticked tokens (the helper's header records this), so
+  // a plain-prose `cleanup` left in the Allowed cell passes every Check 79 rule.
+  // U6 pins this change's own row instead of widening rule C.
+  it.skipIf(!hasDoc)('SMI-7185 U6: the memory_* Allowed cell does not name cleanup', () => {
+    expect(namesCleanup(cellOf(docText, 'memory_', 1))).toBe(false)
+  })
+
+  // Known negative for the predicate itself: words that only share letters
+  // with "cleanup" are not flagged, so U6 is not passing on any input.
+  it('SMI-7185 U6 control: "clean them up" does not name cleanup', () => {
+    expect(namesCleanup('x, clean them up')).toBe(false)
+  })
+
+  for (const spelling of CLEANUP_SPELLINGS) {
+    it.skipIf(!hasDoc)(
+      `SMI-7185 U6 red arm: plain ${JSON.stringify(spelling)} in Allowed is caught`,
+      () => {
+        const doc = withMemoryCell(docText, 1, (c) => `${c}, and ${spelling} `)
+        applied(`U6:${spelling}`)
+        expect(namesCleanup(cellOf(doc, 'memory_', 1))).toBe(true)
+        // Characterization of the rule C gap, not a guarantee: if rule C is ever
+        // widened to unbackticked prose, this line should flip to expect a finding.
+        expect(evalReal({ doc }).findings).toEqual([])
+      }
+    )
+  }
 })
