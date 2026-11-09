@@ -673,7 +673,7 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R1",
-      "basis": "Only the 6.0.10 copy remains affected (the 7.x copy under eslint-plugin-astro is fixed at 7.1.6). It is exact-pinned by @tailwindcss/typography (we use 0.5.19; the latest, 0.5.20, still pins 6.0.10). The advisory now lists a fixed 6.x, 6.1.5 (advisory updated 2026-10-26), so the fix is a scoped npm override under typography rather than a major; that override is a separate dependency change (SMI-7216). Dev-only CSS-selector parsing at website build time (including credentialed deploy jobs) of our own stylesheets, which are trusted input, not outside input. Re-triaged 2026-11-09 (SMI-7215): renewed for 30 days by owner decision while SMI-7216 lands.",
+      "basis": "Only the 6.0.10 copy remains affected (the 7.x copy under eslint-plugin-astro is fixed at 7.1.6). It is exact-pinned by @tailwindcss/typography (we use 0.5.19; the latest, 0.5.20, still pins 6.0.10). The advisory now lists a fixed 6.x, 6.1.5 (advisory updated 2026-10-26), so a scoped npm override under typography is the planned fix; whether it resolves and builds is verified in SMI-7216, a separate dependency change. Exposure, as assessed in the previous acceptance (SMI-7026): dev-only CSS-selector parsing at website build time (including credentialed deploy jobs) of our own stylesheets. Re-triaged 2026-11-09 (SMI-7215): renewed for 30 days by owner decision while SMI-7216 lands.",
       "owner": "wrsmith108",
       "accepted": "2026-11-09",
       "expires": "2026-12-09",
