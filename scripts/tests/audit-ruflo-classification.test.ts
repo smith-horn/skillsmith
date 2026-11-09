@@ -615,10 +615,24 @@ describe('SMI-7184', () => {
  */
 describe('SMI-7185', () => {
   const FULL = `${P}memory_cleanup`
-  // Any spelling a reader would take as naming the tool: `memory_cleanup`
-  // (`\b` does not fire inside it), `clean-up`, `clean up`, plurals, capitals.
-  const NAMES_CLEANUP = /clean[-_ ]?up/i
-  const CLEANUP_SPELLINGS = ['memory_cleanup', 'clean-up', 'Clean up', 'cleanups']
+  // Does the text name the tool in any spelling? A list of spellings kept
+  // missing one (gate PR-16, then a Unicode hyphen), so this checks the
+  // property instead: fold compatibility forms, lowercase, drop every
+  // non-letter, look for "cleanup". Separators of any kind, zero-width
+  // characters and fullwidth forms all fold away. Known trade-off: letters that
+  // happen to run together ("clean, update") also match, which fails loudly.
+  const namesCleanup = (text: string): boolean =>
+    text.normalize('NFKC').toLowerCase().replace(/\P{L}/gu, '').includes('cleanup')
+  const CLEANUP_SPELLINGS = [
+    'memory_cleanup',
+    'clean-up',
+    'Clean up',
+    'cleanups',
+    'clean‑up', // non-breaking hyphen
+    'clean–up', // en dash
+    'clean​up', // zero-width space
+    'ＣＬＥＡＮＵＰ', // fullwidth CLEANUP
+  ]
   /** Rewrite the memory_* row's cell and require that the doc actually changed. */
   function withMemoryCell(doc: string, cell: number, fn: (c: string) => string): string {
     const out = withCell(doc, 'memory_', cell, fn)
@@ -670,17 +684,26 @@ describe('SMI-7185', () => {
   // a plain-prose `cleanup` left in the Allowed cell passes every Check 79 rule.
   // U6 pins this change's own row instead of widening rule C.
   it.skipIf(!hasDoc)('SMI-7185 U6: the memory_* Allowed cell does not name cleanup', () => {
-    expect(cellOf(docText, 'memory_', 1)).not.toMatch(NAMES_CLEANUP)
+    expect(namesCleanup(cellOf(docText, 'memory_', 1))).toBe(false)
+  })
+
+  // Known negative for the predicate itself: words that only share letters
+  // with "cleanup" are not flagged, so U6 is not passing on any input.
+  it('SMI-7185 U6 control: "clean them up" does not name cleanup', () => {
+    expect(namesCleanup('x, clean them up')).toBe(false)
   })
 
   for (const spelling of CLEANUP_SPELLINGS) {
-    it.skipIf(!hasDoc)(`SMI-7185 U6 red arm: plain "${spelling}" in Allowed is caught`, () => {
-      const doc = withMemoryCell(docText, 1, (c) => `${c}, and ${spelling} `)
-      applied(`U6:${spelling}`)
-      expect(cellOf(doc, 'memory_', 1)).toMatch(NAMES_CLEANUP)
-      // Characterization of the rule C gap, not a guarantee: if rule C is ever
-      // widened to unbackticked prose, this line should flip to expect a finding.
-      expect(evalReal({ doc }).findings).toEqual([])
-    })
+    it.skipIf(!hasDoc)(
+      `SMI-7185 U6 red arm: plain ${JSON.stringify(spelling)} in Allowed is caught`,
+      () => {
+        const doc = withMemoryCell(docText, 1, (c) => `${c}, and ${spelling} `)
+        applied(`U6:${spelling}`)
+        expect(namesCleanup(cellOf(doc, 'memory_', 1))).toBe(true)
+        // Characterization of the rule C gap, not a guarantee: if rule C is ever
+        // widened to unbackticked prose, this line should flip to expect a finding.
+        expect(evalReal({ doc }).findings).toEqual([])
+      }
+    )
   }
 })
