@@ -644,18 +644,6 @@
       "pinnedBy": "scripts/tests/r4-no-pac-proxy.test.ts"
     },
     {
-      "advisory": "GHSA-vfj7-8cjw-p6xm",
-      "package": "braces",
-      "severity": "high",
-      "scope": "dev",
-      "tier": "R1",
-      "basis": "No patched release exists (3.0.3 is latest); inputs are repo-controlled glob patterns (vercel build, ESLint, secretlint), and mocha watch mode that loads chokidar is never invoked. Re-verified 2026-10-09 (SMI-6952): 3.0.3 (published 2024-05-21) is still latest and the advisory lists no patched version.",
-      "owner": "wrsmith108",
-      "accepted": "2026-10-09",
-      "expires": "2026-11-08",
-      "tracking": "SMI-6952"
-    },
-    {
       "advisory": "GHSA-jmr9-qjv8-65gv",
       "package": "extract-zip",
       "severity": "high",
@@ -685,23 +673,11 @@
       "severity": "moderate",
       "scope": "dev",
       "tier": "R1",
-      "basis": "Only the 6.0.10 copy remains affected (the 7.x copy under eslint-plugin-astro is fixed at 7.1.6). It is exact-pinned by @tailwindcss/typography, whose latest release 0.5.20 still pins 6.0.10, and no fixed 6.x exists; a fix would force a major the plugin does not declare. Dev-only CSS-selector parsing at website build time (including credentialed deploy jobs) of our own stylesheets, which are trusted input, not outside input. Re-verified 2026-10-09 (SMI-7026): tailwindcss-typography PR #429 (bump to 7.1.6) is open upstream; bump typography once it ships.",
+      "basis": "Only the 6.0.10 copy remains affected (the 7.x copy under eslint-plugin-astro is fixed at 7.1.6). It is exact-pinned by @tailwindcss/typography (we use 0.5.19; the latest, 0.5.20, still pins 6.0.10). The advisory now lists a fixed 6.x, 6.1.5 (advisory updated 2026-10-26), so the fix is a scoped npm override under typography rather than a major; that override is a separate dependency change (SMI-7216). Dev-only CSS-selector parsing at website build time (including credentialed deploy jobs) of our own stylesheets, which are trusted input, not outside input. Re-triaged 2026-11-09 (SMI-7215): renewed for 30 days by owner decision while SMI-7216 lands.",
       "owner": "wrsmith108",
-      "accepted": "2026-10-09",
-      "expires": "2026-11-08",
-      "tracking": "SMI-7026"
-    },
-    {
-      "advisory": "GHSA-hp3w-g68c-fv3c",
-      "package": "sprintf-js",
-      "severity": "moderate",
-      "scope": "dev",
-      "tier": "R1",
-      "basis": "No patched release exists (1.1.3 is latest; the advisory range is <=1.1.3). Dev-only since SMI-7018 removed gray-matter from the CLI's production tree. The 1.0.3 copy is required only by argparse 1.0.10 under the js-yaml 3.15.2 copies of @vercel/backends (credentialed deploy jobs) and @yarnpkg/parsers, and in js-yaml 3 only the bin/js-yaml.js command-line entry requires argparse; the library those packages call never loads it, so no input reaches sprintf-js. Re-verified 2026-10-09 (SMI-7031): the fix path is the vercel 52 -> 63 upgrade, whose @vercel/backends drops js-yaml entirely (SMI-7036).",
-      "owner": "wrsmith108",
-      "accepted": "2026-10-09",
-      "expires": "2026-11-08",
-      "tracking": "SMI-7031"
+      "accepted": "2026-11-09",
+      "expires": "2026-12-09",
+      "tracking": "SMI-7216"
     }
   ],
   "seeds": {
@@ -809,18 +785,6 @@
         }
       },
       "acceptances": [
-        {
-          "advisory": "GHSA-vfj7-8cjw-p6xm",
-          "package": "braces",
-          "severity": "high",
-          "scope": "seed",
-          "tier": "R3",
-          "basis": "No patched release exists (3.0.3 is latest; the advisory range is <=3.0.3). Reached only through optional installs (agentic-flow -> http-proxy-middleware -> micromatch -> braces), and the seed is served by a local-only container with network_mode none and no secrets (ADR-170 section 1). Re-triaged 2026-10-20 (SMI-7153): 3.0.3 is still the latest release.",
-          "owner": "wrsmith108",
-          "accepted": "2026-10-20",
-          "expires": "2027-01-18",
-          "tracking": null
-        },
         {
           "advisory": "GHSA-8988-4f7v-96qf",
           "package": "@opentelemetry/core",
