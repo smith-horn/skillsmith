@@ -4,6 +4,31 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added (internal, no caller yet)**: SMI-6531 -- A1 step 6c-i: ADR-166 D-11's deletion engine
+  is ported from the SMI-6676 spike into `src/install/prune.*.ts`. A walker child re-checks one
+  approved copy (its file type included), stages it with its sidecar in a private
+  `.prune-<16 hex>` directory on the same device, verifies it there (identity, mountinfo, a
+  stable-read hash, the sidecar byte-exact), then writes the approved inventory to the staging
+  directory, durably and once, before its first delete. Prune deletes only approved entries: every
+  delete, on the first run or a resume, must match a row of that inventory by inode and metadata,
+  and on a resume by content too. Anything else (a swapped-in, moved-in or recreated entry) is kept
+  where it is and reported, and the walk goes on; that includes any entry directly in the staging
+  directory that is not prune's own metadata, and any entry that appears in a directory after the
+  walk read it. A `deleting` marker written after the inventory and before the first delete records
+  the run ID and the inventory's sha256, and a resume is offered and accepted only when the intent,
+  the marker and the inventory agree. A leftover without a valid, bound inventory deletes nothing. The walk renames, re-checks and unlinks; it never follows a link, never crosses a mount,
+  never renames onto an existing name and never renames anything back. A run removes a directory
+  only after renaming it itself, so a resume leaves directories in place and the listing reports
+  them for the user to remove. The sidecar goes last, and only once no entry is kept, so a stopped
+  walk keeps its restore metadata. A resume re-checks the staging directory against the
+  inventory's own record of it and the intent on disk. It also ships the read-only leftover
+  inspection, which diffs a leftover against its inventory, and the strict sidecar
+  schema for parked copies and backup-area trees; the backup schema is one shared fs-free parser,
+  `install/backup-sidecar.strict.ts` (recovery moves onto it in SMI-7214). Nothing in core, the
+  CLI or the MCP server calls it, and nothing is exported from the package:
+  `doctor backups --prune --apply` wires it in 6c-iii. A static fs boundary test checks every
+  `prune*.ts` module and pins the fs calls, their argument shapes and the Node builtins each may
+  use.
 - **Added**: SMI-7201 -- `EmbeddingService` now reports every mock embedding it serves while the
   dev container's Tier-B pair flag (`/run/skillsmith/tier-b-pairs.state`, written at container
   boot when a native package and its JS parent have drifted, or the check could not run) exists:
