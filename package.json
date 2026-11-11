@@ -116,7 +116,7 @@
     "protobufjs": "^7.6.5"
   },
   "overrides": {
-    "undici": "^7.30.0",
+    "undici": "^7.30.2",
     "path-to-regexp": "^8.4.0",
     "axios": "^1.20.0",
     "find-my-way": "^9.7.0",
