@@ -12,9 +12,9 @@ All notable changes to `@skillsmith/core` are documented here.
   directory, durably and once, before its first delete. Prune deletes only approved entries: every
   delete, on the first run or a resume, must match a row of that inventory by inode and metadata,
   and on a resume by content too. Anything else (a swapped-in, moved-in or recreated entry) is kept
-  where it is and reported, and the walk goes on; a directory whose identity changed stops the walk
-  instead. That includes any entry directly in the staging directory that is not prune's own
-  metadata, and any entry that appears in a directory after the walk read it. A `deleting` marker
+  where it is and reported, and the walk goes on. That includes any entry directly in the staging
+  directory that is not prune's own metadata, and any entry that appears in a directory after the
+  walk read it. A directory whose identity changed stops the walk instead. A `deleting` marker
   written after the inventory and before the first delete records the run ID and the inventory's
   sha256, and a resume is offered and accepted only when the intent, the marker and the inventory
   agree. A leftover without a valid, bound inventory deletes nothing.
