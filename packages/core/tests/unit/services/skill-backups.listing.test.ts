@@ -312,6 +312,53 @@ describe('T-K1 (listing rows) and the newest-per-group fact', () => {
         .sort()
     ).toEqual(['op-1', 'op-bar'])
   })
+
+  // GPT-5.6-Sol gate (PR-12, PLAN:2046): the group is (client, skillsDir, dirName),
+  // not the physical area, so one newest across every state root and every scope.
+  const twoStateRoots = (b: string) => {
+    const ws = path.join(b, 'ws')
+    fs.mkdirSync(path.join(ws, '.claude', 'skills'), { recursive: true })
+    const old = makeBackup({
+      state: path.join(b, '.skillsmith'),
+      skillsDir: claude(b),
+      opId: 'op-old',
+      sidecar: { createdAt: '2026-01-01T00:00:00.000Z' },
+    })
+    makeBackup({
+      state: path.join(ws, '.skillsmith'),
+      skillsDir: claude(b),
+      opId: 'op-new',
+      sidecar: { createdAt: '2026-03-01T00:00:00.000Z' },
+    })
+    return { ws, old }
+  }
+
+  it('one group spread over two state roots has exactly one newest', async () => {
+    const b = base()
+    const { ws } = twoStateRoots(b)
+    const l = await listBackups({ discovery: { ...hermetic(b), cwd: ws } })
+    expect(l.discovery.stateRoots).toHaveLength(2)
+    const rows = l.backups.flatMap((s) => s.areas.flatMap((a) => a.rows))
+    expect(rows.map((r) => r.opId).sort()).toEqual(['op-new', 'op-old'])
+    expect(
+      rows
+        .filter((r) => r.newestOfGroup)
+        .map((r) => r.opId)
+        .sort()
+    ).toEqual(['op-new'])
+  })
+
+  it('a scope that shows only the older tree still does not call it newest', async () => {
+    const b = base()
+    const { ws, old } = twoStateRoots(b)
+    const l = await listBackups({
+      discovery: { ...hermetic(b), cwd: ws },
+      scope: { areaPaths: [old.areaPath] },
+    })
+    const rows = l.backups.flatMap((s) => s.areas.flatMap((a) => a.rows))
+    expect(rows.map((r) => r.opId)).toEqual(['op-old'])
+    expect(rows[0]!.newestOfGroup).toBe(false)
+  })
 })
 
 describe('UD61 facts', () => {

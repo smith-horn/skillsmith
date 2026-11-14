@@ -353,7 +353,6 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
       }))
       listedAreas.add(a.areaPath)
       if (!inScope(a.areaPath)) continue
-      markNewest(rows)
       views.push({
         areaPath: a.areaPath,
         client: a.client,
@@ -376,6 +375,9 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
       areas: views,
     }
   })
+  // One newest per (client, skillsDir, dirName) across every state root and regardless of
+  // scope (PLAN:2046): the views hold these same row objects, so the mark shows through.
+  markNewest(backupRows)
 
   const mcp = mcpStores(ctx, discovery.roots)
   const legacy = await legacyLeftovers(ctx, rootPaths)
