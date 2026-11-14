@@ -6,7 +6,7 @@
 // test pins that), so it sees every call the walker makes.
 //
 // env PRUNE_INTERPOSE = JSON {hooks:[...]}, PRUNE_TRACE = file the trace is written to at exit.
-// A hook: {when:'before'|'after', fn, a0Re?, a1Re?, a0IsDir?, a0IsFile?, nth?, action:{kind,...}}
+// A hook: {when:'before'|'after', fn, a0Re?, a1Re?, a0IsFile?, nth?, action:{kind,...}}
 //   nth: fire on the nth matching call (1-based); otherwise on the first.
 //   armedBy: {fn, a0Re?}: count only calls made after one matching it returned (so a
 //   writeSync made inside an earlier writeFileSync is not the nth).
@@ -53,11 +53,10 @@ function matches(h, when, fn, a0, a1) {
   if (h.armedBy && !h.armed) return false
   if (h.a0Re && !(a0 !== null && new RegExp(h.a0Re).test(a0))) return false
   if (h.a1Re && !(a1 !== null && new RegExp(h.a1Re).test(a1))) return false
-  if (h.a0IsDir || h.a0IsFile) {
+  if (h.a0IsFile) {
     try {
       const s = O('lstatSync', a0)
-      if (h.a0IsDir && !s.isDirectory()) return false
-      if (h.a0IsFile && !s.isFile()) return false
+      if (!s.isFile()) return false
     } catch {
       return false
     }
@@ -127,17 +126,13 @@ function act(a, a0, a1) {
       return null
     case 'rewriteInPlace': {
       const p =
-        a.path === '$cwd/sidecar.json'
-          ? path.join(realCwd(), 'sidecar.json')
-          : a.path === '$a0dir/sidecar.json'
-            ? path.join(path.dirname(abs(a0)), 'sidecar.json')
-            : abs(a0)
+        a.path === '$a0dir/sidecar.json'
+          ? path.join(path.dirname(abs(a0)), 'sidecar.json')
+          : abs(a0)
       const fd = O('openSync', p, 'r+')
       try {
         const buf = Buffer.alloc(O('fstatSync', fd).size, 'Z')
-        const res = writeUntilMoved(fd, () => O('writeSync', fd, buf, 0, buf.length, 0))
-        record(a.recordFile, { path: p })
-        return res
+        return writeUntilMoved(fd, () => O('writeSync', fd, buf, 0, buf.length, 0))
       } finally {
         O('closeSync', fd)
       }
@@ -162,7 +157,6 @@ function act(a, a0, a1) {
       const n = abs(a0)
       O('renameSync', n, path.join(a.awayDir, 'swapped-away-dir'))
       O('symlinkSync', a.outside, n)
-      record(a.recordFile, { swapped: n })
       return null
     }
     case 'appendA1':

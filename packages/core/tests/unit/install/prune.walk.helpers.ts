@@ -26,7 +26,7 @@ import { CALLER, CLIENT, KIND, populate } from './park-tree.helpers.js'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const WALKER = path.resolve(HERE, '../../../src/install/prune.walk.ts')
 const INTERPOSER = pathToFileURL(path.join(HERE, 'prune.walk.interposer.mjs')).href
-export const PARKED = '.skillsmith-parked'
+const PARKED = '.skillsmith-parked'
 
 export interface PruneFixture {
   root: string
@@ -41,7 +41,7 @@ export function makeParent(prefix = 'prune-'): PruneFixture {
   return { root, parent }
 }
 
-/** Removes a fixture, restoring permissions first. */
+/** Removes a fixture. */
 export function removeFixture(f: PruneFixture): void {
   fs.rmSync(f.root, { recursive: true, force: true })
 }
@@ -133,7 +133,6 @@ export interface Hook {
   fn: string
   a0Re?: string
   a1Re?: string
-  a0IsDir?: boolean
   a0IsFile?: boolean
   nth?: number
   /** Count only calls after one matching this has returned. */
@@ -209,7 +208,6 @@ export function runWalker(
   return { item, status: r.status, signal: r.signal, stderr: r.stderr, trace }
 }
 
-/** The hook of `kind` ran without error. */
 /** Writes that must move the timestamps to count as landed (`writeUntilMoved`). */
 const MUST_MOVE: ReadonlySet<string> = new Set(['writeFd', 'rewriteInPlace'])
 

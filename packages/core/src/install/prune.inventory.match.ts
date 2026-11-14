@@ -32,7 +32,7 @@ export type Located = { row: ApprovedRow; at: FoundAt } | { row: null; why: stri
 
 /**
  * The approved rows, indexed for the walk and the listing, with the
- * one-to-one `consumed` set: a row matches at most one entry per run (§4).
+ * one-to-one `consumed` set: a row matches at most one entry per run (UD69).
  */
 export class Approved {
   readonly inv: PruneInventory
@@ -100,7 +100,7 @@ const identityProblem = (row: ApprovedRow, s: BigIntStats): string | null =>
       : null
 
 /**
- * Why a file or symlink is not its approved row (§2): identity, type, mode,
+ * Why a file or symlink is not its approved row (UD69): identity, type, mode,
  * size and mtime; ctime on a first run, and on a resume where the entry is at
  * its inventory name (our own rename changed it under a `.d-` name).
  */

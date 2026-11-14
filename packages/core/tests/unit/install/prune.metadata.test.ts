@@ -81,7 +81,7 @@ describe('removeIfIdentical', () => {
     return S
   }
 
-  it('removes the exact recorded file, by a random name', () => {
+  it('removes the exact recorded file and leaves nothing behind', () => {
     f = makeParent('prune-meta-')
     const S = stagingDir(f)
     const p = path.join(S, 'intent.json')

@@ -18,7 +18,8 @@
  *  - the exact fs members it uses (`FS_MEMBERS`). The deleting calls are
  *    allowed only where named: `unlinkSync` in `prune.walk.ts` (the delete
  *    walk) and `prune.metadata.ts` (`removeIfIdentical`), `rmdirSync` in
- *    `prune.walk.ts`, and `renameSync` only in `prune.walk.shared.ts`
+ *    `prune.walk.ts` and `prune.walk.stage.ts` (the latter also has
+ *    `writeFileSync`), and `renameSync` only in `prune.walk.shared.ts`
  *    (`renameNoReplace`);
  *  - the exact Node builtins it imports (`BUILTINS`). `child_process` is
  *    allowed nowhere: the module that spawns the walker arrives in 6c-iii and

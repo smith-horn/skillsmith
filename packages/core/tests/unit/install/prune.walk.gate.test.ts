@@ -109,9 +109,9 @@ describe('gate mutation 4: a staged sidecar with the approved bytes at a new ino
   })
 })
 
-describe('gate mutation 6: the parent goes away mid-walk', () => {
+describe('gate mutation 5: the parent goes away mid-walk', () => {
   it('the walk stops at the next entry instead of deleting on', () => {
-    f = makeParent('prune-g6-')
+    f = makeParent('prune-g5-')
     const c = parkCopy(f.parent, 't', { extraDirs: 2 })
     const run = runWalker(jobFor(c), {
       traceDir: f.root,

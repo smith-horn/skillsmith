@@ -6,7 +6,7 @@
  *  - the write protocol: every durability step that fails deletes nothing;
  *  - the old Majors (M-a, M-b) re-run against the new rule;
  *  - R2: a resume never removes a directory, even an empty matching one;
- *  - the design's mutation set (§6) that no other file pins.
+ *  - the design's mutation set that no other file pins.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -428,7 +428,7 @@ describe('R2: a resume never removes a directory', () => {
   })
 })
 
-describe('the mutation set (§6)', () => {
+describe('the mutation set', () => {
   it('3: a resume compares content; an in-place rewrite with mtime restored is kept', () => {
     const fx = fixture('prune-m3-')
     const c = parkCopy(fx.parent, 't')
