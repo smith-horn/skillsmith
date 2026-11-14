@@ -47,22 +47,26 @@ const realOr = (p: string): string => {
 
 type Visible = (row: LedgerRow) => boolean
 
-/** The listing's views filtered by `visible`, and the counts of the rows it hid. */
-function narrowBy(l: BackupsListing, visible: Visible) {
+/**
+ * The listing's views filtered by `visible`, and the counts of the rows it hid. A hidden row
+ * is counted only when `counts` says it is still on show before this narrowing, so an item two
+ * narrowings both hide is counted by the first one only.
+ */
+function narrowBy(l: BackupsListing, visible: Visible, counts: Visible = () => true) {
   const byPath = new Map(l.accounting.rows.map((r) => [r.path, r]))
   // A path with no row is shown: hiding it would hide something the ledger never counted.
   const shown = (p: string): boolean => {
     const r = byPath.get(p)
     return r === undefined || visible(r)
   }
-  const counts = { parkedCopies: 0, backupTrees: 0, otherEntries: 0, olderStores: 0 }
+  const hidden = { parkedCopies: 0, backupTrees: 0, otherEntries: 0, olderStores: 0 }
   for (const r of l.accounting.rows) {
-    if (r.item === null || visible(r)) continue
+    if (r.item === null || visible(r) || !counts(r)) continue
     if (r.item === 'copy') {
-      if (r.where.store === 'parked') counts.parkedCopies += 1
-      else counts.backupTrees += 1
-    } else if (r.item === 'entry') counts.otherEntries += 1
-    else counts.olderStores += 1
+      if (r.where.store === 'parked') hidden.parkedCopies += 1
+      else hidden.backupTrees += 1
+    } else if (r.item === 'entry') hidden.otherEntries += 1
+    else hidden.olderStores += 1
   }
   const parked = l.parked.flatMap((a) => {
     if (!shown(a.ref.skipped === undefined ? a.ref.areaDir : a.ref.root)) return []
@@ -98,10 +102,11 @@ function narrowBy(l: BackupsListing, visible: Visible) {
   const mcpStores = l.mcpStores.filter((m) => shown(m.path))
   const legacy = l.legacy.flatMap((g) => {
     const paths = g.paths.filter(shown)
-    const unreadable = g.unreadable !== null && shown(g.root) ? g.unreadable : null
+    // The unreadable-scan marker has a row of its own, keyed off the root (an exempt row never stands for the root).
+    const unreadable = g.unreadable !== null && shown(`${g.root}:legacy-scan`) ? g.unreadable : null
     return paths.length > 0 || unreadable !== null ? [{ ...g, paths, unreadable }] : []
   })
-  return { listing: { ...l, parked, backups, mcpStores, legacy }, counts }
+  return { listing: { ...l, parked, backups, mcpStores, legacy }, counts: hidden }
 }
 
 /** The listing narrowed to `roots` (real paths), with the counts of what was left out. */
@@ -116,14 +121,16 @@ export function narrowToRoots(l: BackupsListing, roots: readonly string[]): Back
       r.item === 'copy' && w.sidecarSkillsDir !== null && roots.includes(realOr(w.sidecarSkillsDir))
     )
   }
-  const { listing, counts } = narrowBy(l, visible)
+  // Under `--client` too, only what `--client` still shows is counted here.
+  const clientShows = l.client === null ? () => true : clientVisible(l.client)
+  const { listing, counts } = narrowBy(l, visible, clientShows)
   const out: ExcludedByRoot = counts
   return { ...listing, narrowedTo: [...roots], excludedByRoot: out }
 }
 
-/** `--client`: the listing narrowed to one client, with the counts of what was left out. */
-export function narrowToClient(l: BackupsListing, client: string): BackupsListing {
-  const visible: Visible = (r) => {
+const clientVisible =
+  (client: string): Visible =>
+  (r) => {
     const w = r.where
     if (w.store === 'backup') return w.client === null || w.client === client
     if (w.store === 'parked' && r.item === 'copy') {
@@ -131,7 +138,10 @@ export function narrowToClient(l: BackupsListing, client: string): BackupsListin
     }
     return true
   }
-  const { listing, counts } = narrowBy(l, visible)
+
+/** `--client`: the listing narrowed to one client, with the counts of what was left out. */
+export function narrowToClient(l: BackupsListing, client: string): BackupsListing {
+  const { listing, counts } = narrowBy(l, clientVisible(client))
   const out: ExcludedByClient = {
     parkedCopies: counts.parkedCopies,
     backupTrees: counts.backupTrees,

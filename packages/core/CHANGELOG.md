@@ -15,7 +15,9 @@ All notable changes to `@skillsmith/core` are documented here.
   (its bytes on disk), could not be measured (with the reason: refused, unreadable, a symlink where
   a store folder belongs, an index that cannot be read, an index line that cannot be parsed, or a
   size walk that did not finish), or counts for nothing for one of three reasons only: it does not
-  exist, it vanished while being listed, or it is a legacy leftover (D7). Hidden files and folders
+  exist, it vanished while being listed (proven by listing its folder again; a name that is not
+  valid UTF-8 cannot be looked up and is never counted as gone), or it is a legacy leftover (D7).
+  Such a verdict covers its own path only, never another path under it. Hidden files and folders
   are measured like anything else. The warning reads the ledger and nothing else, so nothing the
   listing saw, or knows it could not see, can be left out of both. `scope` narrows only what is
   shown: the protection facts and the warning still read every area. `--root` and `--client` count

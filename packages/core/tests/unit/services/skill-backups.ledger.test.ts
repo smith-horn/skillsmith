@@ -37,14 +37,24 @@ interface Faults {
   uid: string[]
   dev: string[]
   readdirEacces: string[]
+  /** lstat of exactly this path fails with EACCES (the entry exists; it cannot be looked at). */
+  lstatEacces: string[]
+  /** readdir of this path works once (the lister's read) and fails with EACCES after. */
+  readdirEaccesSecond: string[]
 }
 
 /** Path-exact fs faults; every other call passes through. */
 function inject(f: Faults): void {
+  const readCount = new Map<string, number>()
   const realL = fs.lstatSync.bind(fs) as (...a: unknown[]) => unknown
   vi.spyOn(fs, 'lstatSync').mockImplementation(((p: unknown, ...rest: unknown[]) => {
     if (typeof p === 'string' && f.enoent.includes(p)) {
+      // Really gone from now on, as a name that vanished between the listing and the look.
+      fs.rmSync(p, { recursive: true, force: true })
       throw Object.assign(new Error('gone'), { code: 'ENOENT' })
+    }
+    if (typeof p === 'string' && f.lstatEacces.includes(p)) {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' })
     }
     const st = realL(p, ...rest)
     if (typeof p === 'string' && typeof st === 'object' && st !== null) {
@@ -60,6 +70,11 @@ function inject(f: Faults): void {
   vi.spyOn(fs, 'readdirSync').mockImplementation(((p: unknown, ...rest: unknown[]) => {
     if (typeof p === 'string' && f.readdirEacces.includes(p)) {
       throw Object.assign(new Error('denied'), { code: 'EACCES' })
+    }
+    if (typeof p === 'string' && f.readdirEaccesSecond.includes(p)) {
+      const n = (readCount.get(p) ?? 0) + 1
+      readCount.set(p, n)
+      if (n > 1) throw Object.assign(new Error('denied'), { code: 'EACCES' })
     }
     return realR(p, ...rest)
   }) as typeof fs.readdirSync)
@@ -78,7 +93,14 @@ const file = (p: string, bytes = 10): string => {
 /** Plants every kind; returns the expected disposition of every planted path. */
 function plant(b: string) {
   const want: Record<string, Want> = {}
-  const faults: Faults = { enoent: [], uid: [], dev: [], readdirEacces: [] }
+  const faults: Faults = {
+    enoent: [],
+    uid: [],
+    dev: [],
+    readdirEacces: [],
+    lstatEacces: [],
+    readdirEaccesSecond: [],
+  }
   const claude = path.join(b, 'clients', 'claude-code')
   const cursor = path.join(b, 'clients', 'cursor')
   const target = mkdir(path.join(b, 'linktarget'))
@@ -112,6 +134,19 @@ function plant(b: string) {
   faults.enoent.push(opGone)
   want[opGone] = 'exempt:vanished'
   want[mkdir(path.join(area, 'op-empty'))] = 'measured'
+  // lstat refused (EACCES) on an op-dir entry and on an op dir: unreadable, never "vanished".
+  const entryEacces = file(path.join(keep.opDir, 'eperm-entry'))
+  faults.lstatEacces.push(entryEacces)
+  want[entryEacces] = 'unmeasured'
+  const opLstat = mkdir(path.join(area, 'op-lstat-eacces'))
+  file(path.join(opLstat, 'x-55555555', 'f'))
+  faults.lstatEacces.push(opLstat)
+  want[opLstat] = 'unmeasured'
+  // An op dir the lister read fine and the sweep then could not read.
+  const second = parkAt(claude, 'second', { opId: 'op-second' })
+  faults.readdirEaccesSecond.push(second.opDir)
+  want[second.opDir] = 'unmeasured'
+  want[second.copyPath] = 'measured'
 
   // The cursor root: its area refused (another owner), its staging directory a symlink.
   parkAt(cursor, 'theirs', { opId: 'op-theirs' })
@@ -211,6 +246,15 @@ const kindOf = (l: BackupsListing, p: string): string => {
   return d.kind === 'exempt' ? `exempt:${d.reason}` : d.kind
 }
 
+/** A symlink measured as the link may hold no blocks; a path that is not on disk is not one. */
+const isSymlink = (p: string): boolean => {
+  try {
+    return fs.lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 const zeroCap = { statfs: () => ({ bavail: 1e12, bsize: 1 }), capBytes: 0 }
 
 describe('the ledger invariant', () => {
@@ -256,7 +300,7 @@ describe('the ledger invariant', () => {
         const e = counted.get(p)
         if (e === undefined || e.unmeasured > 0) return false
         const bytes = [...e.units.values()].reduce((n, x) => n + x, 0)
-        return bytes === 0 && !fs.lstatSync(p).isSymbolicLink()
+        return bytes === 0 && !isSymlink(p)
       })
     expect(silent).toEqual([])
     expect(l.warning.warn).toBe(true)

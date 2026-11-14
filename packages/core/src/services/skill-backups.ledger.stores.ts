@@ -26,12 +26,14 @@ import { errCode } from '../install/park-result.js'
 import type { Measured } from '../install/prune.measure.js'
 import type { Anomaly, BackupStoreListing, ParkedAreaListing } from '../install/prune.list.types.js'
 import {
+  NOT_UTF8,
   entryDisposition,
   fromMeasured,
   levelDisposition,
   lstatOr,
   selfDisposition,
   SYMLINK_LEVEL,
+  utf8Clean,
   whereOf,
 } from './skill-backups.ledger.js'
 import type { Disposition, Ledger, LedgerItem, LedgerWhere } from './skill-backups.ledger.js'
@@ -93,15 +95,24 @@ function sweep(
   whereAt: (p: string) => LedgerWhere,
   isLevel: (name: string) => boolean
 ): void {
-  let names: string[]
+  let names: Buffer[]
   try {
-    names = fs.readdirSync(dir).sort()
+    names = fs.readdirSync(dir, { encoding: 'buffer' }).sort(Buffer.compare)
   } catch (err) {
     if (errCode(err) !== 'ENOENT') ctx.ledger.downgrade(dir, `unreadable (${errCode(err)})`)
     return
   }
-  for (const n of names) {
+  for (const raw of names) {
+    const n = raw.toString('utf8')
     const p = path.join(dir, n)
+    if (!utf8Clean(raw)) {
+      // No string reaches it: it is never gone, and what it holds is not measured.
+      if (!ctx.ledger.has(p)) {
+        const d: Disposition = { kind: 'unmeasured', reason: NOT_UTF8, partial: null }
+        put(ctx, p, d, { item: null, where: whereAt(p), level: true })
+      }
+      continue
+    }
     const row = ctx.ledger.get(p)
     if (row !== undefined) {
       if (row.covers === 'self' && levelsBelow > 0) sweep(ctx, p, levelsBelow - 1, whereAt, isLevel)
@@ -290,8 +301,10 @@ export function ledgerLegacy(
   const where = whereOf('legacy', { skillsRoot: root })
   const d: Disposition = { kind: 'exempt', reason: 'legacy-leftover' }
   for (const p of paths) put(ctx, p, d, { item: 'older-store', where })
-  // What a failed scan of the root could have found is legacy leftovers only, exempt by D7.
-  if (unreadable !== null) put(ctx, root, d, { item: 'older-store', where })
+  // What a failed scan of the root could have found is legacy leftovers only, exempt by D7. The
+  // marker sits at a key of its own: an exempt row never stands for the root or anything under it.
+  if (unreadable !== null)
+    put(ctx, `${root}:legacy-scan`, d, { item: 'older-store', where, storeDir: root })
 }
 
 /** A path the index names: accounted already, `absent`, or there and not reached (`unmeasured`). */

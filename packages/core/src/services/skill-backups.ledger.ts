@@ -133,13 +133,17 @@ export class Ledger {
     })
   }
 
-  /** The row that accounts for `p`: its own, or a `tree` row above it; null when none does. */
+  /**
+   * The row that accounts for `p`: its own, or a `tree` row above it; null when none does.
+   * An exempt row says what its OWN path holds and never stands in for another path.
+   */
   coverOf(p: string): LedgerRow | null {
     const own = this.byPath.get(p)
     if (own !== undefined) return own
     for (let d = path.dirname(p); ; d = path.dirname(d)) {
       const row = this.byPath.get(d)
-      if (row !== undefined && row.covers === 'tree') return row
+      if (row !== undefined && row.covers === 'tree' && row.disposition.kind !== 'exempt')
+        return row
       if (path.dirname(d) === d) return null
     }
   }
@@ -163,12 +167,44 @@ const unreadable = (err: unknown): Disposition => ({
   partial: null,
 })
 
-/** `lstat`, as a stat or the disposition its failure gives (ENOENT is `vanished`). */
+/** A name whose bytes are not valid UTF-8 has no string spelling that reaches it. */
+export const NOT_UTF8 = 'name is not valid UTF-8; could not be addressed'
+
+/** Whether a directory entry's bytes survive a decode to a string and back. */
+export const utf8Clean = (b: Buffer): boolean => Buffer.from(b.toString('utf8')).equals(b)
+
+const VANISHED: Disposition = { kind: 'exempt', reason: 'vanished' }
+
+/**
+ * `lstat` said ENOENT for `p`. That proves the name is gone only if the parent,
+ * listed again as bytes, no longer has it: a name that is not valid UTF-8 reads
+ * back as U+FFFD, and no string reaches it. A parent that is itself gone is
+ * judged the same way; a parent that cannot be listed proves nothing.
+ */
+function goneOrUnreachable(p: string): Disposition {
+  const parent = path.dirname(p)
+  if (parent === p) return VANISHED
+  let names: Buffer[]
+  try {
+    names = fs.readdirSync(parent, { encoding: 'buffer' })
+  } catch (err) {
+    return errCode(err) === 'ENOENT' ? goneOrUnreachable(parent) : unreadable(err)
+  }
+  const base = path.basename(p)
+  for (const n of names) {
+    if (n.toString('utf8') !== base) continue
+    const reason = utf8Clean(n) ? 'listed, but could not be looked at (ENOENT)' : NOT_UTF8
+    return { kind: 'unmeasured', reason, partial: null }
+  }
+  return VANISHED
+}
+
+/** `lstat`, as a stat or the disposition its failure gives (ENOENT is `vanished` only once proven). */
 export function lstatOr(p: string): BigIntStats | Disposition {
   try {
     return fs.lstatSync(p, { bigint: true })
   } catch (err) {
-    return errCode(err) === 'ENOENT' ? { kind: 'exempt', reason: 'vanished' } : unreadable(err)
+    return errCode(err) === 'ENOENT' ? goneOrUnreachable(p) : unreadable(err)
   }
 }
 
