@@ -316,15 +316,28 @@ describe('read-only: nothing listed, classified, measured or evaluated writes', 
     expect([snapshot(f.root), snapshot(state)]).toEqual(before)
   })
 
-  it('control: the same spy does see a write, so a silent pass is not the spy being blind', () => {
+  it('control: a write made from inside product code is seen, so a silent pass is not the spy being blind', () => {
     const { f, state } = fixture()
     const calls: string[] = []
+    const planted = path.join(state, 'planted')
     vi.spyOn(fs, 'mkdirSync').mockImplementation((() => {
       calls.push('mkdirSync')
       return undefined
     }) as typeof fs.mkdirSync)
+    // The test body never writes. A directory read the PRODUCT code makes (listing, classifying,
+    // measuring) is wrapped to write through the same `fs` object: the write is seen only if
+    // the product's `fs` is the object the spies sit on.
+    const realReaddir = fs.readdirSync.bind(fs) as (...a: unknown[]) => unknown
+    let productReads = 0
+    vi.spyOn(fs, 'readdirSync').mockImplementation(((...a: unknown[]) => {
+      productReads += 1
+      fs.mkdirSync(planted)
+      return realReaddir(...a)
+    }) as unknown as typeof fs.readdirSync)
     run(f, state)
-    fs.mkdirSync(path.join(state, 'planted'))
-    expect(calls).toEqual(['mkdirSync'])
+    expect(productReads).toBeGreaterThan(0)
+    expect(calls.length).toBe(productReads)
+    expect(new Set(calls)).toEqual(new Set(['mkdirSync']))
+    expect(fs.existsSync(planted)).toBe(false)
   })
 })

@@ -8,7 +8,10 @@
  * refused whole: nothing in it is listed, and nothing in it can be selected.
  * Every entry is read with lstat and none is followed. A `.prune-*` entry is
  * handed to `inspectLeftover`, which reads it without touching it. A copy
- * with no sidecar is still listed; the classifier calls it held.
+ * with no sidecar is still listed; the classifier calls it held. A hidden
+ * entry (a dot-name that is not `.prune-*`, or in an op dir not a parked copy of
+ * a dot-named entry) is an anomaly in both places, never a copy and never
+ * dropped.
  *
  * fs is the DEFAULT export, looked up at call time.
  *
@@ -26,8 +29,10 @@ import type { ListedCopy, ParkedAreaListing } from './prune.list.types.js'
 export const PARKED_DIR = '.skillsmith-parked'
 /** A staging directory's name prefix. */
 export const STAGING_PREFIX = '.prune-'
+/** The name of a parked copy of a dot-named entry: `<name>-<8 hex>` (ADR-166 D-3). */
+const HIDDEN_COPY_RE = /^\..+-[0-9a-f]{8}$/
 
-const SELF_UID = typeof process.getuid === 'function' ? BigInt(process.getuid()) : null
+export const SELF_UID = typeof process.getuid === 'function' ? BigInt(process.getuid()) : null
 
 const isFile = (p: string): boolean => {
   try {
@@ -80,6 +85,10 @@ function listOpDir(entry: ParkedAreaListing, opDir: string, opId: string): strin
       if (!set.has(x.slice(0, -5))) entry.orphanSidecars.push(xp)
       continue
     }
+    if (x.startsWith('.') && !HIDDEN_COPY_RE.test(x)) {
+      entry.anomalies.push({ path: xp, detail: 'unrecognised hidden entry; never touched' })
+      continue
+    }
     const copy: ListedCopy = {
       copyPath: xp,
       name: x,
@@ -130,7 +139,10 @@ export function listParkedArea(root: string): ParkedAreaListing {
       entry.leftovers.push(inspectLeftover({ S: abs, stagingRoot: areaDir }))
       continue
     }
-    if (n.startsWith('.')) continue
+    if (n.startsWith('.')) {
+      entry.anomalies.push({ path: abs, detail: 'unrecognised hidden entry; never touched' })
+      continue
+    }
     const why = listOpDir(entry, abs, n)
     if (why !== null) return refuse(why)
   }

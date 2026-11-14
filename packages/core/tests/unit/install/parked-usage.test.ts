@@ -249,7 +249,7 @@ describe('volumes', () => {
     expect(over.message).toContain(old)
   })
 
-  it('a statfs that fails falls back to the cap alone, never to silence', () => {
+  it('a statfs that fails keeps the cap as the threshold, and the volume warns whatever it holds', () => {
     const dir = root()
     const w = evaluateParkedUsage([entry(dir, 2e9)], {
       statfs: () => {

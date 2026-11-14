@@ -4,8 +4,10 @@
  *
  * Every level (the store, `<client>`, `<rootKey>`, `<dirName>`) is read with
  * lstat and never followed: a symlink or non-directory at any level is an
- * anomaly, and nothing below it is listed. An area with a mount point at it
- * is not listed either, and an unreadable mount table counts as a mount.
+ * anomaly, and nothing below it is listed. So is a directory on another device
+ * than the store, one owned by another user, or one with a mount point at it
+ * (an unreadable mount table counts as a mount): the same checks the parked
+ * lister makes on its area, made at every level.
  *
  * Inside an area an entry is, by name:
  *  - `.prune-*`: a staging leftover, handed to `inspectLeftover` (D14: a
@@ -28,7 +30,7 @@ import path from 'node:path'
 import { errCode } from './park-result.js'
 import { inspectLeftover } from './prune.leftovers.js'
 import { mountAt } from './prune.classify.js'
-import { STAGING_PREFIX } from './prune.list.parked.js'
+import { SELF_UID, STAGING_PREFIX } from './prune.list.parked.js'
 import type {
   Anomaly,
   BackupAreaListing,
@@ -54,8 +56,22 @@ function namesOf(dir: string, anomalies: Anomaly[]): string[] {
   }
 }
 
-/** The children of `dir` that are real directories (lstat, never followed); the rest are anomalies. */
-function realDirChildren(dir: string, anomalies: Anomaly[]): string[] {
+/** What every directory under the store must match: its device. The owner is `SELF_UID`. */
+interface LevelRules {
+  dev: bigint
+}
+
+/** Why `st` (a directory `abs`) is not listable, or null. */
+function levelProblem(abs: string, st: BigIntStats, rules: LevelRules): string | null {
+  if (st.isSymbolicLink() || !st.isDirectory()) return 'not a real directory; never touched'
+  if (st.dev !== rules.dev) return 'on another device than the backup store; not listed'
+  if (SELF_UID !== null && st.uid !== SELF_UID) return 'owned by another user; not listed'
+  if (mountAt(abs)) return 'a mount point is at this directory; not listed'
+  return null
+}
+
+/** The children of `dir` that are listable directories (lstat, never followed); the rest are anomalies. */
+function realDirChildren(dir: string, anomalies: Anomaly[], rules: LevelRules): string[] {
   const out: string[] = []
   for (const n of namesOf(dir, anomalies)) {
     const abs = path.join(dir, n)
@@ -66,8 +82,9 @@ function realDirChildren(dir: string, anomalies: Anomaly[]): string[] {
       anomalies.push({ path: abs, detail: `unreadable (${errCode(err)})` })
       continue
     }
-    if (st.isSymbolicLink() || !st.isDirectory()) {
-      anomalies.push({ path: abs, detail: 'not a real directory; never touched' })
+    const why = levelProblem(abs, st, rules)
+    if (why !== null) {
+      anomalies.push({ path: abs, detail: why })
       continue
     }
     out.push(n)
@@ -126,22 +143,19 @@ export function listBackupStore(updateDir: string): BackupStoreListing {
   if (st.isSymbolicLink() || !st.isDirectory()) {
     return Object.assign(out, { refused: 'backup store is not a real directory' })
   }
+  if (SELF_UID !== null && st.uid !== SELF_UID) {
+    return Object.assign(out, { refused: 'backup store is owned by another user' })
+  }
   if (mountAt(updateDir)) {
     return Object.assign(out, { refused: 'a mount point is at the backup store' })
   }
-  for (const client of realDirChildren(updateDir, out.anomalies)) {
+  const rules: LevelRules = { dev: st.dev }
+  for (const client of realDirChildren(updateDir, out.anomalies, rules)) {
     const clientDir = path.join(updateDir, client)
-    for (const rootKey of realDirChildren(clientDir, out.anomalies)) {
+    for (const rootKey of realDirChildren(clientDir, out.anomalies, rules)) {
       const rootDir = path.join(clientDir, rootKey)
-      for (const dirName of realDirChildren(rootDir, out.anomalies)) {
+      for (const dirName of realDirChildren(rootDir, out.anomalies, rules)) {
         const areaPath = path.join(rootDir, dirName)
-        if (mountAt(areaPath)) {
-          out.anomalies.push({
-            path: areaPath,
-            detail: 'a mount point is at this area; not listed',
-          })
-          continue
-        }
         const area: BackupAreaListing = {
           areaPath,
           client,

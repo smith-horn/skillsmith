@@ -87,7 +87,7 @@ const FS_MEMBERS: Record<string, string[]> = {
   'prune.list.types.ts': [],
   'prune.list.parked.ts': ['lstatSync', 'readdirSync', 'statSync'],
   'prune.list.backups.ts': ['lstatSync', 'readdirSync'],
-  'parked-usage.ts': ['lstatSync', 'statfsSync'],
+  'parked-usage.ts': ['statSync', 'statfsSync'],
   'backup-sidecar.strict.ts': [],
   'park-result.ts': [],
   'park-callers.ts': [],

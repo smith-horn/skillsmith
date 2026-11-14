@@ -74,16 +74,37 @@ const SIDECAR_MAX_BYTES = 1024 * 1024
 export const rootKeyFor = (root: string): string =>
   crypto.createHash('sha256').update(root).digest('hex').slice(0, 16)
 
-/** Linux mount points at or under `abs` (its real path, taken here). `{ ok: false }` fails closed. */
-export function mountsAtOrUnder(abs: string): MountPointsResult {
-  if (!MOUNTINFO_APPLIES) return { ok: true, points: [] }
-  let real: string
+/** A mount check that failed. `stage` says where: the real-path step, or the mount table itself. */
+export type MountsCheck =
+  | Extract<MountPointsResult, { ok: true }>
+  | { ok: false; errno: string | null; stage: 'realpath' | 'mountinfo' }
+
+/**
+ * The path whose real location a mount check should look at. A symlink is not
+ * followed: its target is not part of the copy, and a link is never itself a
+ * mount point, so the check runs at the link's own name inside its resolved
+ * directory. Anything else is its own real path.
+ */
+function mountCheckPath(
+  abs: string
+): { ok: true; path: string } | { ok: false; errno: string | null } {
   try {
-    real = fs.realpathSync(abs)
+    if (fs.lstatSync(abs).isSymbolicLink()) {
+      return { ok: true, path: path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)) }
+    }
+    return { ok: true, path: fs.realpathSync(abs) }
   } catch (err) {
     return { ok: false, errno: errCode(err) }
   }
-  return readMountPointsAtOrUnder(real)
+}
+
+/** Linux mount points at or under `abs` (its real path, taken here). `{ ok: false }` fails closed. */
+export function mountsAtOrUnder(abs: string): MountsCheck {
+  if (!MOUNTINFO_APPLIES) return { ok: true, points: [] }
+  const at = mountCheckPath(abs)
+  if (!at.ok) return { ok: false, errno: at.errno, stage: 'realpath' }
+  const m = readMountPointsAtOrUnder(at.path)
+  return m.ok ? m : { ok: false, errno: m.errno, stage: 'mountinfo' }
 }
 
 /** Linux: is there a mount point exactly AT `abs`? Unreadable is true (fail closed). */
@@ -91,19 +112,17 @@ export function mountAt(abs: string): boolean {
   if (!MOUNTINFO_APPLIES) return false
   const m = mountsAtOrUnder(abs)
   if (!m.ok) return true
-  try {
-    return m.points.includes(fs.realpathSync(abs))
-  } catch {
-    return true
-  }
+  const at = mountCheckPath(abs)
+  return !at.ok || m.points.includes(at.path)
 }
 
-const exists = (p: string): boolean => {
+/** `absent` (ENOENT only), `present`, or the errno of any other failure: unreadable is not absent. */
+const probe = (p: string): 'present' | 'absent' | { errno: string | null } => {
   try {
     fs.lstatSync(p)
-    return true
-  } catch {
-    return false
+    return 'present'
+  } catch (err) {
+    return errCode(err) === 'ENOENT' ? 'absent' : { errno: errCode(err) }
   }
 }
 
@@ -118,6 +137,12 @@ function mountedFinding(
   base: Extra
 ): Classification | null {
   const mi = mountsAtOrUnder(copy.copyPath)
+  if (!mi.ok && mi.stage === 'realpath') {
+    return res('unverified', 'realpath-failed', {
+      ...base,
+      detail: `the copy's directory could not be resolved (${mi.errno}); mounts cannot be checked`,
+    })
+  }
   if (!mi.ok) {
     return res('mounted', 'mountinfo-unreadable', {
       ...base,
@@ -207,8 +232,16 @@ function bySidecar(copy: ClassifyInput, store: CopyStore, w: Walked): Classifica
       detail: 'prune stopped part-way through deleting this copy',
     })
   }
-  if (!exists(copy.sidecarPath)) {
+  const present = probe(copy.sidecarPath)
+  if (present === 'absent') {
     return res('held', 'sidecar-absent', { ...base, freshHash: fresh, detail: 'no sidecar' })
+  }
+  if (present !== 'present') {
+    return res('held', 'sidecar-unreadable', {
+      ...base,
+      freshHash: fresh,
+      detail: `the sidecar could not be examined (${present.errno})`,
+    })
   }
   const rs = readStable(copy.sidecarPath, { maxBytes: SIDECAR_MAX_BYTES })
   if (!rs.ok) {
@@ -265,7 +298,14 @@ function verified(
       detail: `prune has no policy for kind ${JSON.stringify(sc.kind)}`,
     })
   }
-  if (store === 'backup' && copy.area !== undefined) {
+  if (store === 'backup') {
+    // A backup input with no area facts cannot be cross-checked, so it is never clean (D4).
+    if (copy.area === undefined) {
+      return res('unverified', 'area-unknown', {
+        ...withSc,
+        detail: 'the backup tree has no area facts to check its sidecar against',
+      })
+    }
     const key = typeof sc.skillsDir === 'string' ? rootKeyFor(sc.skillsDir) : null
     if (sc.client !== copy.area.client || key !== copy.area.rootKey) {
       return res('unverified', 'area-mismatch', {

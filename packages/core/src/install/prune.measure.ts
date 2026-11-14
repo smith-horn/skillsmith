@@ -12,7 +12,10 @@
  * Entries are de-duplicated by `(dev, ino)` so a hard link counts once. An
  * entry that cannot be measured (lstat fails, or a directory cannot be
  * listed) is COUNTED in `unmeasured`, never silently treated as empty. Never
- * follows a symlink. Never throws.
+ * follows a symlink, and never descends into another device: an entry whose
+ * `dev` differs from the root's is counted itself (the mount point) and not
+ * walked, so a bind mount inside a tree does not add the mounted data to the
+ * total. Never throws.
  *
  * fs is the DEFAULT export, looked up at call time.
  *
@@ -36,6 +39,7 @@ export interface Measured {
 /** Measures the tree at `abs` with one lstat walk. */
 export function measure(abs: string): Measured {
   const out: Measured = { allocatedBytes: 0, apparentBytes: 0, unmeasured: 0, units: new Map() }
+  let rootDev: bigint | null = null
   const visit = (p: string): void => {
     let st: BigIntStats
     try {
@@ -51,7 +55,8 @@ export function measure(abs: string): Measured {
       out.allocatedBytes += allocated
       out.apparentBytes += Number(st.size)
     }
-    if (!st.isDirectory()) return
+    if (rootDev === null) rootDev = st.dev
+    if (!st.isDirectory() || st.dev !== rootDev) return
     let names: string[]
     try {
       names = fs.readdirSync(p)

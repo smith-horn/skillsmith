@@ -13,7 +13,9 @@
  * The threshold per volume is min(1 GB, 5% of that volume's free space). It
  * warns when the total is over it, and ALWAYS names unmeasured entries: the
  * spike stayed silent below half the threshold (SMI-7127), which let an
- * unreadable directory hide. The words are "set-aside folders", never "trash".
+ * unreadable directory hide. Free space that could not be read warns too: the
+ * threshold then has no 5% leg, and a quiet answer would be a guess. The words
+ * are "set-aside folders", never "trash".
  *
  * Read-only. `statfs` is looked up at call time, so a test can inject it.
  *
@@ -55,17 +57,17 @@ export interface ParkedUsageOptions {
 }
 
 export interface VolumeVerdict {
-  /** `st_dev`, or `unknown` when the directory could not be read. */
+  /** `st_dev` of the directory (a symlink followed, as `statfs` follows it), or `unknown` when it could not be read. */
   dev: string
   storeDir: string
-  /** Free bytes on the volume, or null when `statfs` failed (the cap alone then applies). */
+  /** Free bytes on the volume, or null when `statfs` failed: the cap alone is the threshold, and the volume warns. */
   freeBytes: number | null
   thresholdBytes: number
   /** Allocated bytes held, de-duplicated across the volume. A lower bound when `unmeasuredEntries > 0`. */
   heldBytes: number
   unmeasuredEntries: number
   overThreshold: boolean
-  /** This volume warns: over the threshold, or part of it could not be measured. */
+  /** This volume warns: over the threshold, part of it could not be measured, or its free space could not be read. */
   warn: boolean
   largest: { path: string; bytes: number; label: string }[]
 }
@@ -109,7 +111,8 @@ function byVolume(entries: readonly ParkedUsageEntry[]): Volume[] {
   for (const e of entries) {
     let dev: string
     try {
-      dev = String(fs.lstatSync(e.storeDir, { bigint: true }).dev)
+      // statSync, not lstatSync: statfs follows a symlinked storeDir, so the volume must too.
+      dev = String(fs.statSync(e.storeDir, { bigint: true }).dev)
     } catch {
       dev = `unknown:${e.storeDir}`
     }
@@ -144,7 +147,10 @@ function freeBytesOf(
 const labelOf = (e: ParkedUsageEntry): string =>
   e.originPath !== null ? path.basename(e.originPath) : e.opId
 
-/** Judges each volume. `warn` is `heldBytes > min(cap, fraction x free)` OR any unmeasured entry. */
+/**
+ * Judges each volume. `warn` is `heldBytes > min(cap, fraction x free)`, OR any
+ * unmeasured entry, OR free space that could not be read.
+ */
 export function judgeParkedUsage(
   entries: readonly ParkedUsageEntry[],
   { statfs, capBytes = 1e9, freeFraction = 0.05, top = 3 }: ParkedUsageOptions = {}
@@ -169,19 +175,24 @@ export function judgeParkedUsage(
       heldBytes,
       unmeasuredEntries,
       overThreshold,
-      warn: overThreshold || unmeasuredEntries > 0,
+      warn: overThreshold || unmeasuredEntries > 0 || freeBytes === null,
       largest,
     }
   })
 }
 
+/** Every fact that made this volume warn, each stated: nothing is implied by another. */
 function sentence(p: VolumeVerdict): string {
   const n = p.unmeasuredEntries
-  const held =
-    n > 0
-      ? `at least ${human(p.heldBytes)}; ${n} ${n === 1 ? 'entry' : 'entries'} could not be measured ` +
-        `(warning level ${human(p.thresholdBytes)})`
-      : `${human(p.heldBytes)}, over the ${human(p.thresholdBytes)} warning level`
+  const facts: string[] = []
+  if (p.overThreshold) facts.push(`over the ${human(p.thresholdBytes)} warning level`)
+  if (n > 0) facts.push(`${n} ${n === 1 ? 'entry' : 'entries'} could not be measured`)
+  if (p.freeBytes === null) {
+    facts.push(
+      `free space on this disk could not be read, so the warning level is the fixed ${human(p.thresholdBytes)} cap`
+    )
+  }
+  const held = `${n > 0 ? 'at least ' : ''}${human(p.heldBytes)}; ${facts.join('; ')}`
   const big = p.largest.map((c) => `${c.label} ${human(c.bytes)} (${c.path})`).join(', ')
   return (
     `Skillsmith's set-aside folders on this disk hold ${held}. ` +
@@ -192,8 +203,8 @@ function sentence(p: VolumeVerdict): string {
 
 /**
  * Evaluates the entries: the verdict per volume and the message to print. The
- * message is null only when no volume is over its threshold and every entry
- * measured.
+ * message is null only when no volume is over its threshold, every entry
+ * measured and every volume's free space was read.
  */
 export function evaluateParkedUsage(
   entries: readonly ParkedUsageEntry[],
