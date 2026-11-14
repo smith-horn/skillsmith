@@ -67,14 +67,18 @@ export async function runDoctorBackups(options: DoctorBackupsOptions): Promise<v
     process.exitCode = 1
     return
   }
-  if (options.json === true) console.log(JSON.stringify(listingJson(listing), null, 2))
-  else for (const line of renderListing(listing)) console.log(line)
+  // The warning goes first: a render or JSON failure (a closed stdout is one) must not lose it.
   if (listing.warning.message !== null) console.error(listing.warning.message)
-  for (const s of listing.discovery.skipped.filter((x) => x.source === '--root')) {
-    console.error(
-      chalk.red(`--root ${s.path} could not be used (${s.errno}); nothing was created there.`)
-    )
-    process.exitCode = 1
+  try {
+    if (options.json === true) console.log(JSON.stringify(listingJson(listing), null, 2))
+    else for (const line of renderListing(listing)) console.log(line)
+  } finally {
+    for (const s of listing.discovery.skipped.filter((x) => x.source === '--root')) {
+      console.error(
+        chalk.red(`--root ${s.path} could not be used (${s.errno}); nothing was created there.`)
+      )
+      process.exitCode = 1
+    }
   }
 }
 

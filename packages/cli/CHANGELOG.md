@@ -13,8 +13,17 @@ All notable changes to `@skillsmith/cli` are documented here.
   skills root and narrows the listing to the named roots; `--client <id>` narrows by client;
   `--state-root <dir>` reads another state folder; `--json` prints machine-readable output. When
   the folders on a disk hold more than min(1 GB, 5% of its free space), or some could not be
-  measured, or the disk's free space could not be read, a warning goes to stderr. `doctor recovery`
-  prints the same warning after an action that set a folder aside.
+  measured, or the disk's free space could not be read, a warning goes to stderr, and it prints
+  before the listing so a closed stdout cannot lose it. A store, area or folder level that could
+  not be read, or that Skillsmith refused (another owner, another device, a mount point, a symlinked
+  staging folder), counts as "could not be measured", so the warning says so instead of staying
+  quiet. `--client` now says how many folders, kept trees and other entries it left out, in the
+  text and as `excludedByClient` in `--json`. A kept tree says whether an update record protects
+  it, none does, or protection is unknown because some records or set-aside folders could not be
+  read. A folder whose real path could not be resolved reads "could not be resolved", not
+  "mounted". `doctor recovery`
+  prints the same warning after an action that set a folder aside, and also when the action threw
+  before it could say what it did.
 - **Fixed**: SMI-6531 -- #3213 retro: the `skillsmith doctor recovery` listing now prints the
   refused `--clean-staging` line for an operation folder with no record even when another
   action is offered there (a verifying move-source park intent offers `--apply`, `--undo` and

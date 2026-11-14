@@ -9,7 +9,7 @@ import type { ParkedUsageEntry, ParkedUsageWarning } from '../install/parked-usa
 import type { Anomaly, ListedCopy, UnfinishedTemp } from '../install/prune.list.types.js'
 import type { Discovery } from './skill-recovery.discover.js'
 import type { AreaRef, IndexFacts, StaleIndexLine } from './skill-backups.areas.js'
-import type { ProtectedBy, RecordFacts } from './skill-backups.records.js'
+import type { Protection, RecordFacts } from './skill-backups.records.js'
 
 /** The size facts every row carries. Allocated bytes are what the warning counts (D6). */
 export interface Sizes {
@@ -50,8 +50,8 @@ export interface BackupRow extends RowBase {
   opId: string
   /** True when the tree still hashes to the sidecar's hash, false when it does not, null when unknown. */
   hashStillEquals: boolean | null
-  /** UD61: the record protecting it, or null. */
-  protectedBy: ProtectedBy | null
+  /** UD61: the record protecting it, none, or unknown (some records could not be read). */
+  protection: Protection
   /** True when it is the newest `backup` (or `pre-rename`) of its `(client, skillsDir, dirName)`. */
   newestOfGroup: boolean
 }
@@ -132,6 +132,18 @@ export interface BackupsListing {
   narrowedTo: string[] | null
   /** What `--root` hid, so nothing vanishes silently; null when not narrowed. */
   excludedByRoot: ExcludedByRoot | null
+  /** What `--client` hid, so nothing vanishes silently; null when no client was given. */
+  excludedByClient: ExcludedByClient | null
+}
+
+/** Counts of what a `--client` narrowing left out. The warning still counts all of it. */
+export interface ExcludedByClient {
+  /** Set-aside folders whose sidecar names another client. */
+  parkedCopies: number
+  /** Kept backup trees in another client's area. */
+  backupTrees: number
+  /** Temps, `.prune-*` leftovers, orphan sidecars and anomalies in the areas left out. */
+  otherEntries: number
 }
 
 /** Counts of what a `--root` narrowing left out. The warning still counts all of it. */

@@ -24,9 +24,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { checkFsBoundary, checkFsBoundarySource } from './park-tree.fs-boundary.js'
+import { WRITE_MEMBERS, writingNames as writingNamesIn } from './fs-write-shape.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const INSTALL = path.resolve(HERE, '../../../src/install')
@@ -41,26 +41,6 @@ const READ_ONLY_ENTRIES = [
   'prune.list.backups.ts',
   'parked-usage.ts',
 ]
-
-/** fs members that change the tree or the descriptor table's contents. */
-const WRITE_MEMBERS = new Set([
-  'unlinkSync',
-  'rmdirSync',
-  'rmSync',
-  'renameSync',
-  'mkdirSync',
-  'writeFileSync',
-  'appendFileSync',
-  'openSync',
-  'fsyncSync',
-  'writeSync',
-  'linkSync',
-  'symlinkSync',
-  'copyFileSync',
-  'truncateSync',
-  'chmodSync',
-  'utimesSync',
-])
 
 /**
  * `<importer> -> <write-capable target>`: the form and the exact names the
@@ -80,104 +60,14 @@ const ALLOWED_EDGES: Record<string, string> = {
   'prune.leftovers.ts -> prune.walk.shared.ts': 'named:META,RANDOM_NAME_RE,resumeStagingProblem',
 }
 
+/** `file`'s top-level names that can write (see `fs-write-shape.ts`). */
+const writingNames = (file: string, dir = INSTALL): Set<string> =>
+  writingNamesIn(path.join(dir, file))
+
 const isWriteCapable = (dir: string, file: string): boolean =>
   checkFsBoundarySource(fs.readFileSync(path.join(dir, file), 'utf8')).fsMembers.some((m) =>
     WRITE_MEMBERS.has(m)
   )
-
-/** True when `n` (or a node under it) is `fs.<write member>` used in a way that can write. */
-function usesWrite(n: ts.Node): boolean {
-  if (
-    ts.isPropertyAccessExpression(n) &&
-    ts.isIdentifier(n.expression) &&
-    n.expression.text === 'fs' &&
-    WRITE_MEMBERS.has(n.name.text)
-  ) {
-    // `fs.openSync(p, O_RDONLY | ...)` and `fs.openSync(p, 'r')` read; any other flag may write.
-    if (n.name.text === 'openSync' && ts.isCallExpression(n.parent)) {
-      const flags = n.parent.arguments[1]?.getText() ?? ''
-      return (
-        !/^(['"]r['"]|[\w.]*O_RDONLY\b[\w.| ]*)$/.test(flags) || /O_(WRONLY|RDWR|CREAT)/.test(flags)
-      )
-    }
-    return true
-  }
-  return ts.forEachChild(n, usesWrite) === true
-}
-
-/** Every identifier mentioned under `n`. */
-function mentions(n: ts.Node, out = new Set<string>()): Set<string> {
-  if (ts.isIdentifier(n)) out.add(n.text)
-  ts.forEachChild(n, (c) => void mentions(c, out))
-  return out
-}
-
-/**
- * The top-level functions and arrow constants of `file` that can write: a body
- * that uses `fs.<write member>`, OR mentions a writing name of the same module,
- * OR mentions a named import that is itself writing in the module it comes
- * from (followed through any depth of imports; a cycle adds nothing). So a
- * write hidden behind a call, in this module or another, is found.
- */
-function writingNames(file: string, dir = INSTALL, inProgress = new Set<string>()): Set<string> {
-  if (inProgress.has(file)) return new Set()
-  inProgress.add(file)
-  const sf = ts.createSourceFile(
-    file,
-    fs.readFileSync(path.join(dir, file), 'utf8'),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  )
-  const bodies = new Map<string, ts.Node>()
-  const imported = new Map<string, { file: string; name: string }>()
-  for (const st of sf.statements) {
-    if (ts.isFunctionDeclaration(st) && st.name !== undefined) bodies.set(st.name.text, st)
-    if (ts.isVariableStatement(st)) {
-      for (const d of st.declarationList.declarations) {
-        if (ts.isIdentifier(d.name) && d.initializer !== undefined) {
-          bodies.set(d.name.text, d.initializer)
-        }
-      }
-    }
-    const nb = ts.isImportDeclaration(st) ? st.importClause?.namedBindings : undefined
-    if (
-      ts.isImportDeclaration(st) &&
-      nb !== undefined &&
-      ts.isNamedImports(nb) &&
-      ts.isStringLiteral(st.moduleSpecifier)
-    ) {
-      const spec = st.moduleSpecifier.text
-      const target = `${spec.replace(/^\.\//, '').replace(/\.js$/, '')}.ts`
-      if (!spec.startsWith('./') || !fs.existsSync(path.join(dir, target))) continue
-      for (const e of nb.elements) {
-        imported.set(e.name.text, { file: target, name: (e.propertyName ?? e.name).text })
-      }
-    }
-  }
-  const foreign = new Map<string, Set<string>>()
-  const importWrites = (local: string): boolean => {
-    const i = imported.get(local)
-    if (i === undefined) return false
-    if (!foreign.has(i.file)) foreign.set(i.file, writingNames(i.file, dir, inProgress))
-    return foreign.get(i.file)?.has(i.name) === true
-  }
-  const out = new Set<string>()
-  const refs = new Map([...bodies].map(([name, n]) => [name, mentions(n)] as const))
-  for (const [name, n] of bodies) if (usesWrite(n)) out.add(name)
-  for (let changed = true; changed; ) {
-    changed = false
-    for (const [name, m] of refs) {
-      if (out.has(name)) continue
-      if ([...m].some((x) => (x !== name && out.has(x)) || importWrites(x))) {
-        out.add(name)
-        changed = true
-      }
-    }
-  }
-  inProgress.delete(file)
-  return out
-}
 
 /** Every edge into a write-capable module, from any module a read-only entry reaches. */
 export function writeCapableEdges(dir: string): Record<string, string> {
@@ -280,6 +170,94 @@ describe('the read-only modules import no write-capable function (6c-ii-a)', () 
           'export const planted = removeIfIdentical\n'
       )
       expect(writeCapableEdges(dir)).not.toEqual(ALLOWED_EDGES)
+    })
+  })
+})
+
+describe('F8: every shape of a write is seen, not only fs.<Sync member>', () => {
+  const HEAD = 'export function loadInventory(S: string): InventoryLoad {\n'
+  /** `prune.inventory.ts` with `line` as the first statement of `loadInventory` (and `top` ahead of the file). */
+  function plant(dir: string, line: string, top = ''): void {
+    const f = path.join(dir, 'prune.inventory.ts')
+    const src = fs.readFileSync(f, 'utf8')
+    const planted = top + src.replace(HEAD, HEAD + line)
+    expect(planted).not.toBe(top + src)
+    fs.writeFileSync(f, planted)
+  }
+  const loadWrites = (dir: string): boolean =>
+    writingNames('prune.inventory.ts', dir).has('loadInventory')
+
+  const WRITES: [string, string][] = [
+    ['fs.promises.rm', '  void fs.promises.rm(S)\n'],
+    ["a computed fs['renameSync']", "  fs['renameSync'](S, S)\n"],
+    ['a computed fs[member] that is not a literal', '  fs[S](S)\n'],
+    ["a computed fs.promises['rm']", "  void fs.promises['rm'](S)\n"],
+    ['a captured fs.renameSync', '  const f = fs.renameSync\n  f(S, S)\n'],
+    ['a destructured member', '  const { renameSync } = fs\n  renameSync(S, S)\n'],
+    ['a destructured fs.promises member', '  const { rm } = fs.promises\n  void rm(S)\n'],
+    ['a destructuring with a rest element', '  const { ...all } = fs\n  void all\n'],
+    ['an aliased fs', '  const f = fs\n  f.renameSync(S, S)\n'],
+    ['fs.cpSync', '  fs.cpSync(S, S)\n'],
+    ['fs.mkdtempSync', '  fs.mkdtempSync(S)\n'],
+    ['fs.chownSync', '  fs.chownSync(S, 0, 0)\n'],
+    ['fs.lchownSync', '  fs.lchownSync(S, 0, 0)\n'],
+    ['fs.futimesSync', '  fs.futimesSync(0, 0, 0)\n'],
+    ['fs.lutimesSync', '  fs.lutimesSync(S, 0, 0)\n'],
+    ['fs.ftruncateSync', '  fs.ftruncateSync(0)\n'],
+    ['fs.createWriteStream', '  fs.createWriteStream(S)\n'],
+    ['the callback form fs.rename', '  fs.rename(S, S, () => undefined)\n'],
+    ['the callback form fs.writeFile', "  fs.writeFile(S, '', () => undefined)\n"],
+  ]
+  for (const [label, line] of WRITES) {
+    it(`${label} in a reader name is a write`, () => {
+      withCopy((dir) => {
+        expect(loadWrites(dir)).toBe(false)
+        plant(dir, line)
+        expect(loadWrites(dir)).toBe(true)
+      })
+    })
+  }
+
+  const READS: [string, string][] = [
+    ['fs.promises.readFile', '  void fs.promises.readFile(S)\n'],
+    ["a computed fs['readFileSync']", "  fs['readFileSync'](S)\n"],
+    ['a destructured read member', '  const { readFileSync } = fs\n  readFileSync(S)\n'],
+    ['fs.readFile (callback)', '  fs.readFile(S, () => undefined)\n'],
+  ]
+  for (const [label, line] of READS) {
+    it(`control: ${label} is not a write`, () => {
+      withCopy((dir) => {
+        plant(dir, line)
+        expect(loadWrites(dir)).toBe(false)
+      })
+    })
+  }
+
+  it('a namespace import of a write-capable module, called from a reader name, is a write', () => {
+    withCopy((dir) => {
+      // `removeEmptyDirs` is not a name prune.inventory.ts imports, so only the namespace can reach it.
+      plant(dir, '  w.removeEmptyDirs(S, S)\n', "import * as w from './prune.walk.stage.js'\n")
+      expect(loadWrites(dir)).toBe(true)
+    })
+  })
+
+  it('a re-export of a write-capable name makes the re-exporting module write under that name', () => {
+    withCopy((dir) => {
+      fs.appendFileSync(
+        path.join(dir, 'prune.inventory.ts'),
+        "\nexport { renameNoReplace as laundered } from './prune.walk.shared.js'\n"
+      )
+      expect(writingNames('prune.inventory.ts', dir).has('laundered')).toBe(true)
+    })
+  })
+
+  it('an export-star of a write-capable module brings its write names along', () => {
+    withCopy((dir) => {
+      fs.appendFileSync(
+        path.join(dir, 'prune.inventory.ts'),
+        "\nexport * from './prune.walk.shared.js'\n"
+      )
+      expect(writingNames('prune.inventory.ts', dir).has('renameNoReplace')).toBe(true)
     })
   })
 })

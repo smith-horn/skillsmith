@@ -65,9 +65,14 @@ export function readMountPointsAtOrUnder(dir: string): MountPointsResult {
 /** Why a copy root is judged mounted. */
 export type MountVerdictReason = 'realpath-failed' | 'mountinfo-unreadable' | 'mount-point'
 
-/** The verdict on one copy root: not mounted, or mounted and why (fail closed). */
+/**
+ * The verdict on one copy root: not mounted, or mounted and why (fail closed).
+ * "Not mounted" because the path is a symlink says so (`symlink: true`): a
+ * caller that needs a real directory (`mountAt`) must not read it as a clean
+ * directory, since a path can become a link after that caller's own lstat.
+ */
 export type MountVerdict =
-  | { mounted: false }
+  | { mounted: false; symlink?: true }
   | {
       mounted: true
       reason: MountVerdictReason
@@ -84,8 +89,9 @@ export type MountVerdict =
  *
  * A symlink is never a mount point: mounting on a symlink path follows it and
  * mounts on the target, and the walker unlinks a link without following it. So
- * a symlink root is "not mounted" with no realpath call; its parent directory
- * is checked by the listers. Any other root: its real path, then the mount
+ * a symlink root is "not mounted" with no realpath call, marked `symlink: true`
+ * so a caller that needs a directory can refuse it; its parent directory is
+ * checked by the listers. Any other root: its real path, then the mount
  * points at or under it. A path that cannot be resolved is mounted
  * (`realpath-failed`), and an unreadable table is mounted
  * (`mountinfo-unreadable`): never offered. No mountinfo on this platform is
@@ -95,7 +101,7 @@ export function mountVerdictAt(abs: string): MountVerdict {
   if (!MOUNTINFO_APPLIES) return { mounted: false }
   let real: string
   try {
-    if (fs.lstatSync(abs).isSymbolicLink()) return { mounted: false }
+    if (fs.lstatSync(abs).isSymbolicLink()) return { mounted: false, symlink: true }
     real = fs.realpathSync(abs)
   } catch (err) {
     return {

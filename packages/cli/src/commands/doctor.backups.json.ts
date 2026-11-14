@@ -61,6 +61,7 @@ export function listingJson(l: BackupsListing): Record<string, unknown> {
     client: l.client,
     narrowedTo: l.narrowedTo,
     excludedByRoot: l.excludedByRoot,
+    excludedByClient: l.excludedByClient,
     parked: l.parked.map((a) => ({
       area: a.ref.areaDir,
       origin: a.ref.origin,
@@ -102,7 +103,7 @@ export function listingJson(l: BackupsListing): Record<string, unknown> {
           createdAt: createdAt(r),
           ageDays: r.ageDays,
           hashStillEquals: r.hashStillEquals,
-          protectedBy: r.protectedBy,
+          protection: r.protection,
           newestOfGroup: r.newestOfGroup,
           ...sizes(r),
         })),

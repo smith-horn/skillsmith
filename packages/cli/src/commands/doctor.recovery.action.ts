@@ -282,16 +282,23 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     }
   }
   await options.afterConfirm?.()
-  const result = await executeRecovery(planned, options.runOptions ?? {})
-  if (json) printJson(plan, result)
-  else printLines(resultLines(result))
-  const code = exitOf(result)
-  if (code !== undefined) process.exitCode = code
-  if (parked(result)) {
-    await printParkedUsageWarning({
-      discovered: found,
-      ...(options.parkedUsage === undefined ? {} : { parkedUsage: options.parkedUsage }),
-      ...(options.measure === undefined ? {} : { measure: options.measure }),
-    })
+  // UD66: a throw from the action (after a park's rename) or from printing its result must not
+  // skip the warning, so it runs in `finally`: when the run says it parked, and also when it
+  // never returned (the outcome is unknown after the user confirmed).
+  let result: RecoveryRunResult | undefined
+  try {
+    result = await executeRecovery(planned, options.runOptions ?? {})
+    if (json) printJson(plan, result)
+    else printLines(resultLines(result))
+    const code = exitOf(result)
+    if (code !== undefined) process.exitCode = code
+  } finally {
+    if (result === undefined || parked(result)) {
+      await printParkedUsageWarning({
+        discovered: found,
+        ...(options.parkedUsage === undefined ? {} : { parkedUsage: options.parkedUsage }),
+        ...(options.measure === undefined ? {} : { measure: options.measure }),
+      })
+    }
   }
 }

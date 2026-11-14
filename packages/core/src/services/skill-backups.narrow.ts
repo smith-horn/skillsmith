@@ -16,6 +16,12 @@
  *    sidecar that disagrees with its area (a mismatched one) belongs to either
  *    root it names, and is shown with its `unverified` class.
  *
+ * `--client` (`narrowToClient`) is the same kind of post-filter: it keeps a
+ * backup row whose `<client>` segment matches, and a parked row whose sidecar
+ * client does or is unknown. What it drops (other clients' parked rows, and
+ * whole backup areas with their temps, leftovers, orphan sidecars and
+ * anomalies) is counted in `excludedByClient`, never dropped uncounted.
+ *
  * Read-only.
  *
  * @module @skillsmith/core/services/skill-backups.narrow
@@ -25,6 +31,7 @@ import { rootKeyFor } from '../install/prune.classify.js'
 import type {
   BackupAreaView,
   BackupsListing,
+  ExcludedByClient,
   ExcludedByRoot,
 } from './skill-backups.listing.types.js'
 
@@ -63,4 +70,35 @@ export function narrowToRoots(l: BackupsListing, roots: readonly string[]): Back
   const legacy = l.legacy.filter((g) => roots.includes(g.root))
   out.olderStores = l.mcpStores.length - mcpStores.length + (l.legacy.length - legacy.length)
   return { ...l, parked, backups, mcpStores, legacy, narrowedTo: [...roots], excludedByRoot: out }
+}
+
+const sidecarClient = (r: {
+  classification: { sidecar: Record<string, unknown> | null }
+}): string | null => {
+  const c = r.classification.sidecar?.['client']
+  return typeof c === 'string' ? c : null
+}
+
+/** `--client`: the listing narrowed to one client, with the counts of what was left out. */
+export function narrowToClient(l: BackupsListing, client: string): BackupsListing {
+  const out: ExcludedByClient = { parkedCopies: 0, backupTrees: 0, otherEntries: 0 }
+  const parked = l.parked.map((a) => {
+    const rows = a.rows.filter((r) => {
+      const c = sidecarClient(r)
+      return c === null || c === client
+    })
+    out.parkedCopies += a.rows.length - rows.length
+    return { ...a, rows }
+  })
+  const backups = l.backups.map((s) => ({
+    ...s,
+    areas: s.areas.filter((a) => {
+      if (a.client === client) return true
+      out.backupTrees += a.rows.length
+      out.otherEntries +=
+        a.temps.length + a.leftovers.length + a.orphanSidecars.length + a.anomalies.length
+      return false
+    }),
+  }))
+  return { ...l, parked, backups, excludedByClient: out }
 }

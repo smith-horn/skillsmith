@@ -22,6 +22,7 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
 })
 
 import type { RecoveryRunResult } from '@skillsmith/core'
+import { runDoctorBackups } from './doctor.backups.js'
 import { parked, runRecoveryAction } from './doctor.recovery.action.js'
 import { hermeticDiscovery, plantCrashedUpdate } from './doctor.test-helpers.js'
 import type { PlantedUpdate } from './doctor.test-helpers.js'
@@ -264,5 +265,57 @@ describe('D8: the predicate that says a park happened', () => {
     expect(parked(stopped({ path: '/op', stillThere: false }))).toBe(true)
     expect(parked(stopped({ path: '/op', stillThere: true }))).toBe(false)
     expect(parked(stopped(undefined))).toBe(false)
+  })
+})
+
+describe('F6: the warning is not lost when the rest of the action throws', () => {
+  /** A held set-aside folder under the hermetic Claude root, so the loud threshold has something to count. */
+  function plantHeld(): string {
+    const copy = path.join(
+      base,
+      'clients',
+      'claude-code',
+      '.skillsmith-parked',
+      'op-0',
+      'foo-12345678'
+    )
+    fs.mkdirSync(copy, { recursive: true })
+    fs.writeFileSync(path.join(copy, 'SKILL.md'), 's'.repeat(6000))
+    return copy
+  }
+
+  it('doctor backups: a listing that cannot be printed (EPIPE) still warns on stderr', async () => {
+    plantHeld()
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      throw new Error('EPIPE')
+    })
+    await expect(
+      runDoctorBackups({ discovery: hermeticDiscovery(base, true), ...loud })
+    ).rejects.toThrow('EPIPE')
+    expect(err.join('\n')).toContain(WORDS)
+  })
+
+  it('--park: a result that cannot be printed after the park moved still warns', async () => {
+    const u = plantUnreadable()
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      if (!fs.existsSync(u.opDir)) throw new Error('EPIPE')
+    })
+    await expect(runRecoveryAction({ park: u.opId, yes: true, ...loud })).rejects.toThrow('EPIPE')
+    expect(fs.existsSync(u.opDir)).toBe(false)
+    expect(err.join('\n')).toContain(WORDS)
+  })
+
+  it('an action that throws after confirmation leaves the outcome unknown, so it warns', async () => {
+    plantHeld()
+    const u = plantUnreadable()
+    const runOptions = {
+      afterReplan: () => {
+        throw new Error('boom')
+      },
+    }
+    await expect(
+      runRecoveryAction({ park: u.opId, yes: true, runOptions, ...loud })
+    ).rejects.toThrow('boom')
+    expect(err.join('\n')).toContain(WORDS)
   })
 })

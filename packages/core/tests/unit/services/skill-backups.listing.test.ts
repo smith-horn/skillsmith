@@ -306,20 +306,25 @@ describe('UD61 facts', () => {
   it('a live record protects its opId, except a partial-copy whose source is unchanged', () => {
     const q = (kind: string, su: boolean | null) =>
       protectionOf(facts, parkedUnreadable, { opId: 'op-live', kind, sourceUnchanged: su })
-    expect(q('conflict', null)).toEqual({ rule: 'live-record', path: live.get('op-live') })
-    expect(q('partial-copy', true)).toBeNull()
-    expect(q('partial-copy', false)?.rule).toBe('live-record')
-    expect(q('partial-copy', null)?.rule).toBe('live-record')
+    expect(q('conflict', null)).toEqual({
+      status: 'protected',
+      rule: 'live-record',
+      path: live.get('op-live'),
+    })
+    expect(q('partial-copy', true)).toEqual({ status: 'unprotected' })
+    expect(q('partial-copy', false)).toMatchObject({ rule: 'live-record' })
+    expect(q('partial-copy', null)).toMatchObject({ rule: 'live-record' })
   })
 
   it('a parked unreadable record protects its opId; an unrelated opId is unprotected', () => {
     const q = (opId: string) =>
       protectionOf(facts, parkedUnreadable, { opId, kind: 'undone', sourceUnchanged: null })
     expect(q('op-bad')).toEqual({
+      status: 'protected',
       rule: 'parked-unreadable-record',
       path: '/r/.skillsmith-parked/op-bad/op-bad-12345678',
     })
-    expect(q('op-other')).toBeNull()
+    expect(q('op-other')).toEqual({ status: 'unprotected' })
   })
 })
 

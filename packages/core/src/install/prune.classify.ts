@@ -73,10 +73,15 @@ const SIDECAR_MAX_BYTES = 1024 * 1024
 export const rootKeyFor = (root: string): string =>
   crypto.createHash('sha256').update(root).digest('hex').slice(0, 16)
 
-/** Linux: is there a mount point exactly AT `abs`? Unresolvable or unreadable is true (fail closed). */
+/**
+ * Linux: is there a mount point exactly AT `abs`? Unresolvable or unreadable is
+ * true (fail closed). So is a symlink: the callers lstat a directory first and
+ * then ask, so a link here means the path was swapped in between, and a
+ * directory read that follows it would list the target.
+ */
 export function mountAt(abs: string): boolean {
   const v = mountVerdictAt(abs)
-  if (!v.mounted) return false
+  if (!v.mounted) return v.symlink === true
   return v.reason !== 'mount-point' || (v.real !== null && v.points.includes(v.real))
 }
 

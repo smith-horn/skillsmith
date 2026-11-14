@@ -38,6 +38,11 @@ export interface AreaRef {
   origin: AreaOrigin
   /** The discovered skills root this area belongs to, or null for an index-only area. */
   skillsRoot: string | null
+  /**
+   * Why the scan did not go in (a staging directory that is a symlink is never
+   * followed): the area is reported with this as an anomaly and not listed.
+   */
+  skipped?: string
 }
 
 const realOr = (p: string): string => {
@@ -48,19 +53,44 @@ const realOr = (p: string): string => {
   }
 }
 
+const isSymlink = (p: string): boolean => {
+  try {
+    return fs.lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 /** The areas the directory scan covers: each root's own and its staging directory's. */
 export function scannedAreas(roots: readonly string[]): AreaRef[] {
   const out: AreaRef[] = []
   const seen = new Set<string>()
   const add = (root: string, origin: AreaOrigin, skillsRoot: string | null): void => {
-    const areaDir = path.join(realOr(root), PARKED_DIR)
+    const areaDir = path.join(root, PARKED_DIR)
     if (seen.has(areaDir)) return
     seen.add(areaDir)
-    out.push({ root: realOr(root), areaDir, origin, skillsRoot })
+    out.push({ root, areaDir, origin, skillsRoot })
   }
   for (const r of roots) {
-    add(r, 'root', r)
-    add(path.join(r, STAGING_DIR), 'staging', r)
+    // The skills root is resolved (its realpath is the dedup key, E43); its staging directory
+    // is not: a symlink there would hand the target's `.skillsmith-parked` over as this root's.
+    const real = realOr(r)
+    add(real, 'root', r)
+    const staging = path.join(real, STAGING_DIR)
+    if (isSymlink(staging)) {
+      const areaDir = path.join(staging, PARKED_DIR)
+      if (seen.has(areaDir)) continue
+      seen.add(areaDir)
+      out.push({
+        root: staging,
+        areaDir,
+        origin: 'staging',
+        skillsRoot: r,
+        skipped: 'the staging directory is a symlink; not followed',
+      })
+      continue
+    }
+    add(staging, 'staging', r)
   }
   return out
 }

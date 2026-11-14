@@ -13,9 +13,14 @@
  * there). The zero-mutation test in the CLI spies every write-family fs member
  * over a full run.
  *
- * `scope` restricts which areas are listed (a later re-plan lists one lock
- * group); the record scan still covers every discovered root, because UD61
- * protection depends on records in all of them.
+ * `scope` restricts which areas are SHOWN (a later re-plan lists one lock
+ * group). Everything that is a fact about the whole machine is computed over
+ * every discovered area and root: the record scan and the parked unreadable
+ * records UD61 rule (c) reads, the space warning's entries, and the index's
+ * stale lines.
+ *
+ * A store, area or level it refused or could not read is counted as an
+ * unmeasured entry, so the space warning says so instead of staying quiet.
  *
  * @module @skillsmith/core/services/skill-backups.listing
  */
@@ -32,12 +37,13 @@ import { evaluateParkedUsage } from '../install/parked-usage.js'
 import type { ParkedUsageEntry, ParkedUsageOptions } from '../install/parked-usage.js'
 import { listRemovingLeftovers } from '../install/remove-if-same.js'
 import type { Leftover } from '../install/prune.leftovers.js'
-import type { ListedCopy } from '../install/prune.list.types.js'
+import { errCode } from '../install/park-result.js'
+import type { Anomaly, ListedCopy } from '../install/prune.list.types.js'
 import { discoverRoots } from './skill-recovery.discover.js'
 import type { Discovery, DiscoverOptions } from './skill-recovery.discover.js'
 import { indexOnlyAreas, readIndexes, scannedAreas, staleLines } from './skill-backups.areas.js'
 import { collectRecordFacts, protectionOf } from './skill-backups.records.js'
-import { narrowToRoots } from './skill-backups.narrow.js'
+import { narrowToClient, narrowToRoots } from './skill-backups.narrow.js'
 import type {
   BackupAreaView,
   BackupRow,
@@ -196,7 +202,11 @@ function mcpStores(
     try {
       const st = fs.lstatSync(p)
       if (st.isSymbolicLink() || !st.isDirectory()) continue
-    } catch {
+    } catch (err) {
+      // Absent is fine; any other failure means a store that may hold something unmeasured.
+      if (errCode(err) !== 'ENOENT') {
+        entries.push(unreadableEntry(p, r.root, `older MCP store unreadable (${errCode(err)})`))
+      }
       continue
     }
     const m = measureOf(p)
@@ -218,9 +228,34 @@ async function legacyLeftovers(roots: readonly string[]): Promise<LegacyLeftover
   return out
 }
 
+/**
+ * A store, area or level that was refused or could not be read: whatever it
+ * holds was never measured, so it counts as one unmeasured entry. Without this
+ * the space warning's "could not be measured" arm could not see it at all.
+ */
+const unreadableEntry = (p: string, storeDir: string, why: string): ParkedUsageEntry => ({
+  path: p,
+  storeDir,
+  units: new Map(),
+  unmeasured: 1,
+  originPath: null,
+  opId: why,
+})
+
+/**
+ * A lister's anomaly that hides a tree from the measurement (a level it could
+ * not read, or one it refused for its device, owner or a mount). A stray hidden
+ * file or a non-directory is an anomaly too, but holds no tree to measure.
+ */
+const hidesContent = (a: Anomaly): boolean =>
+  /unreadable|another device|another user|mount point/.test(a.detail)
+
 /** Lists everything `doctor backups` reports. Reads only. */
 export async function listBackups(options: ListBackupsOptions = {}): Promise<BackupsListing> {
   const now = options.now ?? Date.now()
+  // Scope decides what is SHOWN. Everything else (UD61 rule (c), the space warning, the
+  // index's stale lines) is computed over every discovered area, so a narrowed view cannot
+  // change a protection fact or hide a copy from the warning.
   const inScope = (p: string): boolean =>
     options.scope?.areaPaths === undefined || options.scope.areaPaths.includes(p)
   const discovery =
@@ -246,17 +281,49 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
   const usageEntries: ParkedUsageEntry[] = []
   const found = new Set<string>()
   const listedAreas = new Set<string>()
+  const noteUnreadable = (anomalies: readonly Anomaly[]): void => {
+    for (const x of anomalies) {
+      if (hidesContent(x))
+        usageEntries.push(unreadableEntry(x.path, path.dirname(x.path), x.detail))
+    }
+  }
 
   const parked: ParkedAreaView[] = []
   const parkedUnreadable = new Map<string, string>()
+  // What the parked scan could not see: rule (c) cannot be ruled out for it (see protectionOf).
+  const unseen = { hidden: [] as string[], maybe: new Map<string, string>() }
   for (const ref of areas) {
-    if (!inScope(ref.areaDir)) continue
+    if (ref.skipped !== undefined) {
+      // Not followed, so not measured: counted, and shown as an anomaly of the staging directory.
+      unseen.hidden.push(ref.root)
+      usageEntries.push(unreadableEntry(ref.root, path.dirname(ref.root), ref.skipped))
+      if (inScope(ref.areaDir)) {
+        const anomalies = [{ path: ref.root, detail: ref.skipped }]
+        parked.push({
+          ref,
+          absent: false,
+          refused: null,
+          rows: [],
+          leftovers: [],
+          orphanSidecars: [],
+          anomalies,
+        })
+      }
+      continue
+    }
     const l = listParkedArea(ref.root)
     if (!l.absent && l.refused === null) listedAreas.add(ref.areaDir)
+    if (l.refused !== null) {
+      unseen.hidden.push(ref.areaDir)
+      usageEntries.push(unreadableEntry(ref.areaDir, ref.root, l.refused))
+    }
+    noteUnreadable(l.anomalies)
+    for (const x of l.anomalies) if (hidesContent(x)) unseen.hidden.push(x.path)
     const rows = l.copies.map((c) => parkedRow(c, now, indexed, classify))
     for (const r of rows) {
       found.add(r.copy.copyPath)
       if (r.kind === 'unreadable-record') parkedUnreadable.set(r.copy.opId, r.copy.copyPath)
+      else if (r.kind === null) unseen.maybe.set(r.copy.opId, r.copy.copyPath)
       usageEntries.push(
         usageOf(r.copy.copyPath, r.copy.parentDir, r.classification.measured, r.origin, r.copy.opId)
       )
@@ -266,6 +333,7 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
         usageOf(lo.S, path.dirname(lo.S), measureOf(lo.S), null, path.basename(lo.S))
       )
     }
+    if (!inScope(ref.areaDir)) continue
     parked.push({
       ref,
       absent: l.absent,
@@ -281,8 +349,12 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
     const updateDir = path.join(stateRoot, 'backups', 'update')
     const store = listBackupStore(updateDir)
     const views: BackupAreaView[] = []
+    if (store.refused !== null) {
+      usageEntries.push(unreadableEntry(updateDir, stateRoot, store.refused))
+    }
+    noteUnreadable(store.anomalies)
     for (const a of store.areas) {
-      if (!inScope(a.areaPath)) continue
+      noteUnreadable(a.anomalies)
       const rows: BackupRow[] = a.copies.map((copy) => {
         const classification = classify(copy, 'backup')
         const createdMs = createdOf(classification, copy.copyPath, false)
@@ -313,14 +385,19 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
               : classification.klass === 'changed'
                 ? false
                 : null,
-          protectedBy: protectionOf(records, parkedUnreadable, {
-            opId,
-            kind,
-            sourceUnchanged:
-              typeof classification.sidecar?.['sourceUnchanged'] === 'boolean'
-                ? (classification.sidecar['sourceUnchanged'] as boolean)
-                : null,
-          }),
+          protection: protectionOf(
+            records,
+            parkedUnreadable,
+            {
+              opId,
+              kind,
+              sourceUnchanged:
+                typeof classification.sidecar?.['sourceUnchanged'] === 'boolean'
+                  ? (classification.sidecar['sourceUnchanged'] as boolean)
+                  : null,
+            },
+            unseen
+          ),
           newestOfGroup: false,
           ...sizesOf(classification.measured),
         }
@@ -336,6 +413,8 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
         )
         return { ...t, ownedBy: records.live.get(t.base.split('.')[0] as string) ?? null }
       })
+      listedAreas.add(a.areaPath)
+      if (!inScope(a.areaPath)) continue
       markNewest(rows)
       views.push({
         areaPath: a.areaPath,
@@ -348,7 +427,6 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
         orphanSidecars: a.orphanSidecars,
         anomalies: a.anomalies,
       })
-      listedAreas.add(a.areaPath)
     }
     return {
       stateRoot,
@@ -382,6 +460,7 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
     client: options.client ?? null,
     narrowedTo: null,
     excludedByRoot: null,
+    excludedByClient: null,
   }
   const byClient = options.client === undefined ? listing : narrowToClient(listing, options.client)
   // `--root` narrows as well as adds (PLAN 2046, UD22): only when the caller gave roots itself.
@@ -389,22 +468,4 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
   if (!given) return byClient
   const wanted = discovery.roots.filter((r) => r.sources.includes('--root')).map((r) => r.root)
   return narrowToRoots(byClient, wanted)
-}
-
-/** `--client`: keep a backup row whose `<client>` segment matches, and a parked row whose sidecar client does or is unknown. */
-function narrowToClient(l: BackupsListing, client: string): BackupsListing {
-  return {
-    ...l,
-    parked: l.parked.map((a) => ({
-      ...a,
-      rows: a.rows.filter((r) => {
-        const c = str(r.classification.sidecar, 'client')
-        return c === null || c === client
-      }),
-    })),
-    backups: l.backups.map((s) => ({
-      ...s,
-      areas: s.areas.filter((a) => a.client === client),
-    })),
-  }
 }

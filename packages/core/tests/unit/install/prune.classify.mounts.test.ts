@@ -7,7 +7,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { classifyCopy } from '../../../src/install/prune.classify.js'
+import { classifyCopy, mountAt } from '../../../src/install/prune.classify.js'
+import { mountVerdictAt } from '../../../src/install/park-tree.mounts.js'
 import { listParkedArea } from '../../../src/install/prune.list.parked.js'
 import { mountFinding } from '../../../src/install/prune.walk.shared.js'
 import type { ListedCopy } from '../../../src/install/prune.list.types.js'
@@ -155,4 +156,45 @@ describe('the classifier and the walker re-check agree on the same roots', () =>
       expect(mountedByClassifier).toBe(k.mountinfo === 'UNDER' || typeof k.mountinfo === 'object')
     })
   }
+})
+
+describe('F9: a path that became a symlink after the caller looked is a refusal', () => {
+  it('the verdict names the symlink; mountAt (which needs a directory) refuses it; the walker check does not', () => {
+    const f = makeParent('prune-f9-')
+    fixtures.push(f)
+    const target = path.join(f.parent, 'target')
+    fs.mkdirSync(target)
+    const link = path.join(f.parent, 'link')
+    fs.symlinkSync(target, link)
+    expect(mountVerdictAt(link)).toEqual({ mounted: false, symlink: true })
+    expect(mountAt(link)).toBe(true)
+    // The walker unlinks a link without following it, so its own check still lets a link through.
+    expect(mountFinding(link)).toBeNull()
+    // Control: a real directory is neither.
+    expect(mountVerdictAt(target)).toEqual({ mounted: false })
+    expect(mountAt(target)).toBe(false)
+  })
+
+  it('a set-aside area swapped for a symlink between the lister lstat and the mount check is refused whole', () => {
+    const real = makeParent('prune-f9-real-')
+    const f = makeParent('prune-f9-root-')
+    fixtures.push(real, f)
+    parkCopy(real.parent, 'tree')
+    const areaDir = path.join(f.parent, '.skillsmith-parked')
+    fs.symlinkSync(path.join(real.parent, '.skillsmith-parked'), areaDir)
+    // The caller's lstat sees the directory it will be swapped for; every later look sees the link.
+    const lstat = fs.lstatSync.bind(fs) as (...a: unknown[]) => unknown
+    let first = true
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((p: unknown, ...rest: unknown[]) => {
+      if (p === areaDir && first) {
+        first = false
+        return fs.statSync(areaDir, { bigint: true })
+      }
+      return lstat(p, ...rest)
+    }) as typeof fs.lstatSync)
+    const l = listParkedArea(f.parent)
+    expect(first).toBe(false)
+    expect(l.refused).not.toBeNull()
+    expect(l.copies).toEqual([])
+  })
 })

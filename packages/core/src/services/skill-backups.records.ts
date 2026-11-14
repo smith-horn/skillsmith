@@ -25,6 +25,16 @@ export interface ProtectedBy {
   path: string
 }
 
+/**
+ * UD61 as a fact with three answers, never two: a record protects the tree, no
+ * record does, or the records could not all be read so nobody can say. "No
+ * record found" and "records unknown" must not read the same.
+ */
+export type Protection =
+  | ({ status: 'protected' } & ProtectedBy)
+  | { status: 'unprotected' }
+  | { status: 'unknown'; reason: string }
+
 export interface RecordFacts {
   /** Verified live records by opId: the first record path seen for each. */
   live: Map<string, string>
@@ -58,20 +68,66 @@ export interface ProtectionQuery {
 }
 
 /**
+ * What the parked scan could not see, so rule (c) cannot be ruled out:
+ * `hidden` names areas (or staging directories) that were refused, skipped or
+ * partly unreadable, any of which may hold an `unreadable-record` copy; `maybe`
+ * maps an opId to a parked copy whose kind could not be read, which may be one.
+ */
+export interface ParkedUnseen {
+  hidden: readonly string[]
+  maybe: ReadonlyMap<string, string>
+}
+
+/**
  * UD61 (b) and (c) as a fact: the live record whose opId the tree carries
  * (except a `partial-copy` with `sourceUnchanged: true`), else the parked
- * unreadable record with that opId. `parkedUnreadable` maps an opId to the
- * parked copy's path.
+ * unreadable record with that opId (`parkedUnreadable` maps an opId to the
+ * parked copy's path). With neither, the answer is `unknown` when some root's
+ * records could not be scanned, a record in one could not be verified (its
+ * opId is unknown, so it may be this tree's), a parked copy with this opId has
+ * an unknown kind, or a parked area could not be read (`unseen`); and
+ * `unprotected` otherwise.
  */
 export function protectionOf(
   facts: RecordFacts,
   parkedUnreadable: ReadonlyMap<string, string>,
-  q: ProtectionQuery
-): ProtectedBy | null {
+  q: ProtectionQuery,
+  unseen?: ParkedUnseen
+): Protection {
   const exempt = q.kind === 'partial-copy' && q.sourceUnchanged === true
   const live = facts.live.get(q.opId)
-  if (live !== undefined && !exempt) return { rule: 'live-record', path: live }
+  if (live !== undefined && !exempt) return { status: 'protected', rule: 'live-record', path: live }
   const parked = parkedUnreadable.get(q.opId)
-  if (parked !== undefined) return { rule: 'parked-unreadable-record', path: parked }
-  return null
+  if (parked !== undefined) {
+    return { status: 'protected', rule: 'parked-unreadable-record', path: parked }
+  }
+  const failed = facts.scanFailures[0]
+  if (failed !== undefined) {
+    return {
+      status: 'unknown',
+      reason: 'records under ' + failed.root + ' could not be read (' + failed.errno + ')',
+    }
+  }
+  const unreadable = facts.unreadable[0]
+  if (unreadable !== undefined) {
+    return {
+      status: 'unknown',
+      reason: 'an unreadable update record in ' + unreadable.root + ' may protect it',
+    }
+  }
+  const maybe = unseen?.maybe.get(q.opId)
+  if (maybe !== undefined) {
+    return {
+      status: 'unknown',
+      reason: 'the set-aside copy ' + maybe + ' has this operation id and an unreadable kind',
+    }
+  }
+  const hidden = unseen?.hidden[0]
+  if (hidden !== undefined) {
+    return {
+      status: 'unknown',
+      reason: hidden + ' could not be read and may hold a set-aside record for this operation',
+    }
+  }
+  return { status: 'unprotected' }
 }

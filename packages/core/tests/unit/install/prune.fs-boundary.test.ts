@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { checkFsBoundary, checkFsBoundarySource } from './park-tree.fs-boundary.js'
 import { callShapeViolations } from './prune.fs-boundary.calls.js'
+import { WRITE_MEMBERS } from './fs-write-shape.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const INSTALL = path.resolve(HERE, '../../../src/install')
@@ -366,30 +367,11 @@ describe('positive controls: each planted bypass is flagged', () => {
     'prune.list.backups.ts',
     'parked-usage.ts',
   ]
-  const WRITE_MEMBERS = [
-    'unlinkSync',
-    'rmdirSync',
-    'rmSync',
-    'renameSync',
-    'mkdirSync',
-    'writeFileSync',
-    'appendFileSync',
-    'openSync',
-    'fsyncSync',
-    'writeSync',
-    'linkSync',
-    'symlinkSync',
-    'copyFileSync',
-    'truncateSync',
-    'chmodSync',
-    'utimesSync',
-  ]
-
   it('6c-ii-a: the pins of the read-only modules hold no write member', () => {
     for (const f of READ_ONLY_MODULES) {
       expect(f in FS_MEMBERS, f).toBe(true)
       expect(
-        FS_MEMBERS[f]?.filter((m) => WRITE_MEMBERS.includes(m)),
+        FS_MEMBERS[f]?.filter((m) => WRITE_MEMBERS.has(m)),
         f
       ).toEqual([])
     }

@@ -9,16 +9,23 @@ All notable changes to `@skillsmith/core` are documented here.
   store, and classifies each copy mounted, held, unverified, changed or clean. Sizes are allocated
   bytes, with hard links counted once. `evaluateParkedUsage()` warns per disk over min(1 GB, 5% of
   free space), and also whenever an entry could not be measured or free space could not be read; it
-  says "set-aside folders". Both only read. A static test pins every listing module to read-only fs
-  calls, and a second checks every import it reaches into a writing module, through any depth of
-  calls.
+  says "set-aside folders". Both only read. A refused or unreadable store, area or level counts as
+  an unmeasured entry, so the warning cannot miss it. `scope` narrows only what is shown: the
+  protection facts and the warning still read every area. `--client` counts what it dropped
+  (`excludedByClient`). A kept tree's protection is `protected`, `unprotected` or `unknown`. A
+  `.skillsmith-staging` that is a symlink is not followed. A static test pins every listing module
+  to read-only fs calls, a second checks every import it reaches into a writing module, through any
+  depth of calls and every shape of write (named, namespace, callback and `fs.promises` forms,
+  computed keys, destructuring, aliases, re-exports), and a third walks every service and CLI module
+  the listing reaches for any write the zero-mutation spy cannot see.
 - **Changed**: SMI-6531 -- the companion-rollback park caller writes kind `companion-rollback`, not
   `install-rollback`. No caller passed it yet, so no parked copy on disk carries the old kind.
 - **Changed**: SMI-6531 -- the prune walker's mount re-check and the listing's classifier share one
   verdict. A copy root that is a symlink is no longer realpath'd for the mount check (a mount on a
   symlink path lands on its target, and the walker removes the link itself), so a dangling link or
   a link to `/` is no longer stopped as mounted. A non-symlink root whose realpath fails is still
-  treated as mounted.
+  treated as mounted. A path that turns into a symlink between a lister's own check and the mount
+  check is now refused instead of followed.
 - **Added (internal, no caller yet)**: SMI-6531 -- A1 step 6c-i: ADR-166 D-11's deletion engine
   is ported from the SMI-6676 spike into `src/install/prune.*.ts`. A walker child re-checks one
   approved copy (its file type included), stages it with its sidecar in a private

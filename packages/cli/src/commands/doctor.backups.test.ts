@@ -219,6 +219,7 @@ function handBuilt(over: Partial<BackupsListing>): BackupsListing {
     client: null,
     narrowedTo: null,
     excludedByRoot: null,
+    excludedByClient: null,
     ...over,
   } as BackupsListing
 }

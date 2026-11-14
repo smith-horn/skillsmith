@@ -198,6 +198,7 @@ export {
   type BackupRow,
   type BackupsListing,
   type BackupStoreView,
+  type ExcludedByClient,
   type ExcludedByRoot,
   type LeftoverView,
   type LegacyLeftovers,
@@ -208,6 +209,6 @@ export {
   type ParkedRow,
   type Sizes,
 } from '../services/skill-backups.listing.js'
-export type { ProtectedBy, RecordFacts } from '../services/skill-backups.records.js'
+export type { ProtectedBy, Protection, RecordFacts } from '../services/skill-backups.records.js'
 export { leftoverLines } from '../services/skill-backups.render.js'
 export { human as humanBytes } from '../install/parked-usage.js'

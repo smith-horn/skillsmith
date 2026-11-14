@@ -20,6 +20,15 @@ import { kindTotals } from './doctor.backups.json.js'
 
 const days = (d: number | null): string => (d === null ? 'age unknown' : `${d}d`)
 const why = (reason: string | null): string => (reason === null ? '' : ` (${reason})`)
+/**
+ * A copy's class and reason. A root whose real path could not be resolved is
+ * never offered, as a mounted one is, but it is not known to be mounted: it
+ * may have vanished or be unreadable, so it says so.
+ */
+const classText = (c: { klass: string; reason: string | null }): string =>
+  c.klass === 'mounted' && c.reason === 'realpath-failed'
+    ? 'could not be resolved (realpath-failed)'
+    : `${c.klass}${why(c.reason)}`
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
 /** Where an area sits, in words: the area-aware "next to your own directory" sentence (Q9). */
@@ -46,7 +55,7 @@ function whereSentence(a: ParkedAreaView): string {
 function parkedRowLine(r: ParkedRow): string {
   const c = r.classification
   return (
-    `  ${c.klass}${why(c.reason)}  ${humanBytes(r.allocatedBytes)} on disk  ${days(r.ageDays)}  ` +
+    `  ${classText(c)}  ${humanBytes(r.allocatedBytes)} on disk  ${days(r.ageDays)}  ` +
     `${r.copy.copyPath}  origin: ${r.origin ?? 'unknown'}  index: ${r.index}` +
     (r.kind === null ? '' : `  kind: ${r.kind}`)
   )
@@ -84,14 +93,17 @@ function backupRowLine(r: BackupRow): string {
       : r.hashStillEquals
         ? '  hash matches sidecar'
         : '  hash differs from sidecar'
+  const p = r.protection
   const prot =
-    r.protectedBy === null
-      ? ''
-      : r.protectedBy.rule === 'live-record'
-        ? `  protected by record ${r.protectedBy.path}`
-        : `  protected by parked unreadable record ${r.protectedBy.path}`
+    p.status === 'unknown'
+      ? `  protection unknown: ${p.reason}`
+      : p.status === 'unprotected'
+        ? '  no update record protects it'
+        : p.rule === 'live-record'
+          ? `  protected by record ${p.path}`
+          : `  protected by parked unreadable record ${p.path}`
   return (
-    `  ${r.kind ?? 'unknown kind'}  ${c.klass}${why(c.reason)}  ${humanBytes(r.allocatedBytes)} on disk  ` +
+    `  ${r.kind ?? 'unknown kind'}  ${classText(c)}  ${humanBytes(r.allocatedBytes)} on disk  ` +
     `${days(r.ageDays)}  ${r.copy.name}  opId ${r.opId}${hash}${prot}` +
     (r.newestOfGroup ? '  newest backup of this folder' : '')
   )
@@ -210,6 +222,20 @@ export function renderListing(l: BackupsListing): string[] {
     if (parts.length > 0) {
       lines.push(
         `Excluded by --root (they belong to other skills roots, or to none you named): ${parts.join(', ')}.`
+      )
+    }
+  }
+  const c = l.excludedByClient
+  if (c !== null && c !== undefined && l.client !== null) {
+    const parts = [
+      c.parkedCopies > 0 && plural(c.parkedCopies, 'set-aside folder', 'set-aside folders'),
+      c.backupTrees > 0 && plural(c.backupTrees, 'kept backup tree', 'kept backup trees'),
+      c.otherEntries > 0 &&
+        plural(c.otherEntries, 'temp, leftover or orphan', 'temps, leftovers or orphans'),
+    ].filter((p): p is string => p !== false)
+    if (parts.length > 0) {
+      lines.push(
+        `Excluded by --client ${l.client} (they belong to other clients): ${parts.join(', ')}.`
       )
     }
   }
