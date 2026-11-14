@@ -184,3 +184,10 @@ export type {
   RowState,
   UnreadableObservation,
 } from '../services/skill-recovery.types.js'
+// SMI-6531 A1 step 6c-ii-a: the space warning over set-aside folders (UD66) that doctor prints.
+export {
+  evaluateParkedUsage,
+  type ParkedUsageEntry,
+  type ParkedUsageOptions,
+  type ParkedUsageWarning,
+} from '../install/parked-usage.js'

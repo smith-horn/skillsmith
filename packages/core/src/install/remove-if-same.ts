@@ -125,6 +125,37 @@ export async function listParkedLeftovers(target: string): Promise<ParkedScan> {
   }
 }
 
+/** Every name {@link removeIfSame} parks something under, whichever target it was: `.<name>.skillsmith-removing-<32 hex>`. */
+export const PARKED_LEFTOVER_RE = /^\..+\.skillsmith-removing-[0-9a-f]{32}$/
+
+/**
+ * Every entry in `dir` that a crashed or failed removal left parked, whatever
+ * target it was parked for (SMI-6531 6c-ii-a). {@link listParkedLeftovers} is
+ * per target and cannot list a whole directory; `doctor backups` lists a
+ * skills root this way. Read-only: it lists names and never touches an entry,
+ * and nothing it returns is ever selected for deletion (UD58: the owner of a
+ * legacy leftover is unknown).
+ */
+export async function listRemovingLeftovers(dir: string): Promise<ParkedScan> {
+  let entries: string[]
+  try {
+    entries = await fsp.readdir(dir)
+  } catch (err) {
+    return {
+      parked: [],
+      unreadable:
+        `${dir} could not be listed (${errorCode(err)}), so anything an interrupted removal ` +
+        `left parked there is not reported here.`,
+    }
+  }
+  return {
+    parked: entries
+      .filter((name) => PARKED_LEFTOVER_RE.test(name))
+      .sort()
+      .map((name) => path.join(dir, name)),
+  }
+}
+
 /**
  * User-facing warning for what {@link listParkedLeftovers} found. Round 18
  * (cross-model review): who owns a parked entry is not known. It is whatever
