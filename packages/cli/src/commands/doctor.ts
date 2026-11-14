@@ -45,6 +45,7 @@ import {
 } from '@skillsmith/core'
 import { collectRoot, doctorRecoveryAction, type DoctorRecoveryOptions } from './doctor.recovery.js'
 import { runRecoveryAction, type RecoveryActionOptions } from './doctor.recovery.action.js'
+import { doctorBackupsAction } from './doctor.backups.js'
 
 export interface DoctorLocksOptions {
   stateRoot?: string
@@ -260,7 +261,7 @@ export const doctorLocksAction = withTelemetry(runDoctorLocks, {
   extractFramework: () => 'cli',
 })
 
-/** Create the `doctor` command (`doctor locks`, `doctor recovery`). */
+/** Create the `doctor` command (`doctor locks`, `doctor recovery`, `doctor backups`). */
 export function createDoctorCommand(): Command {
   const doctor = new Command('doctor').description(
     "Inspect and repair Skillsmith's own state (locks, unfinished updates)"
@@ -329,5 +330,21 @@ export function createDoctorCommand(): Command {
       "With --release: also release a lock whose owner can't be verified gone"
     )
     .action(doctorLocksAction)
+  // SMI-6531 6c-ii-a: read-only; lists set-aside folders and kept backups, warns on stderr.
+  doctor
+    .command('backups')
+    .description(
+      'List the folders Skillsmith set aside and the backups it kept, with how much space they take (read-only; deletes nothing)'
+    )
+    .option(
+      '--root <dir>',
+      'Scan this skills root and show only what belongs to it (repeatable)',
+      collectRoot,
+      [] as string[]
+    )
+    .option('--state-root <dir>', 'State root to read instead of the discovered ones')
+    .option('--client <id>', "Only list this client's folders")
+    .option('--json', 'Print the listing as JSON')
+    .action(doctorBackupsAction)
   return doctor
 }

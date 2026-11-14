@@ -191,3 +191,23 @@ export {
   type ParkedUsageOptions,
   type ParkedUsageWarning,
 } from '../install/parked-usage.js'
+// SMI-6531 A1 step 6c-ii-a: the read-only listing behind `doctor backups` (UD22, UD58, UD61).
+export {
+  listBackups,
+  type BackupAreaView,
+  type BackupRow,
+  type BackupsListing,
+  type BackupStoreView,
+  type ExcludedByRoot,
+  type LeftoverView,
+  type LegacyLeftovers,
+  type ListBackupsOptions,
+  type ListScope,
+  type McpStoreView,
+  type ParkedAreaView,
+  type ParkedRow,
+  type Sizes,
+} from '../services/skill-backups.listing.js'
+export type { ProtectedBy, RecordFacts } from '../services/skill-backups.records.js'
+export { leftoverLines } from '../services/skill-backups.render.js'
+export { human as humanBytes } from '../install/parked-usage.js'

@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6c-ii-a: `skillsmith doctor backups` lists every set-aside folder
+  Skillsmith keeps: update backups under `~/.skillsmith/backups/update/`, parked copies in each
+  skills root's `.skillsmith-parked/`, unfinished prunes, leftovers from earlier releases, and the
+  older MCP backups in `~/.claude/skills/.backups` (reported, not managed by prune). Each copy shows
+  its size on disk, age, origin and a class (mounted, held, unverified, changed or clean) with the
+  reason. It only reads: nothing is deleted, moved or created. `--root <dir>` (repeatable) adds a
+  skills root and narrows the listing to the named roots; `--client <id>` narrows by client;
+  `--state-root <dir>` reads another state folder; `--json` prints machine-readable output. When
+  the folders on a disk hold more than min(1 GB, 5% of its free space), or some could not be
+  measured, or the disk's free space could not be read, a warning goes to stderr. `doctor recovery`
+  prints the same warning after an action that set a folder aside.
 - **Fixed**: SMI-6531 -- #3213 retro: the `skillsmith doctor recovery` listing now prints the
   refused `--clean-staging` line for an operation folder with no record even when another
   action is offered there (a verifying move-source park intent offers `--apply`, `--undo` and
