@@ -11,7 +11,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { errCode } from './park-result.js'
 import type { ParkStatus } from './park-result.js'
-import { MOUNTINFO_APPLIES, readMountPointsAtOrUnder } from './park-tree.mounts.js'
+import { mountVerdictAt } from './park-tree.mounts.js'
 import { opDirOwnerModeProblem } from './park-tree.perms.js'
 
 /** The inventory key of the staged sidecar (no tree entry can be named with a NUL). */
@@ -123,18 +123,10 @@ export const sameLeafPost = (w: InventoryRow | undefined, s: StatLike): boolean 
   w.size === s.size &&
   w.mtimeNs === s.mtimeNs
 
-/** Linux: a mountinfo point at or under `abs` (its real path). Fails closed on an unreadable table. */
+/** Why `abs` is mounted, or null: the shared verdict (`mountVerdictAt`), as the listing reads it. */
 export function mountFinding(abs: string): string | null {
-  if (!MOUNTINFO_APPLIES) return null
-  let real: string
-  try {
-    real = fs.realpathSync(abs)
-  } catch (err) {
-    return `realpath failed (${errCode(err)})`
-  }
-  const m = readMountPointsAtOrUnder(real)
-  if (!m.ok) return `mountinfo unreadable (${m.errno}); a bind mount cannot be ruled out`
-  return m.points.length > 0 ? `mount point ${m.points[0]}` : null
+  const v = mountVerdictAt(abs)
+  return v.mounted ? v.detail : null
 }
 
 /**

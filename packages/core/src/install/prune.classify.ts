@@ -30,8 +30,7 @@ import fs from 'node:fs'
 import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { MOUNTINFO_APPLIES, readMountPointsAtOrUnder } from './park-tree.mounts.js'
-import type { MountPointsResult } from './park-tree.mounts.js'
+import { mountVerdictAt } from './park-tree.mounts.js'
 import { errCode } from './park-result.js'
 import { S_IFMT } from './park-tree.perms.js'
 import { pathTreeRecord } from './park-tree.verify.js'
@@ -74,46 +73,11 @@ const SIDECAR_MAX_BYTES = 1024 * 1024
 export const rootKeyFor = (root: string): string =>
   crypto.createHash('sha256').update(root).digest('hex').slice(0, 16)
 
-/** A mount check that failed. `stage` says where: the real-path step, or the mount table itself. */
-export type MountsCheck =
-  | Extract<MountPointsResult, { ok: true }>
-  | { ok: false; errno: string | null; stage: 'realpath' | 'mountinfo' }
-
-/**
- * The path whose real location a mount check should look at. A symlink is not
- * followed: its target is not part of the copy, and a link is never itself a
- * mount point, so the check runs at the link's own name inside its resolved
- * directory. Anything else is its own real path.
- */
-function mountCheckPath(
-  abs: string
-): { ok: true; path: string } | { ok: false; errno: string | null } {
-  try {
-    if (fs.lstatSync(abs).isSymbolicLink()) {
-      return { ok: true, path: path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs)) }
-    }
-    return { ok: true, path: fs.realpathSync(abs) }
-  } catch (err) {
-    return { ok: false, errno: errCode(err) }
-  }
-}
-
-/** Linux mount points at or under `abs` (its real path, taken here). `{ ok: false }` fails closed. */
-export function mountsAtOrUnder(abs: string): MountsCheck {
-  if (!MOUNTINFO_APPLIES) return { ok: true, points: [] }
-  const at = mountCheckPath(abs)
-  if (!at.ok) return { ok: false, errno: at.errno, stage: 'realpath' }
-  const m = readMountPointsAtOrUnder(at.path)
-  return m.ok ? m : { ok: false, errno: m.errno, stage: 'mountinfo' }
-}
-
-/** Linux: is there a mount point exactly AT `abs`? Unreadable is true (fail closed). */
+/** Linux: is there a mount point exactly AT `abs`? Unresolvable or unreadable is true (fail closed). */
 export function mountAt(abs: string): boolean {
-  if (!MOUNTINFO_APPLIES) return false
-  const m = mountsAtOrUnder(abs)
-  if (!m.ok) return true
-  const at = mountCheckPath(abs)
-  return !at.ok || m.points.includes(at.path)
+  const v = mountVerdictAt(abs)
+  if (!v.mounted) return false
+  return v.reason !== 'mount-point' || (v.real !== null && v.points.includes(v.real))
 }
 
 /** `absent` (ENOENT only), `present`, or the errno of any other failure: unreadable is not absent. */
@@ -136,22 +100,8 @@ function mountedFinding(
   res: Make,
   base: Extra
 ): Classification | null {
-  const mi = mountsAtOrUnder(copy.copyPath)
-  if (!mi.ok && mi.stage === 'realpath') {
-    return res('unverified', 'realpath-failed', {
-      ...base,
-      detail: `the copy's directory could not be resolved (${mi.errno}); mounts cannot be checked`,
-    })
-  }
-  if (!mi.ok) {
-    return res('mounted', 'mountinfo-unreadable', {
-      ...base,
-      detail: `mountinfo unreadable (${mi.errno}); a bind mount cannot be ruled out`,
-    })
-  }
-  if (mi.points.length > 0) {
-    return res('mounted', 'mount-point', { ...base, detail: `mount point ${mi.points[0]}` })
-  }
+  const mi = mountVerdictAt(copy.copyPath)
+  if (mi.mounted) return res('mounted', mi.reason, { ...base, detail: mi.detail })
   const parentDir = copy.schema === undefined ? copy.parentDir : path.dirname(copy.copyPath)
   try {
     if (fs.lstatSync(parentDir, { bigint: true }).dev !== rootSt.dev) {

@@ -15,9 +15,10 @@
  *
  * The allow-list holds only names that read: constants, regexes, parsers,
  * `readStable`. A second check reads each allowed name's own declaration and
- * fails if its body uses a write fs member, so a reader name that later grows a
- * write is caught too. (One level: a write hidden in a helper it calls is the
- * module's own pin's to catch.)
+ * fails if it can write: its body uses a write fs member, or mentions a name in
+ * its own module that does, or a named import that does (`writingNames`
+ * follows that to a fixpoint through any depth of imports). So a reader name
+ * that later grows a write, or a call to a writer, is caught too.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -84,40 +85,97 @@ const isWriteCapable = (dir: string, file: string): boolean =>
     WRITE_MEMBERS.has(m)
   )
 
-/** The top-level functions and arrow constants in `source` whose own body uses `fs.<write member>`. */
-function writingNames(source: string): Set<string> {
-  const sf = ts.createSourceFile('m.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const usesWrite = (n: ts.Node): boolean => {
-    if (
-      ts.isPropertyAccessExpression(n) &&
-      ts.isIdentifier(n.expression) &&
-      n.expression.text === 'fs' &&
-      WRITE_MEMBERS.has(n.name.text)
-    ) {
-      // `fs.openSync(p, O_RDONLY | ...)` and `fs.openSync(p, 'r')` read; any other flag may write.
-      if (n.name.text === 'openSync' && ts.isCallExpression(n.parent)) {
-        const flags = n.parent.arguments[1]?.getText() ?? ''
-        return (
-          !/^(['"]r['"]|[\w.]*O_RDONLY\b[\w.| ]*)$/.test(flags) ||
-          /O_(WRONLY|RDWR|CREAT)/.test(flags)
-        )
-      }
-      return true
+/** True when `n` (or a node under it) is `fs.<write member>` used in a way that can write. */
+function usesWrite(n: ts.Node): boolean {
+  if (
+    ts.isPropertyAccessExpression(n) &&
+    ts.isIdentifier(n.expression) &&
+    n.expression.text === 'fs' &&
+    WRITE_MEMBERS.has(n.name.text)
+  ) {
+    // `fs.openSync(p, O_RDONLY | ...)` and `fs.openSync(p, 'r')` read; any other flag may write.
+    if (n.name.text === 'openSync' && ts.isCallExpression(n.parent)) {
+      const flags = n.parent.arguments[1]?.getText() ?? ''
+      return (
+        !/^(['"]r['"]|[\w.]*O_RDONLY\b[\w.| ]*)$/.test(flags) || /O_(WRONLY|RDWR|CREAT)/.test(flags)
+      )
     }
-    return ts.forEachChild(n, usesWrite) === true
+    return true
   }
-  const out = new Set<string>()
+  return ts.forEachChild(n, usesWrite) === true
+}
+
+/** Every identifier mentioned under `n`. */
+function mentions(n: ts.Node, out = new Set<string>()): Set<string> {
+  if (ts.isIdentifier(n)) out.add(n.text)
+  ts.forEachChild(n, (c) => void mentions(c, out))
+  return out
+}
+
+/**
+ * The top-level functions and arrow constants of `file` that can write: a body
+ * that uses `fs.<write member>`, OR mentions a writing name of the same module,
+ * OR mentions a named import that is itself writing in the module it comes
+ * from (followed through any depth of imports; a cycle adds nothing). So a
+ * write hidden behind a call, in this module or another, is found.
+ */
+function writingNames(file: string, dir = INSTALL, inProgress = new Set<string>()): Set<string> {
+  if (inProgress.has(file)) return new Set()
+  inProgress.add(file)
+  const sf = ts.createSourceFile(
+    file,
+    fs.readFileSync(path.join(dir, file), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  )
+  const bodies = new Map<string, ts.Node>()
+  const imported = new Map<string, { file: string; name: string }>()
   for (const st of sf.statements) {
-    if (ts.isFunctionDeclaration(st) && st.name !== undefined && usesWrite(st))
-      out.add(st.name.text)
+    if (ts.isFunctionDeclaration(st) && st.name !== undefined) bodies.set(st.name.text, st)
     if (ts.isVariableStatement(st)) {
       for (const d of st.declarationList.declarations) {
-        if (ts.isIdentifier(d.name) && d.initializer !== undefined && usesWrite(d.initializer)) {
-          out.add(d.name.text)
+        if (ts.isIdentifier(d.name) && d.initializer !== undefined) {
+          bodies.set(d.name.text, d.initializer)
         }
       }
     }
+    const nb = ts.isImportDeclaration(st) ? st.importClause?.namedBindings : undefined
+    if (
+      ts.isImportDeclaration(st) &&
+      nb !== undefined &&
+      ts.isNamedImports(nb) &&
+      ts.isStringLiteral(st.moduleSpecifier)
+    ) {
+      const spec = st.moduleSpecifier.text
+      const target = `${spec.replace(/^\.\//, '').replace(/\.js$/, '')}.ts`
+      if (!spec.startsWith('./') || !fs.existsSync(path.join(dir, target))) continue
+      for (const e of nb.elements) {
+        imported.set(e.name.text, { file: target, name: (e.propertyName ?? e.name).text })
+      }
+    }
   }
+  const foreign = new Map<string, Set<string>>()
+  const importWrites = (local: string): boolean => {
+    const i = imported.get(local)
+    if (i === undefined) return false
+    if (!foreign.has(i.file)) foreign.set(i.file, writingNames(i.file, dir, inProgress))
+    return foreign.get(i.file)?.has(i.name) === true
+  }
+  const out = new Set<string>()
+  const refs = new Map([...bodies].map(([name, n]) => [name, mentions(n)] as const))
+  for (const [name, n] of bodies) if (usesWrite(n)) out.add(name)
+  for (let changed = true; changed; ) {
+    changed = false
+    for (const [name, m] of refs) {
+      if (out.has(name)) continue
+      if ([...m].some((x) => (x !== name && out.has(x)) || importWrites(x))) {
+        out.add(name)
+        changed = true
+      }
+    }
+  }
+  inProgress.delete(file)
   return out
 }
 
@@ -164,10 +222,10 @@ describe('the read-only modules import no write-capable function (6c-ii-a)', () 
     expect(writeCapableEdges(INSTALL)).toEqual(ALLOWED_EDGES)
   })
 
-  it('no allow-listed name has a body that uses a write fs member', () => {
+  it('no allow-listed name can write, in its body or through anything it calls', () => {
     for (const [edge, spec] of Object.entries(ALLOWED_EDGES)) {
       const target = edge.split(' -> ')[1] as string
-      const writing = writingNames(fs.readFileSync(path.join(INSTALL, target), 'utf8'))
+      const writing = writingNames(target)
       const names = spec.replace(/^named:/, '').split(',')
       expect(
         names.filter((n) => writing.has(n)),
@@ -177,16 +235,27 @@ describe('the read-only modules import no write-capable function (6c-ii-a)', () 
   })
 
   it('control: writingNames flags a known writer and passes a known reader', () => {
-    const inventory = writingNames(
-      fs.readFileSync(path.join(INSTALL, 'prune.inventory.ts'), 'utf8')
-    )
+    const inventory = writingNames('prune.inventory.ts')
     expect(inventory.has('writeInventory')).toBe(true)
     expect(inventory.has('loadInventory')).toBe(false)
-    const walkShared = writingNames(
-      fs.readFileSync(path.join(INSTALL, 'prune.walk.shared.ts'), 'utf8')
-    )
+    const walkShared = writingNames('prune.walk.shared.ts')
     expect(walkShared.has('renameNoReplace')).toBe(true)
     expect(walkShared.has('resumeStagingProblem')).toBe(false)
+  })
+
+  it('control: a write reached through a call inside a reader name is caught', () => {
+    withCopy((dir) => {
+      expect(writingNames('prune.inventory.ts', dir).has('loadInventory')).toBe(false)
+      const f = path.join(dir, 'prune.inventory.ts')
+      const src = fs.readFileSync(f, 'utf8')
+      const planted = src.replace(
+        'export function loadInventory(S: string): InventoryLoad {\n',
+        'export function loadInventory(S: string): InventoryLoad {\n  renameNoReplace(S, S)\n'
+      )
+      expect(planted).not.toBe(src)
+      fs.writeFileSync(f, planted)
+      expect(writingNames('prune.inventory.ts', dir).has('loadInventory')).toBe(true)
+    })
   })
 
   it('control: prune.list.parked.ts importing and calling renameNoReplace is caught', () => {

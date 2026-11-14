@@ -61,3 +61,67 @@ export function readMountPointsAtOrUnder(dir: string): MountPointsResult {
   }
   return { ok: true, points: mountPointsAtOrUnder(dir, text) }
 }
+
+/** Why a copy root is judged mounted. */
+export type MountVerdictReason = 'realpath-failed' | 'mountinfo-unreadable' | 'mount-point'
+
+/** The verdict on one copy root: not mounted, or mounted and why (fail closed). */
+export type MountVerdict =
+  | { mounted: false }
+  | {
+      mounted: true
+      reason: MountVerdictReason
+      detail: string
+      /** The mount points at or under the root's real path (empty unless `mount-point`). */
+      points: string[]
+      /** The root's real path, when it could be resolved. */
+      real: string | null
+    }
+
+/**
+ * The one mount verdict for a copy root, shared by the classifier and the
+ * walker's re-check so they cannot disagree.
+ *
+ * A symlink is never a mount point: mounting on a symlink path follows it and
+ * mounts on the target, and the walker unlinks a link without following it. So
+ * a symlink root is "not mounted" with no realpath call; its parent directory
+ * is checked by the listers. Any other root: its real path, then the mount
+ * points at or under it. A path that cannot be resolved is mounted
+ * (`realpath-failed`), and an unreadable table is mounted
+ * (`mountinfo-unreadable`): never offered. No mountinfo on this platform is
+ * "not mounted".
+ */
+export function mountVerdictAt(abs: string): MountVerdict {
+  if (!MOUNTINFO_APPLIES) return { mounted: false }
+  let real: string
+  try {
+    if (fs.lstatSync(abs).isSymbolicLink()) return { mounted: false }
+    real = fs.realpathSync(abs)
+  } catch (err) {
+    return {
+      mounted: true,
+      reason: 'realpath-failed',
+      detail: `realpath failed (${errCode(err)}); mounts cannot be checked`,
+      points: [],
+      real: null,
+    }
+  }
+  const m = readMountPointsAtOrUnder(real)
+  if (!m.ok) {
+    return {
+      mounted: true,
+      reason: 'mountinfo-unreadable',
+      detail: `mountinfo unreadable (${m.errno}); a bind mount cannot be ruled out`,
+      points: [],
+      real,
+    }
+  }
+  if (m.points.length === 0) return { mounted: false }
+  return {
+    mounted: true,
+    reason: 'mount-point',
+    detail: `mount point ${m.points[0]}`,
+    points: m.points,
+    real,
+  }
+}

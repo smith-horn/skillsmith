@@ -258,4 +258,20 @@ describe('volumes', () => {
     })
     expect(w.perVolume[0]).toMatchObject({ freeBytes: null, thresholdBytes: 1e9, warn: true })
   })
+
+  for (const [label, result] of [
+    ['NaN fields', { bavail: NaN, bsize: 4096 }],
+    ['undefined fields', { bavail: undefined, bsize: undefined }],
+    ['a negative field', { bavail: -5, bsize: 4096 }],
+  ] as const) {
+    it(`a statfs returning ${label} is unreadable free space, not a silent volume`, () => {
+      const dir = root()
+      // One byte held: only an unreadable free-space value makes this volume warn.
+      const w = evaluateParkedUsage([entry(dir, 1)], {
+        statfs: () => result as unknown as { bavail: number; bsize: number },
+      })
+      expect(w.perVolume[0]).toMatchObject({ freeBytes: null, thresholdBytes: 1e9, warn: true })
+      expect(w.message).toContain('could not be read')
+    })
+  }
 })

@@ -102,23 +102,19 @@ describe('finding 3: a parked symlink is not checked for mounts at its target', 
     expect(k.reason).toBe('sidecar-absent')
   })
 
-  it('a real mount at the link name itself is still mounted', () => {
-    const copy = link('/nonexistent-target-for-prune-review')
-    injectMountinfo(mountinfoLine(copy.copyPath))
-    expect(classifyCopy(copy, 'parked').klass).toBe('mounted')
-  })
-
-  it('a directory that cannot be resolved is unverified/realpath-failed, never a mountinfo reason', () => {
+  it('a symlink root makes no realpath call: it is not mounted even when its directory cannot be resolved', () => {
     const copy = link('/')
     const real = fs.realpathSync.bind(fs) as (p: fs.PathLike, o?: unknown) => string
+    const asked: string[] = []
     vi.spyOn(fs, 'realpathSync').mockImplementation(((p: fs.PathLike, o?: unknown) => {
+      asked.push(String(p))
       if (p === copy.opDir) throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
       return real(p, o)
     }) as unknown as typeof fs.realpathSync)
     const k = classifyCopy(copy, 'parked')
-    expect(k.klass).toBe('unverified')
-    expect(k.reason).toBe('realpath-failed')
-    expect(k.detail).toContain('EACCES')
+    expect(k).toMatchObject({ klass: 'held', reason: 'sidecar-absent' })
+    expect(asked).not.toContain(copy.copyPath)
+    expect(asked).not.toContain(copy.opDir)
   })
 })
 

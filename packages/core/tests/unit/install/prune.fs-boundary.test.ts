@@ -58,7 +58,7 @@ const FS_MEMBERS: Record<string, string[]> = {
     'unlinkSync',
   ],
   'prune.walk.verify.ts': ['lstatSync', 'readdirSync', 'readlinkSync'],
-  'prune.walk.shared.ts': ['lstatSync', 'realpathSync', 'renameSync'],
+  'prune.walk.shared.ts': ['lstatSync', 'renameSync'],
   'prune.walk.stage.ts': ['rmdirSync', 'writeFileSync'],
   'prune.walk.resume.ts': ['lstatSync'],
   'prune.inventory.ts': [
@@ -83,7 +83,7 @@ const FS_MEMBERS: Record<string, string[]> = {
   'prune.job.ts': [],
   'prune.kinds.ts': [],
   'prune.measure.ts': ['lstatSync', 'readdirSync'],
-  'prune.classify.ts': ['lstatSync', 'realpathSync'],
+  'prune.classify.ts': ['lstatSync'],
   'prune.list.types.ts': [],
   'prune.list.parked.ts': ['lstatSync', 'readdirSync', 'statSync'],
   'prune.list.backups.ts': ['lstatSync', 'readdirSync'],
@@ -91,7 +91,7 @@ const FS_MEMBERS: Record<string, string[]> = {
   'backup-sidecar.strict.ts': [],
   'park-result.ts': [],
   'park-callers.ts': [],
-  'park-tree.mounts.ts': ['readFileSync'],
+  'park-tree.mounts.ts': ['lstatSync', 'readFileSync', 'realpathSync'],
   'park-tree.identity.ts': ['lstatSync'],
   'park-tree.verify.ts': [
     'lstatSync',

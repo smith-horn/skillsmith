@@ -138,7 +138,9 @@ function freeBytesOf(
 ): number | null {
   try {
     const s = statfs(dir)
-    return Number(s.bavail) * Number(s.bsize)
+    // A value that is not a finite, non-negative number is unreadable, never a threshold.
+    const free = Number(s.bavail) * Number(s.bsize)
+    return Number.isFinite(free) && free >= 0 ? free : null
   } catch {
     return null
   }
