@@ -122,7 +122,7 @@ describe('Q8: the parked index is advisory', () => {
     expect(rows.map((r) => r.copy.copyPath)).toEqual([kept.copyPath])
   })
 
-  it('(c) a line naming a path that is not <area>/<opId>/<name>-<8hex> is neither listed nor counted', async () => {
+  it('(c) a line naming an existing path that is not <area>/<opId>/<name>-<8hex> is not listed, and counts as unmeasured', async () => {
     const b = base()
     const state = path.join(b, '.skillsmith')
     // Real directories with content sit at every rejected path.
@@ -140,7 +140,23 @@ describe('Q8: the parked index is advisory', () => {
     const l = await listBackups({ stateRoot: state, discovery: hermetic(b), usage: usage(1) })
     expect(l.index.facts.rejected.map((r) => r.path).sort()).toEqual([...victims].sort())
     expect(l.parked.flatMap((a) => a.rows)).toEqual([])
-    expect(l.usageEntries).toEqual([])
+    // Never walked (a line the index cannot vouch for may name anything), never silent either.
+    const unmeasured = l.accounting.rows.filter((r) => r.disposition.kind === 'unmeasured')
+    expect(unmeasured.map((r) => r.path).sort()).toEqual([...victims].sort())
+    expect(l.warning.message).toMatch(/4 entries could not be measured/)
+  })
+
+  it('(c) control: a rejected line naming a path that does not exist is absent, and quiet', async () => {
+    const b = base()
+    const state = path.join(b, '.skillsmith')
+    const gone = path.join(b, 'elsewhere', 'victim')
+    indexLine(state, gone, 'op')
+    const l = await listBackups({ stateRoot: state, discovery: hermetic(b), usage: usage(1) })
+    expect(l.index.facts.rejected.map((r) => r.path)).toEqual([gone])
+    expect(l.accounting.rows.find((r) => r.path === gone)?.disposition).toEqual({
+      kind: 'exempt',
+      reason: 'absent',
+    })
     expect(l.warning.message).toBeNull()
   })
 

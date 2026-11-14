@@ -60,10 +60,14 @@ describe('--root narrows as well as adds (PLAN 2046, UD22)', () => {
     expect(shown).not.toContain(native.copyPath)
     expect(l.narrowedTo).toEqual([r1])
     expect(l.excludedByRoot).toMatchObject({ parkedCopies: 2 })
-    // The warning still counts everything on disk, hidden rows included.
-    expect(l.usageEntries.map((e) => e.path).sort()).toEqual(
-      [mine.copyPath, other.copyPath, native.copyPath].sort()
-    )
+    // The warning still counts everything on disk, hidden rows included: every copy is in
+    // the ledger and among the warning's entries.
+    const copies = l.accounting.rows.filter((r) => r.item === 'copy').map((r) => r.path)
+    expect(copies.sort()).toEqual([mine.copyPath, other.copyPath, native.copyPath].sort())
+    const counted = new Set(l.usageEntries.map((e) => e.path))
+    for (const c of [mine.copyPath, other.copyPath, native.copyPath]) {
+      expect(counted.has(c)).toBe(true)
+    }
   })
 
   it('backups: by the sidecar restore root or the area key; an unattributable tree is counted, never lost', async () => {

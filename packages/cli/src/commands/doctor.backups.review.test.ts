@@ -59,6 +59,15 @@ describe('F2: --client says what it left out', () => {
     expect(doc.excludedByClient).toEqual({ parkedCopies: 0, backupTrees: 1, otherEntries: 0 })
   })
 
+  it('an anomaly in a hidden area is counted, and the text names every kind it counts', async () => {
+    const state = planted()
+    fs.writeFileSync(path.join(state, 'backups', 'update', 'claude-code', 'rk', 'foo', '.x'), 'x')
+    await run({ stateRoot: state, client: 'cursor' })
+    expect(out.join('\n')).toContain(
+      '1 kept backup tree, 1 temp, leftover, orphan sidecar, anomaly or refused area.'
+    )
+  })
+
   it('no --client: no such line, and the json field is null', async () => {
     const state = planted()
     await run({ stateRoot: state })
@@ -68,6 +77,32 @@ describe('F2: --client says what it left out', () => {
     expect(
       (JSON.parse(out.join('\n')) as { excludedByClient: unknown }).excludedByClient
     ).toBeNull()
+  })
+})
+
+describe('the ledger: what could not be measured is named', () => {
+  it('an unreadable parked index: the text names it with its reason, and --json lists it', async () => {
+    const state = planted()
+    const idx = path.join(state, 'parked-index.jsonl')
+    fs.mkdirSync(idx)
+    await run({ stateRoot: state })
+    const text = out.join('\n')
+    expect(text).toContain('1 entry could not be measured.')
+    expect(text).toContain(`  ${idx}: parked index unreadable (EISDIR)`)
+    out = []
+    await run({ stateRoot: state, json: true })
+    const doc = JSON.parse(out.join('\n')) as {
+      accounting: { unmeasured: { path: string }[]; exempt: { path: string; reason: string }[] }
+    }
+    expect(doc.accounting.unmeasured.map((u) => u.path)).toEqual([idx])
+    expect(doc.accounting.exempt.every((e) => e.reason === 'absent')).toBe(true)
+  })
+
+  it('control: a readable index names nothing unmeasured', async () => {
+    const state = planted()
+    await run({ stateRoot: state, json: true })
+    const doc = JSON.parse(out.join('\n')) as { accounting: { unmeasured: unknown[] } }
+    expect(doc.accounting.unmeasured).toEqual([])
   })
 })
 
@@ -131,6 +166,7 @@ function withParkedRow(klass: string, reason: string | null): BackupsListing {
     mcpStores: [],
     index: { facts: { reads: [], lines: [], rejected: [], unreadable: [] }, stale: [] },
     records: { live: new Map(), unreadable: [], scanFailures: [] },
+    accounting: { rows: [], duplicates: [] },
     usageEntries: [],
     warning: { warn: false, perVolume: [], message: null },
     unmeasured: 0,

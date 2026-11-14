@@ -213,6 +213,7 @@ function handBuilt(over: Partial<BackupsListing>): BackupsListing {
     mcpStores: [],
     index: { facts: { reads: [], lines: [], rejected: [], unreadable: [] }, stale: [] },
     records: { live: new Map(), unreadable: [], scanFailures: [] },
+    accounting: { rows: [], duplicates: [] },
     usageEntries: [],
     warning: { warn: false, perVolume: [], message: null },
     unmeasured: 0,

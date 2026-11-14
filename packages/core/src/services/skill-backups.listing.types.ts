@@ -10,6 +10,7 @@ import type { Anomaly, ListedCopy, UnfinishedTemp } from '../install/prune.list.
 import type { Discovery } from './skill-recovery.discover.js'
 import type { AreaRef, IndexFacts, StaleIndexLine } from './skill-backups.areas.js'
 import type { Protection, RecordFacts } from './skill-backups.records.js'
+import type { LedgerRow } from './skill-backups.ledger.js'
 
 /** The size facts every row carries. Allocated bytes are what the warning counts (D6). */
 export interface Sizes {
@@ -121,7 +122,18 @@ export interface BackupsListing {
   mcpStores: McpStoreView[]
   index: { facts: IndexFacts; stale: StaleIndexLine[] }
   records: RecordFacts
-  /** Everything the space warning counts, across both stores and the old MCP store. */
+  /**
+   * The ledger: one row per path the listing read, per store or area root, and
+   * per path the parked index names, each measured, unmeasured or exempt. The
+   * warning and the narrowing counts are derived from it. It always covers the
+   * whole machine: `scope`, `--root` and `--client` never remove a row.
+   */
+  accounting: {
+    rows: LedgerRow[]
+    /** Paths offered a second row; always empty unless a ledger builder is wrong. */
+    duplicates: string[]
+  }
+  /** Everything the space warning counts: the ledger's rows that are not exempt. */
   usageEntries: ParkedUsageEntry[]
   warning: ParkedUsageWarning
   /** Entries that could not be measured, across everything the warning counts. */
@@ -142,7 +154,7 @@ export interface ExcludedByClient {
   parkedCopies: number
   /** Kept backup trees in another client's area. */
   backupTrees: number
-  /** Temps, `.prune-*` leftovers, orphan sidecars and anomalies in the areas left out. */
+  /** Temps, `.prune-*` leftovers, orphan sidecars, anomalies and refused areas left out. */
   otherEntries: number
 }
 
@@ -152,8 +164,8 @@ export interface ExcludedByRoot {
   parkedCopies: number
   /** Kept backup trees whose restore root (or area root key) is not one of the roots. */
   backupTrees: number
-  /** Temps, `.prune-*` leftovers and orphan sidecars in the areas that were left out. */
+  /** Temps, `.prune-*` leftovers, orphan sidecars, anomalies and refused or skipped areas left out. */
   otherEntries: number
-  /** Older MCP stores and legacy removal leftovers under other roots. */
+  /** Older MCP stores and legacy removal leftovers (each path) under other roots. */
   olderStores: number
 }

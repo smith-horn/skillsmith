@@ -14,11 +14,18 @@ All notable changes to `@skillsmith/cli` are documented here.
   `--state-root <dir>` reads another state folder; `--json` prints machine-readable output. When
   the folders on a disk hold more than min(1 GB, 5% of its free space), or some could not be
   measured, or the disk's free space could not be read, a warning goes to stderr, and it prints
-  before the listing so a closed stdout cannot lose it. A store, area or folder level that could
-  not be read, or that Skillsmith refused (another owner, another device, a mount point, a symlinked
-  staging folder), counts as "could not be measured", so the warning says so instead of staying
-  quiet. `--client` now says how many folders, kept trees and other entries it left out, in the
-  text and as `excludedByClient` in `--json`. A kept tree says whether an update record protects
+  before the listing so a closed stdout cannot lose it. Every entry the command reads is either
+  measured, counted as "could not be measured", or counts for nothing because it does not exist,
+  vanished while being listed, or is a leftover from an earlier release. Nothing else is possible,
+  so nothing it saw, or knows it could not see, drops out of the warning. A store, area or folder
+  level that could not be read, or that Skillsmith refused (another owner, another device, a mount
+  point, a symlink where a store folder belongs), an unreadable parked index and an index line that
+  cannot be parsed all count as "could not be measured", and the listing names each one with the
+  reason; hidden files and folders are measured like anything else. `--root` and `--client` say how
+  many folders, kept trees and other entries (temps, leftovers, orphan sidecars, anomalies, refused
+  areas) they left out, in the text and as `excludedByRoot` / `excludedByClient` in `--json`; the
+  warning always counts everything. `--json` also lists what could not be measured and what
+  counted for nothing, with the reason (`accounting`). A kept tree says whether an update record protects
   it, none does, or protection is unknown because some records or set-aside folders could not be
   read. A folder whose real path could not be resolved reads "could not be resolved", not
   "mounted". `doctor recovery`

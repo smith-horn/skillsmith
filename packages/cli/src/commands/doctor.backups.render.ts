@@ -30,6 +30,9 @@ const classText = (c: { klass: string; reason: string | null }): string =>
     ? 'could not be resolved (realpath-failed)'
     : `${c.klass}${why(c.reason)}`
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
+/** What `otherEntries` counts, named in full: a narrowing hides no kind without saying so. */
+const OTHER_ONE = 'temp, leftover, orphan sidecar, anomaly or refused area'
+const OTHER_MANY = 'temps, leftovers, orphan sidecars, anomalies or refused areas'
 
 /** Where an area sits, in words: the area-aware "next to your own directory" sentence (Q9). */
 function whereSentence(a: ParkedAreaView): string {
@@ -215,8 +218,7 @@ export function renderListing(l: BackupsListing): string[] {
     const parts = [
       x.parkedCopies > 0 && plural(x.parkedCopies, 'set-aside folder', 'set-aside folders'),
       x.backupTrees > 0 && plural(x.backupTrees, 'kept backup tree', 'kept backup trees'),
-      x.otherEntries > 0 &&
-        plural(x.otherEntries, 'temp, leftover or orphan', 'temps, leftovers or orphans'),
+      x.otherEntries > 0 && plural(x.otherEntries, OTHER_ONE, OTHER_MANY),
       x.olderStores > 0 && plural(x.olderStores, 'older store', 'older stores'),
     ].filter((p): p is string => p !== false)
     if (parts.length > 0) {
@@ -230,8 +232,7 @@ export function renderListing(l: BackupsListing): string[] {
     const parts = [
       c.parkedCopies > 0 && plural(c.parkedCopies, 'set-aside folder', 'set-aside folders'),
       c.backupTrees > 0 && plural(c.backupTrees, 'kept backup tree', 'kept backup trees'),
-      c.otherEntries > 0 &&
-        plural(c.otherEntries, 'temp, leftover or orphan', 'temps, leftovers or orphans'),
+      c.otherEntries > 0 && plural(c.otherEntries, OTHER_ONE, OTHER_MANY),
     ].filter((p): p is string => p !== false)
     if (parts.length > 0) {
       lines.push(
@@ -241,6 +242,9 @@ export function renderListing(l: BackupsListing): string[] {
   }
   if (l.unmeasured > 0) {
     lines.push(`${plural(l.unmeasured, 'entry', 'entries')} could not be measured.`)
+    for (const r of l.accounting.rows) {
+      if (r.disposition.kind === 'unmeasured') lines.push(`  ${r.path}: ${r.disposition.reason}`)
+    }
   }
   return lines
 }

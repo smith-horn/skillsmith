@@ -9,10 +9,18 @@ All notable changes to `@skillsmith/core` are documented here.
   store, and classifies each copy mounted, held, unverified, changed or clean. Sizes are allocated
   bytes, with hard links counted once. `evaluateParkedUsage()` warns per disk over min(1 GB, 5% of
   free space), and also whenever an entry could not be measured or free space could not be read; it
-  says "set-aside folders". Both only read. A refused or unreadable store, area or level counts as
-  an unmeasured entry, so the warning cannot miss it. `scope` narrows only what is shown: the
-  protection facts and the warning still read every area. `--client` counts what it dropped
-  (`excludedByClient`). A kept tree's protection is `protected`, `unprotected` or `unknown`. A
+  says "set-aside folders". Both only read. The accounting is one ledger (`accounting` on the
+  listing): every name the listing reads in every store and at every level, every store or area
+  folder itself, and every path the parked index names gets exactly one verdict. It is measured
+  (its bytes on disk), could not be measured (with the reason: refused, unreadable, a symlink where
+  a store folder belongs, an index that cannot be read, an index line that cannot be parsed, or a
+  size walk that did not finish), or counts for nothing for one of three reasons only: it does not
+  exist, it vanished while being listed, or it is a legacy leftover (D7). Hidden files and folders
+  are measured like anything else. The warning reads the ledger and nothing else, so nothing the
+  listing saw, or knows it could not see, can be left out of both. `scope` narrows only what is
+  shown: the protection facts and the warning still read every area. `--root` and `--client` count
+  what they hide (`excludedByRoot`, `excludedByClient`) from the same ledger rows, anomalies and
+  refused areas included. A kept tree's protection is `protected`, `unprotected` or `unknown`. A
   `.skillsmith-staging` that is a symlink is not followed. A static test pins every listing module
   to read-only fs calls, a second checks every import it reaches into a writing module, through any
   depth of calls and every shape of write (named, namespace, callback and `fs.promises` forms,

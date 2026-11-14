@@ -128,6 +128,16 @@ export function listingJson(l: BackupsListing): Record<string, unknown> {
     },
     totalsPerKind: kindTotals(l),
     unmeasuredEntries: l.unmeasured,
+    // The ledger's verdicts that are not plain measurements: what could not be measured and why,
+    // and what counts for nothing and why (absent, vanished, or a legacy leftover).
+    accounting: {
+      unmeasured: l.accounting.rows.flatMap((r) =>
+        r.disposition.kind === 'unmeasured' ? [{ path: r.path, reason: r.disposition.reason }] : []
+      ),
+      exempt: l.accounting.rows.flatMap((r) =>
+        r.disposition.kind === 'exempt' ? [{ path: r.path, reason: r.disposition.reason }] : []
+      ),
+    },
     warning: { warn: l.warning.warn, message: l.warning.message },
   }
 }
