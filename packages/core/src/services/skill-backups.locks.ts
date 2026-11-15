@@ -20,8 +20,9 @@
  *    `companion-rollback` take lock 1′ of the area. Every other kind takes
  *    lock 1 of the skills root holding the area (the area's real parent, or
  *    `<root>` for an area under `<root>/.skillsmith-staging/`), bound
- *    read-only and still resolving to itself; a root that does not bind is
- *    `unknown`, kept and named. A null, unknown or disputed kind is `unknown`.
+ *    read-only and still resolving to itself, and only when discovery found
+ *    that root (its records were scanned); a root that does not bind, or was
+ *    not discovered, is `unknown`, kept and named. A null, unknown or disputed kind is `unknown`.
  *
  * @module @skillsmith/core/services/skill-backups.locks
  */
@@ -70,11 +71,22 @@ function lock1prime(stateRoot: string, areaReal: string): LockAssignment {
  * area, bound read-only. The root is taken from the area's real path, so a
  * symlinked area names the root it really sits in.
  */
-async function indexOnlyRootLock(areaDir: string): Promise<LockAssignment> {
+async function indexOnlyRootLock(
+  listing: BackupsListing,
+  areaDir: string
+): Promise<LockAssignment> {
   const areaReal = realOf(areaDir)
   if (areaReal === null) return unknown('index-only area: the area cannot be resolved')
   const parent = path.dirname(areaReal)
   const root = path.basename(parent) === STAGING_DIR ? path.dirname(parent) : parent
+  // Only a root discovery found had its update records scanned, so only its lock 1 is named: a
+  // root nobody scanned may hold a live or unreadable record that protects the copy.
+  const discovered = listing.discovery.roots.map((r) => realOf(r.root))
+  if (!discovered.includes(root)) {
+    return unknown(
+      `index-only area: the skills root ${root} holding it was not discovered, so its update records were not read`
+    )
+  }
   try {
     await bindSkillsRootReadOnly(root)
   } catch (err) {
@@ -123,7 +135,7 @@ async function indexOnlyLock(
   if (policyFor('parked', kind) === null) {
     return unknown(`index-only area: the kind '${kind}' is not a parked kind prune recognises`)
   }
-  if (!AREA_LOCK_KINDS.has(kind)) return indexOnlyRootLock(view.ref.areaDir)
+  if (!AREA_LOCK_KINDS.has(kind)) return indexOnlyRootLock(listing, view.ref.areaDir)
   const areaReal = realOf(view.ref.areaDir)
   if (areaReal === null) return unknown('index-only area: the area cannot be resolved')
   // Exactly one state root here: zero lines returned unknown above.

@@ -17,7 +17,10 @@ All notable changes to `@skillsmith/core` are documented here.
   as a backup's is, so a scope, `--root` or `--client` never changes it; the planner reads it and
   computes none. A backup tree whose sidecar names a root or client other than its area's gets no
   lock. An index-only area of kind `agent-uninstall` takes the area lock, and one of any other
-  recognised parked kind takes lock 1 of the skills root holding it, bound read-only.
+  recognised parked kind takes lock 1 of the skills root holding it, bound read-only, and only
+  when discovery found that root (its update records were scanned); in a root nobody scanned the
+  lock is unknown and the copy is kept. A row whose protection was never decided reads unknown,
+  and the planner selects only on an explicit `unprotected`.
 - **Added**: SMI-6531 -- A1 step 6c-ii-a: `listBackups()` lists both stores of set-aside copies
   (update backups and parked copies), unfinished prunes, legacy leftovers and the older MCP backup
   store, and classifies each copy mounted, held, unverified, changed or clean. Sizes are allocated

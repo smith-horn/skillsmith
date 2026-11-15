@@ -54,8 +54,17 @@ type Locked = Exclude<LockAssignment, { kind: 'unknown' }>
 function protectionReason(c: Candidate): ExcludeReason | null {
   const p = c.row.protection
   if (p.status === 'protected') return { code: 'protected', rule: p.rule, path: p.path }
-  if (p.status === 'unknown') return { code: 'protection-unknown', reason: p.reason }
-  return null
+  // Only an explicit `unprotected` selects: any other status, one this code does not know
+  // included, keeps the copy.
+  if (p.status === 'unprotected') return null
+  const reason = (p as { reason?: unknown }).reason
+  return {
+    code: 'protection-unknown',
+    reason:
+      typeof reason === 'string'
+        ? reason
+        : `unrecognised protection status ${String((p as { status: unknown }).status)}`,
+  }
 }
 
 /** The kind table: null when the kind may be selected under this request. */

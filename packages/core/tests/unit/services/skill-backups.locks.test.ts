@@ -230,18 +230,43 @@ describe("Major 2: a backup tree's lock follows its sidecar root only when the s
   })
 })
 
+describe('assignLocks: the memo never lets an agreeing row vouch for a disagreeing one (Q2)', () => {
+  it('a second row with the same skillsDir but another client is unknown', async () => {
+    const rootA = mkdir(base, 'rootA')
+    const { area } = backupArea(rootKeyFor(rootA))
+    const c1 = path.join(area, 'op-1')
+    const c2 = path.join(area, 'op-2')
+    const m = await assignLocks(
+      listingOf({
+        stateRoot: state,
+        backups: [
+          { copyPath: c1, skillsDir: rootA, areaPath: area },
+          { copyPath: c2, skillsDir: rootA, areaPath: area, sidecarClient: 'cursor' },
+        ],
+      })
+    )
+    expect(m.get(c1)).toMatchObject({ kind: 'lock1' })
+    expect(m.get(c2)).toMatchObject({
+      kind: 'unknown',
+      reason: expect.stringContaining('"cursor"'),
+    })
+  })
+})
+
 describe('assignLocks: index-only parked areas (UD63, D13)', () => {
   const area = (): string => mkdir(base, 'author-init', '.skillsmith-parked')
   const copyIn = (a: string): string => path.join(a, 'op', 'foo-aaaaaaaa')
   const run = async (
     indexKind: string | null,
-    sidecarKind: string | null
+    sidecarKind: string | null,
+    discovered = true
   ): ReturnType<typeof assignLocks> => {
     const a = area()
     const c = copyIn(a)
     return assignLocks(
       listingOf({
         stateRoot: state,
+        discoveredRoots: discovered ? [path.dirname(a)] : [],
         parked: [{ copyPath: c, kind: sidecarKind, skillsRoot: null, areaDir: a }],
         index: [{ copyPath: c, kind: indexKind, stateRoot: state }],
       })
@@ -283,6 +308,14 @@ describe('assignLocks: index-only parked areas (UD63, D13)', () => {
     })
   })
 
+  it('Q1: an index-only area under a root discovery did not find is unknown, never lock 1 of it', async () => {
+    const m = await run('install-rollback', 'install-rollback', false)
+    expect([...m.values()][0]).toEqual({
+      kind: 'unknown',
+      reason: expect.stringContaining('was not discovered, so its update records were not read'),
+    })
+  })
+
   it('UD63: an area under <root>/.skillsmith-staging/ takes lock 1 of <root>', async () => {
     const root = mkdir(base, 'ws-root')
     const a = mkdir(root, '.skillsmith-staging', '.skillsmith-parked')
@@ -290,6 +323,7 @@ describe('assignLocks: index-only parked areas (UD63, D13)', () => {
     const m = await assignLocks(
       listingOf({
         stateRoot: state,
+        discoveredRoots: [root],
         parked: [{ copyPath: c, kind: 'uninstall', skillsRoot: null, areaDir: a }],
         index: [{ copyPath: c, kind: 'uninstall', stateRoot: state }],
       })
@@ -308,6 +342,7 @@ describe('assignLocks: index-only parked areas (UD63, D13)', () => {
     const m = await assignLocks(
       listingOf({
         stateRoot: state,
+        discoveredRoots: [path.dirname(a)],
         parked: [{ copyPath: c, kind: 'install-rollback', skillsRoot: null, areaDir: a }],
         index: [{ copyPath: c, kind: 'install-rollback', stateRoot: state }],
       })

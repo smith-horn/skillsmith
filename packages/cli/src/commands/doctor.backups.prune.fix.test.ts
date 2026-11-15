@@ -1,7 +1,7 @@
 /**
  * @fileoverview `doctor backups` after the /governance review of the dry run
- * (SMI-6531 step 6c-ii-b): an empty or blank value is refused instead of
- * becoming the current directory, `--keep 0` is refused by the CLI before the
+ * (SMI-6531 step 6c-ii-b): an empty or blank value is refused by every
+ * string option (the property test in `doctor.backups.prune.blank.test.ts`), `--keep 0` is refused by the CLI before the
  * planner runs, a symlinked copy-root leaf and a symlinked root are named as
  * typed, the output order and exit claims, the text of excluded, per-item and
  * lock 1' rows, a no-match `--allow-changed` notice, and a parked copy's
@@ -64,33 +64,6 @@ async function plan(o: Partial<DoctorBackupsOptions> = {}): Promise<PlanDoc> {
 }
 const reasonOf = (d: PlanDoc, copyPath: string): string | undefined =>
   d.excluded.find((x) => x.copyPath === copyPath)?.reason.code
-
-describe('an empty or blank value is refused, never the current directory', () => {
-  const blanks: [string, Partial<DoctorBackupsOptions>][] = [
-    ['--root', { root: [''] }],
-    ['--path', { path: [''] }],
-    ['--allow-changed', { allowChanged: [''] }],
-    ['--skill', { skill: '' }],
-    ['--op', { op: '' }],
-    ['--client', { client: '' }],
-  ]
-  const cases = blanks.flatMap(([flag, o]) =>
-    [false, true].flatMap((prune) =>
-      ['', '   '].map((v) => [flag, o, prune, v] as [string, typeof o, boolean, string])
-    )
-  )
-  it.each(cases)(
-    '%s given %j (prune: %s, value "%s") exits 1 naming the flag and prints no listing or plan',
-    async (flag, o, prune, v) => {
-      putBackup({ state, skillsDir: root(), opId: 'op-1', kind: 'undone' })
-      const blank = JSON.parse(JSON.stringify(o).split('""').join(JSON.stringify(v))) as typeof o
-      await run({ ...blank, ...(prune ? { prune: true, olderThan: '0' } : {}) })
-      expect(process.exitCode).toBe(1)
-      expect(err.join('\n')).toContain(`${flag} needs a non-empty value`)
-      expect(out).toEqual([])
-    }
-  )
-})
 
 describe('--keep 0 is refused by the CLI before the planner runs', () => {
   it.each(['0', '00'])(

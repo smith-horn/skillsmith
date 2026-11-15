@@ -46,6 +46,7 @@ import { discoverRoots } from './skill-recovery.discover.js'
 import type { Discovery, DiscoverOptions } from './skill-recovery.discover.js'
 import { indexOnlyAreas, readIndexes, scannedAreas, staleLines } from './skill-backups.areas.js'
 import { collectRecordFacts } from './skill-backups.records.js'
+import type { Protection } from './skill-backups.records.js'
 import { protectAll } from './skill-backups.protect.js'
 import { narrowToClient, narrowToRoots } from './skill-backups.narrow.js'
 import { Ledger, usageFromLedger } from './skill-backups.ledger.js'
@@ -141,6 +142,9 @@ const leftoverView = (l: Leftover): LeftoverView => ({
   resumeOffered: l.state === 'interrupted-delete' && l.item !== undefined,
 })
 
+/** What a row reads until `protectAll` decides it: not a clearance, so a missed decision never selects. */
+const UNDECIDED: Protection = { status: 'unknown', reason: 'protection not decided' }
+
 function parkedRow(
   copy: ListedCopy,
   now: number,
@@ -158,7 +162,7 @@ function parkedRow(
     ageDays: ageOf(createdMs, now),
     index: indexed.has(copy.copyPath) ? 'present' : 'missing',
     // Filled in by `protectAll` once every area, record and ledger row is known.
-    protection: { status: 'unprotected' },
+    protection: UNDECIDED,
     ...sizesOf(classification.measured),
   }
 }
@@ -179,7 +183,7 @@ function backupRow(copy: ListedCopy, a: BackupAreaListing, now: number, classify
     opId: str(classification.sidecar, 'opId') ?? copy.opId,
     hashStillEquals:
       classification.klass === 'clean' ? true : classification.klass === 'changed' ? false : null,
-    protection: { status: 'unprotected' },
+    protection: UNDECIDED,
     newestOfGroup: false,
     ...sizesOf(classification.measured),
   }

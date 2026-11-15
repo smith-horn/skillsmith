@@ -51,6 +51,8 @@ export function listingOf(a: {
   parked?: ParkedFx[]
   backups?: BackupFx[]
   index?: IndexFx[]
+  /** Skills roots discovery found (their records were scanned). Default none. */
+  discoveredRoots?: string[]
 }): BackupsListing {
   const parked = (a.parked ?? []).map((p) => ({
     ref: { areaDir: p.areaDir, skillsRoot: p.skillsRoot },
@@ -92,7 +94,11 @@ export function listingOf(a: {
     entry: { kind: i.kind },
   }))
   return {
-    discovery: { stateRoots: [a.stateRoot], roots: [], skipped: [] },
+    discovery: {
+      stateRoots: [a.stateRoot],
+      roots: (a.discoveredRoots ?? []).map((root) => ({ root, sources: [] })),
+      skipped: [],
+    },
     parked,
     backups,
     index: { facts: { lines }, stale: [] },

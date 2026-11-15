@@ -131,23 +131,21 @@ function strayFlags(o: DoctorBackupsOptions): string[] {
   }).map((k) => FLAG[k])
 }
 
+/** `stateRoot` -> `--state-root`: the flag a parsed option came from. */
+const flagOf = (key: string): string => '--' + key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())
+
 /**
- * The first flag given an empty or whitespace-only value, or null. `path.resolve('')`
- * is the current directory, so an empty `--path` or `--root` would silently select
- * whatever tree the shell stands in; a blank name selects nothing by name. Refused
- * for every mode, listing included.
+ * The first option given an empty or whitespace-only value, or null. `path.resolve('')`
+ * is the current directory, so an empty `--path`, `--root` or `--state-root` would
+ * silently name whatever the shell stands in; a blank name selects nothing by name.
+ * The rule is over the parsed values themselves, not a list of flags: every option whose
+ * value is a string, or a list of strings (every element), is checked, so a new
+ * string option is covered the moment commander parses it. Refused in every mode.
  */
 function blankFlag(o: DoctorBackupsOptions): string | null {
-  const given: [string, readonly (string | undefined)[]][] = [
-    ['--root', o.root ?? []],
-    ['--path', o.path ?? []],
-    ['--allow-changed', o.allowChanged ?? []],
-    ['--skill', [o.skill]],
-    ['--op', [o.op]],
-    ['--client', [o.client]],
-  ]
-  for (const [flag, values] of given) {
-    if (values.some((v) => v !== undefined && v.trim() === '')) return flag
+  for (const [key, value] of Object.entries(o)) {
+    const values: readonly unknown[] = Array.isArray(value) ? value : [value]
+    if (values.some((v) => typeof v === 'string' && v.trim() === '')) return flagOf(key)
   }
   return null
 }
