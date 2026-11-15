@@ -64,6 +64,29 @@ STORE_DB_PATH="$SERVICE_CWD/.swarm/memory.db"
 # TOCTOU fix from a launcher that never adopted it.
 FAKE_CONTAINER_ID="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
+# The pin is read from the launcher under test (SMI-6744 pin bump, plan R-1),
+# never hardcoded here: the stub serves it by default, so a pin bump needs no
+# edit to this file. The cli-pin-drift check is what binds the pin itself.
+PIN="$(sed -n 's/^RUFLO_CLI_PIN=\([0-9][0-9.]*\)$/\1/p' "$LAUNCHER")"
+if ! printf '%s' "$PIN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  echo "FAIL (pin-read): could not read a single MAJOR.MINOR.PATCH RUFLO_CLI_PIN from $LAUNCHER (got '$PIN')" >&2
+  exit 1
+fi
+PIN_MAJOR="${PIN%%.*}"
+_pin_rest="${PIN#*.}"
+PIN_MINOR="${_pin_rest%%.*}"
+PIN_PATCH="${PIN##*.}"
+# Served NEWER than the pin: "1<MAJOR>.0.0" is numerically larger for any pin,
+# and for a single-digit MAJOR it sorts LOWER as a string ("13" < "3"), so the
+# arm also fails a launcher that compares versions lexically.
+SERVED_NEWER="1$PIN_MAJOR.0.0"
+# Served OLDER than the pin (pinned newer), keeping MAJOR.MINOR when it can.
+if [ "$PIN_PATCH" -gt 0 ]; then
+  SERVED_OLDER="$PIN_MAJOR.$PIN_MINOR.$((PIN_PATCH - 1))"
+else
+  SERVED_OLDER="0.0.0"
+fi
+
 md5_of() { md5 -q "$1" 2>/dev/null || md5sum "$1" | awk '{print $1}'; }
 
 # Captured before any arm runs — re-checked at suite end (M-10).
@@ -182,9 +205,9 @@ case "$cmd" in
           printf '%s\n' "$FAKE_VERSION_STDERR" >&2
         fi
         if [ "${FAKE_VERSION_NO_SENTINEL:-0}" = "1" ]; then
-          printf '%s' "${FAKE_SERVED_VERSION-3.42.4}"
+          printf '%s' "${FAKE_SERVED_VERSION-$DEFAULT_SERVED_VERSION}"
         else
-          printf 'RUFLO_VER=%s' "${FAKE_SERVED_VERSION-3.42.4}"
+          printf 'RUFLO_VER=%s' "${FAKE_SERVED_VERSION-$DEFAULT_SERVED_VERSION}"
         fi
         exit "${FAKE_VERSION_STATUS:-0}"
         ;;
@@ -232,7 +255,7 @@ run() {
   : >"$DOCKER_LOG"
   : >"$NPX_LOG"
   set +e
-  DOCKER_LOG="$DOCKER_LOG" NPX_LOG="$NPX_LOG" DEFAULT_ARGS_JSON="$DEFAULT_ARGS_JSON" \
+  DOCKER_LOG="$DOCKER_LOG" NPX_LOG="$NPX_LOG" DEFAULT_ARGS_JSON="$DEFAULT_ARGS_JSON" DEFAULT_SERVED_VERSION="$PIN" \
     PATH="$TEST_PATH" HOME="$TEST_HOME" "$launcher_path" >"$out" 2>&1
   local rc=$?
   set -e
@@ -330,18 +353,48 @@ unset FAKE_WORKDIR
 export FAKE_SERVED_VERSION="9.9.9"
 rc="$(run version-mismatch)"
 out="/tmp/mcp-ruflo-launcher-test-version-mismatch.out"
-if [ "$rc" -eq 1 ] && grep -q "pinned:  3.42.4" "$out" && grep -q "served:  9.9.9" "$out"; then
+if [ "$rc" -eq 1 ] && grep -qF "pinned:  $PIN" "$out" && grep -q "served:  9.9.9" "$out"; then
   pass version-mismatch "refuses, prints both version strings, no exec"
 else
   fail version-mismatch "expected exit 1 naming both pinned and served versions (got rc=$rc)"
 fi
 unset FAKE_SERVED_VERSION
 
+# ---- arms: Check 3 remediation split by direction (SMI-6744 pin bump, R-5) --
+# Each direction names its own remedy and neither of the other two: a lagging
+# checkout must be told to rebase, never to rebuild the shared image.
+REMEDY_BEHIND="this checkout is behind main: rebase it (or sync the main checkout), then reconnect; do not rebuild the image or edit RUFLO_CLI_PIN"
+REMEDY_CUTOVER="the service has not been cut over yet: see .claude/development/claude-flow-guide.md § Cutover, run from the main checkout"
+REMEDY_UNCOMPARABLE="cannot compare pinned and served as MAJOR.MINOR.PATCH"
+# version_direction_arm <name> <served> <expected-remedy> <other> <other>
+version_direction_arm() {
+  local name="$1" served="$2" want="$3" not1="$4" not2="$5" rc out
+  export FAKE_SERVED_VERSION="$served"
+  rc="$(run "$name")"
+  out="/tmp/mcp-ruflo-launcher-test-$name.out"
+  unset FAKE_SERVED_VERSION
+  if [ "$rc" -eq 1 ] \
+    && grep -qF "pinned:  $PIN" "$out" \
+    && grep -qF "served:  $served" "$out" \
+    && grep -qF "$want" "$out" \
+    && ! grep -qF "$not1" "$out" \
+    && ! grep -qF "$not2" "$out" \
+    && ! grep -q "real-exec-reached" "$out"; then
+    pass "$name" "served $served vs pinned $PIN: refuses with only the matching remediation, no exec"
+  else
+    fail "$name" "expected exit 1 with remediation '$want' and neither other remediation (served $served, pinned $PIN, got rc=$rc)"
+  fi
+}
+version_direction_arm version-served-newer "$SERVED_NEWER" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_UNCOMPARABLE"
+version_direction_arm version-pinned-newer "$SERVED_OLDER" "$REMEDY_CUTOVER" "$REMEDY_BEHIND" "$REMEDY_UNCOMPARABLE"
+# "<MAJOR>.<MINOR>" survives the probe's [0-9.] trim but is not MAJOR.MINOR.PATCH.
+version_direction_arm version-uncomparable "$PIN_MAJOR.$PIN_MINOR" "$REMEDY_UNCOMPARABLE" "$REMEDY_BEHIND" "$REMEDY_CUTOVER"
+
 # ---- arm: version probe with noisy-but-harmless stderr still passes (M-9) --
 export FAKE_VERSION_STDERR="(node:1) ExperimentalWarning: something noisy on stderr"
 rc="$(run version-stderr-noise-passes)"
 out="/tmp/mcp-ruflo-launcher-test-version-stderr-noise-passes.out"
-if [ "$rc" -eq 0 ] && grep -q "serving @claude-flow/cli@3.42.4" "$out"; then
+if [ "$rc" -eq 0 ] && grep -qF "serving @claude-flow/cli@$PIN" "$out"; then
   pass version-stderr-noise-passes "a correct container with noisy Node stderr on the version probe still passes"
 else
   fail version-stderr-noise-passes "expected exit 0 despite stderr noise on the version probe (got rc=$rc)"
@@ -498,7 +551,7 @@ last_call="$(tail -n +"$((last_call_start + 1))" "$DOCKER_LOG")"
 if [ "$rc" -eq 0 ] \
   && grep -qF "agentdb-memory.db" "$DOCKER_LOG" \
   && grep -qF "$STORE_DB_PATH" "$DOCKER_LOG" \
-  && grep -qF "serving @claude-flow/cli@3.42.4 from $EXPECTED_MAIN_CHECKOUT via $CONTAINER_NAME" "$out" \
+  && grep -qF "serving @claude-flow/cli@$PIN from $EXPECTED_MAIN_CHECKOUT via $CONTAINER_NAME" "$out" \
   && printf '%s\n' "$last_call" | grep -q "^exec$" \
   && printf '%s\n' "$last_call" | grep -q "^-i$" \
   && printf '%s\n' "$last_call" | grep -q "^-w$" \
@@ -511,6 +564,7 @@ if [ "$rc" -eq 0 ] \
   && printf '%s\n' "$last_call" | grep -q "^start$" \
   && printf '%s\n' "$last_call" | grep -q "CLAUDE_FLOW_MEMORY_BACKEND=sqlite" \
   && printf '%s\n' "$last_call" | grep -q "CLAUDE_FLOW_LOG_LEVEL=info" \
+  && printf '%s\n' "$last_call" | grep -qx "XDG_CONFIG_HOME=/srv/ruflo/.config" \
   && grep -q "real-exec-reached" "$out"; then
   pass healthy "the final docker call's argv contains exec/-i/-w/cwd/container-id (not name)/node/cli path/mcp/start/env, success line printed first, exec reached"
 else

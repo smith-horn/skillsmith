@@ -49,7 +49,7 @@
 #
 # Two stores, one marker (SMI-6744 A1.4 defect, measured 2026-09-23):
 # ADR-170 SS5 (c) speaks of "the store's store_generation row" singular, but
-# the served @claude-flow/cli@3.42.4 keeps TWO SQLite databases under
+# the served @claude-flow/cli keeps TWO SQLite databases under
 # .swarm/: sql.js writes memory.db (possibly encrypted at rest under
 # CLAUDE_FLOW_ENCRYPT_AT_REST, which this service does not set) and AgentDB
 # owns agentdb-memory.db via native better-sqlite3 -- see getAgentDbPath() in
