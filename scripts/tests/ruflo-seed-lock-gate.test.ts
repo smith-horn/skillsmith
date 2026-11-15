@@ -14,7 +14,7 @@ import { compareLocks, WATCHED_NAMES } from '../ruflo-seed/lock-gate.mjs'
 
 const GATE = path.resolve(__dirname, '../ruflo-seed/lock-gate.mjs')
 
-type Pk = Record<string, { version: string }>
+type Pk = Record<string, { version: string; integrity?: string; resolved?: string }>
 const lock = (pk: Pk) => ({ lockfileVersion: 3, packages: { '': { name: 'seed' }, ...pk } })
 
 let dir: string
@@ -136,6 +136,57 @@ describe('lock-gate', () => {
   it('usage errors exit 2', () => {
     const r = spawnSync(process.execPath, [GATE, write(lock(base))], { encoding: 'utf8' })
     expect(r.status).toBe(2)
+  })
+
+  // Scoped watched names: the name is everything after the LAST node_modules/,
+  // including its '@scope/' segment, so these pin that a scoped package is
+  // still recognised as watched (a last-'/'-segment name would miss both).
+  const scopedBase: Pk = {
+    ...base,
+    'node_modules/@claude-flow/memory': { version: '3.0.0' },
+    'node_modules/agentic-flow/node_modules/@ruvector/core': { version: '0.1.0' },
+  }
+
+  it('a scoped watched root change exits 1 naming the scoped path', () => {
+    const p = 'node_modules/@claude-flow/memory'
+    const r = run(lock(scopedBase), lock({ ...scopedBase, [p]: { version: '3.0.2' } }))
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`UNACCEPTED changed ${p} 3.0.0 -> 3.0.2`)
+  })
+
+  it('a nested scoped watched change exits 1 naming the nested path', () => {
+    const p = 'node_modules/agentic-flow/node_modules/@ruvector/core'
+    const r = run(lock(scopedBase), lock({ ...scopedBase, [p]: { version: '0.2.0' } }))
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`UNACCEPTED changed ${p} 0.1.0 -> 0.2.0`)
+  })
+
+  it("an accept for a scoped path matches across the '@' in the path", () => {
+    const p = 'node_modules/@claude-flow/memory'
+    const r = run(lock(scopedBase), lock({ ...scopedBase, [p]: { version: '3.0.2' } }), [
+      `${p}@3.0.2`,
+    ])
+    expect(r.code).toBe(0)
+    expect(r.out).not.toContain('UNACCEPTED')
+    expect(r.out).not.toContain('UNUSED-ACCEPT')
+  })
+
+  it('a same-version integrity change at a watched path exits 1 and says why', () => {
+    const p = 'node_modules/agentdb'
+    const before = lock(bump({ [p]: { version: '1.0.0', integrity: 'sha512-AAA' } }))
+    const after = lock(bump({ [p]: { version: '1.0.0', integrity: 'sha512-BBB' } }))
+    const r = run(before, after)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`UNACCEPTED changed ${p} 1.0.0 -> 1.0.0 (integrity changed)`)
+    expect(run(before, after, [`${p}@1.0.0`]).code).toBe(0)
+  })
+
+  it('run through a symlink with no arguments, the gate still exits 2 (usage)', () => {
+    const link = path.join(dir, 'lock-gate-link.mjs')
+    fs.symlinkSync(GATE, link)
+    const r = spawnSync(process.execPath, [link], { encoding: 'utf8' })
+    expect(r.status).toBe(2)
+    expect(r.stderr).toContain('usage:')
   })
 
   it('compareLocks classifies by path and matches name after the last node_modules/', () => {

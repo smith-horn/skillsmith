@@ -366,29 +366,41 @@ unset FAKE_SERVED_VERSION
 REMEDY_BEHIND="this checkout is behind main: rebase it (or sync the main checkout), then reconnect; do not rebuild the image or edit RUFLO_CLI_PIN"
 REMEDY_CUTOVER="the service has not been cut over yet: see .claude/development/claude-flow-guide.md § Cutover, run from the main checkout"
 REMEDY_UNCOMPARABLE="cannot compare pinned and served as MAJOR.MINOR.PATCH"
-# version_direction_arm <name> <served> <expected-remedy> <other> <other>
+REMEDY_SPELLING="pinned and served are numerically equal but spelled differently"
+# version_direction_arm <name> <served> <expected-remedy> <other>...
 version_direction_arm() {
-  local name="$1" served="$2" want="$3" not1="$4" not2="$5" rc out
+  local name="$1" served="$2" want="$3" rc out n others_absent=1
+  shift 3
   export FAKE_SERVED_VERSION="$served"
   rc="$(run "$name")"
   out="/tmp/mcp-ruflo-launcher-test-$name.out"
   unset FAKE_SERVED_VERSION
+  for n in "$@"; do
+    if grep -qF "$n" "$out"; then others_absent=0; fi
+  done
   if [ "$rc" -eq 1 ] \
     && grep -qF "pinned:  $PIN" "$out" \
     && grep -qF "served:  $served" "$out" \
     && grep -qF "$want" "$out" \
-    && ! grep -qF "$not1" "$out" \
-    && ! grep -qF "$not2" "$out" \
+    && [ "$others_absent" -eq 1 ] \
     && ! grep -q "real-exec-reached" "$out"; then
     pass "$name" "served $served vs pinned $PIN: refuses with only the matching remediation, no exec"
   else
-    fail "$name" "expected exit 1 with remediation '$want' and neither other remediation (served $served, pinned $PIN, got rc=$rc)"
+    fail "$name" "expected exit 1 with remediation '$want' and none of the others (served $served, pinned $PIN, got rc=$rc)"
   fi
 }
-version_direction_arm version-served-newer "$SERVED_NEWER" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_UNCOMPARABLE"
-version_direction_arm version-pinned-newer "$SERVED_OLDER" "$REMEDY_CUTOVER" "$REMEDY_BEHIND" "$REMEDY_UNCOMPARABLE"
+version_direction_arm version-served-newer "$SERVED_NEWER" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_UNCOMPARABLE" "$REMEDY_SPELLING"
+version_direction_arm version-pinned-newer "$SERVED_OLDER" "$REMEDY_CUTOVER" "$REMEDY_BEHIND" "$REMEDY_UNCOMPARABLE" "$REMEDY_SPELLING"
 # "<MAJOR>.<MINOR>" survives the probe's [0-9.] trim but is not MAJOR.MINOR.PATCH.
-version_direction_arm version-uncomparable "$PIN_MAJOR.$PIN_MINOR" "$REMEDY_UNCOMPARABLE" "$REMEDY_BEHIND" "$REMEDY_CUTOVER"
+version_direction_arm version-uncomparable "$PIN_MAJOR.$PIN_MINOR" "$REMEDY_UNCOMPARABLE" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_SPELLING"
+# A leading zero: numerically equal to the pin, but not the same string.
+version_direction_arm version-equal-spelling "0$PIN" "$REMEDY_SPELLING" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_UNCOMPARABLE"
+# Prereleases of the pin must be shown whole and be uncomparable. A [0-9.]
+# trim reads "-rc.2" as "<PIN>.2" (shown wrongly, still uncomparable) and
+# "-rc2" as "<PIN>2" (e.g. 3.56.12, which compares as NEWER and prints the
+# rebase remedy), so the second arm pins the routing, the first the display.
+version_direction_arm version-prerelease "$PIN-rc.2" "$REMEDY_UNCOMPARABLE" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_SPELLING"
+version_direction_arm version-prerelease-nodot "$PIN-rc2" "$REMEDY_UNCOMPARABLE" "$REMEDY_BEHIND" "$REMEDY_CUTOVER" "$REMEDY_SPELLING"
 
 # ---- arm: version probe with noisy-but-harmless stderr still passes (M-9) --
 export FAKE_VERSION_STDERR="(node:1) ExperimentalWarning: something noisy on stderr"
@@ -546,29 +558,28 @@ out="/tmp/mcp-ruflo-launcher-test-healthy.out"
 # "exec"/"node"/the container id individually.
 last_call_start="$(grep -n "^--- CALL ---$" "$DOCKER_LOG" | tail -1 | cut -d: -f1)"
 last_call="$(tail -n +"$((last_call_start + 1))" "$DOCKER_LOG")"
+# The WHOLE final argv, in order, one element per line (the stub logs one arg
+# per line): an -e placed after the container id would be passed to node as
+# an argument, not set in the environment, so "appears anywhere" is not
+# enough. The container id, not the name, is what gets exec'd (TOCTOU).
+expected_argv="$(printf '%s\n' exec -i -w "$SERVICE_CWD" \
+  -e CLAUDE_FLOW_LOG_LEVEL=info -e CLAUDE_FLOW_MEMORY_BACKEND=sqlite \
+  -e XDG_CONFIG_HOME=/srv/ruflo/.config \
+  "$FAKE_CONTAINER_ID" node "$CLI_PATH" mcp start)"
 # SMI-6744 A1.4: a healthy run must have probed BOTH store files for
 # presence (quad d) and generation (quad c) -- not just memory.db.
 if [ "$rc" -eq 0 ] \
   && grep -qF "agentdb-memory.db" "$DOCKER_LOG" \
   && grep -qF "$STORE_DB_PATH" "$DOCKER_LOG" \
   && grep -qF "serving @claude-flow/cli@$PIN from $EXPECTED_MAIN_CHECKOUT via $CONTAINER_NAME" "$out" \
-  && printf '%s\n' "$last_call" | grep -q "^exec$" \
-  && printf '%s\n' "$last_call" | grep -q "^-i$" \
-  && printf '%s\n' "$last_call" | grep -q "^-w$" \
-  && printf '%s\n' "$last_call" | grep -q "^$SERVICE_CWD$" \
-  && printf '%s\n' "$last_call" | grep -q "^$FAKE_CONTAINER_ID$" \
-  && ! printf '%s\n' "$last_call" | grep -q "^$CONTAINER_NAME$" \
-  && printf '%s\n' "$last_call" | grep -q "^node$" \
-  && printf '%s\n' "$last_call" | grep -q "^$CLI_PATH$" \
-  && printf '%s\n' "$last_call" | grep -q "^mcp$" \
-  && printf '%s\n' "$last_call" | grep -q "^start$" \
-  && printf '%s\n' "$last_call" | grep -q "CLAUDE_FLOW_MEMORY_BACKEND=sqlite" \
-  && printf '%s\n' "$last_call" | grep -q "CLAUDE_FLOW_LOG_LEVEL=info" \
-  && printf '%s\n' "$last_call" | grep -qx "XDG_CONFIG_HOME=/srv/ruflo/.config" \
+  && [ "$last_call" = "$expected_argv" ] \
   && grep -q "real-exec-reached" "$out"; then
-  pass healthy "the final docker call's argv contains exec/-i/-w/cwd/container-id (not name)/node/cli path/mcp/start/env, success line printed first, exec reached"
+  pass healthy "the final docker call's argv is exactly exec -i -w cwd, the three -e in order, container id, node, cli path, mcp start; success line printed, exec reached"
 else
-  fail healthy "expected a healthy run with the success line and the final exec argv/env (got rc=$rc)"
+  fail healthy "expected a healthy run with the success line and exactly this final argv (got rc=$rc):
+$expected_argv
+-- actual --
+$last_call"
 fi
 
 # ---- arm: disabled -----------------------------------------------------------

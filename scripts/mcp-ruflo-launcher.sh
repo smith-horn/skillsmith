@@ -262,7 +262,13 @@ fi
 # the LAST occurrence of the sentinel, so trailing stderr text before it
 # cannot be mistaken for the version; trimming to [0-9.] then discards
 # anything the sentinel's own line still carries (e.g. a trailing newline).
-served_version="$(printf '%s' "${version_probe_out##*RUFLO_VER=}" | tr -cd '0-9.')"
+# A '-' or '+' on that line (prerelease/build) keeps the value whole instead,
+# so 3.56.1-rc2 is never squashed to 3.56.12 (newer); semver_cmp answers na.
+served_raw="${version_probe_out##*RUFLO_VER=}"
+case "${served_raw%%$'\n'*}" in
+  *[-+]*) served_version="$(printf '%s' "${served_raw%%$'\n'*}" | tr -d '[:space:]')" ;;
+  *) served_version="$(printf '%s' "$served_raw" | tr -cd '0-9.')" ;;
+esac
 # semver_cmp A B: prints gt, lt or eq comparing MAJOR.MINOR.PATCH numerically,
 # or na when either side is not exactly three dot-separated digit runs.
 semver_cmp() {
@@ -283,6 +289,7 @@ if [ "$served_version" != "$RUFLO_CLI_PIN" ]; then
   case "$(semver_cmp "$served_version" "$RUFLO_CLI_PIN")" in
     gt) version_remedy="# this checkout is behind main: rebase it (or sync the main checkout), then reconnect; do not rebuild the image or edit RUFLO_CLI_PIN" ;;
     lt) version_remedy="# the service has not been cut over yet: see .claude/development/claude-flow-guide.md § Cutover, run from the main checkout" ;;
+    eq) version_remedy="# pinned and served are numerically equal but spelled differently: pinned $RUFLO_CLI_PIN, served $served_version; inspect $CLI_PKG_JSON in $CONTAINER_NAME before changing anything" ;;
     *) version_remedy="# cannot compare pinned and served as MAJOR.MINOR.PATCH: check RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh and $CLI_PKG_JSON in $CONTAINER_NAME" ;;
   esac
   emit_error "RUFLO_CLI_PIN=$RUFLO_CLI_PIN does not match the served @claude-flow/cli@$served_version" \
