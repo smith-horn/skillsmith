@@ -243,7 +243,7 @@ async function legacyLeftovers(ctx: LedgerCtx, roots: readonly string[]) {
   return out
 }
 
-/** UD61 (b) and (c) for every kept tree, once the ledger says what could not be seen. */
+/** UD61 (a), (b) and (c) for every kept tree, once the ledger says what could not be seen. */
 function protect(
   rows: readonly BackupRow[],
   records: RecordFacts,
@@ -260,7 +260,12 @@ function protect(
     r.protection = protectionOf(
       records,
       parkedUnreadable,
-      { opId: r.opId, kind: r.kind, sourceUnchanged: typeof s === 'boolean' ? s : null },
+      {
+        copyPath: r.copy.copyPath,
+        opId: r.opId,
+        kind: r.kind,
+        sourceUnchanged: typeof s === 'boolean' ? s : null,
+      },
       { hidden, maybe }
     )
   }

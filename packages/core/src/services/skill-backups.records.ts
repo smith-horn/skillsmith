@@ -6,9 +6,10 @@
  * Protection depends on the records of EVERY discovered root, not the root a
  * tree sits under, so the scan covers all of them (it is the same verifier as
  * the update's step 3, `scanStagingRecords`, so doctor and update agree, UD44).
- * `PendingRecord` does not carry `backupDest`; a record's backup is
- * `<area>/<opId>`, which rule (b) covers by opId, so (a) needs no separate
- * check here.
+ * Rule (a) is its own fact (6c-ii-b, M-P3): every live record's `backupDest`
+ * is protected by path, whatever its opId or kind. A record's backup is
+ * normally `<area>/<opId>`, which rule (b) also covers by opId, so (a) is
+ * checked first and named when it applies.
  *
  * Read-only.
  *
@@ -20,8 +21,8 @@ import type { UnreadableRecord } from './skill-swap.records.js'
 import { STAGING_DIR } from './skill-backups.areas.js'
 
 export interface ProtectedBy {
-  rule: 'live-record' | 'parked-unreadable-record'
-  /** The record's path (live), or the parked copy's path (unreadable). */
+  rule: 'backup-dest' | 'live-record' | 'parked-unreadable-record'
+  /** The record's path (backup-dest, live), or the parked copy's path (unreadable). */
   path: string
 }
 
@@ -38,6 +39,12 @@ export type Protection =
 export interface RecordFacts {
   /** Verified live records by opId: the first record path seen for each. */
   live: Map<string, string>
+  /**
+   * UD61(a): each verified live record's `backupDest`, mapped to that record's
+   * path. `collectRecordFacts` always fills it; it is optional only so a
+   * hand-built fact set without records stays valid.
+   */
+  backupDests?: Map<string, string>
   /** Records that could not be verified, by root: they block every write there. */
   unreadable: { root: string; record: UnreadableRecord }[]
   /** A root's staging directory could not be scanned: nothing about its records is known. */
@@ -46,14 +53,22 @@ export interface RecordFacts {
 
 /** Scans every root's staging directory for records. */
 export async function collectRecordFacts(roots: readonly string[]): Promise<RecordFacts> {
-  const facts: RecordFacts = { live: new Map(), unreadable: [], scanFailures: [] }
+  const facts: RecordFacts = {
+    live: new Map(),
+    backupDests: new Map(),
+    unreadable: [],
+    scanFailures: [],
+  }
   for (const root of roots) {
     const scan = await scanStagingRecords(root, path.join(root, STAGING_DIR))
     if (!scan.ok) {
       facts.scanFailures.push({ root, path: scan.path, errno: scan.errno })
       continue
     }
-    for (const r of scan.pending) if (!facts.live.has(r.opId)) facts.live.set(r.opId, r.path)
+    for (const r of scan.pending) {
+      if (!facts.live.has(r.opId)) facts.live.set(r.opId, r.path)
+      if (!facts.backupDests?.has(r.backupDest)) facts.backupDests?.set(r.backupDest, r.path)
+    }
     for (const u of scan.unreadable) facts.unreadable.push({ root, record: u })
   }
   return facts
@@ -61,6 +76,8 @@ export async function collectRecordFacts(roots: readonly string[]): Promise<Reco
 
 /** What a kept tree needs for the protection question. */
 export interface ProtectionQuery {
+  /** The tree's path, compared exactly with each live record's `backupDest` (rule a). */
+  copyPath?: string
   opId: string
   kind: string | null
   /** For `partial-copy`: the sidecar's `sourceUnchanged`. */
@@ -79,7 +96,8 @@ export interface ParkedUnseen {
 }
 
 /**
- * UD61 (b) and (c) as a fact: the live record whose opId the tree carries
+ * UD61 as a fact: (a) the live record whose `backupDest` is this tree's path;
+ * else (b) the live record whose opId the tree carries
  * (except a `partial-copy` with `sourceUnchanged: true`), else the parked
  * unreadable record with that opId (`parkedUnreadable` maps an opId to the
  * parked copy's path). With neither, the answer is `unknown` when some root's
@@ -94,6 +112,8 @@ export function protectionOf(
   q: ProtectionQuery,
   unseen?: ParkedUnseen
 ): Protection {
+  const dest = q.copyPath === undefined ? undefined : facts.backupDests?.get(q.copyPath)
+  if (dest !== undefined) return { status: 'protected', rule: 'backup-dest', path: dest }
   const exempt = q.kind === 'partial-copy' && q.sourceUnchanged === true
   const live = facts.live.get(q.opId)
   if (live !== undefined && !exempt) return { status: 'protected', rule: 'live-record', path: live }
