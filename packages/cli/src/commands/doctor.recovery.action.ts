@@ -62,10 +62,13 @@ import {
   type DiscoverOptions,
   type RecoveryAction,
   type RecoveryRequest,
+  type ListBackupsOptions,
+  type ParkedUsageOptions,
   type RecoveryRunOptions,
   type RecoveryRunResult,
 } from '@skillsmith/core'
 import { planLines, resultLines } from './doctor.recovery.action.render.js'
+import { printParkedUsageWarning } from './doctor.backups.js'
 
 export type PromptAnswer = 'yes' | 'no' | 'interrupt'
 
@@ -98,6 +101,10 @@ export interface RecoveryActionOptions {
   afterConfirm?: () => void | Promise<void>
   /** @internal Test seam: passed to `executeRecovery` (a park stub, hooks). */
   runOptions?: RecoveryRunOptions
+  /** @internal Test seam (UD66): the space warning's `statfs` and thresholds. */
+  parkedUsage?: ParkedUsageOptions
+  /** @internal Test seam (UD66): replaces the size walk of the warning's listing. */
+  measure?: ListBackupsOptions['measure']
   /** @internal Test seam: merged into the request (the owner probe, the effective uid). */
   request?: Partial<Pick<RecoveryRequest, 'ownerProbe' | 'euid'>>
 }
@@ -145,6 +152,22 @@ export function askOnce(
 /** UD32: a park that did not finish is exit 4 (an action that stopped or was refused is 1, which wins). */
 const exitOf = (r: RecoveryRunResult): number | undefined =>
   r.status !== 'done' ? 1 : r.warnings.some((w) => w.code === 'removal-not-done') ? 4 : undefined
+
+/**
+ * D8 (UD66): whether the run set a folder aside: a kept `OP` tree, an extra
+ * copy of the op dir, a held park (a `removal-not-done` warning naming where
+ * it was parked), or a stop after the park's rename (the op dir is gone).
+ */
+export function parked(r: RecoveryRunResult): boolean {
+  if (r.status === 'done') {
+    return (
+      r.kept.some((k) => k.tree === 'OP') ||
+      r.extraCopy !== null ||
+      r.warnings.some((w) => w.code === 'removal-not-done' && typeof w.parkedPath === 'string')
+    )
+  }
+  return r.status === 'stopped' && r.opDir?.stillThere === false
+}
 
 const printLines = (lines: string[]): void => {
   for (const l of lines) console.log(l)
@@ -259,9 +282,23 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     }
   }
   await options.afterConfirm?.()
-  const result = await executeRecovery(planned, options.runOptions ?? {})
-  if (json) printJson(plan, result)
-  else printLines(resultLines(result))
-  const code = exitOf(result)
-  if (code !== undefined) process.exitCode = code
+  // UD66: a throw from the action (after a park's rename) or from printing its result must not
+  // skip the warning, so it runs in `finally`: when the run says it parked, and also when it
+  // never returned (the outcome is unknown after the user confirmed).
+  let result: RecoveryRunResult | undefined
+  try {
+    result = await executeRecovery(planned, options.runOptions ?? {})
+    if (json) printJson(plan, result)
+    else printLines(resultLines(result))
+    const code = exitOf(result)
+    if (code !== undefined) process.exitCode = code
+  } finally {
+    if (result === undefined || parked(result)) {
+      await printParkedUsageWarning({
+        discovered: found,
+        ...(options.parkedUsage === undefined ? {} : { parkedUsage: options.parkedUsage }),
+        ...(options.measure === undefined ? {} : { measure: options.measure }),
+      })
+    }
+  }
 }

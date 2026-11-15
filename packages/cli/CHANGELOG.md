@@ -4,6 +4,33 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6c-ii-a: `skillsmith doctor backups` lists every set-aside folder
+  Skillsmith keeps: update backups under `~/.skillsmith/backups/update/`, parked copies in each
+  skills root's `.skillsmith-parked/`, unfinished prunes, leftovers from earlier releases, and the
+  older MCP backups in `~/.claude/skills/.backups` (reported, not managed by prune). Each copy shows
+  its size on disk, age, origin and a class (mounted, held, unverified, changed or clean) with the
+  reason. It only reads: nothing is deleted, moved or created. `--root <dir>` (repeatable) adds a
+  skills root and narrows the listing to the named roots; `--client <id>` narrows by client;
+  `--state-root <dir>` reads another state folder; `--json` prints machine-readable output. When
+  the folders on a disk hold more than min(1 GB, 5% of its free space), or some could not be
+  measured, or the disk's free space could not be read, a warning goes to stderr, and it prints
+  before the listing so a closed stdout cannot lose it. Every entry the command reads is either
+  measured, counted as "could not be measured", or counts for nothing because it does not exist,
+  vanished while being listed, or is a leftover from an earlier release. Nothing else is possible,
+  so nothing it saw, or knows it could not see, drops out of the warning. A store, area or folder
+  level that could not be read, or that Skillsmith refused (another owner, another device, a mount
+  point, a symlink where a store folder belongs), an unreadable parked index and an index line that
+  cannot be parsed all count as "could not be measured", and the listing names each one with the
+  reason; hidden files and folders are measured like anything else. `--root` and `--client` say how
+  many folders, kept trees and other entries (temps, leftovers, orphan sidecars, anomalies, refused
+  areas) they left out, in the text and as `excludedByRoot` / `excludedByClient` in `--json`; the
+  warning always counts everything. `--json` also lists what could not be measured and what
+  counted for nothing, with the reason (`accounting`). A kept tree says whether an update record protects
+  it, none does, or protection is unknown because some records or set-aside folders could not be
+  read. A folder whose real path could not be resolved reads "could not be resolved", not
+  "mounted". `doctor recovery`
+  prints the same warning after an action that set a folder aside, and also when the action threw
+  before it could say what it did.
 - **Fixed**: SMI-6531 -- #3213 retro: the `skillsmith doctor recovery` listing now prints the
   refused `--clean-staging` line for an operation folder with no record even when another
   action is offered there (a verifying move-source park intent offers `--apply`, `--undo` and

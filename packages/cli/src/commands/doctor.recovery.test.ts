@@ -305,7 +305,7 @@ describe('the doctor command', () => {
   it('registers recovery (with repeatable --root, --state-root and --json) and locks (with --root)', () => {
     const cmd = createDoctorCommand()
     const names = cmd.commands.map((c) => c.name())
-    expect(names).toEqual(['recovery', 'locks'])
+    expect(names).toEqual(['recovery', 'locks', 'backups'])
     const flags = (name: string): string[] =>
       cmd.commands.find((c) => c.name() === name)!.options.map((o) => o.long ?? '')
     expect(flags('recovery')).toEqual([

@@ -45,7 +45,7 @@ const PLAN: [string, string, boolean][] = [
   ['activation-undo', 'activation-undo', true],
   ['init-rollback', 'init-rollback', true],
   ['agent-uninstall', 'agent-uninstall', true],
-  ['companion-rollback', 'install-rollback', true],
+  ['companion-rollback', 'companion-rollback', true],
   ['doctor-park', 'unreadable-record', false],
 ]
 const BACKUP = '/abs/backups/old'

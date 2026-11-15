@@ -11,8 +11,9 @@
  * (`quarantine.postmove.mjs:43-64`); the plan makes it caller-aware.
  *
  * `kind` stays a separate option, as §3.3 lists it, and must be this caller's
- * kind: three fan-out callers share `fan-out-overwrite` and two callers share
- * `install-rollback`, so the kind alone cannot pick the message.
+ * kind: three fan-out callers share `fan-out-overwrite`, so the kind alone
+ * cannot pick the message. Every other caller has a kind of its own, which
+ * UD63 relies on: the lock for an index-only area is decided by kind.
  *
  * An internal-origin sentence never asserts where the tree is unless the
  * post-move check confirmed it (`safe`, SMI-7134): the detail's own location
@@ -73,7 +74,7 @@ const CALLERS = {
   'activation-undo': { rows: '10, 11', kind: 'activation-undo', internalOrigin: null },
   'init-rollback': { rows: '12', kind: 'init-rollback', internalOrigin: null },
   'agent-uninstall': { rows: '13', kind: 'agent-uninstall', internalOrigin: null },
-  'companion-rollback': { rows: '14', kind: 'install-rollback', internalOrigin: null },
+  'companion-rollback': { rows: '14', kind: 'companion-rollback', internalOrigin: null },
   'doctor-park': {
     rows: '§3.9 doctor recovery --park',
     kind: 'unreadable-record',
@@ -83,6 +84,16 @@ const CALLERS = {
 } as const satisfies Record<string, CallerSpec>
 
 export type ParkCaller = keyof typeof CALLERS
+
+/**
+ * Every kind a park can write, derived from the caller table so a new caller
+ * kind is a new member. Prune's policy table (`prune.kinds.ts`) is checked
+ * against this type with `satisfies`: a kind without a policy does not compile.
+ */
+export type ParkedKind = (typeof CALLERS)[ParkCaller]['kind']
+
+/** The kind `caller` parks with. */
+export const callerKind = (caller: ParkCaller): ParkedKind => CALLERS[caller].kind
 
 /** Every caller name, in §3.8 row order. */
 export const PARK_CALLERS = Object.keys(CALLERS) as ParkCaller[]

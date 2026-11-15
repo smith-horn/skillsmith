@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { checkFsBoundary, checkFsBoundarySource } from './park-tree.fs-boundary.js'
 import { callShapeViolations } from './prune.fs-boundary.calls.js'
+import { WRITE_MEMBERS } from './fs-write-shape.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const INSTALL = path.resolve(HERE, '../../../src/install')
@@ -58,7 +59,7 @@ const FS_MEMBERS: Record<string, string[]> = {
     'unlinkSync',
   ],
   'prune.walk.verify.ts': ['lstatSync', 'readdirSync', 'readlinkSync'],
-  'prune.walk.shared.ts': ['lstatSync', 'realpathSync', 'renameSync'],
+  'prune.walk.shared.ts': ['lstatSync', 'renameSync'],
   'prune.walk.stage.ts': ['rmdirSync', 'writeFileSync'],
   'prune.walk.resume.ts': ['lstatSync'],
   'prune.inventory.ts': [
@@ -81,10 +82,25 @@ const FS_MEMBERS: Record<string, string[]> = {
   ],
   'prune.leftovers.ts': ['lstatSync', 'readdirSync'],
   'prune.job.ts': [],
+  'prune.kinds.ts': [],
+  'prune.measure.ts': ['lstatSync', 'readdirSync'],
+  'prune.classify.ts': ['lstatSync'],
+  'prune.list.types.ts': [],
+  'prune.list.parked.ts': ['lstatSync', 'readdirSync', 'statSync'],
+  'prune.list.backups.ts': ['lstatSync', 'readdirSync'],
+  'parked-usage.ts': ['statSync', 'statfsSync'],
   'backup-sidecar.strict.ts': [],
   'park-result.ts': [],
   'park-callers.ts': [],
-  'park-tree.mounts.ts': ['readFileSync'],
+  'park-tree.mounts.ts': ['lstatSync', 'readFileSync', 'realpathSync'],
+  'park-tree.identity.ts': ['lstatSync'],
+  'park-tree.verify.ts': [
+    'lstatSync',
+    'readFileSync',
+    'readdirSync',
+    'readlinkSync',
+    'realpathSync',
+  ],
   'park-tree.perms.ts': [],
   'tree-hash.ts': [],
 }
@@ -101,20 +117,30 @@ const BUILTINS: Record<string, string[]> = {
   'prune.sidecar.ts': ['fs', 'path'],
   'prune.leftovers.ts': ['fs', 'path'],
   'prune.job.ts': ['path'],
+  'prune.kinds.ts': [],
+  'prune.measure.ts': ['fs', 'path'],
+  'prune.classify.ts': ['crypto', 'fs', 'path'],
+  'prune.list.types.ts': [],
+  'prune.list.parked.ts': ['fs', 'path'],
+  'prune.list.backups.ts': ['fs', 'path'],
+  'parked-usage.ts': ['fs', 'path'],
   'backup-sidecar.strict.ts': ['path'],
   'park-result.ts': ['path', 'util'],
   'park-callers.ts': ['path'],
   'park-tree.mounts.ts': ['fs', 'path'],
+  'park-tree.identity.ts': ['fs'],
+  'park-tree.verify.ts': ['crypto', 'fs', 'path'],
   'park-tree.perms.ts': [],
   'tree-hash.ts': ['crypto'],
 }
 /** The only modules that may import `removeIfIdentical`, relative to packages/. */
 const REMOVE_IMPORTERS = ['core/src/install/prune.walk.ts']
 
+/** Enumerated entries: every `prune*.ts`, and `parked-usage.ts` (D19), which the warning lives in. */
 const pruneFiles = (dir: string): string[] =>
   fs
     .readdirSync(dir)
-    .filter((n) => /^prune.*\.ts$/.test(n))
+    .filter((n) => /^(prune.*|parked-usage)\.ts$/.test(n))
     .sort()
 
 interface AllCheck {
@@ -330,6 +356,41 @@ describe('positive controls: each planted bypass is flagged', () => {
       'fs.renameSync in renameNoReplace without an earlier lstat'
     )
   })
+
+  /** The 6c-ii-a read-only modules (D19): none may ever hold a write member. */
+  const READ_ONLY_MODULES = [
+    'prune.kinds.ts',
+    'prune.measure.ts',
+    'prune.classify.ts',
+    'prune.list.types.ts',
+    'prune.list.parked.ts',
+    'prune.list.backups.ts',
+    'parked-usage.ts',
+  ]
+  it('6c-ii-a: the pins of the read-only modules hold no write member', () => {
+    for (const f of READ_ONLY_MODULES) {
+      expect(f in FS_MEMBERS, f).toBe(true)
+      expect(
+        FS_MEMBERS[f]?.filter((m) => WRITE_MEMBERS.has(m)),
+        f
+      ).toEqual([])
+    }
+  })
+
+  for (const f of READ_ONLY_MODULES) {
+    it(`6c-ii-a: a write member planted in ${f} makes its pin fail`, () => {
+      withCopy((dir) => {
+        expect(checkAll(dir).members[f]).toEqual(FS_MEMBERS[f])
+        fs.appendFileSync(
+          path.join(dir, f),
+          "\nimport fs from 'node:fs'\nexport const planted = (p: string) => fs.unlinkSync(p)\n"
+        )
+        const r = checkAll(dir)
+        expect(r.members[f]).toContain('unlinkSync')
+        expect(r.members).not.toEqual(FS_MEMBERS)
+      })
+    })
+  }
 
   it('(c) a planted import of removeIfIdentical in another module is seen', () => {
     const src = fs.readFileSync(path.join(INSTALL, 'prune.leftovers.ts'), 'utf8')
