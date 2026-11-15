@@ -45,6 +45,18 @@ afterEach(() => {
   fs.rmSync(base, { recursive: true, force: true })
 })
 
+/**
+ * Let work the run scheduled but did not await finish before the final
+ * snapshot: pending immediates, and timers due within SETTLE_MS of the run's
+ * end. A write scheduled later than that is outside what this test sees.
+ */
+const SETTLE_MS = 25
+async function settle(): Promise<void> {
+  await new Promise<void>((r) => setImmediate(r))
+  await new Promise<void>((r) => setTimeout(r, SETTLE_MS))
+  await new Promise<void>((r) => setImmediate(r))
+}
+
 /** Both stores, a changed tree, a kept kind, a leftover, an unreadable record, and a symlinked path. */
 function plant(broken: boolean): { changed: string; kept: string; paths: string[] } {
   const state = stateRootOf(base)
@@ -179,6 +191,25 @@ describe('control against the product: a write injected into code the dry run ru
     expect(seenWrites()).toContain(`fs.mkdirSync ${injected}`)
     expect(snapshot(base)).not.toEqual(before)
   })
+
+  it('a write scheduled to run after the command resolves is also caught', async () => {
+    const planted = plant(true)
+    const discovery = hermeticDiscovery(base, true)
+    const before = snapshot(base)
+    const injected = path.join(base, 'injected-after-resolve')
+    // Built before the spies: runs() creates fixture roots, which is not the run writing.
+    const options = runs(planted)[1]
+    vi.spyOn(console, 'log').mockImplementation(
+      () => void setTimeout(() => namedMkdirSync(injected, { recursive: true }), 0)
+    )
+    installWriteSpies()
+    await runDoctorBackups({ discovery, prune: true, ...options })
+    // Nothing has run yet: the write is still pending when the command resolves.
+    expect(seenWrites()).toEqual([])
+    await settle()
+    expect(seenWrites()).toContain(`fs.mkdirSync ${injected}`)
+    expect(snapshot(base)).not.toEqual(before)
+  })
 })
 
 describe('doctor backups --prune over both stores', () => {
@@ -192,6 +223,8 @@ describe('doctor backups --prune over both stores', () => {
       await runDoctorBackups({ discovery, prune: true, ...o })
       expect(seenWrites()).toEqual([])
     }
+    await settle()
+    expect(seenWrites()).toEqual([])
     expect(snapshot(base)).toEqual(before)
   })
 
