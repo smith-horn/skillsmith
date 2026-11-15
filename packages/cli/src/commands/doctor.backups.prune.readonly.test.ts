@@ -4,11 +4,13 @@
  * selector, every write-family fs member spied in all three forms (callback,
  * sync, promises), and every fixture entry hashed before and after. The
  * instrument is checked first, with a known positive (a write in each form is
- * seen) and a known negative (a read is not). Control against the product: a
- * write injected into code the dry run runs must be reported and must fail
- * this test.
+ * seen, also one made through a named or namespace ESM import of `node:fs`,
+ * which core loads that way) and a known negative (a read is not). Control
+ * against the product: a write injected into code the dry run runs must be
+ * reported and must fail this test.
  */
-import fs from 'node:fs'
+import fs, { mkdirSync as namedMkdirSync } from 'node:fs'
+import { mkdir as namedPromisesMkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runDoctorBackups, type DoctorBackupsOptions } from './doctor.backups.js'
@@ -115,6 +117,67 @@ describe('the write spies themselves (known positive and known negative)', () =>
     fs.readFileSync(path.join(dir, 'f'))
     fs.closeSync(fs.openSync(path.join(dir, 'f'), 'r'))
     expect(seenWrites().length).toBe(before)
+  })
+})
+
+describe('the write spies reach named ESM imports and the later write families', () => {
+  it('see a write made through a named import and through the fs/promises namespace', async () => {
+    installWriteSpies()
+    const named = path.join(base, 'named')
+    const ns = path.join(base, 'ns')
+    namedMkdirSync(named)
+    await namedPromisesMkdir(ns)
+    expect(seenWrites()).toEqual(
+      expect.arrayContaining([`fs.mkdirSync ${named}`, `fs.promises.mkdir ${ns}`])
+    )
+  })
+
+  it('see fchmod, fchown, writev (and lchmod where the platform has it) in every form that exists', async () => {
+    const file = path.join(base, 'f')
+    fs.writeFileSync(file, 'x')
+    const link = path.join(base, 'l')
+    fs.symlinkSync(file, link)
+    installWriteSpies()
+    const fd = fs.openSync(file, 'r+')
+    const uid = process.getuid?.() ?? 0
+    const gid = process.getgid?.() ?? 0
+    fs.fchmodSync(fd, 0o644)
+    fs.fchownSync(fd, uid, gid)
+    fs.writevSync(fd, [Buffer.from('y')])
+    await new Promise<void>((r) => fs.fchmod(fd, 0o644, () => r()))
+    await new Promise<void>((r) => fs.fchown(fd, uid, gid, () => r()))
+    await new Promise<void>((r) => fs.writev(fd, [Buffer.from('z')], () => r()))
+    fs.closeSync(fd)
+    const seen = seenWrites().map((w) => w.split(' ')[0])
+    for (const label of [
+      'fs.fchmodSync',
+      'fs.fchownSync',
+      'fs.writevSync',
+      'fs.fchmod',
+      'fs.fchown',
+      'fs.writev',
+    ]) {
+      expect(seen).toContain(label)
+    }
+    if (typeof fs.lchmodSync === 'function') {
+      fs.lchmodSync(link, 0o777)
+      expect(seenWrites().map((w) => w.split(' ')[0])).toContain('fs.lchmodSync')
+    }
+  })
+})
+
+describe('control against the product: a write injected into code the dry run runs', () => {
+  it('is reported by the spies and changes the fixture, which fails the zero-write assertions', async () => {
+    const planted = plant(true)
+    const discovery = hermeticDiscovery(base, true)
+    const before = snapshot(base)
+    const injected = path.join(base, 'injected-by-the-control')
+    // The dry run prints its plan with console.log: a write made from there is a write the run makes.
+    vi.spyOn(console, 'log').mockImplementation(() => void namedMkdirSync(injected))
+    installWriteSpies()
+    await runDoctorBackups({ discovery, prune: true, ...runs(planted)[1] })
+    expect(seenWrites()).toContain(`fs.mkdirSync ${injected}`)
+    expect(snapshot(base)).not.toEqual(before)
   })
 })
 

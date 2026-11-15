@@ -60,8 +60,20 @@ function parkedRowLine(r: ParkedRow): string {
   return (
     `  ${classText(c)}  ${humanBytes(r.allocatedBytes)} on disk  ${days(r.ageDays)}  ` +
     `${r.copy.copyPath}  origin: ${r.origin ?? 'unknown'}  index: ${r.index}` +
-    (r.kind === null ? '' : `  kind: ${r.kind}`)
+    (r.kind === null ? '' : `  kind: ${r.kind}`) +
+    protectionText(r.protection)
   )
+}
+
+/** UD61's protection, as one clause (two leading spaces): the same words for a backup and a parked copy. */
+function protectionText(p: BackupRow['protection']): string {
+  return p.status === 'unknown'
+    ? `  protection unknown: ${p.reason}`
+    : p.status === 'unprotected'
+      ? '  no update record protects it'
+      : p.rule === 'live-record'
+        ? `  protected by record ${p.path}`
+        : `  protected by parked unreadable record ${p.path}`
 }
 
 function parkedLines(l: BackupsListing): string[] {
@@ -96,15 +108,7 @@ function backupRowLine(r: BackupRow): string {
       : r.hashStillEquals
         ? '  hash matches sidecar'
         : '  hash differs from sidecar'
-  const p = r.protection
-  const prot =
-    p.status === 'unknown'
-      ? `  protection unknown: ${p.reason}`
-      : p.status === 'unprotected'
-        ? '  no update record protects it'
-        : p.rule === 'live-record'
-          ? `  protected by record ${p.path}`
-          : `  protected by parked unreadable record ${p.path}`
+  const prot = protectionText(r.protection)
   return (
     `  ${r.kind ?? 'unknown kind'}  ${classText(c)}  ${humanBytes(r.allocatedBytes)} on disk  ` +
     `${days(r.ageDays)}  ${r.copy.name}  opId ${r.opId}${hash}${prot}` +

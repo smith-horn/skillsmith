@@ -30,7 +30,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { Command } from 'commander'
+import { Command, InvalidArgumentError } from 'commander'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
@@ -261,6 +261,25 @@ export const doctorLocksAction = withTelemetry(runDoctorLocks, {
   extractFramework: () => 'cli',
 })
 
+/** A single-valued option: a second value is refused rather than silently winning or losing. */
+const singleValue =
+  (flag: string) =>
+  (value: string, previous: string | undefined): string => {
+    if (previous !== undefined) {
+      throw new InvalidArgumentError(`${flag} was given twice; give it once.`)
+    }
+    return value
+  }
+
+/** `--keep <n>`: once, and a whole number (so `--keep --prune` names the value it swallowed). */
+const keepValue = (value: string, previous: string | undefined): string => {
+  const once = singleValue('--keep')(value, previous)
+  if (!/^\d+$/.test(once)) {
+    throw new InvalidArgumentError(`--keep needs a whole number, got "${once}"`)
+  }
+  return once
+}
+
 /** Create the `doctor` command (`doctor locks`, `doctor recovery`, `doctor backups`). */
 export function createDoctorCommand(): Command {
   const doctor = new Command('doctor').description(
@@ -342,19 +361,28 @@ export function createDoctorCommand(): Command {
       collectRoot,
       [] as string[]
     )
-    .option('--state-root <dir>', 'State root to read instead of the discovered ones')
-    .option('--client <id>', "Only list this client's folders")
+    .option(
+      '--state-root <dir>',
+      'State root to read instead of the discovered ones',
+      singleValue('--state-root')
+    )
+    .option('--client <id>', "Only list this client's folders", singleValue('--client'))
     .option('--json', 'Print the listing (or the prune plan) as JSON')
     // SMI-6531 6c-ii-b: the dry run. --apply is deliberately not registered (6c-iii).
     .option('--prune', 'Show what would be deleted under --apply (6c-iii); changes nothing')
-    .option('--older-than <days>', 'With --prune: only trees at least this many days old')
+    .option(
+      '--older-than <days>',
+      'With --prune: only trees at least this many days old',
+      singleValue('--older-than')
+    )
     // No commander default: not given means the guard of 1 selects nothing (UD65, M-KEEP1).
     .option(
       '--keep <n>',
-      'With --prune: guard the newest n backups per folder and select the older ones'
+      'With --prune: guard the newest n backups per folder (at least 1) and select the older ones',
+      keepValue
     )
-    .option('--skill <dirName>', 'With --prune: only this skill folder')
-    .option('--op <opId>', 'With --prune: only this operation')
+    .option('--skill <dirName>', 'With --prune: only this skill folder', singleValue('--skill'))
+    .option('--op <opId>', 'With --prune: only this operation', singleValue('--op'))
     .option(
       '--path <tree>',
       'With --prune: only this exact tree (repeatable)',

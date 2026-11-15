@@ -19,6 +19,13 @@ All notable changes to `@skillsmith/cli` are documented here.
   the first line says so and the exit status stays 0. A `--path` that names no tree prune lists
   exits 1 and says why. The selector options are refused without `--prune`. `--json` prints the
   plan, with identities as decimal strings and each sidecar as its sha256.
+  An empty or blank `--path`, `--root`, `--allow-changed`, `--skill`, `--op` or `--client` is
+  refused with exit 1 (an empty path used to mean the current directory), `--keep 0` is refused
+  (the newest backup of each folder is always kept), a single-valued option given twice is refused
+  instead of one value silently winning, and a `--allow-changed` that names no tree in the plan
+  prints a notice. A symlinked `--path` or `--allow-changed` names the path you typed, not its
+  target. The plain listing and its `--json` now show each parked copy's protection, as they
+  already did for backups.
 - **Added**: SMI-6531 -- A1 step 6c-ii-a: `skillsmith doctor backups` lists every set-aside folder
   Skillsmith keeps: update backups under `~/.skillsmith/backups/update/`, parked copies in each
   skills root's `.skillsmith-parked/`, unfinished prunes, leftovers from earlier releases, and the

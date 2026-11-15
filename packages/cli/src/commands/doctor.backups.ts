@@ -18,8 +18,8 @@
  *
  * The space warning goes to stderr. Exit status: 0 when listed or planned (even
  * when `--apply` would refuse); 1 when a `--root` could not be used, a `--path`
- * names no tree prune lists, a selector is given without `--prune` or is invalid,
- * or on an unexpected filesystem error.
+ * names no tree prune lists, a selector is given without `--prune` or is invalid
+ * (an empty or blank value, `--keep 0`, a bad number), or on an unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.backups
  */
 
@@ -131,6 +131,27 @@ function strayFlags(o: DoctorBackupsOptions): string[] {
   }).map((k) => FLAG[k])
 }
 
+/**
+ * The first flag given an empty or whitespace-only value, or null. `path.resolve('')`
+ * is the current directory, so an empty `--path` or `--root` would silently select
+ * whatever tree the shell stands in; a blank name selects nothing by name. Refused
+ * for every mode, listing included.
+ */
+function blankFlag(o: DoctorBackupsOptions): string | null {
+  const given: [string, readonly (string | undefined)[]][] = [
+    ['--root', o.root ?? []],
+    ['--path', o.path ?? []],
+    ['--allow-changed', o.allowChanged ?? []],
+    ['--skill', [o.skill]],
+    ['--op', [o.op]],
+    ['--client', [o.client]],
+  ]
+  for (const [flag, values] of given) {
+    if (values.some((v) => v !== undefined && v.trim() === '')) return flag
+  }
+  return null
+}
+
 /** The request, or the message that says why a value is not usable. */
 function requestOf(o: DoctorBackupsOptions, now: number): PruneRequest | string {
   const req: PruneRequest = {
@@ -146,6 +167,9 @@ function requestOf(o: DoctorBackupsOptions, now: number): PruneRequest | string 
   if (o.keep !== undefined) {
     if (!/^\d+$/.test(o.keep)) return `--keep needs a whole number, got "${o.keep}"`
     req.keep = Number(o.keep)
+    if (req.keep < 1) {
+      return '--keep needs at least 1; the newest backup of each folder is always kept.'
+    }
   }
   if (o.client !== undefined) req.client = o.client
   if (o.root !== undefined && o.root.length > 0) req.roots = o.root.map(nativeReal)
@@ -182,10 +206,28 @@ async function runPrune(options: DoctorBackupsOptions): Promise<void> {
       console.error(chalk.red(`--path ${u.path} matched nothing: ${u.why}.`))
       process.exitCode = 1
     }
+    // A notice only: --allow-changed widens nothing it does not name, and the exit status is unchanged.
+    const inPlan = new Set([
+      ...plan.groups.flatMap((g) => g.items.map((i) => i.copyPath)),
+      ...plan.excluded.map((x) => x.copyPath),
+    ])
+    for (const a of req.allowChanged) {
+      if (!inPlan.has(a)) {
+        console.error(
+          `--allow-changed ${a} names no tree this plan selects or keeps, so it allows nothing.`
+        )
+      }
+    }
   }
 }
 
 export async function runDoctorBackups(options: DoctorBackupsOptions): Promise<void> {
+  const blank = blankFlag(options)
+  if (blank !== null) {
+    console.error(chalk.red(`${blank} needs a non-empty value.`))
+    process.exitCode = 1
+    return
+  }
   const stray = strayFlags(options)
   if (options.prune !== true && stray.length > 0) {
     console.error(

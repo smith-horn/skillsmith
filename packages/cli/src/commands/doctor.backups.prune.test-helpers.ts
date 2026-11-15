@@ -10,6 +10,7 @@
 
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { vi } from 'vitest'
@@ -204,12 +205,16 @@ const WRITE_NAMES = [
   'truncate',
   'ftruncate',
   'chmod',
+  'fchmod',
+  'lchmod',
   'chown',
+  'fchown',
   'lchown',
   'utimes',
   'futimes',
   'lutimes',
   'write',
+  'writev',
   'createWriteStream',
 ] as const
 
@@ -229,7 +234,12 @@ const writeFlag = (flags: unknown): boolean =>
 
 let spied: Spied[] = []
 
-/** Spies every write-family member of `fs` (callback and sync) and `fs.promises`; calls pass through. */
+/**
+ * Spies every write-family member of `fs` (callback and sync) and `fs.promises`; calls pass
+ * through. Spies on the default `fs` object are invisible to a named or namespace ESM import
+ * of `node:fs` (core loads from `dist` as ESM, and `config/file-lock.ts` imports by name)
+ * until the builtin's live bindings are re-synced, so this does that after installing.
+ */
 export function installWriteSpies(): void {
   const add = (
     obj: Record<string, unknown>,
@@ -248,11 +258,13 @@ export function installWriteSpies(): void {
   add(fs as never, 'open', 'fs.open', (a) => writeFlag(a[1]))
   add(fs as never, 'openSync', 'fs.openSync', (a) => writeFlag(a[1]))
   add(fs.promises as never, 'open', 'fs.promises.open', (a) => writeFlag(a[1]))
+  syncBuiltinESMExports()
 }
 
-/** Forgets the spies (call after `vi.restoreAllMocks()`). */
+/** Forgets the spies and re-syncs the ESM bindings to the restored originals (call after `vi.restoreAllMocks()`). */
 export const clearWriteSpies = (): void => {
   spied = []
+  syncBuiltinESMExports()
 }
 
 /** Every write the spies saw: `fs.mkdirSync /path`. */

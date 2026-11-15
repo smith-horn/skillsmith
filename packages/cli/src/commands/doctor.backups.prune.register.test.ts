@@ -101,4 +101,27 @@ describe('doctor backups options', () => {
     const opt = backups?.options.find((o) => o.long === '--allow-changed')
     expect(opt?.description).toContain('select for a per-item confirmation under --apply (6c-iii)')
   })
+
+  it.each([
+    ['--older-than', '5', '1'],
+    ['--keep', '5', '1'],
+    ['--skill', 'a', 'b'],
+    ['--op', 'op-1', 'op-2'],
+    ['--client', 'cursor', 'agents'],
+    ['--state-root', '/a', '/b'],
+  ])('%s given twice is refused naming the flag, not silently one of them', async (flag, a, b) => {
+    await expect(parse('--prune', flag, a, flag, b)).rejects.toMatchObject({
+      code: 'commander.invalidArgument',
+      message: expect.stringContaining(`${flag} was given twice`),
+    })
+    expect(calls.opts).toEqual([])
+  })
+
+  it('--keep --prune names the value it swallowed instead of passing it on', async () => {
+    await expect(parse('--keep', '--prune')).rejects.toMatchObject({
+      code: 'commander.invalidArgument',
+      message: expect.stringContaining('--keep needs a whole number, got "--prune"'),
+    })
+    expect(calls.opts).toEqual([])
+  })
 })

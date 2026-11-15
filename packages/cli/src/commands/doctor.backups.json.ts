@@ -75,6 +75,7 @@ export function listingJson(l: BackupsListing): Record<string, unknown> {
         ...classOf(r),
         origin: r.origin,
         index: r.index,
+        protection: r.protection,
         createdAt: createdAt(r),
         ageDays: r.ageDays,
         ...sizes(r),
