@@ -36,7 +36,7 @@ printf "       docker ps --format '{{.Names}}' | grep -- '-dev-1\$' | grep -vx '
 printf '     Stop each one listed, from its own worktree.\n'
 printf '\n'
 printf '  2. Clear SMI-6034'\''s deny-delete ACLs (run from the MAIN checkout — see\n'
-printf '     CLAUDE.md'\''s SMI-6034 troubleshooting row for the full chmod -N recipe).\n'
+printf '     .claude/development/troubleshooting.md (SMI-6034 row) for the full chmod -N recipe).\n'
 printf '\n'
 printf '  3. Regenerate the lockfile + sync node_modules + heal native modules:\n'
 printf '       ( cd "%s" && ./scripts/regen-lockfile.sh )\n' "$MAIN"

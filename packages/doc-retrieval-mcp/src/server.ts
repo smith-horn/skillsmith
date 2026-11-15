@@ -158,7 +158,7 @@ export function jsonSchemaOf(schema: z.ZodObject): Record<string, unknown> {
         '— possible zod version drift. ' +
         REMEDIATION +
         '(packages/doc-retrieval-mcp declares zod 4.x — this fires when a zod 3 install ' +
-        'resolves instead. See CLAUDE.md > Troubleshooting.)'
+        'resolves instead. See .claude/development/troubleshooting.md.)'
     )
   }
   try {
