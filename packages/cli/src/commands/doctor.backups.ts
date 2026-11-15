@@ -12,15 +12,26 @@
  * narrows the listing to what belongs to the roots given (what it hid is
  * counted, never silent); `--client` narrows the rows to one client.
  *
- * The space warning goes to stderr. Exit status: 0 when listed; 1 when a
- * `--root` could not be used, or on an unexpected filesystem error.
+ * `--prune` (SMI-6531 6c-ii-b) is a dry run over the same listing: it plans what
+ * `--apply` (6c-iii) would delete, and deletes, renames, creates, writes and locks
+ * nothing. `--apply` is not registered.
+ *
+ * The space warning goes to stderr. Exit status: 0 when listed or planned (even
+ * when `--apply` would refuse); 1 when a `--root` could not be used, a `--path`
+ * names no tree prune lists, a selector is given without `--prune` or is invalid,
+ * or on an unexpected filesystem error.
  * @module @skillsmith/cli/commands/doctor.backups
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
 import {
+  assignLocks,
   listBackups,
+  planPrune,
+  type PruneRequest,
   type DiscoverOptions,
   type Discovery,
   type ListBackupsOptions,
@@ -28,6 +39,8 @@ import {
 } from '@skillsmith/core'
 import { listingJson } from './doctor.backups.json.js'
 import { renderListing } from './doctor.backups.render.js'
+import { planJson } from './doctor.backups.plan.json.js'
+import { renderPlan } from './doctor.backups.render.plan.js'
 
 export interface DoctorBackupsOptions {
   /** `--root <dir>`, repeatable: an extra skills root to scan. */
@@ -35,6 +48,19 @@ export interface DoctorBackupsOptions {
   stateRoot?: string
   json?: boolean
   client?: string
+  /** `--prune`: plan what `--apply` (6c-iii) would delete. Read-only. */
+  prune?: boolean
+  /** `--older-than <days>`, as the command line gives it. */
+  olderThan?: string
+  /** `--keep <n>`, as given. Undefined when not given (no commander default, M-KEEP1). */
+  keep?: string
+  skill?: string
+  op?: string
+  /** `--path <tree>`, repeatable. */
+  path?: string[]
+  includeKept?: boolean
+  /** `--allow-changed <path>`, repeatable. */
+  allowChanged?: string[]
   /** A discovery already made (a doctor action passes the one it acted on). */
   discovered?: Discovery
   /** @internal Test seam: overrides for root discovery (the nine paths, the home directory, `cwd`). */
@@ -58,7 +84,125 @@ const listOptions = (o: DoctorBackupsOptions): ListBackupsOptions => ({
   ...(o.measure === undefined ? {} : { measure: o.measure }),
 })
 
+/** A directory's native real path; a path that cannot be resolved stays as given. */
+function nativeReal(p: string): string {
+  const abs = path.resolve(p)
+  try {
+    return fs.realpathSync.native(abs)
+  } catch {
+    return abs
+  }
+}
+
+/**
+ * A tree's path: its parent's native real path plus its own name. The tree may
+ * itself be a symlink (a copy root can be), and resolving that link would name
+ * a different tree; the listing names a copy by its real parent and its leaf.
+ */
+function treePath(p: string): string {
+  const abs = path.resolve(p)
+  return path.join(nativeReal(path.dirname(abs)), path.basename(abs))
+}
+
+const SELECTORS = [
+  'olderThan',
+  'keep',
+  'skill',
+  'op',
+  'path',
+  'includeKept',
+  'allowChanged',
+] as const
+const FLAG: Record<(typeof SELECTORS)[number], string> = {
+  olderThan: '--older-than',
+  keep: '--keep',
+  skill: '--skill',
+  op: '--op',
+  path: '--path',
+  includeKept: '--include-kept',
+  allowChanged: '--allow-changed',
+}
+
+/** The options that only mean something with `--prune`, as given. */
+function strayFlags(o: DoctorBackupsOptions): string[] {
+  return SELECTORS.filter((k) => {
+    const v = o[k]
+    return Array.isArray(v) ? v.length > 0 : v !== undefined && v !== false
+  }).map((k) => FLAG[k])
+}
+
+/** The request, or the message that says why a value is not usable. */
+function requestOf(o: DoctorBackupsOptions, now: number): PruneRequest | string {
+  const req: PruneRequest = {
+    now,
+    includeKept: o.includeKept === true,
+    allowChanged: (o.allowChanged ?? []).map(treePath),
+  }
+  if (o.olderThan !== undefined) {
+    const days = /^\d+(\.\d+)?$/.test(o.olderThan) ? Number(o.olderThan) : NaN
+    if (!Number.isFinite(days)) return `--older-than needs a number of days, got "${o.olderThan}"`
+    req.olderThanDays = days
+  }
+  if (o.keep !== undefined) {
+    if (!/^\d+$/.test(o.keep)) return `--keep needs a whole number, got "${o.keep}"`
+    req.keep = Number(o.keep)
+  }
+  if (o.client !== undefined) req.client = o.client
+  if (o.root !== undefined && o.root.length > 0) req.roots = o.root.map(nativeReal)
+  if (o.skill !== undefined) req.skill = o.skill
+  if (o.op !== undefined) req.op = o.op
+  if (o.path !== undefined && o.path.length > 0) req.paths = o.path.map(treePath)
+  return req
+}
+
+/** `--prune`: list, assign locks, plan; print the plan. Reads only. */
+async function runPrune(options: DoctorBackupsOptions): Promise<void> {
+  const now = options.now ?? Date.now()
+  const req = requestOf(options, now)
+  if (typeof req === 'string') {
+    console.error(chalk.red(req))
+    process.exitCode = 1
+    return
+  }
+  const listing = await listBackups(listOptions({ ...options, now }))
+  const plan = planPrune(listing, req, await assignLocks(listing))
+  // The warning goes first: a render or JSON failure (a closed stdout is one) must not lose it.
+  if (listing.warning.message !== null) console.error(listing.warning.message)
+  try {
+    if (options.json === true) console.log(JSON.stringify(planJson(plan), null, 2))
+    else for (const line of renderPlan(plan)) console.log(line)
+  } finally {
+    for (const s of listing.discovery.skipped.filter((x) => x.source === '--root')) {
+      console.error(
+        chalk.red(`--root ${s.path} could not be used (${s.errno}); nothing was created there.`)
+      )
+      process.exitCode = 1
+    }
+    for (const u of plan.unmatchedPaths) {
+      console.error(chalk.red(`--path ${u.path} matched nothing: ${u.why}.`))
+      process.exitCode = 1
+    }
+  }
+}
+
 export async function runDoctorBackups(options: DoctorBackupsOptions): Promise<void> {
+  const stray = strayFlags(options)
+  if (options.prune !== true && stray.length > 0) {
+    console.error(
+      chalk.red(`${stray.join(', ')} only works with --prune (a dry run that deletes nothing).`)
+    )
+    process.exitCode = 1
+    return
+  }
+  if (options.prune === true) {
+    try {
+      await runPrune(options)
+    } catch (err) {
+      console.error(chalk.red(`doctor backups --prune could not plan: ${(err as Error).message}`))
+      process.exitCode = 1
+    }
+    return
+  }
   let listing: Awaited<ReturnType<typeof listBackups>>
   try {
     listing = await listBackups(listOptions(options))

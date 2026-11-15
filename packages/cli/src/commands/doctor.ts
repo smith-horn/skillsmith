@@ -344,7 +344,30 @@ export function createDoctorCommand(): Command {
     )
     .option('--state-root <dir>', 'State root to read instead of the discovered ones')
     .option('--client <id>', "Only list this client's folders")
-    .option('--json', 'Print the listing as JSON')
+    .option('--json', 'Print the listing (or the prune plan) as JSON')
+    // SMI-6531 6c-ii-b: the dry run. --apply is deliberately not registered (6c-iii).
+    .option('--prune', 'Show what would be deleted under --apply (6c-iii); changes nothing')
+    .option('--older-than <days>', 'With --prune: only trees at least this many days old')
+    // No commander default: not given means the guard of 1 selects nothing (UD65, M-KEEP1).
+    .option(
+      '--keep <n>',
+      'With --prune: guard the newest n backups per folder and select the older ones'
+    )
+    .option('--skill <dirName>', 'With --prune: only this skill folder')
+    .option('--op <opId>', 'With --prune: only this operation')
+    .option(
+      '--path <tree>',
+      'With --prune: only this exact tree (repeatable)',
+      collectRoot,
+      [] as string[]
+    )
+    .option('--include-kept', 'With --prune: also offer kept kinds such as conflict or edited-new')
+    .option(
+      '--allow-changed <path>',
+      'With --prune: select for a per-item confirmation under --apply (6c-iii) (repeatable)',
+      collectRoot,
+      [] as string[]
+    )
     .action(doctorBackupsAction)
   return doctor
 }

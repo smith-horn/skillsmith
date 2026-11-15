@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
+  listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
+  `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects
+  nothing; selectors intersect over both stores; `keep` selects only when given. A protected tree,
+  a tree whose protection is unknown, a mounted copy, a copy with no lock, a copy no deletion job
+  can name, and (without `includeKept`) a kept kind are never selected, and each appears in
+  `excluded` with its reason. Groups come in ascending bytewise order of the lock path, each with a
+  digest a scoped re-plan reproduces. The plan carries no authorization. A live update record's
+  `backupDest` now protects that exact tree as its own rule (`backup-dest`).
 - **Added**: SMI-6531 -- A1 step 6c-ii-a: `listBackups()` lists both stores of set-aside copies
   (update backups and parked copies), unfinished prunes, legacy leftovers and the older MCP backup
   store, and classifies each copy mounted, held, unverified, changed or clean. Sizes are allocated

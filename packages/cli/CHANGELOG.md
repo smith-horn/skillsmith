@@ -4,6 +4,21 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6c-ii-b: `skillsmith doctor backups --prune` is a dry run that shows
+  exactly which set-aside folders and kept backups a later `--apply` (not yet available) would
+  delete, with each one's store, kind, class, size on disk and whether it needs a batch or a
+  per-item confirmation, grouped by the lock the deletion would hold. It deletes, moves, creates
+  and locks nothing. Nothing is selected unless you give a selector: `--older-than <days>`,
+  `--keep <n>` (given, it guards the newest n backups of each folder and selects the older ones;
+  not given, the guard of 1 selects nothing), `--client`, `--root`, `--skill`, `--op` or `--path`
+  (repeatable). `--include-kept` also offers kept kinds such as `conflict`, and
+  `--allow-changed <path>` (repeatable) offers a held, changed or unverified copy for a per-item
+  confirmation. A mounted copy is never offered, a tree whose protection or lock is unknown is
+  kept, and every tree the selectors matched but the rules kept is listed with its reason. When
+  `--apply` would refuse (an update record that cannot be read, an area that could not be used),
+  the first line says so and the exit status stays 0. A `--path` that names no tree prune lists
+  exits 1 and says why. The selector options are refused without `--prune`. `--json` prints the
+  plan, with identities as decimal strings and each sidecar as its sha256.
 - **Added**: SMI-6531 -- A1 step 6c-ii-a: `skillsmith doctor backups` lists every set-aside folder
   Skillsmith keeps: update backups under `~/.skillsmith/backups/update/`, parked copies in each
   skills root's `.skillsmith-parked/`, unfinished prunes, leftovers from earlier releases, and the
