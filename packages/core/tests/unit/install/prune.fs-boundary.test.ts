@@ -89,6 +89,12 @@ const FS_MEMBERS: Record<string, string[]> = {
   'prune.list.parked.ts': ['lstatSync', 'readdirSync', 'statSync'],
   'prune.list.backups.ts': ['lstatSync', 'readdirSync'],
   'parked-usage.ts': ['statSync', 'statfsSync'],
+  'prune.plan.types.ts': [],
+  'prune.select.ts': [],
+  'prune.select.digest.ts': [],
+  'prune.select.match.ts': [],
+  'prune.select.paths.ts': [],
+  'parked-index.name.ts': [],
   'backup-sidecar.strict.ts': [],
   'park-result.ts': [],
   'park-callers.ts': [],
@@ -124,6 +130,12 @@ const BUILTINS: Record<string, string[]> = {
   'prune.list.parked.ts': ['fs', 'path'],
   'prune.list.backups.ts': ['fs', 'path'],
   'parked-usage.ts': ['fs', 'path'],
+  'prune.plan.types.ts': [],
+  'prune.select.ts': [],
+  'prune.select.digest.ts': ['crypto'],
+  'prune.select.match.ts': [],
+  'prune.select.paths.ts': [],
+  'parked-index.name.ts': [],
   'backup-sidecar.strict.ts': ['path'],
   'park-result.ts': ['path', 'util'],
   'park-callers.ts': ['path'],
@@ -357,7 +369,7 @@ describe('positive controls: each planted bypass is flagged', () => {
     )
   })
 
-  /** The 6c-ii-a read-only modules (D19): none may ever hold a write member. */
+  /** The 6c-ii read-only modules (D19; 6c-ii-b's planner): none may ever hold a write member. */
   const READ_ONLY_MODULES = [
     'prune.kinds.ts',
     'prune.measure.ts',
@@ -366,7 +378,29 @@ describe('positive controls: each planted bypass is flagged', () => {
     'prune.list.parked.ts',
     'prune.list.backups.ts',
     'parked-usage.ts',
+    'prune.plan.types.ts',
+    'prune.select.ts',
+    'prune.select.digest.ts',
+    'prune.select.match.ts',
+    'prune.select.paths.ts',
   ]
+  it('6c-ii-b: the planner modules use no fs member at all (no fs, design note 4.4)', () => {
+    const real = checkAll(INSTALL)
+    for (const f of [
+      'prune.plan.types.ts',
+      'prune.select.ts',
+      'prune.select.digest.ts',
+      'prune.select.match.ts',
+      'prune.select.paths.ts',
+    ]) {
+      expect(real.members[f], f).toEqual([])
+      expect(
+        real.builtins[f]?.filter((b) => b !== 'crypto'),
+        f
+      ).toEqual([])
+    }
+  })
+
   it('6c-ii-a: the pins of the read-only modules hold no write member', () => {
     for (const f of READ_ONLY_MODULES) {
       expect(f in FS_MEMBERS, f).toBe(true)

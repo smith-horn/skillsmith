@@ -68,6 +68,8 @@ export interface PendingRecord {
   path: string
   comparedPath: string
   realDir: string
+  /** Where the update publishes (or published) the old tree: UD61(a)'s protected path. */
+  backupDest: string
 }
 
 export type RecordScan =
@@ -153,6 +155,7 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
       path: file,
       comparedPath: v.record.target.comparedPath,
       realDir: v.record.target.realDir,
+      backupDest: v.record.backupDest,
     },
   }
 }

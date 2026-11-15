@@ -400,8 +400,17 @@ describe('scanStagingRecords: a record written by the real writer', () => {
     put(fx.staging, BAD, '{ corrupt')
 
     const scan = okScan(await scanStagingRecords(fx.skillsDir, fx.staging))
+    // backupDest is carried exactly as the writer recorded it (SMI-6531 6c-ii-b, UD61(a)).
+    const written = JSON.parse(fs.readFileSync(recordPath, 'utf8')) as { backupDest: string }
+    expect(typeof written.backupDest).toBe('string')
     expect(scan.pending).toEqual([
-      { opId: OP_ID, path: recordPath, comparedPath: fx.realDir, realDir: fx.realDir },
+      {
+        opId: OP_ID,
+        path: recordPath,
+        comparedPath: fx.realDir,
+        realDir: fx.realDir,
+        backupDest: written.backupDest,
+      },
     ])
     expect(scan.unreadable.map((u) => u.opId)).toEqual([BAD])
     expect(isSwapRecord(JSON.parse(fs.readFileSync(recordPath, 'utf8')))).toBe(true)
@@ -431,6 +440,7 @@ describe('recordsNaming', () => {
     path: `/st/${opId}/record.json`,
     realDir,
     comparedPath,
+    backupDest: `/b/${opId}`,
   })
   const pending = [
     rec('r', '/r/skill', '/r/skill'),

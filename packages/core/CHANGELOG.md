@@ -4,6 +4,23 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
+  listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
+  `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects
+  nothing; selectors intersect over both stores; `keep` selects only when given, and a `keep` below 1 (or not an integer) is refused with a `TypeError`. A protected tree,
+  a tree whose protection is unknown, a mounted copy, a copy with no lock, a copy no deletion job
+  can name, and (without `includeKept`) a kept kind are never selected, and each appears in
+  `excluded` with its reason. Groups come in ascending bytewise order of the lock path, each with a
+  digest a scoped re-plan reproduces. The plan carries no authorization. A live update record's
+  `backupDest` now protects that exact tree as its own rule (`backup-dest`). Each parked row now
+  carries `protection`, decided by the listing from every root's records and every parked area,
+  as a backup's is, so a scope, `--root` or `--client` never changes it; the planner reads it and
+  computes none. A backup tree whose sidecar names a root or client other than its area's gets no
+  lock. An index-only area of kind `agent-uninstall` takes the area lock, and one of any other
+  recognised parked kind takes lock 1 of the skills root holding it, bound read-only, and only
+  when discovery found that root (its update records were scanned); in a root nobody scanned the
+  lock is unknown and the copy is kept. A row whose protection was never decided reads unknown,
+  and the planner selects only on an explicit `unprotected`.
 - **Added**: SMI-6531 -- A1 step 6c-ii-a: `listBackups()` lists both stores of set-aside copies
   (update backups and parked copies), unfinished prunes, legacy leftovers and the older MCP backup
   store, and classifies each copy mounted, held, unverified, changed or clean. Sizes are allocated
