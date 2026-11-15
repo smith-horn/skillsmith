@@ -5,15 +5,23 @@
  * file (it `realpath`s and `lstat`s only), so it is the one binding used.
  *
  *  - A parked copy in a discovered root's area: lock 1 of that root.
- *  - A backup copy whose sidecar root binds read-only: lock 1 of it; whose
- *    root is gone (`root-unsafe` caused by ENOENT or ENOTDIR): lock 1′ of the
- *    `<client>/<rootKey>/` directory. Anything else is `unknown`: the root
+ *  - A backup copy's lock follows its sidecar root only when the sidecar
+ *    agrees with the area it sits in: `rootKeyOf(skillsDir)` is the area's
+ *    `<rootKey>` and the sidecar's client is the area's `<client>`. A sidecar
+ *    naming another root is not trusted to pick the lock (an update of the
+ *    area's own root publishes there under that root's lock 1), so the lock is
+ *    `unknown`. With agreement: a root that binds read-only gets lock 1 of it;
+ *    a gone root (`root-unsafe` caused by ENOENT or ENOTDIR) gets lock 1′ of
+ *    the `<client>/<rootKey>/` directory. Anything else is `unknown`: the root
  *    exists, an update there would take lock 1, and lock 1′ would not
  *    exclude it.
- *  - A parked copy in an index-only area: decided by the index line's kind.
- *    `init-rollback` and `companion-rollback` take lock 1′ of the area; any
- *    other kind needs lock 1 of a root holding the area, and this area has
- *    none. A null, unknown or disputed kind is `unknown`.
+ *  - A parked copy in an index-only area: decided by the index line's kind
+ *    (UD63, PLAN:235). `init-rollback`, `agent-uninstall` and
+ *    `companion-rollback` take lock 1′ of the area. Every other kind takes
+ *    lock 1 of the skills root holding the area (the area's real parent, or
+ *    `<root>` for an area under `<root>/.skillsmith-staging/`), bound
+ *    read-only and still resolving to itself; a root that does not bind is
+ *    `unknown`, kept and named. A null, unknown or disputed kind is `unknown`.
  *
  * @module @skillsmith/core/services/skill-backups.locks
  */
@@ -22,10 +30,22 @@ import path from 'node:path'
 import { parkedLockPath } from '../config/file-lock.parked.js'
 import type { LockAssignment, LockMap } from '../install/prune.plan.types.js'
 import { bindSkillsRootReadOnly, skillsRootLockPaths, SkillWriteStop } from './skill-write-lock.js'
-import type { ParkedAreaView, BackupsListing } from './skill-backups.listing.types.js'
+import { rootKeyFor } from '../install/prune.classify.js'
+import { policyFor } from '../install/prune.kinds.js'
+import { STAGING_DIR } from './skill-backups.areas.js'
+import type {
+  BackupAreaView,
+  BackupRow,
+  ParkedAreaView,
+  BackupsListing,
+} from './skill-backups.listing.types.js'
 
-/** Index kinds whose area is outside every skills root and takes lock 1′ (UD63). */
-const AREA_LOCK_KINDS: ReadonlySet<string> = new Set(['init-rollback', 'companion-rollback'])
+/** Index kinds whose area is outside every skills root and takes lock 1′ (UD63, PLAN:235). */
+const AREA_LOCK_KINDS: ReadonlySet<string> = new Set([
+  'init-rollback',
+  'agent-uninstall',
+  'companion-rollback',
+])
 
 const unknown = (reason: string): LockAssignment => ({ kind: 'unknown', reason })
 
@@ -45,13 +65,39 @@ function lock1prime(stateRoot: string, areaReal: string): LockAssignment {
   return { kind: 'lock1prime', path: parkedLockPath(stateRoot, areaReal), areaReal }
 }
 
+/**
+ * UD63's "every other kind": lock 1 of the skills root holding an index-only
+ * area, bound read-only. The root is taken from the area's real path, so a
+ * symlinked area names the root it really sits in.
+ */
+async function indexOnlyRootLock(areaDir: string): Promise<LockAssignment> {
+  const areaReal = realOf(areaDir)
+  if (areaReal === null) return unknown('index-only area: the area cannot be resolved')
+  const parent = path.dirname(areaReal)
+  const root = path.basename(parent) === STAGING_DIR ? path.dirname(parent) : parent
+  try {
+    await bindSkillsRootReadOnly(root)
+  } catch (err) {
+    if (!(err instanceof SkillWriteStop)) throw err
+    return unknown(
+      `index-only area: the skills root ${root} holding it does not bind read-only ` +
+        `(${err.code}: ${err.detail})`
+    )
+  }
+  const now = realOf(root)
+  if (now !== root) {
+    return unknown(`index-only area: the skills root ${root} now resolves to ${now ?? 'nothing'}`)
+  }
+  return lock1(root)
+}
+
 /** Index-only area: UD63, decided by the index line's kind (D13). */
-function indexOnlyLock(
+async function indexOnlyLock(
   listing: BackupsListing,
   view: ParkedAreaView,
   copyPath: string,
   sidecarKind: string | null
-): LockAssignment {
+): Promise<LockAssignment> {
   const lines = listing.index.facts.lines.filter((l) => l.copyPath === copyPath)
   // Lock 1' lives in the state root whose index named the copy; lines from two state roots
   // leave no single locks/ directory, so no lock is named.
@@ -74,15 +120,32 @@ function indexOnlyLock(
         `(${sidecarKind === null ? 'unreadable' : `'${sidecarKind}'`})`
     )
   }
-  if (!AREA_LOCK_KINDS.has(kind)) {
-    return unknown(
-      `index-only area: kind '${kind}' needs lock 1 of a skills root holding the area, and none does`
-    )
+  if (policyFor('parked', kind) === null) {
+    return unknown(`index-only area: the kind '${kind}' is not a parked kind prune recognises`)
   }
+  if (!AREA_LOCK_KINDS.has(kind)) return indexOnlyRootLock(view.ref.areaDir)
   const areaReal = realOf(view.ref.areaDir)
   if (areaReal === null) return unknown('index-only area: the area cannot be resolved')
   // Exactly one state root here: zero lines returned unknown above.
   return lock1prime(stateRoots[0] as string, areaReal)
+}
+
+const str = (o: Record<string, unknown> | null, k: string): string | null =>
+  o !== null && typeof o[k] === 'string' ? (o[k] as string) : null
+
+/**
+ * Null when the sidecar's root and client agree with the area the tree sits
+ * in, else why its root must not pick the lock (the same `rootKeyOf` the
+ * writer keys the area by; the classifier's pinned copy, `rootKeyFor`).
+ */
+function sidecarDisagrees(row: BackupRow, area: BackupAreaView, skillsDir: string): string | null {
+  const client = str(row.classification.sidecar, 'client')
+  const key = rootKeyFor(skillsDir)
+  if (key === area.rootKey && client === area.client) return null
+  return (
+    `the sidecar names client ${JSON.stringify(client)} and root ${skillsDir} (key ${key}), ` +
+    `but the tree sits in ${area.client}/${area.rootKey}: its root does not pick the lock`
+  )
 }
 
 const errnoOfCause = (err: SkillWriteStop): string | null => {
@@ -135,7 +198,7 @@ export async function assignLocks(listing: BackupsListing): Promise<LockMap> {
         )
         continue
       }
-      put(row.copy.copyPath, indexOnlyLock(listing, view, row.copy.copyPath, row.kind))
+      put(row.copy.copyPath, await indexOnlyLock(listing, view, row.copy.copyPath, row.kind))
     }
   }
   const memo = new Map<string, Promise<LockAssignment>>()
@@ -145,6 +208,11 @@ export async function assignLocks(listing: BackupsListing): Promise<LockMap> {
       for (const row of area.rows) {
         if (row.skillsDir === null) {
           put(row.copy.copyPath, unknown('no sidecar names the skills root'))
+          continue
+        }
+        const disagrees = sidecarDisagrees(row, area, row.skillsDir)
+        if (disagrees !== null) {
+          put(row.copy.copyPath, unknown(disagrees))
           continue
         }
         const key = `${store.stateRoot}\0${keyDir}\0${row.skillsDir}`

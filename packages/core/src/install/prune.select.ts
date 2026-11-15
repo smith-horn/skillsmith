@@ -9,8 +9,9 @@
  *  1. No selector selects nothing. Selectors intersect, over both stores;
  *     `--keep` is a selector only when given (UD65, M-KEEP1).
  *  2. UD61: a tree whose protection is `protected` OR `unknown` is never
- *     selected. Rule (c) and D17 (a live unreadable record's opId) are also
- *     applied to parked copies.
+ *     selected. Each row's protection, parked or backup, is the listing's
+ *     (`skill-backups.protect.ts`): the planner has no protection rule of its
+ *     own, so a scoped or narrowed listing cannot weaken it.
  *  3. A mounted copy is never offered, whatever `--allow-changed` says (D-11).
  *  4. The kind table (`prune.kinds.ts`): `--include-kept` kinds, the
  *     `partial-copy` split on `sourceUnchanged`; an unknown kind needs it too.
@@ -45,54 +46,15 @@ import { preconditionsOf, unmatchedPaths } from './prune.select.paths.js'
 
 type Locked = Exclude<LockAssignment, { kind: 'unknown' }>
 
-/** Run-wide UD61 facts the parked copies need: (c) and D17, from the whole listing. */
-interface RunFacts {
-  /** opId -> the parked `unreadable-record` copy with it. */
-  parkedUnreadable: Map<string, string>
-  /** opId -> a live record that could not be verified, named by its op dir (D17). */
-  liveUnreadable: Map<string, string>
-}
-
-function runFacts(listing: BackupsListing, cands: readonly Candidate[]): RunFacts {
-  const parkedUnreadable = new Map<string, string>()
-  for (const c of cands) {
-    if (c.store === 'parked' && c.row.kind === 'unreadable-record') {
-      parkedUnreadable.set(c.row.copy.opId, c.row.copy.copyPath)
-    }
-  }
-  const liveUnreadable = new Map<string, string>()
-  for (const u of listing.records.unreadable) liveUnreadable.set(u.record.opId, u.record.path)
-  return { parkedUnreadable, liveUnreadable }
-}
-
-/** UD61 for one candidate: the reason it is protected or unknown, or null when it is free. */
-function protectionReason(c: Candidate, f: RunFacts): ExcludeReason | null {
-  const opId = c.store === 'backup' ? c.row.opId : c.row.copy.opId
-  const unreadable = f.liveUnreadable.get(opId)
-  if (c.store === 'backup') {
-    const p = c.row.protection
-    if (p.status === 'protected') return { code: 'protected', rule: p.rule, path: p.path }
-    if (unreadable !== undefined) {
-      return {
-        code: 'protection-unknown',
-        reason: `the unreadable update record ${unreadable} has this operation id`,
-      }
-    }
-    if (p.status === 'unknown') return { code: 'protection-unknown', reason: p.reason }
-    return null
-  }
-  // Rule (c) for a parked copy: another parked copy with this opId is an unreadable record.
-  // The unreadable-record copy itself stays selectable with --include-kept (UD61).
-  const parked = f.parkedUnreadable.get(opId)
-  if (parked !== undefined && c.row.kind !== 'unreadable-record') {
-    return { code: 'protected', rule: 'parked-unreadable-record', path: parked }
-  }
-  if (unreadable !== undefined) {
-    return {
-      code: 'protection-unknown',
-      reason: `the unreadable update record ${unreadable} has this operation id`,
-    }
-  }
+/**
+ * UD61 for one candidate, either store: the row's own `protection`, which the
+ * listing decided once from the whole machine's facts. The planner adds no
+ * protection rule of its own, so scope and narrowing cannot change it.
+ */
+function protectionReason(c: Candidate): ExcludeReason | null {
+  const p = c.row.protection
+  if (p.status === 'protected') return { code: 'protected', rule: p.rule, path: p.path }
+  if (p.status === 'unknown') return { code: 'protection-unknown', reason: p.reason }
   return null
 }
 
@@ -111,17 +73,11 @@ function kindReason(c: Candidate, includeKept: boolean): ExcludeReason | null {
 type Verdict = { ok: true; item: PlanItem; lock: Locked } | { ok: false; reason: ExcludeReason }
 
 /** Every rule, in order; the first that keeps the copy is its reason (D20). */
-function judge(
-  c: Candidate,
-  req: PruneRequest,
-  locks: LockMap,
-  guards: Guards,
-  facts: RunFacts
-): Verdict {
+function judge(c: Candidate, req: PruneRequest, locks: LockMap, guards: Guards): Verdict {
   const no = (reason: ExcludeReason): Verdict => ({ ok: false, reason })
   const row = c.row
   const cls = row.classification
-  const prot = protectionReason(c, facts)
+  const prot = protectionReason(c)
   if (prot !== null) return no(prot)
   if (cls.klass === 'mounted') return no({ code: 'mounted' })
   const kind = kindReason(c, req.includeKept)
@@ -187,8 +143,9 @@ export function planPrune(
   locks: LockMap
 ): PrunePlan {
   const keep = request.keep ?? 1
-  if (!Number.isInteger(keep) || keep < 0) {
-    throw new TypeError(`planPrune: keep must be a non-negative integer, got ${String(keep)}`)
+  // keep 0 would guard nothing and select every group's newest tree (owner decision: keep >= 1).
+  if (!Number.isInteger(keep) || keep < 1) {
+    throw new TypeError(`planPrune: keep must be an integer of at least 1, got ${String(keep)}`)
   }
   const preconditions = preconditionsOf(listing)
   const plan: PrunePlan = {
@@ -207,12 +164,11 @@ export function planPrune(
     new Set(cands.map((c) => c.row.copy.copyPath))
   )
   const guards = keepGuards(cands, keep)
-  const facts = runFacts(listing, cands)
   const byLock = new Map<string, { lock: Locked; cands: Candidate[]; items: PlanItem[] }>()
   const excluded: ExcludedRow[] = []
   for (const c of cands) {
     if (!matches(c, request)) continue
-    const v = judge(c, request, locks, guards, facts)
+    const v = judge(c, request, locks, guards)
     if (!v.ok) {
       excluded.push({ copyPath: c.row.copy.copyPath, store: c.store, reason: v.reason })
       continue

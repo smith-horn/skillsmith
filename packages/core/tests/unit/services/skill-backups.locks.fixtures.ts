@@ -34,8 +34,10 @@ export interface ParkedFx {
 export interface BackupFx {
   copyPath: string
   skillsDir: string | null
-  /** The `<dirName>` area directory. */
+  /** The `<dirName>` area directory: `.../<client>/<rootKey>/<dirName>`. */
   areaPath: string
+  /** The sidecar's `client` (default `claude-code`); null for no sidecar client. */
+  sidecarClient?: string | null
 }
 export interface IndexFx {
   copyPath: string
@@ -57,10 +59,31 @@ export function listingOf(a: {
   const backups = [
     {
       stateRoot: a.stateRoot,
-      areas: (a.backups ?? []).map((b) => ({
-        areaPath: b.areaPath,
-        rows: [{ copy: { copyPath: b.copyPath }, skillsDir: b.skillsDir }],
-      })),
+      areas: (a.backups ?? []).map((b) => {
+        // The area's `<client>` and `<rootKey>` are its path segments, as the lister reads them.
+        const segs = b.areaPath.split(path.sep)
+        const sidecarClient = b.sidecarClient === undefined ? 'claude-code' : b.sidecarClient
+        return {
+          areaPath: b.areaPath,
+          client: segs[segs.length - 3],
+          rootKey: segs[segs.length - 2],
+          rows: [
+            {
+              copy: { copyPath: b.copyPath },
+              skillsDir: b.skillsDir,
+              classification: {
+                sidecar:
+                  b.skillsDir === null
+                    ? null
+                    : {
+                        skillsDir: b.skillsDir,
+                        ...(sidecarClient === null ? {} : { client: sidecarClient }),
+                      },
+              },
+            },
+          ],
+        }
+      }),
     },
   ]
   const lines = (a.index ?? []).map((i) => ({

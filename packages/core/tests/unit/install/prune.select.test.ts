@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import { planPrune } from '../../../src/install/prune.select.js'
 import { BACKUP_KIND_POLICY } from '../../../src/install/prune.kinds.js'
+import { groupDigest } from '../../../src/install/prune.select.digest.js'
 import type { Classification, CopyClass } from '../../../src/install/prune.classify.js'
 import type {
   ExcludeReason,
@@ -22,7 +23,8 @@ import type {
   BackupsListing,
   ParkedRow,
 } from '../../../src/services/skill-backups.listing.types.js'
-import type { Protection } from '../../../src/services/skill-backups.records.js'
+import { protectionOf } from '../../../src/services/skill-backups.records.js'
+import type { Protection, RecordFacts } from '../../../src/services/skill-backups.records.js'
 
 const NOW = Date.UTC(2026, 10, 15)
 const DAY = 86_400_000
@@ -124,6 +126,7 @@ interface PSpec {
   klass?: CopyClass
   origin?: string
   client?: string
+  protection?: Protection
 }
 
 interface BuiltParked {
@@ -161,6 +164,7 @@ function parked(s: PSpec = {}): BuiltParked {
     unmeasured: 0,
     origin: `${root}/${s.origin ?? 'skill'}`,
     index: 'present',
+    protection: s.protection ?? { status: 'unprotected' },
   }
   return { row, areaDir, root }
 }
@@ -348,11 +352,18 @@ describe('--keep (UD65, E43b, D5)', () => {
     expect(selected(p)).toEqual([older!.row.copy.copyPath])
   })
 
-  it('rejects a --keep that is not a non-negative integer, rather than guarding nothing', () => {
+  it('rejects a --keep that is not an integer, or is negative, rather than guarding nothing', () => {
     const l = listing([backup({ age: 1 }), backup({ age: 2 })])
     for (const keep of [Number.NaN, -1, 1.5]) {
       expect(() => plan(l, req({ keep }))).toThrow(TypeError)
     }
+  })
+
+  it("rejects --keep 0: it would select every group's newest tree (owner decision, keep >= 1)", () => {
+    const l = listing([backup({ age: 1 }), backup({ age: 2 })])
+    // Control: the smallest allowed value plans normally.
+    expect(selected(plan(l, req({ keep: 1 })))).toHaveLength(1)
+    expect(() => plan(l, req({ keep: 0 }))).toThrow(TypeError)
   })
 })
 
@@ -476,22 +487,26 @@ describe('UD61 in the planner: protected and unknown are never selected', () => 
     })
   })
 
-  it('D17: a live unreadable record with the opId is named', () => {
-    const t = backup({
+  /** A record fact set with one unreadable record for `opId` in root `/r`. */
+  const unreadableFor = (opId: string): RecordFacts => ({
+    live: new Map<string, string>(),
+    unreadable: [
+      {
+        root: '/r',
+        record: { opId, path: `/r/st/${opId}/record.json`, why: 'not-json' as const },
+      },
+    ],
+    scanFailures: [],
+  })
+
+  it("D17: a live unreadable record with the opId is named (the listing's rule, read by the planner)", () => {
+    const records = unreadableFor('op-u')
+    const protection = protectionOf(records, new Map(), {
       opId: 'op-u',
       kind: 'undone',
-      protection: { status: 'unknown', reason: 'generic' },
+      sourceUnchanged: null,
     })
-    const records = {
-      live: new Map<string, string>(),
-      unreadable: [
-        {
-          root: '/r',
-          record: { opId: 'op-u', path: '/r/st/op-u/record.json', why: 'not-json' as const },
-        },
-      ],
-      scanFailures: [],
-    }
+    const t = backup({ opId: 'op-u', kind: 'undone', protection })
     const p = plan(listing([t], [], { records }), req({ op: 'op-u' }))
     expect(reasonOf(p, t.row.copy.copyPath)).toEqual({
       code: 'protection-unknown',
@@ -502,23 +517,68 @@ describe('UD61 in the planner: protected and unknown are never selected', () => 
     ])
   })
 
-  it('rule (c) for parked copies: another copy with the opId of a parked unreadable record is protected; the record copy itself needs --include-kept', () => {
-    const rec = parked({ root: 'a', opId: 'op-X', kind: 'unreadable-record' })
-    const other = parked({ root: 'b', opId: 'op-X', kind: 'uninstall', origin: 'other' })
-    const l = listing([], [rec, other])
-    const p = plan(l, req({ op: 'op-X' }))
-    expect(reasonOf(p, other.row.copy.copyPath)).toEqual({
+  it('M5: D17 for a parked copy: the unreadable record with its opId is named, and it is never selected', () => {
+    const records = unreadableFor('op-u')
+    const pk = parked({ opId: 'op-u' })
+    const protection = protectionOf(records, new Map(), {
+      copyPath: pk.row.copy.copyPath,
+      opId: 'op-u',
+      kind: 'uninstall',
+      sourceUnchanged: null,
+      store: 'parked',
+    })
+    expect(protection).toEqual({
+      status: 'unknown',
+      reason: 'the unreadable update record /r/st/op-u/record.json has this operation id',
+    })
+    const withIt = parked({ opId: 'op-u', protection })
+    const p = plan(listing([], [withIt], { records }), req({ op: 'op-u' }))
+    expect(selected(p)).toEqual([])
+    expect(reasonOf(p, withIt.row.copy.copyPath)).toEqual({
+      code: 'protection-unknown',
+      reason: 'the unreadable update record /r/st/op-u/record.json has this operation id',
+    })
+  })
+
+  it('the planner has no protection rule of its own: a parked row is judged by its protection alone', () => {
+    // Every other fact equal, including a sibling unreadable-record copy with the same opId and
+    // an unreadable live record with it: only the row's own protection decides.
+    const records = unreadableFor('op-P')
+    const rec = parked({ root: 'z', opId: 'op-P', kind: 'unreadable-record' })
+    const free = parked({ root: 'a', opId: 'op-P', origin: 'free' })
+    const unknownRow = parked({
+      root: 'b',
+      opId: 'op-P',
+      origin: 'unk',
+      protection: { status: 'unknown', reason: 'planted unknown' },
+    })
+    const prot = parked({
+      root: 'c',
+      opId: 'op-P',
+      origin: 'prot',
+      protection: { status: 'protected', rule: 'parked-unreadable-record', path: '/x/rec' },
+    })
+    const l = listing([], [rec, free, unknownRow, prot], { records })
+    const p = plan(l, req({ op: 'op-P' }))
+    expect(selected(p)).toEqual([free.row.copy.copyPath])
+    expect(reasonOf(p, unknownRow.row.copy.copyPath)).toEqual({
+      code: 'protection-unknown',
+      reason: 'planted unknown',
+    })
+    expect(reasonOf(p, prot.row.copy.copyPath)).toEqual({
       code: 'protected',
       rule: 'parked-unreadable-record',
-      path: rec.row.copy.copyPath,
+      path: '/x/rec',
     })
-    expect(reasonOf(p, rec.row.copy.copyPath)).toEqual({
-      code: 'needs-include-kept',
-      kind: 'unreadable-record',
-    })
-    expect(selected(plan(l, req({ op: 'op-X', includeKept: true })))).toEqual([
-      rec.row.copy.copyPath,
-    ])
+  })
+
+  it('M6: an explicit --keep never selects a parked copy', () => {
+    const [newest, old] = [1, 9].map((age) => backup({ age, opId: `op-k${age}` }))
+    const pk = parked({ root: 'one', opId: 'op-pk' })
+    const p = plan(listing([newest!, old!], [pk]), req({ keep: 1 }))
+    expect(selected(p)).toEqual([old!.row.copy.copyPath])
+    expect(selected(p)).not.toContain(pk.row.copy.copyPath)
+    expect(reasonOf(p, pk.row.copy.copyPath)).toBeUndefined()
   })
 })
 
@@ -714,5 +774,56 @@ describe('D18 and D10: unmatched paths and preconditions', () => {
         reason: 'the parked index could not be read (EISDIR)',
       },
     ])
+  })
+})
+
+describe('the digest covers copyPath and kind (M1, M2)', () => {
+  const item = (): PlanItem => {
+    nextIno = 700n
+    const b = backup({ age: 9, opId: 'op-dg', kind: 'undone' })
+    const p = plan(listing([b]), req({ op: 'op-dg' }))
+    return p.groups[0]!.items[0]!
+  }
+
+  it('M1: a changed copyPath alone changes the digest', () => {
+    const i = item()
+    const base = groupDigest('/L/one.lock', [i])
+    expect(groupDigest('/L/one.lock', [{ ...i }])).toBe(base)
+    expect(groupDigest('/L/one.lock', [{ ...i, copyPath: `${i.copyPath}-other` }])).not.toBe(base)
+  })
+
+  it('M2: a changed kind alone changes the digest', () => {
+    const i = item()
+    const base = groupDigest('/L/one.lock', [i])
+    expect(groupDigest('/L/one.lock', [{ ...i, kind: 'conflict' }])).not.toBe(base)
+  })
+})
+
+describe("M3: a group's scope holds every area of its keep group, across state roots", () => {
+  /** The listing as `listBackups({ scope })` shows it: only the scoped areas. */
+  const scoped = (l: BackupsListing, areaPaths: readonly string[]): BackupsListing => ({
+    ...l,
+    parked: l.parked.filter((v) => areaPaths.includes(v.ref.areaDir)),
+    backups: l.backups.map((s) => ({
+      ...s,
+      areas: s.areas.filter((a) => areaPaths.includes(a.areaPath)),
+    })),
+  })
+
+  it('the newest tree is in another state root with no item: its area is in scope, and the re-plan agrees', () => {
+    const newest = backup({ state: 'b', age: 1, opId: 'op-n' })
+    const older = [10, 20].map((age) => backup({ state: 'a', age, opId: `op-o${age}` }))
+    const l = listing([older[0]!, older[1]!, newest])
+    const r = req({ olderThanDays: 0 })
+    const p = plan(l, r)
+    expect(p.groups).toHaveLength(1)
+    const g = p.groups[0]!
+    expect(g.items.map((i) => i.copyPath).sort()).toEqual(
+      older.map((o) => o.row.copy.copyPath).sort()
+    )
+    expect(g.scope.areaPaths).toEqual([older[0]!.area.areaPath, newest.area.areaPath])
+    const again = plan(scoped(l, g.scope.areaPaths), r).groups[0]
+    expect(again?.items.map((i) => i.copyPath)).toEqual(g.items.map((i) => i.copyPath))
+    expect(again?.digest).toBe(g.digest)
   })
 })

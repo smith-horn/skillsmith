@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parkedLockPath } from '../../../src/config/file-lock.parked.js'
+import { rootKeyFor } from '../../../src/install/prune.classify.js'
 import { assignLocks } from '../../../src/services/skill-backups.locks.js'
 import { mkBase } from './skill-backups.helpers.js'
 import { EMOJI, FF5A, listingOf, orderingRoots } from './skill-backups.locks.fixtures.js'
@@ -27,8 +28,12 @@ const mkdir = (...p: string[]): string => {
 }
 
 /** `<state>/backups/update/claude-code/<rootKey>/<dirName>`, created. */
-const backupArea = (rootKey: string, dirName = 'foo'): { keyDir: string; area: string } => {
-  const area = mkdir(state, 'backups', 'update', 'claude-code', rootKey, dirName)
+const backupArea = (
+  rootKey: string,
+  dirName = 'foo',
+  client = 'claude-code'
+): { keyDir: string; area: string } => {
+  const area = mkdir(state, 'backups', 'update', client, rootKey, dirName)
   return { keyDir: path.dirname(area), area }
 }
 
@@ -78,12 +83,13 @@ describe('assignLocks: parked copies in a discovered root', () => {
 
 describe('assignLocks: backup copies (UD62, D12)', () => {
   it('M-L1: a gone root takes lock 1prime of <client>/<rootKey>/, not of <dirName>', async () => {
-    const { keyDir, area } = backupArea('0123456789abcdef')
+    const gone = path.join(base, 'gone-root')
+    const { keyDir, area } = backupArea(rootKeyFor(gone))
     const copy = path.join(area, 'op1')
     const m = await assignLocks(
       listingOf({
         stateRoot: state,
-        backups: [{ copyPath: copy, skillsDir: path.join(base, 'gone-root'), areaPath: area }],
+        backups: [{ copyPath: copy, skillsDir: gone, areaPath: area }],
       })
     )
     const got = m.get(copy)
@@ -97,7 +103,7 @@ describe('assignLocks: backup copies (UD62, D12)', () => {
 
   it('a root that binds takes lock 1 of the root', async () => {
     const root = mkdir(base, 'skills')
-    const { area } = backupArea('aaaaaaaaaaaaaaaa')
+    const { area } = backupArea(rootKeyFor(root))
     const copy = path.join(area, 'op1')
     const m = await assignLocks(
       listingOf({
@@ -115,7 +121,7 @@ describe('assignLocks: backup copies (UD62, D12)', () => {
   it('D12: a staging-unsafe root is unknown, not lock 1prime', async () => {
     const root = mkdir(base, 'skills')
     fs.writeFileSync(path.join(root, '.skillsmith-staging'), 'a file where ST should be')
-    const { area } = backupArea('bbbbbbbbbbbbbbbb')
+    const { area } = backupArea(rootKeyFor(root))
     const copy = path.join(area, 'op1')
     const m = await assignLocks(
       listingOf({
@@ -133,7 +139,7 @@ describe('assignLocks: backup copies (UD62, D12)', () => {
     const elsewhere = mkdir(base, 'elsewhere')
     const link = path.join(base, 'link')
     fs.symlinkSync(elsewhere, link)
-    const { area } = backupArea('cccccccccccccccc')
+    const { area } = backupArea(rootKeyFor(link))
     const copy = path.join(area, 'op1')
     const m = await assignLocks(
       listingOf({
@@ -150,7 +156,7 @@ describe('assignLocks: backup copies (UD62, D12)', () => {
   it('D12: a root that is a file, and a copy with no sidecar skillsDir, are unknown', async () => {
     const file = path.join(base, 'a-file')
     fs.writeFileSync(file, 'x')
-    const { area } = backupArea('dddddddddddddddd')
+    const { area } = backupArea(rootKeyFor(file))
     const c1 = path.join(area, 'op1')
     const c2 = path.join(area, 'op2')
     const m = await assignLocks(
@@ -164,6 +170,63 @@ describe('assignLocks: backup copies (UD62, D12)', () => {
     )
     expect(m.get(c1)?.kind).toBe('unknown')
     expect(m.get(c2)?.kind).toBe('unknown')
+  })
+})
+
+describe("Major 2: a backup tree's lock follows its sidecar root only when the sidecar matches its area", () => {
+  it("control: a sidecar naming the area's own root and client takes lock 1 of that root", async () => {
+    const rootA = mkdir(base, 'rootA')
+    const { area } = backupArea(rootKeyFor(rootA))
+    const copy = path.join(area, 'op-M')
+    const m = await assignLocks(
+      listingOf({
+        stateRoot: state,
+        backups: [{ copyPath: copy, skillsDir: rootA, areaPath: area }],
+      })
+    )
+    expect(m.get(copy)).toEqual({
+      kind: 'lock1',
+      path: path.join(rootA, '.skillsmith-writes.lock'),
+      root: rootA,
+    })
+  })
+
+  it("P4: a tree in rootA's area whose sidecar names rootB is unknown, never lock 1 of rootB", async () => {
+    const rootA = mkdir(base, 'rootA')
+    const rootB = mkdir(base, 'rootB')
+    const { area } = backupArea(rootKeyFor(rootA))
+    const copy = path.join(area, 'op-M')
+    const m = await assignLocks(
+      listingOf({
+        stateRoot: state,
+        backups: [{ copyPath: copy, skillsDir: rootB, areaPath: area }],
+      })
+    )
+    expect(m.get(copy)).toEqual({
+      kind: 'unknown',
+      reason: expect.stringContaining('its root does not pick the lock'),
+    })
+  })
+
+  it("a sidecar naming another client than the area's is unknown, and so is one naming no client", async () => {
+    const rootA = mkdir(base, 'rootA')
+    const { area } = backupArea(rootKeyFor(rootA))
+    const c1 = path.join(area, 'op-1')
+    const c2 = path.join(area, 'op-2')
+    const m = await assignLocks(
+      listingOf({
+        stateRoot: state,
+        backups: [
+          { copyPath: c1, skillsDir: rootA, areaPath: area, sidecarClient: 'cursor' },
+          { copyPath: c2, skillsDir: rootA, areaPath: area, sidecarClient: null },
+        ],
+      })
+    )
+    expect(m.get(c1)).toMatchObject({
+      kind: 'unknown',
+      reason: expect.stringContaining('"cursor"'),
+    })
+    expect(m.get(c2)).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('null') })
   })
 })
 
@@ -200,9 +263,59 @@ describe('assignLocks: index-only parked areas (UD63, D13)', () => {
     expect([...m.values()][0]?.kind).toBe('lock1prime')
   })
 
-  it('M-L2: a stray install-rollback index line whose area is in no root is unknown', async () => {
+  it('agent-uninstall takes lock 1prime of the area (UD63, PLAN:235)', async () => {
+    const m = await run('agent-uninstall', 'agent-uninstall')
+    const a = area()
+    expect(m.get(copyIn(a))).toEqual({
+      kind: 'lock1prime',
+      path: parkedLockPath(state, a),
+      areaReal: a,
+    })
+  })
+
+  it("UD63: any other kind takes lock 1 of the area's parent, bound read-only", async () => {
     const m = await run('install-rollback', 'install-rollback')
-    expect([...m.values()][0]).toMatchObject({ kind: 'unknown' })
+    const root = path.dirname(area())
+    expect([...m.values()][0]).toEqual({
+      kind: 'lock1',
+      path: path.join(root, '.skillsmith-writes.lock'),
+      root,
+    })
+  })
+
+  it('UD63: an area under <root>/.skillsmith-staging/ takes lock 1 of <root>', async () => {
+    const root = mkdir(base, 'ws-root')
+    const a = mkdir(root, '.skillsmith-staging', '.skillsmith-parked')
+    const c = copyIn(a)
+    const m = await assignLocks(
+      listingOf({
+        stateRoot: state,
+        parked: [{ copyPath: c, kind: 'uninstall', skillsRoot: null, areaDir: a }],
+        index: [{ copyPath: c, kind: 'uninstall', stateRoot: state }],
+      })
+    )
+    expect(m.get(c)).toEqual({
+      kind: 'lock1',
+      path: path.join(root, '.skillsmith-writes.lock'),
+      root,
+    })
+  })
+
+  it('UD63: a parent root that does not bind read-only is unknown, kept and named', async () => {
+    const a = area()
+    fs.writeFileSync(path.join(path.dirname(a), '.skillsmith-staging'), 'a file where ST should be')
+    const c = copyIn(a)
+    const m = await assignLocks(
+      listingOf({
+        stateRoot: state,
+        parked: [{ copyPath: c, kind: 'install-rollback', skillsRoot: null, areaDir: a }],
+        index: [{ copyPath: c, kind: 'install-rollback', stateRoot: state }],
+      })
+    )
+    expect(m.get(c)).toEqual({
+      kind: 'unknown',
+      reason: expect.stringContaining('does not bind read-only (staging-unsafe'),
+    })
   })
 
   it('D13: a null, unknown or disputed index kind is unknown', async () => {
