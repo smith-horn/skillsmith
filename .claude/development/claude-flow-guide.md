@@ -2,7 +2,7 @@
 
 Agent spawning, swarm orchestration, and SPARC development reference.
 
-> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. The `.mcp.json` server key is `ruflo`, so every tool is exposed as `mcp__ruflo__<name>` (confirmed live, 2026-09-23, against the served `@claude-flow/cli@3.42.4`) — not the old `mcp__claude-flow__` prefix an earlier revision of this guide used.
+> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. The `.mcp.json` server key is `ruflo`, so every tool is exposed as `mcp__ruflo__<name>` (confirmed 2026-11-15 against the `@claude-flow/cli@3.56.1` candidate image the cutover serves) — not the old `mcp__claude-flow__` prefix an earlier revision of this guide used.
 
 ## Setup
 
@@ -32,7 +32,7 @@ Verify: `claude mcp list | grep ruflo`
 2. Service command authentication: the running container's Entrypoint, Cmd, and WorkingDir must equal the § 1 / § 4 literals exactly.
 3. `RUFLO_CLI_PIN` vs the served `@claude-flow/cli` version, read via a sentinel-tagged probe run inside the container.
 4. Authority quad (§ 5): the `/srv/ruflo` mount's volume identity, instance-nonce label, and EACH of the two store files' `store_generation` row (`.swarm/memory.db` and `.swarm/agentdb-memory.db` -- the served `@claude-flow/cli` keeps both, and a swapped or copied copy of either one must be caught independently) must all match the machine-local authority file at `~/.skillsmith/ruflo-store.json`; an empty or partially-initialised volume is refused by name, distinct from a generation mismatch.
-5. Per-spawn guard (`scripts/ruflo-launch-guard.mjs`), piped into the container immediately before exec — writability probes, then the runtime's `state.lock` decision taken under an OS-released mutex (SQLite `BEGIN IMMEDIATE` on `state.lock.launcher.db`, a kernel lock the holder's death releases) — the guard never deletes the runtime's lock; a stale one is waited out (the runtime clears it after 30 s), a live one refuses.
+5. Per-spawn guard (`scripts/ruflo-launch-guard.mjs`), piped into the container immediately before exec — writability probes, then the runtime's `state.lock` decision taken under an OS-released mutex (SQLite `BEGIN IMMEDIATE` on `state.lock.launcher.db`, a kernel lock the holder's death releases) — the guard never deletes the runtime's lock; a stale one is waited out (the runtime clears it after 30 s, or at once when its owner is dead, `lockOwnerIsDead`, from 3.56.1), a live one refuses.
 
 **Guard exit codes** (each prints one `[ruflo] guard: ...` line naming the failing check — read the guard's own header for the current message text):
 
@@ -44,16 +44,38 @@ Verify: `claude mcp list | grep ruflo`
 | 3 | the launcher mutex is held by another launcher past the 3 s busy timeout | retry — nothing to delete (a live holder releases on exit; a dead one already did); the message names the last recorded holder pid |
 | 4 | the mutex database `state.lock.launcher.db` is unusable (not a database, a directory, unreadable) | remove ONLY that file — it holds no state — never `state.lock` or `state.json` |
 | 5 | the runtime's `state.lock` is held by a live server (another session mid-transaction) | retry — nothing to delete; a stale lock is waited out by the guard itself |
-| 6 | retired — a malformed real `state.lock` warns and proceeds; a stale one is waited out (the runtime clears a lock older than 30 s on its next acquire) | — |
+| 6 | retired — a malformed real `state.lock` warns and proceeds; a stale one is waited out (the runtime clears a lock older than 30 s, or one whose owner is dead from 3.56.1, on its next acquire) | — |
 | 7 | internal error, including a missing `better-sqlite3` in the image (an image defect, not a lock problem) | file a Linear issue |
 
 Nothing under `/srv/ruflo/.claude-flow/policy/` is deleted by hand for codes 3, 5 or 6. For code 4 only: `docker exec skillsmith-ruflo-1 rm -f /srv/ruflo/.claude-flow/policy/state.lock.launcher.db` (the mutex database carries no state and is recreated on the next spawn). To see who holds what: `docker exec skillsmith-ruflo-1 ps -eo pid,etimes,args` is not available (the image has no `ps`); use the literal copy of `scripts/ruflo-launch-guard.mjs`'s own `PROC_SCAN_CMD_HINT` constant -- `docker exec skillsmith-ruflo-1 sh -c 'for p in /proc/[0-9]*; do printf "%s " "${p#/proc/}"; tr "\0" " " < "$p/cmdline"; echo; done'` -- which that file's own header now says this guide must be updated together with.
 
 Disable the launcher entirely (no `npx` fallback): `SKILLSMITH_RUFLO_LAUNCHER_DISABLE=1`.
 
+## Cutover
+
+Check 3 refuses when `RUFLO_CLI_PIN` and the served version differ. Which way they differ decides what to do.
+
+- **Pinned newer than served** ("the service has not been cut over yet"): `main` carries the new pin but `skillsmith-ruflo-1` still serves the old image. Do not rebuild the image and do not edit `RUFLO_CLI_PIN`. Wait for the cutover broadcast, run from the main checkout. If you are the one running the cutover, follow step 7 of [smi-6744-ruflo-pin-bump.md](../../docs/internal/implementation/smi-6744-ruflo-pin-bump.md) in order; it holds the exact commands.
+- **Served newer than pinned**: this checkout is behind `main`. Rebase it (or sync the main checkout), then reconnect.
+
+Cutover order (step 7 of the plan):
+
+1. Broadcast the moratorium; no other session touches ruflo, its image or its volume until "done".
+2. Merge the pin-bump PR.
+3. Stage the revert PR (with CI run) so a rollback does not leave main's launcher pinned to the new version.
+4. Record the rollback anchor: tag the currently served image ID and save it to a tar.
+5. Serve the validated candidate image, only after the two 7.4 checks pass.
+6. Quiesce the service, record the anchor inventory (per-file sha256/size, nonce label, both `store_generation` rows, authority file), and back up the volume.
+7. Anchor the existing policy ledger (7.5b) in a throwaway `docker run -t` container on the stopped volume.
+8. Start with `./scripts/ruflo-service-up.sh`.
+9. Run V-7 through V-9 (launcher line, bridge probe verdict, canary round trip).
+10. Broadcast "done".
+
+Rollback restores the 7.5 backup unconditionally and re-tags the saved anchor image; see the plan's § Rollback.
+
 ## MCP Tools
 
-The live registry serves **353 tools** total (measured 2026-09-23 via `tools/list` against the running `skillsmith-ruflo-1` service, `@claude-flow/cli@3.42.4`) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `memory_list`, `hooks_intelligence_attention` and `embeddings_search` are denied too (SMI-7184: when the bridge is down, their sql.js fallback rewrites `memory.db` under the store lock, but with no WAL-sidecar refusal). `memory_cleanup` is denied as well (SMI-7185: with `dryRun:false` it deletes expired rows across every namespace, and every call, dry run included, reads through the same fallback); `memory_delete` stays allowed, an accepted risk. `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
+The live registry serves **358 tools** total (measured 2026-11-15 via `tools/list` against the `@claude-flow/cli@3.56.1` candidate image the cutover serves; the five added over 3.42.4 are `mission_*`, unclassified and callable by owner decision D-2) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `memory_list`, `hooks_intelligence_attention` and `embeddings_search` are denied too (SMI-7184: when the bridge is down, their sql.js fallback rewrites `memory.db` under the store lock, but with no WAL-sidecar refusal). `memory_cleanup` is denied as well (SMI-7185: with `dryRun:false` it deletes expired rows across every namespace, and every call, dry run included, reads through the same fallback); `memory_delete` stays allowed, an accepted risk. `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
 
 | Tool | Purpose | Required input | Notes |
 |------|---------|-----------------|-------|
@@ -67,7 +89,7 @@ The live registry serves **353 tools** total (measured 2026-09-23 via `tools/lis
 | `mcp__ruflo__memory_bridge_status` | Report memory bridge status — AgentDB vectors, SONA learning, intelligence patterns, connection health | none | reaches the sql.js fallback, which rewrites `memory.db` when the bridge is down (SMI-7184) |
 | `mcp__ruflo__memory_store` | Persistent key-value store with vector embedding | `key`, `value` | **denied** in `.claude/settings.json`'s `permissions.deny` — present in the live registry (confirmed 2026-09-23) but not currently callable from this repo |
 
-**Retired names, not live tools**: `task_orchestrate`, `memory_usage`, and `swarm_destroy` do **not** exist in the live registry (SMI-5777) — `coordination_orchestrate`, `memory_retrieve`/`memory_delete`, and `swarm_shutdown` above are their respective replacements. Full list: `tools/list` (353 tools).
+**Retired names, not live tools**: `task_orchestrate`, `memory_usage`, and `swarm_destroy` do **not** exist in the live registry (SMI-5777) — `coordination_orchestrate`, `memory_retrieve`/`memory_delete`, and `swarm_shutdown` above are their respective replacements. Full list: `tools/list` (358 tools at 3.56.1).
 
 ## Specialist Agent Types
 

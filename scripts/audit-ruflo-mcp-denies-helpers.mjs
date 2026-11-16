@@ -36,7 +36,7 @@ import { readFileSync } from 'node:fs'
  * The 37-entry MCP deny set (design doc § 6 rows 13 and decision 2.5): the
  * three in-container command surfaces (`terminal_execute`, `agent_execute`,
  * `wasm_agent_tool`), five `github_*` tools, and 29 `browser_*` tools --
- * measured live against the served `@claude-flow/cli@3.42.4` build. See
+ * measured live against the `@claude-flow/cli` build served at the time. See
  * SMI-6744 A4.4 § 10 for the measurement (the tool-count denominator is a
  * factual claim that rots as the served build changes -- CLAUDE.md's
  * "durable rules instruct, they don't describe" -- so it is cited here, not
