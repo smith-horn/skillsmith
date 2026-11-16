@@ -822,6 +822,71 @@ describe('ruflo-launch-guard.mjs (ADR-170 §§ 4, 7)', () => {
     30000
   )
 
+  // ---- 7c: the 3.56.1 runtime's six-field lock record (SMI-6744 pin bump, V-5)
+
+  it.skipIf(!canRun)(
+    `arm 7c: a 3.56.1 {pid, acquiredAt, host, platform, pidns, boot} state.lock classifies exactly as the two-field record -- live refuses, stale proceeds, neither is deleted (${skipReason})`,
+    async () => {
+      // @claude-flow/cli 3.56.1's acquireLock writes four more fields than
+      // 3.42.4's {pid, acquiredAt}. The guard authenticates only pid and
+      // acquiredAt, so the property pinned here is EQUIVALENCE: for the same
+      // owner and the same mtime, the six-field record must reach the same
+      // exit status and the same classification as the two-field one. A
+      // guard that treated the extra fields as a foreign shape would read a
+      // live 3.56.1 lock as malformed and proceed past it (exit 0, not 5).
+      const extra = {
+        host: 'smi6744-fixture-host',
+        platform: 'linux',
+        pidns: 'pid:[4026531836]',
+        boot: '00000000-0000-4000-8000-000000000000',
+      }
+      const outcome = async (record: Record<string, unknown>, ageMs: number | null) => {
+        const cwd = scratchCwd()
+        const cliPath = makeCliPath(cwd)
+        const lockPath = realLockPathOf(cwd)
+        const raw = JSON.stringify(record)
+        writeFileSync(lockPath, raw)
+        if (ageMs !== null) {
+          const when = new Date(Date.now() - ageMs)
+          utimesSync(lockPath, when, when)
+        }
+        const r = await runGuard(cwd, cliPath)
+        // Neither shape is ever removed or rewritten by the guard.
+        expect(readFileSync(lockPath, 'utf8'), `output: ${r.output}`).toBe(raw)
+        return r
+      }
+
+      const sleeper = spawnSleeper()
+      try {
+        const acquiredAt = Date.now()
+        const liveTwo = await outcome({ pid: sleeper.pid, acquiredAt }, null)
+        const liveSix = await outcome({ pid: sleeper.pid, acquiredAt, ...extra }, null)
+        note(`arm 7c (live): two-field exit=${liveTwo.status} | six-field exit=${liveSix.status}`)
+        expect(liveTwo.status, `two-field output: ${liveTwo.output}`).toBe(5)
+        expect(liveSix.status, `six-field output: ${liveSix.output}`).toBe(liveTwo.status)
+        expect(liveSix.output).toContain('held by a live server')
+        expect(liveSix.output).not.toContain('unresolved')
+      } finally {
+        sleeper.kill()
+      }
+
+      // Stale: a dead pid whose mtime is already past the runtime's window,
+      // so the guard proceeds at once instead of waiting.
+      const staleAge = RUNTIME_LOCK_STALE_MS + 30000
+      const deadAt = Date.now() - 600000
+      const staleTwo = await outcome({ pid: DEAD_PID, acquiredAt: deadAt }, staleAge)
+      const staleSix = await outcome({ pid: DEAD_PID, acquiredAt: deadAt, ...extra }, staleAge)
+      note(`arm 7c (stale): two-field exit=${staleTwo.status} | six-field exit=${staleSix.status}`)
+      expect(staleTwo.status, `two-field output: ${staleTwo.output}`).toBe(0)
+      expect(staleSix.status, `six-field output: ${staleSix.output}`).toBe(staleTwo.status)
+      for (const r of [staleTwo, staleSix]) {
+        expect(r.output, `output: ${r.output}`).toContain(`pid ${DEAD_PID} is not running`)
+        expect(r.output, `output: ${r.output}`).not.toContain('unresolved')
+      }
+    },
+    30000
+  )
+
   // ---- 8: an unusable mutex database is a distinct, self-describing refusal
 
   it.skipIf(!canRun)(
