@@ -174,8 +174,11 @@ if [[ -n "$FILTER_FUNCTIONS" ]]; then
     fi
   done
 
-  NO_VERIFY_JWT_FUNCTIONS=("${FILTERED_NO_VERIFY[@]}")
-  VERIFY_JWT_FUNCTIONS=("${FILTERED_VERIFY[@]}")
+  # `${a[@]+"${a[@]}"}`: bash 3.2 (macOS /bin/bash) treats an empty array as
+  # unbound under `set -u`, so a --functions list naming only one JWT kind
+  # crashed here before SMI-7223.
+  NO_VERIFY_JWT_FUNCTIONS=(${FILTERED_NO_VERIFY[@]+"${FILTERED_NO_VERIFY[@]}"})
+  VERIFY_JWT_FUNCTIONS=(${FILTERED_VERIFY[@]+"${FILTERED_VERIFY[@]}"})
   TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
   echo "Deploying $TOTAL edge function(s) to project: $PROJECT_REF"
 else
@@ -185,6 +188,16 @@ else
 fi
 
 echo "=================================================="
+
+# --- Resolve the pinned Supabase CLI before deploying anything (SMI-7223) ---
+# Never `npx supabase`: with no local package it downloads registry-latest and
+# ignores the pinned binary that CI installs on PATH.
+# shellcheck source=scripts/lib/resolve-supabase-cli.sh
+source "$SCRIPT_DIR/lib/resolve-supabase-cli.sh"
+if ! resolve_supabase_cli "$SCRIPT_DIR/.."; then
+  echo "ERROR: no function deployed -- fix the Supabase CLI version first"
+  exit 1
+fi
 
 DEPLOYED=0
 FAILED=0
@@ -199,7 +212,7 @@ deploy_function() {
   fi
 
   echo -n "  Deploying $func_name..."
-  if npx supabase "${args[@]}" 2>&1; then
+  if "${SUPABASE_CLI[@]}" "${args[@]}" 2>&1; then
     echo " OK"
     DEPLOYED=$((DEPLOYED + 1))
   else

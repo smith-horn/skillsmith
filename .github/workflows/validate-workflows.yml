@@ -10,6 +10,12 @@ on:
       - '.github/workflows/validate-workflows.yml'
       - 'scripts/classify-deploy-mode.sh'
       - 'scripts/tests/deploy-detection.test.sh'
+      # SMI-7223: the deploy scripts must run the pinned Supabase CLI, never npx.
+      - 'scripts/deploy-edge-functions.sh'
+      - 'scripts/validate-staging.sh'
+      - 'scripts/validate-edge-functions.sh'
+      - 'scripts/lib/resolve-supabase-cli.sh'
+      - 'scripts/tests/resolve-supabase-cli.test.sh'
 
 permissions:
   contents: read
@@ -34,3 +40,27 @@ jobs:
       - name: Detection unit tests
         run: |
           bash scripts/tests/deploy-detection.test.sh
+
+  # SMI-7223: deploy-edge-functions.sh once ran `npx supabase`, which downloads
+  # registry-latest and ignores the pinned CLI on PATH. These tests pin the
+  # resolver and every caller to the package.json version, with stub CLIs.
+  cli-pin-test:
+    name: Supabase CLI Pin Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: shellcheck
+        run: |
+          shellcheck -x scripts/lib/resolve-supabase-cli.sh scripts/deploy-edge-functions.sh scripts/validate-staging.sh scripts/tests/resolve-supabase-cli.test.sh
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n scripts/lib/resolve-supabase-cli.sh
+          bash -n scripts/validate-edge-functions.sh
+          bash -n scripts/tests/resolve-supabase-cli.test.sh
+
+      - name: Resolver and caller tests
+        run: |
+          bash scripts/tests/resolve-supabase-cli.test.sh

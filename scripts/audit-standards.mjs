@@ -112,6 +112,7 @@ import {
   findProcScanCmdHintDrift,
   findClaudeFlowReintroductions,
 } from './audit-cli-pin-drift-helpers.mjs'
+import { findBareNpxCliInShellAndWorkflows } from './audit-shell-npx-cli-helpers.mjs'
 import {
   runDependencyRegistryCheck,
   runDependencyRegistryCli,
@@ -5187,6 +5188,28 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     report(
       `Check 59: ${f.file} script "${f.script}" runs bare "npx ${f.tool}" with no matching devDependency pin${shadowSuffix}`,
       `Add "${f.tool}" as an exact-pinned devDependency so npx resolves the local copy instead of registry-latest.`
+    )
+  }
+
+  // SMI-7223: the same invariant for shell scripts and workflows. A bare
+  // `npx supabase` in CI has no local package, so npx downloads
+  // registry-latest and ignores the pinned binary setup-cli put on PATH.
+  const shellNpx = findBareNpxCliInShellAndWorkflows('.')
+  console.log(`  shell/workflow npx scan: ${shellNpx.scanned} file(s) via ${shellNpx.via}`)
+  if (shellNpx.scanned === 0) {
+    check59Violations++
+    report(
+      `Check 59: the shell/workflow npx scan examined 0 files${shadowSuffix}`,
+      `git ls-files returned nothing for scripts/*.sh and .github/workflows/*.y*ml; the check ran over an empty set, which is not a pass.`
+    )
+  }
+  for (const f of shellNpx.findings) {
+    check59Violations++
+    report(
+      `Check 59: ${f.file}:${f.line} runs bare "npx ${f.tool}", which downloads registry-latest when no local package exists${shadowSuffix}`,
+      f.tool === 'supabase'
+        ? `Source scripts/lib/resolve-supabase-cli.sh and run "\${SUPABASE_CLI[@]}" instead (SMI-7223).`
+        : `Run the pinned local binary (node_modules/.bin/${f.tool}) or pin it as npx ${f.tool}@<version>.`
     )
   }
 
