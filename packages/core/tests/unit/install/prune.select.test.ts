@@ -8,7 +8,11 @@
 import { describe, expect, it } from 'vitest'
 import { planPrune } from '../../../src/install/prune.select.js'
 import { BACKUP_KIND_POLICY } from '../../../src/install/prune.kinds.js'
-import { groupDigest } from '../../../src/install/prune.select.digest.js'
+import {
+  groupDigest,
+  rootKeyOf as planRootKeyOf,
+} from '../../../src/install/prune.select.digest.js'
+import { rootKeyOf } from '../../../src/services/skill-swap.area.js'
 import type { Classification, CopyClass } from '../../../src/install/prune.classify.js'
 import type {
   ExcludeReason,
@@ -825,5 +829,15 @@ describe("M3: a group's scope holds every area of its keep group, across state r
     const again = plan(scoped(l, g.scope.areaPaths), r).groups[0]
     expect(again?.items.map((i) => i.copyPath)).toEqual(g.items.map((i) => i.copyPath))
     expect(again?.digest).toBe(g.digest)
+  })
+})
+
+describe('the planner root key', () => {
+  // The planner keeps its own copy (src/install imports nothing from services); --root matching
+  // for a backup with no parsed sidecar compares it with the area's key, so the two must agree.
+  it('equals the services rootKeyOf, which names the backup area', () => {
+    for (const r of ['/a', '/Users/x/.claude/skills', '/tmp/s p/ace', '/é/\u{1F600}']) {
+      expect(planRootKeyOf(r)).toBe(rootKeyOf(r))
+    }
   })
 })

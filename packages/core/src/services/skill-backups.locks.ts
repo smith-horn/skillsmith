@@ -165,7 +165,10 @@ const errnoOfCause = (err: SkillWriteStop): string | null => {
   return typeof code === 'string' ? code : null
 }
 
-/** UD62 for one backup copy's sidecar root, memoised per root. */
+/**
+ * UD62 for one backup copy's sidecar root. `assignLocks` memoises it per (state root, area key
+ * directory, sidecar root), and only after the row's area-agreement check passes.
+ */
 async function backupRootLock(
   skillsDir: string,
   stateRoot: string,

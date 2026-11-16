@@ -19,7 +19,9 @@
  *  6. Held, changed and unverified copies need `--allow-changed <copyPath>`, and
  *     then a per-item yes; clean copies the batch yes. The tier follows the
  *     class, never the kind (M-T1), and the plan carries no authorization (M-T2).
- *  7. A copy whose lock is unknown (or missing from the map) is never selected.
+ *  7. A copy no deletion job can name (unknown root identity, or no hash to
+ *     approve) is never selected (`unidentified`).
+ *  8. A copy whose lock is unknown (or missing from the map) is never selected.
  *
  * Groups come in ascending bytewise order of the lock path (UD60), each with
  * the digest 6c-iii re-plans against.
