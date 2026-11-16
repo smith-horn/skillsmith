@@ -477,7 +477,7 @@ print_worktree_next_steps() {
         echo "worktree even if this one's own container never came up):"
         echo "  $repo_root/scripts/worktree-docker.sh exec $worktree_path -- npm run preflight  # like: docker exec <container> npm run preflight"
         echo "This errors loudly (not silently) if the container isn't running yet —"
-        echo "see CLAUDE.md's Troubleshooting table, 'Container won't start', if it does."
+        echo "see .claude/development/troubleshooting.md, 'Container won't start', if it does."
         echo ""
         echo "SMI-5570/SMI-5074: git push now requires THIS worktree's OWN container to"
         echo "be running (the command above) — pre-push no longer routes through the"

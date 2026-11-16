@@ -183,6 +183,15 @@ regexes = [
   # keyword" class as the entries above.
   '''smi6205-legacy-key''',
 
+  # False positive (SMI-7219): identifiers in the Troubleshooting table that
+  # match the 24-char vercel-token regex. `isServiceRoleCallerBySec` is the
+  # truncated body of `isServiceRoleCallerBySecretCompare()`;
+  # `allowSymlinksOutsideRoot` is a `LocalFilesystemConfig` option name. Both
+  # lines already lived in CLAUDE.md and surfaced only when SMI-7219 moved
+  # them, verbatim, into .claude/development/troubleshooting.md.
+  '''isServiceRoleCallerBySec''',
+  '''allowSymlinksOutsideRoot''',
+
 ]
 
 # Allow specific files that contain examples or tests
