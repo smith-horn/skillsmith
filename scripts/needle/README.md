@@ -120,7 +120,7 @@ long *atomic* identifiers that can't be abbreviated or factored out — e.g. a
 plan doc's `SCREAMING_SNAKE_CASE` env var / feature-flag names, several of
 which are naturally 44+ characters on their own (e.g.
 `SKILLSMITH_SUBMODULE_POINTER_AUTOREPAIR_SHADOW`, 46 characters — see this
-repo's `CLAUDE.md` § Monitoring & Alerts for that flag). This is exactly what
+repo's `.claude/development/deployment-guide.md` § Monitor details for that flag). This is exactly what
 happened in SMI-6260: a plan doc's own prose, inlined into a dispatch body,
 tripped the guard repeatedly on ordinary flag names, not paths.
 
@@ -251,7 +251,7 @@ guaranteed for every model/prompt.
   `.beads/traces/<bead-id>/` directory in place, destroying whatever answer
   it held. `dispatch.sh` now refuses (exit 2) before ever creating its own
   bead when the target workspace holds any stale bead — see this repo's
-  `CLAUDE.md` Troubleshooting table for the exact refusal message and its
+  `.claude/development/troubleshooting.md` for the exact refusal message and its
   registered opt-out (`SKILLSMITH_NEEDLE_STALE_BEAD_GUARD_DISABLE=1`).
   **One dispatch per workspace at a time** is the underlying constraint
   this guard enforces: `bf`'s `claim_ttl_minutes` (30 min) is shorter than

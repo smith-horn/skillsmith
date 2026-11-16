@@ -318,7 +318,7 @@ assert_contains "test12: second run reports already-correct, not a re-repair" "a
 # the fixture scope dir is MISSING or NOT WRITABLE — the two edge cases
 # plan §5 Edge Case 1 describes as "stale override, not a cosmetic
 # warning". Both must reference the scripts/repair-worktrees.sh
-# remediation the CLAUDE.md troubleshooting row now points at.
+# remediation the .claude/development/troubleshooting.md row now points at.
 # -----------------------------------------------------------------------
 setup_fixture
 mkdir -p "$SANDBOX/dotworktrees/name/packages/missing-scope-pkg"

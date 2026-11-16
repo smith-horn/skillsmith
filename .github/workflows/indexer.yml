@@ -747,7 +747,7 @@ jobs:
           REASON_TEXT="${REASON_TEXT%; }"
           REASON_LINES=$(printf -- '- %s\n' "${REASONS[@]}") || REASON_LINES=""
 
-          MESSAGE=$(printf 'Skill Indexer run degraded (run_type=%s, phase=%s).\n\nReasons:\n%s\nObserved:\n- found=%s indexed=%s failed=%s\n- rate_limit_remaining_min=%s (global, informational only)\n- core: remaining=%s observed=%s\n- search: remaining=%s observed=%s\n- code_search: remaining=%s observed=%s\n- secondary_rate_limit_hits=%s\n- recheck: errors=%s fetch_error_rate=%s\n\nThresholds in force: MAX_FAILED_RATIO=%s MIN_COHORT=%s MAX_SECONDARY_HITS=%s\n\nRunbook: docs/internal/process/guards-and-opt-outs.md (SKILLSMITH_INDEXER_DEGRADED_ALERT_SHADOW / _DISABLE); CLAUDE.md Troubleshooting -> "indexer_degraded alert fired".\nRun: %s\n' \
+          MESSAGE=$(printf 'Skill Indexer run degraded (run_type=%s, phase=%s).\n\nReasons:\n%s\nObserved:\n- found=%s indexed=%s failed=%s\n- rate_limit_remaining_min=%s (global, informational only)\n- core: remaining=%s observed=%s\n- search: remaining=%s observed=%s\n- code_search: remaining=%s observed=%s\n- secondary_rate_limit_hits=%s\n- recheck: errors=%s fetch_error_rate=%s\n\nThresholds in force: MAX_FAILED_RATIO=%s MIN_COHORT=%s MAX_SECONDARY_HITS=%s\n\nRunbook: docs/internal/process/guards-and-opt-outs.md (SKILLSMITH_INDEXER_DEGRADED_ALERT_SHADOW / _DISABLE); .claude/development/troubleshooting.md -> "indexer_degraded alert fired".\nRun: %s\n' \
             "$RUN_TYPE" "${DISCOVERY_PHASE:-<none>}" "$REASON_LINES" \
             "$FOUND" "$INDEXED" "$FAILED" \
             "$RRL" \

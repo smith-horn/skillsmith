@@ -8,6 +8,7 @@ Developer guides for local development, testing, and debugging.
 |----------|-------------|
 | [concurrency-patterns.md](concurrency-patterns.md) | Pattern-to-incident-to-canonical-fix index for the six `concurrency-auditor` patterns (SMI-4895/4896/4861/4887/6428) |
 | [docker-guide.md](docker-guide.md) | Container management, rebuild scenarios, native modules, troubleshooting |
+| [troubleshooting.md](troubleshooting.md) | Symptom-to-fix recipes moved from CLAUDE.md § Troubleshooting (SMI-7219) |
 | [git-crypt-guide.md](git-crypt-guide.md) | Encrypted docs, unlock, worktree setup, rebase workaround, host native bindings & SessionStart instrumentation (SMI-4549) |
 | [ci-reference.md](ci-reference.md) | Change classification, branch protection, Turborepo, CI scripts, npm overrides and the dependency registry (SMI-6943), runbook "When the production audit gate blocks on an advisory" (SMI-6942) |
 | [deployment-guide.md](deployment-guide.md) | Edge function deployment, CORS, website, monitoring & alerts |
