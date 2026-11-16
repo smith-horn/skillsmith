@@ -8,7 +8,11 @@
 import { describe, expect, it } from 'vitest'
 import { planPrune } from '../../../src/install/prune.select.js'
 import { BACKUP_KIND_POLICY } from '../../../src/install/prune.kinds.js'
-import { groupDigest } from '../../../src/install/prune.select.digest.js'
+import {
+  groupDigest,
+  rootKeyOf as planRootKeyOf,
+} from '../../../src/install/prune.select.digest.js'
+import { rootKeyOf } from '../../../src/services/skill-swap.area.js'
 import type { Classification, CopyClass } from '../../../src/install/prune.classify.js'
 import type {
   ExcludeReason,
@@ -825,5 +829,52 @@ describe("M3: a group's scope holds every area of its keep group, across state r
     const again = plan(scoped(l, g.scope.areaPaths), r).groups[0]
     expect(again?.items.map((i) => i.copyPath)).toEqual(g.items.map((i) => i.copyPath))
     expect(again?.digest).toBe(g.digest)
+  })
+})
+
+describe('the planner root key', () => {
+  // The planner keeps its own copy (src/install imports nothing from services); --root matching
+  // for a backup with no parsed sidecar compares it with the area's key, so the two must agree.
+  it('equals the services rootKeyOf, which names the backup area', () => {
+    for (const r of ['/a', '/Users/x/.claude/skills', '/tmp/s p/ace', '/é/\u{1F600}']) {
+      expect(planRootKeyOf(r)).toBe(rootKeyOf(r))
+    }
+  })
+
+  it('agrees on inputs a normalising, trimming or lossy copy would get wrong', () => {
+    // Composed and decomposed forms are different paths on disk and must key differently,
+    // as they do in the writer; so must lone surrogates, NUL, and trailing whitespace.
+    const cp = (...points: number[]): string => String.fromCodePoint(...points)
+    const composed = `/${cp(0xe9)}/skills`
+    const decomposed = `/${cp(0x65, 0x301)}/skills`
+    const angstromSign = `/${cp(0x212b)}`
+    const ringA = `/${cp(0xc5)}`
+    // The pairs really are distinct strings, so an editor that normalises cannot hollow this out.
+    expect(composed).not.toBe(decomposed)
+    expect(angstromSign).not.toBe(ringA)
+    const edge = [
+      composed,
+      decomposed,
+      angstromSign,
+      ringA,
+      `/${String.fromCharCode(0xd800)}`,
+      `/${String.fromCharCode(0xdfff)}/x`,
+      `/a${String.fromCharCode(0)}b`,
+      '/skills ',
+      ' /skills',
+      '',
+    ]
+    for (const r of edge) expect(planRootKeyOf(r)).toBe(rootKeyOf(r))
+    expect(planRootKeyOf(composed)).not.toBe(planRootKeyOf(decomposed))
+    expect(planRootKeyOf(angstromSign)).not.toBe(planRootKeyOf(ringA))
+    // A fixed-seed sweep over arbitrary UTF-16 code units, surrogates included.
+    let seed = 0x6531
+    const next = (): number => (seed = (seed * 1103515245 + 12345) >>> 0)
+    for (let i = 0; i < 500; i++) {
+      const len = next() % 24
+      let s = '/'
+      for (let j = 0; j < len; j++) s += String.fromCharCode(next() % 0x10000)
+      expect(planRootKeyOf(s)).toBe(rootKeyOf(s))
+    }
   })
 })

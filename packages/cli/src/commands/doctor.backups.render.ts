@@ -65,15 +65,26 @@ function parkedRowLine(r: ParkedRow): string {
   )
 }
 
-/** UD61's protection, as one clause (two leading spaces): the same words for a backup and a parked copy. */
+/**
+ * UD61's protection, as one clause (two leading spaces): the same words for a backup and a
+ * parked copy. Every rule is named; a new rule fails typecheck here instead of borrowing
+ * another rule's words.
+ */
 function protectionText(p: BackupRow['protection']): string {
-  return p.status === 'unknown'
-    ? `  protection unknown: ${p.reason}`
-    : p.status === 'unprotected'
-      ? '  no update record protects it'
-      : p.rule === 'live-record'
-        ? `  protected by record ${p.path}`
-        : `  protected by parked unreadable record ${p.path}`
+  if (p.status === 'unknown') return `  protection unknown: ${p.reason}`
+  if (p.status === 'unprotected') return '  no update record protects it'
+  switch (p.rule) {
+    case 'backup-dest':
+      return `  it is the backup the update record ${p.path} names`
+    case 'live-record':
+      return `  protected by record ${p.path}`
+    case 'parked-unreadable-record':
+      return `  protected by parked unreadable record ${p.path}`
+    default: {
+      const unhandled: never = p.rule
+      return `  protected (${String(unhandled)})`
+    }
+  }
 }
 
 function parkedLines(l: BackupsListing): string[] {

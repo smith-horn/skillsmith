@@ -134,8 +134,12 @@ describe('F4: protection that cannot be established is unknown', () => {
   })
 })
 
-/** A listing with one parked row whose classification is given. */
-function withParkedRow(klass: string, reason: string | null): BackupsListing {
+/** A listing with one parked row whose classification (and, optionally, protection) is given. */
+function withParkedRow(
+  klass: string,
+  reason: string | null,
+  protection: unknown = { status: 'unprotected' }
+): BackupsListing {
   const row = {
     copy: { copyPath: '/r/.skillsmith-parked/op/x-12345678', name: 'x-12345678', opId: 'op' },
     classification: { klass, reason, detail: null, sidecar: null },
@@ -148,7 +152,7 @@ function withParkedRow(klass: string, reason: string | null): BackupsListing {
     apparentBytes: 0,
     unmeasured: 0,
     // 6c-ii-b: parked rows carry UD61 protection like backup rows.
-    protection: { status: 'unprotected' },
+    protection,
   }
   return {
     discovery: { stateRoots: ['/s'], roots: [], skipped: [] },
@@ -187,4 +191,76 @@ describe('F10: a root that could not be resolved is not called mounted', () => {
     const real = renderListing(withParkedRow('mounted', 'mount-point')).join('\n')
     expect(real).toContain('mounted (mount-point)')
   })
+})
+
+/** A listing with one backup row (in one backup area) whose protection is given. */
+function withBackupRow(protection: unknown): BackupsListing {
+  const row = {
+    copy: { copyPath: '/s/backups/update/claude-code/k/x/op-b', name: 'op-b', opId: 'op-b' },
+    classification: { klass: 'clean', reason: null, detail: null, sidecar: null },
+    kind: 'undone',
+    opId: 'op-b',
+    skillsDir: '/r',
+    hashStillEquals: null,
+    createdMs: null,
+    ageDays: null,
+    allocatedBytes: 0,
+    apparentBytes: 0,
+    unmeasured: 0,
+    newestOfGroup: false,
+    protection,
+  }
+  const store = {
+    stateRoot: '/s',
+    updateDir: '/s/backups/update',
+    absent: false,
+    refused: null,
+    areas: [
+      {
+        client: 'claude-code',
+        dirName: 'x',
+        areaPath: '/s/backups/update/claude-code/k/x',
+        rows: [row],
+        temps: [],
+        leftovers: [],
+        orphanSidecars: [],
+        anomalies: [],
+      },
+    ],
+    anomalies: [],
+  }
+  const base = withParkedRow('clean', null) as unknown as Record<string, unknown>
+  return { ...base, parked: [], backups: [store] } as unknown as BackupsListing
+}
+
+describe('each protection rule reads as itself in the listing, for both kinds of row', () => {
+  // The row's own line: the backup row names its opId, the parked row its copy path.
+  const rowFor = {
+    parked: (protection: unknown): string =>
+      renderListing(withParkedRow('clean', null, protection)).find((l) =>
+        l.includes('/r/.skillsmith-parked/op/x-12345678')
+      ) ?? '',
+    backup: (protection: unknown): string =>
+      renderListing(withBackupRow(protection)).find((l) => l.includes('opId op-b')) ?? '',
+  }
+
+  for (const [kind, lineFor] of Object.entries(rowFor)) {
+    const textFor = (rule: string, p: string): string =>
+      lineFor({ status: 'protected', rule, path: p })
+
+    it(`${kind} row: backup-dest names the record whose backup it is, not a parked unreadable record`, () => {
+      const t = textFor('backup-dest', '/r/.skillsmith-staging/op/record.json')
+      expect(t).toContain(
+        'it is the backup the update record /r/.skillsmith-staging/op/record.json names'
+      )
+      expect(t).not.toContain('parked unreadable record')
+    })
+
+    it(`${kind} row: live-record and parked-unreadable-record keep their own words`, () => {
+      expect(textFor('live-record', '/r/rec.json')).toContain('protected by record /r/rec.json')
+      expect(textFor('parked-unreadable-record', '/r/.skillsmith-parked/op/y')).toContain(
+        'protected by parked unreadable record /r/.skillsmith-parked/op/y'
+      )
+    })
+  }
 })

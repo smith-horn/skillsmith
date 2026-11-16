@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- `skillsmith doctor backups` called the backup an update record names
+  "protected by parked unreadable record <record>". It now reads "it is the backup the update
+  record <record> names", as `--prune` already did.
 - **Added**: SMI-6531 -- A1 step 6c-ii-b: `skillsmith doctor backups --prune` is a dry run that shows
   exactly which set-aside folders and kept backups a later `--apply` (not yet available) would
   delete, with each one's store, kind, class, size on disk and whether it needs a batch or a

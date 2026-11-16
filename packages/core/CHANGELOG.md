@@ -16,8 +16,9 @@ All notable changes to `@skillsmith/core` are documented here.
   carries `protection`, decided by the listing from every root's records and every parked area,
   as a backup's is, so a scope, `--root` or `--client` never changes it; the planner reads it and
   computes none. A backup tree whose sidecar names a root or client other than its area's gets no
-  lock. An index-only area of kind `agent-uninstall` takes the area lock, and one of any other
-  recognised parked kind takes lock 1 of the skills root holding it, bound read-only, and only
+  lock. An index-only area of kind `init-rollback`, `agent-uninstall` or `companion-rollback`
+  takes lock 1′ of the area, and one of any other recognised parked kind takes lock 1 of the skills
+  root holding it, bound read-only, and only
   when discovery found that root (its update records were scanned); in a root nobody scanned the
   lock is unknown and the copy is kept. A row whose protection was never decided reads unknown,
   and the planner selects only on an explicit `unprotected`.
