@@ -147,6 +147,8 @@ function withParkedRow(klass: string, reason: string | null): BackupsListing {
     allocatedBytes: 0,
     apparentBytes: 0,
     unmeasured: 0,
+    // 6c-ii-b: parked rows carry UD61 protection like backup rows.
+    protection: { status: 'unprotected' },
   }
   return {
     discovery: { stateRoots: ['/s'], roots: [], skipped: [] },

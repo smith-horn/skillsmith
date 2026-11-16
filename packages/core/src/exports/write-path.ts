@@ -211,4 +211,21 @@ export {
 } from '../services/skill-backups.listing.js'
 export type { ProtectedBy, Protection, RecordFacts } from '../services/skill-backups.records.js'
 export { leftoverLines } from '../services/skill-backups.render.js'
+// SMI-6531 A1 step 6c-ii-b: the `--prune` dry run's pure planner and its contract (UD60-UD65).
+export { planPrune } from '../install/prune.select.js'
+// The lock each deletion would hold (UD62, UD63; D12, D13) and the lock 1' path (PLAN:915).
+export { assignLocks } from '../services/skill-backups.locks.js'
+export { parkedLockPath } from '../config/file-lock.parked.js'
+export type {
+  ExcludedRow,
+  ExcludeReason,
+  LockAssignment,
+  LockMap,
+  PlanGroup,
+  PlanItem,
+  PlanTier,
+  Precondition,
+  PrunePlan,
+  PruneRequest,
+} from '../install/prune.plan.types.js'
 export { human as humanBytes } from '../install/parked-usage.js'

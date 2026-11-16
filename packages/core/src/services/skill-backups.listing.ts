@@ -22,7 +22,8 @@
  * `scope` restricts which areas are SHOWN (a later re-plan lists one lock
  * group). Everything that is a fact about the whole machine is computed over
  * every discovered area and root: the record scan and the parked unreadable
- * records UD61 rule (c) reads, the ledger and so the space warning, and the
+ * records UD61 rule (c) reads, and so every row's protection, in both stores
+ * (`skill-backups.protect.ts`); the ledger and so the space warning; and the
  * index's stale lines.
  *
  * @module @skillsmith/core/services/skill-backups.listing
@@ -44,11 +45,11 @@ import type { BackupAreaListing, ListedCopy } from '../install/prune.list.types.
 import { discoverRoots } from './skill-recovery.discover.js'
 import type { Discovery, DiscoverOptions } from './skill-recovery.discover.js'
 import { indexOnlyAreas, readIndexes, scannedAreas, staleLines } from './skill-backups.areas.js'
-import { collectRecordFacts, protectionOf } from './skill-backups.records.js'
-import type { RecordFacts } from './skill-backups.records.js'
+import { collectRecordFacts } from './skill-backups.records.js'
+import type { Protection } from './skill-backups.records.js'
+import { protectAll } from './skill-backups.protect.js'
 import { narrowToClient, narrowToRoots } from './skill-backups.narrow.js'
 import { Ledger, usageFromLedger } from './skill-backups.ledger.js'
-import type { LedgerRow } from './skill-backups.ledger.js'
 import {
   ledgerBackupStore,
   ledgerIndex,
@@ -141,6 +142,9 @@ const leftoverView = (l: Leftover): LeftoverView => ({
   resumeOffered: l.state === 'interrupted-delete' && l.item !== undefined,
 })
 
+/** What a row reads until `protectAll` decides it: not a clearance, so a missed decision never selects. */
+const UNDECIDED: Protection = { status: 'unknown', reason: 'protection not decided' }
+
 function parkedRow(
   copy: ListedCopy,
   now: number,
@@ -157,6 +161,8 @@ function parkedRow(
     createdMs,
     ageDays: ageOf(createdMs, now),
     index: indexed.has(copy.copyPath) ? 'present' : 'missing',
+    // Filled in by `protectAll` once every area, record and ledger row is known.
+    protection: UNDECIDED,
     ...sizesOf(classification.measured),
   }
 }
@@ -177,7 +183,7 @@ function backupRow(copy: ListedCopy, a: BackupAreaListing, now: number, classify
     opId: str(classification.sidecar, 'opId') ?? copy.opId,
     hashStillEquals:
       classification.klass === 'clean' ? true : classification.klass === 'changed' ? false : null,
-    protection: { status: 'unprotected' },
+    protection: UNDECIDED,
     newestOfGroup: false,
     ...sizesOf(classification.measured),
   }
@@ -243,29 +249,6 @@ async function legacyLeftovers(ctx: LedgerCtx, roots: readonly string[]) {
   return out
 }
 
-/** UD61 (b) and (c) for every kept tree, once the ledger says what could not be seen. */
-function protect(
-  rows: readonly BackupRow[],
-  records: RecordFacts,
-  parkedUnreadable: ReadonlyMap<string, string>,
-  ledger: readonly LedgerRow[],
-  maybe: ReadonlyMap<string, string>
-): void {
-  // Rule (c) cannot be ruled out for what the parked scan or the index could not see.
-  const hidden = ledger
-    .filter((r) => r.mayHideCopies && (r.where.store === 'parked' || r.where.store === 'index'))
-    .map((r) => r.path)
-  for (const r of rows) {
-    const s = r.classification.sidecar?.['sourceUnchanged']
-    r.protection = protectionOf(
-      records,
-      parkedUnreadable,
-      { opId: r.opId, kind: r.kind, sourceUnchanged: typeof s === 'boolean' ? s : null },
-      { hidden, maybe }
-    )
-  }
-}
-
 /** Lists everything `doctor backups` reports. Reads only. */
 export async function listBackups(options: ListBackupsOptions = {}): Promise<BackupsListing> {
   const now = options.now ?? Date.now()
@@ -296,9 +279,8 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
   const listedAreas = new Set<string>()
 
   const parked: ParkedAreaView[] = []
-  const parkedUnreadable = new Map<string, string>()
-  // A parked copy whose kind could not be read may be an unreadable record (rule (c)).
-  const maybe = new Map<string, string>()
+  // Every parked row of every area, shown or not: UD61 is decided over all of them.
+  const parkedRows: ParkedRow[] = []
   for (const ref of areas) {
     if (ref.skipped !== undefined) {
       ledgerParkedArea(ctx, ref, null, [])
@@ -319,11 +301,8 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
     const l = listParkedArea(ref.root)
     if (!l.absent && l.refused === null) listedAreas.add(ref.areaDir)
     const rows = l.copies.map((c) => parkedRow(c, now, indexed, classify))
-    for (const r of rows) {
-      found.add(r.copy.copyPath)
-      if (r.kind === 'unreadable-record') parkedUnreadable.set(r.copy.opId, r.copy.copyPath)
-      else if (r.kind === null) maybe.set(r.copy.opId, r.copy.copyPath)
-    }
+    for (const r of rows) found.add(r.copy.copyPath)
+    parkedRows.push(...rows)
     ledgerParkedArea(ctx, ref, l, rows)
     if (!inScope(ref.areaDir)) continue
     parked.push({
@@ -384,7 +363,7 @@ export async function listBackups(options: ListBackupsOptions = {}): Promise<Bac
   // Last, so a path the index names that a store already accounts for is not counted twice.
   ledgerIndex(ctx, facts)
   const ledgerRows = ctx.ledger.rows()
-  protect(backupRows, records, parkedUnreadable, ledgerRows, maybe)
+  protectAll(backupRows, parkedRows, records, ledgerRows)
   const usageEntries = usageFromLedger(ledgerRows)
   const warning = evaluateParkedUsage(usageEntries, options.usage)
   const stale = staleLines(

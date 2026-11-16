@@ -38,6 +38,12 @@ export interface ParkedRow extends RowBase {
   origin: string | null
   /** Whether the parked index has a line for it. */
   index: 'present' | 'missing'
+  /**
+   * UD61, decided by the listing from the whole machine's facts, as for a
+   * backup (rule (c), D17, and unknown when records or parked areas could not
+   * be read). The same in a scoped or narrowed listing; the planner reads it.
+   */
+  protection: Protection
 }
 
 /** One kept tree in the update backup area. */
@@ -51,7 +57,7 @@ export interface BackupRow extends RowBase {
   opId: string
   /** True when the tree still hashes to the sidecar's hash, false when it does not, null when unknown. */
   hashStillEquals: boolean | null
-  /** UD61: the record protecting it, none, or unknown (some records could not be read). */
+  /** UD61: the record protecting it, none, or unknown (some records could not be read). Global, as for a parked row. */
   protection: Protection
   /** True when it is the newest `backup` (or `pre-rename`) of its `(client, skillsDir, dirName)`. */
   newestOfGroup: boolean

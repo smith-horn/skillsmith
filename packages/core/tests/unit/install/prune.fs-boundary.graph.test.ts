@@ -31,8 +31,13 @@ import { WRITE_MEMBERS, writingNames as writingNamesIn } from './fs-write-shape.
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const INSTALL = path.resolve(HERE, '../../../src/install')
 
-/** The read-only modules (D19): each is an entry, and everything it reaches is walked. */
+/** The read-only modules (D19, and 6c-ii-b's planner): each is an entry, and everything it reaches is walked. */
 const READ_ONLY_ENTRIES = [
+  'prune.plan.types.ts',
+  'prune.select.ts',
+  'prune.select.digest.ts',
+  'prune.select.match.ts',
+  'prune.select.paths.ts',
   'prune.kinds.ts',
   'prune.measure.ts',
   'prune.classify.ts',
