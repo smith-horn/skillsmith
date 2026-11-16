@@ -9,6 +9,12 @@ npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous/inter
 npx supabase functions deploy <function-name>                   # Gateway JWT validation
 ```
 
+**Run those `npx` lines only where `node_modules` holds the pinned CLI** (the main checkout after its dependency refresh). Anywhere else, `npx` downloads the latest Supabase CLI instead of the `package.json` pin. On 2026-11-16 that pulled in 3.x and broke every deploy (SMI-7223). For a manual deploy, prefer the script CI uses. It refuses to run unless the CLI matches the pin, and it never downloads one:
+
+```bash
+./scripts/deploy-edge-functions.sh --project-ref <ref> --functions <name1,name2>
+```
+
 ### Functions Requiring `--no-verify-jwt`
 
 These functions bypass Supabase gateway JWT validation and handle auth internally:
