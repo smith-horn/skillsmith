@@ -840,4 +840,41 @@ describe('the planner root key', () => {
       expect(planRootKeyOf(r)).toBe(rootKeyOf(r))
     }
   })
+
+  it('agrees on inputs a normalising, trimming or lossy copy would get wrong', () => {
+    // Composed and decomposed forms are different paths on disk and must key differently,
+    // as they do in the writer; so must lone surrogates, NUL, and trailing whitespace.
+    const cp = (...points: number[]): string => String.fromCodePoint(...points)
+    const composed = `/${cp(0xe9)}/skills`
+    const decomposed = `/${cp(0x65, 0x301)}/skills`
+    const angstromSign = `/${cp(0x212b)}`
+    const ringA = `/${cp(0xc5)}`
+    // The pairs really are distinct strings, so an editor that normalises cannot hollow this out.
+    expect(composed).not.toBe(decomposed)
+    expect(angstromSign).not.toBe(ringA)
+    const edge = [
+      composed,
+      decomposed,
+      angstromSign,
+      ringA,
+      `/${String.fromCharCode(0xd800)}`,
+      `/${String.fromCharCode(0xdfff)}/x`,
+      `/a${String.fromCharCode(0)}b`,
+      '/skills ',
+      ' /skills',
+      '',
+    ]
+    for (const r of edge) expect(planRootKeyOf(r)).toBe(rootKeyOf(r))
+    expect(planRootKeyOf(composed)).not.toBe(planRootKeyOf(decomposed))
+    expect(planRootKeyOf(angstromSign)).not.toBe(planRootKeyOf(ringA))
+    // A fixed-seed sweep over arbitrary UTF-16 code units, surrogates included.
+    let seed = 0x6531
+    const next = (): number => (seed = (seed * 1103515245 + 12345) >>> 0)
+    for (let i = 0; i < 500; i++) {
+      const len = next() % 24
+      let s = '/'
+      for (let j = 0; j < len; j++) s += String.fromCharCode(next() % 0x10000)
+      expect(planRootKeyOf(s)).toBe(rootKeyOf(s))
+    }
+  })
 })
