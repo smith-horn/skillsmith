@@ -2,7 +2,7 @@
 
 Agent spawning, swarm orchestration, and SPARC development reference.
 
-> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. The `.mcp.json` server key is `ruflo`, so every tool is exposed as `mcp__ruflo__<name>` (confirmed 2026-11-15 against the `@claude-flow/cli@3.56.1` candidate image the cutover serves) — not the old `mcp__claude-flow__` prefix an earlier revision of this guide used.
+> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. The `.mcp.json` server key is `ruflo`, so every tool is exposed as `mcp__ruflo__<name>` (confirmed against the served build, SMI-6744; the prefix is the same at 3.42.4 and 3.56.1) — not the old `mcp__claude-flow__` prefix an earlier revision of this guide used.
 
 ## Setup
 
@@ -64,7 +64,7 @@ Cutover order (step 7 of the plan):
 2. Merge the pin-bump PR.
 3. Stage the revert PR (with CI run) so a rollback does not leave main's launcher pinned to the new version.
 4. Record the rollback anchor: tag the currently served image ID and save it to a tar.
-5. Serve the validated candidate image, only after the two 7.4 checks pass.
+5. Tag the validated candidate image as `skillsmith-ruflo`, only after the two 7.4 checks pass (on failure: stop, leave the old container running, merge the staged revert); the running container keeps the old image until the start step (step 8).
 6. Quiesce the service, record the anchor inventory (per-file sha256/size, nonce label, both `store_generation` rows, authority file), and back up the volume.
 7. Anchor the existing policy ledger (7.5b) in a throwaway `docker run -t` container on the stopped volume.
 8. Start with `./scripts/ruflo-service-up.sh`.
@@ -75,7 +75,7 @@ Rollback restores the 7.5 backup unconditionally and re-tags the saved anchor im
 
 ## MCP Tools
 
-The live registry serves **358 tools** total (measured 2026-11-15 via `tools/list` against the `@claude-flow/cli@3.56.1` candidate image the cutover serves; the five added over 3.42.4 are `mission_*`, unclassified and callable by owner decision D-2) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `memory_list`, `hooks_intelligence_attention` and `embeddings_search` are denied too (SMI-7184: when the bridge is down, their sql.js fallback rewrites `memory.db` under the store lock, but with no WAL-sidecar refusal). `memory_cleanup` is denied as well (SMI-7185: with `dryRun:false` it deletes expired rows across every namespace, and every call, dry run included, reads through the same fallback); `memory_delete` stays allowed, an accepted risk. `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
+The registry serves **358 tools** from the 3.56.1 cutover on (measured 2026-11-15 on the candidate image; the service serves 353 at 3.42.4 until the cutover; the five added are `mission_*`, unclassified by owner decision D-2) — most of it is not granted. `CLAUDE.md`'s § Ruflo MCP Server names the small subset this repo actually uses; the rest needs an explicit ask, and a large share of the memory-mutating surface (`memory_import`, `memory_import_claude`, `memory_migrate`, `memory_search`, `memory_search_unified`, `memory_store`, and more) sits in `.claude/settings.json`'s `permissions.deny` by design (SMI-6744 A0.6: no corpus content enters ruflo's index before Wave 4's structural guarantee). `memory_list`, `hooks_intelligence_attention` and `embeddings_search` are denied too (SMI-7184: when the bridge is down, their sql.js fallback rewrites `memory.db` under the store lock, but with no WAL-sidecar refusal). `memory_cleanup` is denied as well (SMI-7185: with `dryRun:false` it deletes expired rows across every namespace, and every call, dry run included, reads through the same fallback); `memory_delete` stays allowed, an accepted risk. `hooks_model-route` is also denied (SMI-5659: it writes `.swarm/model-router-state.json` on every call and is not sandboxed by worktree cwd) — never call it. Its sibling `hooks_route` is classified Allowed (`docs/internal/architecture/ruflo-tool-classification.md` § `hooks_*`) and is **not** in `permissions.deny`.
 
 | Tool | Purpose | Required input | Notes |
 |------|---------|-----------------|-------|
