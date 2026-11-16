@@ -170,15 +170,22 @@ echo ""
 # Check 4: Deployment check (optional, requires SUPABASE_ACCESS_TOKEN)
 if [ "$1" = "--check-deployment" ]; then
   echo "Checking deployment status..."
+  # Same pinned CLI as deploy-edge-functions.sh, not whatever `supabase` is on PATH (SMI-7223).
+  VEF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=scripts/lib/resolve-supabase-cli.sh
+  source "$VEF_SCRIPT_DIR/lib/resolve-supabase-cli.sh"
   if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_PROJECT_REF" ]; then
     echo -e "${YELLOW}  ⚠ SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_REF not set, skipping deployment check${NC}"
+  elif ! resolve_supabase_cli "$VEF_SCRIPT_DIR/.."; then
+    echo -e "${RED}  ✗ no Supabase CLI matching the package.json pin — cannot check deployment${NC}"
+    ERRORS=$((ERRORS + 1))
   else
     # Parse pipe-delimited table. Skip header + separator rows (NR > 2), skip
     # separator rows with few fields (NF > 2 guards against dashes-only rows),
     # extract the NAME column ($2 when splitting on '|'), trim whitespace.
     # Prior `awk '{print $1}'` returned the UUID column, causing every function
     # to be reported NOT DEPLOYED after a Supabase CLI output-format change.
-    DEPLOYED=$(supabase functions list --project-ref "$SUPABASE_PROJECT_REF" 2>/dev/null \
+    DEPLOYED=$("${SUPABASE_CLI[@]}" functions list --project-ref "$SUPABASE_PROJECT_REF" 2>/dev/null \
       | awk -F '|' 'NR > 2 && NF > 2 { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2 }')
 
     if [ -z "$DEPLOYED" ]; then

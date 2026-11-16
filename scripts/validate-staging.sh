@@ -18,11 +18,18 @@ STAGING_REF="${STAGING_SUPABASE_PROJECT_REF:?STAGING_SUPABASE_PROJECT_REF not se
 PROD_REF="${SUPABASE_PROJECT_REF:?SUPABASE_PROJECT_REF not set}"
 STAGING_DB_PASS="${STAGING_SUPABASE_DB_PASSWORD:-}"
 
+# --- Resolve the pinned Supabase CLI before touching any project (SMI-7223) ---
+# Never `npx supabase`: with no local package it downloads registry-latest.
+# Resolved before the trap below, so a failure here exits without a re-link.
+# shellcheck source=scripts/lib/resolve-supabase-cli.sh
+source "$SCRIPT_DIR/lib/resolve-supabase-cli.sh"
+resolve_supabase_cli "$SCRIPT_DIR/.." || exit 1
+
 # --- Trap: always re-link to production on exit ---
 cleanup() {
   echo ""
   echo "Re-linking to production ($PROD_REF)..."
-  npx supabase link --project-ref "$PROD_REF" 2>&1 || echo "WARNING: Failed to re-link to production"
+  "${SUPABASE_CLI[@]}" link --project-ref "$PROD_REF" 2>&1 || echo "WARNING: Failed to re-link to production"
 }
 trap cleanup EXIT
 
@@ -33,15 +40,15 @@ echo "=========================================="
 # --- Step 1: Link to staging ---
 echo ""
 echo "[1/4] Linking to staging..."
-npx supabase link --project-ref "$STAGING_REF" 2>&1
+"${SUPABASE_CLI[@]}" link --project-ref "$STAGING_REF" 2>&1
 
 # --- Step 2: Push migrations ---
 echo ""
 echo "[2/4] Pushing migrations..."
 if [[ -n "$STAGING_DB_PASS" ]]; then
-  SUPABASE_DB_PASSWORD="$STAGING_DB_PASS" npx supabase db push --linked 2>&1
+  SUPABASE_DB_PASSWORD="$STAGING_DB_PASS" "${SUPABASE_CLI[@]}" db push --linked 2>&1
 else
-  npx supabase db push --linked 2>&1
+  "${SUPABASE_CLI[@]}" db push --linked 2>&1
 fi
 
 # --- Step 3: Deploy all functions ---
