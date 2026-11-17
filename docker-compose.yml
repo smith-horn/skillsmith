@@ -239,10 +239,6 @@ services:
     # visibly Restarting container, never a serving one.
     environment:
       - RUFLO_SEED_EXPECTED_DIGEST=${RUFLO_SEED_EXPECTED_DIGEST:-}
-      # SMI-6744 D-6: keep the CLI's policy trust root inside the data volume
-      # (it defaults to ~/.config/ruflo/policy-trust, outside it). The launcher's
-      # per-session `docker exec` passes the same value.
-      - XDG_CONFIG_HOME=/srv/ruflo/.config
     volumes:
       - ruflo-data:/srv/ruflo
     # ADR-170 SS1's literal, verbatim, and the ONLY form the ADR gives.

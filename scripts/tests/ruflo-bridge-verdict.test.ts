@@ -764,9 +764,8 @@ describe('predicate source drift (skips when the served ruflo seed tree is unrea
         // option's destructuring default) and `let backend = 'unknown'` are
         // different variables in the same file, and a `[:=]` scan read them
         // as enum members -- measured on both trees before this was narrowed.
-        // The per-file site count is pinned EXACTLY (2 and 1 at 3.14.2,
-        // 3.42.4 and 3.56.1; the count is unchanged at 3.56.1, measured by the
-        // V-4 drift run on 2026-11-15): a site upstream removes, or moves to object shorthand
+        // The per-file site count is pinned EXACTLY (2 and 1 at 3.14.2 and
+        // 3.42.4): a site upstream removes, or moves to object shorthand
         // where the value is a variable, fails loudly instead of shrinking
         // the set quietly. scanBackendSites (SMI-6772 F8) additionally sees
         // double-quoted and template-literal values, not single-quote only.

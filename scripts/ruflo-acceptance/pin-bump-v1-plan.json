@@ -1,8 +1,0 @@
-[
-  { "label": "tools-list", "method": "tools/list", "params": {} },
-  {
-    "label": "memory-bridge-status",
-    "method": "tools/call",
-    "params": { "name": "memory_bridge_status", "arguments": {} }
-  }
-]
