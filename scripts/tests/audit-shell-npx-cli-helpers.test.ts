@@ -102,6 +102,86 @@ describe('scanShellText (SMI-7223)', () => {
   })
 })
 
+// SMI-7226: the lexer's contexts. Each row is [name, text, expected hit count,
+// yaml]. The must-flag rows that run as whole commands were checked against
+// bash 5.2 with a stub npx (see the SMI-7223 plan, Addendum A).
+type LexRow = [string, string, number, boolean?]
+const LEXER_ROWS: LexRow[] = [
+  // Here-strings are not heredocs; real heredocs stay hidden.
+  ['here-string word', 'cat <<<foo\nnpx supabase deploy\nfoo', 1],
+  ['here-string EOF', 'read x <<<EOF\nnpx supabase deploy', 1],
+  ['here-string quoted', 'read x <<< "$v"\nnpx supabase deploy', 1],
+  ['real heredoc hidden', 'cat <<EOF\nnpx supabase deploy\nEOF', 0],
+  ['real <<- heredoc hidden', 'cat <<-EOF\n\tnpx supabase deploy\n\tEOF', 0],
+  ['heredoc after a here-string', 'read x <<<y; cat <<EOF\nnpx supabase deploy\nEOF', 0],
+  ['two heredocs on one line', 'cat <<A <<B\nfirst\nA\nnpx supabase prose\nB', 0],
+  ['quoted <<EOF is not a heredoc', 'echo "<<EOF"\nnpx supabase deploy', 1],
+  ['heredoc in a trailing comment', 'echo hi # cat <<EOF\nnpx supabase s', 1],
+  // Arithmetic: << is a shift, and $(( is arithmetic only when it closes as )).
+  ['numeric shift', 'x=$((1<<2))\nnpx supabase deploy', 1],
+  ['identifier shift', 'x=$((a<<b))\nnpx supabase deploy', 1],
+  ['$[ ] shift', 'x=$[a<<EOF]\nnpx supabase status', 1],
+  ['heredoc in $( ) inside (( ))', '(( x = $(cat <<EOF\nnpx supabase prose\nEOF\n) ))', 0],
+  ['(( )) test', 'if (( a < b )); then npx supabase status; fi', 1],
+  ['for (( )) loop', 'for ((i=0;i<3;i++)); do npx supabase s; done', 1],
+  ['nested parens in $(( ))', 'x=$(( (1+2) * 3 )); npx supabase s', 1],
+  ['spaced shift in $(( ))', 'echo $(( 1 << 2 )) && npx supabase s', 1],
+  ['$(( that bash reads as $( (', 'x=$((echo hi; npx supabase status) )', 1],
+  ['$((( nested subshell', 'x=$(((echo hi); npx supabase status) )', 1],
+  ['(( as two subshells', '((echo a); npx supabase s)', 1],
+  ['unclosed $(( fails closed', 'x=$((npx supabase status', 1],
+  ['arithmetic in "…" is not a command', 'echo "$((1+2)) npx supabase"', 0],
+  // Command substitution inside "…" runs a command.
+  ['"$( )" assignment', 'x="$(npx supabase --version)"', 1],
+  ['"$( )" echo', 'echo "$(npx supabase v)"', 1],
+  ['backtick in "…"', 'echo "`npx supabase v`"', 1],
+  ['unquoted backtick', 'v=`npx supabase s`', 1],
+  ['subshell in "$( )"', 'x="$( (cd a && npx supabase status) )"', 1],
+  ['nested quotes in "$( )"', 'x="$(echo "npx supabase")"', 0],
+  ['text after "$( )" closes', 'echo "$(date) npx supabase"', 0],
+  ['escaped \\$(', 'echo "\\$(npx supabase)"', 0],
+  ["'$( )' is literal", "echo '$(npx supabase)'", 0],
+  ['plain "…" prose', 'echo "npx supabase deploy"', 0],
+  // case…esac: a pattern's ) does not close a substitution.
+  ['case in "$( )"', 'x="$(case x in a) npx supabase status;; esac)"', 1],
+  ['top-level case arm', 'case "$x" in a) npx supabase status ;; esac', 1],
+  ['case after then', 'if x; then case $y in a) npx supabase s;; esac; fi', 1],
+  ['echo case is a word', 'x="$(echo case) npx supabase status"', 0],
+  ['x=case is a word', 'x="$(y=case; echo) npx supabase status"', 0],
+  ['esac as an argument', 'x="$(case a in a) echo esac;; esac) npx supabase s"', 0],
+  ['case word in "…" prose', 'echo "case a) npx supabase"', 0],
+  // YAML run: values are decoded before scanning (workflow and action files).
+  ['yaml single-quoted', "run: 'npx supabase deploy'", 1, true],
+  ['yaml double-quoted', 'run: "npx supabase deploy"', 1, true],
+  ['yaml list item', '  - run: "npx supabase status"', 1, true],
+  ['yaml \\x escape', 'run: "\\x6epx supabase status"', 1, true],
+  ['yaml \\u escape', 'run: "\\u006epx supabase status"', 1, true],
+  ['yaml multi-line scalar', 'run: "npx supabase\n  status"', 1, true],
+  ['yaml line after a decoded run:', 'run: "echo hi"\nnpx supabase s', 1, true],
+  ['yaml block scalar', 'run: |\n  npx supabase status', 1, true],
+  ['yaml inner "…" prose', `run: 'echo "npx supabase"'`, 0, true],
+  ["yaml doubled ''", "run: 'echo ''npx supabase'''", 0, true],
+  ['yaml escaped \\"', 'run: "echo \\"npx supabase\\""', 0, true],
+  ['yaml trailing comment', "run: 'echo hi' # npx supabase", 0, true],
+  ['yaml other key', 'name: "npx supabase deploy"', 0, true],
+  ['yaml multi-line prose', 'run: "echo \'npx supabase\'\n  done"', 0, true],
+  ['yaml unterminated at EOF', 'run: "npx supabase', 0, true],
+  ['yaml quoting is not decoded in .sh', 'run: "npx supabase deploy"', 0],
+]
+
+describe('scanShellText lexer contexts (SMI-7226)', () => {
+  it.each(LEXER_ROWS)('%s', (_name, text, want, yaml) => {
+    expect(scanShellText(text, { yaml: yaml === true })).toHaveLength(want)
+  })
+
+  it('reports a decoded YAML run: hit at the run: line', () => {
+    const hits = scanShellText('steps:\n  - run: "echo a"\n  - run: "npx supabase\n      status"', {
+      yaml: true,
+    })
+    expect(hits.map((h: { line: number }) => h.line)).toEqual([3])
+  })
+})
+
 describe('findBareNpxCliInShellAndWorkflows (SMI-7223)', () => {
   let repo: string | undefined
   afterEach(() => {
@@ -141,6 +221,21 @@ describe('findBareNpxCliInShellAndWorkflows (SMI-7223)', () => {
     ).toEqual(['.github/workflows/w.yml:4', 'scripts/deep/a.sh:2'])
   })
 
+  // SMI-7226: composite actions are scanned, and YAML quoting is decoded only
+  // in YAML files.
+  it('scans composite actions and decodes quoted run: only in YAML', () => {
+    repo = makeRepo({
+      '.github/actions/a/action.yml': 'runs:\n  steps:\n    - run: "npx supabase status"\n',
+      '.github/workflows/w.yml': "jobs:\n  x:\n    steps:\n      - run: 'npx wrangler deploy'\n",
+      'scripts/s.sh': 'run: "npx supabase status"\n',
+    })
+    const { findings, scanned } = findBareNpxCliInShellAndWorkflows(repo, { env })
+    expect(scanned).toBe(3)
+    expect(
+      findings.map((f: { file: string; line: number }) => `${f.file}:${f.line}`).sort()
+    ).toEqual(['.github/actions/a/action.yml:3', '.github/workflows/w.yml:4'])
+  })
+
   it('returns no findings for a clean tree', () => {
     repo = makeRepo({ 'scripts/a.sh': 'supabase link\n' })
     expect(findBareNpxCliInShellAndWorkflows(repo, { env })).toEqual({
@@ -157,12 +252,14 @@ describe('findBareNpxCliInShellAndWorkflows (SMI-7223)', () => {
       'scripts/a.sh': 'npx supabase link\n',
       'scripts/node_modules/x/b.sh': 'npx supabase link\n',
       '.github/workflows/w.yaml': '      - run: npx wrangler deploy\n',
+      '.github/actions/b/action.yaml': '    - run: npx supabase status\n',
       'docs/c.sh': 'npx supabase link\n',
     })
     const { findings, scanned, via } = findBareNpxCliInShellAndWorkflows(repo, { env })
     expect(via).toBe('filesystem')
-    expect(scanned).toBe(2)
+    expect(scanned).toBe(3)
     expect(findings.map((f: { file: string }) => f.file).sort()).toEqual([
+      '.github/actions/b/action.yaml',
       '.github/workflows/w.yaml',
       'scripts/a.sh',
     ])
