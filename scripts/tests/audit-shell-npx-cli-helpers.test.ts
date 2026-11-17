@@ -8,7 +8,7 @@
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 // @ts-expect-error - .mjs helper has no typings
@@ -167,11 +167,61 @@ const LEXER_ROWS: LexRow[] = [
   ['yaml multi-line prose', 'run: "echo \'npx supabase\'\n  done"', 0, true],
   ['yaml unterminated at EOF', 'run: "npx supabase', 0, true],
   ['yaml quoting is not decoded in .sh', 'run: "npx supabase deploy"', 0],
+  // Governance review of 1703b283d (SMI-7226): each row checked against bash 5.2.
+  ['heredoc tag with -', 'cat <<END-OF\nhello\nEND-OF\nnpx supabase status', 1],
+  [
+    'quoted heredoc tag with -',
+    "cat <<'END-OF'\nnpx supabase prose\nEND-OF\nnpx supabase status",
+    1,
+  ],
+  ['"…" heredoc tag with -', 'cat <<"END-OF"\nnpx supabase prose\nEND-OF', 0],
+  ['backslashed heredoc tag', 'cat <<\\EOF\nnpx supabase prose\nEOF\nnpx supabase status', 1],
+  [
+    '<<- strips tabs, then resumes',
+    'cat <<-EOF\n\tnpx supabase prose\n\tEOF\nnpx supabase status',
+    1,
+  ],
+  ['an indented delimiter does not end <<', 'cat <<EOF\n  EOF\nnpx supabase prose\nEOF', 0],
+  ['bash -lc', 'bash -lc "npx supabase status"', 1],
+  ['sh -ec', "sh -ec 'npx supabase status'", 1],
+  ['bash -o pipefail -c', 'bash -o pipefail -c "npx supabase status"', 1],
+  ['bash -l runs a script, not a command', 'bash -l "npx supabase status"', 0],
+  [
+    'nested case after a pattern',
+    'x="$(case $a in b) case $c in d) :;; esac;; e) npx supabase status;; esac)"',
+    1,
+  ],
+  ['npx --prefix value', 'npx --prefix ./x supabase status', 1],
+  ['quoted tool word', 'npx "supabase" status', 1],
+  ['@latest is not a pin', 'npx supabase@latest status', 1],
+  ['@major is not a pin', 'npx wrangler@3 deploy', 1],
+  ['backslash-newline joins with no space', 'npx\\\nsupabase status', 0],
+  ['space before the backslash survives', 'npx \\\nsupabase status', 1],
+  ['parens inside $(( )) before <<', 'x=$(( (1+(2)) <<EOF ))\nnpx supabase s', 1],
+  ['$(( inside "…" before <<', 'echo "$(( 1<<EOF ))"\nnpx supabase s', 1],
+  ['yaml folded >-', 'run: >-\n  npx\n  supabase status', 1, true],
+  ['yaml folded > in a list', '  - run: >\n      npx\n      supabase status', 1, true],
+  ['yaml plain multi-line', 'run: npx\n  supabase status', 1, true],
+  ['yaml literal | keeps lines apart', 'run: |\n  npx\n  supabase status', 0, true],
+  ['yaml literal | comment', 'run: |\n  # npx supabase status\n  echo ok', 0, true],
+  [
+    'yaml sibling key ends the block',
+    "- run: echo 'npx supabase status'\n  name: npx supabase status",
+    1,
+    true,
+  ],
 ]
 
 describe('scanShellText lexer contexts (SMI-7226)', () => {
   it.each(LEXER_ROWS)('%s', (_name, text, want, yaml) => {
     expect(scanShellText(text, { yaml: yaml === true })).toHaveLength(want)
+  })
+
+  it('reports a literal | block hit at its physical line', () => {
+    const hits = scanShellText('steps:\n  - run: |\n      echo a\n\n      npx supabase status\n', {
+      yaml: true,
+    })
+    expect(hits.map((h: { line: number }) => h.line)).toEqual([5])
   })
 
   it('reports a decoded YAML run: hit at the run: line', () => {
@@ -242,6 +292,20 @@ describe('findBareNpxCliInShellAndWorkflows (SMI-7223)', () => {
       findings: [],
       scanned: 1,
       via: 'git',
+      unreadable: [],
+    })
+  })
+
+  // SMI-7226: a listed file that can't be read is reported, not counted.
+  it('reports an unreadable tracked file instead of counting it as scanned', () => {
+    repo = makeRepo({ 'scripts/a.sh': 'echo ok\n' })
+    symlinkSync('does-not-exist.sh', join(repo, 'scripts', 'gone.sh'))
+    execFileSync('git', ['add', '-A'], { cwd: repo, env })
+    expect(findBareNpxCliInShellAndWorkflows(repo, { env })).toEqual({
+      findings: [],
+      scanned: 1,
+      via: 'git',
+      unreadable: ['scripts/gone.sh'],
     })
   })
 

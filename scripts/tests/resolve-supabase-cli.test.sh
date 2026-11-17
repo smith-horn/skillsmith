@@ -219,6 +219,31 @@ else
   bad "11d check-deployment reports a function missing from the listing" "rc=$rc $(grep -i deployed "$r/out.txt" | tr '\n' ' ')"
 fi
 
+# --- 12. validate-edge-functions.sh function enumeration (SMI-7226) ---
+# 12a: `_` names, dot-directories and plain files are skipped; a symlinked
+# directory is included; several names are all kept.
+r=$(new_root)
+mkdir -p "$r/supabase/functions/alpha" "$r/supabase/functions/_shared" "$r/supabase/functions/.hidden" "$r/real/linked"
+: > "$r/supabase/functions/alpha/index.ts"
+: > "$r/real/linked/index.ts"
+: > "$r/supabase/functions/notadir.ts"
+ln -s "$r/real/linked" "$r/supabase/functions/linked"
+run_in "$r" bash scripts/validate-edge-functions.sh > "$r/out.txt" 2>&1; rc=$?
+names=$(grep -o '✓ [a-z_.-]*: index.ts exists' "$r/out.txt" | awk '{print $2}' | tr -d ':' | tr '\n' ' ')
+if [ "$rc" -eq 0 ] && grep -q "Found 3 Edge Functions" "$r/out.txt" && [ "$names" = "alpha health linked " ]; then
+  ok "12a enumeration skips _ and dot names and plain files, follows symlinks"
+else
+  bad "12a enumeration skips _ and dot names and plain files, follows symlinks" "rc=$rc names=[$names]"
+fi
+# 12b: no function directories at all is an error, not an empty pass.
+r=$(new_root); rm -rf "$r/supabase/functions/health"
+run_in "$r" bash scripts/validate-edge-functions.sh > "$r/out.txt" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "No Edge Functions found" "$r/out.txt"; then
+  ok "12b no function directories -> error"
+else
+  bad "12b no function directories -> error" "rc=$rc $(head -3 "$r/out.txt" | tr '\n' ' ')"
+fi
+
 echo ""
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
