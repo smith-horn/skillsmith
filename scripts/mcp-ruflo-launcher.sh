@@ -61,7 +61,7 @@
 #      BOTH store files must be present -- an empty volume missing either
 #      one is refused by name, distinctly from a generation mismatch,
 #      naming scripts/ruflo-service-up.sh as the remediation. Two files,
-#      not one, because the served @claude-flow/cli@3.42.4 keeps TWO SQLite
+#      not one, because the served @claude-flow/cli keeps TWO SQLite
 #      databases under .swarm/: sql.js writes memory.db (possibly encrypted
 #      at rest under CLAUDE_FLOW_ENCRYPT_AT_REST) and AgentDB owns
 #      agentdb-memory.db via native better-sqlite3 (see getAgentDbPath() in
@@ -82,7 +82,7 @@
 #      failure.
 #
 # Env moved here from .mcp.json (ADR-170 § 7): CLAUDE_FLOW_LOG_LEVEL,
-# CLAUDE_FLOW_MEMORY_BACKEND, passed via `docker exec -e`. No
+# CLAUDE_FLOW_MEMORY_BACKEND, plus XDG_CONFIG_HOME (SMI-6744 D-6), passed via `docker exec -e`. No
 # AGENTDB_MODEL_PATH (ADR-170 § 2 — the served chain does not consult it).
 #
 # References: SMI-6744, ADR-170 (docs/internal/adr/170-ruflo-mcp-server-tree-store-and-topology.md).
@@ -122,7 +122,7 @@ STORE_GENERATION_TABLE="store_generation"
 # RUFLO_CLI_PIN is the one pin literal (ADR-170 § 7). Grepped by
 # scripts/audit-cli-pin-drift-helpers.mjs and scripts/cli-pin-drift-check.sh —
 # keep this a plain, unindented, single-line assignment.
-RUFLO_CLI_PIN=3.42.4
+RUFLO_CLI_PIN=3.56.1
 
 MAIN_CHECKOUT="$REPO_ROOT"
 _gcd="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || echo '')"
@@ -262,12 +262,40 @@ fi
 # the LAST occurrence of the sentinel, so trailing stderr text before it
 # cannot be mistaken for the version; trimming to [0-9.] then discards
 # anything the sentinel's own line still carries (e.g. a trailing newline).
-served_version="$(printf '%s' "${version_probe_out##*RUFLO_VER=}" | tr -cd '0-9.')"
+# A '-' or '+' on that line (prerelease/build) keeps the value whole instead,
+# so 3.56.1-rc2 is never squashed to 3.56.12 (newer); semver_cmp answers na.
+served_raw="${version_probe_out##*RUFLO_VER=}"
+case "${served_raw%%$'\n'*}" in
+  *[-+]*) served_version="$(printf '%s' "${served_raw%%$'\n'*}" | tr -d '[:space:]')" ;;
+  *) served_version="$(printf '%s' "$served_raw" | tr -cd '0-9.')" ;;
+esac
+# semver_cmp A B: prints gt, lt or eq comparing MAJOR.MINOR.PATCH numerically,
+# or na when either side is not exactly three dot-separated digit runs.
+semver_cmp() {
+  local re='^([0-9]+)\.([0-9]+)\.([0-9]+)$' a b i
+  [[ $1 =~ $re ]] || { echo na; return; }
+  a=("${BASH_REMATCH[@]:1}")
+  [[ $2 =~ $re ]] || { echo na; return; }
+  b=("${BASH_REMATCH[@]:1}")
+  for i in 0 1 2; do
+    if ((10#${a[i]} > 10#${b[i]})); then echo gt; return; fi
+    if ((10#${a[i]} < 10#${b[i]})); then echo lt; return; fi
+  done
+  echo eq
+}
 if [ "$served_version" != "$RUFLO_CLI_PIN" ]; then
+  # The remedy depends on which side is newer: a lagging checkout must never
+  # be told to rebuild the shared image (SMI-6744 pin bump, plan § 3).
+  case "$(semver_cmp "$served_version" "$RUFLO_CLI_PIN")" in
+    gt) version_remedy="# this checkout is behind main: rebase it (or sync the main checkout), then reconnect; do not rebuild the image or edit RUFLO_CLI_PIN" ;;
+    lt) version_remedy="# the service has not been cut over yet: see .claude/development/claude-flow-guide.md § Cutover, run from the main checkout" ;;
+    eq) version_remedy="# pinned and served are numerically equal but spelled differently: pinned $RUFLO_CLI_PIN, served $served_version; inspect $CLI_PKG_JSON in $CONTAINER_NAME before changing anything" ;;
+    *) version_remedy="# cannot compare pinned and served as MAJOR.MINOR.PATCH: check RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh and $CLI_PKG_JSON in $CONTAINER_NAME" ;;
+  esac
   emit_error "RUFLO_CLI_PIN=$RUFLO_CLI_PIN does not match the served @claude-flow/cli@$served_version" \
 "    pinned:  $RUFLO_CLI_PIN
     served:  $served_version
-    # rebuild the ruflo image stage, or update RUFLO_CLI_PIN in this launcher if the pin moved (ADR-170 § 7)"
+    $version_remedy"
   exit 1
 fi
 
@@ -465,5 +493,6 @@ echo "[ruflo] serving @claude-flow/cli@$served_version from $MAIN_CHECKOUT via $
 # already pins the working directory explicitly; the final exec must match
 # it rather than rely on the image's default Config.WorkingDir, which Check
 # 2 authenticates but which a future image/compose edit could still change
-# out from under this literal exec.
-exec docker exec -i -w "$SERVICE_CWD" -e CLAUDE_FLOW_LOG_LEVEL=info -e CLAUDE_FLOW_MEMORY_BACKEND=sqlite "$cid" node "$CLI_PATH" mcp start
+# out from under this literal exec. XDG_CONFIG_HOME keeps the CLI's policy
+# trust root inside the volume (SMI-6744 D-6); compose sets the same value.
+exec docker exec -i -w "$SERVICE_CWD" -e CLAUDE_FLOW_LOG_LEVEL=info -e CLAUDE_FLOW_MEMORY_BACKEND=sqlite -e XDG_CONFIG_HOME=/srv/ruflo/.config "$cid" node "$CLI_PATH" mcp start

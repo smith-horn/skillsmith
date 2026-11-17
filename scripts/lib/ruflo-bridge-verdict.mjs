@@ -55,10 +55,10 @@ export const DERIVED_FROM = Object.freeze({
   package: '@claude-flow/cli',
   // SMI-6744 A1.4: the launcher-pinned tree actually served in prod
   // (RUFLO_CLI_PIN in scripts/mcp-ruflo-launcher.sh) is the primary version
-  // here -- the earlier primary (3.14.2, Wave 0's install-time resolution)
+  // here (the pinned tree; served from the SMI-6744 cutover on) -- the earlier primary (3.14.2, Wave 0's install-time resolution)
   // moved to alsoVerifiedAt below, since it was independently re-read there
   // and never re-promoted after the ADR-170 launcher cutover.
-  version: '3.42.4',
+  version: '3.56.1',
   // `version` is @claude-flow/cli's, not the wrapper's. Historically this
   // coincided with the `.mcp.json` npx wrapper pin (`ruflo@3.14.2`) by
   // accident, since the wrapper's dependency range was open
@@ -67,15 +67,18 @@ export const DERIVED_FROM = Object.freeze({
   // SMI-6744 ADR-170 retires that npx entry: ruflo is now served by
   // scripts/mcp-ruflo-launcher.sh, which docker execs into the `ruflo`
   // Compose service (skillsmith-ruflo-1), itself running a lockfile-pinned
-  // @claude-flow/cli@3.42.4 baked into the image at /opt/ruflo-seed
+  // @claude-flow/cli@3.56.1 baked into the image from the cutover at /opt/ruflo-seed
   // (ADR-170 § 1, § 7 — RUFLO_CLI_PIN is the one pin literal). Bumping
   // that pin does not re-derive this predicate; only re-reading the cli
-  // source does.
+  // source does. 3.56.1 basis (2026-11-15, step 5 of the pin bump): V-2 on
+  // candidate image sha256:137657431b8c... returned embeddingBackend onnx /
+  // verdict healthy with this predicate table, and V-4's drift test ran and
+  // passed with exactly this version change.
   servedBy: 'scripts/mcp-ruflo-launcher.sh via the ruflo Compose service (skillsmith-ruflo-1)',
-  // The same six source literals were re-read, unchanged, at this earlier
-  // version (the one `npm install ruflo@3.14.2` resolved to on
-  // 2026-09-18, before the ADR-170 launcher cutover made 3.42.4 primary).
-  alsoVerifiedAt: Object.freeze(['3.14.2']),
+  // The same six source literals were re-read, unchanged, at these earlier
+  // versions (3.14.2, the install-time resolution of 2026-09-18; 3.42.4, the
+  // served build before the pin bump).
+  alsoVerifiedAt: Object.freeze(['3.14.2', '3.42.4']),
   files: Object.freeze([
     'dist/src/mcp-tools/memory-tools.js',
     'dist/src/memory/memory-initializer.js',

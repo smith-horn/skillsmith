@@ -89,11 +89,16 @@
  *
  * `state.lock`'s format is owned by @claude-flow/cli, not this repo.
  * Measured live: policy-runtime.js writes it as JSON
- * `{"pid":<int>,"acquiredAt":<Date.now() ms>}`, holds it only across a
- * policy transaction, and on a CONTENDED acquire unlinks any lock whose
- * mtime is older than its own LOCK_STALE_MS (30 s) before retrying,
- * within a LOCK_WAIT_MS (5 s) budget. That self-heal is the ONLY thing
- * that removes a state.lock. This guard never does, in any branch:
+ * `{"pid":<int>,"acquiredAt":<Date.now() ms>}` -- since 3.56.1 plus
+ * `host`, `platform`, `pidns` and `boot`, which this guard ignores (it
+ * reads only `pid` and `acquiredAt`) -- holds it only across a policy
+ * transaction, and on a CONTENDED acquire unlinks the lock before retrying,
+ * within a LOCK_WAIT_MS (5 s) budget, when either its mtime is older than
+ * LOCK_STALE_MS (30 s) or (since 3.56.1, `lockOwnerIsDead`) the lock names
+ * this host, platform, PID namespace and boot and its pid is no longer
+ * alive -- the second rule removes a dead owner's lock at once, without
+ * waiting out the 30 s. Those two runtime self-heals are the only things
+ * that remove a state.lock. This guard never does, in any branch:
  *
  *   live      -> refuse, exit 5 (another server is mid-transaction).
  *   malformed

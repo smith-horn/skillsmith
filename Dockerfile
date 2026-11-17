@@ -268,9 +268,11 @@ RUN node scripts/lib/linux-optional-packages.mjs | sort > /tmp/tier-b-predicted.
 # `"ruflo": "3.5.42"` devDependency, SMI-5399) and must not inherit or share
 # a layer with it, since Wave 4 (A4.4) removes `ruflo` from the host tree
 # entirely while this seed keeps serving (ADR-170 Decision, "C1 is rejected").
-# The seed is its own tiny private package at scripts/ruflo-seed/, whose only
-# dependency is the exact pin "@claude-flow/cli": "3.42.4" (ADR-170 § 1's
-# offline-load table — the only chain measured to load onnx offline). No
+# The seed is its own tiny private package at scripts/ruflo-seed/, whose
+# dependencies are the exact pins in scripts/ruflo-seed/package.json, led by
+# "@claude-flow/cli": "3.56.1" (ADR-170 § 1's offline-load table measured
+# 3.42.4 as the only chain to load onnx offline; decision D-7 re-measures
+# 3.56.1 before cutover, plan V-12, result recorded in ADR-170 § 1). No
 # `ruflo` wrapper package ships (§ 1 rejects it: it only adds a resolution
 # walk over `cli.js`, for no gain; this stage's entrypoint is `cli.js`
 # directly, per Checkpoint 2 decision 2.9).

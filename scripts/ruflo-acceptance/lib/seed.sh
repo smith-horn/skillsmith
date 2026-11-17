@@ -113,7 +113,7 @@ seed_necessity_image() {
   printf '[{"label":"bridge_status","params":{"name":"memory_bridge_status","arguments":{}}},{"label":"init","params":{"name":"embeddings_init","arguments":{"hyperbolic":false,"force":true}}},{"label":"generate:necessity-probe","params":{"name":"embeddings_generate","arguments":{"text":"necessity-probe","hyperbolic":false,"normalize":true}}}]\n' >"$EVD/necessity-plan.json"
   run_capture _rc "$EVD/necessity-$_tag-probe.log" node "$HARNESS/mcp-probe.mjs" \
     --out "$EVD/necessity-$_tag-probe.json" --plan "$EVD/necessity-plan.json" --canaries 0 --timeout-ms 90000 -- \
-    docker run --rm -i --network none -v "$_vol":/srv/ruflo -w /srv/ruflo --entrypoint node "ruflo-a14-$_tag" \
+    docker run --rm -i --network none -v "$_vol":/srv/ruflo -w /srv/ruflo -e XDG_CONFIG_HOME=/srv/ruflo/.config --entrypoint node "ruflo-a14-$_tag" \
     /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js mcp start
   _backend="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/necessity-$_tag-probe.json" bridgeBackend 2>/dev/null || echo ERR)"
   _outcome="$(node "$HARNESS/lib/jqlite.mjs" "$EVD/necessity-$_tag-probe.json" probeOutcome 2>/dev/null || echo ERR)"
