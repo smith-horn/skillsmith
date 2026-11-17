@@ -21,7 +21,9 @@
  * `-p`/`--package` value is such a pin; `@latest` or `@3` is flagged. CRLF
  * line endings are read as LF. In a workflow or action file, each `run:`
  * value (plain, quoted or block) is decoded with js-yaml and scanned as the
- * command it holds. Known blind spots, by design:
+ * command it holds, and the whole file is also resolved once so a `run`
+ * value reached through an alias is counted (audit-shell-npx-cli-yaml.mjs).
+ * Known blind spots, by design:
  * npx built from a variable, eval, a tool name in a variable, a quoted string
  * passed to another interpreter (ssh, docker exec), npx flags that take a
  * value other than those listed in NPX_VALUE_FLAGS, and a substitution or
@@ -30,10 +32,9 @@
 
 import { execFileSync } from 'child_process'
 import { readFileSync, readdirSync } from 'fs'
-import { createRequire } from 'module'
 import { join } from 'path'
 
-const yaml = createRequire(import.meta.url)('js-yaml')
+import { decodeYamlRun, firstAliasLine, resolvedRunValues } from './audit-shell-npx-cli-yaml.mjs'
 
 const TOOLS = ['supabase', 'wrangler']
 
@@ -70,8 +71,6 @@ const SH_C =
 // Sticky, so it is tried only at the first `<`: in a here-string `<<<word`
 // the third `<` cannot start a word, and the scan moves past the operator.
 const HEREDOC_AT = /<<(-?)\s*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>()'"\\])+)/y
-// A workflow or action `run:` key; group 1 is its indentation and list dash.
-const YAML_RUN = /^(\s*(?:-\s+)?)run:(\s.*|)$/
 const WORD_BREAK = /[\s;&|()]/
 
 function wordAt(line, i, word) {
@@ -100,25 +99,38 @@ function heredocTag(word) {
 /**
  * Bash reads `$((` / `((` as arithmetic only when the outer paren closes as
  * `))`; otherwise it is a substitution or subshell holding a subshell.
- * `from` is the index just past the opening `((`. Returns true for
- * arithmetic. When no close is found on the line it returns false, so the
- * text is lexed as commands and an invocation there is still seen.
+ * `from` is the index just past the opening `((`, so the inner paren is at
+ * from - 1. Returns true for arithmetic. When no close is found on the line it
+ * returns false, so the text is lexed as commands and an invocation there is
+ * still seen. `pairs` (one Map per line) caches every paren this scan matches,
+ * open index -> close index or -1 for unclosed, so a later opener inside an
+ * already-scanned span is answered without rescanning: the line costs about
+ * one pass however many openers it holds.
  */
-function arithmeticCloses(line, from) {
-  let depth = 0
+function arithmeticCloses(line, from, pairs) {
+  const inner = from - 1
+  const known = pairs.get(inner)
+  if (known !== undefined) return known !== -1 && line[known + 1] === ')'
+  const open = [inner]
   for (let j = from; j < line.length; j++) {
     const c = line[j]
     if (c === '\\') j++
     else if (c === "'" || c === '"') {
       const end = line.indexOf(c, j + 1)
-      if (end === -1) return false
+      if (end === -1) break
       j = end
-    } else if (c === '(') depth++
-    else if (c === ')') {
-      if (depth > 0) depth--
-      else return line[j + 1] === ')'
+    } else if (c === '(') {
+      const close = pairs.get(j)
+      if (close === undefined) open.push(j)
+      else if (close === -1) break
+      else j = close
+    } else if (c === ')') {
+      const at = open.pop()
+      pairs.set(at, j)
+      if (at === inner) return line[j + 1] === ')'
     }
   }
+  for (const at of open) pairs.set(at, -1)
   return false
 }
 
@@ -136,6 +148,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
     : [{ kind: 'cmd', close: null, openAt: -1, bodyAt: 0, depth: 0, cases: 0 }]
   const at = new Array(line.length + 1)
   const heredocs = []
+  const pairs = new Map() // arithmeticCloses() cache for this line
   const top = () => stack[stack.length - 1]
   const push = (kind, close, openAt, bodyAt = openAt + 1) =>
     stack.push({ kind, close, openAt, bodyAt, depth: 0, cases: 0 })
@@ -172,7 +185,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
         c === '$' &&
         next === '(' &&
         line[i + 2] === '(' &&
-        arithmeticCloses(line, i + 3)
+        arithmeticCloses(line, i + 3, pairs)
       ) {
         push('arith', '))', i)
         i += 3
@@ -226,7 +239,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
         c === '$' &&
         next === '(' &&
         line[i + 2] === '(' &&
-        arithmeticCloses(line, i + 3)
+        arithmeticCloses(line, i + 3, pairs)
       ) {
         push('arith', '))', i)
         i += 3
@@ -236,7 +249,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
       } else if (c === '$' && next === '[') {
         push('arith', ']', i)
         i += 2
-      } else if (c === '(' && next === '(' && arithmeticCloses(line, i + 2)) {
+      } else if (c === '(' && next === '(' && arithmeticCloses(line, i + 2, pairs)) {
         push('arith', '))', i)
         i += 2
       } else if (c === '`') {
@@ -296,36 +309,6 @@ function trailingCommentIndex(line, at) {
     if (at[pos].q === null) return pos
   }
   return -1
-}
-
-/**
- * Decode the `run:` value starting at raw[i] (plain, quoted or block scalar).
- * The value runs to the first non-blank line indented no deeper than the
- * `run:` key. Returns { command, consumed, literal } or null when the key has
- * no string value or js-yaml rejects it; the caller then scans the lines as
- * plain text. `literal` is true for a `|` block, whose decoded lines map one
- * to one onto the physical lines after the key.
- */
-function decodeYamlRun(raw, i) {
-  const m = raw[i].match(YAML_RUN)
-  if (!m) return null
-  const keyCol = m[1].length
-  const indent = (l) => l.length - l.trimStart().length
-  let n = 1
-  while (i + n < raw.length && (raw[i + n].trim() === '' || indent(raw[i + n]) > keyCol)) n++
-  while (n > 1 && raw[i + n - 1].trim() === '') n--
-  const body = [
-    'run:' + m[2],
-    ...raw.slice(i + 1, i + n).map((l) => l.slice(Math.min(keyCol, indent(l)))),
-  ]
-  let value
-  try {
-    value = yaml.load(body.join('\n'))?.run
-  } catch {
-    return null
-  }
-  if (typeof value !== 'string') return null
-  return { command: value, consumed: n, literal: /^\s*\|/.test(m[2]) }
 }
 
 /**
@@ -392,7 +375,28 @@ export function scanShellText(text, { yaml: isYaml = false } = {}) {
     if (tool) hits.push({ line: startLine, tool, text: line.trim() })
     heredocs.push(...(cut === -1 ? found : lexLine(code).heredocs))
   }
+  if (isYaml) reconcileAliases(text, raw, hits)
   return hits
+}
+
+/**
+ * A `run` value reached through a YAML alias is invisible line by line. If
+ * the file's resolved `run` values hold more unpinned calls per tool than the
+ * line pass found, report the difference at the first alias reference, so the
+ * check fails even when it cannot name the exact step.
+ */
+function reconcileAliases(text, raw, hits) {
+  const values = resolvedRunValues(text)
+  if (!values) return
+  const count = (list) => list.reduce((m, h) => m.set(h.tool, (m.get(h.tool) || 0) + 1), new Map())
+  const want = count(values.flatMap((v) => scanShellText(v)))
+  const have = count(hits)
+  const at = firstAliasLine(raw)
+  for (const [tool, n] of want) {
+    for (let k = have.get(tool) || 0; k < n; k++) {
+      hits.push({ line: at + 1, tool, text: raw[at].trim() })
+    }
+  }
 }
 
 function walkFiles(repoRoot) {

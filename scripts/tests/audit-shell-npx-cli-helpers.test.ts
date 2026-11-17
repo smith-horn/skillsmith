@@ -242,11 +242,67 @@ const LEXER_ROWS: LexRow[] = [
   ['four-part version is not a pin', 'npx supabase@2.111.0.1 x', 1],
   ['mismatched quotes around the tool', `npx "supabase' x`, 0],
   ['<<- ignores a space-indented delimiter', 'cat <<-EOF\n  EOF\nnpx supabase prose\n\tEOF', 0],
+  // PR #3257 cross-family gate (SMI-7226): run values reached through YAML aliases.
+  [
+    'yaml alias as a run: value',
+    'x-command: &cmd "npx supabase status"\njobs:\n  x:\n    steps:\n      - run: *cmd',
+    1,
+    true,
+  ],
+  [
+    'yaml alias to a step without npx',
+    'x-step: &step\n  run: echo ok\njobs:\n  x:\n    steps:\n      - *step\n      - run: |\n          echo hi',
+    0,
+    true,
+  ],
+  // The resolved tree holds the run value twice: the anchor and its use.
+  [
+    'yaml alias to a step that calls npx (counted per use)',
+    'x-env: &e "npx supabase status"\nx-step: &step\n  name: s\n  run: *e\njobs:\n  x:\n    steps:\n      - *step',
+    2,
+    true,
+  ],
+  [
+    'yaml alias to an exact pin',
+    'jobs:\n  x:\n    steps:\n      - run: &c "npx supabase@2.111.0 status"\n      - run: *c',
+    0,
+    true,
+  ],
+  [
+    'yaml alias to an unpinned anchor under another key',
+    'jobs:\n  x:\n    steps:\n      - name: a\n        run: &c echo first\n      - run: *c\n      - name: b\n        env:\n          X: &d "npx supabase status"\n      - run: *d',
+    1,
+    true,
+  ],
+  ['invalid yaml falls back without throwing', 'run: *undefined_anchor\n  bad: [', 0, true],
 ]
 
 describe('scanShellText lexer contexts (SMI-7226)', () => {
   it.each(LEXER_ROWS)('%s', (_name, text, want, yaml) => {
     expect(scanShellText(text, { yaml: yaml === true })).toHaveLength(want)
+  })
+
+  it('reports an alias-resolved hit at the first alias reference', () => {
+    const hits = scanShellText(
+      'x-command: &cmd "npx supabase status"\njobs:\n  x:\n    steps:\n      - run: *cmd',
+      { yaml: true }
+    )
+    expect(hits.map((h: { line: number }) => h.line)).toEqual([5])
+  })
+
+  // js-yaml builds a cyclic structure from a self-referencing anchor.
+  it('does not recurse forever on a self-referencing YAML anchor', () => {
+    const text = 'x: &a\n  b: *a\njobs:\n  j:\n    steps:\n      - run: echo ok'
+    expect(() => scanShellText(text, { yaml: true })).not.toThrow()
+    expect(scanShellText(text, { yaml: true })).toEqual([])
+  })
+
+  // Quadratic lookahead took ~0.65 s at 16,000 openers and grows 4x per
+  // doubling (~6 s here); one cached pass takes milliseconds.
+  it('lexes a line of 50,000 $(( openers in well under 2 s', () => {
+    const t0 = performance.now()
+    scanShellText('$(('.repeat(50_000))
+    expect(performance.now() - t0).toBeLessThan(2000)
   })
 
   it('reports a literal | block hit at its physical line', () => {
