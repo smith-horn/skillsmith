@@ -64,8 +64,11 @@ function pinnedByPackageFlag(call, tool) {
 }
 // `sh -c` and its relatives (also by path, /bin/bash): -c possibly bundled
 // (-lc, -ce), `-o`/`-O <option>` allowed before it, more flags or `--` after.
+// An option value may not start with `-`: otherwise `-O -x` matches both as
+// one option and as two flags, and backtracking is exponential (CodeQL
+// js/redos on PR #3257).
 const SH_C =
-  /(?:^|[\s;&|(/])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+\S+|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
+  /(?:^|[\s;&|(/])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
 // A heredoc operator at the lexer's position; group 2 is the delimiter word,
 // which may mix quoted, backslashed and bare parts (`END-OF`, `'EOF'`, `\EOF`).
 // Sticky, so it is tried only at the first `<`: in a here-string `<<<word`

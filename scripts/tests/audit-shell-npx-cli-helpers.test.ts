@@ -290,6 +290,14 @@ describe('scanShellText lexer contexts (SMI-7226)', () => {
     expect(hits.map((h: { line: number }) => h.line)).toEqual([5])
   })
 
+  // CodeQL js/redos witness for SH_C: exponential before the option-value fix
+  // (~1.6 s at 26 repeats, x16 per 4, so ~26 s here); now immediate.
+  it('matches the CodeQL js/redos witness for sh -c in well under 1 s', () => {
+    const t0 = performance.now()
+    scanShellText('\tsh ' + '-O -! '.repeat(30) + 'x "npx supabase status"')
+    expect(performance.now() - t0).toBeLessThan(1000)
+  })
+
   // js-yaml builds a cyclic structure from a self-referencing anchor.
   it('does not recurse forever on a self-referencing YAML anchor', () => {
     const text = 'x: &a\n  b: *a\njobs:\n  j:\n    steps:\n      - run: echo ok'
