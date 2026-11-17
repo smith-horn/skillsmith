@@ -14,10 +14,14 @@
  * "…"), arithmetic ($((…)), ((…)), $[…]) and case…esac, so a pattern's `)`
  * does not close a substitution. An `npx … <tool>` in command context counts
  * as an invocation whatever precedes it; inside quotes it counts only as the
- * argument of `sh -c` (bundled flags such as `-lc` included). A tool pinned to
- * an exact x.y.z version is not flagged; `@latest` or `@3` is. In a workflow
- * or action file, each `run:` value (plain, quoted or block) is decoded with
- * js-yaml and scanned as the command it holds. Known blind spots, by design:
+ * argument of `sh -c` (bundled flags such as `-lc` or `-ce` included). The
+ * body of a heredoc with an unquoted delimiter is scanned for command
+ * substitutions, which bash runs. A tool pinned to an exact x.y.z version
+ * (a prerelease or build suffix allowed) is not flagged, nor is a tool whose
+ * `-p`/`--package` value is such a pin; `@latest` or `@3` is flagged. CRLF
+ * line endings are read as LF. In a workflow or action file, each `run:`
+ * value (plain, quoted or block) is decoded with js-yaml and scanned as the
+ * command it holds. Known blind spots, by design:
  * npx built from a variable, eval, a tool name in a variable, a quoted string
  * passed to another interpreter (ssh, docker exec), npx flags that take a
  * value other than those listed in NPX_VALUE_FLAGS, and a substitution or
@@ -33,20 +37,34 @@ const yaml = createRequire(import.meta.url)('js-yaml')
 
 const TOOLS = ['supabase', 'wrangler']
 
-// npx flags whose value is a separate word.
-const NPX_VALUE_FLAGS = '--prefix|--cache|--registry|--userconfig|--workspace|-w'
+// npx flags whose value is a separate word. `-p`/`--package` is checked by
+// pinnedByPackageFlag(): its value is what npx installs.
+const NPX_VALUE_FLAGS = '--prefix|--cache|--registry|--userconfig|--workspace|-w|--package|-p'
 // `npx` as a bare word or a quoted command word ("npx" / 'npx'), then
 // optional flags, then a watched tool, bare or quoted, with an optional
 // @version (group 3 is the tool, group 4 the version).
 const HIT = new RegExp(
-  String.raw`(?:(?<![\w.-])npx|(["'])npx\1)\s+(?:(?:${NPX_VALUE_FLAGS})(?:=|\s+)\S+\s+|--?[A-Za-z-]+(?:=\S+)?\s+)*(["']?)(${TOOLS.join('|')})(@[^\s"']+)?\2(?![A-Za-z0-9@_-])`,
+  String.raw`(?:(?<![\w.-])npx|(["'])npx\1)\s+(?:(?:${NPX_VALUE_FLAGS})(?:=|\s+)\S+\s+|--?[A-Za-z-]+(?:=\S+)?\s+)*(["']?)(${TOOLS.join('|')})(@[^\s"';&|()<>]+)?\2(?![A-Za-z0-9@_-])`,
   'g'
 )
-// An exact pin: npx runs that version, not registry-latest.
-const EXACT_VERSION = /^@\d+\.\d+\.\d+$/
-// `sh -c` and its relatives, with -c possibly bundled (-lc, -ec) and
-// `-o <option>` allowed before it.
-const SH_C = /(?:^|[\s;&|(])(?:ba|z|da|k)?sh\s+(?:(?:-o\s+\S+|-\S+)\s+)*-[A-Za-z]*c\s*$/
+// An exact pin: npx runs that version, not registry-latest. A prerelease or
+// build suffix still names one version.
+const EXACT_VERSION = /^@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+// `-p <value>` / `--package=<value>` among npx's flags.
+const PACKAGE_FLAG = /(?:^|\s)(?:-p|--package)(?:=|\s+)(["']?)([^\s"']+)\1/g
+
+/** True when the npx call's -p/--package value pins this tool exactly. */
+function pinnedByPackageFlag(call, tool) {
+  for (const m of call.matchAll(PACKAGE_FLAG)) {
+    const at = m[2].lastIndexOf('@')
+    if (at > 0 && m[2].slice(0, at) === tool && EXACT_VERSION.test(m[2].slice(at))) return true
+  }
+  return false
+}
+// `sh -c` and its relatives (also by path, /bin/bash): -c possibly bundled
+// (-lc, -ce), `-o`/`-O <option>` allowed before it, more flags or `--` after.
+const SH_C =
+  /(?:^|[\s;&|(/])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+\S+|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
 // A heredoc operator at the lexer's position; group 2 is the delimiter word,
 // which may mix quoted, backslashed and bare parts (`END-OF`, `'EOF'`, `\EOF`).
 // Sticky, so it is tried only at the first `<`: in a here-string `<<<word`
@@ -110,8 +128,12 @@ function arithmeticCloses(line, from) {
  * context), "'", '"', "$'" or 'arith', and openAt is where that context
  * opened. heredocs lists every heredoc operator in command context, in order.
  */
-export function lexLine(line) {
-  const stack = [{ kind: 'cmd', close: null, openAt: -1, bodyAt: 0, depth: 0, cases: 0 }]
+export function lexLine(line, { heredocBody = false } = {}) {
+  // A heredoc body with an unquoted delimiter expands like "…" but has no
+  // closing quote, so it starts in a "…" frame that a `"` never pops.
+  const stack = heredocBody
+    ? [{ kind: '"', close: null, openAt: -1, bodyAt: 0, depth: 0, cases: 0, sticky: true }]
+    : [{ kind: 'cmd', close: null, openAt: -1, bodyAt: 0, depth: 0, cases: 0 }]
   const at = new Array(line.length + 1)
   const heredocs = []
   const top = () => stack[stack.length - 1]
@@ -144,7 +166,7 @@ export function lexLine(line) {
         mark(i + 1, i + 2)
         i += 2
       } else if (c === '"') {
-        stack.pop()
+        if (!t.sticky) stack.pop()
         i++
       } else if (
         c === '$' &&
@@ -234,7 +256,11 @@ export function lexLine(line) {
         HEREDOC_AT.lastIndex = i
         const m = HEREDOC_AT.exec(line)
         if (m) {
-          heredocs.push({ dash: m[1] === '-', tag: heredocTag(m[2]) })
+          heredocs.push({
+            dash: m[1] === '-',
+            tag: heredocTag(m[2]),
+            expands: !/['"\\]/.test(m[2]),
+          })
           mark(i, i + m[0].length)
           i += m[0].length
         } else {
@@ -303,12 +329,26 @@ function decodeYamlRun(raw, i) {
 }
 
 /**
+ * The tool of the first unpinned npx call in `code` that runs (command context,
+ * or quotes that are a `sh -c` argument), or null. `at` comes from lexLine.
+ */
+function firstCall(code, at) {
+  for (const m of code.matchAll(HIT)) {
+    if (m[4] && EXACT_VERSION.test(m[4])) continue
+    if (!m[4] && pinnedByPackageFlag(m[0], m[3])) continue
+    const { q, openAt } = at[m.index]
+    if (q === null || (q !== 'arith' && SH_C.test(code.slice(0, openAt)))) return m[3]
+  }
+  return null
+}
+
+/**
  * Scan shell (or workflow YAML) text. Returns [{ line, tool, text }].
  * Pass { yaml: true } for a workflow or action file, so a quoted `run:`
  * value is read as the command it holds.
  */
 export function scanShellText(text, { yaml: isYaml = false } = {}) {
-  const raw = text.split('\n')
+  const raw = text.split(/\r?\n/)
   const hits = []
   const heredocs = []
   let i = 0
@@ -321,6 +361,10 @@ export function scanShellText(text, { yaml: isYaml = false } = {}) {
       // leading tabs only.
       const body = h.dash ? line.replace(/^\t+/, '') : line
       if (body === h.tag) heredocs.shift()
+      else if (h.expands) {
+        const tool = firstCall(line, lexLine(line, { heredocBody: true }).at)
+        if (tool) hits.push({ line: startLine, tool, text: line.trim() })
+      }
       i++
       continue
     }
@@ -344,14 +388,8 @@ export function scanShellText(text, { yaml: isYaml = false } = {}) {
     const { at, heredocs: found } = lexLine(line)
     const cut = trailingCommentIndex(line, at)
     const code = cut === -1 ? line : line.slice(0, cut)
-    for (const m of code.matchAll(HIT)) {
-      if (m[4] && EXACT_VERSION.test(m[4])) continue
-      const { q, openAt } = at[m.index]
-      if (q === null || (q !== 'arith' && SH_C.test(code.slice(0, openAt)))) {
-        hits.push({ line: startLine, tool: m[3], text: line.trim() })
-        break
-      }
-    }
+    const tool = firstCall(code, at)
+    if (tool) hits.push({ line: startLine, tool, text: line.trim() })
     heredocs.push(...(cut === -1 ? found : lexLine(code).heredocs))
   }
   return hits
