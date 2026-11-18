@@ -53,7 +53,7 @@ jobs:
 
       - name: shellcheck
         run: |
-          shellcheck -x scripts/lib/resolve-supabase-cli.sh scripts/deploy-edge-functions.sh scripts/validate-staging.sh scripts/tests/resolve-supabase-cli.test.sh
+          shellcheck -x scripts/lib/resolve-supabase-cli.sh scripts/deploy-edge-functions.sh scripts/validate-staging.sh scripts/validate-edge-functions.sh scripts/tests/resolve-supabase-cli.test.sh
 
       - name: Syntax check (bash -n)
         run: |

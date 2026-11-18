@@ -5200,7 +5200,14 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
     check59Violations++
     report(
       `Check 59: the shell/workflow npx scan examined 0 files${shadowSuffix}`,
-      `git ls-files returned nothing for scripts/*.sh and .github/workflows/*.y*ml; the check ran over an empty set, which is not a pass.`
+      `The ${shellNpx.via === 'git' ? 'git ls-files listing' : 'filesystem walk'} found no scripts/*.sh, .github/workflows/*.y*ml or .github/actions/*/action.y*ml files; the check ran over an empty set, which is not a pass.`
+    )
+  }
+  for (const file of shellNpx.unreadable) {
+    check59Violations++
+    report(
+      `Check 59: ${file} is in the shell/workflow npx scan set but could not be read${shadowSuffix}`,
+      `An unread file is an unchecked file, not a pass. Restore it or remove it from the tree (SMI-7226).`
     )
   }
   for (const f of shellNpx.findings) {
