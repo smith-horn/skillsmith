@@ -17,6 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { withFileLock } from '../../../src/config/file-lock.js'
+import { parkedLockPath, withParkedAreaLock } from '../../../src/config/file-lock.parked.js'
 import { LockOrderError, setLockTrackerEnabledForTests } from '../../../src/config/lock-tracker.js'
 import type { LockRank } from '../../../src/config/lock-tracker.js'
 import { withDestinationLock } from '../../../src/install/fan-out.locks.js'
@@ -221,5 +222,41 @@ describe('appendParkedIndexLocked holds lock 4', () => {
     fs.writeFileSync(indexPath, '')
     const result = await insideRank('3', () => compactParkedIndexLocked(indexPath))
     expect(result.ok).toBe(true)
+  })
+})
+
+describe('withParkedAreaLock holds lock 1′', () => {
+  const parked = (): { run: () => Promise<unknown>; ran: () => boolean } => {
+    const stateRoot = path.join(dir, 'state')
+    fs.mkdirSync(stateRoot, { recursive: true })
+    let ran = false
+    return {
+      run: () =>
+        withParkedAreaLock(parkedLockPath(stateRoot, '/srv/area'), 'parked', async () => {
+          ran = true
+        }),
+      ran: () => ran,
+    }
+  }
+
+  it('is refused inside lock 1′ (second-skills-root-lock), and the work does not run', async () => {
+    const p = parked()
+    const error = await insideRank("1'", () => rejection(p.run()))
+    expectKind(error, 'second-skills-root-lock')
+    expect(p.ran()).toBe(false)
+  })
+
+  it('is refused inside lock 2a (inversion), and the work does not run', async () => {
+    const p = parked()
+    const error = await insideRank('2a', () => rejection(p.run()))
+    expectKind(error, 'inversion')
+    expect(p.ran()).toBe(false)
+  })
+
+  it('runs when nothing is held', async () => {
+    const p = parked()
+    const result = (await p.run()) as { ok: boolean }
+    expect(result.ok).toBe(true)
+    expect(p.ran()).toBe(true)
   })
 })
