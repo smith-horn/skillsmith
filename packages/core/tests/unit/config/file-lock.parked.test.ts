@@ -4,10 +4,12 @@
  * `withParkedAreaLock` takes it as lock 1′ and guards the `locks/` directory
  * (design note §3.3, W1, W2, W4-W10; W3 is in lock-ranks.call-sites.test.ts).
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { bindLocksDir, inspect } from '../../../src/config/file-lock.parked.checks.js'
 import {
   ParkedLockChanged,
   parkedLockPath,
@@ -280,10 +282,10 @@ describe('withParkedAreaLock', () => {
     expect(ran).toBe(false)
     expect(fs.readdirSync(target)).toEqual([])
     // Check 3 cannot tell a swap before the link (the claim was made in the
-    // replacement and released) from one after it, and does not guess from what
-    // is visible at the path, so it reports an uncertain stranded claim.
-    expect(r.stranded).toMatchObject({ certain: false, lockName: LOCK_NAME })
-    expect(r.stranded?.claim).toBeUndefined()
+    // replacement and released) from one after it, so any change of locks/ after
+    // the claim is reported as a possibly stranded claim, without an identity.
+    expect(r.stranded).toMatchObject({ lockName: LOCK_NAME })
+    expect(r.stranded).not.toHaveProperty('claim')
   })
 
   describe('W10: a swap after check 3', () => {
@@ -320,10 +322,11 @@ describe('withParkedAreaLock', () => {
       expect(r.value).toBeInstanceOf(ParkedLockChanged)
       const stranded = r.stranded
       expect(stranded).toBeDefined()
-      const moved = fs.lstatSync(path.join(root, 'locks.moved', LOCK_NAME), { bigint: true })
       // The stranding is real: the claim file is still in the moved directory.
-      expect(stranded?.certain).toBe(true)
-      expect(stranded?.claim).toEqual({ dev: moved.dev, ino: moved.ino })
+      expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
+      // ...but no identity is claimed for it.
+      expect(stranded).not.toHaveProperty('claim')
+      expect(stranded?.detail).toMatch(/may have been left/)
       expect(stranded?.lockName).toBe(LOCK_NAME)
       const movedDir = fs.lstatSync(path.join(root, 'locks.moved'), { bigint: true })
       expect(stranded?.locksDir).toEqual({ dev: movedDir.dev, ino: movedDir.ino })
@@ -344,8 +347,8 @@ describe('withParkedAreaLock', () => {
       expect(error).toBeInstanceOf(ParkedLockChanged)
       const stranded = strandedOf(error)
       expect(stranded).toBeDefined()
-      const moved = fs.lstatSync(path.join(root, 'locks.moved', LOCK_NAME), { bigint: true })
-      expect(stranded?.claim).toEqual({ dev: moved.dev, ino: moved.ino })
+      expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
+      expect(stranded).not.toHaveProperty('claim')
       expect(stranded?.lockName).toBe(LOCK_NAME)
     })
 
@@ -393,11 +396,10 @@ describe('withParkedAreaLock', () => {
     // The stranding is real: the claim is in the folder that moved away.
     expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
     expect(r.stranded).toBeDefined()
-    expect(r.stranded?.certain).toBe(false)
     expect(r.stranded?.lockName).toBe(LOCK_NAME)
     const movedDir = fs.lstatSync(path.join(root, 'locks.moved'), { bigint: true })
     expect(r.stranded?.locksDir).toEqual({ dev: movedDir.dev, ino: movedDir.ino })
-    expect(r.stranded?.claim).toBeUndefined()
+    expect(r.stranded).not.toHaveProperty('claim')
     expect(r.stranded?.detail).toMatch(/may have been left/)
   })
 
@@ -424,7 +426,7 @@ describe('withParkedAreaLock', () => {
     expect(r.stop.code).toBe('locks-dir-changed')
     expect(ran).toBe(false)
     expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
-    expect(r.stranded).toMatchObject({ certain: false, lockName: LOCK_NAME })
+    expect(r.stranded).toMatchObject({ lockName: LOCK_NAME })
   })
 
   describe('W5b: a StuckLockError from fn is not a busy stop', () => {
@@ -598,24 +600,160 @@ describe('withParkedAreaLock', () => {
       expect(r.ok).toBe(true)
       if (!r.ok) throw new Error('unreachable')
       expect(r.value).toBeInstanceOf(ParkedLockChanged)
-      expect(String((r.value as Error).message)).toMatch(/not this process/)
+      expect(String((r.value as Error).message)).toMatch(/claim-not-ours/)
     })
 
-    it('a move of locks/ after the replacement never reports the foreign claim as ours', async () => {
+    it.each([
+      ['not a claim', 'x'],
+      ['a legacy claim naming our pid', String(process.pid)],
+      ['a v2 claim', '{"v":2,"pid":1,"token":"t","host":"h","acquiredAt":1}'],
+    ])('afterAcquire: %s at the bound inode stops', async (_name, content) => {
       let ran = false
       const r = await runLockedForTests(
         lockPath,
-        'foreign-c',
+        'non-v1',
         async () => {
           ran = true
+        },
+        { hooks: { afterAcquire: () => fs.writeFileSync(lockPath, content) } }
+      )
+      expect(ran).toBe(false)
+      expect(r.ok).toBe(false)
+      if (r.ok) throw new Error('unreachable')
+      expect(r.stop).toMatchObject({ detail: expect.stringContaining('claim-not-ours') })
+    })
+
+    it('beforeFn: a rewritten claim that fn swallows, then a move of locks/, is reported without a claim', async () => {
+      const r = await runLockedForTests(
+        lockPath,
+        'foreign-c',
+        async (ctx) => {
+          try {
+            ctx.recheck()
+          } catch {
+            // fn swallows the refusal
+          }
           fs.renameSync(locksDir, path.join(root, 'locks.moved'))
           fs.mkdirSync(locksDir, { mode: 0o700 })
+          return 'finished'
         },
-        { hooks: { afterAcquire: overwriteInPlace } }
+        { hooks: { beforeFn: overwriteInPlace } }
       )
+      expect(r).toMatchObject({ ok: true, value: 'finished' })
+      expect(r.stranded).toBeDefined()
+      expect(r.stranded).not.toHaveProperty('claim')
+      expect(r.stranded?.detail).toMatch(/may have been left/)
+      expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
+    })
+
+    it('beforeFn: our pid and host with a forged token fails recheck()', async () => {
+      const r = await runLockedForTests(
+        lockPath,
+        'forged-token',
+        async (ctx) => {
+          try {
+            ctx.recheck()
+            return null
+          } catch (error) {
+            return error
+          }
+        },
+        {
+          hooks: {
+            beforeFn: () => {
+              const record = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as Record<
+                string,
+                unknown
+              >
+              fs.writeFileSync(lockPath, JSON.stringify({ ...record, token: 'forged' }) + '\n')
+            },
+          },
+        }
+      )
+      expect(r.ok).toBe(true)
+      if (!r.ok) throw new Error('unreachable')
+      expect(r.value).toBeInstanceOf(ParkedLockChanged)
+    })
+
+    it('recheck() compares with the record read at check 3, not the live hostname', async () => {
+      let checked: unknown = 'unset'
+      const r = await runLockedForTests(
+        lockPath,
+        'renamed-host',
+        async (ctx) => {
+          try {
+            ctx.recheck()
+            checked = null
+          } catch (error) {
+            checked = error
+          }
+        },
+        { hooks: { beforeFn: () => void vi.spyOn(os, 'hostname').mockReturnValue('renamed-host') } }
+      )
+      expect(r.ok).toBe(true)
+      expect(checked).toBeNull()
+    })
+  })
+
+  describe('the claim reader (inspect) refuses what is not a claim file', () => {
+    const ours = (): string =>
+      JSON.stringify({
+        v: 1,
+        pid: process.pid,
+        token: 'tok',
+        host: os.hostname(),
+        acquiredAt: 1,
+      })
+    const bind = () => {
+      const b = bindLocksDir(stateRoot, locksDir)
+      if (!b.ok) throw new Error('bind failed')
+      return b
+    }
+
+    it('control: a regular claim of ours passes', () => {
+      const { bound } = bind()
+      fs.writeFileSync(lockPath, `${ours()}\n`)
+      expect(inspect(bound, lockPath).ok).toBe(true)
+    })
+
+    it('a FIFO at the lock path is refused without waiting', { timeout: 5000 }, () => {
+      const { bound } = bind()
+      execFileSync('mkfifo', [lockPath])
+      const r = inspect(bound, lockPath)
       expect(r.ok).toBe(false)
-      expect(r.stranded).toBeUndefined()
-      expect(ran).toBe(false)
+      if (!r.ok) expect(r.detail).toContain('claim-not-ours')
+    })
+
+    it('a symlink to a valid claim at the lock path is refused', () => {
+      const { bound } = bind()
+      const elsewhere = path.join(locksDir, 'elsewhere')
+      fs.writeFileSync(elsewhere, `${ours()}\n`)
+      fs.symlinkSync(elsewhere, lockPath)
+      const r = inspect(bound, lockPath)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.detail).toContain('claim-not-ours')
+    })
+
+    it('a file larger than a claim is refused even when it starts with a valid claim', () => {
+      const { bound } = bind()
+      fs.writeFileSync(lockPath, ours() + ' '.repeat(5000))
+      const r = inspect(bound, lockPath)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.detail).toContain('larger than a claim')
+    })
+
+    it('a file swapped in between the folder check and the open is not the bound claim', () => {
+      const { bound } = bind()
+      fs.writeFileSync(lockPath, `${ours()}\n`)
+      const first = inspect(bound, lockPath)
+      if (!first.ok) throw new Error('control failed')
+      const r = inspect(bound, lockPath, first.claim, () => {
+        // A new file is made first, so it cannot reuse the old inode number.
+        fs.writeFileSync(`${lockPath}.new`, `${ours()}\n`)
+        fs.renameSync(`${lockPath}.new`, lockPath)
+      })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.detail).toContain('not the one bound')
     })
   })
 

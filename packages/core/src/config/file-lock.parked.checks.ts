@@ -6,9 +6,10 @@
  * @module @skillsmith/core/config/file-lock.parked.checks
  */
 import fs from 'node:fs'
-import { hostname } from 'node:os'
+import os from 'node:os'
 import path from 'node:path'
-import { readClaim } from './owned-lock.claim.js'
+import { parseClaim } from './owned-lock.claim.js'
+import { MAX_LOCK_BYTES, type Claim, type V1Claim } from './owned-lock.types.js'
 import type { ParkedLockStop } from './file-lock.parked.js'
 
 export interface Id {
@@ -77,50 +78,103 @@ export function bindLocksDir(stateRoot: string, locks: string): Bind {
   return { ok: true, bound: { locks: { dev: st.dev, ino: st.ino }, real } }
 }
 
+const NOT_OURS = 'claim-not-ours'
+
+type ClaimRead = { ok: true; id: Id; claim: Claim } | { ok: false; detail: string }
+
 /**
- * Whether the file at `lockPath` is THIS process's claim, by content: a v1
- * claim (`parseClaim`, owned-lock.claim.ts:69-100) naming `process.pid` and this
- * host, the two fields the writer records (owned-lock.acquire.ts:258-260). The
- * claim also carries a random `token` and `acquiredAt` that only the acquiring
- * call knows, but `withFileLock` does not hand them to its callback, so they
- * cannot be compared here. A claim forged with our pid and host needs the
- * user's own account (ADR-166 D-0). `at` is the inode the caller bound; the
- * file read must still be that inode afterwards. Returns why not, or `null`.
+ * Read the claim at `lockPath` without trusting what the path names. The shared
+ * `readClaim` opens with a plain `open`, which blocks forever on a FIFO and
+ * follows a symlink; this one opens `O_NOFOLLOW | O_NONBLOCK`, then checks the
+ * OPEN descriptor: a regular file, on the lock folder's device, and (when
+ * `expect` is given) the inode already bound. The read is bounded as
+ * `readClaim`'s is (`MAX_LOCK_BYTES`) and parsed with the same `parseClaim`.
  */
-function notOurClaim(lockPath: string, at: Id): string | null {
-  const claim = readClaim(lockPath)
-  if (claim.kind !== 'v1') return 'claim-not-ours: the file at the lock path is not a v1 claim'
-  if (claim.pid !== process.pid || claim.host !== hostname()) {
-    return "claim-not-ours: the claim at the lock path is not this process's claim"
+function readClaimFd(lockPath: string, dev: bigint, expect: Id | undefined): ClaimRead {
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
+  let fd: number
+  try {
+    fd = fs.openSync(lockPath, flags)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return { ok: false, detail: 'the claim is not at its path' }
+    return { ok: false, detail: `${NOT_OURS}: the lock path cannot be opened as a file (${code})` }
   }
-  return same(lstatId(lockPath), at) ? null : 'claim-not-ours: the claim changed while it was read'
+  try {
+    const st = fs.fstatSync(fd, { bigint: true })
+    if (!st.isFile())
+      return { ok: false, detail: `${NOT_OURS}: the lock path is not a regular file` }
+    if (st.dev !== dev) return { ok: false, detail: `${NOT_OURS}: the claim is on another device` }
+    const id = { dev: st.dev, ino: st.ino }
+    if (expect !== undefined && !same(id, expect)) {
+      return { ok: false, detail: `${NOT_OURS}: the claim file is not the one bound` }
+    }
+    if (st.size > BigInt(MAX_LOCK_BYTES)) {
+      return { ok: false, detail: `${NOT_OURS}: the file at the lock path is larger than a claim` }
+    }
+    const buf = Buffer.allocUnsafe(MAX_LOCK_BYTES)
+    const n = fs.readSync(fd, buf, 0, MAX_LOCK_BYTES, 0)
+    return { ok: true, id, claim: parseClaim(buf.subarray(0, n).toString('utf8')) }
+  } catch {
+    return { ok: false, detail: `${NOT_OURS}: the claim could not be read` }
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+/** The claim bound at check 3: its identity and the v1 record read from it. */
+export interface Born {
+  id: Id
+  record: V1Claim
+}
+
+/**
+ * Check 3 (no `born`): a v1 claim naming this process and host, the two fields
+ * the writer records (owned-lock.acquire.ts:258-260). `recheck()` (with `born`):
+ * the same pid, host AND token as the record verified at check 3, so a later
+ * hostname change cannot fail a correct holder and a forgery must also copy the
+ * random token. The token cannot be checked at check 3 itself: only the
+ * acquiring call knows it and `withFileLock` does not hand it to its callback.
+ */
+function isOurs(c: Claim, born: Born | undefined): c is V1Claim {
+  return (
+    c.kind === 'v1' &&
+    (born === undefined
+      ? c.pid === process.pid && c.host === os.hostname()
+      : c.pid === born.record.pid && c.host === born.record.host && c.token === born.record.token)
+  )
 }
 
 /** `dirChanged` is true when `locks/` is no longer the bound directory. */
-export type Inspect = { ok: true; claim: Id } | { ok: false; detail: string; dirChanged: boolean }
+export type Inspect = { ok: true; claim: Born } | { ok: false; detail: string; dirChanged: boolean }
 
-/** Check 3, and `ctx.recheck()`'s repeat of it: `locks/`, the claim and the folder's realpath still match. */
-export function inspect(bound: Bound, lockPath: string): Inspect {
+/**
+ * Check 3, and `ctx.recheck()`'s repeat of it (pass the `born` it bound): `locks/`,
+ * the claim's content and the folder's realpath still match. `beforeOpen` is a
+ * test seam between the folder check and the open.
+ */
+export function inspect(
+  bound: Bound,
+  lockPath: string,
+  born?: Born,
+  beforeOpen?: () => void
+): Inspect {
   const dir = path.dirname(lockPath)
   if (!same(lstatId(dir), bound.locks)) {
     return { ok: false, detail: 'its identity changed', dirChanged: true }
   }
   const fail = (detail: string): Inspect => ({ ok: false, detail, dirChanged: false })
-  let claim: fs.BigIntStats
-  try {
-    claim = fs.lstatSync(lockPath, { bigint: true })
-  } catch {
-    return fail('the claim is not at its path')
+  beforeOpen?.()
+  const read = readClaimFd(lockPath, bound.locks.dev, born?.id)
+  if (!read.ok) return fail(read.detail)
+  const { claim } = read
+  if (!isOurs(claim, born)) {
+    return fail(`${NOT_OURS}: the claim at the lock path is not this acquisition's v1 claim`)
   }
-  if (!claim.isFile() || claim.dev !== bound.locks.dev) {
-    return fail('the claim is not a file on the same device')
-  }
-  const foreign = notOurClaim(lockPath, { dev: claim.dev, ino: claim.ino })
-  if (foreign !== null) return fail(foreign)
   try {
     if (fs.realpathSync.native(dir) !== bound.real) return fail('its path moved')
   } catch {
     return fail('its path no longer resolves')
   }
-  return { ok: true, claim: { dev: claim.dev, ino: claim.ino } }
+  return { ok: true, claim: { id: read.id, record: claim } }
 }

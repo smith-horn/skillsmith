@@ -22,7 +22,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { withFileLock } from './file-lock.js'
-import { bindLocksDir, inspect, lstatId, same, type Id } from './file-lock.parked.checks.js'
+import { bindLocksDir, inspect, lstatId, same, type Born } from './file-lock.parked.checks.js'
 import { checkLockRequest, LockOrderError } from './lock-tracker.js'
 import { StuckLockError, type StuckLockReason } from './owned-lock.js'
 
@@ -51,19 +51,16 @@ export type ParkedLockStop =
   | { code: 'locks-dir-changed'; path: string; detail: string }
 
 /**
- * A claim the release may not have been able to find at its path, because
- * `locks/` changed while it was held. `certain: true` (a swap after check 3):
- * `claim` is the identity bound under the lock, and it is in `locksDir`.
- * `certain: false` (a swap before check 3 could bind a claim): `claim` is absent
- * and `detail` says what is known. Nothing about whose file is now visible at the
- * lock path is used to decide either way.
+ * A claim the release may not have been able to find, because `locks/` was not the
+ * bound directory after the claim was taken (found at check 3 or after `fn`). It
+ * names no claim: the wrapper cannot know whose file is in the folder that moved
+ * away, so `detail` says only that a claim may have been left there and is
+ * reclaimed as a dead owner's claim if the folder returns.
  */
 export interface StrandedClaim {
-  certain: boolean
   lockName: string // `parked-<key>.lock`
   locksDir: { dev: bigint; ino: bigint } // the directory the claim was created in
-  claim?: { dev: bigint; ino: bigint }
-  detail?: string
+  detail: string
 }
 
 export interface ParkedLockContext {
@@ -121,29 +118,33 @@ export type WithParkedAreaLockResult<T> =
  * `fn`: `busy`, a missing state root, or an unsafe, changed or removed
  * `locks/`. `fn`'s own errors propagate unchanged.
  *
- * `stranded` reports a claim the release may not have found, because `locks/`
- * changed while the lock was held (on `ok: true` and `ok: false`; for a
- * propagating error, `strandedOf(error)`). A swap after the claim was bound
- * (check 4) is `certain: true` and names the claim. A swap found by check 3,
- * before a claim could be bound, is `certain: false` with no claim: the wrapper
- * does not guess whose file is visible at the path afterwards, so it reports
- * every such swap, including one that came before the claim was made, when the
- * release removed the claim from the replacement. A `locks/` removed outright
- * is reported the same way, though nothing is then left to reclaim.
+ * `stranded` reports that `locks/` was not the bound directory after the claim was
+ * taken, found at check 3 or after `fn`, so the release (which works by path) may
+ * not have found the claim and one may have been left in the folder that moved
+ * away. It is on the result (`ok: true` and `ok: false`), and `strandedOf(error)`
+ * returns it for an error `fn` threw. It carries no claim identity and no
+ * certainty: a swap before the claim was made (released from the replacement), a
+ * swap after check 3, a claim rewritten in place and then a swap, and a `locks/`
+ * removed outright are all reported the same way.
  *
  * Check 3 and `ctx.recheck()` read the claim at the lock path and require it to
- * be this process's own (a v1 claim naming this pid and host), not just a file
- * with the expected inode: `withFileLock` hands its callback no claim identity,
- * so the inode alone would bind whatever was put at the path. A mismatch stops
- * with `locks-dir-changed` and a `claim-not-ours` detail, `fn` never runs, and
- * nothing is reported as ours. Same-process holders of one lock cannot both own
- * a claim at the path: the file claim is created by an exclusive `link`
- * (owned-lock.claim.ts:296-300), a live owner's claim is never reclaimed
- * (:165-170, :200-201), and a nested request for the same lock is refused by
- * the tracker (lock-tracker.ts:15-16). Residual (ADR-166 D-0): a claim forged
- * with this process's pid and host needs the user's own account and is not
- * detected; nor is a claim removed after check 3, which a later swap would
- * still report by the identity bound there.
+ * be this acquisition's, not just a file with the expected inode: `withFileLock`
+ * hands its callback no claim identity. Check 3 requires a v1 claim naming this
+ * pid and host; `recheck()` requires the pid, host and token read at check 3. The
+ * read is on an `O_NOFOLLOW | O_NONBLOCK` descriptor, so a FIFO or symlink at the
+ * path is refused, not followed or waited on. A mismatch stops with
+ * `locks-dir-changed` and a `claim-not-ours` detail and `fn` never runs; a
+ * foreign claim is never attributed to this call. Same-process holders of one
+ * lock cannot both own a claim at the path: the file claim is created by an
+ * exclusive `link` (owned-lock.claim.ts:296-300), a live owner's claim is never
+ * reclaimed (:165-170, :200-201), and a nested request for the same lock is
+ * refused by the tracker (lock-tracker.ts:15-16).
+ *
+ * Residuals (ADR-166 D-0, each needs the user's own account): a claim forged with
+ * this process's pid and host before check 3 binds; a claim removed before or
+ * after check 3, after which another acquisition in this process can take the
+ * path and have its claim bound; a claim rewritten in place after check 3 that
+ * `fn` never rechecks.
  */
 export function withParkedAreaLock<T>(
   lockPath: string,
@@ -209,26 +210,20 @@ async function runLocked<T>(
   if (!same(lstatId(locks), bound.locks)) return changed('its identity changed before the lock')
   hooks?.afterRecheck?.()
   let entered = false
-  let claim: Id | undefined
   let lostAtCheck3 = false
   let stop: ParkedLockStop | undefined
   let value: T | undefined
-  // Check 4: the release works by path, so it cannot have found its own claim
+  // Check 4: the release works by path, so it may not have found its own claim
   // if `locks/` is no longer the directory the claim was made in.
-  const findStranded = (): StrandedClaim | undefined => {
-    const base = { lockName: path.basename(lockPath), locksDir: bound.locks }
-    if (claim !== undefined) {
-      return same(lstatId(locks), bound.locks) ? undefined : { ...base, certain: true, claim }
-    }
-    return lostAtCheck3
+  const findStranded = (): StrandedClaim | undefined =>
+    lostAtCheck3 || (entered && !same(lstatId(locks), bound.locks))
       ? {
-          ...base,
-          certain: false,
+          lockName: path.basename(lockPath),
+          locksDir: bound.locks,
           detail:
             "the lock folder changed after the claim was taken, so a claim may have been left in the folder that moved away; it is reclaimed as a dead owner's claim if the folder returns",
         }
       : undefined
-  }
   try {
     value = await withFileLock(
       target,
@@ -240,21 +235,17 @@ async function runLocked<T>(
         // the release (by path) removes the claim wherever the path now leads.
         const first = inspect(bound, lockPath)
         if (!first.ok) {
-          // `locks/` changed after the claim was taken. Whose file is visible
-          // through the path now says nothing about where OUR claim went.
+          // `locks/` changed after the claim was taken.
           lostAtCheck3 = first.dirChanged
           stop = { code: 'locks-dir-changed', path: locks, detail: first.detail }
           return undefined as T
         }
-        const bornClaim = first.claim
-        claim = bornClaim
+        const bornClaim: Born = first.claim
         hooks?.beforeFn?.()
         return fn({
           recheck(): void {
-            const again = inspect(bound, lockPath)
+            const again = inspect(bound, lockPath, bornClaim)
             if (!again.ok) throw new ParkedLockChanged(locks, again.detail)
-            if (!same(again.claim, bornClaim))
-              throw new ParkedLockChanged(locks, 'the claim was replaced')
           },
         })
       },
