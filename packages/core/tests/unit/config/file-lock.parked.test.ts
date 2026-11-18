@@ -12,10 +12,10 @@ import {
   ParkedLockChanged,
   parkedLockPath,
   parkedLockTarget,
+  runLockedForTests,
   strandedOf,
   withParkedAreaLock,
   type ParkedLockHooks,
-  type WithParkedAreaLockOptions,
 } from '../../../src/config/file-lock.parked.js'
 import { StuckLockError } from '../../../src/config/owned-lock.js'
 import {
@@ -244,7 +244,7 @@ describe('withParkedAreaLock', () => {
   it('W7b: a swap after validation stops before anything is created (check 2)', async () => {
     let target = ''
     let ran = false
-    const r = await withParkedAreaLock(
+    const r = await runLockedForTests(
       lockPath,
       'w7b',
       async () => {
@@ -265,7 +265,7 @@ describe('withParkedAreaLock', () => {
   it('W7c: a swap after check 2 never runs fn and leaves no claim or temp in the replacement', async () => {
     let target = ''
     let ran = false
-    const r = await withParkedAreaLock(
+    const r = await runLockedForTests(
       lockPath,
       'w7c',
       async () => {
@@ -279,7 +279,11 @@ describe('withParkedAreaLock', () => {
     expect(r.stop).not.toMatchObject({ detail: expect.stringContaining('before the lock') })
     expect(ran).toBe(false)
     expect(fs.readdirSync(target)).toEqual([])
-    expect(r.stranded).toBeUndefined()
+    // Check 3 cannot tell a swap before the link (the claim was made in the
+    // replacement and released) from one after it, and does not guess from what
+    // is visible at the path, so it reports an uncertain stranded claim.
+    expect(r.stranded).toMatchObject({ certain: false, lockName: LOCK_NAME })
+    expect(r.stranded?.claim).toBeUndefined()
   })
 
   describe('W10: a swap after check 3', () => {
@@ -294,7 +298,7 @@ describe('withParkedAreaLock', () => {
       runSwapped(decoy ? { beforeFn: swapFresh(true) } : { beforeFn: swapFresh(false) })
 
     async function runSwapped(hooks: ParkedLockHooks) {
-      return withParkedAreaLock(
+      return runLockedForTests(
         lockPath,
         'w10',
         async (ctx) => {
@@ -318,6 +322,7 @@ describe('withParkedAreaLock', () => {
       expect(stranded).toBeDefined()
       const moved = fs.lstatSync(path.join(root, 'locks.moved', LOCK_NAME), { bigint: true })
       // The stranding is real: the claim file is still in the moved directory.
+      expect(stranded?.certain).toBe(true)
       expect(stranded?.claim).toEqual({ dev: moved.dev, ino: moved.ino })
       expect(stranded?.lockName).toBe(LOCK_NAME)
       const movedDir = fs.lstatSync(path.join(root, 'locks.moved'), { bigint: true })
@@ -327,7 +332,7 @@ describe('withParkedAreaLock', () => {
 
     it('a ParkedLockChanged that fn lets propagate still carries the stranded claim', async () => {
       const error = await rejection(
-        withParkedAreaLock(
+        runLockedForTests(
           lockPath,
           'w10d',
           async (ctx) => {
@@ -366,7 +371,7 @@ describe('withParkedAreaLock', () => {
 
   it('W10 (afterAcquire): a swap between the claim and check 3 still reports the stranded claim', async () => {
     let ran = false
-    const r = await withParkedAreaLock(
+    const r = await runLockedForTests(
       lockPath,
       'w10e',
       async () => {
@@ -388,10 +393,38 @@ describe('withParkedAreaLock', () => {
     // The stranding is real: the claim is in the folder that moved away.
     expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
     expect(r.stranded).toBeDefined()
+    expect(r.stranded?.certain).toBe(false)
     expect(r.stranded?.lockName).toBe(LOCK_NAME)
     const movedDir = fs.lstatSync(path.join(root, 'locks.moved'), { bigint: true })
     expect(r.stranded?.locksDir).toEqual({ dev: movedDir.dev, ino: movedDir.ino })
     expect(r.stranded?.claim).toBeUndefined()
+    expect(r.stranded?.detail).toMatch(/may have been left/)
+  })
+
+  it('W10 (afterAcquire + decoy): a file planted at the lock path in the replacement changes nothing', async () => {
+    let ran = false
+    const r = await runLockedForTests(
+      lockPath,
+      'w10f',
+      async () => {
+        ran = true
+      },
+      {
+        hooks: {
+          afterAcquire: () => {
+            fs.renameSync(locksDir, path.join(root, 'locks.moved'))
+            fs.mkdirSync(locksDir, { mode: 0o700 })
+            fs.writeFileSync(lockPath, 'decoy')
+          },
+        },
+      }
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.code).toBe('locks-dir-changed')
+    expect(ran).toBe(false)
+    expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
+    expect(r.stranded).toMatchObject({ certain: false, lockName: LOCK_NAME })
   })
 
   describe('W5b: a StuckLockError from fn is not a busy stop', () => {
@@ -443,7 +476,7 @@ describe('withParkedAreaLock', () => {
   it('one error object reused across calls reports stranded only for the call that stranded', async () => {
     const shared = new Error('shared')
     await rejection(
-      withParkedAreaLock(
+      runLockedForTests(
         lockPath,
         'first',
         async () => {
@@ -465,7 +498,7 @@ describe('withParkedAreaLock', () => {
 
   it('a locks/ removed between check 2 and the claim is locks-dir-changed, not a raw ENOENT', async () => {
     let ran = false
-    const r = await withParkedAreaLock(
+    const r = await runLockedForTests(
       lockPath,
       'removed',
       async () => {
@@ -480,10 +513,15 @@ describe('withParkedAreaLock', () => {
     expect(ran).toBe(false)
   })
 
-  it('the public options type has no test hooks (type-level: the directive below must stay needed)', () => {
-    // @ts-expect-error hooks are internal; only ParkedLockTestOptions has them
-    const options: WithParkedAreaLockOptions = { hooks: {} }
-    expect(options).toEqual({ hooks: {} })
+  it('the public signature has no test hooks (type-level: the directive below must stay needed)', async () => {
+    const r = await withParkedAreaLock(
+      lockPath,
+      'public',
+      async () => 1,
+      // @ts-expect-error hooks are internal; only runLockedForTests takes them
+      { hooks: {} }
+    )
+    expect(r).toEqual({ ok: true, value: 1 })
   })
 
   it('W8: an error from fn propagates and the lock is released', async () => {

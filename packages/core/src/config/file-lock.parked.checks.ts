@@ -75,31 +75,22 @@ export function bindLocksDir(stateRoot: string, locks: string): Bind {
   return { ok: true, bound: { locks: { dev: st.dev, ino: st.ino }, real } }
 }
 
-/**
- * `dirChanged` is true when `locks/` is no longer the bound directory;
- * `claimSeen` is whether a claim was found at the path through the directory
- * as it now resolves. A claim seen after a swap is in the REPLACEMENT, so the
- * release (by path) removes it; one not seen was left in the directory moved away.
- */
-export type Inspect =
-  | { ok: true; claim: Id }
-  | { ok: false; detail: string; dirChanged: boolean; claimSeen: boolean }
+/** `dirChanged` is true when `locks/` is no longer the bound directory. */
+export type Inspect = { ok: true; claim: Id } | { ok: false; detail: string; dirChanged: boolean }
 
 /** Check 3, and `ctx.recheck()`'s repeat of it: `locks/`, the claim and the folder's realpath still match. */
 export function inspect(bound: Bound, lockPath: string): Inspect {
   const dir = path.dirname(lockPath)
-  let claim: fs.BigIntStats | null = null
+  if (!same(lstatId(dir), bound.locks)) {
+    return { ok: false, detail: 'its identity changed', dirChanged: true }
+  }
+  const fail = (detail: string): Inspect => ({ ok: false, detail, dirChanged: false })
+  let claim: fs.BigIntStats
   try {
     claim = fs.lstatSync(lockPath, { bigint: true })
   } catch {
-    claim = null
+    return fail('the claim is not at its path')
   }
-  const claimSeen = claim !== null
-  if (!same(lstatId(dir), bound.locks)) {
-    return { ok: false, detail: 'its identity changed', dirChanged: true, claimSeen }
-  }
-  const fail = (detail: string): Inspect => ({ ok: false, detail, dirChanged: false, claimSeen })
-  if (claim === null) return fail('the claim is not at its path')
   if (!claim.isFile() || claim.dev !== bound.locks.dev) {
     return fail('the claim is not a file on the same device')
   }

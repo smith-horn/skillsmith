@@ -50,12 +50,20 @@ export type ParkedLockStop =
   | { code: 'locks-dir-unsafe'; path: string; detail: string }
   | { code: 'locks-dir-changed'; path: string; detail: string }
 
-/** A claim the release could not find at its path because `locks/` changed while it was held. */
+/**
+ * A claim the release may not have been able to find at its path, because
+ * `locks/` changed while it was held. `certain: true` (a swap after check 3):
+ * `claim` is the identity bound under the lock, and it is in `locksDir`.
+ * `certain: false` (a swap before check 3 could bind a claim): `claim` is absent
+ * and `detail` says what is known. Nothing about whose file is now visible at the
+ * lock path is used to decide either way.
+ */
 export interface StrandedClaim {
+  certain: boolean
   lockName: string // `parked-<key>.lock`
   locksDir: { dev: bigint; ino: bigint } // the directory the claim was created in
-  /** The claim file's identity; absent when `locks/` was swapped before check 3 could bind it. */
   claim?: { dev: bigint; ino: bigint }
+  detail?: string
 }
 
 export interface ParkedLockContext {
@@ -113,19 +121,36 @@ export type WithParkedAreaLockResult<T> =
  * `fn`: `busy`, a missing state root, or an unsafe, changed or removed
  * `locks/`. `fn`'s own errors propagate unchanged.
  *
- * When `locks/` was swapped after the claim was made, the release (which works
- * by path) could not find it and the claim stays in the folder that moved away:
- * the result carries `stranded` (`ok: true` or `ok: false`), or, for a
- * propagating error, `strandedOf(error)` returns it, so the caller sees it
- * either way. `stranded.claim` is absent when the swap came before check 3 could
- * bind the claim. A `locks/` removed outright is reported the same way, though
- * nothing is then left to reclaim.
+ * `stranded` reports a claim the release may not have found, because `locks/`
+ * changed while the lock was held (on `ok: true` and `ok: false`; for a
+ * propagating error, `strandedOf(error)`). A swap after the claim was bound
+ * (check 4) is `certain: true` and names the claim. A swap found by check 3,
+ * before a claim could be bound, is `certain: false` with no claim: the wrapper
+ * does not guess whose file is visible at the path afterwards, so it reports
+ * every such swap, including one that came before the claim was made, when the
+ * release removed the claim from the replacement. A `locks/` removed outright
+ * is reported the same way, though nothing is then left to reclaim.
  */
 export function withParkedAreaLock<T>(
   lockPath: string,
   label: string,
   fn: (ctx: ParkedLockContext) => Promise<T>,
-  options: ParkedLockTestOptions = {}
+  options: WithParkedAreaLockOptions = {}
+): Promise<WithParkedAreaLockResult<T>> {
+  return runLockedForTests(
+    lockPath,
+    label,
+    fn,
+    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
+  )
+}
+
+/** @internal `withParkedAreaLock` with the test seams; not exported from the package. */
+export function runLockedForTests<T>(
+  lockPath: string,
+  label: string,
+  fn: (ctx: ParkedLockContext) => Promise<T>,
+  options: ParkedLockTestOptions
 ): Promise<WithParkedAreaLockResult<T>> {
   try {
     if (
@@ -179,9 +204,16 @@ async function runLocked<T>(
   const findStranded = (): StrandedClaim | undefined => {
     const base = { lockName: path.basename(lockPath), locksDir: bound.locks }
     if (claim !== undefined) {
-      return same(lstatId(locks), bound.locks) ? undefined : { ...base, claim }
+      return same(lstatId(locks), bound.locks) ? undefined : { ...base, certain: true, claim }
     }
-    return lostAtCheck3 ? base : undefined
+    return lostAtCheck3
+      ? {
+          ...base,
+          certain: false,
+          detail:
+            "the lock folder changed after the claim was taken, so a claim may have been left in the folder that moved away; it is reclaimed as a dead owner's claim if the folder returns",
+        }
+      : undefined
   }
   try {
     value = await withFileLock(
@@ -194,9 +226,9 @@ async function runLocked<T>(
         // the release (by path) removes the claim wherever the path now leads.
         const first = inspect(bound, lockPath)
         if (!first.ok) {
-          // `locks/` changed and no claim is in its replacement: the one just
-          // made is in the folder that moved away.
-          lostAtCheck3 = first.dirChanged && !first.claimSeen
+          // `locks/` changed after the claim was taken. Whose file is visible
+          // through the path now says nothing about where OUR claim went.
+          lostAtCheck3 = first.dirChanged
           stop = { code: 'locks-dir-changed', path: locks, detail: first.detail }
           return undefined as T
         }

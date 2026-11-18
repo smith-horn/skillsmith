@@ -14,10 +14,12 @@ All notable changes to `@skillsmith/core` are documented here.
   anything is created. The folder is made if absent (mode 0700), bound by identity, and checked
   before the claim, right after it and again on request (`ctx.recheck()`, which throws
   `ParkedLockChanged`). Swapping that folder needs the user's own account, so a swap after the
-  third check is a stated residual (ADR-166 D-0). When `locks` is swapped after the claim was made,
-  the release cannot find the claim and it stays in the folder that moved away; the result carries
-  `stranded` (on `ok: true` and on `ok: false`), and `strandedOf(error)` returns it for an error
-  the callback threw. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on it.
+  third check is a stated residual (ADR-166 D-0). When `locks` is swapped after the claim was made, the release cannot be sure to find
+  it and the claim may stay in the folder that moved away; the result carries `stranded` (on
+  `ok: true` and `ok: false`), and `strandedOf(error)` returns it for an error the callback threw.
+  A swap after the claim was bound names the claim (`certain: true`); one found before it could be
+  bound has no claim and `certain: false`, and is reported whenever the folder changed, without
+  guessing whose file is now at the lock path. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on it.
 - **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
   listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
   `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects
