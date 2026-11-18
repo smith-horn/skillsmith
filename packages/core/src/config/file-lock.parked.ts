@@ -100,6 +100,8 @@ export interface ParkedLockHooks {
   afterRecheck?: () => void
   afterAcquire?: () => void
   beforeFn?: () => void
+  /** After the lock is released, before the final `locks/` check (check 4). */
+  afterRelease?: () => void
 }
 
 /** @internal What the tests pass; the public options are `WithParkedAreaLockOptions`. */
@@ -119,9 +121,10 @@ export type WithParkedAreaLockResult<T> =
  * `locks/`. `fn`'s own errors propagate unchanged.
  *
  * `stranded` reports that `locks/` was not the bound directory after the claim was
- * taken, found at check 3 or after `fn`, so the release (which works by path) may
- * not have found the claim and one may have been left in the folder that moved
- * away. It is on the result (`ok: true` and `ok: false`), and `strandedOf(error)`
+ * taken, found at check 3 or at the wrapper's last check after the release, so the
+ * release (which works by path) may not have found the claim and one may have been
+ * left in the folder that moved away. It is not reported for a change the wrapper
+ * does not see (see the residuals). It is on the result (`ok: true` and `ok: false`), and `strandedOf(error)`
  * returns it for an error `fn` threw. It carries no claim identity and no
  * certainty: a swap before the claim was made (released from the replacement), a
  * swap after check 3, a claim rewritten in place and then a swap, and a `locks/`
@@ -144,7 +147,11 @@ export type WithParkedAreaLockResult<T> =
  * this process's pid and host before check 3 binds; a claim removed before or
  * after check 3, after which another acquisition in this process can take the
  * path and have its claim bound; a claim rewritten in place after check 3 that
- * `fn` never rechecks.
+ * `fn` never rechecks; a swap reversed before the wrapper's last check, where
+ * `locks/` is swapped out during `fn`, the release by path finds nothing, and the
+ * original folder is swapped back before that check: no `stranded` is reported, and
+ * our claim stays at the live path until this process exits, when it is reclaimed as
+ * a dead owner's claim (a swap that check 3 caught is still reported).
  */
 export function withParkedAreaLock<T>(
   lockPath: string,
@@ -265,6 +272,7 @@ async function runLocked<T>(
           : 'it was replaced while the lock was being taken'
       )
     }
+    hooks?.afterRelease?.()
     const lost = findStranded()
     if (typeof error === 'object' && error !== null) {
       if (lost === undefined) strandedByError.delete(error)
@@ -272,6 +280,7 @@ async function runLocked<T>(
     }
     throw error
   }
+  hooks?.afterRelease?.()
   const stranded = findStranded()
   const extra = stranded === undefined ? {} : { stranded }
   if (stop !== undefined) return { ok: false, stop, ...extra }

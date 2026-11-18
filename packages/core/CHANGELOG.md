@@ -23,8 +23,11 @@ All notable changes to `@skillsmith/core` are documented here.
   Stated residuals (ADR-166 D-0; each needs the user's own account): a claim forged with this
   process's pid and host before the third check; a claim removed before or after it, after which
   another acquisition in this process can take the path and be bound; a claim rewritten in place
-  after it, which is reported as `stranded` only if `locks` then moves. Nothing calls it yet;
-  `skillsmith restore` and `--prune --apply` build on it.
+  after it, which is reported as `stranded` only if `locks` then moves; a swap reversed before the
+  wrapper's last check (`locks` is swapped out during `fn`, the release finds nothing and the
+  folder is swapped back), which is not reported and leaves the claim at the live path until
+  this process exits. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on
+  it.
 - **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
   listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
   `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects

@@ -102,6 +102,9 @@ function readClaimFd(lockPath: string, dev: bigint, expect: Id | undefined): Cla
   }
   try {
     const st = fs.fstatSync(fd, { bigint: true })
+    // Defence in depth: the positional read below (position 0, a pread) already fails
+    // ESPIPE on any pipe, so a FIFO never reaches parsing. Reading at position `null`
+    // instead would make this check load-bearing.
     if (!st.isFile())
       return { ok: false, detail: `${NOT_OURS}: the lock path is not a regular file` }
     if (st.dev !== dev) return { ok: false, detail: `${NOT_OURS}: the claim is on another device` }

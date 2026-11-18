@@ -429,6 +429,28 @@ describe('withParkedAreaLock', () => {
     expect(r.stranded).toMatchObject({ lockName: LOCK_NAME })
   })
 
+  it('W10 (afterRelease): a swap that check 3 caught is still reported when the folder is swapped back', async () => {
+    const r = await runLockedForTests(lockPath, 'w10g', async () => 'never', {
+      hooks: {
+        afterAcquire: () => {
+          fs.renameSync(locksDir, path.join(root, 'locks.moved'))
+          fs.mkdirSync(locksDir, { mode: 0o700 })
+        },
+        afterRelease: () => {
+          fs.rmSync(locksDir, { recursive: true })
+          fs.renameSync(path.join(root, 'locks.moved'), locksDir)
+        },
+      },
+    })
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.code).toBe('locks-dir-changed')
+    // The folder is back, so only the check-3 finding can report it, and the claim
+    // the release could not find is still at the live path.
+    expect(fs.existsSync(lockPath)).toBe(true)
+    expect(r.stranded).toBeDefined()
+  })
+
   describe('W5b: a StuckLockError from fn is not a busy stop', () => {
     const stuck = (p: string): StuckLockError =>
       Object.assign(Object.create(StuckLockError.prototype) as StuckLockError, {
@@ -722,6 +744,21 @@ describe('withParkedAreaLock', () => {
       const r = inspect(bound, lockPath)
       expect(r.ok).toBe(false)
       if (!r.ok) expect(r.detail).toContain('claim-not-ours')
+    })
+
+    it('a FIFO that a live writer filled with a valid claim is refused', { timeout: 5000 }, () => {
+      const { bound } = bind()
+      execFileSync('mkfifo', [lockPath])
+      // Opening read-write never blocks and keeps a writer on the FIFO.
+      const writer = fs.openSync(lockPath, fs.constants.O_RDWR)
+      try {
+        fs.writeSync(writer, `${ours()}\n`)
+        const r = inspect(bound, lockPath)
+        expect(r.ok).toBe(false)
+        if (!r.ok) expect(r.detail).toContain('claim-not-ours')
+      } finally {
+        fs.closeSync(writer)
+      }
     })
 
     it('a symlink to a valid claim at the lock path is refused', () => {
