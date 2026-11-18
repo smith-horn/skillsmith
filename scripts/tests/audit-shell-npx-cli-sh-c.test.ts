@@ -213,14 +213,22 @@ describe('endsInShC', () => {
     expect(positives).toBeGreaterThan(200)
   })
 
-  // A heredoc body's sticky frame has no opening (-1). The old regex call read
-  // slice(0, -1), so `npx supabase sh -c x` in a body was flagged although the
-  // body is text and never runs.
   it('flags sh -c inside backticks as it does inside $(…)', () => {
     expect(scanShellText("x=`bash -c 'npx supabase status'`")).toHaveLength(1)
     expect(scanShellText('echo "`sh -lc \'npx wrangler deploy\'`"')).toHaveLength(1)
     expect(scanShellText("x=$(bash -c 'npx supabase status')")).toHaveLength(1)
     expect(scanShellText("echo `bash -c 'echo ok'`")).toEqual([])
+  })
+
+  // Accepted over-approximations (owner decision, PR #3257): the boundary
+  // ignores backslashes and does not tell an opening backtick from a closing
+  // one, so these lines are flagged although bash runs no npx. Flagging is the
+  // safe side. An escaped `\$(` or `\;` was already flagged the same way.
+  it('flags escaped and closing backticks before sh -c (accepted)', () => {
+    expect(scanShellText("echo \\`bash -c 'npx supabase status'\\`")).toHaveLength(1)
+    expect(scanShellText("echo \\$(bash -c 'npx supabase status')")).toHaveLength(1)
+    expect(scanShellText("`echo hi`bash -c 'npx supabase status'")).toHaveLength(1)
+    expect(scanShellText("$(echo hi)bash -c 'npx supabase status'")).toEqual([])
   })
 
   // The keyword-position check sliced from the frame start for every `case`
@@ -245,6 +253,9 @@ describe('endsInShC', () => {
     expect(scanShellText('echo "$(echo domain case a) npx supabase status"')).toEqual([])
   })
 
+  // A heredoc body's sticky frame has no opening (-1). The old regex call read
+  // slice(0, -1), so `npx supabase sh -c x` in a body was flagged although the
+  // body is text and never runs.
   it('treats a negative end as no opening', () => {
     expect(endsInShC('npx supabase sh -c x', -1)).toBe(false)
     expect(ORACLE.test('npx supabase sh -c x'.slice(0, -1))).toBe(true)

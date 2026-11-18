@@ -1,7 +1,7 @@
 /**
  * SMI-7226: does the text before a quote end in `sh -c` (or a relative), so the
  * quoted string is a command that runs? Shells: sh, bash, zsh, dash, ksh, also
- * by path (/bin/bash) or after ; & | ( . The -c may be bundled (-lc, -ce);
+ * by path (/bin/bash) or after ; & | ( or a backtick. The -c may be bundled (-lc, -ce);
  * flags may come before it, including `-o`/`-O <option>`, and more flags (or a
  * lone `-`/`--`) after it.
  *
@@ -25,7 +25,10 @@
  */
 
 // The shell word: whole token, or after ; & | ( / or a backtick, which opens
-// a command substitution (`` `bash -c '…'` ``) as `$(` does.
+// a command substitution (`` `bash -c '…'` ``) as `$(` does. Accepted
+// over-approximations (owner decision, PR #3257): backslashes are ignored
+// here, so an escaped `` \` `` or `\;` still counts, and a closing backtick
+// (`` `echo hi`bash -c `` runs `hibash`) counts too. Both err towards a flag.
 const SHELL_TAIL = /(?:^|[;&|(/`])(?:ba|z|da|k)?sh$/
 const SPACE = /\s/
 const LETTER = /[A-Za-z]/
