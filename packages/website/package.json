@@ -21,7 +21,6 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.117.2",
-    "@tailwindcss/vite": "4.1.18",
     "cookie": "2.0.1",
     "sharp": "0.35.5",
     "tailwindcss": "4.3.3",
@@ -36,6 +35,7 @@
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.62.1",
     "@tailwindcss/typography": "0.5.19",
+    "@tailwindcss/vite": "4.1.18",
     "@types/node": "^25.9.3",
     "@types/turndown": "^5.0.5",
     "astro": "7.2.10",
