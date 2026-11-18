@@ -20,10 +20,10 @@
  * @module @skillsmith/core/config/file-lock.parked
  */
 import { createHash } from 'node:crypto'
-import fs from 'node:fs'
 import path from 'node:path'
 import { withFileLock } from './file-lock.js'
-import { checkLockRequest } from './lock-tracker.js'
+import { bindLocksDir, inspect, lstatId, same, type Id } from './file-lock.parked.checks.js'
+import { checkLockRequest, LockOrderError } from './lock-tracker.js'
 import { StuckLockError, type StuckLockReason } from './owned-lock.js'
 
 /** Hex characters of the digest kept in the lock's name (PLAN:915). */
@@ -54,7 +54,8 @@ export type ParkedLockStop =
 export interface StrandedClaim {
   lockName: string // `parked-<key>.lock`
   locksDir: { dev: bigint; ino: bigint } // the directory the claim was created in
-  claim: { dev: bigint; ino: bigint } // the claim file's identity, bound at check 3
+  /** The claim file's identity; absent when `locks/` was swapped before check 3 could bind it. */
+  claim?: { dev: bigint; ino: bigint }
 }
 
 export interface ParkedLockContext {
@@ -86,125 +87,76 @@ export function strandedOf(error: unknown): StrandedClaim | undefined {
 
 export interface WithParkedAreaLockOptions {
   timeoutMs?: number
-  /** @internal Test seams around the `locks/` checks (W7b, W7c, W10). */
-  hooks?: { afterValidate?: () => void; afterRecheck?: () => void; beforeFn?: () => void }
+}
+
+/** @internal Test seams around the `locks/` checks (W7b, W7c, W10, afterAcquire). */
+export interface ParkedLockHooks {
+  afterValidate?: () => void
+  afterRecheck?: () => void
+  afterAcquire?: () => void
+  beforeFn?: () => void
+}
+
+/** @internal What the tests pass; the public options are `WithParkedAreaLockOptions`. */
+export interface ParkedLockTestOptions extends WithParkedAreaLockOptions {
+  hooks?: ParkedLockHooks
 }
 
 export type WithParkedAreaLockResult<T> =
   | { ok: true; value: T; stranded?: StrandedClaim }
   | { ok: false; stop: ParkedLockStop; stranded?: StrandedClaim }
 
-interface Id {
-  dev: bigint
-  ino: bigint
-}
-
-const same = (a: Id | null, b: Id): boolean => a !== null && a.dev === b.dev && a.ino === b.ino
-
-function lstatId(p: string): Id | null {
-  try {
-    const st = fs.lstatSync(p, { bigint: true })
-    return { dev: st.dev, ino: st.ino }
-  } catch {
-    return null
-  }
-}
-
-interface Bound {
-  locks: Id
-  real: string
-}
-
-type Bind = { ok: true; bound: Bound } | { ok: false; stop: ParkedLockStop }
-
-/** Check 1: make `locks/` if needed and bind it by identity and realpath. */
-function bindLocksDir(stateRoot: string, locks: string): Bind {
-  const unsafe = (detail: string): Bind => ({
-    ok: false,
-    stop: { code: 'locks-dir-unsafe', path: locks, detail },
-  })
-  try {
-    if (!fs.statSync(stateRoot).isDirectory()) throw new Error('not a directory')
-  } catch {
-    return { ok: false, stop: { code: 'state-root-missing', path: stateRoot } }
-  }
-  try {
-    fs.mkdirSync(locks, { mode: 0o700 })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-      return unsafe(`cannot create it: ${(error as Error).message}`)
-    }
-  }
-  let st: fs.BigIntStats
-  try {
-    st = fs.lstatSync(locks, { bigint: true })
-  } catch (error) {
-    return unsafe((error as Error).message)
-  }
-  if (!st.isDirectory()) return unsafe('it is not a real directory (a symlink or a file)')
-  if (process.platform !== 'win32') {
-    const uid = process.getuid?.()
-    if (uid !== undefined && Number(st.uid) !== uid) return unsafe('it is owned by another user')
-    if ((Number(st.mode) & 0o022) !== 0) return unsafe('it is writable by group or others')
-  }
-  let real: string
-  try {
-    real = fs.realpathSync.native(locks)
-  } catch (error) {
-    return unsafe((error as Error).message)
-  }
-  // No `real === <realpath(stateRoot)>/locks` guard: with `locks` already shown to be a real
-  // directory it can only fail when `locks` is a symlink (caught above) or on a case-folding
-  // filesystem, where `real` is simply the spelling `inspect` compares against later.
-  return { ok: true, bound: { locks: { dev: st.dev, ino: st.ino }, real } }
-}
-
-type Inspect = { ok: true; claim: Id } | { ok: false; detail: string }
-
-/** Checks 3 and 4's repeat: `locks/`, the claim file and the folder's realpath still match. */
-function inspect(bound: Bound, lockPath: string): Inspect {
-  const dir = path.dirname(lockPath)
-  if (!same(lstatId(dir), bound.locks)) return { ok: false, detail: 'its identity changed' }
-  let claim: fs.BigIntStats
-  try {
-    claim = fs.lstatSync(lockPath, { bigint: true })
-  } catch {
-    return { ok: false, detail: 'the claim is not at its path' }
-  }
-  if (!claim.isFile() || claim.dev !== bound.locks.dev) {
-    return { ok: false, detail: 'the claim is not a file on the same device' }
-  }
-  try {
-    if (fs.realpathSync.native(dir) !== bound.real) return { ok: false, detail: 'its path moved' }
-  } catch {
-    return { ok: false, detail: 'its path no longer resolves' }
-  }
-  return { ok: true, claim: { dev: claim.dev, ino: claim.ino } }
-}
-
 /**
  * Run `fn` holding lock 1′ at `lockPath`, a path built by `parkedLockPath`.
- * Rejects `LockOrderError` (before any fs call) when the tracker refuses.
- * `{ ok: false }` is a stop that ran nothing: `busy`, a missing state root, or
- * an unsafe or changed `locks/`. `fn`'s own errors propagate unchanged; when
- * `locks/` was swapped while the lock was held, the claim the release could not
- * find is on the result (`stranded`), or, for a propagating error, readable with
- * `strandedOf(error)`, so the caller sees it either way.
+ * Rejects `TypeError` for any other path and `LockOrderError` when the tracker
+ * refuses, both before any fs call. `{ ok: false }` is a stop that did not run
+ * `fn`: `busy`, a missing state root, or an unsafe, changed or removed
+ * `locks/`. `fn`'s own errors propagate unchanged.
+ *
+ * When `locks/` was swapped after the claim was made, the release (which works
+ * by path) could not find it and the claim stays in the folder that moved away:
+ * the result carries `stranded` (`ok: true` or `ok: false`), or, for a
+ * propagating error, `strandedOf(error)` returns it, so the caller sees it
+ * either way. `stranded.claim` is absent when the swap came before check 3 could
+ * bind the claim. A `locks/` removed outright is reported the same way, though
+ * nothing is then left to reclaim.
  */
-export async function withParkedAreaLock<T>(
+export function withParkedAreaLock<T>(
   lockPath: string,
   label: string,
   fn: (ctx: ParkedLockContext) => Promise<T>,
-  options: WithParkedAreaLockOptions = {}
+  options: ParkedLockTestOptions = {}
+): Promise<WithParkedAreaLockResult<T>> {
+  try {
+    if (
+      !LOCK_FILE_RE.test(path.basename(lockPath)) ||
+      path.basename(path.dirname(lockPath)) !== 'locks'
+    ) {
+      throw new TypeError(
+        `withParkedAreaLock(${JSON.stringify(label)}) needs <stateRoot>/locks/parked-<16 hex>.lock, got ${JSON.stringify(lockPath)}`
+      )
+    }
+    checkLockRequest(lockPath.slice(0, -'.lock'.length), label, "1'")
+  } catch (err) {
+    const refused = Promise.reject(err)
+    // Inside a manifest callback, which doesn't await this, the refusal is
+    // reported when the callback returns; don't also leave it unhandled.
+    if (err instanceof LockOrderError && err.kind === 'in-pure-callback') {
+      refused.catch(() => {})
+    }
+    return refused as Promise<WithParkedAreaLockResult<T>>
+  }
+  return runLocked(lockPath, label, fn, options)
+}
+
+async function runLocked<T>(
+  lockPath: string,
+  label: string,
+  fn: (ctx: ParkedLockContext) => Promise<T>,
+  options: ParkedLockTestOptions
 ): Promise<WithParkedAreaLockResult<T>> {
   const locks = path.dirname(lockPath)
-  if (!LOCK_FILE_RE.test(path.basename(lockPath)) || path.basename(locks) !== 'locks') {
-    throw new TypeError(
-      `withParkedAreaLock(${JSON.stringify(label)}) needs <stateRoot>/locks/parked-<16 hex>.lock, got ${JSON.stringify(lockPath)}`
-    )
-  }
   const target = lockPath.slice(0, -'.lock'.length)
-  checkLockRequest(target, label, "1'")
   const hooks = options.hooks
   const bind = bindLocksDir(path.dirname(locks), locks)
   if (!bind.ok) return { ok: false, stop: bind.stop }
@@ -219,24 +171,32 @@ export async function withParkedAreaLock<T>(
   hooks?.afterRecheck?.()
   let entered = false
   let claim: Id | undefined
+  let lostAtCheck3 = false
   let stop: ParkedLockStop | undefined
   let value: T | undefined
   // Check 4: the release works by path, so it cannot have found its own claim
   // if `locks/` is no longer the directory the claim was made in.
-  const findStranded = (): StrandedClaim | undefined =>
-    claim !== undefined && !same(lstatId(locks), bound.locks)
-      ? { lockName: path.basename(lockPath), locksDir: bound.locks, claim }
-      : undefined
+  const findStranded = (): StrandedClaim | undefined => {
+    const base = { lockName: path.basename(lockPath), locksDir: bound.locks }
+    if (claim !== undefined) {
+      return same(lstatId(locks), bound.locks) ? undefined : { ...base, claim }
+    }
+    return lostAtCheck3 ? base : undefined
+  }
   try {
     value = await withFileLock(
       target,
       label,
       async () => {
         entered = true
+        hooks?.afterAcquire?.()
         // Check 3: after the claim exists; on a mismatch `fn` never runs and
         // the release (by path) removes the claim wherever the path now leads.
         const first = inspect(bound, lockPath)
         if (!first.ok) {
+          // `locks/` changed and no claim is in its replacement: the one just
+          // made is in the folder that moved away.
+          lostAtCheck3 = first.dirChanged && !first.claimSeen
           stop = { code: 'locks-dir-changed', path: locks, detail: first.detail }
           return undefined as T
         }
@@ -261,9 +221,17 @@ export async function withParkedAreaLock<T>(
         stop: { code: 'busy', lockPath, detail: error.message, reason: error.reason },
       }
     }
+    if (!entered && !same(lstatId(locks), bound.locks)) {
+      return changed(
+        lstatId(locks) === null
+          ? 'it was removed while the lock was being taken'
+          : 'it was replaced while the lock was being taken'
+      )
+    }
     const lost = findStranded()
-    if (lost !== undefined && typeof error === 'object' && error !== null) {
-      strandedByError.set(error, lost)
+    if (typeof error === 'object' && error !== null) {
+      if (lost === undefined) strandedByError.delete(error)
+      else strandedByError.set(error, lost)
     }
     throw error
   }

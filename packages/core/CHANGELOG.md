@@ -8,14 +8,16 @@ All notable changes to `@skillsmith/core` are documented here.
   is pruned and restored under, at `<stateRoot>/locks/parked-<key>.lock` (`parkedLockPath()`, and
   `parkedLockTarget()` for the name `withFileLock` takes). It runs a callback under the lock and
   returns `{ ok: true, value }`, or `{ ok: false, stop }` when the lock is busy, the state root is
-  missing, or the `locks` folder is not a real private folder or changed while the lock was being
-  taken. The folder is made if absent, bound by identity and checked before the claim, right after
-  it and again on request (`ctx.recheck()`, which throws `ParkedLockChanged`); a claim the release
-  could not find because `locks` was swapped while it was held comes back as `stranded` (or `strandedOf(error)` when the callback threw). Swapping
-  that folder needs the user's own account, so a swap after the third check is a stated residual
-  (ADR-166 D-0). A request made while holding a skills-root lock (1 or 1′) is refused before
-  anything is created. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on
-  it.
+  missing, or the `locks` folder is not a real private folder, or changed or was removed while the
+  lock was being taken. A path that is not a lock 1′ file is a `TypeError`, and a request made
+  while holding a skills-root lock (1 or 1′) is refused with a `LockOrderError`, both before
+  anything is created. The folder is made if absent (mode 0700), bound by identity, and checked
+  before the claim, right after it and again on request (`ctx.recheck()`, which throws
+  `ParkedLockChanged`). Swapping that folder needs the user's own account, so a swap after the
+  third check is a stated residual (ADR-166 D-0). When `locks` is swapped after the claim was made,
+  the release cannot find the claim and it stays in the folder that moved away; the result carries
+  `stranded` (on `ok: true` and on `ok: false`), and `strandedOf(error)` returns it for an error
+  the callback threw. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on it.
 - **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
   listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
   `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects

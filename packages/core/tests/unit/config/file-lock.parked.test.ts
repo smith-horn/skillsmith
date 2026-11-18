@@ -14,11 +14,14 @@ import {
   parkedLockTarget,
   strandedOf,
   withParkedAreaLock,
+  type ParkedLockHooks,
   type WithParkedAreaLockOptions,
 } from '../../../src/config/file-lock.parked.js'
+import { StuckLockError } from '../../../src/config/owned-lock.js'
 import {
   assertSkillWriteLockNotHeld,
   LockOrderError,
+  runPureCallback,
   setLockTrackerEnabledForTests,
 } from '../../../src/config/lock-tracker.js'
 import { withSkillWriteLock } from '../../../src/services/skill-write-lock.js'
@@ -88,6 +91,12 @@ function swapForSymlink(): string {
 
 const LOCK_NAME = 'parked-e2b1ec75336d8f3d.lock'
 
+/** Move `locks/` aside to `locks.moved` and put a fresh private one in its place. */
+function swapFreshDir(): void {
+  fs.renameSync(locksDir, path.join(root, 'locks.moved'))
+  fs.mkdirSync(locksDir, { mode: 0o700 })
+}
+
 describe('withParkedAreaLock', () => {
   it('W1: holds exactly <stateRoot>/locks/parked-<key>.lock while fn runs, and releases it', async () => {
     let during: string[] = []
@@ -104,6 +113,8 @@ describe('withParkedAreaLock', () => {
     expect(doubledDuring).toBe(false)
     expect(during).toEqual([LOCK_NAME])
     expect(fs.existsSync(lockPath)).toBe(false)
+    // The run created locks/, so its mode is the one the wrapper asked for.
+    expect(fs.lstatSync(locksDir).mode & 0o777).toBe(0o700)
   })
 
   it('W2: is refused inside lock 1 (second-skills-root-lock) and creates no locks/', async () => {
@@ -282,7 +293,7 @@ describe('withParkedAreaLock', () => {
     const run = (decoy: boolean): Promise<Awaited<ReturnType<typeof runSwapped>>> =>
       runSwapped(decoy ? { beforeFn: swapFresh(true) } : { beforeFn: swapFresh(false) })
 
-    async function runSwapped(hooks: NonNullable<WithParkedAreaLockOptions['hooks']>) {
+    async function runSwapped(hooks: ParkedLockHooks) {
       return withParkedAreaLock(
         lockPath,
         'w10',
@@ -351,6 +362,128 @@ describe('withParkedAreaLock', () => {
     expect(r.ok).toBe(true)
     expect(checked).toBeNull()
     if (r.ok) expect(r.stranded).toBeUndefined()
+  })
+
+  it('W10 (afterAcquire): a swap between the claim and check 3 still reports the stranded claim', async () => {
+    let ran = false
+    const r = await withParkedAreaLock(
+      lockPath,
+      'w10e',
+      async () => {
+        ran = true
+      },
+      {
+        hooks: {
+          afterAcquire: () => {
+            fs.renameSync(locksDir, path.join(root, 'locks.moved'))
+            fs.mkdirSync(locksDir, { mode: 0o700 })
+          },
+        },
+      }
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.code).toBe('locks-dir-changed')
+    expect(ran).toBe(false)
+    // The stranding is real: the claim is in the folder that moved away.
+    expect(fs.existsSync(path.join(root, 'locks.moved', LOCK_NAME))).toBe(true)
+    expect(r.stranded).toBeDefined()
+    expect(r.stranded?.lockName).toBe(LOCK_NAME)
+    const movedDir = fs.lstatSync(path.join(root, 'locks.moved'), { bigint: true })
+    expect(r.stranded?.locksDir).toEqual({ dev: movedDir.dev, ino: movedDir.ino })
+    expect(r.stranded?.claim).toBeUndefined()
+  })
+
+  describe('W5b: a StuckLockError from fn is not a busy stop', () => {
+    const stuck = (p: string): StuckLockError =>
+      Object.assign(Object.create(StuckLockError.prototype) as StuckLockError, {
+        lockPath: p,
+        reclaimPath: `${p}.reclaim`,
+        reason: 'held' as const,
+      })
+
+    it.each([
+      ['the same lock path', () => lockPath],
+      ['another lock path', () => path.join(locksDir, 'parked-0000000000000000.lock')],
+    ])('rejects with that exact error (%s)', async (_name, pick) => {
+      const thrown = stuck(pick())
+      const error = await rejection(
+        withParkedAreaLock(lockPath, 'w5b', async () => {
+          throw thrown
+        })
+      )
+      expect(error).toBe(thrown)
+    })
+  })
+
+  it('the tracker refusal inside a pure callback is not an unhandled rejection', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      let refusal: unknown
+      try {
+        runPureCallback(() => {
+          void withParkedAreaLock(lockPath, 'pure', async () => 1)
+        })
+      } catch (error) {
+        refusal = error
+      }
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(refusal).toBeInstanceOf(LockOrderError)
+      expect((refusal as LockOrderError).kind).toBe('in-pure-callback')
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(fs.existsSync(locksDir)).toBe(false)
+  })
+
+  it('one error object reused across calls reports stranded only for the call that stranded', async () => {
+    const shared = new Error('shared')
+    await rejection(
+      withParkedAreaLock(
+        lockPath,
+        'first',
+        async () => {
+          throw shared
+        },
+        { hooks: { beforeFn: swapFreshDir } }
+      )
+    )
+    expect(strandedOf(shared)).toBeDefined()
+    fs.rmSync(path.join(root, 'locks.moved'), { recursive: true, force: true })
+    const second = await rejection(
+      withParkedAreaLock(lockPath, 'second', async () => {
+        throw shared
+      })
+    )
+    expect(second).toBe(shared)
+    expect(strandedOf(shared)).toBeUndefined()
+  })
+
+  it('a locks/ removed between check 2 and the claim is locks-dir-changed, not a raw ENOENT', async () => {
+    let ran = false
+    const r = await withParkedAreaLock(
+      lockPath,
+      'removed',
+      async () => {
+        ran = true
+      },
+      { hooks: { afterRecheck: () => fs.rmSync(locksDir, { recursive: true }) } }
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) throw new Error('unreachable')
+    expect(r.stop.code).toBe('locks-dir-changed')
+    expect(r.stop).toMatchObject({ detail: expect.stringContaining('removed') })
+    expect(ran).toBe(false)
+  })
+
+  it('the public options type has no test hooks (type-level: the directive below must stay needed)', () => {
+    // @ts-expect-error hooks are internal; only ParkedLockTestOptions has them
+    const options: WithParkedAreaLockOptions = { hooks: {} }
+    expect(options).toEqual({ hooks: {} })
   })
 
   it('W8: an error from fn propagates and the lock is released', async () => {
