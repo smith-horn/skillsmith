@@ -34,6 +34,7 @@ import { execFileSync } from 'child_process'
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 
+import { endsInShC } from './audit-shell-npx-cli-sh-c.mjs'
 import { decodeYamlRun, firstAliasLine, resolvedRunValues } from './audit-shell-npx-cli-yaml.mjs'
 
 const TOOLS = ['supabase', 'wrangler']
@@ -62,13 +63,6 @@ function pinnedByPackageFlag(call, tool) {
   }
   return false
 }
-// `sh -c` and its relatives (also by path, /bin/bash): -c possibly bundled
-// (-lc, -ce), `-o`/`-O <option>` allowed before it, more flags or `--` after.
-// An option value may not start with `-`: otherwise `-O -x` matches both as
-// one option and as two flags, and backtracking is exponential (CodeQL
-// js/redos on PR #3257).
-const SH_C =
-  /(?:^|[\s;&|(/])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
 // A heredoc operator at the lexer's position; group 2 is the delimiter word,
 // which may mix quoted, backslashed and bare parts (`END-OF`, `'EOF'`, `\EOF`).
 // Sticky, so it is tried only at the first `<`: in a here-string `<<<word`
@@ -323,7 +317,7 @@ function firstCall(code, at) {
     if (m[4] && EXACT_VERSION.test(m[4])) continue
     if (!m[4] && pinnedByPackageFlag(m[0], m[3])) continue
     const { q, openAt } = at[m.index]
-    if (q === null || (q !== 'arith' && SH_C.test(code.slice(0, openAt)))) return m[3]
+    if (q === null || (q !== 'arith' && endsInShC(code, openAt))) return m[3]
   }
   return null
 }
