@@ -1,29 +1,37 @@
 /**
- * SMI-7236: search_skills searches tiered skills only.
+ * SMI-7236: search ranks inside a compact tiered-only table so it fits Micro.
  *
- * Prod runs on Micro compute. Ranking every 'unknown'-tier match read ~31K
- * heap pages and blew the anon role's 3 s statement_timeout, so search failed
- * for every user. The fix restricts search_skills to trust_tier <> 'unknown'
- * and adds partial GIN indexes with the same predicate.
+ * Static guard over migration text (CI has no live Postgres). The behavioural
+ * proof is on SMI-7236: a staging dry run inside BEGIN/ROLLBACK (count parity,
+ * search parity for three terms, eleven trigger cases, a gate mutation) and
+ * prod EXPLAIN ANALYZE timings.
  *
- * Static guard over the migration text (no live Postgres in CI; the
- * behavioural proof is the prod EXPLAIN ANALYZE recorded on SMI-7236):
- *  1. The NEWEST migration that defines search_skills keeps the tier filter,
- *     so a later CREATE OR REPLACE cannot silently drop it.
- *  2. Both partial indexes exist with a predicate the function's WHERE
- *     implies, so the planner can use them.
+ * SQL comments are stripped before every match, so commenting a line out
+ * cannot keep a test green (review finding).
  */
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const DIR = 'supabase/migrations'
-// Matches a CREATE of search_skills( but not search_skills_v2(,
-// fuzzy_search_skills(, or a GRANT ... ON FUNCTION search_skills(.
+const FIX = '20261118000000_search_skills_tiered_only.sql'
+const PRE_FIX = '20260703000002_search_skills_minlen_guard.sql'
+const ELIGIBLE =
+  /trust_tier\s+NOT\s+IN\s*\(\s*'unknown'\s*,\s*'unverified'\s*\)\s+AND\s+NOT\s+\w+\.quarantined/i
+
+/** Remove `-- ...` line comments and C-style block comments. */
+function stripComments(sql: string): string {
+  return sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '')
+}
+
+function read(file: string): string {
+  return stripComments(readFileSync(join(DIR, file), 'utf8'))
+}
+
+// A CREATE of search_skills( in any quoting/schema form, but not
+// search_skills_v2(, fuzzy_search_skills(, or GRANT ... ON FUNCTION.
 const DEFINES_SEARCH_SKILLS =
-  /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?search_skills\s*\(/i
-const TIER_FILTER = /AND\s+s\.trust_tier\s*<>\s*'unknown'/
-const INDEX_PREDICATE = "WHERE trust_tier <> 'unknown' AND NOT quarantined"
+  /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\.)?"?search_skills"?\s*\(/i
 
 function searchSkillsBody(sql: string): string {
   const start = sql.search(DEFINES_SEARCH_SKILLS)
@@ -32,47 +40,81 @@ function searchSkillsBody(sql: string): string {
   return end < 0 ? sql.slice(start) : sql.slice(start, end)
 }
 
-function definingMigrations(): string[] {
+function migrations(): string[] {
   return readdirSync(DIR)
     .filter((f) => f.endsWith('.sql'))
     .sort()
-    .filter((f) => DEFINES_SEARCH_SKILLS.test(readFileSync(join(DIR, f), 'utf8')))
 }
 
-describe('SMI-7236: search_skills is tiered-only', () => {
-  it('finds the migrations that define search_skills (presence control)', () => {
-    const files = definingMigrations()
-    // Known earlier definitions must be seen, or the scan is pointed at nothing.
-    expect(files).toContain('20260703000002_search_skills_minlen_guard.sql')
-    expect(files).toContain('20261118000000_search_skills_tiered_only.sql')
+describe('SMI-7236: compact tiered search', () => {
+  it('sees both the pre-fix and the fix definitions (presence control)', () => {
+    const defining = migrations().filter((f) => DEFINES_SEARCH_SKILLS.test(read(f)))
+    expect(defining).toContain(PRE_FIX)
+    expect(defining).toContain(FIX)
   })
 
-  it('the newest search_skills definition keeps the tier filter', () => {
-    const files = definingMigrations()
-    const newest = files[files.length - 1]
-    const body = searchSkillsBody(readFileSync(join(DIR, newest), 'utf8'))
-    expect(body).toMatch(/s\.quarantined\s*=\s*FALSE/)
-    expect(body).toMatch(TIER_FILTER)
+  it('the newest search_skills definition ranks inside skills_search_tiered', () => {
+    const defining = migrations().filter((f) => DEFINES_SEARCH_SKILLS.test(read(f)))
+    const body = searchSkillsBody(read(defining[defining.length - 1]))
+    expect(body).toMatch(/FROM\s+skills_search_tiered\s+t\b/)
+    expect(body).toMatch(/LIMIT\s+limit_count\s+OFFSET\s+offset_count/)
+    expect(body).toMatch(/JOIN\s+skills\s+s\s+ON\s+s\.id\s*=\s*page\.skill_id/)
   })
 
-  it('the pre-fix definition lacks the filter (the regex can tell them apart)', () => {
-    const body = searchSkillsBody(
-      readFileSync(join(DIR, '20260703000002_search_skills_minlen_guard.sql'), 'utf8')
-    )
+  it('the pre-fix definition does not (the matcher tells them apart)', () => {
+    const body = searchSkillsBody(read(PRE_FIX))
     expect(body.length).toBeGreaterThan(0)
-    expect(body).not.toMatch(TIER_FILTER)
+    expect(body).not.toMatch(/skills_search_tiered/)
   })
 
-  it('creates both partial indexes with the predicate the WHERE implies', () => {
-    const sql = readFileSync(join(DIR, '20261118000000_search_skills_tiered_only.sql'), 'utf8')
-    for (const [name, expr] of [
-      ['idx_skills_search_tiered', 'USING gin (search_vector)'],
-      ['idx_skills_tags_text_trgm_tiered', 'USING gin (tags_to_text(tags) gin_trgm_ops)'],
+  it('the trigger and the populate INSERT use the same eligibility rule', () => {
+    const sql = read(FIX)
+    const fn = sql.slice(sql.indexOf('FUNCTION public.sync_skills_search_tiered'))
+    expect(fn).toMatch(
+      /NEW\.trust_tier\s+NOT\s+IN\s*\(\s*'unknown'\s*,\s*'unverified'\s*\)\s+AND\s+NOT\s+NEW\.quarantined/
+    )
+    const populate = sql.slice(sql.indexOf('INSERT INTO public.skills_search_tiered'))
+    expect(populate).toMatch(ELIGIBLE)
+  })
+
+  it('the update trigger fires on every column the compact row copies or filters on', () => {
+    const sql = read(FIX)
+    const upd = sql.slice(sql.indexOf('CREATE TRIGGER trg_sync_skills_search_tiered_upd'))
+    const when = upd.slice(0, upd.indexOf('EXECUTE FUNCTION'))
+    for (const col of [
+      'id',
+      'search_vector',
+      'tags',
+      'quality_score',
+      'trust_tier',
+      'quarantined',
     ]) {
-      const stmt = new RegExp(
-        `CREATE INDEX IF NOT EXISTS ${name}\\s+ON public\\.skills ${expr.replace(/[()]/g, '\\$&')}\\s+${INDEX_PREDICATE}`
-      )
-      expect(sql).toMatch(stmt)
+      expect(when).toMatch(new RegExp(`OLD\\.${col}\\s+IS\\s+DISTINCT\\s+FROM\\s+NEW\\.${col}`))
     }
+    expect(sql).toMatch(
+      /CREATE TRIGGER trg_sync_skills_search_tiered\s+AFTER\s+INSERT\s+OR\s+DELETE\s+ON\s+public\.skills/
+    )
+  })
+
+  it('the gate checks all three indexes', () => {
+    const sql = read(FIX)
+    const gate = sql.slice(sql.lastIndexOf('DO $$'))
+    for (const idx of [
+      'idx_skills_quality_desc_live',
+      'idx_skills_search_tiered_vector',
+      'idx_skills_search_tiered_tags_trgm',
+    ]) {
+      expect(gate).toContain(`'${idx}'`)
+    }
+    expect(gate).toMatch(/indisvalid\s+AND\s+x\.indisready/)
+    expect(gate).toMatch(/RAISE\s+EXCEPTION/)
+  })
+
+  it('no later migration drops the table, trigger, sync function or indexes', () => {
+    const later = migrations().filter((f) => f > FIX)
+    const DROPS =
+      /DROP\s+(?:TABLE|TRIGGER|FUNCTION|INDEX)(?:\s+CONCURRENTLY)?(?:\s+IF\s+EXISTS)?\s+(?:"?public"?\.)?"?(skills_search_tiered|trg_sync_skills_search_tiered(?:_upd)?|sync_skills_search_tiered|idx_skills_quality_desc_live|idx_skills_search_tiered_vector|idx_skills_search_tiered_tags_trgm)\b/i
+    const offenders = later.filter((f) => DROPS.test(read(f)))
+    expect(offenders).toEqual([])
   })
 })
