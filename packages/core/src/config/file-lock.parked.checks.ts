@@ -6,7 +6,9 @@
  * @module @skillsmith/core/config/file-lock.parked.checks
  */
 import fs from 'node:fs'
+import { hostname } from 'node:os'
 import path from 'node:path'
+import { readClaim } from './owned-lock.claim.js'
 import type { ParkedLockStop } from './file-lock.parked.js'
 
 export interface Id {
@@ -75,6 +77,25 @@ export function bindLocksDir(stateRoot: string, locks: string): Bind {
   return { ok: true, bound: { locks: { dev: st.dev, ino: st.ino }, real } }
 }
 
+/**
+ * Whether the file at `lockPath` is THIS process's claim, by content: a v1
+ * claim (`parseClaim`, owned-lock.claim.ts:69-100) naming `process.pid` and this
+ * host, the two fields the writer records (owned-lock.acquire.ts:258-260). The
+ * claim also carries a random `token` and `acquiredAt` that only the acquiring
+ * call knows, but `withFileLock` does not hand them to its callback, so they
+ * cannot be compared here. A claim forged with our pid and host needs the
+ * user's own account (ADR-166 D-0). `at` is the inode the caller bound; the
+ * file read must still be that inode afterwards. Returns why not, or `null`.
+ */
+function notOurClaim(lockPath: string, at: Id): string | null {
+  const claim = readClaim(lockPath)
+  if (claim.kind !== 'v1') return 'claim-not-ours: the file at the lock path is not a v1 claim'
+  if (claim.pid !== process.pid || claim.host !== hostname()) {
+    return "claim-not-ours: the claim at the lock path is not this process's claim"
+  }
+  return same(lstatId(lockPath), at) ? null : 'claim-not-ours: the claim changed while it was read'
+}
+
 /** `dirChanged` is true when `locks/` is no longer the bound directory. */
 export type Inspect = { ok: true; claim: Id } | { ok: false; detail: string; dirChanged: boolean }
 
@@ -94,6 +115,8 @@ export function inspect(bound: Bound, lockPath: string): Inspect {
   if (!claim.isFile() || claim.dev !== bound.locks.dev) {
     return fail('the claim is not a file on the same device')
   }
+  const foreign = notOurClaim(lockPath, { dev: claim.dev, ino: claim.ino })
+  if (foreign !== null) return fail(foreign)
   try {
     if (fs.realpathSync.native(dir) !== bound.real) return fail('its path moved')
   } catch {

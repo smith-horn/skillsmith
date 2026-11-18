@@ -130,6 +130,20 @@ export type WithParkedAreaLockResult<T> =
  * every such swap, including one that came before the claim was made, when the
  * release removed the claim from the replacement. A `locks/` removed outright
  * is reported the same way, though nothing is then left to reclaim.
+ *
+ * Check 3 and `ctx.recheck()` read the claim at the lock path and require it to
+ * be this process's own (a v1 claim naming this pid and host), not just a file
+ * with the expected inode: `withFileLock` hands its callback no claim identity,
+ * so the inode alone would bind whatever was put at the path. A mismatch stops
+ * with `locks-dir-changed` and a `claim-not-ours` detail, `fn` never runs, and
+ * nothing is reported as ours. Same-process holders of one lock cannot both own
+ * a claim at the path: the file claim is created by an exclusive `link`
+ * (owned-lock.claim.ts:296-300), a live owner's claim is never reclaimed
+ * (:165-170, :200-201), and a nested request for the same lock is refused by
+ * the tracker (lock-tracker.ts:15-16). Residual (ADR-166 D-0): a claim forged
+ * with this process's pid and host needs the user's own account and is not
+ * detected; nor is a claim removed after check 3, which a later swap would
+ * still report by the identity bound there.
  */
 export function withParkedAreaLock<T>(
   lockPath: string,

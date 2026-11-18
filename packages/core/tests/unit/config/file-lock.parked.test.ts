@@ -524,6 +524,101 @@ describe('withParkedAreaLock', () => {
     expect(r).toEqual({ ok: true, value: 1 })
   })
 
+  describe('a claim that is not our own', () => {
+    /** Another valid v1 claim (a different pid), written over the same file: same inode, new content. */
+    const foreignRecord =
+      JSON.stringify({
+        v: 1,
+        pid: process.pid + 1,
+        token: 'foreign-token',
+        host: os.hostname(),
+        acquiredAt: Date.now(),
+      }) + '\n'
+    const overwriteInPlace = (): void => fs.writeFileSync(lockPath, foreignRecord)
+
+    it('afterAcquire: check 3 stops, fn never runs, and nothing is reported as ours', async () => {
+      let ran = false
+      const r = await runLockedForTests(
+        lockPath,
+        'foreign-a',
+        async () => {
+          ran = true
+        },
+        { hooks: { afterAcquire: overwriteInPlace } }
+      )
+      expect(ran).toBe(false)
+      expect(r.ok).toBe(false)
+      if (r.ok) throw new Error('unreachable')
+      expect(r.stop.code).toBe('locks-dir-changed')
+      expect(r.stop).toMatchObject({ detail: expect.stringContaining('claim-not-ours') })
+      expect(r.stranded).toBeUndefined()
+    })
+
+    it('afterAcquire: a claim with our pid but another host is not ours', async () => {
+      let ran = false
+      const sameInodeOtherHost = (): void =>
+        fs.writeFileSync(
+          lockPath,
+          JSON.stringify({
+            v: 1,
+            pid: process.pid,
+            token: 'other-host-token',
+            host: `${os.hostname()}-elsewhere`,
+            acquiredAt: Date.now(),
+          }) + '\n'
+        )
+      const r = await runLockedForTests(
+        lockPath,
+        'foreign-host',
+        async () => {
+          ran = true
+        },
+        { hooks: { afterAcquire: sameInodeOtherHost } }
+      )
+      expect(ran).toBe(false)
+      expect(r.ok).toBe(false)
+      if (r.ok) throw new Error('unreachable')
+      expect(r.stop).toMatchObject({ detail: expect.stringContaining('claim-not-ours') })
+    })
+
+    it('beforeFn (after check 3): recheck() throws ParkedLockChanged', async () => {
+      const r = await runLockedForTests(
+        lockPath,
+        'foreign-b',
+        async (ctx) => {
+          try {
+            ctx.recheck()
+            return null
+          } catch (error) {
+            return error
+          }
+        },
+        { hooks: { beforeFn: overwriteInPlace } }
+      )
+      expect(r.ok).toBe(true)
+      if (!r.ok) throw new Error('unreachable')
+      expect(r.value).toBeInstanceOf(ParkedLockChanged)
+      expect(String((r.value as Error).message)).toMatch(/not this process/)
+    })
+
+    it('a move of locks/ after the replacement never reports the foreign claim as ours', async () => {
+      let ran = false
+      const r = await runLockedForTests(
+        lockPath,
+        'foreign-c',
+        async () => {
+          ran = true
+          fs.renameSync(locksDir, path.join(root, 'locks.moved'))
+          fs.mkdirSync(locksDir, { mode: 0o700 })
+        },
+        { hooks: { afterAcquire: overwriteInPlace } }
+      )
+      expect(r.ok).toBe(false)
+      expect(r.stranded).toBeUndefined()
+      expect(ran).toBe(false)
+    })
+  })
+
   it('W8: an error from fn propagates and the lock is released', async () => {
     const boom = new Error('boom')
     const error = await rejection(

@@ -19,7 +19,11 @@ All notable changes to `@skillsmith/core` are documented here.
   `ok: true` and `ok: false`), and `strandedOf(error)` returns it for an error the callback threw.
   A swap after the claim was bound names the claim (`certain: true`); one found before it could be
   bound has no claim and `certain: false`, and is reported whenever the folder changed, without
-  guessing whose file is now at the lock path. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on it.
+  guessing whose file is now at the lock path. The third check and `ctx.recheck()` also read the claim at the lock path and require it to be this
+  process's own (a v1 claim naming this pid and host), because the lock primitive hands the callback
+  no claim identity; any other claim stops with `locks-dir-changed` (detail `claim-not-ours`), `fn`
+  never runs and nothing is reported as stranded. A claim forged with this process's pid and host
+  needs the user's own account and is a stated residual (ADR-166 D-0). Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on it.
 - **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
   listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
   `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects
