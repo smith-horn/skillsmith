@@ -115,7 +115,8 @@ describe('endsInShC', () => {
   })
 
   // The regex took ~1.5 s on this shape at 16,000 repeats, ~2.5 s at this
-  // size, and grew about 4x per doubling. It is no call: bash runs `x`, not the quoted text.
+  // size, and grew about 4x per doubling. It is no call: bash runs `x`, not
+  // the quoted text.
   it('scans a line of 20,000 -c flags in well under 0.5 s', () => {
     const t0 = performance.now()
     const hits = scanShellText('bash ' + '-c '.repeat(20_000) + 'x "npx supabase status"')
@@ -132,15 +133,89 @@ describe('endsInShC', () => {
     expect(hits).toHaveLength(1)
   })
 
-  // Hits inside one quote share its opening. Without a per-opening cache the
+  // Hits inside one quote share its opening. Without the per-line memo the
   // scan re-walked the flag run for each: ~1.07 s at 4,000 on a host, and
-  // ~6.5 s here in the dev container. `foo` is not a shell, so nothing runs and nothing is flagged.
+  // ~6.5 s here in the dev container. With `foo` nothing runs; with `bash`
+  // the same line must still be flagged, so the test can't pass by scanning
+  // nothing.
   it('scans one quote holding 8,000 hits after 8,000 flags in well under 0.5 s', () => {
+    const line = (sh: string) =>
+      sh + ' ' + '-c '.repeat(8_000) + '"' + 'npx supabase; '.repeat(8_000) + '"'
     const t0 = performance.now()
-    const hits = scanShellText(
-      'foo ' + '-c '.repeat(8_000) + '"' + 'npx supabase; '.repeat(8_000) + '"'
-    )
+    const hits = scanShellText(line('foo'))
     expect(performance.now() - t0).toBeLessThan(500)
     expect(hits).toEqual([])
+    expect(scanShellText(line('bash'))).toHaveLength(1)
+  })
+
+  // 8,000 nested openings inside one unbroken token (`-"$(-"$(…`), each with a
+  // hit. Before the per-line tables, each opening scanned back to the token's
+  // start and ran a regex over it: ~1 s on a host at this size.
+  it('scans 8,000 nested openings in one long token in well under 0.5 s', () => {
+    const line = (sh: string) =>
+      sh + ' ' + '-"$('.repeat(8_000) + '-" npx supabase ' + ' " ) npx supabase '.repeat(8_000)
+    const t0 = performance.now()
+    const hits = scanShellText(line('foo'))
+    expect(performance.now() - t0).toBeLessThan(500)
+    expect(hits).toEqual([])
+    expect(scanShellText(line('bash -c'))).toHaveLength(1)
+  })
+
+  // One memo per string, shared across every `end` and visited out of order,
+  // as firstCall shares it across a line's openings.
+  it('agrees with the regex at every end of a string, with one shared memo', () => {
+    const TOK = [
+      'sh',
+      'bash',
+      '/bin/bash',
+      'x;sh',
+      '-c',
+      '-lc',
+      '-o',
+      '-O',
+      'pipefail',
+      '-',
+      '--',
+      '-x',
+      '-c;sh',
+      '"',
+      '"$(',
+      '-"',
+      '-"$(',
+      'npx',
+      'supabase',
+      'x',
+    ]
+    const SEP = [' ', '  ', '\t', '', ' ']
+    let seed = 4242
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      return Math.floor((seed / 0x80000000) * n)
+    }
+    let positives = 0
+    const diffs: string[] = []
+    for (let k = 0; k < 3_000; k++) {
+      let s = ''
+      for (let j = rnd(12); j >= 0; j--) s += TOK[rnd(TOK.length)] + SEP[rnd(SEP.length)]
+      const memo = new Map()
+      const ends = [...Array(s.length + 1).keys()].sort(() => rnd(3) - 1)
+      for (const e of ends) {
+        const want = ORACLE.test(s.slice(0, e))
+        if (want) positives++
+        if (endsInShC(s, e, memo) !== want && diffs.length < 5) diffs.push(`${e}:${s}`)
+      }
+    }
+    expect(diffs).toEqual([])
+    expect(positives).toBeGreaterThan(200)
+  })
+
+  // A heredoc body's sticky frame has no opening (-1). The old regex call read
+  // slice(0, -1), so `npx supabase sh -c x` in a body was flagged although the
+  // body is text and never runs.
+  it('treats a negative end as no opening', () => {
+    expect(endsInShC('npx supabase sh -c x', -1)).toBe(false)
+    expect(ORACLE.test('npx supabase sh -c x'.slice(0, -1))).toBe(true)
+    expect(scanShellText('cat <<EOF\nnpx supabase sh -c x\nEOF')).toEqual([])
+    expect(scanShellText('cat <<EOF\n$(npx supabase status)\nEOF')).toHaveLength(1)
   })
 })
