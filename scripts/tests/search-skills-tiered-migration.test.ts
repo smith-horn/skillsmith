@@ -57,7 +57,6 @@ describe('SMI-7236: compact tiered search', () => {
     const defining = migrations().filter((f) => DEFINES_SEARCH_SKILLS.test(read(f)))
     const body = searchSkillsBody(read(defining[defining.length - 1]))
     expect(body).toMatch(/FROM\s+skills_search_tiered\s+t\b/)
-    expect(body).toMatch(/LIMIT\s+limit_count\s+OFFSET\s+offset_count/)
     expect(body).toMatch(/JOIN\s+skills\s+s\s+ON\s+s\.id\s*=\s*page\.skill_id/)
   })
 
@@ -116,5 +115,46 @@ describe('SMI-7236: compact tiered search', () => {
       /DROP\s+(?:TABLE|TRIGGER|FUNCTION|INDEX)(?:\s+CONCURRENTLY)?(?:\s+IF\s+EXISTS)?\s+(?:"?public"?\.)?"?(skills_search_tiered|trg_sync_skills_search_tiered(?:_upd)?|sync_skills_search_tiered|idx_skills_quality_desc_live|idx_skills_search_tiered_vector|idx_skills_search_tiered_tags_trgm)\b/i
     const offenders = later.filter((f) => DROPS.test(read(f)))
     expect(offenders).toEqual([])
+  })
+
+  it('the trigger removes ineligible rows and refreshes eligible ones (review mutations)', () => {
+    const sql = read(FIX)
+    const fn = sql.slice(
+      sql.indexOf('FUNCTION public.sync_skills_search_tiered'),
+      sql.indexOf('REVOKE ALL ON FUNCTION public.sync_skills_search_tiered')
+    )
+    // ELSE branch: a skill that stops being eligible leaves search.
+    expect(fn).toMatch(/ELSE\s+DELETE\s+FROM\s+skills_search_tiered\s+WHERE\s+id\s*=\s*NEW\.id/)
+    // Upsert must overwrite every copied column, not DO NOTHING.
+    expect(fn).not.toMatch(/DO\s+NOTHING/i)
+    expect(fn).toMatch(/search_vector\s*=\s*EXCLUDED\.search_vector/)
+    expect(fn).toMatch(/tags_text\s*=\s*EXCLUDED\.tags_text/)
+    expect(fn).toMatch(/quality_score\s*=\s*EXCLUDED\.quality_score/)
+  })
+
+  it('creates the triggers, then truncates, then populates', () => {
+    const sql = read(FIX)
+    const trg = sql.indexOf('CREATE TRIGGER trg_sync_skills_search_tiered_upd')
+    const trunc = sql.indexOf('TRUNCATE public.skills_search_tiered')
+    const populate = sql.indexOf('INSERT INTO public.skills_search_tiered')
+    expect(trg).toBeGreaterThan(0)
+    expect(trunc).toBeGreaterThan(trg)
+    expect(populate).toBeGreaterThan(trunc)
+  })
+
+  it('ranks with a deterministic tiebreak and a capped page size', () => {
+    const body = searchSkillsBody(read(FIX))
+    expect(body).toMatch(/ORDER\s+BY\s+r\s+DESC,\s*q\s+DESC\s+NULLS\s+LAST,\s*t\.id/)
+    expect(body).toMatch(/LIMIT\s+LEAST\(GREATEST\(limit_count,\s*0\),\s*250\)/)
+    expect(body).toMatch(
+      /ORDER\s+BY\s+page\.r\s+DESC,\s*page\.q\s+DESC\s+NULLS\s+LAST,\s*page\.skill_id/
+    )
+  })
+
+  it('has no FK from the compact table to skills and puts pg_temp last', () => {
+    const sql = read(FIX)
+    const table = sql.slice(sql.indexOf('CREATE TABLE IF NOT EXISTS public.skills_search_tiered'))
+    expect(table.slice(0, table.indexOf(');'))).not.toMatch(/REFERENCES/i)
+    expect(sql.match(/SET\s+search_path\s*=\s*public,\s*pg_temp/g)?.length).toBe(2)
   })
 })
