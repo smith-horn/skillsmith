@@ -415,6 +415,7 @@ const breadcrumbSchema = {
     // SMI-5366: the card renderer + its helpers now live in the bundler-visible,
     // unit-tested skill-card.ts module (GH #1377). The page just supplies the href.
     import { renderSkillCard } from '../../lib/skill-card.js'
+    import { tierNotSearchableNotice } from '../../lib/search-tier-notice.js'
     import type { WireSkill } from '../../types/skills.js'
 
     // SMI-5365: reconstruct the edge-function base in-script. import.meta.env
@@ -742,6 +743,25 @@ const breadcrumbSchema = {
             showState('error')
             resultsCount.textContent = ''
             return
+          }
+
+          // SMI-7246: a query plus a tier full-text search does not cover
+          // (unverified) is declined by design (SMI-7236). Explain it instead of
+          // the generic error; retrying would only repeat the same answer.
+          if (response.status === 400) {
+            const declined = tierNotSearchableNotice(400, await response.json().catch(() => null))
+            if (gen !== resultsGeneration) return
+            if (declined) {
+              const errorHeading = errorState.querySelector('h2')
+              const errorIcon = errorState.querySelector('svg')
+              if (errorHeading) errorHeading.textContent = declined.heading
+              if (errorIcon) errorIcon.classList.add('hidden')
+              if (retryButton) retryButton.classList.add('hidden')
+              errorMessage.textContent = declined.message
+              showState('error')
+              resultsCount.textContent = ''
+              return
+            }
           }
 
           if (!response.ok) {
