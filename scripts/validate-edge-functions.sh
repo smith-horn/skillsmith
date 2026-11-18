@@ -102,8 +102,16 @@ echo ""
 ERRORS=0
 WARNINGS=0
 
-# Get list of function directories (excluding _shared and hidden files)
-FUNCTION_DIRS=$(ls -d "$FUNCTIONS_DIR"/*/ 2>/dev/null | xargs -n1 basename | grep -v "^_" || true)
+# Function directories, space-separated: the `*/` glob skips dot-directories
+# and follows symlinks to directories; names starting with `_` (e.g. _shared)
+# are skipped. Function names are slugs, so a name with a space is unsupported.
+FUNCTION_DIRS=""
+for d in "$FUNCTIONS_DIR"/*/; do
+  [ -d "$d" ] || continue
+  d=${d%/}
+  case "${d##*/}" in _*) continue ;; esac
+  FUNCTION_DIRS="${FUNCTION_DIRS:+$FUNCTION_DIRS }${d##*/}"
+done
 
 if [ -z "$FUNCTION_DIRS" ]; then
   echo -e "${RED}ERROR: No Edge Functions found in $FUNCTIONS_DIR${NC}"
