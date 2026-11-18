@@ -25,7 +25,11 @@ new_root() {
   root=$(cd "$(mktemp -d)" && pwd -P)
   mkdir -p "$root/scripts/lib" "$root/stubbin"
   cp "$SRC/lib/resolve-supabase-cli.sh" "$root/scripts/lib/"
-  cp "$SRC/deploy-edge-functions.sh" "$SRC/validate-staging.sh" "$root/scripts/"
+  cp "$SRC/deploy-edge-functions.sh" "$SRC/validate-staging.sh" "$SRC/validate-edge-functions.sh" "$root/scripts/"
+  # One function that passes validate-edge-functions.sh checks 1-3 cleanly.
+  mkdir -p "$root/supabase/functions/health"
+  : > "$root/supabase/functions/health/index.ts"
+  printf '[functions.health]\nverify_jwt = false\n' > "$root/supabase/config.toml"
   printf '{"devDependencies":{"supabase":"%s"}}\n' "${1-$PIN}" > "$root/package.json"
   ln -s "$NODE_BIN" "$root/stubbin/node"
   cat > "$root/stubbin/npx" <<EOF
@@ -47,7 +51,8 @@ EOF
 
 # make_cli PATH VERSION_STDOUT [VERSION_EXIT] [VERSION_STDERR]
 # --version prints VERSION_STDOUT verbatim (printf %b) and logs to PATH.ver.
-# Any other call logs its argv to PATH.log; `db push` fails when FAIL_DB_PUSH=1.
+# Any other call logs its argv to PATH.log; `db push` fails when FAIL_DB_PUSH=1;
+# `functions list` prints LIST_OUT (printf %b) when it is set.
 make_cli() {
   local p="$1" out="$2" rc="${3:-0}" err="${4:-}"
   mkdir -p "$(dirname "$p")"
@@ -61,6 +66,7 @@ if [ "\$1" = "--version" ]; then
 fi
 echo "\$*" >> "$p.log"
 if [ "\$1 \$2" = "db push" ] && [ "\${FAIL_DB_PUSH:-0}" = "1" ]; then exit 1; fi
+if [ "\$1 \$2" = "functions list" ] && [ -n "\${LIST_OUT:-}" ]; then printf '%b' "\$LIST_OUT"; fi
 exit 0
 EOF
   chmod +x "$p"
@@ -169,6 +175,74 @@ fi
 r=$(new_root); make_cli "$r/stubbin/supabase" "3.1.0\n"
 staging "$r"; rc=$?
 if [ "$rc" -eq 1 ] && [ ! -e "$r/stubbin/supabase.log" ] && ! grep -q "Re-linking" "$r/out.txt" && no_npx "$r"; then ok "10c staging refuses on mismatch, no link and no re-link"; else bad "10c staging refuses on mismatch, no link and no re-link" "rc=$rc"; fi
+
+# --- 11. validate-edge-functions.sh --check-deployment (SMI-7226) ---
+# A `functions list` table in the CLI's pipe-delimited shape; NAME is column 2.
+listing() { printf '  ID | NAME | SLUG\\n  ---|------|-----\\n  u1 | %s | %s\\n' "$1" "$1"; }
+vef() {
+  local root="$1"; shift
+  run_in "$root" env "$@" bash scripts/validate-edge-functions.sh --check-deployment > "$root/out.txt" 2>&1
+}
+# 11a: the pinned local copy and a mismatched PATH copy; only the resolved
+# (local) CLI may list. A bare `supabase functions list` would hit the PATH stub.
+r=$(new_root); make_cli "$r/node_modules/.bin/supabase" "$PIN\n"; make_cli "$r/stubbin/supabase" "3.1.0\n"
+vef "$r" SUPABASE_ACCESS_TOKEN=t SUPABASE_PROJECT_REF=ref "LIST_OUT=$(listing health)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$r/node_modules/.bin/supabase.log" 2>/dev/null)" = "functions list --project-ref ref" ] \
+  && [ ! -e "$r/stubbin/supabase.log" ] && grep -q "health: Deployed" "$r/out.txt" && no_npx "$r"; then
+  ok "11a check-deployment lists with the resolved CLI only"
+else
+  bad "11a check-deployment lists with the resolved CLI only" "rc=$rc local=$(cat "$r/node_modules/.bin/supabase.log" 2>/dev/null) path=$(cat "$r/stubbin/supabase.log" 2>/dev/null)"
+fi
+# 11b: no CLI matches the pin: error, exit 1, nothing listed.
+r=$(new_root); make_cli "$r/stubbin/supabase" "3.1.0\n"
+vef "$r" SUPABASE_ACCESS_TOKEN=t SUPABASE_PROJECT_REF=ref "LIST_OUT=$(listing health)"; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "no Supabase CLI matching" "$r/out.txt" && [ ! -e "$r/stubbin/supabase.log" ] && no_npx "$r"; then
+  ok "11b check-deployment refuses on mismatch, nothing listed"
+else
+  bad "11b check-deployment refuses on mismatch, nothing listed" "rc=$rc $(tail -4 "$r/out.txt" | tr '\n' ' ')"
+fi
+# 11c: no token: skipped before any candidate is consulted.
+r=$(new_root); make_cli "$r/stubbin/supabase" "$PIN\n"
+vef "$r" SUPABASE_PROJECT_REF=ref; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "skipping deployment check" "$r/out.txt" && [ ! -e "$r/stubbin/supabase.ver" ] && no_npx "$r"; then
+  ok "11c check-deployment without a token skips the resolver"
+else
+  bad "11c check-deployment without a token skips the resolver" "rc=$rc"
+fi
+# 11d: the pinned CLI lists a different function: health is NOT DEPLOYED.
+r=$(new_root); make_cli "$r/stubbin/supabase" "$PIN\n"
+vef "$r" SUPABASE_ACCESS_TOKEN=t SUPABASE_PROJECT_REF=ref "LIST_OUT=$(listing other-fn)"; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "health: NOT DEPLOYED" "$r/out.txt" \
+  && [ "$(cat "$r/stubbin/supabase.log" 2>/dev/null)" = "functions list --project-ref ref" ] && no_npx "$r"; then
+  ok "11d check-deployment reports a function missing from the listing"
+else
+  bad "11d check-deployment reports a function missing from the listing" "rc=$rc $(grep -i deployed "$r/out.txt" | tr '\n' ' ')"
+fi
+
+# --- 12. validate-edge-functions.sh function enumeration (SMI-7226) ---
+# 12a: `_` names, dot-directories and plain files are skipped; a symlinked
+# directory is included; several names are all kept.
+r=$(new_root)
+mkdir -p "$r/supabase/functions/alpha" "$r/supabase/functions/_shared" "$r/supabase/functions/.hidden" "$r/real/linked"
+: > "$r/supabase/functions/alpha/index.ts"
+: > "$r/real/linked/index.ts"
+: > "$r/supabase/functions/notadir.ts"
+ln -s "$r/real/linked" "$r/supabase/functions/linked"
+run_in "$r" bash scripts/validate-edge-functions.sh > "$r/out.txt" 2>&1; rc=$?
+names=$(grep -o '✓ [a-z_.-]*: index.ts exists' "$r/out.txt" | awk '{print $2}' | tr -d ':' | tr '\n' ' ')
+if [ "$rc" -eq 0 ] && grep -q "Found 3 Edge Functions" "$r/out.txt" && [ "$names" = "alpha health linked " ]; then
+  ok "12a enumeration skips _ and dot names and plain files, follows symlinks"
+else
+  bad "12a enumeration skips _ and dot names and plain files, follows symlinks" "rc=$rc names=[$names]"
+fi
+# 12b: no function directories at all is an error, not an empty pass.
+r=$(new_root); rm -rf "$r/supabase/functions/health"
+run_in "$r" bash scripts/validate-edge-functions.sh > "$r/out.txt" 2>&1; rc=$?
+if [ "$rc" -eq 1 ] && grep -q "No Edge Functions found" "$r/out.txt"; then
+  ok "12b no function directories -> error"
+else
+  bad "12b no function directories -> error" "rc=$rc $(head -3 "$r/out.txt" | tr '\n' ' ')"
+fi
 
 echo ""
 echo "$pass passed, $fail failed"
