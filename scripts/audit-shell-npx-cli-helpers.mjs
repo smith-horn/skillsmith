@@ -78,14 +78,28 @@ function wordAt(line, i, word) {
   )
 }
 
-// Preceding text that leaves the lexer in command (keyword) position.
-const KEYWORD_POSITION = /(?:^|[;&|({!]|\b(?:then|do|else|elif|if|while|until|in)\b)\s*$/
-// Inside a case, a pattern's `)` also leaves command position (a nested case).
-const AFTER_PATTERN = /\)\s*$/
+// Is `i` in command (keyword) position within frame `t`? True after only
+// whitespace since the frame's start, after ; & | ( { ! , or after one of
+// these words; inside a case, also after a pattern's `)` (a nested case). It
+// looks back over whitespace only, so a line of many `case` words costs one
+// pass; slicing from the frame start each time made it quadratic.
+const KEYWORDS = ['then', 'do', 'else', 'elif', 'if', 'while', 'until', 'in']
+const SPACE_CHAR = /\s/
+const WORD_CHAR = /\w/
 
 function inKeywordPosition(line, t, i) {
-  const before = line.slice(t.bodyAt, i)
-  return KEYWORD_POSITION.test(before) || (t.cases > 0 && AFTER_PATTERN.test(before))
+  let j = i
+  while (j > t.bodyAt && SPACE_CHAR.test(line[j - 1])) j--
+  if (j === t.bodyAt) return true
+  const c = line[j - 1]
+  if (';&|({!'.includes(c)) return true
+  if (c === ')') return t.cases > 0
+  return KEYWORDS.some((k) => {
+    const s = j - k.length
+    return (
+      s >= t.bodyAt && line.startsWith(k, s) && (s === t.bodyAt || !WORD_CHAR.test(line[s - 1]))
+    )
+  })
 }
 
 /** The delimiter a heredoc word stands for: its quotes and backslashes removed. */

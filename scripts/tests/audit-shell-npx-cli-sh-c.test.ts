@@ -12,10 +12,11 @@ import { endsInShC } from '../audit-shell-npx-cli-sh-c.mjs'
 // @ts-expect-error - .mjs helper has no typings
 import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 
-// The SH_C regex from the CodeQL js/redos fix on PR #3257, the last one
-// shipped. Only ever run on short inputs here.
+// The SH_C regex from the CodeQL js/redos fix on PR #3257, plus the backtick
+// in its boundary class: a governance review found `` `bash -c '…'` `` missed,
+// although `$(bash -c '…')` was flagged. Only ever run on short inputs here.
 const ORACLE =
-  /(?:^|[\s;&|(/])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
+  /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
 
 const ROWS: Array<[string, boolean]> = [
   ['sh -c ', true],
@@ -34,6 +35,9 @@ const ROWS: Array<[string, boolean]> = [
   ['echo bash -c x ', false], // the -c belongs to bash, but `x` follows it
   ['fish -c ', false],
   ['"bash -c ', false],
+  ['x=`bash -c ', true], // a backtick opens a command substitution
+  ['echo "`sh -lc ', true],
+  ['x`bash -c ', true],
   ['bash -c', true],
   ['', false],
 ]
@@ -212,6 +216,35 @@ describe('endsInShC', () => {
   // A heredoc body's sticky frame has no opening (-1). The old regex call read
   // slice(0, -1), so `npx supabase sh -c x` in a body was flagged although the
   // body is text and never runs.
+  it('flags sh -c inside backticks as it does inside $(…)', () => {
+    expect(scanShellText("x=`bash -c 'npx supabase status'`")).toHaveLength(1)
+    expect(scanShellText('echo "`sh -lc \'npx wrangler deploy\'`"')).toHaveLength(1)
+    expect(scanShellText("x=$(bash -c 'npx supabase status')")).toHaveLength(1)
+    expect(scanShellText("echo `bash -c 'echo ok'`")).toEqual([])
+  })
+
+  // The keyword-position check sliced from the frame start for every `case`
+  // or `esac` word: ~1 s on a host at 16,000 words, 4x per doubling.
+  it('lexes a line of 16,000 case words in well under 0.5 s', () => {
+    for (const unit of ['case ', 'esac ']) {
+      const t0 = performance.now()
+      const hits = scanShellText(unit.repeat(16_000) + 'npx supabase status')
+      expect(performance.now() - t0).toBeLessThan(500)
+      // the trailing call is still found (the slicing version agreed: 1)
+      expect(hits).toHaveLength(1)
+    }
+    // the same keywords still open and close a case: the call after `esac`
+    // runs and is flagged
+    expect(scanShellText('case x in a) ;; esac; npx supabase status')).toHaveLength(1)
+  })
+
+  // `domain` ends in `in` but is not the keyword, so this `case` is a plain
+  // word and `)` closes the `$(`; the call after it is quoted text. Read as a
+  // keyword, `)` would be a case pattern and the text would be flagged.
+  it('needs a word boundary before a keyword', () => {
+    expect(scanShellText('echo "$(echo domain case a) npx supabase status"')).toEqual([])
+  })
+
   it('treats a negative end as no opening', () => {
     expect(endsInShC('npx supabase sh -c x', -1)).toBe(false)
     expect(ORACLE.test('npx supabase sh -c x'.slice(0, -1))).toBe(true)

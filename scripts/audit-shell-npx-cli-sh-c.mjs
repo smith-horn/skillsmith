@@ -24,7 +24,9 @@
  *   seen, so only on whole earlier tokens, each at most once per state.
  */
 
-const SHELL_TAIL = /(?:^|[;&|(/])(?:ba|z|da|k)?sh$/
+// The shell word: whole token, or after ; & | ( / or a backtick, which opens
+// a command substitution (`` `bash -c '…'` ``) as `$(` does.
+const SHELL_TAIL = /(?:^|[;&|(/`])(?:ba|z|da|k)?sh$/
 const SPACE = /\s/
 const LETTER = /[A-Za-z]/
 
