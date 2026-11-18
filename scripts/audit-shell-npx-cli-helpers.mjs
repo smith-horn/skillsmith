@@ -311,13 +311,19 @@ function trailingCommentIndex(line, at) {
 /**
  * The tool of the first unpinned npx call in `code` that runs (command context,
  * or quotes that are a `sh -c` argument), or null. `at` comes from lexLine.
+ * Hits inside one quote share its opening, so the `sh -c` answer is cached per
+ * opening; otherwise many hits after a long flag run cost quadratic time.
  */
 function firstCall(code, at) {
+  const shC = new Map()
   for (const m of code.matchAll(HIT)) {
     if (m[4] && EXACT_VERSION.test(m[4])) continue
     if (!m[4] && pinnedByPackageFlag(m[0], m[3])) continue
     const { q, openAt } = at[m.index]
-    if (q === null || (q !== 'arith' && endsInShC(code, openAt))) return m[3]
+    if (q === null) return m[3]
+    if (q === 'arith') continue
+    if (!shC.has(openAt)) shC.set(openAt, endsInShC(code, openAt))
+    if (shC.get(openAt)) return m[3]
   }
   return null
 }

@@ -12,8 +12,8 @@ import { endsInShC } from '../audit-shell-npx-cli-sh-c.mjs'
 // @ts-expect-error - .mjs helper has no typings
 import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 
-// The shipped regex as of the CodeQL fix (cabaa428d). Only ever run on short
-// inputs here.
+// The SH_C regex from the CodeQL js/redos fix on PR #3257, the last one
+// shipped. Only ever run on short inputs here.
 const ORACLE =
   /(?:^|[\s;&|(/])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
 
@@ -89,7 +89,9 @@ describe('endsInShC', () => {
       'sh',
       '"x"',
     ]
-    const SEP = [' ', '  ', '\t']
+    // Newlines, CRLF and Unicode spaces too: the scan must split on exactly
+    // the whitespace the regex's \s matches.
+    const SEP = [' ', '  ', '\t', '\n', '\r\n', ' ', '\v', ' ']
     // Take the high bits: an LCG's low bits cycle quickly, and `seed % n`
     // never produced some token pairs (a lone `-` right before `-c`).
     let seed = 7226
@@ -101,9 +103,9 @@ describe('endsInShC', () => {
     const diffs: string[] = []
     for (let k = 0; k < 100_000; k++) {
       let s = NOISE[rnd(NOISE.length)]
-      s += (s ? SEP[rnd(3)] : '') + SHELL[rnd(SHELL.length)]
-      for (let j = rnd(7); j > 0; j--) s += SEP[rnd(3)] + FLAG[rnd(FLAG.length)]
-      if (rnd(3) === 0) s += SEP[rnd(3)]
+      s += (s ? SEP[rnd(SEP.length)] : '') + SHELL[rnd(SHELL.length)]
+      for (let j = rnd(7); j > 0; j--) s += SEP[rnd(SEP.length)] + FLAG[rnd(FLAG.length)]
+      if (rnd(3) === 0) s += SEP[rnd(SEP.length)]
       const want = ORACLE.test(s)
       if (want) positives++
       if (endsInShC(s) !== want && diffs.length < 5) diffs.push(s)
@@ -112,8 +114,8 @@ describe('endsInShC', () => {
     expect(positives).toBeGreaterThan(10_000)
   })
 
-  // The regex took ~1.5 s on this shape at 16,000 repeats and grew 4x per
-  // doubling (~2.3 s here). It is no call: bash runs `x`, not the quoted text.
+  // The regex took ~1.5 s on this shape at 16,000 repeats, ~2.5 s at this
+  // size, and grew about 4x per doubling. It is no call: bash runs `x`, not the quoted text.
   it('scans a line of 20,000 -c flags in well under 0.5 s', () => {
     const t0 = performance.now()
     const hits = scanShellText('bash ' + '-c '.repeat(20_000) + 'x "npx supabase status"')
@@ -128,5 +130,17 @@ describe('endsInShC', () => {
     const hits = scanShellText('bash ' + '-c '.repeat(20_000) + '"npx supabase status"')
     expect(performance.now() - t0).toBeLessThan(500)
     expect(hits).toHaveLength(1)
+  })
+
+  // Hits inside one quote share its opening. Without a per-opening cache the
+  // scan re-walked the flag run for each: ~1.07 s at 4,000 on a host, and
+  // ~6.5 s here in the dev container. `foo` is not a shell, so nothing runs and nothing is flagged.
+  it('scans one quote holding 8,000 hits after 8,000 flags in well under 0.5 s', () => {
+    const t0 = performance.now()
+    const hits = scanShellText(
+      'foo ' + '-c '.repeat(8_000) + '"' + 'npx supabase; '.repeat(8_000) + '"'
+    )
+    expect(performance.now() - t0).toBeLessThan(500)
+    expect(hits).toEqual([])
   })
 })
