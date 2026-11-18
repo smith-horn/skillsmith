@@ -105,7 +105,7 @@ describe('SMI-7236: compact tiered search', () => {
     ]) {
       expect(gate).toContain(`'${idx}'`)
     }
-    expect(gate).toMatch(/indisvalid\s+AND\s+x\.indisready/)
+    expect(gate).toMatch(/indisvalid\s+AND\s+x\.indisready\s+AND\s+x\.indislive/)
     expect(gate).toMatch(/RAISE\s+EXCEPTION/)
   })
 
@@ -156,5 +156,17 @@ describe('SMI-7236: compact tiered search', () => {
     const table = sql.slice(sql.indexOf('CREATE TABLE IF NOT EXISTS public.skills_search_tiered'))
     expect(table.slice(0, table.indexOf(');'))).not.toMatch(/REFERENCES/i)
     expect(sql.match(/SET\s+search_path\s*=\s*public,\s*pg_temp/g)?.length).toBe(2)
+  })
+
+  it('enables RLS and states the access model as a policy in the same file (PR-02)', () => {
+    const sql = read(FIX)
+    expect(sql).toMatch(/ALTER TABLE public\.skills_search_tiered ENABLE ROW LEVEL SECURITY/)
+    expect(sql).toMatch(
+      /CREATE POLICY\s+\w+\s+ON public\.skills_search_tiered\s+FOR SELECT TO service_role USING \(true\)/
+    )
+    // Clients get neither a policy nor a grant.
+    expect(sql).not.toMatch(
+      /CREATE POLICY[^;]*ON public\.skills_search_tiered[^;]*TO\s+(anon|authenticated)/
+    )
   })
 })
