@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6d-i: `withParkedAreaLock()` takes lock 1′, the lock a parked area
+  is pruned and restored under, at `<stateRoot>/locks/parked-<key>.lock` (`parkedLockPath()`, and
+  `parkedLockTarget()` for the name `withFileLock` takes). It runs a callback under the lock and
+  returns `{ ok: true, value }`, or `{ ok: false, stop }` when the lock is busy, the state root is
+  missing, or the `locks` folder is not a real private folder, or changed or was removed while the
+  lock was being taken. A path that is not a lock 1′ file is a `TypeError`, and a request made
+  while holding a skills-root lock (1 or 1′) is refused with a `LockOrderError`, both before
+  anything is created. The folder is made if absent (mode 0700), bound by identity, and checked
+  before the claim, right after it and again on request (`ctx.recheck()`, which throws
+  `ParkedLockChanged`). The claim itself is checked by content on an `O_NOFOLLOW | O_NONBLOCK`
+  descriptor, so a FIFO, a symlink or an oversized file at the lock path is refused. The third
+  check requires a v1 claim naming this process and host; `recheck()` requires the pid, host and
+  token it read there. Any other claim stops with `locks-dir-changed` (detail `claim-not-ours`)
+  and `fn` never runs. When `locks` is not the bound folder after the claim was taken, the result
+  carries `stranded` (on `ok: true` and `ok: false`; `strandedOf(error)` for an error `fn` threw):
+  a claim may have been left in the folder that moved away. It names no claim and no certainty.
+  Stated residuals (ADR-166 D-0; each needs the user's own account): a claim forged with this
+  process's pid and host before the third check; a claim removed before or after it, after which
+  another acquisition in this process can take the path and be bound; a claim rewritten in place
+  after it, which is reported as `stranded` only if `locks` then moves; a swap reversed before the
+  wrapper's last check (`locks` is swapped out during `fn`, the release finds nothing and the
+  folder is swapped back), which is not reported and leaves the claim at the live path until
+  this process exits. Nothing calls it yet; `skillsmith restore` and `--prune --apply` build on
+  it.
 - **Added**: SMI-6531 -- A1 step 6c-ii-b: `planPrune()` plans a prune from a `listBackups()`
   listing, a `PruneRequest` and the lock each copy's deletion would hold (`assignLocks()`,
   `parkedLockPath()`). It reads its arguments and touches no filesystem. No selector selects

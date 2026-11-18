@@ -119,139 +119,149 @@ function withCopy(body: (src: string, cli: string) => void): void {
   }
 }
 
-describe('the listing and the doctor backups path are read-only (F7)', () => {
-  it('no strict-zone module can write, and every edge out of it takes only read-only names', () => {
-    expect(readOnlyViolations(entriesIn(SRC, CLI), SRC, CLI)).toEqual([])
-  })
+// Each copy-based control copies the source tree and walks its import graph, often twice. On a
+// loaded CI runner that took 36-40 s per case (#3267, run 44364742912) against vitest's 15 s
+// default; the whole file took 100 s on #3248. This raises the time limit only; no assertion
+// changes.
+const GRAPH_TEST_TIMEOUT_MS = 120_000
 
-  it('control: the real graph reaches the services, the install and config modules and the CLI render', () => {
-    const { reached, into } = walk(entriesIn(SRC, CLI))
-    const names = [...reached].map((f) => path.basename(f))
-    for (const n of [
-      'skill-backups.listing.ts',
-      'skill-backups.areas.ts',
-      'prune.list.parked.ts',
-      'workspace-scope.ts',
-      'doctor.backups.render.ts',
-    ]) {
-      expect(names).toContain(n)
+describe(
+  'the listing and the doctor backups path are read-only (F7)',
+  { timeout: GRAPH_TEST_TIMEOUT_MS },
+  () => {
+    it('no strict-zone module can write, and every edge out of it takes only read-only names', () => {
+      expect(readOnlyViolations(entriesIn(SRC, CLI), SRC, CLI)).toEqual([])
+    })
+
+    it('control: the real graph reaches the services, the install and config modules and the CLI render', () => {
+      const { reached, into } = walk(entriesIn(SRC, CLI))
+      const names = [...reached].map((f) => path.basename(f))
+      for (const n of [
+        'skill-backups.listing.ts',
+        'skill-backups.areas.ts',
+        'prune.list.parked.ts',
+        'workspace-scope.ts',
+        'doctor.backups.render.ts',
+      ]) {
+        expect(names).toContain(n)
+      }
+      // workspace-scope.ts imports mkdirSync by name: the case the existing spy cannot see. It is
+      // reached, and passes only because the names the services take from it cannot write.
+      const ws = path.join(SRC, 'install/workspace-scope.ts')
+      expect(writeImportsOf(ws)).toContain('mkdirSync')
+      expect(writingNames(ws).size).toBeGreaterThan(0)
+      const taken = (into.get(ws) ?? []).flatMap((e) => e.names)
+      expect(taken.length).toBeGreaterThan(0)
+      expect(taken.filter((n) => writingNames(ws).has(n))).toEqual([])
+    })
+
+    const PLANTS: [string, string, string][] = [
+      [
+        'a named mkdirSync import and call in skill-backups.areas.ts',
+        'services/skill-backups.areas.ts',
+        "\nimport { mkdirSync } from 'node:fs'\nexport const planted = (p: string) => mkdirSync(p)\n",
+      ],
+      [
+        'a namespace import and write in skill-backups.records.ts',
+        'services/skill-backups.records.ts',
+        "\nimport * as nfs from 'node:fs'\nexport const planted = (p: string) => nfs.rmSync(p)\n",
+      ],
+      [
+        'fs.promises.rm through the default fs in skill-backups.narrow.ts',
+        'services/skill-backups.narrow.ts',
+        '\nexport const planted = (p: string) => fs.promises.rm(p)\n',
+      ],
+      [
+        'a node:fs/promises named import in skill-backups.areas.ts',
+        'services/skill-backups.areas.ts',
+        "\nimport { rm } from 'node:fs/promises'\nexport const planted = (p: string) => rm(p)\n",
+      ],
+      [
+        'a call into a writer from skill-backups.listing.ts',
+        'services/skill-backups.listing.ts',
+        "\nimport { renameNoReplace } from '../install/prune.walk.shared.js'\nexport const planted = (a: string) => renameNoReplace(a, a)\n",
+      ],
+    ]
+    for (const [label, file, planted] of PLANTS) {
+      it(`control: ${label} is caught`, () => {
+        withCopy((src, cli) => {
+          expect(readOnlyViolations(entriesIn(src, cli), src, cli)).toEqual([])
+          fs.appendFileSync(path.join(src, file), planted)
+          const v = readOnlyViolations(entriesIn(src, cli), src, cli)
+          expect(v.some((x) => x.startsWith(`${file} can write`))).toBe(true)
+        })
+      })
     }
-    // workspace-scope.ts imports mkdirSync by name: the case the existing spy cannot see. It is
-    // reached, and passes only because the names the services take from it cannot write.
-    const ws = path.join(SRC, 'install/workspace-scope.ts')
-    expect(writeImportsOf(ws)).toContain('mkdirSync')
-    expect(writingNames(ws).size).toBeGreaterThan(0)
-    const taken = (into.get(ws) ?? []).flatMap((e) => e.names)
-    expect(taken.length).toBeGreaterThan(0)
-    expect(taken.filter((n) => writingNames(ws).has(n))).toEqual([])
-  })
 
-  const PLANTS: [string, string, string][] = [
-    [
-      'a named mkdirSync import and call in skill-backups.areas.ts',
-      'services/skill-backups.areas.ts',
-      "\nimport { mkdirSync } from 'node:fs'\nexport const planted = (p: string) => mkdirSync(p)\n",
-    ],
-    [
-      'a namespace import and write in skill-backups.records.ts',
-      'services/skill-backups.records.ts',
-      "\nimport * as nfs from 'node:fs'\nexport const planted = (p: string) => nfs.rmSync(p)\n",
-    ],
-    [
-      'fs.promises.rm through the default fs in skill-backups.narrow.ts',
-      'services/skill-backups.narrow.ts',
-      '\nexport const planted = (p: string) => fs.promises.rm(p)\n',
-    ],
-    [
-      'a node:fs/promises named import in skill-backups.areas.ts',
-      'services/skill-backups.areas.ts',
-      "\nimport { rm } from 'node:fs/promises'\nexport const planted = (p: string) => rm(p)\n",
-    ],
-    [
-      'a call into a writer from skill-backups.listing.ts',
-      'services/skill-backups.listing.ts',
-      "\nimport { renameNoReplace } from '../install/prune.walk.shared.js'\nexport const planted = (a: string) => renameNoReplace(a, a)\n",
-    ],
-  ]
-  for (const [label, file, planted] of PLANTS) {
-    it(`control: ${label} is caught`, () => {
+    it('control: a write planted in a reached install function is caught at the edge into it', () => {
       withCopy((src, cli) => {
-        expect(readOnlyViolations(entriesIn(src, cli), src, cli)).toEqual([])
-        fs.appendFileSync(path.join(src, file), planted)
+        const f = path.join(src, 'install/parked-usage.ts')
+        const text = fs.readFileSync(f, 'utf8')
+        const hook = 'const perVolume = judgeParkedUsage(entries, options)'
+        expect(text).toContain(hook)
+        fs.writeFileSync(f, text.replace(hook, `${hook}\n  fs.rmSync('/x')`))
+        expect(readOnlyViolations(entriesIn(src, cli), src, cli)).toContain(
+          'services/skill-backups.listing.ts takes install/parked-usage.ts as named (evaluateParkedUsage can write)'
+        )
+      })
+    })
+
+    it('control: a write several modules down, behind a name the services take, is caught', () => {
+      withCopy((src, cli) => {
+        // `prune.list.parked.ts` imports nothing writing from here today; a writer added to the
+        // module it imports `errCode` from reaches `listParkedArea` through that call.
+        const park = path.join(src, 'install/park-result.ts')
+        fs.appendFileSync(
+          park,
+          "\nimport nfs from 'node:fs'\nexport const errCodeAndWrite = (e: unknown) => nfs.rmSync('/x')\n"
+        )
+        const text = fs.readFileSync(path.join(src, 'install/prune.list.parked.ts'), 'utf8')
+        expect(text).toContain("import { errCode } from './park-result.js'")
+        fs.writeFileSync(
+          path.join(src, 'install/prune.list.parked.ts'),
+          text
+            .replace(
+              "import { errCode } from './park-result.js'",
+              "import { errCode, errCodeAndWrite } from './park-result.js'"
+            )
+            .replace(
+              'const isFile = (p: string): boolean => {',
+              'const isFile = (p: string): boolean => {\n  errCodeAndWrite(p)'
+            )
+        )
         const v = readOnlyViolations(entriesIn(src, cli), src, cli)
-        expect(v.some((x) => x.startsWith(`${file} can write`))).toBe(true)
+        expect(
+          v.some((x) => x.includes('takes install/prune.list.parked.ts as named (listParkedArea'))
+        ).toBe(true)
+      })
+    })
+
+    const WS = 'install/workspace-scope.ts'
+    it('control: workspace-scope taken by a name that writes is caught', () => {
+      withCopy((src, cli) => {
+        const writer = [...writingNames(path.join(src, WS))][0] as string
+        expect(writer).toBeDefined()
+        fs.appendFileSync(
+          path.join(src, 'services/skill-backups.areas.ts'),
+          `\nimport { ${writer} } from '../install/workspace-scope.js'\nexport const planted = ${writer}\n`
+        )
+        const v = readOnlyViolations(entriesIn(src, cli), src, cli)
+        expect(v).toContain(
+          `services/skill-backups.areas.ts takes ${WS} as named (${writer} can write)`
+        )
+      })
+    })
+
+    it('control: workspace-scope taken as a namespace is caught', () => {
+      withCopy((src, cli) => {
+        fs.appendFileSync(
+          path.join(src, 'services/skill-backups.areas.ts'),
+          "\nimport * as ws from '../install/workspace-scope.js'\nexport const planted = ws\n"
+        )
+        expect(readOnlyViolations(entriesIn(src, cli), src, cli)).toContain(
+          `services/skill-backups.areas.ts takes ${WS} as namespace`
+        )
       })
     })
   }
-
-  it('control: a write planted in a reached install function is caught at the edge into it', () => {
-    withCopy((src, cli) => {
-      const f = path.join(src, 'install/parked-usage.ts')
-      const text = fs.readFileSync(f, 'utf8')
-      const hook = 'const perVolume = judgeParkedUsage(entries, options)'
-      expect(text).toContain(hook)
-      fs.writeFileSync(f, text.replace(hook, `${hook}\n  fs.rmSync('/x')`))
-      expect(readOnlyViolations(entriesIn(src, cli), src, cli)).toContain(
-        'services/skill-backups.listing.ts takes install/parked-usage.ts as named (evaluateParkedUsage can write)'
-      )
-    })
-  })
-
-  it('control: a write several modules down, behind a name the services take, is caught', () => {
-    withCopy((src, cli) => {
-      // `prune.list.parked.ts` imports nothing writing from here today; a writer added to the
-      // module it imports `errCode` from reaches `listParkedArea` through that call.
-      const park = path.join(src, 'install/park-result.ts')
-      fs.appendFileSync(
-        park,
-        "\nimport nfs from 'node:fs'\nexport const errCodeAndWrite = (e: unknown) => nfs.rmSync('/x')\n"
-      )
-      const text = fs.readFileSync(path.join(src, 'install/prune.list.parked.ts'), 'utf8')
-      expect(text).toContain("import { errCode } from './park-result.js'")
-      fs.writeFileSync(
-        path.join(src, 'install/prune.list.parked.ts'),
-        text
-          .replace(
-            "import { errCode } from './park-result.js'",
-            "import { errCode, errCodeAndWrite } from './park-result.js'"
-          )
-          .replace(
-            'const isFile = (p: string): boolean => {',
-            'const isFile = (p: string): boolean => {\n  errCodeAndWrite(p)'
-          )
-      )
-      const v = readOnlyViolations(entriesIn(src, cli), src, cli)
-      expect(
-        v.some((x) => x.includes('takes install/prune.list.parked.ts as named (listParkedArea'))
-      ).toBe(true)
-    })
-  })
-
-  const WS = 'install/workspace-scope.ts'
-  it('control: workspace-scope taken by a name that writes is caught', () => {
-    withCopy((src, cli) => {
-      const writer = [...writingNames(path.join(src, WS))][0] as string
-      expect(writer).toBeDefined()
-      fs.appendFileSync(
-        path.join(src, 'services/skill-backups.areas.ts'),
-        `\nimport { ${writer} } from '../install/workspace-scope.js'\nexport const planted = ${writer}\n`
-      )
-      const v = readOnlyViolations(entriesIn(src, cli), src, cli)
-      expect(v).toContain(
-        `services/skill-backups.areas.ts takes ${WS} as named (${writer} can write)`
-      )
-    })
-  })
-
-  it('control: workspace-scope taken as a namespace is caught', () => {
-    withCopy((src, cli) => {
-      fs.appendFileSync(
-        path.join(src, 'services/skill-backups.areas.ts'),
-        "\nimport * as ws from '../install/workspace-scope.js'\nexport const planted = ws\n"
-      )
-      expect(readOnlyViolations(entriesIn(src, cli), src, cli)).toContain(
-        `services/skill-backups.areas.ts takes ${WS} as namespace`
-      )
-    })
-  })
-})
+)

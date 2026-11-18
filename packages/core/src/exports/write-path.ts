@@ -215,7 +215,20 @@ export { leftoverLines } from '../services/skill-backups.render.js'
 export { planPrune } from '../install/prune.select.js'
 // The lock each deletion would hold (UD62, UD63; D12, D13) and the lock 1' path (PLAN:915).
 export { assignLocks } from '../services/skill-backups.locks.js'
-export { parkedLockPath } from '../config/file-lock.parked.js'
+export {
+  parkedLockPath,
+  parkedLockTarget,
+  strandedOf,
+  withParkedAreaLock,
+  ParkedLockChanged,
+} from '../config/file-lock.parked.js'
+export type {
+  ParkedLockContext,
+  ParkedLockStop,
+  StrandedClaim,
+  WithParkedAreaLockOptions,
+  WithParkedAreaLockResult,
+} from '../config/file-lock.parked.js'
 export type {
   ExcludedRow,
   ExcludeReason,
