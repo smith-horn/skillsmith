@@ -122,6 +122,8 @@ export interface RestoreHooks {
   beforeUnlink?: () => void
   /** Replaces the lock timeout. */
   lockTimeoutMs?: number
+  /** Runs between lock 1's binding and its claim (the wrapper's own seam). */
+  beforeLock?: () => void | Promise<void>
   /** @internal Test seam: wraps the lock's own check (`ctx.check()` / `ctx.recheck()`) so a test can force it to throw. */
   wrapCheck?: (real: () => void) => () => void
   /** Replaces the lock 1′ runner (default `withParkedAreaLock`): a test passes one with the wrapper's own seams. */

@@ -216,7 +216,6 @@ export { planPrune } from '../install/prune.select.js'
 // SMI-6531 6d-ii: `skillsmith restore <id>`.
 export { planRestore } from '../services/skill-restore.js'
 export { executeRestore } from '../services/skill-restore.exec.js'
-export { restoreClassOf, RESTORE_CLASS } from '../services/skill-restore.kinds.js'
 export type {
   PlanRestoreResult,
   RestoreCandidate,

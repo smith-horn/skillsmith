@@ -125,7 +125,12 @@ describe('lock 1: the check runs before every write', () => {
     const mkdir = vi.spyOn(fs.promises, 'mkdir')
     const r = await executeRestoreWith(plan, { wrapCheck: failAt(2) })
     expect(r.status).toBe('refused')
-    if (r.status !== 'restored') expect(r.changed).toBe(false)
+    if (r.status !== 'restored') {
+      expect(r.changed).toBe(false)
+      // Lock 1 is the skills folder's lock, not the set-aside-area lock.
+      expect(r.reason).toBe('origin-root-unbindable')
+      expect(r.message).toContain('skills folder lock')
+    }
     expect(mkdir.mock.calls.map((c) => String(c[0]))).not.toContain(plan.target)
     expect(fs.existsSync(m.origin)).toBe(false)
     expect(fs.existsSync(m.copyPath)).toBe(true)
@@ -138,8 +143,26 @@ describe('lock 1: the check runs before every write', () => {
     const link = vi.spyOn(fs, 'linkSync')
     const r = await executeRestoreWith(plan, { wrapCheck: failAt(2) })
     expect(r.status).toBe('refused')
+    if (r.status !== 'restored') expect(r.reason).toBe('origin-root-unbindable')
     expect(link).not.toHaveBeenCalled()
     expect(fs.existsSync(m.origin)).toBe(false)
+  })
+
+  it('a root swapped after the plan was checked and before the lock: the lock refuses as the skills folder', async () => {
+    env = mkEnv()
+    const m = parkEntry(env.root, 'skill-a')
+    const plan = await planOk(m.copyPath, env.opts)
+    const r = await executeRestoreWith(plan, {
+      beforeLock: () => {
+        fs.renameSync(env.root, `${env.root}.aside`)
+        fs.mkdirSync(env.root)
+      },
+    })
+    expect(r.status).toBe('refused')
+    if (r.status === 'restored') return
+    expect(r.reason).toBe('origin-root-unbindable')
+    expect(r.message).toContain('skills folder lock refused')
+    expect(r.changed).toBe(false)
   })
 
   it('before the parked unlink: the link is done, neither the copy nor the record is unlinked', async () => {

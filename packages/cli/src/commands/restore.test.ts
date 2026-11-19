@@ -329,6 +329,48 @@ describe('a stranded lock claim is reported in the text and the JSON', () => {
   })
 })
 
+describe('an execute-time stop that changed nothing says so, once', () => {
+  const said = (): number => out.filter((l) => l.includes('Nothing was restored.')).length
+
+  it('refused: an occupant created before the claim', async () => {
+    const p = parked()
+    const disc = base0()
+    calls.hooks = { beforeClaim: () => fs.mkdirSync(p.origin) }
+    await runRestore(p.opId, { ...disc, yes: true })
+    expect(process.exitCode).toBe(1)
+    expect(said()).toBe(1)
+  })
+
+  it('plan-changed already says it in its own message: not doubled', async () => {
+    const p = parked()
+    const disc = base0()
+    calls.hooks = {
+      beforeClaim: () => {
+        fs.renameSync(p.copy, p.copy + '.real')
+        fs.mkdirSync(p.copy)
+      },
+    }
+    await runRestore(p.opId, { ...disc, yes: true })
+    expect(process.exitCode).toBe(1)
+    expect(said()).toBe(1)
+  })
+
+  it('stopped after something changed: not said, exit 4', async () => {
+    const p = parked()
+    const disc = base0()
+    let n = 0
+    calls.hooks = {
+      wrapCheck: (real: () => void) => () => {
+        if (++n === 3) throw new Error('forced')
+        real()
+      },
+    }
+    await runRestore(p.opId, { ...disc, yes: true })
+    expect(process.exitCode).toBe(4)
+    expect(said()).toBe(0)
+  })
+})
+
 describe('registration', () => {
   it('index.ts adds the command to the program', () => {
     const src = fs.readFileSync(new URL('../index.ts', import.meta.url), 'utf8')

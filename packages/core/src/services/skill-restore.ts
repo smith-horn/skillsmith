@@ -13,6 +13,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseSidecarStrict } from '../install/prune.sidecar.js'
+import { S_IFMT } from '../install/park-tree.perms.js'
+import { occupiedMessage } from './skill-restore.messages.js'
 import { PARKED_DIR } from '../install/prune.list.parked.js'
 import { classifyCopy, type Classification } from '../install/prune.classify.js'
 import type { ListedCopy } from '../install/prune.list.types.js'
@@ -35,7 +37,6 @@ import type {
 
 export type { PlanRestoreResult, RestorePlan } from './skill-restore.types.js'
 
-const S_IFMT = 0o170000n
 const TYPE_OF: Record<string, RestoreType> = {
   [String(0o040000n)]: 'directory',
   [String(0o100000n)]: 'file',
@@ -321,10 +322,7 @@ async function evaluate(
   // Writes go to the bound real parent plus the name, never through the sidecar's own spelling.
   const target = path.join(o, path.basename(origin))
   if (idOf(target) !== 'absent') {
-    return refuse(
-      'origin-occupied',
-      `Something already exists at \`${origin}\`. Move it aside first, then run \`skillsmith restore <id>\` again.`
-    )
+    return refuse('origin-occupied', occupiedMessage(origin))
   }
   const digest = sha(
     JSON.stringify([

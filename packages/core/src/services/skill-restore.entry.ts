@@ -13,6 +13,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { RootIdentity } from '../install/prune.job.js'
+import { identityOf, sameIdentity } from '../install/park-tree.identity.js'
+import { S_IFMT } from '../install/park-tree.perms.js'
+import { occupiedMessage, PLAN_CHANGED } from './skill-restore.messages.js'
 
 export type EntryFailure = {
   ok: false
@@ -47,15 +50,9 @@ const fail = (code: EntryFailure['code'], message: string, changed: boolean): En
   changed,
 })
 
-/** The parked entry is still the one the listing bound. */
-function stillBound(st: fs.BigIntStats, rid: RootIdentity, birth: boolean): boolean {
-  return (
-    st.dev === rid.dev &&
-    st.ino === rid.ino &&
-    (st.mode & 0o170000n) === rid.fmt &&
-    (!birth || st.birthtimeNs === rid.birthtimeNs)
-  )
-}
+/** The parked entry is still the one the listing bound: dev, ino, type and birthtime (UD24, SMI-7130). */
+const stillBound = (st: fs.BigIntStats, rid: RootIdentity): boolean =>
+  sameIdentity(rid, identityOf(st))
 
 const lstatBig = (p: string): fs.BigIntStats | null => {
   try {
@@ -105,15 +102,15 @@ const stopped = (a: EntryArgs): string =>
 
 export function restoreFileEntry(a: EntryArgs): EntryOutcome {
   const f1 = lstatBig(a.copyPath)
-  if (f1 === null || !stillBound(f1, a.rid, true)) {
-    return fail('plan-changed', `\`${a.copyPath}\` changed after you confirmed.`, false)
+  if (f1 === null || !stillBound(f1, a.rid)) {
+    return fail('plan-changed', PLAN_CHANGED, false)
   }
   a.guard()
   try {
     fs.linkSync(a.copyPath, a.target)
   } catch (err) {
     return errno(err) === 'EEXIST'
-      ? fail('origin-occupied', `Something already exists at \`${a.display}\`.`, false)
+      ? fail('origin-occupied', occupiedMessage(a.display), false)
       : fail('restore-failed', `Could not restore \`${a.display}\` (${errno(err)}).`, false)
   }
   a.onChanged()
@@ -125,8 +122,8 @@ export function restoreFileEntry(a: EntryArgs): EntryOutcome {
     lc !== null &&
     lo.dev === lc.dev &&
     lo.ino === lc.ino &&
-    (lo.mode & 0o170000n) === (lc.mode & 0o170000n) &&
-    stillBound(lc, a.rid, true)
+    (lo.mode & S_IFMT) === (lc.mode & S_IFMT) &&
+    stillBound(lc, a.rid)
   if (!same) return fail('link-stopped', stopped(a), true)
   a.guard()
   try {
@@ -139,8 +136,8 @@ export function restoreFileEntry(a: EntryArgs): EntryOutcome {
 
 export function restoreSymlinkEntry(a: EntryArgs): EntryOutcome {
   const s1 = lstatBig(a.copyPath)
-  if (s1 === null || !stillBound(s1, a.rid, true)) {
-    return fail('plan-changed', `\`${a.copyPath}\` changed after you confirmed.`, false)
+  if (s1 === null || !stillBound(s1, a.rid)) {
+    return fail('plan-changed', PLAN_CHANGED, false)
   }
   let text: string
   try {
@@ -153,7 +150,7 @@ export function restoreSymlinkEntry(a: EntryArgs): EntryOutcome {
     fs.symlinkSync(text, a.target)
   } catch (err) {
     return errno(err) === 'EEXIST'
-      ? fail('origin-occupied', `Something already exists at \`${a.display}\`.`, false)
+      ? fail('origin-occupied', occupiedMessage(a.display), false)
       : fail('restore-failed', `Could not restore \`${a.display}\` (${errno(err)}).`, false)
   }
   a.onChanged()
@@ -167,11 +164,7 @@ export function restoreSymlinkEntry(a: EntryArgs): EntryOutcome {
   }
   const lc = lstatBig(a.copyPath)
   const same =
-    lo !== null &&
-    lo.isSymbolicLink() &&
-    nowText === text &&
-    lc !== null &&
-    stillBound(lc, a.rid, true)
+    lo !== null && lo.isSymbolicLink() && nowText === text && lc !== null && stillBound(lc, a.rid)
   if (!same) return fail('link-stopped', stopped(a), true)
   a.guard()
   try {

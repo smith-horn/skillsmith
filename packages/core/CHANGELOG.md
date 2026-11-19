@@ -12,6 +12,13 @@ All notable changes to `@skillsmith/core` are documented here.
   restores a folder by claiming the origin first, and a file or symlink with a no-replace primitive
   (`link` / `symlink`), so whatever now sits at the origin is never replaced. The record is removed
   only after the set-aside copy is gone.
+- **Fixed**: SMI-6531 -- (#3271 retro) `executeRestore()` checks a plan's lock against a fresh
+  re-plan before taking it. A plan that names the wrong lock is refused with nothing created, not
+  even a staging or `locks/` folder. A stop under a skills root's lock now reports
+  `origin-root-unbindable` rather than the set-aside-area reason `locks-dir-changed`. A file or
+  symlink refusal carries the same remedy text as a folder ("Move it aside first…", "Nothing was
+  restored…"). `restoreClassOf` and `RESTORE_CLASS`, which 6d-ii exported by mistake, are no
+  longer exported.
 - **Changed**: SMI-6531 -- the park kind `fan-out-overwrite` is replaced by `fan-out-staging`,
   `fan-out-symlink` and `fan-out-backup`, one per caller, so restore can tell Skillsmith's own
   staging and backup folders from a link a user would want back. No park caller is wired to write

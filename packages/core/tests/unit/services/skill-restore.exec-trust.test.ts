@@ -9,7 +9,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ParkedLockChanged, runLockedForTests } from '../../../src/config/file-lock.parked.js'
+import {
+  ParkedLockChanged,
+  parkedLockPath,
+  runLockedForTests,
+} from '../../../src/config/file-lock.parked.js'
 import { executeRestore, executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import { replanUnderLock } from '../../../src/services/skill-restore.js'
 import type { RestoreHooks, RestorePlan } from '../../../src/services/skill-restore.types.js'
@@ -57,10 +61,35 @@ describe('a plan with a field the caller changed is plan-changed, with nothing w
       planChanged(r)
       expect(fs.existsSync(m.origin)).toBe(false)
       expect(fs.existsSync(path.join(env.base, 'elsewhere'))).toBe(false)
+      // A wrong lock is refused before any lock is taken, so no lock 1 binding made a folder.
+      expect(fs.existsSync(path.join(env.root2, '.skillsmith-staging'))).toBe(false)
       expect(fs.existsSync(m.copyPath)).toBe(true)
       expect(fs.existsSync(m.sidecarPath)).toBe(true)
     })
   }
+})
+
+describe('a lock named by the caller is checked before it is taken', () => {
+  it('lock 1prime: a lock path under another state root makes no locks folder', async () => {
+    env = mkEnv()
+    const m = parkEntry(env.root, 'f.txt', { type: 'file' })
+    const plan = await planOk(m.copyPath, env.opts)
+    const other = path.join(env.base, 'other')
+    fs.mkdirSync(other)
+    const areaReal = fs.realpathSync(path.join(env.root, '.skillsmith-parked'))
+    const forged: RestorePlan = {
+      ...plan,
+      lock: {
+        kind: 'lock1prime',
+        path: parkedLockPath(other, areaReal),
+        stateRoot: other,
+        areaReal,
+      },
+    }
+    planChanged(await executeRestoreWith(forged))
+    expect(fs.existsSync(path.join(other, 'locks'))).toBe(false)
+    expect(fs.existsSync(m.origin)).toBe(false)
+  })
 })
 
 describe('the plan own test seams are not read', () => {
@@ -295,4 +324,43 @@ describe('the public executeRestore works for a plan made without any test seam'
       else process.env['HOME'] = home
     }
   })
+})
+
+describe('stops say the same thing wherever they are raised', () => {
+  const MOVE_ASIDE = 'Move it aside first, then run `skillsmith restore <id>` again.'
+  const REPLAN = 'Nothing was restored. Run `skillsmith restore <id>` again'
+
+  for (const type of ['dir', 'file', 'symlink'] as const) {
+    it(`${type}: an occupant created before the write names the remedy`, async () => {
+      env = mkEnv()
+      const m = parkEntry(env.root, 'thing', { type })
+      const plan = await planOk(m.copyPath, env.opts)
+      const r = await executeRestoreWith(plan, {
+        beforeClaim: () => fs.writeFileSync(m.origin, 'occupant'),
+      })
+      expect(r.status).toBe('refused')
+      if (r.status === 'restored') return
+      expect(r.reason).toBe('origin-occupied')
+      expect(r.message).toContain(MOVE_ASIDE)
+    })
+  }
+
+  for (const type of ['file', 'symlink'] as const) {
+    it(`${type}: a parked name replaced after the re-plan says nothing was restored and how to retry`, async () => {
+      env = mkEnv()
+      const m = parkEntry(env.root, 'thing', { type })
+      const plan = await planOk(m.copyPath, env.opts)
+      const r = await executeRestoreWith(plan, {
+        beforeClaim: () => {
+          fs.unlinkSync(m.copyPath)
+          if (type === 'file') fs.writeFileSync(m.copyPath, 'another file')
+          else fs.symlinkSync('elsewhere', m.copyPath)
+        },
+      })
+      expect(r.status).toBe('refused')
+      if (r.status === 'restored') return
+      expect(r.reason).toBe('plan-changed')
+      expect(r.message).toContain(REPLAN)
+    })
+  }
 })

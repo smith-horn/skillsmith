@@ -13,6 +13,8 @@ All notable changes to `@skillsmith/cli` are documented here.
   step 8), so on a real machine it reports "No set-aside copy matches" when there is no copy at
   all, and "there is nothing to restore it into" for a copy that came from Skillsmith's own staging,
   temporary or backup folder.
+- **Fixed**: SMI-6531 -- (#3271 retro) when `skillsmith restore` refuses at run time with nothing
+  changed, it now says "Nothing was restored.", as it already did for a refusal at planning time.
 - **Changed**: SMI-6531 -- `skillsmith doctor recovery` and `skillsmith restore` share one
   confirmation gate (`confirm-gate.ts`); the prompts and exit codes of `doctor recovery` are
   unchanged.
