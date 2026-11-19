@@ -39,6 +39,7 @@ const ROWS: Array<[string, boolean]> = [
   ['echo "`sh -lc ', true],
   ['x`bash -c ', true],
   ['bash -c', true],
+  ['bash -c $', false], // a bare $ after -c is not an argument: the $'...' form is read by the word reader
   ['', false],
 ]
 
@@ -98,9 +99,12 @@ describe('endsInShC', () => {
     const SEP = [' ', '  ', '\t', '\n', '\r\n', ' ', '\v', ' ']
     // Take the high bits: an LCG's low bits cycle quickly, and `seed % n`
     // never produced some token pairs (a lone `-` right before `-c`).
+    // Math.imul keeps the multiply exact: a plain `*` passes 2^53 and loses
+    // precision, which cut the state to a 10,466-step cycle and this loop to
+    // 1,317 distinct strings out of 100,000 (SMI-7241).
     let seed = 7226
     const rnd = (n: number) => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
       return Math.floor((seed / 0x80000000) * n)
     }
     let positives = 0
@@ -193,7 +197,7 @@ describe('endsInShC', () => {
     const SEP = [' ', '  ', '\t', '', ' ']
     let seed = 4242
     const rnd = (n: number) => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
       return Math.floor((seed / 0x80000000) * n)
     }
     let positives = 0

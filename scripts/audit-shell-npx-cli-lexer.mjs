@@ -1,12 +1,25 @@
 /**
- * Line lexer for audit-standards.mjs Check 59's shell scan (SMI-7223,
- * SMI-7226, SMI-7241).
+ * Line lexer for Check 59's shell sub-check (SMI-7223, SMI-7226, SMI-7241).
+ * Used by audit-shell-npx-cli-helpers.mjs and audit-shell-npx-cli-words.mjs.
  *
- * lexLine() returns the context in force at every index of a logical line
- * (command context, a quote kind, or arithmetic), plus every heredoc operator
- * in command context. The scan that consumes it, and the list of Known blind
- * spots, are in audit-shell-npx-cli-helpers.mjs.
+ * lexLine() walks one logical line once with a context stack: quotes ('…',
+ * "…", $'…', $"…"), command substitution ($(…) and backticks, including inside
+ * "…"), arithmetic ($((…)), ((…)), $[…]) and case…esac, so a pattern's `)`
+ * does not close a substitution. Besides the per-index context it records
+ * every frame it opens (a match table: opening -> body start, closing index,
+ * end), so a later reader can jump over a quote or substitution without
+ * rescanning it, and every heredoc operator in command context.
+ *
+ * decodeAnsiC() decodes the body of a $'…' string as bash 5.2 does.
  */
+
+// Frame kinds in the match table. 0 means no frame opens at that index.
+export const SQ = 1 // '…'
+export const ANSI = 2 // $'…'
+export const DQ = 3 // "…" and $"…"
+export const CMD = 4 // $(…) and `…`
+export const ARITH = 5 // $((…)), ((…)), $[…]
+const KIND = { "'": SQ, "$'": ANSI, '"': DQ, cmd: CMD, arith: ARITH }
 
 // A heredoc operator at the lexer's position; group 2 is the delimiter word,
 // which may mix quoted, backslashed and bare parts (`END-OF`, `'EOF'`, `\EOF`).
@@ -91,43 +104,66 @@ function arithmeticCloses(line, from, pairs) {
 }
 
 /**
- * Lex one logical line. Returns { at, heredocs }: at[i] is the context in
- * force just before index i, as { q, openAt } where q is null (command
- * context), "'", '"', "$'" or 'arith', and openAt is where that context
- * opened. heredocs lists every heredoc operator in command context, in order.
+ * Lex one logical line. Returns { at, heredocs, frames }:
+ * - at[i] is the context just before index i, as { q, openAt }: q is null
+ *   (command context), "'", '"', "$'" or 'arith'; openAt is where it opened.
+ * - heredocs lists every heredoc operator in command context, in order, as
+ *   { dash, tag, expands, at, end } (`at`..`end` is the operator and word).
+ * - frames is the match table: kind[k] (SQ, ANSI, DQ, CMD, ARITH or 0) for a
+ *   frame opening at k, body[k] its first body index, close[k] the index of
+ *   its closing character and end[k] the index after the close. An unclosed
+ *   frame has close and end equal to the line's length.
  */
 export function lexLine(line, { heredocBody = false } = {}) {
+  const n = line.length
   // A heredoc body with an unquoted delimiter expands like "…" but has no
   // closing quote, so it starts in a "…" frame that a `"` never pops.
   const stack = heredocBody
     ? [{ kind: '"', close: null, openAt: -1, bodyAt: 0, depth: 0, cases: 0, sticky: true }]
     : [{ kind: 'cmd', close: null, openAt: -1, bodyAt: 0, depth: 0, cases: 0 }]
-  const at = new Array(line.length + 1)
+  const at = new Array(n + 1)
   const heredocs = []
-  const pairs = new Map() // arithmeticCloses() cache for this line
+  const frames = {
+    kind: new Uint8Array(n + 1),
+    body: new Int32Array(n + 1),
+    close: new Int32Array(n + 1),
+    end: new Int32Array(n + 1),
+  }
+  const pairs = new Map()
   const top = () => stack[stack.length - 1]
-  const push = (kind, close, openAt, bodyAt = openAt + 1) =>
+  const push = (kind, close, openAt, bodyAt = openAt + 1) => {
     stack.push({ kind, close, openAt, bodyAt, depth: 0, cases: 0 })
+    frames.kind[openAt] = KIND[kind]
+    frames.body[openAt] = bodyAt
+    frames.close[openAt] = n
+    frames.end[openAt] = n
+  }
+  // Pop the top frame, whose closing text is line[closeAt .. endAt).
+  const pop = (closeAt, endAt) => {
+    const f = stack.pop()
+    frames.close[f.openAt] = closeAt
+    frames.end[f.openAt] = endAt
+  }
   const mark = (from, to) => {
     const t = top()
     const st = { q: t.kind === 'cmd' ? null : t.kind, openAt: t.openAt }
-    for (let k = from; k < to && k <= line.length; k++) at[k] = st
+    for (let k = from; k < to && k <= n; k++) at[k] = st
   }
   let i = 0
-  while (i < line.length) {
+  while (i < n) {
     const t = top()
     const c = line[i]
     const next = line[i + 1]
     mark(i, i + 1)
     if (t.kind === "'") {
-      if (c === "'") stack.pop()
+      if (c === "'") pop(i, i + 1)
       i++
     } else if (t.kind === "$'") {
       if (c === '\\') {
         mark(i + 1, i + 2)
         i += 2
       } else {
-        if (c === "'") stack.pop()
+        if (c === "'") pop(i, i + 1)
         i++
       }
     } else if (t.kind === '"') {
@@ -135,7 +171,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
         mark(i + 1, i + 2)
         i += 2
       } else if (c === '"') {
-        if (!t.sticky) stack.pop()
+        if (!t.sticky) pop(i, i + 1)
         i++
       } else if (
         c === '$' &&
@@ -166,13 +202,13 @@ export function lexLine(line, { heredocBody = false } = {}) {
         i++
       } else if (t.close === '))' && c === ')' && t.depth === 0 && next === ')') {
         mark(i + 1, i + 2)
-        stack.pop()
+        pop(i, i + 2)
         i += 2
       } else if (c === ')' && t.depth > 0) {
         t.depth--
         i++
       } else if (t.close === ']' && c === ']') {
-        stack.pop()
+        pop(i, i + 1)
         i++
       } else {
         i++
@@ -185,8 +221,12 @@ export function lexLine(line, { heredocBody = false } = {}) {
       } else if (c === "'") {
         push("'", "'", i)
         i++
-      } else if (c === '$' && next === "'") {
-        push("$'", "'", i + 1)
+      } else if (c === '$' && (next === "'" || next === '"')) {
+        // SMI-7241 B.3 steps 1-2: the quote after `$` keeps the outer
+        // context (marked before the push), and the frame opens at the `$`,
+        // so endsInShC tests the text before it. $"…" is an ordinary "…".
+        mark(i + 1, i + 2)
+        push(next === "'" ? "$'" : '"', next, i, i + 2)
         i += 2
       } else if (c === '"') {
         push('"', '"', i)
@@ -209,7 +249,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
         push('arith', '))', i)
         i += 2
       } else if (c === '`') {
-        if (t.close === '`') stack.pop()
+        if (t.close === '`') pop(i, i + 1)
         else push('cmd', '`', i)
         i++
       } else if (c === '(') {
@@ -219,7 +259,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
         if (t.depth > 0) t.depth--
         else if (t.cases > 0) {
           // a case pattern's closing paren
-        } else if (t.close === ')') stack.pop()
+        } else if (t.close === ')') pop(i, i + 1)
         i++
       } else if (c === '<' && next === '<') {
         HEREDOC_AT.lastIndex = i
@@ -229,6 +269,8 @@ export function lexLine(line, { heredocBody = false } = {}) {
             dash: m[1] === '-',
             tag: heredocTag(m[2]),
             expands: !/['"\\]/.test(m[2]),
+            at: i,
+            end: i + m[0].length,
           })
           mark(i, i + m[0].length)
           i += m[0].length
@@ -248,6 +290,84 @@ export function lexLine(line, { heredocBody = false } = {}) {
       }
     }
   }
-  mark(line.length, line.length + 1)
-  return { at, heredocs }
+  mark(n, n + 1)
+  return { at, heredocs, frames }
+}
+
+// --- ANSI-C ($'…') decoding, after bash 5.2's ansicstr() -------------------
+
+const SIMPLE = {
+  a: '\x07',
+  b: '\b',
+  e: '\x1b',
+  E: '\x1b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  v: '\v',
+  '\\': '\\',
+  "'": "'",
+  '"': '"',
+  '?': '?',
+}
+const OCT = /[0-7]{1,3}/y
+const HEX2 = /[0-9A-Fa-f]{1,2}/y
+const HEX4 = /[0-9A-Fa-f]{1,4}/y
+const HEX8 = /[0-9A-Fa-f]{1,8}/y
+
+function take(re, s, at) {
+  re.lastIndex = at
+  const m = re.exec(s)
+  return m ? m[0] : null
+}
+
+/**
+ * Decode the body of a $'…' string (the text between `$'` and `'`). The
+ * simple escapes, octal of one to three digits masked to a byte, `\x` with one
+ * or two hex digits, `\u` up to four, `\U` up to eight, `\cX` (`\c?` is DEL);
+ * an unknown escape keeps its backslash; the string ends at a NUL. Linear: the
+ * NUL test looks only at the character just produced.
+ */
+export function decodeAnsiC(body) {
+  const out = []
+  let i = 0
+  while (i < body.length) {
+    const c = body[i]
+    let ch
+    if (c !== '\\' || i + 1 >= body.length) {
+      ch = c
+      i++
+    } else {
+      const n = body[i + 1]
+      let d
+      if (Object.hasOwn(SIMPLE, n)) {
+        ch = SIMPLE[n]
+        i += 2
+      } else if ((d = take(OCT, body, i + 1))) {
+        ch = String.fromCharCode(parseInt(d, 8) & 0xff)
+        i += 1 + d.length
+      } else if (n === 'x' && (d = take(HEX2, body, i + 2))) {
+        ch = String.fromCharCode(parseInt(d, 16))
+        i += 2 + d.length
+      } else if (n === 'u' && (d = take(HEX4, body, i + 2))) {
+        ch = String.fromCodePoint(parseInt(d, 16))
+        i += 2 + d.length
+      } else if (n === 'U' && (d = take(HEX8, body, i + 2))) {
+        const cp = parseInt(d, 16)
+        ch = cp <= 0x10ffff ? String.fromCodePoint(cp) : '\ufffd'
+        i += 2 + d.length
+      } else if (n === 'c' && i + 2 < body.length) {
+        const x = body[i + 2]
+        ch = x === '?' ? '\x7f' : String.fromCharCode(x.toUpperCase().charCodeAt(0) & 0x1f)
+        i += 3
+      } else {
+        ch = c
+        i++
+      }
+    }
+    if (ch === '\0') break // bash strings end at NUL
+    out.push(ch)
+  }
+  return out.join('')
 }
