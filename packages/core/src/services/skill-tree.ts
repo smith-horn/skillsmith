@@ -80,6 +80,19 @@ export type ClaimPublishResult =
    */
   | { ok: false; reason: 'rename-failed'; errno: string | null; claimLeft: true }
 
+/** Production options of `claimPublish`. */
+export interface ClaimPublishOptions {
+  /**
+   * Runs after the claim exists and its parent is synced, immediately before the
+   * `rename`. A caller that holds a lock and must re-verify it before the write
+   * (restore's `recheck()`) puts that check here: throwing stops the publish with
+   * the empty claim left in place, and the error propagates to the caller, who is
+   * responsible for reporting the claim. Unlike the test seam below, dropping this
+   * callback changes behaviour.
+   */
+  beforeRename?: () => void
+}
+
 /** @internal Test seam. */
 export interface ClaimPublishHooks {
   /** Runs between the claim's `mkdir` and the `rename`. */
@@ -99,7 +112,8 @@ export async function claimPublish(
   stagedAbs: string,
   destAbs: string,
   /** @internal */
-  hooks?: ClaimPublishHooks
+  hooks?: ClaimPublishHooks,
+  options: ClaimPublishOptions = {}
 ): Promise<ClaimPublishResult> {
   try {
     await fs.promises.mkdir(destAbs)
@@ -115,6 +129,7 @@ export async function claimPublish(
     return { ok: false, reason: 'sync-failed', errno: claim.code, claimLeft: true }
   }
   hooks?.afterClaim?.()
+  options.beforeRename?.()
   try {
     await fs.promises.rename(stagedAbs, destAbs)
   } catch (err) {

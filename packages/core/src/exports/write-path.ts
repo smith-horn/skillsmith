@@ -213,6 +213,21 @@ export type { ProtectedBy, Protection, RecordFacts } from '../services/skill-bac
 export { leftoverLines } from '../services/skill-backups.render.js'
 // SMI-6531 A1 step 6c-ii-b: the `--prune` dry run's pure planner and its contract (UD60-UD65).
 export { planPrune } from '../install/prune.select.js'
+// SMI-6531 6d-ii: `skillsmith restore <id>`.
+export { planRestore } from '../services/skill-restore.js'
+export { executeRestore } from '../services/skill-restore.exec.js'
+export { restoreClassOf, RESTORE_CLASS } from '../services/skill-restore.kinds.js'
+export type {
+  PlanRestoreResult,
+  RestoreCandidate,
+  RestoreContents,
+  RestoreLock,
+  RestorePlan,
+  RestorePlanOptions,
+  RestoreRefusalReason,
+  RestoreResult,
+  RestoreType,
+} from '../services/skill-restore.types.js'
 // The lock each deletion would hold (UD62, UD63; D12, D13) and the lock 1' path (PLAN:915).
 export { assignLocks } from '../services/skill-backups.locks.js'
 export {

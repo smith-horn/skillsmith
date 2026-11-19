@@ -38,9 +38,9 @@ const PLAN: [string, string, boolean][] = [
   ['uninstall', 'uninstall', true],
   ['fan-out-cleanup', 'fan-out-cleanup', true],
   ['fan-out-undo', 'fan-out-undo', true],
-  ['fan-out-staging', 'fan-out-overwrite', false],
-  ['fan-out-symlink', 'fan-out-overwrite', true],
-  ['fan-out-backup', 'fan-out-overwrite', false],
+  ['fan-out-staging', 'fan-out-staging', false],
+  ['fan-out-symlink', 'fan-out-symlink', true],
+  ['fan-out-backup', 'fan-out-backup', false],
   ['install-rollback', 'install-rollback', true],
   ['activation-undo', 'activation-undo', true],
   ['init-rollback', 'init-rollback', true],
@@ -178,7 +178,7 @@ describe('each caller parks with its own kind and gets its own held detail', () 
 
   it('a parked (not held) result is unaffected by the caller', () => {
     const f = fixture()
-    const r = parkTree(f.parent, 'tree', optsFor('fan-out-backup', 'fan-out-overwrite'))
+    const r = parkTree(f.parent, 'tree', optsFor('fan-out-backup', 'fan-out-backup'))
     expect(r.status).toBe('parked')
     expect(r.detail).toBe(null)
   })
@@ -191,7 +191,7 @@ describe('caller, kind and backupPath are validated before any filesystem work',
     [
       'a kind that is not the caller’s',
       { client: CLIENT, caller: 'fan-out-backup', kind: 'uninstall' },
-      'caller fan-out-backup parks with kind "fan-out-overwrite", got "uninstall"',
+      'caller fan-out-backup parks with kind "fan-out-backup", got "uninstall"',
     ],
     [
       'move-source without backupPath',
@@ -266,13 +266,13 @@ describe('caller and backupPath are read as plain data, never by running a gette
 })
 
 describe('the sidecar of a held park records the kind, not the caller', () => {
-  it('fan-out-staging writes kind fan-out-overwrite', () => {
-    const { r } = heldPark('fan-out-staging', 'fan-out-overwrite')
+  it('fan-out-staging writes kind fan-out-staging', () => {
+    const { r } = heldPark('fan-out-staging', 'fan-out-staging')
     const sidecar = JSON.parse(fs.readFileSync(String(r.sidecarPath), 'utf8')) as Record<
       string,
       unknown
     >
-    expect(sidecar.kind).toBe('fan-out-overwrite')
+    expect(sidecar.kind).toBe('fan-out-staging')
     expect('caller' in sidecar).toBe(false)
     expect(path.isAbsolute(String(r.heldPath))).toBe(true)
   })

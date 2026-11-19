@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6d-ii: `planRestore()` and `executeRestore()` put a set-aside copy
+  back where it came from. Planning takes no lock and writes nothing; it resolves an id (an op id,
+  `<opId>/<name>`, or a full path), refuses a copy whose record cannot be read or whose origin is
+  Skillsmith's own scratch space, and chooses the lock from the origin's current skills root (lock 1
+  of that root, or lock 1′ when no skills root holds it). Execution re-plans under the lock, then
+  restores a folder by claiming the origin first, and a file or symlink with a no-replace primitive
+  (`link` / `symlink`), so whatever now sits at the origin is never replaced. The record is removed
+  only after the set-aside copy is gone.
+- **Changed**: SMI-6531 -- the park kind `fan-out-overwrite` is replaced by `fan-out-staging`,
+  `fan-out-symlink` and `fan-out-backup`, one per caller, so restore can tell Skillsmith's own
+  staging and backup folders from a link a user would want back. No park caller is wired to write
+  these yet, so no existing record carries the old kind; a record that still does is refused as an
+  unknown kind.
 - **Added**: SMI-6531 -- A1 step 6d-i: `withParkedAreaLock()` takes lock 1′, the lock a parked area
   is pruned and restored under, at `<stateRoot>/locks/parked-<key>.lock` (`parkedLockPath()`, and
   `parkedLockTarget()` for the name `withFileLock` takes). It runs a callback under the lock and

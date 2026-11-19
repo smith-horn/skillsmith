@@ -4,6 +4,18 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 6d-ii: `skillsmith restore <id>` puts a set-aside copy back where
+  it came from. It shows the plan, asks once (`--yes` skips the prompt and waives no check), and
+  takes `--json`, `--root <dir>` and `--state-root <dir>`. It refuses a copy it cannot place safely,
+  and never replaces something already at the destination. Exit codes: 0 restored or declined,
+  1 refused or failed with nothing changed, 3 not confirmed, 4 stopped after something changed,
+  130 interrupted. No Skillsmith command sets aside a copy this can restore yet (that arrives with
+  step 8), so on a real machine it reports "No set-aside copy matches" when there is no copy at
+  all, and "there is nothing to restore it into" for a copy that came from Skillsmith's own staging,
+  temporary or backup folder.
+- **Changed**: SMI-6531 -- `skillsmith doctor recovery` and `skillsmith restore` share one
+  confirmation gate (`confirm-gate.ts`); the prompts and exit codes of `doctor recovery` are
+  unchanged.
 - **Fixed**: SMI-6531 -- `skillsmith doctor backups` called the backup an update record names
   "protected by parked unreadable record <record>". It now reads "it is the backup the update
   record <record> names", as `--prune` already did.
