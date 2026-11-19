@@ -13,6 +13,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseSidecarStrict } from '../install/prune.sidecar.js'
+import { PARKED_DIR } from '../install/prune.list.parked.js'
 import { classifyCopy, type Classification } from '../install/prune.classify.js'
 import type { ListedCopy } from '../install/prune.list.types.js'
 import type { LockAssignment } from '../install/prune.plan.types.js'
@@ -154,13 +155,11 @@ export async function planRestore(
       candidates,
     }
   }
-  const { row, view } = matches[0]!
+  const { row } = matches[0]!
   return evaluate(
     {
       copy: row.copy,
       classification: row.classification,
-      areaRoot: view.ref.root,
-      areaDir: view.ref.areaDir,
       bytes: row.apparentBytes,
     },
     {
@@ -180,14 +179,16 @@ export async function planRestore(
  */
 export async function replanUnderLock(plan: RestorePlan): Promise<PlanRestoreResult> {
   const { discovered: _stale, ...options } = plan.options
+  // Nothing the plan says about where the copy sits is trusted: the area comes from the copy's own
+  // listing fields, and those must agree with each other and with the parked layout.
+  const inconsistent = copyShapeProblem(plan.copy)
+  if (inconsistent !== null) return refuse('plan-changed', inconsistent)
   const discovery = await discoverFor(options)
   const classification = classifyCopy(plan.copy, 'parked')
   return evaluate(
     {
       copy: plan.copy,
       classification,
-      areaRoot: plan.areaRoot,
-      areaDir: plan.areaDir,
       bytes: classification.measured.apparentBytes,
     },
     { discovery, indexLines: readIndexes(discovery.stateRoots).lines, assigned: undefined },
@@ -195,11 +196,28 @@ export async function replanUnderLock(plan: RestorePlan): Promise<PlanRestoreRes
   )
 }
 
+/**
+ * Why `copy` cannot be a parked copy as the listing makes one, or null: the
+ * area is `stagingRoot` (a `.skillsmith-parked` folder), and the copy, its op
+ * folder, its parent and its record all follow from it.
+ */
+export function copyShapeProblem(copy: ListedCopy): string | null {
+  const area = copy.stagingRoot
+  const opDir = path.join(area, copy.opId)
+  const ok =
+    path.basename(area) === PARKED_DIR &&
+    copy.opDir === opDir &&
+    copy.parentDir === opDir &&
+    copy.copyPath === path.join(opDir, copy.name) &&
+    copy.sidecarPath === `${copy.copyPath}.json`
+  return ok
+    ? null
+    : 'The restore plan does not describe a set-aside copy in a parked area, so nothing was restored. Run `skillsmith restore <id>` again.'
+}
+
 interface Subject {
   copy: ListedCopy
   classification: Classification
-  areaRoot: string
-  areaDir: string
   bytes: number
 }
 
@@ -214,6 +232,9 @@ async function evaluate(
 ): Promise<PlanRestoreResult> {
   const row = { copy: s.copy }
   const c = s.classification
+  // The area is the copy's own `stagingRoot`; its parent is where `.skillsmith-parked` sits.
+  const areaDir = s.copy.stagingRoot
+  const areaRoot = path.dirname(areaDir)
   const copyPath = s.copy.copyPath
   const unknownOrigin = refuse(
     'origin-unknown',
@@ -272,10 +293,10 @@ async function evaluate(
       `The folder \`${dir}\` that \`${path.basename(origin)}\` came from no longer exists. Create it, then run \`skillsmith restore <id>\` again.`
     )
   }
-  if (o !== realOf(s.areaRoot)) {
+  if (o !== realOf(areaRoot)) {
     return refuse(
       'origin-mismatch',
-      `\`${copyPath}\` says it came from \`${origin}\`, which is not beside the folder it was set aside in (\`${s.areaDir}\`). Copy what you need from it by hand.`
+      `\`${copyPath}\` says it came from \`${origin}\`, which is not beside the folder it was set aside in (\`${areaDir}\`). Copy what you need from it by hand.`
     )
   }
   const chosen = await chooseLock({
@@ -284,7 +305,7 @@ async function evaluate(
     copyPath,
     origin,
     o,
-    areaDir: s.areaDir,
+    areaDir,
     assigned: ctx.assigned,
   })
   if (!chosen.ok) return refuse(chosen.reason, chosen.message)
@@ -311,7 +332,7 @@ async function evaluate(
       target,
       idOf(target),
       idOf(o),
-      idOf(s.areaDir),
+      idOf(areaDir),
       idOf(row.copy.opDir),
       chosen.lock,
       chosen.rootIdentity,
@@ -327,8 +348,6 @@ async function evaluate(
       type,
       origin,
       target,
-      areaRoot: s.areaRoot,
-      areaDir: s.areaDir,
       lock: chosen.lock,
       bytes: s.bytes,
       contents: contentsOf(sc, c.freshHash),

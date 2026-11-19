@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ParkedLockChanged, runLockedForTests } from '../../../src/config/file-lock.parked.js'
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import type { RestoreHooks } from '../../../src/services/skill-restore.types.js'
 import {
   indexKind,
@@ -59,7 +59,7 @@ describe('a lock that stops holding after something changed is reported for what
     const m = outside('dir')
     const plan = await planOk(m.copyPath, env.opts)
     // calls: 1 initial, 2 before the claim, 3 immediately before the rename
-    const r = await executeRestore(plan, { runLock: throwingAt(3) })
+    const r = await executeRestoreWith(plan, { runLock: throwingAt(3) })
     expect(r.status).toBe('stopped')
     if (r.status === 'restored') return
     expect(r.reason).toBe('claim-left')
@@ -76,7 +76,7 @@ describe('a lock that stops holding after something changed is reported for what
     const m = outside('file')
     const plan = await planOk(m.copyPath, env.opts)
     // calls: 1 initial, 2 before the link, 3 before the parked unlink
-    const r = await executeRestore(plan, { runLock: throwingAt(3) })
+    const r = await executeRestoreWith(plan, { runLock: throwingAt(3) })
     expect(r.status).toBe('stopped')
     if (r.status === 'restored') return
     expect(r.reason).toBe('unlink-failed')
@@ -94,7 +94,7 @@ describe('a lock that stops holding after something changed is reported for what
     const m = outside('file')
     const plan = await planOk(m.copyPath, env.opts)
     // calls: 1 initial, 2 before the link, 3 before the parked unlink, 4 before the record unlink
-    const r = await executeRestore(plan, { runLock: throwingAt(4) })
+    const r = await executeRestoreWith(plan, { runLock: throwingAt(4) })
     expect(r.status).toBe('restored')
     if (r.status !== 'restored') return
     expect(r.warnings.join(' ')).toContain('could not be removed')
@@ -123,7 +123,7 @@ describe('lock 1: the check runs before every write', () => {
     const m = parkEntry(env.root, 'skill-a')
     const plan = await planOk(m.copyPath, env.opts)
     const mkdir = vi.spyOn(fs.promises, 'mkdir')
-    const r = await executeRestore(plan, { wrapCheck: failAt(2) })
+    const r = await executeRestoreWith(plan, { wrapCheck: failAt(2) })
     expect(r.status).toBe('refused')
     if (r.status !== 'restored') expect(r.changed).toBe(false)
     expect(mkdir.mock.calls.map((c) => String(c[0]))).not.toContain(plan.target)
@@ -136,7 +136,7 @@ describe('lock 1: the check runs before every write', () => {
     const m = parkEntry(env.root, 'f.txt', { type: 'file' })
     const plan = await planOk(m.copyPath, env.opts)
     const link = vi.spyOn(fs, 'linkSync')
-    const r = await executeRestore(plan, { wrapCheck: failAt(2) })
+    const r = await executeRestoreWith(plan, { wrapCheck: failAt(2) })
     expect(r.status).toBe('refused')
     expect(link).not.toHaveBeenCalled()
     expect(fs.existsSync(m.origin)).toBe(false)
@@ -147,7 +147,7 @@ describe('lock 1: the check runs before every write', () => {
     const m = parkEntry(env.root, 'f.txt', { type: 'file' })
     const plan = await planOk(m.copyPath, env.opts)
     const unlink = vi.spyOn(fs, 'unlinkSync')
-    const r = await executeRestore(plan, { wrapCheck: failAt(3) })
+    const r = await executeRestoreWith(plan, { wrapCheck: failAt(3) })
     expect(r.status).toBe('stopped')
     const unlinked = unlink.mock.calls.map((c) => String(c[0]))
     expect(unlinked).not.toContain(m.copyPath)
@@ -176,7 +176,7 @@ describe('the record is unlinked only when it is still the one the plan read', (
       env = mkEnv()
       const m = parkEntry(env.root, 'f.txt', { type: 'file' })
       const plan = await planOk(m.copyPath, env.opts)
-      const r = await executeRestore(plan, { beforeUnlink: swapRecord(m, how) })
+      const r = await executeRestoreWith(plan, { beforeUnlink: swapRecord(m, how) })
       expect(r.status).toBe('restored')
       if (r.status !== 'restored') return
       expect(r.warnings.join(' ')).toContain('changed since it was read')

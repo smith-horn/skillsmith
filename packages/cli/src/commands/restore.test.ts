@@ -13,14 +13,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const calls = vi.hoisted(() => ({ executes: 0 }))
+const calls = vi.hoisted(() => ({ executes: 0, hooks: {} as Record<string, unknown> }))
 vi.mock('@skillsmith/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@skillsmith/core')>()
   return {
     ...actual,
-    executeRestore: (...a: Parameters<typeof actual.executeRestore>) => {
+    // The public entry takes no seams; a test reaches the internal one through this mock.
+    executeRestore: async (plan: Parameters<typeof actual.executeRestore>[0]) => {
       calls.executes++
-      return actual.executeRestore(...a)
+      const internal = await import('../../../core/src/services/skill-restore.exec.js')
+      return internal.executeRestoreWith(plan, calls.hooks)
     },
   }
 })
@@ -29,9 +31,9 @@ import {
   withSkillWriteLock,
   withParkedAreaLock,
   parkedLockPath,
-  type RestoreHooks,
   type RestorePlan,
 } from '@skillsmith/core'
+import type { RestoreHooks } from '../../../core/src/services/skill-restore.types.js'
 import { runLockedForTests } from '../../../core/src/config/file-lock.parked.js'
 import { appendParkedIndex } from '../../../core/src/install/parked-index.js'
 import { computePathTreeHash, parkTree } from '../../../core/src/install/park-tree.js'
@@ -50,6 +52,7 @@ beforeEach(() => {
   root = path.join(base, 'clients', 'claude-code')
   fs.mkdirSync(root, { recursive: true })
   calls.executes = 0
+  calls.hooks = {}
   out = []
   vi.spyOn(console, 'log').mockImplementation((...a) => void out.push(a.join(' ')))
   vi.spyOn(console, 'error').mockImplementation((...a) => void out.push(a.join(' ')))
@@ -300,11 +303,11 @@ describe('a stranded lock claim is reported in the text and the JSON', () => {
           },
         },
       }) as ReturnType<NonNullable<RestoreHooks['runLock']>>
+    calls.hooks = { runLock }
     const opts = {
       discovery: hermeticDiscovery(base, true),
       stateRoot,
       yes: true,
-      hooks: { runLock },
     }
     await runRestore('op-i', opts)
     const text = out.join('\n')

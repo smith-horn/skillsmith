@@ -25,7 +25,10 @@ export type EntryOutcome = { ok: true; warnings: string[] } | EntryFailure
 
 export interface EntryArgs {
   copyPath: string
-  origin: string
+  /** Where the writes go: the bound real path. */
+  target: string
+  /** What messages call it: the record's own spelling of the origin. */
+  display: string
   rid: RootIdentity
   /** Called immediately before every write; throws to stop. */
   guard: () => void
@@ -79,7 +82,7 @@ function trySync(dir: string): string | null {
 
 function syncWarnings(a: EntryArgs): string[] {
   const out: string[] = []
-  for (const d of [path.dirname(a.origin), path.dirname(a.copyPath)]) {
+  for (const d of [path.dirname(a.target), path.dirname(a.copyPath)]) {
     const e = trySync(d)
     if (e !== null) {
       out.push(
@@ -91,10 +94,10 @@ function syncWarnings(a: EntryArgs): string[] {
 }
 
 const gone = (a: EntryArgs, e: string): string =>
-  `Restored to \`${a.origin}\`, but the set-aside name \`${a.copyPath}\` could not be removed (${e}). Both names are the same entry; remove \`${a.copyPath}\` and its \`.json\` by hand.`
+  `Restored to \`${a.display}\`, but the set-aside name \`${a.copyPath}\` could not be removed (${e}). Both names are the same entry; remove \`${a.copyPath}\` and its \`.json\` by hand.`
 
 const stopped = (a: EntryArgs): string =>
-  `Restore stopped: \`${a.origin}\` was created, but \`${a.copyPath}\` changed at the same time, so it was left in place. Check both paths: \`${a.origin}\` and \`${a.copyPath}\`.`
+  `Restore stopped: \`${a.display}\` was created, but \`${a.copyPath}\` changed at the same time, so it was left in place. Check both paths: \`${a.display}\` and \`${a.copyPath}\`.`
 
 export function restoreFileEntry(a: EntryArgs): EntryOutcome {
   const f1 = lstatBig(a.copyPath)
@@ -103,15 +106,15 @@ export function restoreFileEntry(a: EntryArgs): EntryOutcome {
   }
   a.guard()
   try {
-    fs.linkSync(a.copyPath, a.origin)
+    fs.linkSync(a.copyPath, a.target)
   } catch (err) {
     return errno(err) === 'EEXIST'
-      ? fail('origin-occupied', `Something already exists at \`${a.origin}\`.`, false)
-      : fail('restore-failed', `Could not restore \`${a.origin}\` (${errno(err)}).`, false)
+      ? fail('origin-occupied', `Something already exists at \`${a.display}\`.`, false)
+      : fail('restore-failed', `Could not restore \`${a.display}\` (${errno(err)}).`, false)
   }
   a.onChanged()
   a.afterLink?.()
-  const lo = lstatBig(a.origin)
+  const lo = lstatBig(a.target)
   const lc = lstatBig(a.copyPath)
   const same =
     lo !== null &&
@@ -143,18 +146,18 @@ export function restoreSymlinkEntry(a: EntryArgs): EntryOutcome {
   }
   a.guard()
   try {
-    fs.symlinkSync(text, a.origin)
+    fs.symlinkSync(text, a.target)
   } catch (err) {
     return errno(err) === 'EEXIST'
-      ? fail('origin-occupied', `Something already exists at \`${a.origin}\`.`, false)
-      : fail('restore-failed', `Could not restore \`${a.origin}\` (${errno(err)}).`, false)
+      ? fail('origin-occupied', `Something already exists at \`${a.display}\`.`, false)
+      : fail('restore-failed', `Could not restore \`${a.display}\` (${errno(err)}).`, false)
   }
   a.onChanged()
   a.afterLink?.()
-  const lo = lstatBig(a.origin)
+  const lo = lstatBig(a.target)
   let nowText: string | null = null
   try {
-    nowText = fs.readlinkSync(a.origin)
+    nowText = fs.readlinkSync(a.target)
   } catch {
     nowText = null
   }

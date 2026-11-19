@@ -221,7 +221,6 @@ export type {
   PlanRestoreResult,
   RestoreCandidate,
   RestoreContents,
-  RestoreHooks,
   RestoreLock,
   RestorePlan,
   RestorePlanOptions,

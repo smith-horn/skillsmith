@@ -20,7 +20,7 @@ vi.mock('fs/promises', async (importOriginal) => {
   }
 })
 
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import { mkEnv, parkEntry, planOk, type Env } from './skill-restore.helpers.js'
 
 let env: Env
@@ -35,7 +35,7 @@ describe('R-claim-left', () => {
     env = mkEnv()
     const m = parkEntry(env.root, 'skill-a')
     const plan = await planOk(m.copyPath, env.opts)
-    const r = await executeRestore(plan, {
+    const r = await executeRestoreWith(plan, {
       beforeClaim: () => {
         sync.fail = true
       },
@@ -60,7 +60,7 @@ describe('R-claim-left', () => {
     vi.spyOn(fs.promises, 'rename').mockRejectedValue(
       Object.assign(new Error('forced'), { code: 'ENOTEMPTY' })
     )
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('stopped')
     if (r.status === 'restored') return
     expect(r.reason).toBe('claim-left')

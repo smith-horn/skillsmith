@@ -12,12 +12,7 @@
 import path from 'node:path'
 import chalk from 'chalk'
 import { withTelemetry } from '@skillsmith/core/telemetry'
-import {
-  executeRestore,
-  planRestore,
-  type DiscoverOptions,
-  type RestoreHooks,
-} from '@skillsmith/core'
+import { executeRestore, planRestore, type DiscoverOptions } from '@skillsmith/core'
 import { confirmOrStop, type PromptAnswer } from './confirm-gate.js'
 import { planLines, restoreJson, resultLines } from './restore.render.js'
 
@@ -34,8 +29,6 @@ export interface RestoreActionOptions {
   prompt?: (question: string) => Promise<PromptAnswer>
   /** @internal Test seam: runs between the confirmation and the lock. */
   afterConfirm?: () => void | Promise<void>
-  /** @internal Test seam: passed to `executeRestore`. */
-  hooks?: RestoreHooks
 }
 
 const blankFlag = (o: RestoreActionOptions): string | null => {
@@ -86,7 +79,7 @@ export async function runRestore(id: string, options: RestoreActionOptions): Pro
   )
   if (gate === 'stop') return
   await options.afterConfirm?.()
-  const result = await executeRestore(plan, options.hooks ?? {})
+  const result = await executeRestore(plan)
   if (json) {
     console.log(
       restoreJson({

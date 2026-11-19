@@ -1,5 +1,5 @@
 /**
- * SMI-6531 (A1 step 6d-ii): `planRestore` / `executeRestore` over folders and
+ * SMI-6531 (A1 step 6d-ii): `planRestore` / `executeRestoreWith` over folders and
  * the refusals (design note §9.1, §9.4). Each row has a declared red mutation
  * recorded in the 6d-ii PR.
  */
@@ -8,7 +8,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { computePathTreeHash } from '../../../src/install/park-tree.js'
 import { parkedLockPath } from '../../../src/config/file-lock.parked.js'
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import { planRestore } from '../../../src/services/skill-restore.js'
 import { withSkillWriteLock } from '../../../src/services/skill-write-lock.js'
 import { mkEnv, parkEntry, planOk, snapshot, indexKind, type Env } from './skill-restore.helpers.js'
@@ -30,7 +30,7 @@ describe('restoring a folder', () => {
     expect(before).toBe(false)
     const plan = await planOk(m.copyPath, env.opts)
     expect(plan.lock.kind).toBe('lock1')
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('restored')
     if (r.status !== 'restored') return
     expect(r.notes.join(' ')).toContain('not tracked')
@@ -44,7 +44,7 @@ describe('restoring a folder', () => {
     const m = parkEntry(env.root, 'skill-h', { held: true })
     const plan = await planOk(m.copyPath, env.opts)
     expect(plan.held).toBe(true)
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('restored')
     if (r.status !== 'restored') return
     expect(r.notes.join(' ')).toContain('differs')
@@ -93,7 +93,7 @@ describe('restoring a folder', () => {
     const m = parkEntry(env.root, 'skill-a')
     const plan = await planOk(m.copyPath, env.opts)
     let ino = 0n
-    const r = await executeRestore(plan, {
+    const r = await executeRestoreWith(plan, {
       beforeClaim: () => {
         fs.mkdirSync(m.origin)
         ino = fs.lstatSync(m.origin, { bigint: true }).ino
@@ -130,7 +130,7 @@ describe('restoring a folder', () => {
       await held
     })
     await got
-    const r = await executeRestore(plan, { lockTimeoutMs: 200 })
+    const r = await executeRestoreWith(plan, { lockTimeoutMs: 200 })
     release()
     await holder
     expect(r.status).toBe('refused')
@@ -169,7 +169,7 @@ describe('refusals', () => {
     expect(s.status === 'refused' && s.reason).toBe('nothing-to-restore-into')
     const plan = await planOk(sl.copyPath, env.opts)
     expect(plan.type).toBe('symlink')
-    expect((await executeRestore(plan)).status).toBe('restored')
+    expect((await executeRestoreWith(plan)).status).toBe('restored')
   })
 
   it('RS1-legacy-kind: a sidecar still carrying fan-out-overwrite is refused as unknown', async () => {
@@ -229,7 +229,7 @@ describe('the lock follows the origin', () => {
     expect(plan.lock.path).toBe(
       parkedLockPath(env.stateRoot, fs.realpathSync.native(path.join(p, '.skillsmith-parked')))
     )
-    expect((await executeRestore(plan)).status).toBe('restored')
+    expect((await executeRestoreWith(plan)).status).toBe('restored')
     expect(fs.existsSync(path.join(m.origin, 'SKILL.md'))).toBe(true)
   })
 
@@ -240,7 +240,7 @@ describe('the lock follows the origin', () => {
     indexKind(env.stateRoot, m.copyPath, m.opId, 'init-rollback')
     const plan = await planOk(m.copyPath, env.opts)
     const changed = { ...plan, options: { ...plan.options, roots: [p] } }
-    const r = await executeRestore(changed)
+    const r = await executeRestoreWith(changed)
     expect(r.status).toBe('refused')
     if (r.status !== 'restored') expect(r.reason).toBe('plan-changed')
     expect(fs.existsSync(m.origin)).toBe(false)
@@ -269,14 +269,14 @@ describe('the lock follows the origin', () => {
       await held
     })
     await got
-    const busy = await executeRestore(plan, { lockTimeoutMs: 200 })
+    const busy = await executeRestoreWith(plan, { lockTimeoutMs: 200 })
     expect(busy.status).toBe('refused')
     if (busy.status !== 'restored') expect(busy.reason).toBe('restore-busy')
     expect(fs.existsSync(m.origin)).toBe(false)
     expect(fs.existsSync(m.copyPath)).toBe(true)
     release()
     await holder
-    expect((await executeRestore(plan)).status).toBe('restored')
+    expect((await executeRestoreWith(plan)).status).toBe('restored')
     expect(fs.existsSync(path.join(m.origin, 'SKILL.md'))).toBe(true)
   })
 

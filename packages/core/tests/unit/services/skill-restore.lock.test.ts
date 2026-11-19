@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ParkedLockChanged, runLockedForTests } from '../../../src/config/file-lock.parked.js'
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import type { RestoreHooks } from '../../../src/services/skill-restore.types.js'
 import { withSkillWriteLock } from '../../../src/services/skill-write-lock.js'
 import {
@@ -78,7 +78,7 @@ describe('stranded lock claim', () => {
           },
         },
       }) as ReturnType<RunLock>
-    const r = await executeRestore(plan, { runLock })
+    const r = await executeRestoreWith(plan, { runLock })
     expect(r.status).toBe('refused')
     if (r.status === 'restored') return
     expect(r.reason).toBe('locks-dir-changed')
@@ -118,7 +118,7 @@ describe('a recheck immediately before every write', () => {
       watch('link', fs, 'linkSync', [0])
       watch('symlink', fs, 'symlinkSync', [1])
       watch('unlink', fs, 'unlinkSync', [0])
-      const r = await executeRestore(plan, { runLock: loggingRunner(events) })
+      const r = await executeRestoreWith(plan, { runLock: loggingRunner(events) })
       expect(r.status).toBe('restored')
       const writes = events.filter((e) => e.startsWith('write:')).map((e) => e.slice(6))
       expect(writes).toEqual(writesOf(m)[type])
@@ -136,7 +136,7 @@ describe('a recheck immediately before every write', () => {
     const runLock = loggingRunner([], (n) => {
       if (n === 3) throw new ParkedLockChanged(env.stateRoot, 'test swap')
     })
-    const r = await executeRestore(plan, { runLock })
+    const r = await executeRestoreWith(plan, { runLock })
     expect(r.status).toBe('stopped')
     if (r.status === 'restored') return
     // After the link: reported as the F4 stop naming both paths (see skill-restore.guard.test.ts).
@@ -170,14 +170,14 @@ describe('the lock follows the origin: (a1) and the disagreement with prune', ()
       await held
     })
     await got
-    const busy = await executeRestore(plan, { lockTimeoutMs: 200 })
+    const busy = await executeRestoreWith(plan, { lockTimeoutMs: 200 })
     expect(busy.status).toBe('refused')
     if (busy.status !== 'restored') expect(busy.reason).toBe('restore-busy')
     expect(fs.existsSync(m.origin)).toBe(false)
     expect(fs.existsSync(m.copyPath)).toBe(true)
     release()
     await holder
-    expect((await executeRestore(plan)).status).toBe('restored')
+    expect((await executeRestoreWith(plan)).status).toBe('restored')
   })
 
   it('an ancestor that became a root: the disagreement is data as well as a note', async () => {

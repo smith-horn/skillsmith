@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import { planRestore } from '../../../src/services/skill-restore.js'
 import { insideOrEqual } from '../../../src/services/skill-restore.lock.js'
 import { indexKind, mkEnv, parkEntry, planOk, type Env } from './skill-restore.helpers.js'
@@ -105,7 +105,7 @@ describe('writes go to the bound real parent, not the sidecar spelling', () => {
     expect(plan.origin).toBe(a.spelled)
     expect(plan.target).toBe(a.real)
     const mkdir = vi.spyOn(fs.promises, 'mkdir')
-    expect((await executeRestore(plan)).status).toBe('restored')
+    expect((await executeRestoreWith(plan)).status).toBe('restored')
     const made = mkdir.mock.calls.map((c) => String(c[0]))
     expect(made).toContain(a.real)
     expect(made).not.toContain(a.spelled)
@@ -117,7 +117,7 @@ describe('writes go to the bound real parent, not the sidecar spelling', () => {
     const a = viaAlias(env, 'file')
     const plan = await planOk(a.copy, env.opts)
     const link = vi.spyOn(fs, 'linkSync')
-    expect((await executeRestore(plan)).status).toBe('restored')
+    expect((await executeRestoreWith(plan)).status).toBe('restored')
     expect(link.mock.calls.map((c) => String(c[1]))).toEqual([a.real])
     expect(fs.readFileSync(a.real, 'utf8')).toBe('file thing\n')
   })

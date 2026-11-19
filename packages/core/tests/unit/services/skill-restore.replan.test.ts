@@ -30,7 +30,7 @@ vi.mock('../../../src/services/skill-backups.locks.js', async (importOriginal) =
   }
 })
 
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import { mkEnv, parkEntry, planOk, type Env } from './skill-restore.helpers.js'
 
 let env: Env
@@ -45,7 +45,7 @@ describe('the re-plan under the lock', () => {
     expect(calls.assignLocks).toBeGreaterThan(0)
     calls.listBackups = 0
     calls.assignLocks = 0
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('restored')
     expect(calls.listBackups).toBe(0)
     expect(calls.assignLocks).toBe(0)

@@ -99,7 +99,8 @@ const bodyOf =
         try {
           out = run({
             copyPath: plan.copy.copyPath,
-            origin: plan.target,
+            target: plan.target,
+            display: plan.origin,
             rid: plan.rootIdentity,
             guard,
             onChanged: () => {
@@ -219,7 +220,18 @@ function notesOf(plan: RestorePlan): string[] {
   return out
 }
 
-export async function executeRestore(
+/**
+ * Restores the copy `plan` names (the public entry; it takes no test seams).
+ * `plan` must come from `planRestore`: everything it carries is re-derived
+ * and re-checked under the lock, and one that does not match the disk is
+ * `plan-changed`.
+ */
+export function executeRestore(plan: RestorePlan): Promise<RestoreResult> {
+  return executeRestoreWith(plan, {})
+}
+
+/** @internal `executeRestore` with the test seams; not exported from the package. */
+export async function executeRestoreWith(
   plan: RestorePlan,
   hooks: RestoreHooks = {}
 ): Promise<RestoreResult> {

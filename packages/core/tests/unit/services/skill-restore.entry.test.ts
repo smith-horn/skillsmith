@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listBackups } from '../../../src/services/skill-backups.listing.js'
-import { executeRestore } from '../../../src/services/skill-restore.exec.js'
+import { executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
 import { mkEnv, parkEntry, planOk, type Env } from './skill-restore.helpers.js'
 
 let env: Env
@@ -32,7 +32,7 @@ describe('RS2: no-replace restore of files and symlinks', () => {
     wrap('lstatSync')
     wrap('unlinkSync')
     wrap('renameSync')
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('restored')
     expect(fs.readFileSync(m.origin, 'utf8')).toBe('file f.txt\n')
     expect(order.some((c) => c.startsWith('renameSync:'))).toBe(false)
@@ -53,7 +53,7 @@ describe('RS2: no-replace restore of files and symlinks', () => {
     const plan = await planOk(m.copyPath, env.opts)
     const link = vi.spyOn(fs, 'linkSync')
     const sym = vi.spyOn(fs, 'symlinkSync')
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('restored')
     expect(link).not.toHaveBeenCalled()
     expect(sym).toHaveBeenCalledWith('does-not-exist', m.origin)
@@ -67,7 +67,7 @@ describe('RS2: no-replace restore of files and symlinks', () => {
       const m = parkEntry(env.root, 'thing', { type })
       const plan = await planOk(m.copyPath, env.opts)
       let ino = 0n
-      const r = await executeRestore(plan, {
+      const r = await executeRestoreWith(plan, {
         beforeClaim: () => {
           fs.writeFileSync(m.origin, 'occupant')
           ino = fs.lstatSync(m.origin, { bigint: true }).ino
@@ -86,7 +86,7 @@ describe('RS2: no-replace restore of files and symlinks', () => {
     env = mkEnv()
     const m = parkEntry(env.root, 'f.txt', { type: 'file' })
     const plan = await planOk(m.copyPath, env.opts)
-    const r = await executeRestore(plan, {
+    const r = await executeRestoreWith(plan, {
       afterLink: () => {
         fs.unlinkSync(m.copyPath)
         fs.writeFileSync(m.copyPath, 'a different file')
@@ -115,7 +115,7 @@ describe('RS2: no-replace restore of files and symlinks', () => {
       }
       return orig(p)
     }) as never)
-    const r = await executeRestore(plan)
+    const r = await executeRestoreWith(plan)
     expect(r.status).toBe('stopped')
     if (r.status === 'restored') return
     expect(r.reason).toBe('unlink-failed')

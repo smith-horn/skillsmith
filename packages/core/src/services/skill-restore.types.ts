@@ -52,9 +52,6 @@ export interface RestorePlan {
   origin: string
   /** Where restore writes: the bound real path of the origin's parent, then its name (§5, no symlinked component is followed). */
   target: string
-  /** The directory `.skillsmith-parked` sits in, and the area itself, for the re-plan under the lock. */
-  areaRoot: string
-  areaDir: string
   lock: RestoreLock
   bytes: number
   contents: RestoreContents
@@ -118,7 +115,7 @@ export type RestoreResult =
       strandedLockClaim?: StrandedClaim
     }
 
-/** @internal Test seams for `executeRestore`. */
+/** @internal Test seams for `executeRestoreWith`; not exported from the package. */
 export interface RestoreHooks {
   beforeClaim?: () => void
   afterLink?: () => void
