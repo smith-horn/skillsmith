@@ -5157,27 +5157,19 @@ console.log(
 // full incident history (two real production incidents already traced to
 // this blind spot) and design rationale.
 //
-// Ships warn-level for a two-week shadow burn-in (matching the Check 49
-// convention), then promotes to fail-level — CHECK_59_SHADOW_END_DATE below,
-// same pattern as team-compliance-check-pr.yml's SHADOW_MODE_END_DATE.
+// Fails on any violation. It shipped warn-level and was promoted when its
+// shadow window ended; SMI-7241 removed the expired shadow plumbing.
 console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
 {
-  const CHECK_59_SHADOW_END_DATE = '2026-08-01'
-  const inShadow = new Date() < new Date(CHECK_59_SHADOW_END_DATE)
-  const report = inShadow ? warn : fail
-  const shadowSuffix = inShadow
-    ? ` [shadow mode through ${CHECK_59_SHADOW_END_DATE} — advisory only]`
-    : ''
-
   let check59Violations = 0
 
   const floatingSupabase = findFloatingSupabaseCliInstalls(join('.github', 'workflows'))
   for (const f of floatingSupabase) {
     check59Violations++
-    report(
+    fail(
       `Check 59: ${f.file}:${f.line} — supabase/setup-cli step has ${
         f.versionLine === null ? 'no version: input' : `version: ${f.versionLine}`
-      } (must pin an exact devDependency-derived version)${shadowSuffix}`,
+      } (must pin an exact devDependency-derived version)`,
       `Read the pin from package.json's devDependencies.supabase into a step output and reference it — see the deploy-edge-functions.yml pattern.`
     )
   }
@@ -5185,8 +5177,8 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
   const unpinnedBareNpx = findUnpinnedBareNpxCliInPackageJson('.')
   for (const f of unpinnedBareNpx) {
     check59Violations++
-    report(
-      `Check 59: ${f.file} script "${f.script}" runs bare "npx ${f.tool}" with no matching devDependency pin${shadowSuffix}`,
+    fail(
+      `Check 59: ${f.file} script "${f.script}" runs bare "npx ${f.tool}" with no matching devDependency pin`,
       `Add "${f.tool}" as an exact-pinned devDependency so npx resolves the local copy instead of registry-latest.`
     )
   }
@@ -5198,22 +5190,22 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
   console.log(`  shell/workflow npx scan: ${shellNpx.scanned} file(s) via ${shellNpx.via}`)
   if (shellNpx.scanned === 0) {
     check59Violations++
-    report(
-      `Check 59: the shell/workflow npx scan examined 0 files${shadowSuffix}`,
+    fail(
+      `Check 59: the shell/workflow npx scan examined 0 files`,
       `The ${shellNpx.via === 'git' ? 'git ls-files listing' : 'filesystem walk'} found no scripts/*.sh, .github/workflows/*.y*ml or .github/actions/*/action.y*ml files; the check ran over an empty set, which is not a pass.`
     )
   }
   for (const file of shellNpx.unreadable) {
     check59Violations++
-    report(
-      `Check 59: ${file} is in the shell/workflow npx scan set but could not be read${shadowSuffix}`,
+    fail(
+      `Check 59: ${file} is in the shell/workflow npx scan set but could not be read`,
       `An unread file is an unchecked file, not a pass. Restore it or remove it from the tree (SMI-7226).`
     )
   }
   for (const f of shellNpx.findings) {
     check59Violations++
-    report(
-      `Check 59: ${f.file}:${f.line} runs bare "npx ${f.tool}", which downloads registry-latest when no local package exists${shadowSuffix}`,
+    fail(
+      `Check 59: ${f.file}:${f.line} runs bare "npx ${f.tool}", which downloads registry-latest when no local package exists`,
       f.tool === 'supabase'
         ? `Source scripts/lib/resolve-supabase-cli.sh and run "\${SUPABASE_CLI[@]}" instead (SMI-7223).`
         : `Run the pinned local binary (node_modules/.bin/${f.tool}) or pin it as npx ${f.tool}@<version>.`
@@ -5224,8 +5216,8 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
   const rufloFinding = findUnpinnedRufloLauncherPin(rufloLauncherPath)
   if (rufloFinding) {
     check59Violations++
-    report(
-      `Check 59: ${rufloLauncherPath} — ${rufloFinding.reason}${shadowSuffix}`,
+    fail(
+      `Check 59: ${rufloLauncherPath} — ${rufloFinding.reason}`,
       `Add a plain, anchored "RUFLO_CLI_PIN=<exact-semver>" assignment near the top of ${rufloLauncherPath} (ADR-170 § 7).`
     )
   }
@@ -5238,8 +5230,8 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
   const rufloSeedDrift = findRufloSeedPinDrift(rufloLauncherPath, rufloSeedPackageJsonPath)
   if (rufloSeedDrift) {
     check59Violations++
-    report(
-      `Check 59: ${rufloSeedDrift.reason}${shadowSuffix}`,
+    fail(
+      `Check 59: ${rufloSeedDrift.reason}`,
       `Keep RUFLO_CLI_PIN in ${rufloLauncherPath} and dependencies["@claude-flow/cli"] in ${rufloSeedPackageJsonPath} identical (ADR-170 § 7) — bump both together and re-run scripts/ruflo-seed/regenerate-digest.sh.`
     )
   }
@@ -5254,8 +5246,8 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
   const procScanHintDrift = findProcScanCmdHintDrift(rufloGuardPath, claudeFlowGuidePath)
   if (procScanHintDrift) {
     check59Violations++
-    report(
-      `Check 59: ${procScanHintDrift.reason}${shadowSuffix}`,
+    fail(
+      `Check 59: ${procScanHintDrift.reason}`,
       `Update ${claudeFlowGuidePath}'s PROC_SCAN_CMD_HINT prose to match ${rufloGuardPath}'s constant verbatim, or vice versa.`
     )
   }
@@ -5263,8 +5255,8 @@ console.log(`\n${BOLD}Check 59: CLI-tool pin invariants (SMI-5746)${RESET}`)
   const claudeFlowHits = findClaudeFlowReintroductions(resolvePath('.'))
   for (const f of claudeFlowHits) {
     check59Violations++
-    report(
-      `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)${shadowSuffix}`,
+    fail(
+      `Check 59: ${f.file}:${f.line} — reintroduces "npx claude-flow" (pre-rename name)`,
       `Replace with the sanctioned service form: docker exec skillsmith-ruflo-1 node /opt/ruflo-seed/node_modules/@claude-flow/cli/bin/cli.js ... (SMI-6744 Wave 4 removes the root ruflo devDependency, Checkpoint 4 row 5, so the fastmcp edge is gone from the lockfile; the host tree follows at the post-merge refresh)`
     )
   }
@@ -5593,7 +5585,7 @@ console.log(
   // Gate/marker decision logic lives in evaluateExportSurfaceShadowGate
   // (audit-export-surface-consumer-helpers.mjs) — extracted out of this
   // inline block so it's unit-testable in isolation, matching the pattern
-  // already inlined for Check 59/60 above but factored out here.
+  // already inlined for Check 60 above but factored out here.
   const {
     report: reportLevel,
     shadowSuffix,
