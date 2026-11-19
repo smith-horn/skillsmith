@@ -126,7 +126,7 @@ export function restoreFileEntry(a: EntryArgs): EntryOutcome {
     lo.dev === lc.dev &&
     lo.ino === lc.ino &&
     (lo.mode & 0o170000n) === (lc.mode & 0o170000n) &&
-    stillBound(lc, a.rid, false)
+    stillBound(lc, a.rid, true)
   if (!same) return fail('link-stopped', stopped(a), true)
   a.guard()
   try {
@@ -171,7 +171,7 @@ export function restoreSymlinkEntry(a: EntryArgs): EntryOutcome {
     lo.isSymbolicLink() &&
     nowText === text &&
     lc !== null &&
-    stillBound(lc, a.rid, false)
+    stillBound(lc, a.rid, true)
   if (!same) return fail('link-stopped', stopped(a), true)
   a.guard()
   try {

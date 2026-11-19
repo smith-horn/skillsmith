@@ -6,6 +6,7 @@
  * before the claim and again before the rename (design note §5.2 D1).
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ParkedLockChanged, runLockedForTests } from '../../../src/config/file-lock.parked.js'
@@ -201,5 +202,97 @@ describe('a symlink stop says the links, not the entry', () => {
     expect(r.reason).toBe('unlink-failed')
     expect(r.message).toContain(LINKS)
     expect(r.message).not.toContain('same entry')
+  })
+})
+
+describe('F3 and S4 bind the parked name by birthtime as well', () => {
+  /** Reports `copyPath` with the bound dev, ino and mode but another birthtime, once armed. */
+  const lstatWithOtherBirthtime = (copyPath: string, armed: () => boolean): void => {
+    const orig = fs.lstatSync.bind(fs) as (a: fs.PathLike, b?: unknown) => unknown
+    vi.spyOn(fs, 'lstatSync').mockImplementation(((p: fs.PathLike, o?: { bigint?: boolean }) => {
+      const st = orig(p, o) as fs.BigIntStats
+      if (armed() && String(p) === copyPath && o?.bigint === true) {
+        return Object.assign(Object.create(Object.getPrototypeOf(st)), st, {
+          birthtimeNs: st.birthtimeNs + 1n,
+        })
+      }
+      return st
+    }) as never)
+  }
+
+  for (const type of ['file', 'symlink'] as const) {
+    it(`${type}: the same dev, ino and mode with a different birthtime is link-stopped, changed, record kept`, async () => {
+      env = mkEnv()
+      const m = parkEntry(env.root, 'thing', { type })
+      const plan = await planOk(m.copyPath, env.opts)
+      let armed = false
+      lstatWithOtherBirthtime(m.copyPath, () => armed)
+      const r = await executeRestoreWith(plan, {
+        afterLink: () => {
+          armed = true
+        },
+      })
+      expect(r.status).toBe('stopped')
+      if (r.status === 'restored') return
+      expect(r.reason).toBe('link-stopped')
+      expect(r.changed).toBe(true)
+      expect(fs.existsSync(m.sidecarPath)).toBe(true)
+      expect(fs.lstatSync(m.copyPath, { throwIfNoEntry: false })).toBeDefined()
+    })
+  }
+
+  it('a real inode-number reuse: both names re-linked to a new file that took the freed inode is link-stopped', async (ctx) => {
+    env = mkEnv()
+    const m = parkEntry(env.root, 'f.txt', { type: 'file' })
+    const plan = await planOk(m.copyPath, env.opts)
+    let reused = false
+    const r = await executeRestoreWith(plan, {
+      afterLink: () => {
+        const ino = fs.lstatSync(m.copyPath, { bigint: true }).ino
+        fs.unlinkSync(m.origin)
+        fs.unlinkSync(m.copyPath)
+        for (let i = 0; i < 500 && !reused; i++) {
+          const f = path.join(path.dirname(m.copyPath), `reuse-${i}`)
+          fs.writeFileSync(f, 'FOREIGN-REUSED')
+          if (fs.lstatSync(f, { bigint: true }).ino === ino) {
+            fs.linkSync(f, m.origin)
+            fs.linkSync(f, m.copyPath)
+            reused = true
+          }
+          fs.unlinkSync(f)
+        }
+      },
+    })
+    // The filesystem chooses inode numbers; the test is only meaningful when it reused one. Without
+    // reuse both names are simply gone, which proves nothing about the birthtime check, so skip (as
+    // prune.walk.binding does). The spy tests above pin the property on every filesystem.
+    if (!reused) ctx.skip('no inode reuse this run')
+    expect(r.status).toBe('stopped')
+    if (r.status === 'restored') return
+    expect(r.reason).toBe('link-stopped')
+    expect(fs.existsSync(m.sidecarPath)).toBe(true)
+  })
+})
+
+describe('the public executeRestore works for a plan made without any test seam', () => {
+  it('with HOME set to the fixture, a lock 1prime copy restores through the public entry', async () => {
+    env = mkEnv()
+    const home = process.env['HOME']
+    process.env['HOME'] = env.base
+    try {
+      expect(os.homedir()).toBe(env.base)
+      const p = path.join(env.base, 'proj-outside')
+      const m = parkEntry(p, 'thing', { caller: 'init-rollback', type: 'file' })
+      indexKind(env.stateRoot, m.copyPath, m.opId, 'init-rollback')
+      const plan = await planOk(m.copyPath, { stateRoot: env.stateRoot })
+      expect(plan.options.discovery).toBeUndefined()
+      expect(plan.lock.kind).toBe('lock1prime')
+      const r = await executeRestore(plan)
+      expect(r.status).toBe('restored')
+      expect(fs.readFileSync(m.origin, 'utf8')).toBe('file thing\n')
+    } finally {
+      if (home === undefined) delete process.env['HOME']
+      else process.env['HOME'] = home
+    }
   })
 })
