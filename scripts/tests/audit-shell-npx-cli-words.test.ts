@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 // @ts-expect-error - .mjs helper has no typings
 import { lexLine, decodeAnsiC, ARITH } from '../audit-shell-npx-cli-lexer.mjs'
+import { timeAlternating } from './_lib/ratio-timing.js'
 
 type Hit = { line: number; tool: string; text: string }
 const scan = (text: string): Hit[] => scanShellText(text)
@@ -147,6 +148,57 @@ const FIX3_ROWS: Array<[string, string, number]> = [
   ['F8', 'bash 3<<EOF\nnpx supabase status\nEOF', 0],
 ]
 
+// Review round 2 on 74b248591 (SMI-7241). Every row was run under bash
+// 5.2.15 (`bash --noprofile --norc -c`, stub npx first on PATH, no network);
+// the count is what bash did.
+const FIX4_ROWS: Array<[string, string, number]> = [
+  // R1: a heredoc redirected onto a ( … ) group feeds the group's stdin.
+  ['R1', '( bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '(bash)<<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '(bash -s) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '( exec bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '( env bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '( ( bash ) ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '(bash) <<-EOF\n\tnpx supabase status\n\tEOF', 1],
+  ['R1', 'if true; then (bash) <<EOF\nnpx supabase status\nEOF\nfi', 1],
+  ['R1', '( bash ) <<EOF | cat\nnpx supabase status\nEOF', 1],
+  ['R1', '( bash -euo pipefail ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '( bash ) 0<<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '( . /dev/stdin ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', '( echo hi; bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['R1', "( bash ) <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['R1', '( cat ) <<EOF\nnpx supabase status\nEOF', 0],
+  ['R1', '( bash -c cat ) <<EOF\nnpx supabase status\nEOF', 0],
+  ['R1', '( bash ) 3<<EOF\nnpx supabase status\nEOF', 0],
+  ['R1', '( bash /dev/null ) <<EOF\nnpx supabase status\nEOF', 0],
+  // R8: /dev/fd/0 is stdin; `source`/`.` behind `command` or `builtin`.
+  ['R8', 'bash /dev/fd/0 <<EOF\nnpx supabase status\nEOF', 1],
+  ['R8', 'cat <<EOF | bash /dev/fd/0\nnpx supabase status\nEOF', 1],
+  ['R8', 'source /dev/fd/0 <<EOF\nnpx supabase status\nEOF', 1],
+  ['R8', '. /dev/fd/0 <<EOF\nnpx supabase status\nEOF', 1],
+  ['R8', 'command source /dev/stdin <<EOF\nnpx supabase status\nEOF', 1],
+  ['R8', 'builtin . /dev/stdin <<EOF\nnpx supabase status\nEOF', 1],
+  ['R8', 'command source /dev/null <<EOF\nnpx supabase status\nEOF', 0],
+  // R12 (review round 3): a `+` flag is a flag, a lone `+` too, and a c in a
+  // `+` bundle is -c, so the heredoc is not the script.
+  ['R12', 'bash +e <<EOF\nnpx supabase status\nEOF', 1],
+  ['R12', 'bash +x -s <<EOF\nnpx supabase status\nEOF', 1],
+  ['R12', 'bash + <<EOF\nnpx supabase status\nEOF', 1],
+  ['R12', 'bash +c <<EOF\nnpx supabase status\nEOF', 0],
+  ['R12', 'bash +ec <<EOF\nnpx supabase status\nEOF', 0],
+  ['R12', 'cat <<EOF | bash +c\nnpx supabase status\nEOF', 0],
+]
+
+// R7: one hit per call. A substitution on a continued body line is the call
+// the script scan found on that logical line (bash ran npx once); a separate
+// top-level call stays a second hit (bash ran npx twice). Bash 5.2.15, as above.
+const FIX4_LINE_ROWS: Array<[string, number[], string[]]> = [
+  ['bash <<EOF\necho \\\n$(npx supabase status)\nEOF', [2], ['supabase']],
+  ['bash <<EOF\n\\\n$(npx supabase status)\nEOF', [2], ['supabase']],
+  ['bash <<EOF\necho a; \\\n$(npx supabase status)\nEOF', [2], ['supabase']],
+  ['bash <<EOF\nnpx supabase x \\\n$(npx wrangler)\nEOF', [2, 3], ['supabase', 'wrangler']],
+]
+
 const TOOL_ROWS: Array<[string, string]> = [
   ["npx wrangler deploy; bash -c 'np''x supabase status'", 'wrangler'],
   ["bash -c 'np''x wrangler deploy'; 'np'x supabase status", 'wrangler'],
@@ -197,6 +249,20 @@ describe('word rebuilding and fed heredocs agree with bash', () => {
     ['bash <<EOF\nnpx supabase status $(npx supabase --version)\nEOF', [2]],
   ] as Array<[string, number[]]>)('reports F1 hits at physical lines: %j', (row, want) => {
     expect(scan(row).map((h) => h.line)).toEqual(want)
+  })
+
+  describe('review fixes on 74b248591', () => {
+    it.each(FIX4_ROWS)('%s %j -> %i hit(s)', (_fix, row, want) => {
+      const hits = scan(row)
+      expect(hits).toHaveLength(want)
+      for (const h of hits) expect(h.tool).toBe('supabase')
+    })
+
+    it.each(FIX4_LINE_ROWS)('R7 %j hits at lines %j', (row, lines, tools) => {
+      const hits = scan(row)
+      expect(hits.map((h) => h.line)).toEqual(lines)
+      expect(hits.map((h) => h.tool)).toEqual(tools)
+    })
   })
 
   it.each(TOOL_ROWS)("reports the first pass's tool: %j", (row, want) => {
@@ -278,13 +344,16 @@ describe("decodeAnsiC matches bash printf %s $'…' (SMI-7241 B.2)", () => {
   })
 })
 
-// Timing: each input is scanned once untimed (warm-up), then timed 5 times
-// at n and at 4n; the ratio of the fastest runs must stay under 8 (linear is
-// about 4, quadratic about 16). Noise (GC, JIT) only adds time, so the
-// minimum is the stable estimate; a median of 3 without warm-up flaked on
-// unmodified code (ratios 8.65 and 9.36 in 5 runs, SMI-7241). No wall-clock
+// Timing: the inputs at n and 4n are timed alternately after one warm-up of
+// each, fastest of 7 pairs (timeAlternating in _lib/ratio-timing.ts); the
+// ratio must stay under 8 (linear is about 4, quadratic about 16). A median
+// of 3 without warm-up flaked on unmodified code (ratios 8.65 and 9.36 in 5
+// runs, SMI-7241), and timing each size in its own block let a load spike
+// land on one size (8.35 in 1 of 10 runs, review round 2). No wall-clock
 // bound, so a slow CI runner does not flake. `hits` pins that the scanner
-// reached the code under test rather than bailing out early.
+// reached the code under test rather than bailing out early. Each n is set
+// so the small input takes 15 ms or more in the dev container: a ratio of two
+// few-millisecond timings flaked (8.09 and 8.10, review round 2).
 const nestedSubst = (n: number) => '$('.repeat(n) + 'echo' + ')'.repeat(n)
 const nestedShC = (n: number) => '$(bash -c '.repeat(n) + "'np''x supabase status'" + ')'.repeat(n)
 const nestedBrace = (n: number) => 'echo ' + '${'.repeat(n) + 'x' + '}'.repeat(n)
@@ -305,20 +374,20 @@ function nestedQuotes(depth: number): string {
 // separate so the earlier line still exercises every pass.
 const CALL = '\nnpx supabase status'
 const STRESS: Array<[string, (n: number) => string, number, number]> = [
-  ['nested $( … ) echo', nestedSubst, 5_000, 0],
-  ['nested $(bash -c …) with a call', nestedShC, 2_000, 1],
-  ['nested ${ … }', nestedBrace, 40_000, 0],
-  ["quoted words 'a'", (n) => "'a' ".repeat(n), 20_000, 0],
-  ["quoted words $'\\x6e'", (n) => "$'\\x6e' ".repeat(n), 20_000, 0],
-  ["long joined word 'n''n'…", (n) => "'n'".repeat(n) + ' supabase', 20_000, 0],
-  ['bash -c + long joined word', (n) => 'bash -c ' + "'n'".repeat(n), 20_000, 0],
+  ['nested $( … ) echo', nestedSubst, 50_000, 0],
+  ['nested $(bash -c …) with a call', nestedShC, 10_000, 1],
+  ['nested ${ … }', nestedBrace, 160_000, 0],
+  ["quoted words 'a'", (n) => "'a' ".repeat(n), 50_000, 0],
+  ["quoted words $'\\x6e'", (n) => "$'\\x6e' ".repeat(n), 40_000, 0],
+  ["long joined word 'n''n'…", (n) => "'n'".repeat(n) + ' supabase', 100_000, 0],
+  ['bash -c + long joined word', (n) => 'bash -c ' + "'n'".repeat(n), 80_000, 0],
   [
     'many -c words, then a joined word',
     (n) => 'bash ' + '-c '.repeat(n) + "'np''x supabase status'",
     20_000,
     1,
   ],
-  ['heredoc pipeline stages', (n) => 'cat <<a | '.repeat(n) + 'bash', 5_000, 0],
+  ['heredoc pipeline stages', (n) => 'cat <<a | '.repeat(n) + 'bash', 20_000, 0],
   [
     'fed heredoc body lines',
     (n) => 'bash <<EOF\n' + "echo 'np''x' a\n".repeat(n) + 'EOF',
@@ -333,42 +402,32 @@ const STRESS: Array<[string, (n: number) => string, number, number]> = [
   ],
   ["$'…' with escapes", (n) => "bash -c $'" + '\\x41'.repeat(n) + "'", 50_000, 0],
   // F4: nested fed heredocs, each level's body holding the next.
-  ['nested fed heredocs', (n) => nestedFed(n), 200, 1],
+  ['nested fed heredocs', (n) => nestedFed(n), 800, 1],
 ]
-
-function fastestOf5(text: string): { ms: number; hits: number } {
-  let hits = scan(text).length // warm-up, untimed
-  let best = Infinity
-  for (let k = 0; k < 5; k++) {
-    const t0 = performance.now()
-    hits = scan(text).length
-    best = Math.min(best, performance.now() - t0)
-  }
-  return { ms: best, hits }
-}
 
 describe('scaling of the word reader (SMI-7241)', () => {
   it.each(STRESS)('%s: 4n costs under 8x n', (_name, make, n, wantHits) => {
-    const small = fastestOf5(make(n) + CALL)
-    const large = fastestOf5(make(4 * n) + CALL)
-    expect(small.hits).toBe(wantHits + 1)
-    expect(large.hits).toBe(wantHits + 1)
-    expect(large.ms / small.ms).toBeLessThan(8)
+    const t = timeAlternating((text) => scan(text).length, make(n) + CALL, make(4 * n) + CALL)
+    expect(t.smallHits).toBe(wantHits + 1)
+    expect(t.largeHits).toBe(wantHits + 1)
+    expect(t.ratio).toBeLessThan(8)
   })
 
   // F4: fed-heredoc recursion had no depth cap, so deep nesting threw a
   // RangeError out of scanShellText and crashed audit:standards.
+  // The call is the line after the 3,000 openers, so it is line 3,001.
   it('does not throw on 3,000 nested terminated fed heredocs', () => {
     let hits: Hit[] = []
     expect(() => (hits = scan(nestedFed(3_000)))).not.toThrow()
-    expect(hits.length).toBeGreaterThanOrEqual(1)
+    expect(hits.map((h) => h.line)).toEqual([3_001])
   })
 
+  // The call is the line after the 4,000 openers, so it is line 4,001.
   it('does not throw on 4,000 unterminated fed heredocs', () => {
     const text = 'bash <<EOF\n'.repeat(4_000) + 'npx supabase status'
     let hits: Hit[] = []
     expect(() => (hits = scan(text))).not.toThrow()
-    expect(hits.length).toBeGreaterThanOrEqual(1)
+    expect(hits.map((h) => h.line)).toEqual([4_001])
   })
 
   it.each([4, 8, 12])('nested "…" sh -c of depth %i is still found', (depth) => {

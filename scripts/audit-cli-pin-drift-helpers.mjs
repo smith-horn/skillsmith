@@ -49,14 +49,24 @@ export function findFloatingSupabaseCliInstalls(workflowsDir) {
 }
 
 /**
- * Sub-check 2: a bare `npx wrangler`/`npx supabase` invocation in a
- * package.json script is only safe when that tool is an exact-pinned
- * devDependency somewhere the invoking package's npm resolution would find
- * it (its own package.json, or the workspace root — npm hoists).
+ * Sub-check 2: an unpinned `npx wrangler`/`npx supabase` invocation in a
+ * package.json script. A bare `npx tool` (no version) is safe only when the
+ * tool is a dependency somewhere the invoking package's npm resolution would
+ * find it (its own package.json, or the workspace root — npm hoists): npx
+ * then runs that local copy. A call naming a version that is not exact
+ * (`npx tool@latest`, `npx tool@3`, `npx -p tool@latest tool`) is flagged
+ * even then, because npx fetches that spec instead of using the local copy
+ * (owner decision, SMI-7241). An exact pin (`npx tool@2.107.0`) is never
+ * flagged.
  * Calls are found with the shell sub-check's scanner (SMI-7241), so quoting
- * (`bash -c 'np''x supabase'`, `sh -c $'npx …'`) does not hide one, and prose
- * or a comment that mentions npx is not a call. Each tool is scanned on its
- * own, so a script calling both reports both.
+ * (`bash -c 'np''x supabase'`, `sh -c $'npx …'`) does not hide one, and a
+ * comment that mentions npx is not a call. Runners such as concurrently and
+ * nodemon execute their string arguments (`concurrently "npm run dev" "npx
+ * supabase start"`, `nodemon --exec "tsc && npx wrangler dev"`), so every
+ * quoted argument is also scanned as a script (`quotedArgs`); quoted prose
+ * that mentions a call (`echo "run npx supabase start"`) is flagged as well,
+ * since a miss costs more than a false positive here. Each tool is scanned
+ * on its own, so a script calling both reports both.
  */
 export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
   const findings = []
@@ -92,9 +102,11 @@ export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
     for (const [scriptName, scriptBody] of Object.entries(scripts)) {
       if (typeof scriptBody !== 'string') continue
       for (const tool of WATCHED) {
-        if (scanShellText(scriptBody, { tools: [tool] }).length === 0) continue
-        const pinned = Boolean(localDeps[tool]) || Boolean(rootDeps[tool])
-        if (!pinned) {
+        const scan = (versioned) =>
+          scanShellText(scriptBody, { tools: [tool], quotedArgs: true, versioned }).length > 0
+        if (!scan(false)) continue
+        const local = Boolean(localDeps[tool]) || Boolean(rootDeps[tool])
+        if (!local || scan(true)) {
           findings.push({ file: label, script: scriptName, tool })
         }
       }

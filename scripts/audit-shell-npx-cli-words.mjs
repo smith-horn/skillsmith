@@ -45,7 +45,9 @@ const WRAPPERS = new Set([
 ])
 const SHELL = /^(?:ba|z|da|k)?sh$/
 // A script operand that is the shell's own stdin.
-const STDIN_PATHS = new Set(['/dev/stdin', '/proc/self/fd/0'])
+const STDIN_PATHS = new Set(['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'])
+// Builtins that run the builtin named after them (`command source`, `builtin .`).
+const BUILTIN_RUNNERS = new Set(['command', 'builtin'])
 const basename = (w) => w.slice(w.lastIndexOf('/') + 1)
 
 /**
@@ -201,15 +203,33 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
     return { start, end: i, value: v, changed: raw !== v, quoted, subst, closed }
   }
 
+  // The digits-only word written directly against the operator at `opAt`,
+  // which is its fd, or null. Removed from the command's words when found.
+  const takeFd = (cmd, opAt) => {
+    const last = cmd.words[cmd.words.length - 1]
+    if (!last || last.end !== opAt || !/^\d+$/.test(code.slice(last.start, opAt))) return null
+    cmd.words.pop()
+    return Number(last.value)
+  }
+
   // Walk one command range, collecting words and the simple commands of each
-  // pipeline, for the heredoc decision.
+  // pipeline, for the heredoc decision. `groups` holds, for each `(` still
+  // open, the simple commands started inside it; the command that follows
+  // its `)` records whether any of them reads stdin, so a heredoc redirected
+  // onto the group (`( bash ) <<EOF`) is fed when one does.
   const walk = (from, to) => {
-    let cmd = { words: [], hds: [] }
+    const groups = []
+    const newCmd = () => {
+      const c = { words: [], hds: [], groupReads: false }
+      if (groups.length > 0) groups[groups.length - 1].push(c)
+      return c
+    }
+    let cmd = newCmd()
     let stages = [cmd]
     let target = false // the next word is a redirection target
     const endPipeline = () => {
       if (stages.some((s) => s.hds.length > 0)) markFed(stages)
-      cmd = { words: [], hds: [] }
+      cmd = newCmd()
       stages = [cmd]
     }
     let i = from
@@ -226,13 +246,7 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
         // A digits-only word against the operator is its fd: only fd 0 (or
         // none) is the command's stdin.
         const k = hdAt.get(i)
-        const last = cmd.words[cmd.words.length - 1]
-        let fd = 0
-        if (last && last.end === i && /^\d+$/.test(code.slice(last.start, i))) {
-          cmd.words.pop()
-          fd = Number(last.value)
-        }
-        if (fd === 0) cmd.hds.push(k)
+        if ((takeFd(cmd, i) ?? 0) === 0) cmd.hds.push(k)
         i = lexed.heredocs[k].end
         continue
       }
@@ -246,14 +260,17 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
         i += op.length
         if (op === '(' || op === ')') {
           // Grouping ends the simple command but not the pipeline: a case
-          // pattern, a function header or a subshell starts a new one.
-          cmd = { words: [], hds: [] }
+          // pattern, a function header or a subshell starts a new one. A `)`
+          // with no open `(` (a case pattern) closes no group.
+          const inside = op === ')' && groups.length > 0 ? groups.pop() : null
+          if (op === '(') groups.push([])
+          cmd = newCmd()
+          cmd.groupReads = inside !== null && inside.some(readsStdin)
           stages.push(cmd)
           continue
         }
         if (REDIRECTS.has(op)) {
-          const last = cmd.words[cmd.words.length - 1]
-          if (last && last.end === i - op.length && /^\d+$/.test(last.value)) cmd.words.pop()
+          takeFd(cmd, i - op.length)
           target = true
         } else if (PIPES.has(op)) {
           cmd = { words: [], hds: [] }
@@ -275,10 +292,17 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
     // pipeline, is a shell reading stdin: one pass from the end.
     let later = false
     for (let s = stages.length - 1; s >= 0; s--) {
-      later = later || readsStdinScript(stages[s].words)
+      later = later || readsStdin(stages[s])
       for (const k of stages[s].hds) fed[k] = later
     }
   }
+
+  // A stage reads its script from stdin itself or, when it is the bare
+  // redirection target of a `( … )` group, through any command inside the
+  // group, nested groups included (groupReads, set once when the group
+  // closes). Over-approximate: a command earlier in the group could consume
+  // stdin first (`( cat; bash ) <<EOF`).
+  const readsStdin = (c) => readsStdinScript(c.words) || (c.words.length === 0 && c.groupReads)
 
   if (heredocBody) queueSubsIn(0, n)
   else work.push([0, n])
@@ -293,17 +317,24 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
  * Does this simple command run a shell that reads its script from stdin?
  * The command word (after assignments and reserved words) is a shell, or a
  * wrapper (sudo, env, exec, …) followed somewhere by a shell; the shell has
- * no -c flag, and either has -s or takes no operand, or its operand is
+ * no -c flag (a c in a `+` bundle is -c too, and a lone `+` is a flag, as
+ * bash 5.2 reads them), and either has -s or takes no operand, or its operand is
  * /dev/stdin (any other operand would be a script file). Every o or O in a
  * flag bundle takes the next word as its value, as bash reads `-euo pipefail`
- * and `-oe pipefail`. `source /dev/stdin` and `. /dev/stdin` read stdin too.
+ * and `-oe pipefail`. `source /dev/stdin` and `. /dev/stdin` read stdin too,
+ * also behind `command` or `builtin` (with their options).
  */
 export function readsStdinScript(words) {
   let k = 0
   while (k < words.length && (ASSIGNMENT.test(words[k].value) || RESERVED.has(words[k].value))) k++
   if (k >= words.length) return false
-  if (words[k].value === 'source' || words[k].value === '.') {
-    const op = words[k + 1]?.value === '--' ? words[k + 2] : words[k + 1]
+  let s = k
+  while (s < words.length && BUILTIN_RUNNERS.has(words[s].value)) {
+    s++
+    while (s < words.length && words[s].value.startsWith('-')) s++
+  }
+  if (s < words.length && (words[s].value === 'source' || words[s].value === '.')) {
+    const op = words[s + 1]?.value === '--' ? words[s + 2] : words[s + 1]
     return op !== undefined && STDIN_PATHS.has(op.value)
   }
   if (!SHELL.test(basename(words[k].value))) {
@@ -320,8 +351,8 @@ export function readsStdinScript(words) {
     }
     if (w === '--rcfile' || w === '--init-file') j++
     else if (w.startsWith('--')) continue
-    else if (/^[-+][A-Za-z]+$/.test(w)) {
-      if (w[0] === '-' && w.includes('c')) return false
+    else if (/^[-+][A-Za-z]*$/.test(w)) {
+      if (w.includes('c')) return false
       if (w.includes('s')) stdin = true
       j += w.length - w.replace(/[oO]/g, '').length
     } else return stdin || STDIN_PATHS.has(w)

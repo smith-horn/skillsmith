@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import { timeAlternating } from './_lib/ratio-timing.js'
 // @ts-expect-error - .mjs helper has no typings
 import {
   scanShellText,
@@ -550,6 +551,10 @@ const FIX3_ROWS: Array<[string, number]> = [
   ['# deploy \\\nnpx supabase status', 1],
   ['echo a # note \\\nnpx supabase status', 1],
   ['npx \\\n  supabase status', 1],
+  // Review round 3 (R12): formerly known misses. A `+` flag with no o before
+  // or after the -c keeps the `sh -c` shape.
+  ["bash +e -c 'npx supabase status'", 1],
+  ["bash -c +e 'npx supabase status'", 1],
 ]
 
 const LOGIN_SHELL_ROWS: Array<[string, number]> = [
@@ -585,6 +590,9 @@ const KNOWN_MISSES: Array<[string]> = [
   ["bash -c ${x:-'npx supabase status'}"],
   // eval, ssh, docker exec and other interpreters of a quoted string are not followed (B.8)
   ["eval 'np''x supabase status'"],
+  // the raw comment cut reads a `#` inside `${…}` or after an escaped space as a comment (SMI-7248)
+  ['echo ${y:- #} ; npx supabase status'],
+  ['x=a\\ #b npx supabase status'],
 ]
 
 describe('SMI-7241 shell rows agree with bash', () => {
@@ -616,6 +624,14 @@ describe('SMI-7241 shell rows agree with bash', () => {
   })
 })
 
+// Sizes for the ratio rows below (even, so the quote shapes pair up and the
+// final call runs).
+const N_COMMENT = 300_000
+const N_TRAILING = 10_000
+const N_CONTINUED = 30_000
+const N_R6 = 20_000
+const CALL_X = 'npx supabase x'
+
 // F7: the lines after a comment ending in a backslash are their own lines.
 describe('SMI-7241 comments do not continue lines', () => {
   it.each([
@@ -629,29 +645,37 @@ describe('SMI-7241 comments do not continue lines', () => {
   })
 
   // One lex per physical line, not per logical line: a run of comment lines
-  // ending in backslashes must not be re-joined line by line.
+  // ending in backslashes must not be re-joined line by line. The last three
+  // rows reach the restart path (review round 2, R6): each comment ends a
+  // logical line inside one run of backslash-ended lines, and re-joining to
+  // the end of the run on each restart was quadratic (1.4 s at 4,000, 26 s at
+  // 16,000 for the first). n is set so the small input takes 15 ms or more
+  // in the dev container: a ratio of two few-millisecond timings flaked.
   it.each([
-    ['comment lines', (n: number) => '# x \\\n'.repeat(n) + 'npx supabase status'],
-    ['trailing comments', (n: number) => 'echo a # x \\\n'.repeat(n) + 'npx supabase status'],
-    ['real continuations', (n: number) => 'echo a \\\n'.repeat(n) + 'x\nnpx supabase status'],
-  ])('%s: 4n costs under 8x n', (_name, make) => {
-    const time = (text: string) => {
-      scanShellText(text)
-      let best = Infinity
-      let hits = 0
-      for (let k = 0; k < 5; k++) {
-        const t0 = performance.now()
-        hits = scanShellText(text).length
-        best = Math.min(best, performance.now() - t0)
-      }
-      return { best, hits }
+    ['comment lines', (n: number) => '# x \\\n'.repeat(n) + 'npx supabase status', N_COMMENT],
+    [
+      'trailing comments',
+      (n: number) => 'echo a # x \\\n'.repeat(n) + 'npx supabase status',
+      N_TRAILING,
+    ],
+    [
+      'real continuations',
+      (n: number) => 'echo a \\\n'.repeat(n) + 'x\nnpx supabase status',
+      N_CONTINUED,
+    ],
+    ['restart: echo / comment', (n: number) => 'echo \\\n # c \\\n'.repeat(n) + CALL_X, N_R6],
+    ["restart: ' #\\", (n: number) => "' #\\\n".repeat(n) + CALL_X, N_R6],
+    ['restart: " #\\', (n: number) => '" #\\\n'.repeat(n) + CALL_X, N_R6],
+  ] as Array<[string, (n: number) => string, number]>)(
+    '%s: 4n costs under 8x n',
+    (_name, make, n) => {
+      // Alternating timing, fastest of 7 pairs: see _lib/ratio-timing.ts.
+      const t = timeAlternating((text) => scanShellText(text).length, make(n), make(4 * n))
+      expect(t.smallHits).toBe(1)
+      expect(t.largeHits).toBe(1)
+      expect(t.ratio).toBeLessThan(8)
     }
-    const small = time(make(5_000))
-    const large = time(make(20_000))
-    expect(small.hits).toBe(1)
-    expect(large.hits).toBe(1)
-    expect(large.best / small.best).toBeLessThan(8)
-  })
+  )
 })
 
 describe('SMI-7241 accepted over-approximations', () => {
@@ -669,6 +693,33 @@ describe('SMI-7241 accepted over-approximations', () => {
       expect(scanShellText(row)).toHaveLength(1)
     }
   )
+})
+
+// R4: the `tools` option is an argument threaded through every scan
+// function, not a module-level pattern swapped and restored.
+describe('SMI-7241 scanShellText tools option', () => {
+  it('does not leak a restricted scan into a later unrestricted one', () => {
+    // The last restricted scan excludes wrangler, so a leaked restriction
+    // hides the unrestricted call below.
+    expect(scanShellText('npx supabase status', { tools: ['wrangler'] })).toEqual([])
+    expect(scanShellText('npx wrangler deploy', { tools: ['supabase'] })).toEqual([])
+    expect(scanShellText('npx wrangler deploy')).toHaveLength(1)
+  })
+
+  it('keeps the restriction inside a nested sh -c script', () => {
+    expect(scanShellText("bash -c 'npx wrangler deploy'", { tools: ['supabase'] })).toEqual([])
+    expect(scanShellText("bash -c 'npx wrangler deploy'", { tools: ['wrangler'] })).toHaveLength(1)
+  })
+
+  it('rejects an empty tools list', () => {
+    expect(() => scanShellText('npx supabase status', { tools: [] })).toThrow(/non-empty/)
+  })
+
+  it('names an unwatched tool', () => {
+    expect(() => scanShellText('npx supabase status', { tools: ['supabase', 'vercel'] })).toThrow(
+      /"vercel"/
+    )
+  })
 })
 
 describe('SMI-7241 known misses (documented blind spots)', () => {

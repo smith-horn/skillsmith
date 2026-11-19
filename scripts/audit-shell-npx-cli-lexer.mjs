@@ -113,8 +113,13 @@ function arithmeticCloses(line, from, pairs) {
  *   frame opening at k, body[k] its first body index, close[k] the index of
  *   its closing character and end[k] the index after the close. An unclosed
  *   frame has close and end equal to the line's length.
+ * `lookahead` ({ text, base, pairs }) says that `line` is text.slice(base, …)
+ * of a longer logical line: the `((` arithmetic test then reads `text`, past
+ * the end of `line`, so every context in `line` is the one the whole text
+ * gives it, and `pairs` (in `text` indices) is shared by every call on that
+ * text. Everything else the lexer decides depends only on what precedes it.
  */
-export function lexLine(line, { heredocBody = false } = {}) {
+export function lexLine(line, { heredocBody = false, lookahead = null } = {}) {
   const n = line.length
   // A heredoc body with an unquoted delimiter expands like "…" but has no
   // closing quote, so it starts in a "…" frame that a `"` never pops.
@@ -130,6 +135,10 @@ export function lexLine(line, { heredocBody = false } = {}) {
     end: new Int32Array(n + 1),
   }
   const pairs = new Map()
+  // Does the `((` whose inner paren is at from - 1 close as `))`?
+  const closes = lookahead
+    ? (from) => arithmeticCloses(lookahead.text, lookahead.base + from, lookahead.pairs)
+    : (from) => arithmeticCloses(line, from, pairs)
   const top = () => stack[stack.length - 1]
   const push = (kind, close, openAt, bodyAt = openAt + 1) => {
     stack.push({ kind, close, openAt, bodyAt, depth: 0, cases: 0 })
@@ -173,12 +182,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
       } else if (c === '"') {
         if (!t.sticky) pop(i, i + 1)
         i++
-      } else if (
-        c === '$' &&
-        next === '(' &&
-        line[i + 2] === '(' &&
-        arithmeticCloses(line, i + 3, pairs)
-      ) {
+      } else if (c === '$' && next === '(' && line[i + 2] === '(' && closes(i + 3)) {
         push('arith', '))', i)
         i += 3
       } else if (c === '$' && next === '(') {
@@ -231,12 +235,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
       } else if (c === '"') {
         push('"', '"', i)
         i++
-      } else if (
-        c === '$' &&
-        next === '(' &&
-        line[i + 2] === '(' &&
-        arithmeticCloses(line, i + 3, pairs)
-      ) {
+      } else if (c === '$' && next === '(' && line[i + 2] === '(' && closes(i + 3)) {
         push('arith', '))', i)
         i += 3
       } else if (c === '$' && next === '(') {
@@ -245,7 +244,7 @@ export function lexLine(line, { heredocBody = false } = {}) {
       } else if (c === '$' && next === '[') {
         push('arith', ']', i)
         i += 2
-      } else if (c === '(' && next === '(' && arithmeticCloses(line, i + 2, pairs)) {
+      } else if (c === '(' && next === '(' && closes(i + 2)) {
         push('arith', '))', i)
         i += 2
       } else if (c === '`') {

@@ -15,10 +15,14 @@ import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 // The SH_C regex from the CodeQL js/redos fix on PR #3257, plus the backtick
 // in its boundary class: a governance review found `` `bash -c '…'` `` missed,
 // although `$(bash -c '…')` was flagged. Since SMI-7241 a letters-only bundle
-// holding o or O (`-eo`, `-euo`) takes a value, as bash reads it. Only ever
-// run on short inputs here: the bundle alternative backtracks.
+// holding o or O (`-eo`, `-euo`) takes a value, as bash reads it, with `+`
+// as well as `-` (`+o posix`, `+eo posix`; review round 2). A `+` then
+// letters with no o/O (`+e`, `+eu`, a lone `+`) is a flag before or after the
+// -c, and a c in a `+` bundle is the -c (`bash +c '…'`), as bash 5.2 reads
+// them (review round 3). Only ever run on short inputs here: the bundle
+// alternative backtracks.
 const ORACLE =
-  /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:-[A-Za-z]*[oO][A-Za-z]*\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
+  /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:[-+][A-Za-z]*[oO][A-Za-z]*\s+[^\s-]\S*|-\S+|\+[A-NP-Za-np-z]*)\s+)*[-+][A-Za-z]*c[A-Za-z]*(?:\s+(?:-\S*|\+[A-NP-Za-np-z]*))*\s*$/
 
 // SMI-7241 F11: floors on the two generators' distinct-string counts. With
 // Math.imul they produce 88,147 and 2,842; with the old float multiply 1,317
@@ -56,6 +60,30 @@ const ROWS: Array<[string, boolean]> = [
   ['bash -xO extglob -c ', true],
   ['bash -ex pipefail -c ', false], // no o: `pipefail` is a script operand
   ['bash -e1o pipefail -c ', false], // not letters only
+  // A `+` bundle holding o/O takes a value too (review round 2, R9).
+  ['bash +o posix -c ', true],
+  ['bash +O extglob -c ', true],
+  ['bash +eo posix -c ', true],
+  ['bash +xo posix -c ', true],
+  ['bash -e +o posix -c ', true],
+  ['bash +o posix ', false], // no -c
+  ['bash +o -c ', false], // `+o` takes `-c` as its value; bash ran nothing (measured)
+  ['bash +e1o posix -c ', false], // not letters only
+  // A `+` flag without o, before or after the -c, and a c in a `+` bundle
+  // (review round 3, R12).
+  ['bash +e -c ', true],
+  ['bash -c +e ', true],
+  ['bash +eu -c ', true],
+  ['bash -e +x -c ', true],
+  ['bash -c +eu -- ', true],
+  ['bash + -c ', true], // a lone `+` is a flag, unlike a lone `-`
+  ['bash -c + ', true],
+  ['bash +c ', true],
+  ['bash +ec ', true],
+  ['bash -o posix +c ', true],
+  ['bash +e ', false], // no c
+  ['bash +1 -c ', false], // not letters only
+  ['echo +e -c ', false],
   ['', false],
 ]
 
@@ -104,6 +132,17 @@ describe('endsInShC', () => {
       '-xo',
       '-oe',
       '-xO',
+      '+o',
+      '+O',
+      '+eo',
+      '+xO',
+      '+e',
+      '+x',
+      '+eu',
+      '+c',
+      '+ec',
+      '+',
+      '+1',
       'pipefail',
       '-',
       '--',
@@ -206,6 +245,12 @@ describe('endsInShC', () => {
       '-lc',
       '-o',
       '-O',
+      '+o',
+      '+eo',
+      '+e',
+      '+eu',
+      '+c',
+      '+',
       'pipefail',
       '-',
       '--',
@@ -255,6 +300,44 @@ describe('endsInShC', () => {
   ])('flags a bundled -o before -c: %j', (row) => {
     expect(scanShellText(row)).toHaveLength(1)
   })
+
+  // Review round 2, R9: each row run under bash 5.2.15 (`bash --noprofile
+  // --norc -c`, stub npx first on PATH, no network); the count is what bash did.
+  it.each([
+    ["bash +o posix -c 'npx supabase status'", 1],
+    ["bash +o posix -c 'np''x supabase status'", 1],
+    ["bash +O extglob -c 'npx supabase status'", 1],
+    ["bash +O extglob -c 'np''x supabase status'", 1],
+    ["bash -e +o posix -c 'npx supabase status'", 1],
+    ["bash +eo posix -c 'npx supabase status'", 1],
+    ["bash +xo posix -c 'npx supabase status'", 1],
+    ["bash +o posix 'npx supabase status'", 0],
+    // Review round 3, R12, measured the same way.
+    ["bash +e -c 'npx supabase status'", 1],
+    ["bash -c +e 'npx supabase status'", 1],
+    ["bash +eu -c 'npx supabase status'", 1],
+    ["bash -e +x -c 'npx supabase status'", 1],
+    ["bash +x -c 'np''x supabase status'", 1],
+    ["bash -c +eu -- 'npx supabase status'", 1],
+    ["bash +e +o posix -c 'npx supabase status'", 1],
+    ["bash + -c 'npx supabase status'", 1],
+    ["bash -c + 'npx supabase status'", 1],
+    ["bash +c 'npx supabase status'", 1],
+    ["bash +ec 'npx supabase status'", 1],
+    ["bash -o posix +c 'npx supabase status'", 1],
+    ["bash +c +e 'npx supabase status'", 1],
+    ["bash +e 'npx supabase status'", 0],
+    ["bash +x 'npx supabase status'", 0],
+    ["bash + 'npx supabase status'", 0],
+    ["echo +e -c 'npx supabase status'", 0],
+    ["bash +1 -c 'npx supabase status'", 0],
+    ["bash +o -c 'npx supabase status'", 0],
+  ] as Array<[string, number]>)(
+    'reads a + bundle before -c as bash does: %j -> %i',
+    (row, want) => {
+      expect(scanShellText(row)).toHaveLength(want)
+    }
+  )
 
   it('flags sh -c inside backticks as it does inside $(…)', () => {
     expect(scanShellText("x=`bash -c 'npx supabase status'`")).toHaveLength(1)
