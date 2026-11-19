@@ -93,8 +93,12 @@ function syncWarnings(a: EntryArgs): string[] {
   return out
 }
 
-const gone = (a: EntryArgs, e: string): string =>
-  `Restored to \`${a.display}\`, but the set-aside name \`${a.copyPath}\` could not be removed (${e}). Both names are the same entry; remove \`${a.copyPath}\` and its \`.json\` by hand.`
+/** What "both names" are, by type (design note §5.3 F4 and S5). */
+export const sameEntryText = (type: 'file' | 'symlink'): string =>
+  type === 'file' ? 'Both names are the same entry' : 'Both are links with the same text'
+
+const gone = (a: EntryArgs, e: string, type: 'file' | 'symlink'): string =>
+  `Restored to \`${a.display}\`, but the set-aside name \`${a.copyPath}\` could not be removed (${e}). ${sameEntryText(type)}; remove \`${a.copyPath}\` and its \`.json\` by hand.`
 
 const stopped = (a: EntryArgs): string =>
   `Restore stopped: \`${a.display}\` was created, but \`${a.copyPath}\` changed at the same time, so it was left in place. Check both paths: \`${a.display}\` and \`${a.copyPath}\`.`
@@ -128,7 +132,7 @@ export function restoreFileEntry(a: EntryArgs): EntryOutcome {
   try {
     fs.unlinkSync(a.copyPath)
   } catch (err) {
-    return fail('unlink-failed', gone(a, errno(err)), true)
+    return fail('unlink-failed', gone(a, errno(err), 'file'), true)
   }
   return { ok: true, warnings: syncWarnings(a) }
 }
@@ -173,7 +177,7 @@ export function restoreSymlinkEntry(a: EntryArgs): EntryOutcome {
   try {
     fs.unlinkSync(a.copyPath)
   } catch (err) {
-    return fail('unlink-failed', gone(a, errno(err)), true)
+    return fail('unlink-failed', gone(a, errno(err), 'symlink'), true)
   }
   return { ok: true, warnings: syncWarnings(a) }
 }

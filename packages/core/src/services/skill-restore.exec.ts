@@ -19,7 +19,12 @@ import {
 } from '../config/file-lock.parked.js'
 import { readStable } from '../install/prune.sidecar.js'
 import { replanUnderLock } from './skill-restore.js'
-import { restoreFileEntry, restoreSymlinkEntry, type EntryOutcome } from './skill-restore.entry.js'
+import {
+  restoreFileEntry,
+  restoreSymlinkEntry,
+  sameEntryText,
+  type EntryOutcome,
+} from './skill-restore.entry.js'
 import { claimPublish } from './skill-tree.js'
 import { SkillWriteStop, withSkillWriteLock } from './skill-write-lock.js'
 import type { RestoreHooks, RestorePlan, RestoreResult } from './skill-restore.types.js'
@@ -38,8 +43,59 @@ type Failure = Extract<RestoreResult, { status: 'refused' | 'stopped' }>
 
 const stopLine = (what: string): string => `Restore stopped: ${what}`
 
+const S_IFMT = 0o170000n
+
+/** The parked entry is still the one the plan bound (design note §5.2 D1, §5.1 step 4). */
+function copyStillBound(plan: RestorePlan): boolean {
+  try {
+    const st = fs.lstatSync(plan.copy.copyPath, { bigint: true })
+    const r = plan.rootIdentity
+    return (
+      st.dev === r.dev &&
+      st.ino === r.ino &&
+      (st.mode & S_IFMT) === r.fmt &&
+      st.birthtimeNs === r.birthtimeNs
+    )
+  } catch {
+    return false
+  }
+}
+
+const sameLock = (a: RestorePlan['lock'], b: RestorePlan['lock']): boolean =>
+  a.kind === b.kind &&
+  a.path === b.path &&
+  (a.kind === 'lock1'
+    ? b.kind === 'lock1' && a.root === b.root
+    : b.kind === 'lock1prime' && a.stateRoot === b.stateRoot && a.areaReal === b.areaReal)
+
+/**
+ * What must agree between the plan the caller holds and the one derived under
+ * the lock. Execution then uses the fresh plan, so nothing the caller wrote
+ * into its own plan reaches a write; a disagreement is `plan-changed`.
+ */
+function sameExecution(a: RestorePlan, b: RestorePlan): boolean {
+  return (
+    a.digest === b.digest &&
+    a.target === b.target &&
+    a.type === b.type &&
+    sameLock(a.lock, b.lock) &&
+    a.rootIdentity.dev === b.rootIdentity.dev &&
+    a.rootIdentity.ino === b.rootIdentity.ino &&
+    a.rootIdentity.birthtimeNs === b.rootIdentity.birthtimeNs &&
+    a.rootIdentity.fmt === b.rootIdentity.fmt &&
+    a.sidecarIno === b.sidecarIno &&
+    a.sidecarBytes.equals(b.sidecarBytes)
+  )
+}
+
+/** The set-aside folder changed between the plan and the claim's rename. */
+class CopySwapped extends Error {}
+
+const PLAN_CHANGED =
+  'The copy or its origin changed after you confirmed. Nothing was restored. Run `skillsmith restore <id>` again to see the new plan.'
+
 const bodyOf =
-  (plan: RestorePlan, hooks: RestoreHooks, check: () => void, state: { changed: boolean }) =>
+  (asked: RestorePlan, hooks: RestoreHooks, check: () => void, state: { changed: boolean }) =>
   async (): Promise<RestoreResult> => {
     const guard = (): void => {
       try {
@@ -56,17 +112,21 @@ const bodyOf =
     try {
       guard()
       // Re-plan under the lock (D12): the same copy, rediscovered, reclassified, re-digested.
-      const again = await replanUnderLock(plan)
-      if (again.status !== 'planned' || again.plan.digest !== plan.digest) {
-        return fail(
-          'plan-changed',
-          'The copy or its origin changed after you confirmed. Nothing was restored. Run `skillsmith restore <id>` again to see the new plan.'
-        )
+      const again = await replanUnderLock(asked, {
+        ...(asked.options.discovery === undefined ? {} : { discovery: asked.options.discovery }),
+        ...(asked.options.measure === undefined ? {} : { measure: asked.options.measure }),
+      })
+      if (again.status !== 'planned' || !sameExecution(asked, again.plan)) {
+        return fail('plan-changed', PLAN_CHANGED)
       }
+      // From here on every write is made from the plan derived under the lock.
+      const plan = again.plan
       hooks.beforeClaim?.()
       const warnings: string[] = []
       if (plan.type === 'directory') {
         guard()
+        // D1: the parked folder is still the planned one before anything is claimed.
+        if (!copyStillBound(plan)) return fail('plan-changed', PLAN_CHANGED)
         let claim: Awaited<ReturnType<typeof claimPublish>>
         try {
           claim = await claimPublish(plan.copy.copyPath, plan.target, undefined, {
@@ -74,9 +134,21 @@ const bodyOf =
               // The claim exists by now: a stop here leaves it (D10).
               state.changed = true
               guard()
+              if (!copyStillBound(plan)) throw new CopySwapped()
             },
           })
         } catch (err) {
+          if (err instanceof CopySwapped) {
+            return fail(
+              'claim-left',
+              claimLeftMessage(
+                plan,
+                'the set-aside folder changed',
+                'it is no longer the planned folder'
+              ),
+              'stopped'
+            )
+          }
           if (err instanceof GuardStop) {
             return fail(
               'claim-left',
@@ -114,7 +186,7 @@ const bodyOf =
           if (err instanceof GuardStop && state.changed) {
             return fail(
               'unlink-failed',
-              `Restored to \`${plan.origin}\`, but the set-aside name \`${plan.copyPath}\` could not be removed (the lock no longer holds: ${err.detail}). Both names are the same entry; remove \`${plan.copyPath}\` and its \`.json\` by hand.`,
+              `Restored to \`${plan.origin}\`, but the set-aside name \`${plan.copyPath}\` could not be removed (the lock no longer holds: ${err.detail}). ${sameEntryText(plan.type === 'symlink' ? 'symlink' : 'file')}; remove \`${plan.copyPath}\` and its \`.json\` by hand.`,
               'stopped'
             )
           }
@@ -222,12 +294,16 @@ function notesOf(plan: RestorePlan): string[] {
 
 /**
  * Restores the copy `plan` names (the public entry; it takes no test seams).
- * `plan` must come from `planRestore`: everything it carries is re-derived
- * and re-checked under the lock, and one that does not match the disk is
- * `plan-changed`.
+ * Under the lock the plan is re-derived from the disk, and it must agree with
+ * the plan given on its digest, write target, lock (the one actually taken),
+ * type, copy identity and record identity, or the result is `plan-changed`
+ * with nothing written; every write is then made from the re-derived plan, not
+ * the given one. The plan's own `discovery`, `measure` and `discovered`
+ * options are ignored here; `stateRoot` and `roots` are honoured.
  */
 export function executeRestore(plan: RestorePlan): Promise<RestoreResult> {
-  return executeRestoreWith(plan, {})
+  const { discovered: _a, discovery: _b, measure: _c, ...options } = plan.options
+  return executeRestoreWith({ ...plan, options }, {})
 }
 
 /** @internal `executeRestore` with the test seams; not exported from the package. */

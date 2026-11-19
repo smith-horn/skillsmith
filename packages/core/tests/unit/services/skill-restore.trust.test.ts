@@ -54,7 +54,7 @@ describe('a hand-built plan is checked against the parked layout', () => {
         parentDir: opDir,
       },
     }
-    const r = await replanUnderLock(crafted)
+    const r = await replanUnderLock(crafted, { discovery: env.opts.discovery! })
     expect(r.status === 'refused' && r.message).toMatch(/does not describe a set-aside copy/)
     const e = await executeRestoreWith(crafted)
     expect(e.status).toBe('refused')

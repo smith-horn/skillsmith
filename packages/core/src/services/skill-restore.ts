@@ -177,8 +177,17 @@ export async function planRestore(
  * listing and no `assignLocks` (the note it feeds is not in the digest), so
  * the root's lock is not held across a scan of every area.
  */
-export async function replanUnderLock(plan: RestorePlan): Promise<PlanRestoreResult> {
-  const { discovered: _stale, ...options } = plan.options
+export async function replanUnderLock(
+  plan: RestorePlan,
+  /** @internal Test seams only: the plan's own `discovery` and `measure` are never read. */
+  seams: Pick<RestorePlanOptions, 'discovery' | 'measure'> = {}
+): Promise<PlanRestoreResult> {
+  const { discovered: _stale, discovery: _d, measure: _m, ...kept } = plan.options
+  const options: RestorePlanOptions = {
+    ...kept,
+    ...(seams.discovery === undefined ? {} : { discovery: seams.discovery }),
+    ...(seams.measure === undefined ? {} : { measure: seams.measure }),
+  }
   // Nothing the plan says about where the copy sits is trusted: the area comes from the copy's own
   // listing fields, and those must agree with each other and with the parked layout.
   const inconsistent = copyShapeProblem(plan.copy)
