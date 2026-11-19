@@ -44,7 +44,7 @@ export const searchToolSchema = {
       trust_tier: {
         type: 'string',
         description:
-          'Filter by trust tier level (verified, curated, community, experimental, unknown)',
+          'Filter by trust tier level (verified, curated, community, experimental, unknown). Registry full-text search covers tiered skills only and never returns unknown (unverified) skills for a query',
         enum: ['verified', 'curated', 'community', 'experimental', 'unknown'],
       },
       min_score: {
