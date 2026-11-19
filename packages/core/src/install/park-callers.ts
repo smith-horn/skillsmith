@@ -11,9 +11,11 @@
  * (`quarantine.postmove.mjs:43-64`); the plan makes it caller-aware.
  *
  * `kind` stays a separate option, as §3.3 lists it, and must be this caller's
- * kind: three fan-out callers share `fan-out-overwrite`, so the kind alone
- * cannot pick the message. Every other caller has a kind of its own, which
- * UD63 relies on: the lock for an index-only area is decided by kind.
+ * kind: every caller has a kind of its own (D5 split the three fan-out
+ * overwrite callers into `fan-out-staging`, `fan-out-symlink` and
+ * `fan-out-backup`, so `skillsmith restore` can tell the internal origins
+ * apart from the sidecar alone), which UD63 relies on: the lock for an
+ * index-only area is decided by kind.
  *
  * An internal-origin sentence never asserts where the tree is unless the
  * post-move check confirmed it (`safe`, SMI-7134): the detail's own location
@@ -60,14 +62,14 @@ const CALLERS = {
   'fan-out-undo': { rows: '5', kind: 'fan-out-undo', internalOrigin: null },
   'fan-out-staging': {
     rows: '6',
-    kind: 'fan-out-overwrite',
+    kind: 'fan-out-staging',
     internalOrigin: () =>
       'Its origin is a temporary staging folder, so there is nothing to restore.',
   },
-  'fan-out-symlink': { rows: '7', kind: 'fan-out-overwrite', internalOrigin: null },
+  'fan-out-symlink': { rows: '7', kind: 'fan-out-symlink', internalOrigin: null },
   'fan-out-backup': {
     rows: '8',
-    kind: 'fan-out-overwrite',
+    kind: 'fan-out-backup',
     internalOrigin: () => 'Its origin is a backup folder, so there is nothing to restore.',
   },
   'install-rollback': { rows: '9', kind: 'install-rollback', internalOrigin: null },

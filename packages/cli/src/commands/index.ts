@@ -86,3 +86,5 @@ export { createLogsCommand } from './logs.js'
 
 // SMI-7143: `sklx doctor locks` lists and releases Skillsmith's own lock files
 export { createDoctorCommand } from './doctor.js'
+// SMI-6531 6d-ii: `skillsmith restore <id>`
+export { createRestoreCommand } from './restore.js'

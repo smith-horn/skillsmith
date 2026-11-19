@@ -54,6 +54,7 @@ import {
   createAgentCommand,
   createDiagnoseCommand,
   createDoctorCommand,
+  createRestoreCommand,
   createLogsCommand,
 } from './commands/index.js'
 import { getCliLogger } from './cli-logger.js'
@@ -219,6 +220,7 @@ program.addCommand(createLogsCommand())
 
 // SMI-7143: `sklx doctor locks` lists and releases Skillsmith's own lock files
 program.addCommand(createDoctorCommand())
+program.addCommand(createRestoreCommand())
 
 // SMI-5021 Wave 3: telemetry opt-in + Claude Code hook management
 program.addCommand(createTelemetryCommand())
