@@ -17,7 +17,9 @@ import {
   withParkedAreaLock,
   type StrandedClaim,
 } from '../config/file-lock.parked.js'
+import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import { readStable } from '../install/prune.sidecar.js'
+import { occupiedMessage, PLAN_CHANGED } from './skill-restore.messages.js'
 import { replanUnderLock } from './skill-restore.js'
 import {
   restoreFileEntry,
@@ -43,22 +45,10 @@ type Failure = Extract<RestoreResult, { status: 'refused' | 'stopped' }>
 
 const stopLine = (what: string): string => `Restore stopped: ${what}`
 
-const S_IFMT = 0o170000n
-
 /** The parked entry is still the one the plan bound (design note §5.2 D1, §5.1 step 4). */
 function copyStillBound(plan: RestorePlan): boolean {
-  try {
-    const st = fs.lstatSync(plan.copy.copyPath, { bigint: true })
-    const r = plan.rootIdentity
-    return (
-      st.dev === r.dev &&
-      st.ino === r.ino &&
-      (st.mode & S_IFMT) === r.fmt &&
-      st.birthtimeNs === r.birthtimeNs
-    )
-  } catch {
-    return false
-  }
+  const now = bindIdentity(plan.copy.copyPath)
+  return now.ok && sameIdentity(plan.rootIdentity, now)
 }
 
 const sameLock = (a: RestorePlan['lock'], b: RestorePlan['lock']): boolean =>
@@ -90,9 +80,6 @@ function sameExecution(a: RestorePlan, b: RestorePlan): boolean {
 
 /** The set-aside folder changed between the plan and the claim's rename. */
 class CopySwapped extends Error {}
-
-const PLAN_CHANGED =
-  'The copy or its origin changed after you confirmed. Nothing was restored. Run `skillsmith restore <id>` again to see the new plan.'
 
 const bodyOf =
   (asked: RestorePlan, hooks: RestoreHooks, check: () => void, state: { changed: boolean }) =>
@@ -207,7 +194,13 @@ const bodyOf =
       }
     } catch (err) {
       if (err instanceof GuardStop) {
-        return fail('locks-dir-changed', stopLine(`the lock no longer holds (${err.detail}).`))
+        // Lock 1 is the skills folder's lock: its failures read as the plan-time refusal does.
+        return asked.lock.kind === 'lock1'
+          ? fail(
+              'origin-root-unbindable',
+              stopLine(`the skills folder lock no longer holds (${err.detail}).`)
+            )
+          : fail('locks-dir-changed', stopLine(`the lock no longer holds (${err.detail}).`))
       }
       throw err
     }
@@ -220,11 +213,7 @@ function directoryFailure(
   fail: (r: Failure['reason'], m: string, s?: Failure['status']) => Failure
 ): Failure {
   if (claim.reason === 'target-exists') {
-    return fail(
-      'origin-occupied',
-      `Something already exists at \`${plan.origin}\`. Move it aside first, then run \`skillsmith restore <id>\` again.`,
-      'refused'
-    )
+    return fail('origin-occupied', occupiedMessage(plan.origin), 'refused')
   }
   if (claim.reason === 'claim-failed') {
     return fail(
@@ -297,9 +286,11 @@ function notesOf(plan: RestorePlan): string[] {
  * Under the lock the plan is re-derived from the disk, and it must agree with
  * the plan given on its digest, write target, lock (the one actually taken),
  * type, copy identity and record identity, or the result is `plan-changed`
- * with nothing written; every write is then made from the re-derived plan, not
- * the given one. The plan's own `discovery`, `measure` and `discovered`
- * options are ignored here; `stateRoot` and `roots` are honoured.
+ * with nothing written (the lock named is checked against a lock-free
+ * derivation before any lock is taken, so a wrong lock makes no folder);
+ * every write is then made from the re-derived plan, not the given one. The
+ * plan's own `discovery`, `measure` and `discovered` options are ignored here;
+ * `stateRoot` and `roots` are honoured.
  */
 export function executeRestore(plan: RestorePlan): Promise<RestoreResult> {
   const { discovered: _a, discovery: _b, measure: _c, ...options } = plan.options
@@ -314,7 +305,10 @@ export async function executeRestoreWith(
   const state = { changed: false }
   const wrap = (real: () => void): (() => void) =>
     hooks.wrapCheck === undefined ? real : hooks.wrapCheck(real)
-  const timeout = hooks.lockTimeoutMs === undefined ? {} : { timeoutMs: hooks.lockTimeoutMs }
+  const timeout = {
+    ...(hooks.lockTimeoutMs === undefined ? {} : { timeoutMs: hooks.lockTimeoutMs }),
+    ...(hooks.beforeLock === undefined ? {} : { beforeLock: hooks.beforeLock }),
+  }
   const busy = (lock: string): Failure => ({
     status: 'refused',
     reason: 'restore-busy',
@@ -324,6 +318,22 @@ export async function executeRestoreWith(
   })
   const withStranded = (r: RestoreResult, s: StrandedClaim | undefined): RestoreResult =>
     s === undefined ? r : { ...r, strandedLockClaim: s }
+  // Before any lock is taken (a lock 1 binding makes the staging folder, lock 1prime makes
+  // `locks/`): re-derive the plan without a lock and require the lock the caller names to be
+  // the one it derives. The same derivation runs again under the lock.
+  const early = await replanUnderLock(plan, {
+    ...(plan.options.discovery === undefined ? {} : { discovery: plan.options.discovery }),
+    ...(plan.options.measure === undefined ? {} : { measure: plan.options.measure }),
+  })
+  if (early.status !== 'planned' || !sameLock(plan.lock, early.plan.lock)) {
+    return {
+      status: 'refused',
+      reason: 'plan-changed',
+      message: PLAN_CHANGED,
+      changed: false,
+      warnings: [],
+    }
+  }
   if (plan.lock.kind === 'lock1') {
     const run = await withSkillWriteLock(
       plan.lock.root,
@@ -341,7 +351,7 @@ export async function executeRestoreWith(
     if (run.stop.code === 'busy') return busy(plan.lock.path)
     return {
       status: state.changed ? 'stopped' : 'refused',
-      reason: 'locks-dir-changed',
+      reason: 'origin-root-unbindable',
       message: stopLine(`the skills folder lock refused (${run.stop.code}: ${run.stop.detail}).`),
       changed: state.changed,
       warnings: [],

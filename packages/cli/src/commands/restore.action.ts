@@ -91,6 +91,14 @@ export async function runRestore(id: string, options: RestoreActionOptions): Pro
     )
   } else {
     const locksDir = plan.lock.kind === 'lock1prime' ? path.join(plan.lock.stateRoot, 'locks') : ''
+    // As the plan refusal does: say so whenever nothing changed (a message that says it already is not doubled).
+    if (
+      result.status !== 'restored' &&
+      !result.changed &&
+      !result.message.includes('Nothing was restored')
+    ) {
+      console.log('Nothing was restored.')
+    }
     for (const l of resultLines(result, locksDir)) console.log(l)
   }
   if (result.status !== 'restored') process.exitCode = result.changed ? 4 : 1
