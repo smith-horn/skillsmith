@@ -194,7 +194,12 @@ export async function replanUnderLock(
   const inconsistent = copyShapeProblem(plan.copy)
   if (inconsistent !== null) return refuse('plan-changed', inconsistent)
   const discovery = await discoverFor(options)
-  const classification = classifyCopy(plan.copy, 'parked')
+  const measured = classifyCopy(plan.copy, 'parked')
+  // As the listing does: a test seam may replace the size walk.
+  const classification =
+    options.measure === undefined
+      ? measured
+      : { ...measured, measured: options.measure(plan.copy.copyPath) }
   return evaluate(
     {
       copy: plan.copy,

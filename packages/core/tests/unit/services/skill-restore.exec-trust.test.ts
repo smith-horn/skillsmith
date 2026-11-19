@@ -15,6 +15,7 @@ import {
   runLockedForTests,
 } from '../../../src/config/file-lock.parked.js'
 import { executeRestore, executeRestoreWith } from '../../../src/services/skill-restore.exec.js'
+import type { Measured } from '../../../src/install/prune.measure.js'
 import { replanUnderLock } from '../../../src/services/skill-restore.js'
 import type { RestoreHooks, RestorePlan } from '../../../src/services/skill-restore.types.js'
 import { indexKind, mkEnv, parkEntry, planOk, type Env } from './skill-restore.helpers.js'
@@ -300,6 +301,56 @@ describe('F3 and S4 bind the parked name by birthtime as well', () => {
     if (r.status === 'restored') return
     expect(r.reason).toBe('link-stopped')
     expect(fs.existsSync(m.sidecarPath)).toBe(true)
+  })
+})
+
+describe('the public executeRestore never calls a measure seam the plan carries', () => {
+  /** A lock 1prime copy under a production-discovery fixture (HOME is the fixture) and a recording measure. */
+  async function planWithMeasure(): Promise<{ plan: RestorePlan; calls: () => number }> {
+    const p = path.join(env.base, 'proj-outside')
+    const m = parkEntry(p, 'thing', { caller: 'init-rollback', type: 'file' })
+    indexKind(env.stateRoot, m.copyPath, m.opId, 'init-rollback')
+    let n = 0
+    const measure = (): Measured => {
+      n++
+      return { allocatedBytes: 0, apparentBytes: 0, unmeasured: 0, units: new Map() }
+    }
+    const plan = await planOk(m.copyPath, { stateRoot: env.stateRoot, measure })
+    expect(plan.options.discovery).toBeUndefined()
+    expect(plan.options.measure).toBe(measure)
+    n = 0
+    return { plan, calls: () => n }
+  }
+
+  const withHome = async (body: () => Promise<void>): Promise<void> => {
+    const home = process.env['HOME']
+    process.env['HOME'] = env.base
+    try {
+      await body()
+    } finally {
+      if (home === undefined) delete process.env['HOME']
+      else process.env['HOME'] = home
+    }
+  }
+
+  it('public executeRestore: the seam is never invoked, before the lock or under it', async () => {
+    env = mkEnv()
+    await withHome(async () => {
+      const { plan, calls } = await planWithMeasure()
+      const r = await executeRestore(plan)
+      expect(r.status).toBe('restored')
+      expect(calls()).toBe(0)
+    })
+  })
+
+  it('control: the internal entry does invoke it (the instrument sees calls)', async () => {
+    env = mkEnv()
+    await withHome(async () => {
+      const { plan, calls } = await planWithMeasure()
+      const r = await executeRestoreWith(plan)
+      expect(r.status).toBe('restored')
+      expect(calls()).toBeGreaterThan(0)
+    })
   })
 })
 

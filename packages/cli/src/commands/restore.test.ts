@@ -330,7 +330,11 @@ describe('a stranded lock claim is reported in the text and the JSON', () => {
 })
 
 describe('an execute-time stop that changed nothing says so, once', () => {
-  const said = (): number => out.filter((l) => l.includes('Nothing was restored.')).length
+  const SENTENCE = 'Nothing was restored.'
+  /** Exact occurrences of the sentence across all output (a doubled line counts twice). */
+  const said = (): number => out.join('\n').split(SENTENCE).length - 1
+  /** The standalone line the CLI itself prints. */
+  const standalone = (): number => out.filter((l) => l === SENTENCE).length
 
   it('refused: an occupant created before the claim', async () => {
     const p = parked()
@@ -339,6 +343,7 @@ describe('an execute-time stop that changed nothing says so, once', () => {
     await runRestore(p.opId, { ...disc, yes: true })
     expect(process.exitCode).toBe(1)
     expect(said()).toBe(1)
+    expect(standalone()).toBe(1)
   })
 
   it('plan-changed already says it in its own message: not doubled', async () => {
@@ -353,6 +358,7 @@ describe('an execute-time stop that changed nothing says so, once', () => {
     await runRestore(p.opId, { ...disc, yes: true })
     expect(process.exitCode).toBe(1)
     expect(said()).toBe(1)
+    expect(standalone()).toBe(0)
   })
 
   it('stopped after something changed: not said, exit 4', async () => {
@@ -368,6 +374,7 @@ describe('an execute-time stop that changed nothing says so, once', () => {
     await runRestore(p.opId, { ...disc, yes: true })
     expect(process.exitCode).toBe(4)
     expect(said()).toBe(0)
+    expect(standalone()).toBe(0)
   })
 })
 
