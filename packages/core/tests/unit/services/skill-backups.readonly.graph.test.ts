@@ -120,9 +120,9 @@ function withCopy(body: (src: string, cli: string) => void): void {
 }
 
 // Each copy-based control copies the source tree and walks its import graph, often twice. On a
-// loaded CI runner that took 36-40 s per case (#3267, run 44364742912) against vitest's 15 s
-// default; the whole file took 100 s on #3248. This raises the time limit only; no assertion
-// changes.
+// loaded CI runner that took 36-40 s per case (#3267, run 44364742912) against the repo's 15 s
+// `testTimeout` (`vitest.preset.ts`); the whole file took 100 s on #3248. This raises the time
+// limit only; no assertion changes.
 const GRAPH_TEST_TIMEOUT_MS = 120_000
 
 describe(

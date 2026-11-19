@@ -15,7 +15,9 @@
  * bound by identity and checked three times, and again on request through
  * `ctx.recheck()`. The swap that remains after the third check is an accepted
  * residual (ADR-166 D-0, as UD71): swapping `locks/` needs the user's own
- * account. A claim the release could not find is reported as `stranded`.
+ * account. When `locks/` was not the bound folder after the claim was taken, the
+ * result reports (`stranded`) that a claim may have been left in the folder that
+ * moved away.
  *
  * @module @skillsmith/core/config/file-lock.parked
  */
@@ -64,11 +66,14 @@ export interface StrandedClaim {
 }
 
 export interface ParkedLockContext {
-  /** Throws `ParkedLockChanged` unless `locks/` and the claim still have their bound identities. */
+  /**
+   * Throws `ParkedLockChanged` unless `locks/` is the bound folder and the claim is the same
+   * inode carrying the pid, host and token read at check 3.
+   */
   recheck(): void
 }
 
-/** `locks/` or the claim no longer has the identity bound when the lock was taken. */
+/** `locks/` or the claim no longer matches what check 3 bound (identity, or the claim's content). */
 export class ParkedLockChanged extends Error {
   constructor(
     readonly path: string,
@@ -82,9 +87,9 @@ export class ParkedLockChanged extends Error {
 const strandedByError = new WeakMap<object, StrandedClaim>()
 
 /**
- * The stranded claim `withParkedAreaLock` found when `fn` (or the release)
- * threw, for the error it rethrew; `undefined` when there was none. A thrown
- * primitive cannot carry it, so only a thrown object is tracked.
+ * The `stranded` report for an error `fn` threw (a claim may have been left in a
+ * moved `locks/`), or `undefined` when there was none. A thrown primitive cannot
+ * carry it, so only a thrown object is tracked.
  */
 export function strandedOf(error: unknown): StrandedClaim | undefined {
   return typeof error === 'object' && error !== null ? strandedByError.get(error) : undefined
@@ -94,7 +99,7 @@ export interface WithParkedAreaLockOptions {
   timeoutMs?: number
 }
 
-/** @internal Test seams around the `locks/` checks (W7b, W7c, W10, afterAcquire). */
+/** @internal Test seams around the `locks/` checks (W7b, W7c, W10, afterAcquire, afterRelease). */
 export interface ParkedLockHooks {
   afterValidate?: () => void
   afterRecheck?: () => void
