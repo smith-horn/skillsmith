@@ -18,7 +18,7 @@ import {
   type StrandedClaim,
 } from '../config/file-lock.parked.js'
 import { readStable } from '../install/prune.sidecar.js'
-import { planRestore } from './skill-restore.js'
+import { replanUnderLock } from './skill-restore.js'
 import { restoreFileEntry, restoreSymlinkEntry, type EntryOutcome } from './skill-restore.entry.js'
 import { claimPublish } from './skill-tree.js'
 import { SkillWriteStop, withSkillWriteLock } from './skill-write-lock.js'
@@ -56,9 +56,7 @@ const bodyOf =
     try {
       guard()
       // Re-plan under the lock (D12): the same copy, rediscovered, reclassified, re-digested.
-      // `discovered` is dropped so discovery is re-run, not reused.
-      const { discovered: _stale, ...fresh } = plan.options
-      const again = await planRestore(plan.copyPath, fresh)
+      const again = await replanUnderLock(plan)
       if (again.status !== 'planned' || again.plan.digest !== plan.digest) {
         return fail(
           'plan-changed',
@@ -69,12 +67,25 @@ const bodyOf =
       const warnings: string[] = []
       if (plan.type === 'directory') {
         guard()
-        const claim = await claimPublish(plan.copy.copyPath, plan.origin, {
-          afterClaim: () => {
-            state.changed = true
-            guard()
-          },
-        })
+        let claim: Awaited<ReturnType<typeof claimPublish>>
+        try {
+          claim = await claimPublish(plan.copy.copyPath, plan.target, undefined, {
+            beforeRename: () => {
+              // The claim exists by now: a stop here leaves it (D10).
+              state.changed = true
+              guard()
+            },
+          })
+        } catch (err) {
+          if (err instanceof GuardStop) {
+            return fail(
+              'claim-left',
+              claimLeftMessage(plan, 'the lock no longer holds', err.detail),
+              'stopped'
+            )
+          }
+          throw err
+        }
         if (!claim.ok) return directoryFailure(plan, claim, state, fail)
         if (claim.syncs.publish.outcome === 'failed') {
           warnings.push(
@@ -84,16 +95,30 @@ const bodyOf =
         state.changed = true
       } else {
         const run = plan.type === 'file' ? restoreFileEntry : restoreSymlinkEntry
-        const out: EntryOutcome = run({
-          copyPath: plan.copy.copyPath,
-          origin: plan.origin,
-          rid: plan.rootIdentity,
-          guard,
-          onChanged: () => {
-            state.changed = true
-          },
-          ...(hooks.afterLink === undefined ? {} : { afterLink: hooks.afterLink }),
-        })
+        let out: EntryOutcome
+        try {
+          out = run({
+            copyPath: plan.copy.copyPath,
+            origin: plan.target,
+            rid: plan.rootIdentity,
+            guard,
+            onChanged: () => {
+              state.changed = true
+            },
+            ...(hooks.afterLink === undefined ? {} : { afterLink: hooks.afterLink }),
+          })
+        } catch (err) {
+          // A stop after the new name exists and before the parked name is removed: both names
+          // hold the same entry (F4), which the user must be told, not "the lock no longer holds".
+          if (err instanceof GuardStop && state.changed) {
+            return fail(
+              'unlink-failed',
+              `Restored to \`${plan.origin}\`, but the set-aside name \`${plan.copyPath}\` could not be removed (the lock no longer holds: ${err.detail}). Both names are the same entry; remove \`${plan.copyPath}\` and its \`.json\` by hand.`,
+              'stopped'
+            )
+          }
+          throw err
+        }
         if (!out.ok) {
           return fail(out.code, out.message, out.changed || state.changed ? 'stopped' : 'refused')
         }
@@ -142,12 +167,16 @@ function directoryFailure(
       : 'the copy could not be moved in'
   return fail(
     claim.reason === 'sync-failed' ? 'sync-failed' : 'claim-left',
-    stopLine(
-      `an empty folder was created at \`${plan.origin}\`, but ${why} (${claim.errno ?? 'unknown'}). The copy is still at \`${plan.copyPath}\`. Remove the empty folder with \`rmdir\`, then run \`skillsmith restore <id>\` again.`
-    ),
+    claimLeftMessage(plan, why, claim.errno ?? 'unknown'),
     'stopped'
   )
 }
+
+/** D10: the empty claim stays, the copy and its record are untouched. */
+const claimLeftMessage = (plan: RestorePlan, why: string, detail: string): string =>
+  stopLine(
+    `an empty folder was created at \`${plan.origin}\`, but ${why} (${detail}). The copy is still at \`${plan.copyPath}\`. Remove the empty folder with \`rmdir\`, then run \`skillsmith restore <id>\` again.`
+  )
 
 /** §5.4: only after the parked name is gone, and only the record the listing read. */
 function unlinkSidecar(plan: RestorePlan, hooks: RestoreHooks, guard: () => void): string[] {
@@ -161,7 +190,13 @@ function unlinkSidecar(plan: RestorePlan, hooks: RestoreHooks, guard: () => void
   if (read.ino !== plan.sidecarIno || !read.bytes.equals(plan.sidecarBytes)) {
     return handBy('it changed since it was read')
   }
-  guard()
+  try {
+    guard()
+  } catch (err) {
+    // Already restored: the lock stopping now only leaves the record (D8), exit 0.
+    if (err instanceof GuardStop) return handBy('the lock no longer holds')
+    throw err
+  }
   try {
     fs.unlinkSync(p)
   } catch (err) {
@@ -189,6 +224,8 @@ export async function executeRestore(
   hooks: RestoreHooks = {}
 ): Promise<RestoreResult> {
   const state = { changed: false }
+  const wrap = (real: () => void): (() => void) =>
+    hooks.wrapCheck === undefined ? real : hooks.wrapCheck(real)
   const timeout = hooks.lockTimeoutMs === undefined ? {} : { timeoutMs: hooks.lockTimeoutMs }
   const busy = (lock: string): Failure => ({
     status: 'refused',
@@ -203,7 +240,13 @@ export async function executeRestore(
     const run = await withSkillWriteLock(
       plan.lock.root,
       'skillsmith restore',
-      (ctx) => bodyOf(plan, hooks, () => ctx.check(), state)(),
+      (ctx) =>
+        bodyOf(
+          plan,
+          hooks,
+          wrap(() => ctx.check()),
+          state
+        )(),
       timeout
     )
     if (run.ok) return run.value
@@ -220,7 +263,13 @@ export async function executeRestore(
     const run = await (hooks.runLock ?? withParkedAreaLock)(
       plan.lock.path,
       'skillsmith restore',
-      (ctx) => bodyOf(plan, hooks, () => ctx.recheck(), state)(),
+      (ctx) =>
+        bodyOf(
+          plan,
+          hooks,
+          wrap(() => ctx.recheck()),
+          state
+        )(),
       timeout
     )
     if (run.ok) return withStranded(run.value, run.stranded)

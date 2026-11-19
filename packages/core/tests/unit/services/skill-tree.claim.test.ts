@@ -124,6 +124,22 @@ describe('claimPublish', () => {
     expect(seen).toEqual({ claimIsEmptyDir: true, stagedStillThere: true })
   })
 
+  it('beforeRename runs after the claim and before the rename; throwing leaves the empty claim and the stage', async () => {
+    const root = tmp()
+    const { staged, dest } = stage(root)
+    const stagedHash = hashOrThrow(staged)
+    await expect(
+      claimPublish(staged, dest, undefined, {
+        beforeRename: () => {
+          throw new Error('stop before the rename')
+        },
+      })
+    ).rejects.toThrow('stop before the rename')
+    expect(lstatBig(dest)?.isDirectory()).toBe(true)
+    expect(fs.readdirSync(dest)).toEqual([])
+    expect(hashOrThrow(staged)).toBe(stagedHash)
+  })
+
   it('T-X9 (2): a kill between the claim and the rename leaves the empty claim and an intact stage', () => {
     const root = tmp()
     const { staged, dest } = stage(root)

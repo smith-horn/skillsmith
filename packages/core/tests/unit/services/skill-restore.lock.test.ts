@@ -139,7 +139,8 @@ describe('a recheck immediately before every write', () => {
     const r = await executeRestore(plan, { runLock })
     expect(r.status).toBe('stopped')
     if (r.status === 'restored') return
-    expect(r.reason).toBe('locks-dir-changed')
+    // After the link: reported as the F4 stop naming both paths (see skill-restore.guard.test.ts).
+    expect(r.reason).toBe('unlink-failed')
     expect(r.changed).toBe(true)
     expect(fs.existsSync(m.origin)).toBe(true)
     expect(fs.existsSync(m.copyPath)).toBe(true)

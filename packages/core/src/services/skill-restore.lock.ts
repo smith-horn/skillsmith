@@ -11,7 +11,8 @@ import path from 'node:path'
 import { parkedLockPath } from '../config/file-lock.parked.js'
 import type { LockAssignment } from '../install/prune.plan.types.js'
 import { STAGING_DIR } from './skill-backups.areas.js'
-import type { BackupsListing } from './skill-backups.listing.js'
+import type { Discovery } from './skill-recovery.discover.js'
+import type { IndexedLine } from './skill-backups.areas.js'
 import {
   bindSkillsRootReadOnly,
   skillsRootLockPaths,
@@ -41,13 +42,14 @@ const realOf = (p: string): string | null => {
 /** True when `child` is `root` or inside it, by path segments, never by string prefix. */
 export function insideOrEqual(root: string, child: string): boolean {
   const rel = path.relative(root, child)
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+  // A folder named `..proj` is inside; only `..` itself, or `../...`, is outside.
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel))
 }
 
 /** The longest discovered root (real path) equal to `o` or an ancestor of it. */
-export function containingRoot(listing: BackupsListing, o: string): string | null {
+export function containingRoot(roots: Discovery['roots'], o: string): string | null {
   let best: string | null = null
-  for (const r of listing.discovery.roots) {
+  for (const r of roots) {
     const real = realOf(r.root)
     if (real !== null && insideOrEqual(real, o) && (best === null || real.length > best.length)) {
       best = real
@@ -77,7 +79,8 @@ const describe = (a: LockAssignment | undefined): string =>
       : `the lock ${a.path}`
 
 export function chooseLock(args: {
-  listing: BackupsListing
+  discovery: Pick<Discovery, 'roots'>
+  indexLines: readonly IndexedLine[]
   copyPath: string
   origin: string
   /** `realpath.native(dirname(origin))`. */
@@ -89,8 +92,8 @@ export function chooseLock(args: {
 }
 
 async function choose(args: Parameters<typeof chooseLock>[0]): Promise<ChosenLock> {
-  const { listing, copyPath, origin, o, areaDir, assigned } = args
-  const root = containingRoot(listing, o)
+  const { discovery, indexLines, copyPath, origin, o, areaDir, assigned } = args
+  const root = containingRoot(discovery.roots, o)
   let lock: RestoreLock
   let rootIdentity: string | null = null
   if (root !== null) {
@@ -111,11 +114,19 @@ async function choose(args: Parameters<typeof chooseLock>[0]): Promise<ChosenLoc
         message: `The skills folder \`${root}\` that \`${origin}\` is in can't be used right now (root-changed: it now resolves elsewhere), so nothing was restored.`,
       }
     }
-    const st = fs.lstatSync(root, { bigint: true })
-    rootIdentity = `${st.dev}:${st.ino}`
+    try {
+      const st = fs.lstatSync(root, { bigint: true })
+      rootIdentity = `${st.dev}:${st.ino}`
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'origin-root-unbindable',
+        message: `The skills folder \`${root}\` that \`${origin}\` is in can't be used right now (${(err as NodeJS.ErrnoException).code ?? 'UNKNOWN'}: it can't be read), so nothing was restored.`,
+      }
+    }
     lock = { kind: 'lock1', root, path: skillsRootLockPaths(root)[0]! }
   } else {
-    const lines = listing.index.facts.lines.filter((l) => l.copyPath === copyPath)
+    const lines = indexLines.filter((l) => l.copyPath === copyPath)
     const stateRoots = [...new Set(lines.map((l) => l.stateRoot))]
     if (stateRoots.length !== 1) {
       return {

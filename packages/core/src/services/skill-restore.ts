@@ -13,13 +13,18 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseSidecarStrict } from '../install/prune.sidecar.js'
+import { classifyCopy, type Classification } from '../install/prune.classify.js'
+import type { ListedCopy } from '../install/prune.list.types.js'
+import type { LockAssignment } from '../install/prune.plan.types.js'
+import { readIndexes, type IndexedLine } from './skill-backups.areas.js'
 import { listBackups, type ListBackupsOptions } from './skill-backups.listing.js'
-import { discoverRoots } from './skill-recovery.discover.js'
+import { discoverRoots, type Discovery } from './skill-recovery.discover.js'
 import { assignLocks } from './skill-backups.locks.js'
 import { chooseLock } from './skill-restore.lock.js'
 import { restoreClassOf } from './skill-restore.kinds.js'
-import { allRows, matchRows, parseId, type Match } from './skill-restore.resolve.js'
+import { allRows, matchRows, parseId } from './skill-restore.resolve.js'
 import type {
+  RestorePlan,
   PlanRestoreResult,
   RestoreContents,
   RestorePlanOptions,
@@ -59,6 +64,15 @@ export function idOf(p: string): string {
   }
 }
 
+/** False when `p` is not a directory, or vanished before it could be read. */
+const isDirectory = (p: string): boolean => {
+  try {
+    return fs.statSync(p).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 const realOf = (p: string): string | null => {
   try {
     return fs.realpathSync.native(p)
@@ -73,14 +87,19 @@ const realOf = (p: string): string | null => {
  * the parked index names (the very copy §4.1a's `--root` remedy is for). So
  * discovery is made here and handed over, which the listing never narrows by.
  */
-async function listOptions(o: RestorePlanOptions): Promise<ListBackupsOptions> {
-  const discovered =
+async function discoverFor(o: RestorePlanOptions): Promise<Discovery> {
+  return (
     o.discovered ??
     (await discoverRoots({
       ...(o.stateRoot === undefined ? {} : { stateRoot: o.stateRoot }),
       ...(o.roots === undefined || o.roots.length === 0 ? {} : { roots: o.roots }),
       ...o.discovery,
     }))
+  )
+}
+
+async function listOptions(o: RestorePlanOptions): Promise<ListBackupsOptions> {
+  const discovered = await discoverFor(o)
   return {
     ...(o.stateRoot === undefined ? {} : { stateRoot: o.stateRoot }),
     discovered,
@@ -135,17 +154,67 @@ export async function planRestore(
       candidates,
     }
   }
-  return planOne(matches[0]!, listing, options)
+  const { row, view } = matches[0]!
+  return evaluate(
+    {
+      copy: row.copy,
+      classification: row.classification,
+      areaRoot: view.ref.root,
+      areaDir: view.ref.areaDir,
+      bytes: row.apparentBytes,
+    },
+    {
+      discovery: listing.discovery,
+      indexLines: listing.index.facts.lines,
+      assigned: (await assignLocks(listing)).get(row.copy.copyPath),
+    },
+    options
+  )
 }
 
-async function planOne(
-  m: Match,
-  listing: Awaited<ReturnType<typeof listBackups>>,
+/**
+ * The re-plan under the lock (D12, §5.1 step 3): rediscovery, `classifyCopy` of
+ * the one copy, the same checks and the same digest. It makes no whole-machine
+ * listing and no `assignLocks` (the note it feeds is not in the digest), so
+ * the root's lock is not held across a scan of every area.
+ */
+export async function replanUnderLock(plan: RestorePlan): Promise<PlanRestoreResult> {
+  const { discovered: _stale, ...options } = plan.options
+  const discovery = await discoverFor(options)
+  const classification = classifyCopy(plan.copy, 'parked')
+  return evaluate(
+    {
+      copy: plan.copy,
+      classification,
+      areaRoot: plan.areaRoot,
+      areaDir: plan.areaDir,
+      bytes: classification.measured.apparentBytes,
+    },
+    { discovery, indexLines: readIndexes(discovery.stateRoots).lines, assigned: undefined },
+    options
+  )
+}
+
+interface Subject {
+  copy: ListedCopy
+  classification: Classification
+  areaRoot: string
+  areaDir: string
+  bytes: number
+}
+
+async function evaluate(
+  s: Subject,
+  ctx: {
+    discovery: Pick<Discovery, 'roots'>
+    indexLines: readonly IndexedLine[]
+    assigned: LockAssignment | undefined
+  },
   options: RestorePlanOptions
 ): Promise<PlanRestoreResult> {
-  const { row, view } = m
-  const c = row.classification
-  const copyPath = row.copy.copyPath
+  const row = { copy: s.copy }
+  const c = s.classification
+  const copyPath = s.copy.copyPath
   const unknownOrigin = refuse(
     'origin-unknown',
     `The record beside \`${copyPath}\` can't be read, so where it came from is unknown. Copy what you need from it by hand.`
@@ -197,29 +266,31 @@ async function planOne(
   }
   const dir = path.dirname(origin)
   const o = realOf(dir)
-  if (o === null || !fs.statSync(o).isDirectory()) {
+  if (o === null || !isDirectory(o)) {
     return refuse(
       'origin-parent-missing',
       `The folder \`${dir}\` that \`${path.basename(origin)}\` came from no longer exists. Create it, then run \`skillsmith restore <id>\` again.`
     )
   }
-  if (o !== realOf(view.ref.root)) {
+  if (o !== realOf(s.areaRoot)) {
     return refuse(
       'origin-mismatch',
-      `\`${copyPath}\` says it came from \`${origin}\`, which is not beside the folder it was set aside in (\`${view.ref.areaDir}\`). Copy what you need from it by hand.`
+      `\`${copyPath}\` says it came from \`${origin}\`, which is not beside the folder it was set aside in (\`${s.areaDir}\`). Copy what you need from it by hand.`
     )
   }
-  const assigned = (await assignLocks(listing)).get(copyPath)
   const chosen = await chooseLock({
-    listing,
+    discovery: ctx.discovery,
+    indexLines: ctx.indexLines,
     copyPath,
     origin,
     o,
-    areaDir: view.ref.areaDir,
-    assigned,
+    areaDir: s.areaDir,
+    assigned: ctx.assigned,
   })
   if (!chosen.ok) return refuse(chosen.reason, chosen.message)
-  if (idOf(origin) !== 'absent') {
+  // Writes go to the bound real parent plus the name, never through the sidecar's own spelling.
+  const target = path.join(o, path.basename(origin))
+  if (idOf(target) !== 'absent') {
     return refuse(
       'origin-occupied',
       `Something already exists at \`${origin}\`. Move it aside first, then run \`skillsmith restore <id>\` again.`
@@ -237,9 +308,10 @@ async function planOne(
       c.klass,
       kind,
       origin,
-      idOf(origin),
+      target,
+      idOf(target),
       idOf(o),
-      idOf(view.ref.areaDir),
+      idOf(s.areaDir),
       idOf(row.copy.opDir),
       chosen.lock,
       chosen.rootIdentity,
@@ -254,8 +326,11 @@ async function planOne(
       held: sc.hold === true,
       type,
       origin,
+      target,
+      areaRoot: s.areaRoot,
+      areaDir: s.areaDir,
       lock: chosen.lock,
-      bytes: row.apparentBytes,
+      bytes: s.bytes,
       contents: contentsOf(sc, c.freshHash),
       lockNote: chosen.note,
       lockDisagreement: chosen.disagreement,

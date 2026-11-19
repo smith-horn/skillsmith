@@ -50,6 +50,11 @@ export interface RestorePlan {
   held: boolean
   type: RestoreType
   origin: string
+  /** Where restore writes: the bound real path of the origin's parent, then its name (§5, no symlinked component is followed). */
+  target: string
+  /** The directory `.skillsmith-parked` sits in, and the area itself, for the re-plan under the lock. */
+  areaRoot: string
+  areaDir: string
   lock: RestoreLock
   bytes: number
   contents: RestoreContents
@@ -120,6 +125,8 @@ export interface RestoreHooks {
   beforeUnlink?: () => void
   /** Replaces the lock timeout. */
   lockTimeoutMs?: number
+  /** @internal Test seam: wraps the lock's own check (`ctx.check()` / `ctx.recheck()`) so a test can force it to throw. */
+  wrapCheck?: (real: () => void) => () => void
   /** Replaces the lock 1′ runner (default `withParkedAreaLock`): a test passes one with the wrapper's own seams. */
   runLock?: (
     lockPath: string,
