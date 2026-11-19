@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { tierNotSearchableNotice, TIER_NOT_SEARCHABLE_REASON } from './search-tier-notice'
+import { TRUST_TIER_ORDER } from '../constants/terminology'
 
 // The body skills-search sends for a query plus trust_tier=unverified (SMI-7236).
 const DECLINED = {
@@ -14,6 +15,20 @@ describe('tierNotSearchableNotice (SMI-7246)', () => {
     expect(notice).not.toBeNull()
     expect(notice?.message).toMatch(/clear the search box/i)
     expect(notice?.message).toMatch(/Unverified filter/)
+  })
+
+  // PR #3269 gate (PR-16): pin the coverage claim, not just the call to action.
+  // The website shows the five public tiers; the edge relabels experimental as
+  // community, so "every public tier except unverified" is exactly the set
+  // full-text search covers (SMI-7236).
+  it('names every searchable public tier, and not unverified, in the coverage sentence', () => {
+    const notice = tierNotSearchableNotice(400, DECLINED)
+    const coverage = (notice?.message ?? '').split('. ')[0].toLowerCase()
+    expect(coverage).toMatch(/^text search covers /)
+    const searchable = TRUST_TIER_ORDER.filter((t) => t.id !== 'unverified')
+    expect(searchable.length).toBe(TRUST_TIER_ORDER.length - 1)
+    for (const tier of searchable) expect(coverage).toContain(tier.id)
+    expect(coverage).not.toContain('unverified')
   })
 
   it('stays null for any other 400, so real errors keep the generic path', () => {
