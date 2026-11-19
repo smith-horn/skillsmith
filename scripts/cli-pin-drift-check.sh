@@ -374,7 +374,7 @@ read_json_field() {
 # (retired — ruflo is now scripts/mcp-ruflo-launcher.sh, which docker execs
 # into an image-baked tree) into one RUFLO_CLI_PIN=<semver> assignment in
 # that launcher script. Read with an anchored, semver-validating regex —
-# the same shape scripts/audit-cli-pin-drift-helpers.mjs Check 59 reads.
+# the same shape scripts/audit-cli-pin-drift-ruflo.mjs Check 59 reads.
 #
 # This one pin is NOT "no pin found, skipping" when absent or malformed —
 # unlike every other soft-fail path in this script (see the header's
@@ -412,7 +412,7 @@ fi
 # apart from the OTHER committed copy that determines what actually ships in
 # the ruflo image -- scripts/ruflo-seed/package.json's own
 # dependencies["@claude-flow/cli"]. Mirrors
-# scripts/audit-cli-pin-drift-helpers.mjs's findRufloSeedPinDrift(). Only
+# scripts/audit-cli-pin-drift-ruflo.mjs's findRufloSeedPinDrift(). Only
 # checked when the launcher pin itself was found (RUFLO_PIN_MISSING=0);
 # otherwise there is nothing valid to compare the seed pin against.
 RUFLO_SEED_PACKAGE_JSON="$REPO_ROOT/scripts/ruflo-seed/package.json"

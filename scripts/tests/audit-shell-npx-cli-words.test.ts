@@ -228,6 +228,10 @@ const FIX5_LINE_ROWS: Array<[string, number[]]> = [
   ['(\n  cd /tmp\n  bash\n) <<EOF\necho a\nnpx supabase status\nEOF', [6]],
   ['echo a\n( cd /tmp\n  bash ) <<EOF\nnpx supabase status\nEOF\nnpx wrangler deploy', [4, 6]],
   ['(\n  npx supabase status\n  bash\n) <<EOF\nnpx wrangler deploy\nEOF', [2, 5]],
+  // A line whose raw pass already found a call must still open or join a
+  // group (the `tracking` gate in lineCall); bash runs npx twice for each.
+  ['( npx supabase status; bash\n) <<EOF\nnpx wrangler deploy\nEOF', [1, 3]],
+  ['(\n  npx supabase status; bash\n) <<EOF\nnpx wrangler deploy\nEOF', [2, 4]],
 ]
 
 const TOOL_ROWS: Array<[string, string]> = [
@@ -418,6 +422,9 @@ function nestedQuotes(depth: number): string {
 // presence assertion: an early bail-out returns one hit fewer. The line is
 // separate so the earlier line still exercises every pass.
 const CALL = '\nnpx supabase status'
+// The preset's 15 s test timeout would report a quadratic regression as a
+// retried timeout; with 60 s the ratio assertion (or its fail-fast) reports it.
+const RATIO_TIMEOUT_MS = 60_000
 const N_GROUPS = 5_000
 const STRESS: Array<[string, (n: number) => string, number, number]> = [
   ['nested $( … ) echo', nestedSubst, 50_000, 0],
@@ -450,18 +457,31 @@ const STRESS: Array<[string, (n: number) => string, number, number]> = [
   // F4: nested fed heredocs, each level's body holding the next.
   ['nested fed heredocs', (n) => nestedFed(n), 800, 1],
   // G2: groups open across lines, each closed on a later line with a fed heredoc.
-  ['multi-line groups', (n) => '(\n  cd /tmp\n  bash\n) <<EOF\necho\nEOF\n'.repeat(n), N_GROUPS, 0],
+  // The final group feeds a call, so the hit depends on the group stack
+  // still being right after n multi-line groups.
+  [
+    'multi-line groups',
+    (n) =>
+      '(\n  cd /tmp\n  bash\n) <<EOF\necho\nEOF\n'.repeat(n) +
+      '(\n  bash\n) <<EOF\nnpx supabase status\nEOF',
+    N_GROUPS,
+    1,
+  ],
 ]
 
 describe('scaling of the word reader (SMI-7241)', () => {
-  it.each(STRESS)('%s: 4n costs under 8x n', (_name, make, n, wantHits) => {
-    const t = timeAlternating((text) => scan(text).length, make(n) + CALL, make(4 * n) + CALL, {
-      failFast: 16,
-    })
-    expect(t.smallHits).toBe(wantHits + 1)
-    expect(t.largeHits).toBe(wantHits + 1)
-    expect(t.ratio).toBeLessThan(8)
-  })
+  it.each(STRESS)(
+    '%s: 4n costs under 8x n',
+    (_name, make, n, wantHits) => {
+      const t = timeAlternating((text) => scan(text).length, make(n) + CALL, make(4 * n) + CALL, {
+        failFast: 16,
+      })
+      expect(t.smallHits).toBe(wantHits + 1)
+      expect(t.largeHits).toBe(wantHits + 1)
+      expect(t.ratio, `failedFast=${t.failedFast}`).toBeLessThan(8)
+    },
+    RATIO_TIMEOUT_MS
+  )
 
   // F4: fed-heredoc recursion had no depth cap, so deep nesting threw a
   // RangeError out of scanShellText and crashed audit:standards.

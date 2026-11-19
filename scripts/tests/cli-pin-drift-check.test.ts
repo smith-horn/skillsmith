@@ -226,7 +226,7 @@ describe('cli-pin-drift-check.sh (SMI-5746)', () => {
   })
 
   // SMI-6744 M-3 (post-merge governance retro, PR #2931): mirrors
-  // scripts/audit-cli-pin-drift-helpers.mjs's findRufloSeedPinDrift() --
+  // scripts/audit-cli-pin-drift-ruflo.mjs's findRufloSeedPinDrift() --
   // a second committed pin that must never drift from the launcher's own.
   it('M-3: exits 1 and names both values/paths when the seed package.json pin differs from the launcher pin', () => {
     const repo = makeFixtureRepo({ rufloPin: '3.42.4', rufloSeedPin: '3.41.0' })

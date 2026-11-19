@@ -692,8 +692,11 @@ describe('SMI-7241 comments do not continue lines', () => {
       })
       expect(t.smallHits).toBe(1)
       expect(t.largeHits).toBe(1)
-      expect(t.ratio).toBeLessThan(8)
-    }
+      expect(t.ratio, `failedFast=${t.failedFast}`).toBeLessThan(8)
+    },
+    // The preset's 15 s timeout would report a quadratic regression as a
+    // retried timeout; with 60 s the ratio assertion (or its fail-fast) does.
+    60_000
   )
 })
 

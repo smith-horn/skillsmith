@@ -60,8 +60,13 @@
  *   <<EOF`), or a pipeline into a group holding `&&` or `;` (`cat <<EOF | (
  *   cd /tmp && bash )`, SMI-7248). A group counts as fed when any command in
  *   it without a heredoc of its own reads stdin, even one an earlier command
- *   starves (`( cat; bash ) <<EOF`, `( true | bash ) <<EOF`), and a case
- *   pattern's `)` inside a group closes the group early. An unquoted-delimiter
+ *   starves (`( cat; bash ) <<EOF`, `( true | bash ) <<EOF`), or one whose
+ *   stdin is redirected some other way (`( bash </dev/null ) <<EOF`, `<<<`).
+ *   A `)` that is not the group's closes it early: a case pattern's, or the
+ *   close of a `$( … )`, `$(( … ))` or quote spanning lines inside a
+ *   multi-line group. A group opened on the line of an open `$(` is not
+ *   tracked. A `(` left open by a quote the line lexer misreads can hold
+ *   later commands until a stray `)` (a rare false positive). An unquoted-delimiter
  *   body is scanned as written (as a script and for its substitutions), not
  *   as the text the outer shell's expansion produces.
  * - `bash -c 'source /dev/stdin' <<EOF`: a `-c` string is not read for a
