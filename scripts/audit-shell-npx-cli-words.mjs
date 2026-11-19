@@ -44,6 +44,8 @@ const WRAPPERS = new Set([
   'flock',
 ])
 const SHELL = /^(?:ba|z|da|k)?sh$/
+// A script operand that is the shell's own stdin.
+const STDIN_PATHS = new Set(['/dev/stdin', '/proc/self/fd/0'])
 const basename = (w) => w.slice(w.lastIndexOf('/') + 1)
 
 /**
@@ -217,11 +219,21 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
         i++
         continue
       }
-      if (c === '#') break // a comment (only reachable in decoded text)
+      // A word starting with # is a comment: decoded text, or raw text the
+      // trailing-comment cut misses (`echo a;#'np''x' supabase status`).
+      if (c === '#') break
       if (hdAt.has(i)) {
-        const h = lexed.heredocs[hdAt.get(i)]
-        cmd.hds.push(hdAt.get(i))
-        i = h.end
+        // A digits-only word against the operator is its fd: only fd 0 (or
+        // none) is the command's stdin.
+        const k = hdAt.get(i)
+        const last = cmd.words[cmd.words.length - 1]
+        let fd = 0
+        if (last && last.end === i && /^\d+$/.test(code.slice(last.start, i))) {
+          cmd.words.pop()
+          fd = Number(last.value)
+        }
+        if (fd === 0) cmd.hds.push(k)
+        i = lexed.heredocs[k].end
         continue
       }
       if (c === '(' && kind[i] === ARITH) {
@@ -232,7 +244,13 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
       if (OP_CHARS.includes(c)) {
         const op = OPS.find((o) => code.startsWith(o, i)) ?? c
         i += op.length
-        if (op === '(' || op === ')') continue // grouping does not end a pipeline
+        if (op === '(' || op === ')') {
+          // Grouping ends the simple command but not the pipeline: a case
+          // pattern, a function header or a subshell starts a new one.
+          cmd = { words: [], hds: [] }
+          stages.push(cmd)
+          continue
+        }
         if (REDIRECTS.has(op)) {
           const last = cmd.words[cmd.words.length - 1]
           if (last && last.end === i - op.length && /^\d+$/.test(last.value)) cmd.words.pop()
@@ -275,13 +293,19 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
  * Does this simple command run a shell that reads its script from stdin?
  * The command word (after assignments and reserved words) is a shell, or a
  * wrapper (sudo, env, exec, …) followed somewhere by a shell; the shell has
- * no -c flag, and either has -s or takes no operand (an operand would be a
- * script file).
+ * no -c flag, and either has -s or takes no operand, or its operand is
+ * /dev/stdin (any other operand would be a script file). Every o or O in a
+ * flag bundle takes the next word as its value, as bash reads `-euo pipefail`
+ * and `-oe pipefail`. `source /dev/stdin` and `. /dev/stdin` read stdin too.
  */
 export function readsStdinScript(words) {
   let k = 0
   while (k < words.length && (ASSIGNMENT.test(words[k].value) || RESERVED.has(words[k].value))) k++
   if (k >= words.length) return false
+  if (words[k].value === 'source' || words[k].value === '.') {
+    const op = words[k + 1]?.value === '--' ? words[k + 2] : words[k + 1]
+    return op !== undefined && STDIN_PATHS.has(op.value)
+  }
   if (!SHELL.test(basename(words[k].value))) {
     if (!WRAPPERS.has(basename(words[k].value))) return false
     do k++
@@ -291,13 +315,16 @@ export function readsStdinScript(words) {
   let stdin = false
   for (let j = k + 1; j < words.length; j++) {
     const w = words[j].value
-    if (w === '--' || w === '-') return stdin || j === words.length - 1
-    if (/^[-+][oO]$/.test(w) || w === '--rcfile' || w === '--init-file') j++
+    if (w === '--' || w === '-') {
+      return stdin || j === words.length - 1 || STDIN_PATHS.has(words[j + 1].value)
+    }
+    if (w === '--rcfile' || w === '--init-file') j++
     else if (w.startsWith('--')) continue
     else if (/^[-+][A-Za-z]+$/.test(w)) {
       if (w[0] === '-' && w.includes('c')) return false
       if (w.includes('s')) stdin = true
-    } else return stdin
+      j += w.length - w.replace(/[oO]/g, '').length
+    } else return stdin || STDIN_PATHS.has(w)
   }
   return true
 }

@@ -2,8 +2,9 @@
  * SMI-7226: does the text before a quote end in `sh -c` (or a relative), so the
  * quoted string is a command that runs? Shells: sh, bash, zsh, dash, ksh, also
  * by path (/bin/bash) or after ; & | ( or a backtick. The -c may be bundled (-lc, -ce);
- * flags may come before it, including `-o`/`-O <option>`, and more flags (or a
- * lone `-`/`--`) after it.
+ * flags may come before it, including `-o`/`-O <option>` and a letters-only
+ * bundle holding o or O followed by its value (`-euo pipefail`, SMI-7241), and
+ * more flags (or a lone `-`/`--`) after it.
  *
  * This walks whitespace-separated tokens backwards from the quote and stops at
  * the first token that cannot be part of the shape. It replaces a regex that
@@ -46,12 +47,14 @@ function tables(s, memo) {
   for (let i = 1; i <= n; i++) lastSolid[i] = space[i - 1] ? lastSolid[i - 1] : i - 1
   const nonLetter = new Int32Array(n + 1) // first non-letter index at or after i
   const nextC = new Int32Array(n + 1) // first `c` at or after i
-  nonLetter[n] = nextC[n] = n
+  const nextO = new Int32Array(n + 1) // first `o` or `O` at or after i
+  nonLetter[n] = nextC[n] = nextO[n] = n
   for (let i = n - 1; i >= 0; i--) {
     nonLetter[i] = LETTER.test(s[i]) ? nonLetter[i + 1] : i
     nextC[i] = s[i] === 'c' ? i : nextC[i + 1]
+    nextO[i] = s[i] === 'o' || s[i] === 'O' ? i : nextO[i + 1]
   }
-  const t = { start, lastSolid, nonLetter, nextC }
+  const t = { start, lastSolid, nonLetter, nextC, nextO }
   if (memo !== null) memo.set('tables', t)
   return t
 }
@@ -65,6 +68,11 @@ function prevToken(t, end) {
 /** `-` then letters only, one of them `c` (-c, -lc, -ce). */
 function isCFlag(s, t, [b, e]) {
   return s[b] === '-' && e - b >= 2 && t.nonLetter[b + 1] >= e && t.nextC[b + 1] < e
+}
+
+/** `-` then letters only, one of them o or O (-o, -eo, -euo): takes a value. */
+function isOBundle(s, t, [b, e]) {
+  return s[b] === '-' && e - b >= 2 && t.nonLetter[b + 1] >= e && t.nextO[b + 1] < e
 }
 
 function isShellTail(s, [b, e]) {
@@ -108,8 +116,8 @@ export function endsInShC(s, end = s.length, memo = null) {
     tok = prevToken(t, tok[0])
   }
   if (!seenC) return done(false)
-  // Before the -c: flags of two or more characters, `-o`/`-O <value>` pairs,
-  // and then the shell word.
+  // Before the -c: flags of two or more characters, o-bundle `<value>` pairs
+  // (`-o pipefail`, `-euo pipefail`), and then the shell word.
   while (tok) {
     const key = `b:${tok[0]}:${tok[1]}`
     if (seen(key)) return done(memo.get(key))
@@ -120,8 +128,7 @@ export function endsInShC(s, end = s.length, memo = null) {
       continue
     }
     const opt = prevToken(t, tok[0])
-    if (!opt || opt[1] - opt[0] !== 2 || s[opt[0]] !== '-') return done(false)
-    if (s[opt[0] + 1] !== 'o' && s[opt[0] + 1] !== 'O') return done(false)
+    if (!opt || !isOBundle(s, t, opt)) return done(false)
     tok = prevToken(t, opt[0])
   }
   return done(false)

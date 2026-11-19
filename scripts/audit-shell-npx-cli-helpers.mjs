@@ -9,7 +9,8 @@
  * docs/internal/implementation/smi-7223-deploy-pinned-supabase-cli.md.
  *
  * This is a line lexer, not a shell parser. It joins backslash continuations
- * as bash does, skips comments, and lexes each logical line once
+ * as bash does (a backslash ending a comment continues nothing), skips
+ * comments, and lexes each logical line once
  * (audit-shell-npx-cli-lexer.mjs). Each logical line yields at most one hit,
  * at its first physical line, from the first of three passes that finds a
  * call:
@@ -23,9 +24,11 @@
  *    a plain word is put back unquoted into one copy of the line, which is
  *    lexed and checked once.
  * A heredoc whose command, or a later stage of its pipeline, is a shell
- * reading stdin (sh, bash, zsh, dash, ksh, no -c) has its body scanned as a
- * script, hits at their physical lines. Any other heredoc body is text; with
- * an unquoted delimiter its command substitutions are scanned. A tool pinned
+ * reading stdin (sh, bash, zsh, dash, ksh, no -c; or `source /dev/stdin`)
+ * has its body scanned as a script, hits at their physical lines. Any other
+ * heredoc body is text. With an unquoted delimiter the outer shell expands
+ * the body first, so its command substitutions are scanned too, fed or not
+ * (at most one hit per physical line). A tool pinned
  * to an exact x.y.z version (or by an exact `-p`/`--package` value) is not
  * flagged; `@latest` or `@3` is. In a workflow or action file, each `run:`
  * value is decoded with js-yaml and scanned as the command it holds
@@ -41,14 +44,23 @@
  *   same line: only the inner word is substituted.
  * - A heredoc fed to a shell any other way than its own pipeline: through a
  *   `{ …; }` group or after `;`, a here-string, process substitution, or a
- *   wrapper not in the list (`ssh host bash <<EOF`). A heredoc on another fd
- *   (`bash 3<<EOF`) counts as fed, a false positive. A body is scanned as
- *   written, not after the outer shell expands it.
+ *   wrapper not in the list (`ssh host bash <<EOF`). An unquoted-delimiter
+ *   body is scanned as written (as a script and for its substitutions), not
+ *   as the text the outer shell's expansion produces.
  * - Case arms and other conditions are not evaluated.
  * - npx flags that take a value other than NPX_VALUE_FLAGS, and a
  *   substitution or quote left open across lines.
+ * - A redirection between npx and the tool (`npx 2>/dev/null supabase`), and
+ *   a quoted command string piped to a shell (`echo 'npx supabase' | bash`)
+ *   (SMI-7248).
+ * - Before a `sh -c`, a flag bundle holding two or more o/O letters takes
+ *   only one value word (`bash -oo a b -c '…'` is missed), and an o bundle
+ *   that also holds the c (`bash -oc pipefail '…'`) is not read as -c.
  * - The backtick over-approximations at SHELL_TAIL in
  *   audit-shell-npx-cli-sh-c.mjs, which err towards a flag.
+ * - Two rare false positives: a CR, FF or VT between npx and the tool
+ *   (`$'npx\rsupabase'`, one word to bash), and a comment that follows `;`
+ *   with no space (`echo a;#…`), which the raw pass does not cut (SMI-7248).
  */
 
 import { execFileSync } from 'child_process'
@@ -67,16 +79,28 @@ const TOOLS = ['supabase', 'wrangler']
 const NPX_VALUE_FLAGS = '--prefix|--cache|--registry|--userconfig|--workspace|-w|--package|-p'
 // `npx` as a bare word or a quoted command word ("npx" / 'npx'), then
 // optional flags, then a watched tool, bare or quoted, with an optional
-// @version (group 3 is the tool, group 4 the version).
-const HIT = new RegExp(
-  String.raw`(?:(?<![\w.$-])npx|(["'])npx\1)\s+(?:(?:${NPX_VALUE_FLAGS})(?:=|\s+)\S+\s+|--?[A-Za-z-]+(?:=\S+)?\s+)*(["']?)(${TOOLS.join('|')})(@[^\s"';&|()<>]+)?\2(?![A-Za-z0-9@_-])`,
-  'g'
-)
+// @version (group 3 is the tool, group 4 the version). Bash's blanks are
+// space and tab only, so `echo\rnpx` is one word: CR, FF and VT count as word
+// characters before `npx`.
+const hitFor = (tools) =>
+  new RegExp(
+    String.raw`(?:(?<![\w.$\r\f\v-])npx|(["'])npx\1)\s+(?:(?:${NPX_VALUE_FLAGS})(?:=|\s+)\S+\s+|--?[A-Za-z-]+(?:=\S+)?\s+)*(["']?)(${tools.join('|')})(@[^\s"';&|()<>]+)?\2(?![A-Za-z0-9@_-])`,
+    'g'
+  )
+const HIT = hitFor(TOOLS)
+// The pattern the current scan uses: HIT, or one tool's, set by
+// scanShellText's `tools` option for the length of one synchronous call.
+let hit = HIT
 // An exact pin: npx runs that version, not registry-latest. A prerelease or
 // build suffix still names one version.
 const EXACT_VERSION = /^@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 // `-p <value>` / `--package=<value>` among npx's flags.
 const PACKAGE_FLAG = /(?:^|\s)(?:-p|--package)(?:=|\s+)(["']?)([^\s"']+)\1/g
+
+/** True when an npx match pins its tool: an exact @version, or else -p/--package. */
+function isPinned(m) {
+  return m[4] ? EXACT_VERSION.test(m[4]) : pinnedByPackageFlag(m[0], m[3])
+}
 
 /** True when the npx call's -p/--package value pins this tool exactly. */
 function pinnedByPackageFlag(call, tool) {
@@ -108,9 +132,8 @@ function trailingCommentIndex(line, at) {
  */
 function firstCall(code, at) {
   const memo = new Map()
-  for (const m of code.matchAll(HIT)) {
-    if (m[4] && EXACT_VERSION.test(m[4])) continue
-    if (!m[4] && pinnedByPackageFlag(m[0], m[3])) continue
+  for (const m of code.matchAll(hit)) {
+    if (isPinned(m)) continue
     const { q, openAt } = at[m.index]
     if (q === null) return m[3]
     if (q !== 'arith' && q !== "$'" && endsInShC(code, openAt, memo)) return m[3]
@@ -121,17 +144,14 @@ function firstCall(code, at) {
 // A rebuilt word that bash would read as the same single word unquoted.
 const PLAIN_WORD = /^[A-Za-z0-9@._/+-]*$/
 // Nesting of `sh -c` arguments and fed heredocs scanned as scripts. Each level
-// is strictly shorter than the one above, so recursion ends anyway; past this
-// depth any unpinned call in the text counts, whatever its context.
+// is strictly shorter than the one above, so recursion ends anyway, but a few
+// thousand fed heredocs would exhaust the stack; past this depth any unpinned
+// call in the text counts, whatever its context.
 const MAX_DEPTH = 16
 
 /** The tool of the first unpinned call in `text`, context ignored. */
 function anyCall(text) {
-  for (const m of text.matchAll(HIT)) {
-    if (m[4] && EXACT_VERSION.test(m[4])) continue
-    if (!m[4] && pinnedByPackageFlag(m[0], m[3])) continue
-    return m[3]
-  }
+  for (const m of text.matchAll(hit)) if (!isPinned(m)) return m[3]
   return null
 }
 
@@ -201,18 +221,98 @@ function lineCall(code, lexed, depth, heredocBody) {
 /**
  * Scan shell (or workflow YAML) text. Returns [{ line, tool, text }].
  * Pass { yaml: true } for a workflow or action file, so a quoted `run:`
- * value is read as the command it holds.
+ * value is read as the command it holds, and { tools: ['supabase'] } to
+ * look for a subset of the watched tools.
  */
-export function scanShellText(text, { yaml: isYaml = false, depth = 0 } = {}) {
+export function scanShellText(text, opts = {}) {
+  if (opts.tools === undefined) return scan(text, opts)
+  if (!opts.tools.every((t) => TOOLS.includes(t))) throw new Error('unwatched tool')
+  const saved = hit
+  hit = hitFor(opts.tools)
+  try {
+    return scan(text, opts)
+  } finally {
+    hit = saved
+  }
+}
+
+/** The call an unquoted-delimiter heredoc body line makes through its substitutions. */
+function expandedLineCall(line, depth) {
+  return lineCall(line, lexLine(line, { heredocBody: true }), depth, true)
+}
+
+/**
+ * Join the physical lines from raw[i] that end in a backslash, as bash does,
+ * except that a backslash ending a comment continues nothing. Returns
+ * { line, next }. Pieces are collected and joined once (repeated string
+ * concatenation re-scanned the growing line, quadratic in its length). The
+ * first piece is lexed alone for a comment; a comment in a later piece needs
+ * the earlier pieces' context, so the joined line is checked once and cut
+ * after the piece holding the comment.
+ */
+function joinContinued(raw, i) {
+  const first = raw[i]
+  if (!first.endsWith('\\') || i + 1 >= raw.length || endsInComment(first)) {
+    return { line: first, next: i + 1 }
+  }
+  const pieces = [first.slice(0, -1)]
+  const starts = [0]
+  let len = pieces[0].length
+  let j = i + 1
+  for (;;) {
+    const piece = raw[j]
+    const more = piece.endsWith('\\') && j + 1 < raw.length
+    starts.push(len)
+    pieces.push(more ? piece.slice(0, -1) : piece)
+    len += pieces[pieces.length - 1].length
+    j++
+    if (!more) break
+  }
+  const line = pieces.join('')
+  const cut = commentStart(line)
+  if (cut === -1) return { line, next: j }
+  // The first piece starting after the comment is where the logical line ends.
+  const k = starts.findIndex((s) => s > cut)
+  if (k === -1) return { line, next: j }
+  return { line: line.slice(0, starts[k]), next: i + k }
+}
+
+/** Index of the comment's `#` in a logical line, or -1. */
+function commentStart(line) {
+  const full = /^\s*#/.exec(line)
+  if (full) return full[0].length - 1
+  return line.includes('#') ? trailingCommentIndex(line, lexLine(line).at) : -1
+}
+
+/** Does this physical line, read alone, end inside a comment? */
+function endsInComment(line) {
+  return commentStart(line) !== -1
+}
+
+function scan(text, { yaml: isYaml = false, depth = 0 } = {}) {
   const raw = text.split(/\r?\n/)
   const hits = []
   const heredocs = []
-  // A fed heredoc's body is scanned as a script once it is complete.
+  // A fed heredoc's body is scanned as a script once it is complete (past
+  // MAX_DEPTH, any call on a body line counts). With an unquoted delimiter the
+  // body's substitutions, found line by line as it was read, count too: the
+  // outer shell runs them before the inner shell sees the text. One hit per
+  // physical line, the script scan's first.
   const flush = (h) => {
-    if (h.lines.length === 0) return
-    for (const s of scanShellText(h.lines.join('\n'), { depth: depth + 1 })) {
-      const at = h.start + s.line - 1
-      hits.push({ line: at, tool: s.tool, text: raw[at - 1].trim() })
+    const byLine = new Map()
+    if (h.lines.length > 0) {
+      const found =
+        depth + 1 > MAX_DEPTH
+          ? h.lines.map((l, k) => ({ line: k + 1, tool: anyCall(l) })).filter((x) => x.tool)
+          : scan(h.lines.join('\n'), { depth: depth + 1 })
+      for (const f of found) {
+        const at = h.start + f.line - 1
+        if (!byLine.has(at)) byLine.set(at, f.tool)
+      }
+    }
+    for (const e of h.expanded) if (!byLine.has(e.line)) byLine.set(e.line, e.tool)
+    for (const [at, tool] of [...byLine].sort((a, b) => a[0] - b[0])) {
+      hits.push({ line: at, tool, text: raw[at - 1].trim() })
     }
   }
   let i = 0
@@ -230,8 +330,12 @@ export function scanShellText(text, { yaml: isYaml = false, depth = 0 } = {}) {
       } else if (h.fed) {
         if (h.lines.length === 0) h.start = startLine
         h.lines.push(body)
+        if (h.expands) {
+          const { tool } = expandedLineCall(body, depth)
+          if (tool) h.expanded.push({ line: startLine, tool })
+        }
       } else if (h.expands) {
-        const { tool } = lineCall(line, lexLine(line, { heredocBody: true }), depth, true)
+        const { tool } = expandedLineCall(line, depth)
         if (tool) hits.push({ line: startLine, tool, text: line.trim() })
       }
       i++
@@ -240,7 +344,7 @@ export function scanShellText(text, { yaml: isYaml = false, depth = 0 } = {}) {
     if (isYaml) {
       const decoded = decodeYamlRun(raw, i)
       if (decoded) {
-        for (const h of scanShellText(decoded.command, { depth })) {
+        for (const h of scan(decoded.command, { depth })) {
           const at = decoded.literal ? i + h.line : i
           hits.push({ line: at + 1, tool: h.tool, text: raw[at].trim() })
         }
@@ -248,11 +352,7 @@ export function scanShellText(text, { yaml: isYaml = false, depth = 0 } = {}) {
         continue
       }
     }
-    while (/\\$/.test(line) && i + 1 < raw.length) {
-      i++
-      line = line.slice(0, -1) + raw[i]
-    }
-    i++
+    ;({ line, next: i } = joinContinued(raw, i))
     if (/^\s*#/.test(line)) continue
     let lexed = lexLine(line)
     const cut = trailingCommentIndex(line, lexed.at)
@@ -260,7 +360,9 @@ export function scanShellText(text, { yaml: isYaml = false, depth = 0 } = {}) {
     if (cut !== -1) lexed = lexLine(code)
     const { tool, fed } = lineCall(code, lexed, depth, false)
     if (tool) hits.push({ line: startLine, tool, text: line.trim() })
-    lexed.heredocs.forEach((h, k) => heredocs.push({ ...h, fed: fed[k] === true, lines: [] }))
+    lexed.heredocs.forEach((h, k) =>
+      heredocs.push({ ...h, fed: fed[k] === true, lines: [], expanded: [] })
+    )
   }
   // An unterminated heredoc runs to the end of the text, as bash reads it.
   if (heredocs.length > 0 && heredocs[0].fed) flush(heredocs[0])
@@ -278,7 +380,7 @@ function reconcileAliases(text, raw, hits) {
   const values = resolvedRunValues(text)
   if (!values) return
   const count = (list) => list.reduce((m, h) => m.set(h.tool, (m.get(h.tool) || 0) + 1), new Map())
-  const want = count(values.flatMap((v) => scanShellText(v)))
+  const want = count(values.flatMap((v) => scan(v)))
   const have = count(hits)
   const at = firstAliasLine(raw)
   for (const [tool, n] of want) {

@@ -14,9 +14,17 @@ import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 
 // The SH_C regex from the CodeQL js/redos fix on PR #3257, plus the backtick
 // in its boundary class: a governance review found `` `bash -c '…'` `` missed,
-// although `$(bash -c '…')` was flagged. Only ever run on short inputs here.
+// although `$(bash -c '…')` was flagged. Since SMI-7241 a letters-only bundle
+// holding o or O (`-eo`, `-euo`) takes a value, as bash reads it. Only ever
+// run on short inputs here: the bundle alternative backtracks.
 const ORACLE =
-  /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:-[oO]\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
+  /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:-[A-Za-z]*[oO][A-Za-z]*\s+[^\s-]\S*|-\S+)\s+)*-[A-Za-z]*c[A-Za-z]*(?:\s+-\S*)*\s*$/
+
+// SMI-7241 F11: floors on the two generators' distinct-string counts. With
+// Math.imul they produce 88,147 and 2,842; with the old float multiply 1,317
+// and 147, which these floors reject.
+const DISTINCT_100K_FLOOR = 80_000
+const DISTINCT_3K_FLOOR = 2_500
 
 const ROWS: Array<[string, boolean]> = [
   ['sh -c ', true],
@@ -40,6 +48,14 @@ const ROWS: Array<[string, boolean]> = [
   ['x`bash -c ', true],
   ['bash -c', true],
   ['bash -c $', false], // a bare $ after -c is not an argument: the $'...' form is read by the word reader
+  // A letters-only bundle holding o/O takes the next word as its value (SMI-7241 F3).
+  ['bash -euo pipefail -c ', true],
+  ['bash -eo pipefail -c ', true],
+  ['bash -oe pipefail -c ', true],
+  ['bash --noprofile --norc -eo pipefail -c ', true],
+  ['bash -xO extglob -c ', true],
+  ['bash -ex pipefail -c ', false], // no o: `pipefail` is a script operand
+  ['bash -e1o pipefail -c ', false], // not letters only
   ['', false],
 ]
 
@@ -83,6 +99,11 @@ describe('endsInShC', () => {
       '-c;sh',
       '-o',
       '-O',
+      '-eo',
+      '-euo',
+      '-xo',
+      '-oe',
+      '-xO',
       'pipefail',
       '-',
       '--',
@@ -109,17 +130,21 @@ describe('endsInShC', () => {
     }
     let positives = 0
     const diffs: string[] = []
+    const distinct = new Set<string>()
     for (let k = 0; k < 100_000; k++) {
       let s = NOISE[rnd(NOISE.length)]
       s += (s ? SEP[rnd(SEP.length)] : '') + SHELL[rnd(SHELL.length)]
       for (let j = rnd(7); j > 0; j--) s += SEP[rnd(SEP.length)] + FLAG[rnd(FLAG.length)]
       if (rnd(3) === 0) s += SEP[rnd(SEP.length)]
+      distinct.add(s)
       const want = ORACLE.test(s)
       if (want) positives++
       if (endsInShC(s) !== want && diffs.length < 5) diffs.push(s)
     }
     expect(diffs).toEqual([])
     expect(positives).toBeGreaterThan(10_000)
+    // The generator must explore, not cycle.
+    expect(distinct.size).toBeGreaterThan(DISTINCT_100K_FLOOR)
   })
 
   // The regex took ~1.5 s on this shape at 16,000 repeats, ~2.5 s at this
@@ -202,9 +227,11 @@ describe('endsInShC', () => {
     }
     let positives = 0
     const diffs: string[] = []
+    const distinct = new Set<string>()
     for (let k = 0; k < 3_000; k++) {
       let s = ''
       for (let j = rnd(12); j >= 0; j--) s += TOK[rnd(TOK.length)] + SEP[rnd(SEP.length)]
+      distinct.add(s)
       const memo = new Map()
       const ends = [...Array(s.length + 1).keys()].sort(() => rnd(3) - 1)
       for (const e of ends) {
@@ -215,6 +242,18 @@ describe('endsInShC', () => {
     }
     expect(diffs).toEqual([])
     expect(positives).toBeGreaterThan(200)
+    expect(distinct.size).toBeGreaterThan(DISTINCT_3K_FLOOR)
+  })
+
+  // SMI-7241 F3: each row run under bash 5.2.15 (stub npx, no network): bash
+  // ran npx for all four.
+  it.each([
+    ["bash -euo pipefail -c 'npx supabase status'"],
+    ["bash -eo pipefail -c 'npx supabase status'"],
+    ["bash --noprofile --norc -eo pipefail -c 'npx supabase status'"],
+    ["bash -euo pipefail -c 'np''x supabase status'"],
+  ])('flags a bundled -o before -c: %j', (row) => {
+    expect(scanShellText(row)).toHaveLength(1)
   })
 
   it('flags sh -c inside backticks as it does inside $(…)', () => {

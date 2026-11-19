@@ -11,6 +11,8 @@
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { join } from 'path'
 
+import { scanShellText } from './audit-shell-npx-cli-helpers.mjs'
+
 /**
  * Sub-check 1: every `supabase/setup-cli` GitHub Action step must pin an
  * exact version (or a step-output expression resolving to one) — never
@@ -51,6 +53,10 @@ export function findFloatingSupabaseCliInstalls(workflowsDir) {
  * package.json script is only safe when that tool is an exact-pinned
  * devDependency somewhere the invoking package's npm resolution would find
  * it (its own package.json, or the workspace root — npm hoists).
+ * Calls are found with the shell sub-check's scanner (SMI-7241), so quoting
+ * (`bash -c 'np''x supabase'`, `sh -c $'npx …'`) does not hide one, and prose
+ * or a comment that mentions npx is not a call. Each tool is scanned on its
+ * own, so a script calling both reports both.
  */
 export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
   const findings = []
@@ -84,14 +90,12 @@ export function findUnpinnedBareNpxCliInPackageJson(repoRoot) {
     const scripts = pkg.scripts || {}
 
     for (const [scriptName, scriptBody] of Object.entries(scripts)) {
+      if (typeof scriptBody !== 'string') continue
       for (const tool of WATCHED) {
-        const bareRe = new RegExp(`(?:^|[\\s&|;])npx\\s+${tool}(?:@|\\s|$)`)
-        const pinnedRe = new RegExp(`npx\\s+${tool}@`)
-        if (bareRe.test(scriptBody) && !pinnedRe.test(scriptBody)) {
-          const pinned = Boolean(localDeps[tool]) || Boolean(rootDeps[tool])
-          if (!pinned) {
-            findings.push({ file: label, script: scriptName, tool })
-          }
+        if (scanShellText(scriptBody, { tools: [tool] }).length === 0) continue
+        const pinned = Boolean(localDeps[tool]) || Boolean(rootDeps[tool])
+        if (!pinned) {
+          findings.push({ file: label, script: scriptName, tool })
         }
       }
     }

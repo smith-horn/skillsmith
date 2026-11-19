@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
 import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 // @ts-expect-error - .mjs helper has no typings
-import { lexLine, decodeAnsiC } from '../audit-shell-npx-cli-lexer.mjs'
+import { lexLine, decodeAnsiC, ARITH } from '../audit-shell-npx-cli-lexer.mjs'
 
 type Hit = { line: number; tool: string; text: string }
 const scan = (text: string): Hit[] => scanShellText(text)
@@ -105,6 +105,48 @@ const LINE_ROWS: Array<[string, number[]]> = [
   ['bash <<EOF\nnpx supabase status', [2]],
 ]
 
+// Review fixes on 9945f1fe4 (SMI-7241). Every row was run under bash 5.2.15
+// (`bash --noprofile --norc -c`, stub npx, no network); the count is what
+// bash did. `sudo` rows used a stub sudo that drops its options and execs the
+// rest.
+const FIX3_ROWS: Array<[string, string, number]> = [
+  // F1: an unquoted delimiter lets the outer shell expand the body first, so
+  // a substitution runs even inside '…', a # comment or a nested quoted heredoc.
+  ['F1', "bash <<EOF\necho '$(npx supabase status)'\nEOF", 1],
+  ['F1', "bash <<EOF\necho '`npx supabase status`'\nEOF", 1],
+  ['F1', 'bash <<EOF\n# v: $(npx supabase --version)\nEOF', 1],
+  ['F1', "bash <<EOF\ncat <<'INNER'\n$(npx supabase status)\nINNER\nEOF", 1],
+  ['F1', "bash <<'EOF'\necho '$(npx supabase status)'\nEOF", 0],
+  // F2: every o/O in a flag bundle takes the next word as its value.
+  ['F2', "bash -euo pipefail <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "bash -eo pipefail <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "bash -oe pipefail <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "bash -oeu pipefail <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "bash -oo pipefail nounset <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "bash -eoO pipefail extglob <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "bash -xeo pipefail -s <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F2', "cat <<'EOF' | bash -euo pipefail\nnpx supabase status\nEOF", 1],
+  ['F2', "sudo bash -euo pipefail <<'EOF'\nnpx supabase status\nEOF", 1],
+  // F5: ( and ) end a simple command; /dev/stdin is stdin.
+  ['F5', "case x in x) bash <<'EOF' ;; esac\nnpx supabase status\nEOF", 1],
+  ['F5', "f() { bash <<'EOF'\nnpx supabase status\nEOF\n}; f", 1],
+  ['F5', "bash /dev/stdin <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', "bash /proc/self/fd/0 <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', "source /dev/stdin <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', ". /dev/stdin <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', "bash -- /dev/stdin <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', "bash - /dev/stdin <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', "source -- /dev/stdin <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['F5', "bash -- /dev/null <<'EOF'\nnpx supabase status\nEOF", 0],
+  ['F5', "source /dev/null <<'EOF'\nnpx supabase status\nEOF", 0],
+  ['F5', 'x=bash; case $x in bash) cat <<EOF;; esac\nnpx supabase status\nEOF', 0],
+  ['F5', 'bash /dev/null <<EOF\nnpx supabase status\nEOF', 0],
+  ['F5', 'cat <<EOF | (bash)\nnpx supabase status\nEOF', 1],
+  // F8: a digits-only word against the operator is its fd; only fd 0 is stdin.
+  ['F8', 'bash 0<<EOF\nnpx supabase status\nEOF', 1],
+  ['F8', 'bash 3<<EOF\nnpx supabase status\nEOF', 0],
+]
+
 const TOOL_ROWS: Array<[string, string]> = [
   ["npx wrangler deploy; bash -c 'np''x supabase status'", 'wrangler'],
   ["bash -c 'np''x wrangler deploy'; 'np'x supabase status", 'wrangler'],
@@ -141,6 +183,22 @@ describe('word rebuilding and fed heredocs agree with bash', () => {
   })
 
   // The first pass to find a call wins, so the reported tool is that pass's.
+  describe('review fixes on 9945f1fe4', () => {
+    it.each(FIX3_ROWS)('%s %j -> %i hit(s)', (_fix, row, want) => {
+      const hits = scan(row)
+      expect(hits).toHaveLength(want)
+      for (const h of hits) expect(h.tool).toBe('supabase')
+    })
+  })
+
+  // F1: a hit in an expanding fed body is reported at its physical line, once.
+  it.each([
+    ["echo a\nbash <<EOF\necho '$(npx supabase status)'\nnpx supabase status\nEOF", [3, 4]],
+    ['bash <<EOF\nnpx supabase status $(npx supabase --version)\nEOF', [2]],
+  ] as Array<[string, number[]]>)('reports F1 hits at physical lines: %j', (row, want) => {
+    expect(scan(row).map((h) => h.line)).toEqual(want)
+  })
+
   it.each(TOOL_ROWS)("reports the first pass's tool: %j", (row, want) => {
     expect(scan(row).map((h) => h.tool)).toEqual([want])
   })
@@ -163,7 +221,7 @@ describe('lexLine contexts (SMI-7241 B.3 step 1)', () => {
   it('reads the end of a $(( )) frame: the frame closes after both parens', () => {
     const line = 'x=$((1+2))y npx'
     const { frames } = lexLine(line)
-    expect(frames.kind[2]).toBe(5) // ARITH
+    expect(frames.kind[2]).toBe(ARITH)
     expect(frames.close[2]).toBe(line.indexOf('))'))
     expect(frames.end[2]).toBe(line.indexOf('))') + 2)
   })
@@ -171,13 +229,15 @@ describe('lexLine contexts (SMI-7241 B.3 step 1)', () => {
   it('reads the end of a bare (( )) frame', () => {
     const line = '((a))b'
     const { frames } = lexLine(line)
-    expect(frames.kind[0]).toBe(5)
+    expect(frames.kind[0]).toBe(ARITH)
     expect(frames.end[0]).toBe(5)
   })
 })
 
 describe("decodeAnsiC matches bash printf %s $'…' (SMI-7241 B.2)", () => {
-  // Expected bytes are bash 5.2's own output (LC_ALL=C.UTF-8), as hex.
+  // Expected bytes are bash 5.2's own output (LC_ALL=C.UTF-8), as hex. All 25
+  // were re-measured on 2026-11-19 with `printf '%s' $'<body>' | od -An -tx1`
+  // under bash 5.2.15 (no network): every row agreed.
   const DECODE_ROWS: Array<[string, string]> = [
     ['\\u006epx supabase status', '6e707820737570616261736520737461747573'],
     ['\\u6epx supabase', '6e7078207375706162617365'],
@@ -228,16 +288,26 @@ describe("decodeAnsiC matches bash printf %s $'…' (SMI-7241 B.2)", () => {
 const nestedSubst = (n: number) => '$('.repeat(n) + 'echo' + ')'.repeat(n)
 const nestedShC = (n: number) => '$(bash -c '.repeat(n) + "'np''x supabase status'" + ')'.repeat(n)
 const nestedBrace = (n: number) => 'echo ' + '${'.repeat(n) + 'x' + '}'.repeat(n)
+// `bash <<E1` … `bash <<En`, the innermost body a call, then En … E1.
+function nestedFed(n: number): string {
+  const open = Array.from({ length: n }, (_, k) => `bash <<E${k + 1}`)
+  const close = Array.from({ length: n }, (_, k) => `E${n - k}`)
+  return [...open, 'npx supabase status', ...close].join('\n')
+}
 function nestedQuotes(depth: number): string {
   // Each level of "…" nesting doubles the backslashes, so depth is log(size).
   let s = "np''x supabase status"
   for (let d = 0; d < depth; d++) s = 'bash -c "' + s.replace(/[\\"$`]/g, '\\$&') + '"'
   return s
 }
+// Each input ends with a separate line holding one call, so `hits` is a
+// presence assertion: an early bail-out returns one hit fewer. The line is
+// separate so the earlier line still exercises every pass.
+const CALL = '\nnpx supabase status'
 const STRESS: Array<[string, (n: number) => string, number, number]> = [
   ['nested $( … ) echo', nestedSubst, 5_000, 0],
   ['nested $(bash -c …) with a call', nestedShC, 2_000, 1],
-  ['nested ${ … }', nestedBrace, 5_000, 0],
+  ['nested ${ … }', nestedBrace, 40_000, 0],
   ["quoted words 'a'", (n) => "'a' ".repeat(n), 20_000, 0],
   ["quoted words $'\\x6e'", (n) => "$'\\x6e' ".repeat(n), 20_000, 0],
   ["long joined word 'n''n'…", (n) => "'n'".repeat(n) + ' supabase', 20_000, 0],
@@ -262,6 +332,8 @@ const STRESS: Array<[string, (n: number) => string, number, number]> = [
     0,
   ],
   ["$'…' with escapes", (n) => "bash -c $'" + '\\x41'.repeat(n) + "'", 50_000, 0],
+  // F4: nested fed heredocs, each level's body holding the next.
+  ['nested fed heredocs', (n) => nestedFed(n), 200, 1],
 ]
 
 function fastestOf5(text: string): { ms: number; hits: number } {
@@ -277,11 +349,26 @@ function fastestOf5(text: string): { ms: number; hits: number } {
 
 describe('scaling of the word reader (SMI-7241)', () => {
   it.each(STRESS)('%s: 4n costs under 8x n', (_name, make, n, wantHits) => {
-    const small = fastestOf5(make(n))
-    const large = fastestOf5(make(4 * n))
-    expect(small.hits).toBe(wantHits)
-    expect(large.hits).toBe(wantHits)
+    const small = fastestOf5(make(n) + CALL)
+    const large = fastestOf5(make(4 * n) + CALL)
+    expect(small.hits).toBe(wantHits + 1)
+    expect(large.hits).toBe(wantHits + 1)
     expect(large.ms / small.ms).toBeLessThan(8)
+  })
+
+  // F4: fed-heredoc recursion had no depth cap, so deep nesting threw a
+  // RangeError out of scanShellText and crashed audit:standards.
+  it('does not throw on 3,000 nested terminated fed heredocs', () => {
+    let hits: Hit[] = []
+    expect(() => (hits = scan(nestedFed(3_000)))).not.toThrow()
+    expect(hits.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('does not throw on 4,000 unterminated fed heredocs', () => {
+    const text = 'bash <<EOF\n'.repeat(4_000) + 'npx supabase status'
+    let hits: Hit[] = []
+    expect(() => (hits = scan(text))).not.toThrow()
+    expect(hits.length).toBeGreaterThanOrEqual(1)
   })
 
   it.each([4, 8, 12])('nested "…" sh -c of depth %i is still found', (depth) => {

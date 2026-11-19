@@ -427,10 +427,10 @@ describe('findBareNpxCliInShellAndWorkflows (SMI-7223)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// SMI-7241 (Addendum B): rows run against bash 5.2 with a stub npx.
+// SMI-7241 (Addendum B): bash-truth rows. Each is [row, expected hits]; the
+// expectation is what bash 5.2 did with a stub npx on PATH (yes -> 1, no -> 0).
+// The rows bash disagrees with are in the named blocks below.
 // ---------------------------------------------------------------------------
-// ---- SMI-7241: bash-truth rows. Each is [row, expected hits]; the expectation is what bash 5.2 did
-// with a stub npx on PATH (yes -> 1, no -> 0). The rows bash disagrees with are in the named blocks below.
 const B2_ROWS: Array<[string, number]> = [
   ["bash -c $'npx supabase status'", 1],
   ["sh -c $'npx supabase status'", 1],
@@ -540,6 +540,18 @@ const OWN_ROWS: Array<[string, number]> = [
   ['"$(np\'\'x supabase status)"y', 1],
 ]
 
+// Review fixes on 9945f1fe4, each run under bash 5.2.15 with a stub npx and
+// no network. F6: bash's blanks are space and tab only, so `echo\rnpx` is one
+// word. F7: a backslash ending a comment does not continue the line.
+const FIX3_ROWS: Array<[string, number]> = [
+  ["bash -c $'echo\\rnpx supabase status'", 0],
+  ["bash -c $'echo\\fnpx supabase status'", 0],
+  ["bash -c $'echo\\vnpx supabase status'", 0],
+  ['# deploy \\\nnpx supabase status', 1],
+  ['echo a # note \\\nnpx supabase status', 1],
+  ['npx \\\n  supabase status', 1],
+]
+
 const LOGIN_SHELL_ROWS: Array<[string, number]> = [
   ['bash -lc "npx supabase status"', 1],
   ['bash -l "npx supabase status"', 0],
@@ -582,6 +594,7 @@ describe('SMI-7241 shell rows agree with bash', () => {
     ['governance', GOV_ROWS],
     ['must-not-flag controls', CTL_ROWS],
     ['other', OWN_ROWS],
+    ['review fixes', FIX3_ROWS],
   ]
   for (const [name, table] of rows) {
     describe(name, () => {
@@ -600,6 +613,44 @@ describe('SMI-7241 shell rows agree with bash', () => {
     it.each(LOGIN_SHELL_ROWS)('%j -> %i hit(s)', (row, want) => {
       expect(scanShellText(row)).toHaveLength(want)
     })
+  })
+})
+
+// F7: the lines after a comment ending in a backslash are their own lines.
+describe('SMI-7241 comments do not continue lines', () => {
+  it.each([
+    ['# deploy \\\nnpx supabase status', [2]],
+    ['echo a # note \\\nnpx supabase status', [2]],
+    ['npx \\\n  supabase status', [1]],
+    ['echo a \\\n # b \\\nnpx supabase status', [3]],
+    ['# a \\\n# b \\\nnpx supabase status\nnpx wrangler deploy', [3, 4]],
+  ] as Array<[string, number[]]>)('%j hits at lines %j', (row, want) => {
+    expect(scanShellText(row).map((h: { line: number }) => h.line)).toEqual(want)
+  })
+
+  // One lex per physical line, not per logical line: a run of comment lines
+  // ending in backslashes must not be re-joined line by line.
+  it.each([
+    ['comment lines', (n: number) => '# x \\\n'.repeat(n) + 'npx supabase status'],
+    ['trailing comments', (n: number) => 'echo a # x \\\n'.repeat(n) + 'npx supabase status'],
+    ['real continuations', (n: number) => 'echo a \\\n'.repeat(n) + 'x\nnpx supabase status'],
+  ])('%s: 4n costs under 8x n', (_name, make) => {
+    const time = (text: string) => {
+      scanShellText(text)
+      let best = Infinity
+      let hits = 0
+      for (let k = 0; k < 5; k++) {
+        const t0 = performance.now()
+        hits = scanShellText(text).length
+        best = Math.min(best, performance.now() - t0)
+      }
+      return { best, hits }
+    }
+    const small = time(make(5_000))
+    const large = time(make(20_000))
+    expect(small.hits).toBe(1)
+    expect(large.hits).toBe(1)
+    expect(large.best / small.best).toBeLessThan(8)
   })
 })
 

@@ -156,6 +156,59 @@ describe('findUnpinnedBareNpxCliInPackageJson (SMI-5746 Check 59, sub-check 2)',
 
     expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
   })
+
+  // SMI-7241 F9: script bodies are read with Check 59's shell scanner, so a
+  // call bash runs (each row measured under bash 5.2.15 with a stub npx) is
+  // found however it is quoted.
+  it.each([
+    ["sh -c $'npx supabase status'", 'supabase'],
+    ["bash -c 'np''x supabase status'", 'supabase'],
+    ["bash -c 'np''x wrangler deploy'", 'wrangler'],
+  ])('flags %j', (body, tool) => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ scripts: { s: body }, devDependencies: {} })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 's', tool },
+    ])
+  })
+
+  it('reports each tool once per script, in WATCHED order', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        scripts: { s: 'npx supabase db push && npx wrangler deploy && npx supabase status' },
+      })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 's', tool: 'wrangler' },
+      { file: 'package.json', script: 's', tool: 'supabase' },
+    ])
+  })
+
+  it('does not flag a scanner-found call when the tool is a devDependency', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        scripts: { s: "bash -c 'np''x supabase status'" },
+        devDependencies: { supabase: '2.107.0' },
+      })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
+  })
+
+  it('does not flag prose or a comment that mentions npx', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ scripts: { a: 'echo "run npx supabase start"', b: ': # npx wrangler' } })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
+  })
 })
 
 describe('findUnpinnedRufloLauncherPin (SMI-5746 Check 59, sub-check 3; SMI-6744 ADR-170 §7)', () => {
