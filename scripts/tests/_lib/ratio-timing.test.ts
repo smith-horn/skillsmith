@@ -27,14 +27,14 @@ afterEach(() => {
 
 describe('timeAlternating', () => {
   it('times every pair and keeps the fastest of each size', () => {
-    // Warm-ups cost 1 and 4; then the large runs get faster each pair.
-    const { run, calls } = fakeClock((text, call) =>
-      text === 'small' ? 1 : call <= 2 ? 4 : 12 - call
-    )
+    // Warm-ups cost 1 and 4; the timed large runs cost 8, 4, 6, so the
+    // fastest is not the last (a "keep the last run" helper would read 6).
+    const LARGE: Record<number, number> = { 2: 4, 4: 8, 6: 4, 8: 6 }
+    const { run, calls } = fakeClock((text, call) => (text === 'small' ? 1 : LARGE[call]))
     const t = timeAlternating(run, 'small', 'large', { pairs: 3 })
     expect(calls).toEqual(['small', 'large', 'small', 'large', 'small', 'large', 'small', 'large'])
     expect(t.smallMs).toBe(1)
-    expect(t.largeMs).toBe(4) // the last pair: 12 - 8
+    expect(t.largeMs).toBe(4)
     expect(t.ratio).toBe(4)
     expect([t.smallHits, t.largeHits]).toEqual([1, 2])
     expect(t.failedFast).toBe(false)
@@ -55,6 +55,28 @@ describe('timeAlternating', () => {
     expect(calls).toHaveLength(2 + 2 * 7)
     expect(t.failedFast).toBe(false)
     expect(t.ratio).toBe(4)
+  })
+
+  it('does not fail fast on a slow first timed pair after fast warm-ups', () => {
+    // The mirror of a slow warm-up: only the first timed large run (call 4)
+    // is slow. The warm-up ratio is 4, so the gate must not fire.
+    const { run, calls } = fakeClock((text, call) => (text === 'small' ? 1 : call === 4 ? 20 : 4))
+    const t = timeAlternating(run, 'small', 'large', { failFast: 16 })
+    expect(calls).toHaveLength(2 + 2 * 7)
+    expect(t.failedFast).toBe(false)
+    expect(t.ratio).toBe(4)
+  })
+
+  it('only the first timed pair can stop early, even if a later running ratio exceeds the limit', () => {
+    // Slow warm-ups (ratio 20), a fast first pair (ratio 4), then a small run
+    // of 0.125 makes the running ratio 4 / 0.125 = 32 at the second pair.
+    const { run, calls } = fakeClock((text, call) =>
+      text === 'small' ? (call === 5 ? 0.125 : 1) : call === 2 ? 20 : 4
+    )
+    const t = timeAlternating(run, 'small', 'large', { failFast: 16 })
+    expect(calls).toHaveLength(2 + 2 * 7)
+    expect(t.failedFast).toBe(false)
+    expect(t.ratio).toBe(32)
   })
 
   it('never fails fast without a failFast limit', () => {

@@ -10,8 +10,8 @@
  * time, so the minimum is the stable estimate, and a spike long enough to
  * slow every large run slows the small runs between them too.
  *
- * Fail fast: a quadratic regression makes every large run slow, and timing
- * all the pairs of it can outlast the test timeout. When the warm-ups'
+ * Fail fast: a quadratic regression makes every large run slow, so timing
+ * all the pairs of it wastes minutes. When the warm-ups'
  * ratio already exceeds `failFast` (callers pass twice their limit), one
  * timed pair confirms it, so a single load spike on the large warm-up cannot
  * fail the test, and that pair's ratio is returned at once.

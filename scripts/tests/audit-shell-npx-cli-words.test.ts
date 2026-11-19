@@ -422,8 +422,8 @@ function nestedQuotes(depth: number): string {
 // presence assertion: an early bail-out returns one hit fewer. The line is
 // separate so the earlier line still exercises every pass.
 const CALL = '\nnpx supabase status'
-// The preset's 15 s test timeout would report a quadratic regression as a
-// retried timeout; with 60 s the ratio assertion (or its fail-fast) reports it.
+// Above the preset's 15 s, so a passing run on a loaded host is not failed
+// (and retried) as a timeout.
 const RATIO_TIMEOUT_MS = 60_000
 const N_GROUPS = 5_000
 const STRESS: Array<[string, (n: number) => string, number, number]> = [
