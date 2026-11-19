@@ -205,9 +205,18 @@ describe('findUnpinnedBareNpxCliInPackageJson (SMI-5746 Check 59, sub-check 2)',
     const dir = scratchDir()
     writeFileSync(
       join(dir, 'package.json'),
-      JSON.stringify({ scripts: { b: ': # npx wrangler', c: 'echo ok # npx supabase start' } })
+      JSON.stringify({
+        scripts: {
+          b: ': # npx wrangler',
+          c: 'echo ok # npx supabase start',
+          d: 'npx supabase start',
+        },
+      })
     )
-    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
+    // `d` is the positive control: the same file is read and a real call found.
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 'd', tool: 'supabase' },
+    ])
   })
 
   // Accepted false positive (review round 2, R2): every quoted argument is
@@ -242,9 +251,14 @@ describe('findUnpinnedBareNpxCliInPackageJson (SMI-5746 Check 59, sub-check 2)',
     const dir = scratchDir()
     writeFileSync(
       join(dir, 'package.json'),
-      JSON.stringify({ scripts: { s: 'concurrently "echo a # npx supabase start"' } })
+      JSON.stringify({
+        scripts: { s: 'concurrently "echo a # npx supabase start"', d: 'npx supabase start' },
+      })
     )
-    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
+    // `d` is the positive control: the same file is read and a real call found.
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 'd', tool: 'supabase' },
+    ])
   })
 
   // Review round 2, R3 (owner decision): a devDependency exempts only a bare

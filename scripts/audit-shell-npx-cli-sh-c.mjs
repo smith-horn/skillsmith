@@ -20,9 +20,11 @@
  * o bundle before it (`+eo +x`), so a greedy walk back from the quote can take
  * the wrong reading. The shape is therefore decided by a dynamic program over
  * the line's whitespace-separated tokens, left to right, once per line:
- * - B[k]: the tokens up to k are a shell word followed by flags and
- *   o-bundle/value pairs (the part before the -c);
- * - A[k]: they are that, then a -c flag, then flags allowed after it.
+ * - B[k]: the tokens ending at k, from some shell word onward, are that
+ *   shell word followed by flags and o-bundle/value pairs (the part before
+ *   the -c);
+ * - A[k]: the tokens ending at k, from some shell word onward, are that
+ *   part, then a -c flag, then flags allowed after it.
  * Each entry reads only the one or two entries before it, so a line costs one
  * pass however many quote openings it holds; a caller scanning one line
  * passes the same `memo` Map to every call, which keeps the tables. A quote

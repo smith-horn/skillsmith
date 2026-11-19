@@ -30,7 +30,8 @@
  * from stdin (sh, bash, zsh, dash, ksh with no -c, behind the wrappers in
  * audit-shell-npx-cli-words.mjs; `source`/`.` of /dev/stdin or /dev/fd/0,
  * also behind `command`/`builtin`; or a `( … )` group holding one of these,
- * with the heredoc on the group) has its body scanned as a script, hits at
+ * as any command or pipeline stage, with the heredoc on the group's `)`, the
+ * group open across lines or not) has its body scanned as a script, hits at
  * their physical lines. Any other heredoc body is text. With an unquoted
  * delimiter the outer shell expands the body first, so its command
  * substitutions are scanned too, fed or not (at most one hit per physical
@@ -56,11 +57,18 @@
  * - A heredoc fed to a shell any other way than its own pipeline or a
  *   `( … )` group: through a `{ …; }` group or after `;`, a here-string,
  *   process substitution, or a wrapper not in the list (`ssh host bash
- *   <<EOF`). A group counts as fed when any command in it reads stdin, even
- *   one an earlier command starves (`( cat; bash ) <<EOF`), and a case
+ *   <<EOF`), or a pipeline into a group holding `&&` or `;` (`cat <<EOF | (
+ *   cd /tmp && bash )`, SMI-7248). A group counts as fed when any command in
+ *   it without a heredoc of its own reads stdin, even one an earlier command
+ *   starves (`( cat; bash ) <<EOF`, `( true | bash ) <<EOF`), and a case
  *   pattern's `)` inside a group closes the group early. An unquoted-delimiter
  *   body is scanned as written (as a script and for its substitutions), not
  *   as the text the outer shell's expansion produces.
+ * - `bash -c 'source /dev/stdin' <<EOF`: a `-c` string is not read for a
+ *   stdin reader (missed), and `command -v source /dev/stdin <<EOF` is read
+ *   as sourcing stdin (a false positive) (SMI-7248).
+ * - A quoted version spec holding characters outside a plain word
+ *   (`npx supabase@"^2"`) or an empty one (`npx supabase@`) (SMI-7248).
  * - Case arms and other conditions are not evaluated.
  * - npx flags that take a value other than NPX_VALUE_FLAGS, and a
  *   substitution or quote left open across lines.
@@ -71,7 +79,10 @@
  *   only one value word (`bash -oo a b -c '…'` is missed), and an o bundle
  *   that also holds the c (`bash -oc pipefail '…'`) is not read as -c. A `+`
  *   bundle holding a c that bash does not run (`bash +lc '…'` ran nothing
- *   under bash 5.2) is still read as -c, a false positive.
+ *   under bash 5.2) is still read as -c, a false positive. After the -c, an
+ *   option taking a value (`bash -c -o pipefail '…'`, also `+o`, `-euo`,
+ *   `+O`) ends the shape, and so does `--rcfile`/`--init-file <file>` before
+ *   it (SMI-7248).
  * - The backtick over-approximations at SHELL_TAIL in
  *   audit-shell-npx-cli-sh-c.mjs, which err towards a flag.
  * - Two rare false positives: a CR, FF or VT between npx and the tool
@@ -99,8 +110,7 @@ import { decodeYamlRun, firstAliasLine, resolvedRunValues } from './audit-shell-
  * A $'…' argument is left to pass 2, which decodes it: its raw text can hold
  * a call that decoding removes (`$'echo\0; npx …'` ends at the NUL).
  */
-function firstCall(code, at, pat) {
-  const memo = new Map()
+function firstCall(code, at, pat, memo = new Map()) {
   for (const m of code.matchAll(pat.re)) {
     if (!counts(pat, m)) continue
     const { q, openAt } = at[m.index]
@@ -181,15 +191,17 @@ function inPlaceCall(code, words, heredocBody, pat) {
  * The call one logical line makes, as { tool, inSubst, fed }: `inSubst` says
  * the call sits inside a command substitution, `fed` which of the line's
  * heredocs feed a shell. Words are rebuilt only when the raw pass found
- * nothing or the line holds a heredoc operator.
+ * nothing, the line holds a heredoc operator, or `groups` (the text's open
+ * `( … )` groups, updated in place) is open or may change on this line.
  */
-function lineCall(code, lexed, depth, heredocBody, pat) {
-  const m = firstCall(code, lexed.at, pat)
+function lineCall(code, lexed, depth, heredocBody, pat, groups = null) {
+  const memo = new Map() // one endsInShC memo for every reader of this line
+  const m = firstCall(code, lexed.at, pat, memo)
   const raw = m && { tool: m[3], inSubst: insideCmd(lexed.frames, m.index) }
-  if (raw !== null && lexed.heredocs.length === 0) return { ...raw, fed: [] }
-  const { words, fed } = readWords(code, lexed, { heredocBody })
+  const tracking = groups !== null && (groups.length > 0 || /[()]/.test(code))
+  if (raw !== null && lexed.heredocs.length === 0 && !tracking) return { ...raw, fed: [] }
+  const { words, fed } = readWords(code, lexed, { heredocBody, groups: groups ?? [] })
   if (raw !== null) return { ...raw, fed }
-  const memo = new Map()
   const sh = wordArgCall(words, depth, pat, (w) => endsInShC(code, w.start, memo))
   if (sh) return { tool: sh.tool, inSubst: insideCmd(lexed.frames, sh.at), fed }
   const inPlace = inPlaceCall(code, words, heredocBody, pat)
@@ -235,6 +247,10 @@ function scan(text, { yaml: isYaml = false, depth = 0, pat }) {
   const join = makeJoiner(raw)
   const hits = []
   const heredocs = []
+  // `( … )` groups still open, shared by every logical line of this text so a
+  // group can close on a later line (readWords). A fed heredoc body or a
+  // decoded YAML `run:` value is its own script and starts with none.
+  const groups = []
   const push = (line, last, tool, inSubst) =>
     hits.push({ line, last, tool, text: raw[line - 1].trim(), inSubst })
   // A fed heredoc's body is scanned as a script once it is complete (past
@@ -307,7 +323,7 @@ function scan(text, { yaml: isYaml = false, depth = 0, pat }) {
     const cut = trailingCommentIndex(line, lexed.at)
     const code = cut === -1 ? line : line.slice(0, cut)
     if (cut !== -1) lexed = lexLine(code)
-    const { tool, inSubst, fed } = lineCall(code, lexed, depth, false, pat)
+    const { tool, inSubst, fed } = lineCall(code, lexed, depth, false, pat, groups)
     if (tool) hits.push({ line: startLine, last: i, tool, text: line.trim(), inSubst })
     lexed.heredocs.forEach((h, k) =>
       heredocs.push({ ...h, fed: fed[k] === true, lines: [], expanded: [] })

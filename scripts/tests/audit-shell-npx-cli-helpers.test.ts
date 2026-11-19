@@ -579,6 +579,10 @@ const ACCEPTED_OVER_APPROXIMATIONS: Array<[string]> = [
   ["echo $'\\x6epx' supabase status"],
   // base already flags it: a backtick substitution before `bash` ends the word, and the raw pass sees `bash -c 'npx…'`
   ["`echo hi`bash -c 'npx supabase status'"],
+  // a group counts as fed when any command in it reads stdin, even one an earlier stage starves (bash ran nothing)
+  ['( true | bash ) <<EOF\nnpx supabase status\nEOF'],
+  // `command -v` only looks the name up; read as sourcing stdin (SMI-7248; bash ran nothing)
+  ['command -v source /dev/stdin <<EOF\nnpx supabase status\nEOF'],
 ]
 
 const EXPANSION_AS_EMPTY_FALSE_POSITIVE: Array<[string]> = [
@@ -593,6 +597,19 @@ const KNOWN_MISSES: Array<[string]> = [
   // the raw comment cut reads a `#` inside `${…}` or after an escaped space as a comment (SMI-7248)
   ['echo ${y:- #} ; npx supabase status'],
   ['x=a\\ #b npx supabase status'],
+  // filed in SMI-7248, each measured under bash 5.2.15 (bash ran npx): a quoted or empty version spec
+  ['npx supabase@"^2" status'],
+  ['npx supabase@ status'],
+  // an option taking a value after the -c, and --rcfile/--init-file before it
+  ["bash -c -o pipefail 'npx supabase status'"],
+  ["bash -c +o posix 'npx supabase status'"],
+  ["bash -c -euo pipefail 'npx supabase status'"],
+  ["bash -c +O extglob 'npx supabase status'"],
+  ["bash --rcfile /dev/null -c 'npx supabase status'"],
+  ["bash --init-file /dev/null -c 'npx supabase status'"],
+  // a pipeline into a group holding && or ;, and a -c string that sources stdin
+  ['cat <<EOF | ( cd /tmp && bash )\nnpx supabase status\nEOF'],
+  ["bash -c 'source /dev/stdin' <<EOF\nnpx supabase status\nEOF"],
 ]
 
 describe('SMI-7241 shell rows agree with bash', () => {
@@ -670,7 +687,9 @@ describe('SMI-7241 comments do not continue lines', () => {
     '%s: 4n costs under 8x n',
     (_name, make, n) => {
       // Alternating timing, fastest of 7 pairs: see _lib/ratio-timing.ts.
-      const t = timeAlternating((text) => scanShellText(text).length, make(n), make(4 * n))
+      const t = timeAlternating((text) => scanShellText(text).length, make(n), make(4 * n), {
+        failFast: 16,
+      })
       expect(t.smallHits).toBe(1)
       expect(t.largeHits).toBe(1)
       expect(t.ratio).toBeLessThan(8)

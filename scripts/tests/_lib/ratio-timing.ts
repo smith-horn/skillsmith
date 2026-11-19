@@ -9,6 +9,12 @@
  * and the fastest run of each size is kept. Noise (load, GC, JIT) only adds
  * time, so the minimum is the stable estimate, and a spike long enough to
  * slow every large run slows the small runs between them too.
+ *
+ * Fail fast: a quadratic regression makes every large run slow, and timing
+ * all the pairs of it can outlast the test timeout. When the warm-ups'
+ * ratio already exceeds `failFast` (callers pass twice their limit), one
+ * timed pair confirms it, so a single load spike on the large warm-up cannot
+ * fail the test, and that pair's ratio is returned at once.
  */
 export type RatioTiming = {
   smallMs: number
@@ -16,6 +22,7 @@ export type RatioTiming = {
   ratio: number
   smallHits: number
   largeHits: number
+  failedFast: boolean
 }
 
 /** `run` scans its text and returns the hit count. */
@@ -23,19 +30,30 @@ export function timeAlternating(
   run: (text: string) => number,
   small: string,
   large: string,
-  pairs = 7
+  { pairs = 7, failFast = Infinity }: { pairs?: number; failFast?: number } = {}
 ): RatioTiming {
-  let smallHits = run(small) // warm-up, untimed
-  let largeHits = run(large) // warm-up, untimed
+  const timed = (text: string) => {
+    const t0 = performance.now()
+    const hits = run(text)
+    return { ms: performance.now() - t0, hits }
+  }
+  const smallWarm = timed(small) // warm-up
+  const largeWarm = timed(large) // warm-up
+  let smallHits = smallWarm.hits
+  let largeHits = largeWarm.hits
   let smallMs = Infinity
   let largeMs = Infinity
   for (let k = 0; k < pairs; k++) {
-    let t0 = performance.now()
-    smallHits = run(small)
-    smallMs = Math.min(smallMs, performance.now() - t0)
-    t0 = performance.now()
-    largeHits = run(large)
-    largeMs = Math.min(largeMs, performance.now() - t0)
+    const s = timed(small)
+    const l = timed(large)
+    smallHits = s.hits
+    largeHits = l.hits
+    smallMs = Math.min(smallMs, s.ms)
+    largeMs = Math.min(largeMs, l.ms)
+    // Only the confirming pair right after slow warm-ups can stop early.
+    if (k === 0 && largeWarm.ms / smallWarm.ms > failFast && largeMs / smallMs > failFast) {
+      return { smallMs, largeMs, ratio: largeMs / smallMs, smallHits, largeHits, failedFast: true }
+    }
   }
-  return { smallMs, largeMs, ratio: largeMs / smallMs, smallHits, largeHits }
+  return { smallMs, largeMs, ratio: largeMs / smallMs, smallHits, largeHits, failedFast: false }
 }

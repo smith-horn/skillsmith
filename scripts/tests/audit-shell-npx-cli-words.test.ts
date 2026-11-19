@@ -199,6 +199,37 @@ const FIX4_LINE_ROWS: Array<[string, number[], string[]]> = [
   ['bash <<EOF\nnpx supabase x \\\n$(npx wrangler)\nEOF', [2, 3], ['supabase', 'wrangler']],
 ]
 
+// Final review round on 13306d200 (SMI-7241), each row run under bash 5.2.15
+// as above. G1: a pipeline stage inside a group belongs to the group. G2: a
+// group open across lines closes on a later line, and the heredoc on its `)`
+// feeds it.
+const FIX5_ROWS: Array<[string, string, number]> = [
+  ['G1', '( cat | bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['G1', '( cd /tmp; cat | bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['G1', '( cat |& bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['G1', "x=$( ( cat | bash ) <<'EOF'\nnpx supabase status\nEOF\n)", 1],
+  ['G1', '( cat | ( bash ) ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['G1', '( cat | cat ) <<EOF\nnpx supabase status\nEOF', 0],
+  ['G2', '( cd /tmp\n  bash ) <<EOF\nnpx supabase status\nEOF', 1],
+  ['G2', '(\n  cd /tmp\n  bash\n) <<EOF\nnpx supabase status\nEOF', 1],
+  ['G2', "(\n  bash\n) <<'EOF'\nnpx supabase status\nEOF", 1],
+  ['G2', 'x=$(\n  (\n    bash\n  ) <<EOF\nnpx supabase status\nEOF\n)', 1],
+  ['G2', '(\n  cat\n) <<EOF\nnpx supabase status\nEOF', 0],
+  ['G2', 'x=$(\n  (\n    cat\n  ) <<EOF\nnpx supabase status\nEOF\n)', 0],
+  ['G2', '(\n  bash\n) 3<<EOF\nnpx supabase status\nEOF', 0],
+  ['G2', '(\n  bash\n)\ncat <<EOF\nnpx supabase status\nEOF', 0],
+  // A command with a heredoc of its own reads that, not the group's stdin.
+  ['G2', '( bash <<X\necho hi\nX\n) <<EOF\nnpx supabase status\nEOF', 0],
+  ['G2', '(\n  cat <<X\nbash\nX\n) <<EOF\nnpx supabase status\nEOF', 0],
+]
+
+// G2: hits stay at their physical lines.
+const FIX5_LINE_ROWS: Array<[string, number[]]> = [
+  ['(\n  cd /tmp\n  bash\n) <<EOF\necho a\nnpx supabase status\nEOF', [6]],
+  ['echo a\n( cd /tmp\n  bash ) <<EOF\nnpx supabase status\nEOF\nnpx wrangler deploy', [4, 6]],
+  ['(\n  npx supabase status\n  bash\n) <<EOF\nnpx wrangler deploy\nEOF', [2, 5]],
+]
+
 const TOOL_ROWS: Array<[string, string]> = [
   ["npx wrangler deploy; bash -c 'np''x supabase status'", 'wrangler'],
   ["bash -c 'np''x wrangler deploy'; 'np'x supabase status", 'wrangler'],
@@ -262,6 +293,18 @@ describe('word rebuilding and fed heredocs agree with bash', () => {
       const hits = scan(row)
       expect(hits.map((h) => h.line)).toEqual(lines)
       expect(hits.map((h) => h.tool)).toEqual(tools)
+    })
+  })
+
+  describe('review fixes on 13306d200', () => {
+    it.each(FIX5_ROWS)('%s %j -> %i hit(s)', (_fix, row, want) => {
+      const hits = scan(row)
+      expect(hits).toHaveLength(want)
+      for (const h of hits) expect(h.tool).toBe('supabase')
+    })
+
+    it.each(FIX5_LINE_ROWS)('G2 %j hits at lines %j', (row, lines) => {
+      expect(scan(row).map((h) => h.line)).toEqual(lines)
     })
   })
 
@@ -353,7 +396,9 @@ describe("decodeAnsiC matches bash printf %s $'…' (SMI-7241 B.2)", () => {
 // bound, so a slow CI runner does not flake. `hits` pins that the scanner
 // reached the code under test rather than bailing out early. Each n is set
 // so the small input takes 15 ms or more in the dev container: a ratio of two
-// few-millisecond timings flaked (8.09 and 8.10, review round 2).
+// few-millisecond timings flaked (8.09 and 8.10, review round 2). A ratio
+// past 16 at the warm-ups, confirmed by one timed pair, fails at once
+// (failFast), so a quadratic regression fails in seconds, not at the timeout.
 const nestedSubst = (n: number) => '$('.repeat(n) + 'echo' + ')'.repeat(n)
 const nestedShC = (n: number) => '$(bash -c '.repeat(n) + "'np''x supabase status'" + ')'.repeat(n)
 const nestedBrace = (n: number) => 'echo ' + '${'.repeat(n) + 'x' + '}'.repeat(n)
@@ -373,6 +418,7 @@ function nestedQuotes(depth: number): string {
 // presence assertion: an early bail-out returns one hit fewer. The line is
 // separate so the earlier line still exercises every pass.
 const CALL = '\nnpx supabase status'
+const N_GROUPS = 5_000
 const STRESS: Array<[string, (n: number) => string, number, number]> = [
   ['nested $( … ) echo', nestedSubst, 50_000, 0],
   ['nested $(bash -c …) with a call', nestedShC, 10_000, 1],
@@ -403,11 +449,15 @@ const STRESS: Array<[string, (n: number) => string, number, number]> = [
   ["$'…' with escapes", (n) => "bash -c $'" + '\\x41'.repeat(n) + "'", 50_000, 0],
   // F4: nested fed heredocs, each level's body holding the next.
   ['nested fed heredocs', (n) => nestedFed(n), 800, 1],
+  // G2: groups open across lines, each closed on a later line with a fed heredoc.
+  ['multi-line groups', (n) => '(\n  cd /tmp\n  bash\n) <<EOF\necho\nEOF\n'.repeat(n), N_GROUPS, 0],
 ]
 
 describe('scaling of the word reader (SMI-7241)', () => {
   it.each(STRESS)('%s: 4n costs under 8x n', (_name, make, n, wantHits) => {
-    const t = timeAlternating((text) => scan(text).length, make(n) + CALL, make(4 * n) + CALL)
+    const t = timeAlternating((text) => scan(text).length, make(n) + CALL, make(4 * n) + CALL, {
+      failFast: 16,
+    })
     expect(t.smallHits).toBe(wantHits + 1)
     expect(t.largeHits).toBe(wantHits + 1)
     expect(t.ratio).toBeLessThan(8)

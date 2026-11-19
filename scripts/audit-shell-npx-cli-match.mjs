@@ -10,7 +10,8 @@
 export const TOOLS = ['supabase', 'wrangler']
 
 // npx flags whose value is a separate word. `-p`/`--package` is checked by
-// pinnedByPackageFlag(): its value is what npx installs.
+// packageValueFor() (through isPinned and counts): its value is what npx
+// installs.
 const NPX_VALUE_FLAGS = '--prefix|--cache|--registry|--userconfig|--workspace|-w|--package|-p'
 // `npx` as a bare word or a quoted command word ("npx" / 'npx'), then
 // optional flags, then a watched tool, bare or quoted, with an optional

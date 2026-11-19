@@ -59,9 +59,12 @@ const basename = (w) => w.slice(w.lastIndexOf('/') + 1)
  * differs from the raw text; `quoted`: a quote or backslash took part;
  * `subst`: an unquoted command substitution or arithmetic took part; `closed`: every
  * frame in the word closed on this line); fed[k] is true when lexed.heredocs[k]
- * feeds a shell reading stdin.
+ * feeds a shell reading stdin. `groups` is the stack of `( … )` groups still
+ * open at the start of the line (see walk); the line's top-level walk updates
+ * it in place, so a caller passing one stack to every logical line of a text
+ * lets a group opened on one line close on a later one.
  */
-export function readWords(code, lexed, { heredocBody = false } = {}) {
+export function readWords(code, lexed, { heredocBody = false, groups = [] } = {}) {
   const { kind, body, close, end } = lexed.frames
   const n = code.length
   const hdAt = new Map(lexed.heredocs.map((h, k) => [h.at, k]))
@@ -214,11 +217,13 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
 
   // Walk one command range, collecting words and the simple commands of each
   // pipeline, for the heredoc decision. `groups` holds, for each `(` still
-  // open, the simple commands started inside it; the command that follows
-  // its `)` records whether any of them reads stdin, so a heredoc redirected
-  // onto the group (`( bash ) <<EOF`) is fed when one does.
-  const walk = (from, to) => {
-    const groups = []
+  // open, the simple commands started inside it (every pipeline stage among
+  // them); the command that follows its `)` records whether any of them
+  // reads stdin, so a heredoc redirected onto the group (`( bash ) <<EOF`,
+  // `( cat | bash ) <<EOF`) is fed when one does. A command with a heredoc
+  // of its own reads that, not the group's stdin. The top-level range shares
+  // the caller's stack across lines; a command substitution starts empty.
+  const walk = (from, to, groups) => {
     const newCmd = () => {
       const c = { words: [], hds: [], groupReads: false }
       if (groups.length > 0) groups[groups.length - 1].push(c)
@@ -265,7 +270,8 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
           const inside = op === ')' && groups.length > 0 ? groups.pop() : null
           if (op === '(') groups.push([])
           cmd = newCmd()
-          cmd.groupReads = inside !== null && inside.some(readsStdin)
+          cmd.groupReads =
+            inside !== null && inside.some((m) => m.hds.length === 0 && readsStdin(m))
           stages.push(cmd)
           continue
         }
@@ -273,7 +279,7 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
           takeFd(cmd, i - op.length)
           target = true
         } else if (PIPES.has(op)) {
-          cmd = { words: [], hds: [] }
+          cmd = newCmd()
           stages.push(cmd)
         } else endPipeline()
         continue
@@ -301,14 +307,14 @@ export function readWords(code, lexed, { heredocBody = false } = {}) {
   // redirection target of a `( … )` group, through any command inside the
   // group, nested groups included (groupReads, set once when the group
   // closes). Over-approximate: a command earlier in the group could consume
-  // stdin first (`( cat; bash ) <<EOF`).
+  // stdin first (`( cat; bash ) <<EOF`, `( true | bash ) <<EOF`).
   const readsStdin = (c) => readsStdinScript(c.words) || (c.words.length === 0 && c.groupReads)
 
   if (heredocBody) queueSubsIn(0, n)
-  else work.push([0, n])
+  else work.push([0, n, groups])
   while (work.length > 0) {
-    const [from, to] = work.pop()
-    walk(from, to)
+    const [from, to, open = []] = work.pop()
+    walk(from, to, open)
   }
   return { words, fed }
 }
