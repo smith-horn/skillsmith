@@ -4,9 +4,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
-- **Changed**: SMI-7236 -- the registry's full-text search now covers tiered skills only, so
-  `search` with `trust_tier: unknown` returns no matches (the API answers 400). The `trust_tier`
-  description says so. Browsing without a query is unchanged.
+- **Fixed**: SMI-7246 -- the `search` tool's `trust_tier` description no longer claims unknown
+  skills "never match a query". The registry never returns them for a query, but this tool falls
+  back to the local database when the registry rejects a filter, so the text now states only the
+  registry's behaviour.
+- **Changed**: SMI-7236 -- the registry's full-text search now covers tiered skills only, so a
+  query never returns unknown (unverified) skills from the registry. The `trust_tier` description
+  says so. Browsing without a query is unchanged.
 
 - **Changed**: SMI-6531 -- the update result text for a recovery record that belongs to a moved
   root or operation folder no longer says the target needs relinking.

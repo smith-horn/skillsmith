@@ -50,12 +50,10 @@
  * @module @skillsmith/cli/commands/doctor.recovery.action
  */
 
-import { createInterface } from 'node:readline'
 import chalk from 'chalk'
 import {
   ACCEPT_IDENTITY_ACTIONS,
   acceptsIdentity,
-  assertSkillWriteLockNotHeld,
   discoverRoots,
   executeRecovery,
   planRecovery,
@@ -67,10 +65,9 @@ import {
   type RecoveryRunOptions,
   type RecoveryRunResult,
 } from '@skillsmith/core'
+import { confirmOrStop, type PromptAnswer } from './confirm-gate.js'
 import { planLines, resultLines } from './doctor.recovery.action.render.js'
 import { printParkedUsageWarning } from './doctor.backups.js'
-
-export type PromptAnswer = 'yes' | 'no' | 'interrupt'
 
 export interface RecoveryActionOptions {
   apply?: string
@@ -109,45 +106,8 @@ export interface RecoveryActionOptions {
   request?: Partial<Pick<RecoveryRequest, 'ownerProbe' | 'euid'>>
 }
 
-/** The streams `askOnce` talks to (default: the process's terminal). */
-export interface PromptIO {
-  input: NodeJS.ReadableStream
-  output: NodeJS.WritableStream
-  /** Treat the streams as a terminal (Ctrl-C is SIGINT); default: readline's own detection. */
-  terminal?: boolean
-}
-
-/** The prompt runs only when both stdin and stdout are terminals (§3.9 item 2). */
-export function isInteractive(
-  stdin: { isTTY?: boolean } = process.stdin,
-  stdout: { isTTY?: boolean } = process.stdout
-): boolean {
-  return stdin.isTTY === true && stdout.isTTY === true
-}
-
-/** One question on the terminal: `y`/`yes` is yes; anything else, EOF included, is no; Ctrl-C interrupts. */
-export function askOnce(
-  question: string,
-  io: PromptIO = { input: process.stdin, output: process.stdout }
-): Promise<PromptAnswer> {
-  return new Promise((resolve) => {
-    const rl = createInterface({
-      input: io.input,
-      output: io.output,
-      ...(io.terminal === undefined ? {} : { terminal: io.terminal }),
-    })
-    let settled = false
-    const done = (a: PromptAnswer): void => {
-      if (settled) return
-      settled = true
-      rl.close()
-      resolve(a)
-    }
-    rl.on('SIGINT', () => done('interrupt'))
-    rl.on('close', () => done('no'))
-    rl.question(question, (answer) => done(/^y(es)?$/i.test(answer.trim()) ? 'yes' : 'no'))
-  })
-}
+export { askOnce, isInteractive } from './confirm-gate.js'
+export type { PromptAnswer, PromptIO } from './confirm-gate.js'
 
 /** UD32: a park that did not finish is exit 4 (an action that stopped or was refused is 1, which wins). */
 const exitOf = (r: RecoveryRunResult): number | undefined =>
@@ -260,27 +220,8 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
     plan: planned.plan,
   }
   if (!json) printLines(planLines(planned))
-  if (options.yes !== true) {
-    const tty = options.isTTY?.() ?? isInteractive()
-    if (json || !tty) {
-      if (json) printJson(plan, null)
-      else console.log('Nothing changed: confirm with --yes, or run this at a terminal.')
-      process.exitCode = 3
-      return
-    }
-    // Item 2: the prompt is never shown while a skills-root lock is held.
-    assertSkillWriteLockNotHeld('doctor recovery: prompt')
-    const answer = await (options.prompt ?? askOnce)('Proceed? [y/N] ')
-    if (answer === 'interrupt') {
-      process.exitCode = 130
-      return
-    }
-    if (answer !== 'yes') {
-      console.log('Nothing changed.')
-      process.exitCode = 0
-      return
-    }
-  }
+  const gate = await confirmOrStop(options, () => printJson(plan, null), 'doctor recovery: prompt')
+  if (gate === 'stop') return
   await options.afterConfirm?.()
   // UD66: a throw from the action (after a park's rename) or from printing its result must not
   // skip the warning, so it runs in `finally`: when the run says it parked, and also when it

@@ -31,14 +31,16 @@ describe('the parked kinds', () => {
   it('D2: the companion caller writes its own kind, not install-rollback', () => {
     expect(callerKind('companion-rollback')).toBe('companion-rollback')
     expect(callerKind('install-rollback')).toBe('install-rollback')
-    // UD63 picks lock 1' by kind, so no two callers may share one except the three fan-out overwrites.
+    // UD63 picks lock 1' by kind, so no two callers may share one (D5 split the three fan-out overwrites).
     const byKind = new Map<string, string[]>()
     for (const c of PARK_CALLERS)
       byKind.set(callerKind(c), [...(byKind.get(callerKind(c)) ?? []), c])
     const shared = [...byKind].filter(([, cs]) => cs.length > 1)
-    expect(shared).toEqual([
-      ['fan-out-overwrite', ['fan-out-staging', 'fan-out-symlink', 'fan-out-backup']],
-    ])
+    expect(shared).toEqual([])
+    expect(callerKind('fan-out-staging')).toBe('fan-out-staging')
+    expect(callerKind('fan-out-symlink')).toBe('fan-out-symlink')
+    expect(callerKind('fan-out-backup')).toBe('fan-out-backup')
+    expect(policyFor('parked', 'fan-out-overwrite')).toBeNull()
   })
 
   it('every parked kind is default-selectable except unreadable-record', () => {
