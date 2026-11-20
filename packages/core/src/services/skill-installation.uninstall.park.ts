@@ -86,7 +86,7 @@ export const readTreeHash = (installPath: string): PathTreeHashResult =>
   computePathTreeHash(installPath)
 
 /** A prepare that did not finish: why, and the staging hint when its bind made ST (T-N1). */
-export type PrepareFailure = { ok: false; notDone: UninstallNotDone; hints: string[] }
+type PrepareFailure = { ok: false; notDone: UninstallNotDone; hints: string[] }
 
 /**
  * The staging `.gitignore` hint for a bind that made ST, evaluated with no lock

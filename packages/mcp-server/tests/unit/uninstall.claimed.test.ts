@@ -54,6 +54,20 @@ describe('uninstall_skill and a name another install claimed', () => {
     expect(r.warning).toContain(CLAIMED_LINKS_NOTE)
   })
 
+  it('a claimed name on a non-canonical client: no links note (that path owns no links)', async () => {
+    mocks.uninstall.mockResolvedValue({
+      success: true,
+      skillName: 's',
+      message: 'parked',
+      claimedByAnotherInstall: true,
+    })
+    const r = await uninstallSkill({ skillName: 's', force: true, client: 'cursor' }, context)
+    expect(r.success).toBe(true)
+    expect(r.message).toBe('parked')
+    expect(mocks.removeLinks).not.toHaveBeenCalled()
+    expect(r.warning ?? '').not.toContain(CLAIMED_LINKS_NOTE)
+  })
+
   it('control: an unclaimed global uninstall still tears the links down', async () => {
     mocks.uninstall.mockResolvedValue({ success: true, skillName: 's', message: 'parked' })
     const r = await uninstallSkill({ skillName: 's', force: true }, context)

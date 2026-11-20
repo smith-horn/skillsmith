@@ -101,6 +101,20 @@ describe('removeSkill', () => {
     expect(logs.join('\n')).toContain('cross-client links were left in place for that install')
   })
 
+  it('a claimed name on a non-canonical client: no links note (that path owns no links)', async () => {
+    mocks.uninstallFn.mockResolvedValue({
+      success: true,
+      skillName: 's',
+      message: 'parked',
+      claimedByAnotherInstall: true,
+    })
+    const outcome = await removeSkill('s', true, dbPath, 'cursor', scope)
+    expect(outcome).toBe('removed')
+    expect(mocks.succeed).toHaveBeenCalledWith('parked')
+    expect(mocks.removeLinks).not.toHaveBeenCalled()
+    expect(logs.join('\n')).not.toContain('cross-client links were left in place')
+  })
+
   it('an existing refusal is failed (exit 1)', async () => {
     mocks.uninstallFn.mockResolvedValue({ success: false, skillName: 's', message: 'refused' })
     const outcome = await run()

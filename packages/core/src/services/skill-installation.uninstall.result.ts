@@ -1,8 +1,9 @@
 /**
  * @fileoverview `performUninstall`'s two results after the manifest drop: the
  *   drop failed after the folder moved, or the uninstall is done. Moved out of
- *   `skill-installation.uninstall.ts` unchanged (SMI-6531 A1 step 8-i-a-1) to
- *   keep that file under the 500-line standard.
+ *   `skill-installation.uninstall.ts` (SMI-6531 A1 step 8-i-a-1) to keep that
+ *   file under the 500-line standard; the done result also gained
+ *   `claimedByAnotherInstall` (gate Major 2).
  * @module @skillsmith/core/services/skill-installation.uninstall.result
  */
 import type { UninstallResult } from './skill-installation.types.js'
@@ -10,7 +11,7 @@ import { parkedWarnings } from './skill-installation.uninstall.helpers.js'
 import type { ManifestDrop } from './skill-installation.uninstall.park.js'
 
 /** What both results read. */
-export interface AfterDrop {
+interface AfterDrop {
   skillName: string
   installPath: string
   /** Where the folder was set aside; undefined when nothing was on disk. */

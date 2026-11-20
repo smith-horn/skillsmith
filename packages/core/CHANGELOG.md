@@ -7,7 +7,9 @@ All notable changes to `@skillsmith/core` are documented here.
 - **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): uninstall takes the folder's tree hash when it
   reads it, before the modification check, and refuses (`kept/identity-changed`, nothing moved, the
   entry kept) when the hash bound for the move differs, so an edit made after the check is never
-  set aside as if it were the checked folder. A result whose manifest record was claimed by another
+  set aside as if it were the checked folder. When that hash cannot be taken, uninstall stops with
+  the walk's own reason (`guard-unreadable`, `guard-unsupported-type` or `mount-inside-tree`, not
+  `bind-failed`) and creates nothing. A result whose manifest record was claimed by another
   install now says so (`claimedByAnotherInstall`). An uninstall that stops after creating
   `.skillsmith-staging/` still returns its `.gitignore` hint.
 - **Changed**: SMI-6531 -- A1 step 8-i-a-1: uninstall sets the skill folder aside instead of

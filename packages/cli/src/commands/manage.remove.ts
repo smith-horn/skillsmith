@@ -179,35 +179,38 @@ export async function removeSkill(
       // though only the workspace copy was meant to go. Fan-out is always
       // global-canonical-to-global-client, so scope must also be checked.
       // 8-i-a-1 gate Major 2: when another install claimed the name, the links
-      // recorded under it are that install's, so they are left alone.
-      if (result.claimedByAnotherInstall === true) {
-        console.log(
-          chalk.yellow(
-            '  Warning: another install claimed this name while it was being removed, so its ' +
-              'cross-client links were left in place for that install.'
-          )
-        )
-      } else if (client === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
-        try {
-          // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
-          // refused to remove (e.g. a recorded fan-out copy that has since
-          // become a real `.git` working tree) instead of silently
-          // discarding both the manifest entry and the content — surface
-          // each refusal so the user knows a fan-out destination was left
-          // behind and why.
-          const { removed: linkCount, refused, warnings } = await removeLinks(skillName)
-          if (linkCount > 0) {
-            spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
-          }
-          for (const text of [...refused.map((r) => r.reason), ...(warnings ?? [])]) {
-            console.log(chalk.yellow(`  Warning: ${text}`))
-          }
-        } catch (linkErr) {
+      // recorded under it are that install's, so they are left alone. Only the
+      // removal that owns fan-out links (canonical, global) says so.
+      if (client === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
+        if (result.claimedByAnotherInstall === true) {
           console.log(
             chalk.yellow(
-              `  Warning: could not clean up cross-client links: ${sanitizeError(linkErr)}`
+              '  Warning: another install claimed this name while it was being removed, so its ' +
+                'cross-client links were left in place for that install.'
             )
           )
+        } else {
+          try {
+            // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
+            // refused to remove (e.g. a recorded fan-out copy that has since
+            // become a real `.git` working tree) instead of silently
+            // discarding both the manifest entry and the content — surface
+            // each refusal so the user knows a fan-out destination was left
+            // behind and why.
+            const { removed: linkCount, refused, warnings } = await removeLinks(skillName)
+            if (linkCount > 0) {
+              spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
+            }
+            for (const text of [...refused.map((r) => r.reason), ...(warnings ?? [])]) {
+              console.log(chalk.yellow(`  Warning: ${text}`))
+            }
+          } catch (linkErr) {
+            console.log(
+              chalk.yellow(
+                `  Warning: could not clean up cross-client links: ${sanitizeError(linkErr)}`
+              )
+            )
+          }
         }
       }
 
