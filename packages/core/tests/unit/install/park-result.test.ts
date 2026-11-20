@@ -116,7 +116,13 @@ describe('the contract', () => {
     const r = park(f.parent, 'tree', { guardHash })
     // Step 4c round 2: a park that reached its pre-rename syncs also says what it
     // synced and whether it made the op directory (two extra keys, never dropped).
-    expect(keys(r)).toBe([...CONTRACT_FIELDS, 'opDirCreated', 'preMoveSynced'].sort().join(','))
+    // Step 8-i-a-1: a moved tree also carries its size, the sidecar's `bytes`.
+    expect(keys(r)).toBe(
+      [...CONTRACT_FIELDS, 'bytes', 'opDirCreated', 'preMoveSynced'].sort().join(',')
+    )
+    const sidecar = JSON.parse(fs.readFileSync(String(r.sidecarPath), 'utf8')) as { bytes: unknown }
+    expect(typeof sidecar.bytes).toBe('number')
+    expect(r.bytes).toBe(sidecar.bytes)
     expect(r.preMoveSynced).toEqual([path.join(f.parent, '.skillsmith-parked'), f.parent])
     expect(r.opDirCreated).toBe(true)
     expect(r.status).toBe('parked')

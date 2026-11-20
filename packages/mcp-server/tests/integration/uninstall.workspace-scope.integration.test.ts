@@ -152,6 +152,14 @@ describe('ADR-139 (SMI-6274 Wave 4): uninstall_skill MCP tool workspace-scope wi
 
     expect(result.success).toBe(true)
     expect(await pathExists(workspaceSkillDir)).toBe(false)
+    // SMI-6531 A1 step 8-i-a-1: the folder was set aside, not deleted, and the
+    // tool result names where (core's `parkedPath`, passed through unchanged).
+    const parkedArea = path.join(path.dirname(workspaceSkillDir), '.skillsmith-parked')
+    expect(String(result.parkedPath).startsWith(`${parkedArea}${path.sep}`)).toBe(true)
+    expect(await readFile(path.join(String(result.parkedPath), 'SKILL.md'), 'utf-8')).toContain(
+      'Dual Scope Skill'
+    )
+    expect(result.notDone).toBeUndefined()
     // The global copy of the SAME name survives, completely untouched.
     expect(await pathExists(globalSkillDir)).toBe(true)
   })

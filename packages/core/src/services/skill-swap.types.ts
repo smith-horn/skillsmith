@@ -237,7 +237,8 @@ export type SwapWarning =
    * with `held` also for a moved park whose post-rename sync failed,
    * `park-not-durable`), or `kept`/`stopped` for a run that stopped before
    * any park (then `reason` is the stop's word, `busy` included). `parkedPath`
-   * only for `held`. Never names `skillsmith restore`: the origin is an op dir.
+   * only for `held`. OP's removal never names `skillsmith restore` (the origin
+   * is an op dir); `restoreCommand` is uninstall's restore line (§3.8 row 3).
    */
   | {
       code: 'removal-not-done'
@@ -245,6 +246,7 @@ export type SwapWarning =
       status: 'kept' | 'held' | 'stopped'
       reason: string
       parkedPath?: string
+      restoreCommand?: string
       errno?: string
       detail?: string
     }

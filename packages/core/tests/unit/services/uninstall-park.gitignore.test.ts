@@ -1,0 +1,80 @@
+/**
+ * SMI-6531 (A1 step 8-i-a-1): T-N1's uninstall half (UD5a′, D8). Uninstall now
+ * takes lock 1 and parks, so in a root that never had a staging or parked area
+ * it creates both. In a git work tree that ignores neither, the first
+ * uninstall returns one staging hint and one parked-area hint; the next one in
+ * the same root returns neither. No git file is written.
+ */
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  PARKED_GITIGNORE_HINT,
+  STAGING_GITIGNORE_HINT,
+} from '../../../src/services/skill-write-lock.gitignore.js'
+import { makeSandbox } from './skill-write-lock.gitignore.helpers.js'
+import type { Sandbox } from './skill-write-lock.gitignore.helpers.js'
+import { cleanupFixture, makeFixture, uninstall } from './uninstall-park.helpers.js'
+import type { UFixture } from './uninstall-park.helpers.js'
+
+let sandbox: Sandbox | null = null
+const fixtures: UFixture[] = []
+afterEach(() => {
+  for (const f of fixtures.splice(0)) cleanupFixture(f)
+  sandbox?.cleanup()
+  sandbox = null
+})
+
+const snapshot = (root: string): Record<string, string | null> => {
+  const read = (p: string): string | null => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null)
+  return {
+    gitignore: read(path.join(root, '.gitignore')),
+    skillsGitignore: read(path.join(root, 'skills', '.gitignore')),
+    exclude: read(path.join(root, '.git', 'info', 'exclude')),
+    config: read(path.join(root, '.git', 'config')),
+  }
+}
+
+describe('T-N1 (uninstall half): the hints for the areas uninstall creates', () => {
+  it('the first uninstall in a git-tracked root gives both hints once; the next gives none', async () => {
+    sandbox = makeSandbox()
+    const first = makeFixture('uninstall-n1-', 'dir', 'first-skill')
+    fixtures.push(first)
+    execFileSync('git', ['init', '-q', first.root])
+    // A second skill in the same root, tracked in its own manifest.
+    const second = makeFixture('uninstall-n1-b-', 'dir', 'second-skill')
+    fixtures.push(second)
+    fs.renameSync(second.installPath, path.join(first.skillsDir, 'second-skill'))
+    const before = snapshot(first.root)
+
+    const r1 = await uninstall(first)
+    expect(r1.success, r1.message).toBe(true)
+    expect(r1.hints).toEqual([STAGING_GITIGNORE_HINT, PARKED_GITIGNORE_HINT])
+
+    const moved: UFixture = {
+      ...second,
+      skillsDir: first.skillsDir,
+      installPath: path.join(first.skillsDir, 'second-skill'),
+    }
+    const manifest = JSON.parse(fs.readFileSync(second.manifestPath, 'utf8')) as {
+      installedSkills: Record<string, { installPath: string }>
+    }
+    manifest.installedSkills['second-skill']!.installPath = moved.installPath
+    fs.writeFileSync(second.manifestPath, JSON.stringify(manifest))
+    const r2 = await uninstall(moved)
+    expect(r2.success, r2.message).toBe(true)
+    expect(r2.hints).toBeUndefined()
+
+    expect(snapshot(first.root)).toEqual(before)
+  })
+
+  it('a root outside any git work tree gets no hint', async () => {
+    sandbox = makeSandbox()
+    const f = makeFixture('uninstall-n1-nogit-')
+    fixtures.push(f)
+    const r = await uninstall(f)
+    expect(r.success, r.message).toBe(true)
+    expect(r.hints).toBeUndefined()
+  })
+})

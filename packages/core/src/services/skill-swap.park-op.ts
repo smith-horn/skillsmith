@@ -18,7 +18,8 @@
  * hash function the park recomputes with), the same exact set again (a change
  * made before the hash is inside the hash, so it must be caught here; a change
  * made after the hash fails the park's own guard recheck), `check`, then
- * `parkTreeIndexed(ST, opId, …)`, landing at
+ * `parkTreeIndexed(ST, opId, …)` through the state's park reporter (the
+ * park-result path, A1 step 8-i-a-1), landing at
  * `ST/.skillsmith-parked/<opId>/<opId>-<rnd>`. It removes nothing, and it
  * never retries: an outcome other than `parked` is the caller's to report as a
  * removal not done (UD32).
@@ -60,7 +61,6 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { parkTreeIndexed } from '../install/park-call.js'
 import { gateAndBind } from '../install/park-clock-gate.js'
 import type { ParkResult } from '../install/park-result.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
@@ -173,7 +173,8 @@ export async function parkOpFromStaging(st: SwapState, c: ParkOpCall): Promise<P
   trace(st, { op: 'guard', path: st.opDir, hash: g.guardHash })
   await hook(st, 'beforePark')
   checkTraced(st)
-  const park = st.options.park ?? parkTreeIndexed
+  // `st.options.park`, a test's replacement, is the reporter's own inner park.
+  const park = st.reporter.park
   const own = path.join(st.stateRootReal, PARKED_INDEX_FILE)
   const given = c.caller === 'move-source' ? undefined : c.indexPath
   const indexPath = given === undefined ? own : given
