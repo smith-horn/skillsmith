@@ -35,7 +35,7 @@ import { isMainModule } from './lib/is-main-module.mjs'
 
 /**
  * Dated follow-up review target for the shadow-first rollout (matches
- * Check 59/60's hardcoded-shadow-end-date convention, `scripts/audit-standards.mjs`).
+ * Check 60's hardcoded-shadow-end-date convention, `scripts/audit-standards.mjs`).
  * A dated Linear issue filed at merge time references this date; when it
  * arrives, a session reviews the transcript-visible `warn` notices actually
  * seen over the burn-in window before deciding whether to set
