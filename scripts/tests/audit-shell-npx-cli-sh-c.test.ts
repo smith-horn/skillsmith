@@ -3,8 +3,9 @@
  * SH_C regex in Check 59's shell scanner. The regex had the right meaning but
  * backtracked: exponentially on `-O -x …` (CodeQL js/redos on PR #3257) and,
  * after that fix, quadratically on `bash -c -c -c … x` (PR #3257 delta review).
- * So the regex stays here as the oracle: the scan must agree with it on every
- * input, and must not share its cost.
+ * So its grammar stays here as the oracle (since PR #3273 a token-level
+ * descent, not the regex, which backtracked here too): the scan must agree
+ * with it on every input, and must not share its cost.
  */
 import { describe, expect, it } from 'vitest'
 // @ts-expect-error - .mjs helper has no typings
@@ -19,10 +20,50 @@ import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 // as well as `-` (`+o posix`, `+eo posix`; review round 2). A `+` then
 // letters with no o/O (`+e`, `+eu`, a lone `+`) is a flag before or after the
 // -c, and a c in a `+` bundle is the -c (`bash +c '…'`), as bash 5.2 reads
-// them (review round 3). Only ever run on short inputs here: the bundle
-// alternative backtracks.
-const ORACLE =
-  /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:[-+][A-Za-z]*[oO][A-Za-z]*\s+[^\s-]\S*|-\S+|\+[A-NP-Za-np-z]*)\s+)*[-+][A-Za-z]*c[A-Za-z]*(?:\s+(?:-\S*|\+[A-NP-Za-np-z]*))*\s*$/
+// them (review round 3).
+//
+// That grammar as one regex was
+//   (?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s+(?:(?:[-+][A-Za-z]*[oO][A-Za-z]*\s+[^\s-]\S*
+//   |-\S+|\+[A-NP-Za-np-z]*)\s+)*[-+][A-Za-z]*c[A-Za-z]*(?:\s+(?:-\S*|\+[A-NP-Za-np-z]*))*\s*$
+// It is true when ANY parse of the flags ends in a -c word, and an o-bundle
+// before a value word parses two ways (a pair, or a flag then a word), so it
+// backtracked exponentially (CodeQL js/redos on PR #3273). The same grammar
+// as a token-level descent, memoized on the token index, tries both parses
+// once each. It agreed with the regex on all 383,341 distinct inputs of a
+// random token corpus (62,751 true); an O-blind copy disagreed on 2,954.
+const SHELL_HEAD = /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s/g
+const O_BUNDLE = /^[-+][A-Za-z]*[oO][A-Za-z]*$/ // takes the next word as its value
+const PLUS_FLAG = /^\+[A-NP-Za-np-z]*$/ // a + flag with no o/O
+const C_WORD = /^[-+][A-Za-z]*c[A-Za-z]*$/
+const AFTER_C = /^(?:-\S*|\+[A-NP-Za-np-z]*)$/
+function oracle(s: string): boolean {
+  SHELL_HEAD.lastIndex = 0
+  // Every start position, overlapping ones included (`dash\tsh -c`).
+  for (let m; (m = SHELL_HEAD.exec(s)) !== null; SHELL_HEAD.lastIndex = m.index + 1) {
+    const tokens = s
+      .slice(m.index + m[0].length)
+      .split(/\s+/)
+      .filter(Boolean)
+    const memo = new Map<number, boolean>()
+    const fromHere = (i: number): boolean => {
+      const known = memo.get(i)
+      if (known !== undefined) return known
+      const t = tokens[i]
+      let ok = false
+      if (t !== undefined) {
+        const next = tokens[i + 1]
+        if (C_WORD.test(t) && tokens.slice(i + 1).every((u) => AFTER_C.test(u))) ok = true
+        else if (O_BUNDLE.test(t) && next !== undefined && !next.startsWith('-') && fromHere(i + 2))
+          ok = true
+        else if ((t.startsWith('-') && t.length > 1) || PLUS_FLAG.test(t)) ok = fromHere(i + 1)
+      }
+      memo.set(i, ok)
+      return ok
+    }
+    if (fromHere(0)) return true
+  }
+  return false
+}
 
 // SMI-7241 F11: floors on the two generators' distinct-string counts. With
 // Math.imul they produce 88,147 and 2,842; with the old float multiply 1,317
@@ -89,7 +130,7 @@ const ROWS: Array<[string, boolean]> = [
 
 describe('endsInShC', () => {
   it.each(ROWS)('%j -> %s', (s, want) => {
-    expect(ORACLE.test(s)).toBe(want)
+    expect(oracle(s)).toBe(want)
     expect(endsInShC(s)).toBe(want)
   })
 
@@ -101,7 +142,7 @@ describe('endsInShC', () => {
 
   // Shell-shaped token strings, so a good share match: the agreement count
   // below must include positives, or it says nothing about the matching side.
-  it('agrees with the regex on 100,000 generated strings', () => {
+  it('agrees with the oracle on 100,000 generated strings', () => {
     const NOISE = ['', 'echo', 'x', 'a;', '-o', '-c', 'env -i']
     const SHELL = [
       'sh',
@@ -176,7 +217,7 @@ describe('endsInShC', () => {
       for (let j = rnd(7); j > 0; j--) s += SEP[rnd(SEP.length)] + FLAG[rnd(FLAG.length)]
       if (rnd(3) === 0) s += SEP[rnd(SEP.length)]
       distinct.add(s)
-      const want = ORACLE.test(s)
+      const want = oracle(s)
       if (want) positives++
       if (endsInShC(s) !== want && diffs.length < 5) diffs.push(s)
     }
@@ -264,7 +305,7 @@ describe('endsInShC', () => {
 
   // One memo per string, shared across every `end` and visited out of order,
   // as firstCall shares it across a line's openings.
-  it('agrees with the regex at every end of a string, with one shared memo', () => {
+  it('agrees with the oracle at every end of a string, with one shared memo', () => {
     const TOK = [
       'sh',
       'bash',
@@ -309,7 +350,7 @@ describe('endsInShC', () => {
       const memo = new Map()
       const ends = [...Array(s.length + 1).keys()].sort(() => rnd(3) - 1)
       for (const e of ends) {
-        const want = ORACLE.test(s.slice(0, e))
+        const want = oracle(s.slice(0, e))
         if (want) positives++
         if (endsInShC(s, e, memo) !== want && diffs.length < 5) diffs.push(`${e}:${s}`)
       }
@@ -413,7 +454,7 @@ describe('endsInShC', () => {
   // body is text and never runs.
   it('treats a negative end as no opening', () => {
     expect(endsInShC('npx supabase sh -c x', -1)).toBe(false)
-    expect(ORACLE.test('npx supabase sh -c x'.slice(0, -1))).toBe(true)
+    expect(oracle('npx supabase sh -c x'.slice(0, -1))).toBe(true)
     expect(scanShellText('cat <<EOF\nnpx supabase sh -c x\nEOF')).toEqual([])
     expect(scanShellText('cat <<EOF\n$(npx supabase status)\nEOF')).toHaveLength(1)
   })
