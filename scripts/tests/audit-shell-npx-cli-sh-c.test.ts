@@ -224,25 +224,29 @@ describe('endsInShC', () => {
   // time: that scan is a synchronous quadratic, so at 8,000 it runs for
   // minutes and no timeout interrupts it. A timing ratio at smaller sizes
   // flaked under load (its small input took well under a millisecond), so
-  // this test counts instead: every call on one line, sharing one memo, must
-  // build the per-line tables once, and must answer as a call without the memo.
-  it('builds the per-line tables once for every call that shares a memo', () => {
-    let builds = 0
+  // this test counts instead. What it pins is the memo lookup: every call on
+  // one line's quote openings, sharing one memo, stores into it once and
+  // answers as a call without the memo. A scan that rebuilt its tables on
+  // every call without touching the memo would pass here; only the two
+  // absolute bounds above catch that, after minutes rather than at once.
+  it('stores into a shared memo once across every quote opening on a line', () => {
+    let stores = 0
     class CountingMap extends Map<string, unknown> {
       set(key: string, value: unknown) {
-        if (key === 'tables') builds++
+        stores++
         return super.set(key, value)
       }
     }
     const s = 'bash -c -c "npx supabase" "a" sh -c "b" "c"'
-    const ends = [...s].flatMap((ch, i) => (ch === '"' ? [i] : []))
+    const quotes = [...s].flatMap((ch, i) => (ch === '"' ? [i] : []))
+    const openings = quotes.filter((_, k) => k % 2 === 0) // no escaped quotes on this line
     const memo = new CountingMap()
-    const shared = ends.map((end) => endsInShC(s, end, memo))
-    expect(shared).toEqual(ends.map((end) => endsInShC(s, end)))
+    const shared = openings.map((end) => endsInShC(s, end, memo))
+    expect(shared).toEqual(openings.map((end) => endsInShC(s, end)))
     expect(shared).toContain(true) // the scan answers both ways on this line
     expect(shared).toContain(false)
-    expect(ends.length).toBeGreaterThan(4)
-    expect(builds).toBe(1)
+    expect(openings).toHaveLength(4)
+    expect(stores).toBe(1)
   })
 
   // 8,000 nested openings inside one unbroken token (`-"$(-"$(…`), each with a
