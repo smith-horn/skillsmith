@@ -26,6 +26,7 @@ import { createManifestPort } from './skill-manifest.port.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import { processOwnerNow, check, codeOf, SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { createParkReporter } from './park-report.js'
 import type { ManifestPort, RecordIdentity, SwapOptions, SwapRecord } from './skill-swap.types.js'
 import type { ReadTranscript } from './skill-recovery.types.js'
 import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.types.js'
@@ -206,6 +207,7 @@ export function recoveryState(i: RecoveryStateInput): SwapState {
         createManifestPort({ ...ports, preEntry: rec.preEntry, postEntry: rec.postEntry }),
     },
     options: i.options,
+    reporter: createParkReporter({ park: i.options.park }),
     opId: rec.opId,
     binding: i.binding,
     warnings: [],

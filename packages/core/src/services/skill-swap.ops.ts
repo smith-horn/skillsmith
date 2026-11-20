@@ -29,6 +29,7 @@ import { identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import type { BoundIdentity } from '../install/park-tree.identity.js'
 import type { TreeRecord } from '../install/tree-hash.js'
 import { O_NOFOLLOW, writeFullBuffer } from '../utils/safe-fs.js'
+import type { ParkReporter } from './park-report.js'
 import { checkSkillsRootBinding } from './skill-write-lock.js'
 import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.types.js'
 import {
@@ -69,6 +70,8 @@ export type PostCommitStep = SwapIncomplete['step']
 export interface SwapState {
   readonly input: SwapInput
   readonly options: SwapOptions
+  /** Every park of OP goes through it (A1 step 8-i-a-1, the park-result path). */
+  readonly reporter: ParkReporter
   readonly opId: string
   readonly binding: SkillsRootBinding
   readonly warnings: SwapWarning[]

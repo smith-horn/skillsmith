@@ -206,6 +206,9 @@ export function finishAfterRename(a: FinishInput): FinishedPark {
       skillsmithVersion: a.skillsmithVersion,
     }
   }
+  // The sidecar's `bytes`, read after `baseSidecar` ran (a closure write the
+  // compiler cannot see, hence the widening).
+  const bytesCounted = (): number | null => bytes as number | null
   // The index line is built here and appended by `parkTreeIndexed` under lock
   // 4 (UD31), after this synchronous park returns: the lock waits
   // asynchronously, and nothing here may wait.
@@ -264,6 +267,7 @@ export function finishAfterRename(a: FinishInput): FinishedPark {
         safe: verified.safe,
       }),
       ...(sidecarError === null ? {} : { sidecarError }),
+      bytes: bytesCounted(),
       indexEntry: indexEntry(),
     }
   }
@@ -281,6 +285,7 @@ export function finishAfterRename(a: FinishInput): FinishedPark {
     sidecarPath,
     opId,
     ...(sidecarError === null ? {} : { sidecarError }),
+    bytes: bytesCounted(),
     indexEntry: indexEntry(),
   }
 }

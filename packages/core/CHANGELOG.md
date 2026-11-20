@@ -4,6 +4,19 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- A1 step 8-i-a-1: uninstall sets the skill folder aside instead of
+  deleting it. `performUninstall` takes the clock gate, the folder's tree hash and its identity when
+  it reads the folder (with or without `force`), then, under the skills root's write lock, moves it
+  to `<skills dir>/.skillsmith-parked/<opId>/<name>-<rnd>` with those as its guard. On success the
+  manifest entry is dropped and the result names the parked path, about how much space it holds,
+  and `skillsmith doctor backups --prune --op <opId>`. When the move does not finish (`kept`,
+  `held` or `stopped`) nothing is deleted, the entry stays, and the result carries `notDone`
+  (path, status, reason, `restoreCommand`). New `UninstallResult` fields: `parkedPath`, `notDone`,
+  `usageWarning`, `hints`.
+- **Added**: SMI-6531 -- A1 step 8-i-a-1: an internal park-result path (`services/park-report.ts`).
+  Every park goes through it, and the set-aside space warning is evaluated once per command from it, after
+  every lock is released. `executeRecovery` now returns that warning as `usageWarning`, and a
+  moved park's result carries `bytes` (its size, from the sidecar).
 - **Added**: SMI-6531 -- A1 step 6d-ii: `planRestore()` and `executeRestore()` put a set-aside copy
   back where it came from. Planning takes no lock and writes nothing; it resolves an id (an op id,
   `<opId>/<name>`, or a full path), refuses a copy whose record cannot be read or whose origin is

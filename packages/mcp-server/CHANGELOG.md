@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- A1 step 8-i-a-1: `uninstall_skill` sets the skill folder aside instead
+  of deleting it. The result adds `parkedPath`, `notDone` (when the folder could not be set aside;
+  the skill stays installed), `usageWarning` and `hints`.
 - **Fixed**: SMI-7246 -- the `search` tool's `trust_tier` description no longer claims unknown
   skills "never match a query". The registry never returns them for a query, but this tool falls
   back to the local database when the registry rejects a filter, so the text now states only the
