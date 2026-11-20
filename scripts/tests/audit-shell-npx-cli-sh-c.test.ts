@@ -11,7 +11,6 @@ import { describe, expect, it } from 'vitest'
 import { endsInShC } from '../audit-shell-npx-cli-sh-c.mjs'
 // @ts-expect-error - .mjs helper has no typings
 import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
-import { timeAlternating } from './_lib/ratio-timing.js'
 
 // The SH_C regex from the CodeQL js/redos fix on PR #3257, plus the backtick
 // in its boundary class: a governance review found `` `bash -c '…'` `` missed,
@@ -223,28 +222,28 @@ describe('endsInShC', () => {
 
   // The two absolute bounds above cannot kill a memo-less scan in bounded
   // time: that scan is a synchronous quadratic, so at 8,000 it runs for
-  // minutes and no timeout interrupts it. This ratio runs at sizes where it
-  // still ends in seconds. The sizes differ 16x, so a linear scan costs about
-  // 16x and the memo-less quadratic about 256x (15 s for the large size in
-  // the dev container, failing fast in under 40 s). The limit of 64 is their
-  // geometric midpoint, leaving 4x either side; at a 4x size gap the margin
-  // was 2x and the test flaked under load.
-  it('scans one quote holding n hits after n flags with 16n costing under 64x n', () => {
-    const line = (sh: string, n: number) =>
-      sh + ' ' + '-c '.repeat(n) + '"' + 'npx supabase; '.repeat(n) + '"'
-    const t = timeAlternating(
-      (text) => scanShellText(text).length,
-      line('foo', 250),
-      line('foo', 4_000),
-      { failFast: 128 }
-    )
-    expect(t.smallHits).toBe(0)
-    expect(t.largeHits).toBe(0)
-    expect(t.ratio, `failedFast=${t.failedFast}`).toBeLessThan(64)
-    // The same line with `bash` is flagged, so the timing cannot pass by
-    // scanning nothing.
-    expect(scanShellText(line('bash', 250))).toHaveLength(1)
-  }, 60_000)
+  // minutes and no timeout interrupts it. A timing ratio at smaller sizes
+  // flaked under load (its small input took well under a millisecond), so
+  // this test counts instead: every call on one line, sharing one memo, must
+  // build the per-line tables once, and must answer as a call without the memo.
+  it('builds the per-line tables once for every call that shares a memo', () => {
+    let builds = 0
+    class CountingMap extends Map<string, unknown> {
+      set(key: string, value: unknown) {
+        if (key === 'tables') builds++
+        return super.set(key, value)
+      }
+    }
+    const s = 'bash -c -c "npx supabase" "a" sh -c "b" "c"'
+    const ends = [...s].flatMap((ch, i) => (ch === '"' ? [i] : []))
+    const memo = new CountingMap()
+    const shared = ends.map((end) => endsInShC(s, end, memo))
+    expect(shared).toEqual(ends.map((end) => endsInShC(s, end)))
+    expect(shared).toContain(true) // the scan answers both ways on this line
+    expect(shared).toContain(false)
+    expect(ends.length).toBeGreaterThan(4)
+    expect(builds).toBe(1)
+  })
 
   // 8,000 nested openings inside one unbroken token (`-"$(-"$(…`), each with a
   // hit. Before the per-line tables, each opening scanned back to the token's
