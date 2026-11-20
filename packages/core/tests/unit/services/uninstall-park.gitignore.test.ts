@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { makeFixtureEnv } from '../../_lib/git-fixture-env.js'
 import {
   PARKED_GITIGNORE_HINT,
   STAGING_GITIGNORE_HINT,
@@ -41,7 +42,7 @@ describe('T-N1 (uninstall half): the hints for the areas uninstall creates', () 
     sandbox = makeSandbox()
     const first = makeFixture('uninstall-n1-', 'dir', 'first-skill')
     fixtures.push(first)
-    execFileSync('git', ['init', '-q', first.root])
+    execFileSync('git', ['init', '-q', first.root], { env: makeFixtureEnv() })
     // A second skill in the same root, tracked in its own manifest.
     const second = makeFixture('uninstall-n1-b-', 'dir', 'second-skill')
     fixtures.push(second)
