@@ -24,7 +24,7 @@
     "@ruvector/core": "0.1.32",
     "@skillsmith/core": "^0.14.0",
     "better-sqlite3": "11.10.0",
-    "glob": "11.1.0",
+    "glob": "14.0.2",
     "minimatch": "10.2.6",
     "zod": "4.6.7"
   },
