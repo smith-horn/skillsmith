@@ -32,9 +32,12 @@ import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
 // once each. It agreed with the regex on all 383,341 distinct inputs of a
 // random token corpus (62,751 true); an O-blind copy disagreed on 2,954.
 const SHELL_HEAD = /(?:^|[\s;&|(/`])(?:ba|z|da|k)?sh\s/g
-const O_BUNDLE = /^[-+][A-Za-z]*[oO][A-Za-z]*$/ // takes the next word as its value
+// A sign then letters only. Testing the run and the letter separately keeps
+// each check linear: `[A-Za-z]*[oO][A-Za-z]*` backtracks quadratically.
+const SIGNED_LETTERS = /^[-+][A-Za-z]*$/
+const isOBundle = (t: string) => SIGNED_LETTERS.test(t) && /[oO]/.test(t) // takes the next word as its value
+const isCWord = (t: string) => SIGNED_LETTERS.test(t) && t.includes('c')
 const PLUS_FLAG = /^\+[A-NP-Za-np-z]*$/ // a + flag with no o/O
-const C_WORD = /^[-+][A-Za-z]*c[A-Za-z]*$/
 const AFTER_C = /^(?:-\S*|\+[A-NP-Za-np-z]*)$/
 function oracle(s: string): boolean {
   SHELL_HEAD.lastIndex = 0
@@ -52,8 +55,8 @@ function oracle(s: string): boolean {
       let ok = false
       if (t !== undefined) {
         const next = tokens[i + 1]
-        if (C_WORD.test(t) && tokens.slice(i + 1).every((u) => AFTER_C.test(u))) ok = true
-        else if (O_BUNDLE.test(t) && next !== undefined && !next.startsWith('-') && fromHere(i + 2))
+        if (isCWord(t) && tokens.slice(i + 1).every((u) => AFTER_C.test(u))) ok = true
+        else if (isOBundle(t) && next !== undefined && !next.startsWith('-') && fromHere(i + 2))
           ok = true
         else if ((t.startsWith('-') && t.length > 1) || PLUS_FLAG.test(t)) ok = fromHere(i + 1)
       }
