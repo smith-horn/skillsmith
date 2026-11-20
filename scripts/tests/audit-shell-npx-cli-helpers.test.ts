@@ -123,7 +123,6 @@ const LEXER_ROWS: LexRow[] = [
   ['identifier shift', 'x=$((a<<b))\nnpx supabase deploy', 1],
   ['$[ ] shift', 'x=$[a<<EOF]\nnpx supabase status', 1],
   ['heredoc in $( ) inside (( ))', '(( x = $(cat <<EOF\nnpx supabase prose\nEOF\n) ))', 0],
-  ['(( )) test', 'if (( a < b )); then npx supabase status; fi', 1],
   ['for (( )) loop', 'for ((i=0;i<3;i++)); do npx supabase s; done', 1],
   ['nested parens in $(( ))', 'x=$(( (1+2) * 3 )); npx supabase s', 1],
   ['spaced shift in $(( ))', 'echo $(( 1 << 2 )) && npx supabase s', 1],
@@ -144,8 +143,6 @@ const LEXER_ROWS: LexRow[] = [
   ["'$( )' is literal", "echo '$(npx supabase)'", 0],
   ['plain "…" prose', 'echo "npx supabase deploy"', 0],
   // case…esac: a pattern's ) does not close a substitution.
-  ['case in "$( )"', 'x="$(case x in a) npx supabase status;; esac)"', 1],
-  ['top-level case arm', 'case "$x" in a) npx supabase status ;; esac', 1],
   ['case after then', 'if x; then case $y in a) npx supabase s;; esac; fi', 1],
   ['echo case is a word', 'x="$(echo case) npx supabase status"', 0],
   ['x=case is a word', 'x="$(y=case; echo) npx supabase status"', 0],
@@ -569,6 +566,10 @@ const ACCEPTED_OVER_APPROXIMATIONS: Array<[string]> = [
   ["bash -c'npx supabase status'"],
   // case arms and conditions are not evaluated (B.8), so an arm that never runs still counts
   ['x="$(case $a in b) case $c in d) :;; esac;; e) npx supabase status;; esac)"'],
+  // conditions and case arms are not evaluated (B.8): bash runs no npx for these three, the scanner reads the header
+  ['if (( a < b )); then npx supabase status; fi'],
+  ['x="$(case x in a) npx supabase status;; esac)"'],
+  ['case "$x" in a) npx supabase status ;; esac'],
   // the rebuilt script `echo npx supabase status` is the `echo npx` family base already flags
   ["bash -c 'echo np''x supabase status'"],
   // the decoded script `echo npx supabase status` is the same `echo npx` family
@@ -659,6 +660,16 @@ describe('SMI-7241 comments do not continue lines', () => {
     ['# a \\\n# b \\\nnpx supabase status\nnpx wrangler deploy', [3, 4]],
   ] as Array<[string, number[]]>)('%j hits at lines %j', (row, want) => {
     expect(scanShellText(row).map((h: { line: number }) => h.line)).toEqual(want)
+  })
+
+  // An open `$((` spanning two comment-ended pieces: the window must lex with
+  // the whole run as lookahead, or the call lands on line 5 (R6b). Bash reads
+  // the `#y` inside `$(( ))` as arithmetic and stops on a syntax error, so it
+  // runs no npx; flagging it is accepted, since a miss costs more than a
+  // false positive.
+  it('accepted over-approximation: a # inside an open $(( run keeps the call at line 3', () => {
+    const row = 'echo \\\n # c \\\nx=$(( 1 + \\\n #y \\\n+ 2 )); npx supabase status'
+    expect(scanShellText(row).map((h: { line: number }) => h.line)).toEqual([3])
   })
 
   // One lex per physical line, not per logical line: a run of comment lines

@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { endsInShC } from '../audit-shell-npx-cli-sh-c.mjs'
 // @ts-expect-error - .mjs helper has no typings
 import { scanShellText } from '../audit-shell-npx-cli-helpers.mjs'
+import { timeAlternating } from './_lib/ratio-timing.js'
 
 // The SH_C regex from the CodeQL js/redos fix on PR #3257, plus the backtick
 // in its boundary class: a governance review found `` `bash -c '…'` `` missed,
@@ -219,6 +220,28 @@ describe('endsInShC', () => {
     expect(hits).toEqual([])
     expect(scanShellText(line('bash'))).toHaveLength(1)
   })
+
+  // The two absolute bounds above cannot kill a memo-less scan in bounded
+  // time: that scan is a synchronous quadratic, so at 8,000 it runs for
+  // minutes and no timeout interrupts it. This ratio runs at sizes where it
+  // still ends in seconds: without the per-line memo 4n costs ~16x n (about
+  // 1 s at n = 1,000, 15 s at 4,000 in the dev container), with it ~2-4x.
+  it('scans one quote holding n hits after n flags with 4n costing under 8x n', () => {
+    const line = (sh: string, n: number) =>
+      sh + ' ' + '-c '.repeat(n) + '"' + 'npx supabase; '.repeat(n) + '"'
+    const t = timeAlternating(
+      (text) => scanShellText(text).length,
+      line('foo', 1_000),
+      line('foo', 4_000),
+      { failFast: 12 }
+    )
+    expect(t.smallHits).toBe(0)
+    expect(t.largeHits).toBe(0)
+    expect(t.ratio, `failedFast=${t.failedFast}`).toBeLessThan(8)
+    // The same line with `bash` is flagged, so the timing cannot pass by
+    // scanning nothing.
+    expect(scanShellText(line('bash', 1_000))).toHaveLength(1)
+  }, 60_000)
 
   // 8,000 nested openings inside one unbroken token (`-"$(-"$(…`), each with a
   // hit. Before the per-line tables, each opening scanned back to the token's
