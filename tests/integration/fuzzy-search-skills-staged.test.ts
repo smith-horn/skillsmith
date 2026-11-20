@@ -52,7 +52,7 @@ const NAME_MARKER = 'smi6284fzstg'
 const DESC_MARKER = 'smi6284fzdsc'
 const WEAK_MARKER = 'smi6284fzwk'
 
-type ScratchRow = { name: string; description?: string; quarantined?: boolean }
+type ScratchRow = { name: string; description?: string; quarantined?: boolean; trust_tier?: string }
 
 describe.skipIf(!LIVE_DB)('SMI-6284: fuzzy_search_skills staged rewrite', () => {
   // NOTE: describe.skipIf still EXECUTES this callback body to register the
@@ -79,7 +79,9 @@ describe.skipIf(!LIVE_DB)('SMI-6284: fuzzy_search_skills staged rewrite', () => 
   async function seed(rows: ScratchRow[]): Promise<string[]> {
     const { data, error } = await adminClient
       .from('skills')
-      .insert(rows.map((r) => ({ quarantined: false, ...r })))
+      // SMI-7239: fuzzy search reads the tiered-only compact table, so seed
+      // rows default to a tiered value; the untiered case overrides it.
+      .insert(rows.map((r) => ({ quarantined: false, trust_tier: 'community', ...r })))
       .select('id')
     expect(error, `seed insert failed: ${error?.message}`).toBeNull()
     const ids = (data || []).map((r) => r.id as string)
@@ -212,6 +214,32 @@ describe.skipIf(!LIVE_DB)('SMI-6284: fuzzy_search_skills staged rewrite', () => 
     expect(names).toContain(`${marker}-clean-name`)
     expect(names).toContain('unrelated-q2')
     expect(names).not.toContain('unrelated-q1')
+  })
+
+  it('excludes untiered rows (unknown, unverified) on both stages (SMI-7239)', async () => {
+    const marker = `${NAME_MARKER}u`
+    await seed([
+      { name: `${marker}-unknown-name`, trust_tier: 'unknown' },
+      { name: `${marker}-unverified-name`, trust_tier: 'unverified' },
+      { name: `${marker}-tiered-name` },
+      { name: 'unrelated-u1', description: `has ${marker} in description`, trust_tier: 'unknown' },
+      { name: 'unrelated-u2', description: `has ${marker} in description` },
+    ])
+
+    const { data, error } = await adminClient.rpc('fuzzy_search_skills', {
+      search_query: marker,
+      similarity_threshold: 0.3,
+      limit_count: 20,
+    })
+
+    expect(error, `RPC failed: ${error?.message}`).toBeNull()
+    const names = (data as Array<{ name: string }>).map((r) => r.name)
+    // Presence first, so the exclusions below can't pass on an empty result.
+    expect(names).toContain(`${marker}-tiered-name`)
+    expect(names).toContain('unrelated-u2')
+    expect(names).not.toContain(`${marker}-unknown-name`)
+    expect(names).not.toContain(`${marker}-unverified-name`)
+    expect(names).not.toContain('unrelated-u1')
   })
 
   it('rejects a search_query over 100 characters (SMI-5522 guard retained)', async () => {
