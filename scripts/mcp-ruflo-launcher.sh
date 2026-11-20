@@ -120,7 +120,7 @@ VOLUME_LABEL_KEY="app.skillsmith.ruflo.instance" # the key scripts/ruflo-service
 STORE_GENERATION_TABLE="store_generation"
 
 # RUFLO_CLI_PIN is the one pin literal (ADR-170 § 7). Grepped by
-# scripts/audit-cli-pin-drift-helpers.mjs and scripts/cli-pin-drift-check.sh —
+# scripts/audit-cli-pin-drift-ruflo.mjs and scripts/cli-pin-drift-check.sh —
 # keep this a plain, unindented, single-line assignment.
 RUFLO_CLI_PIN=3.56.1
 

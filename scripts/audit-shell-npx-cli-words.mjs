@@ -330,7 +330,7 @@ export function readWords(code, lexed, { heredocBody = false, groups = [] } = {}
  * and `-oe pipefail`. `source /dev/stdin` and `. /dev/stdin` read stdin too,
  * also behind `command` or `builtin` (with their options).
  */
-export function readsStdinScript(words) {
+function readsStdinScript(words) {
   let k = 0
   while (k < words.length && (ASSIGNMENT.test(words[k].value) || RESERVED.has(words[k].value))) k++
   if (k >= words.length) return false
