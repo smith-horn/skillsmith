@@ -16,7 +16,9 @@ import {
 } from '../../../src/services/skill-write-lock.gitignore.js'
 import { makeSandbox } from './skill-write-lock.gitignore.helpers.js'
 import type { Sandbox } from './skill-write-lock.gitignore.helpers.js'
-import { cleanupFixture, makeFixture, uninstall } from './uninstall-park.helpers.js'
+import type { BigIntStats } from 'node:fs'
+import { PROBE_PREFIX } from '../../../src/install/park-clock-gate.js'
+import { cleanupFixture, makeFixture, stubFs, uninstall } from './uninstall-park.helpers.js'
 import type { UFixture } from './uninstall-park.helpers.js'
 
 let sandbox: Sandbox | null = null
@@ -68,6 +70,28 @@ describe('T-N1 (uninstall half): the hints for the areas uninstall creates', () 
     expect(r2.hints).toBeUndefined()
 
     expect(snapshot(first.root)).toEqual(before)
+  })
+
+  it('a gate stop after the bind made the staging folder still returns its hint (0n probe)', async () => {
+    sandbox = makeSandbox()
+    const f = makeFixture('uninstall-n1-stop-')
+    fixtures.push(f)
+    execFileSync('git', ['init', '-q', f.root], { env: makeFixtureEnv() })
+    const restore = stubFs('lstatSync', (orig) => (...a: unknown[]) => {
+      const st = orig(...a) as BigIntStats
+      if (!path.basename(String(a[0])).startsWith(PROBE_PREFIX)) return st
+      if (typeof st.birthtimeNs !== 'bigint') return st
+      return Object.defineProperty(Object.create(st), 'birthtimeNs', { value: 0n }) as BigIntStats
+    })
+    let r: Awaited<ReturnType<typeof uninstall>>
+    try {
+      r = await uninstall(f)
+    } finally {
+      restore()
+    }
+    expect(r.notDone).toMatchObject({ status: 'stopped', reason: 'identity-unverifiable' })
+    expect(fs.existsSync(path.join(f.skillsDir, '.skillsmith-staging'))).toBe(true)
+    expect(r.hints).toEqual([STAGING_GITIGNORE_HINT])
   })
 
   it('a root outside any git work tree gets no hint', async () => {

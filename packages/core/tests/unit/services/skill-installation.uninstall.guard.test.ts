@@ -754,6 +754,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
+    // 8-i-a-1 gate Major 2: the caller must leave that install's fan-out links alone.
+    expect(result.claimedByAnotherInstall).toBe(true)
     expect(await manifestEntry('claimed-skill')).toMatchObject({
       installPath,
       installedAt: '2030-01-01T00:00:00.000Z',
@@ -865,6 +867,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
+    // 8-i-a-1 gate Major 2: the caller must leave that install's fan-out links alone.
+    expect(result.claimedByAnotherInstall).toBe(true)
     expect(await manifestEntry('collide-skill')).toMatchObject({ version: '9.9.9' })
   })
 
@@ -883,6 +887,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
+    // 8-i-a-1 gate Major 2: the caller must leave that install's fan-out links alone.
+    expect(result.claimedByAnotherInstall).toBe(true)
     expect(await manifestEntry('legacy-skill')).toMatchObject({ installPath: claimedPath })
   })
 

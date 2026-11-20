@@ -52,11 +52,13 @@ const scope = {
 const run = () => removeSkill('s', true, dbPath, 'claude-code', scope)
 
 let errors: string[] = []
+let logs: string[] = []
 beforeEach(() => {
   vi.clearAllMocks()
   errors = []
   vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void errors.push(a.join(' ')))
-  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  logs = []
+  vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')))
   mocks.removeLinks.mockResolvedValue({ removed: 0, refused: [], warnings: [] })
 })
 afterEach(() => vi.restoreAllMocks())
@@ -84,6 +86,19 @@ describe('removeSkill', () => {
     expect(removeExitCode(outcome)).toBe(4)
     expect(mocks.fail).toHaveBeenCalledTimes(1)
     expect(mocks.removeLinks).not.toHaveBeenCalled()
+  })
+
+  it('a name another install claimed: removed, its fan-out links left alone, a warning', async () => {
+    mocks.uninstallFn.mockResolvedValue({
+      success: true,
+      skillName: 's',
+      message: 'parked',
+      claimedByAnotherInstall: true,
+    })
+    const outcome = await run()
+    expect(outcome).toBe('removed')
+    expect(mocks.removeLinks).not.toHaveBeenCalled()
+    expect(logs.join('\n')).toContain('cross-client links were left in place for that install')
   })
 
   it('an existing refusal is failed (exit 1)', async () => {

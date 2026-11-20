@@ -215,6 +215,8 @@ export interface UninstallParkSeams {
   usage?: ListBackupsOptions
   /** The park's operation id (default 128 random bits as hex). */
   opId?: string
+  /** Runs after the refusal checks, before the gate and the bind. */
+  afterRefusals?: () => void | Promise<void>
   /** Runs after the gate and the bind, before lock 1 (the folder was read and hashed). */
   afterBind?: () => void | Promise<void>
   /** Runs under lock 1, before the last `check` and the park. */
@@ -244,6 +246,12 @@ export interface UninstallResult {
   usageWarning?: string
   /** T-N1: one-line `.gitignore` hints for a staging or parked area this uninstall created. */
   hints?: string[]
+  /**
+   * The folder was set aside, but another install had claimed the name in the
+   * manifest, so its record was left alone. A caller must not tear down that
+   * install's fan-out links (8-i-a-1 gate Major 2).
+   */
+  claimedByAnotherInstall?: true
 }
 
 // ============================================================================

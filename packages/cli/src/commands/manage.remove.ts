@@ -178,7 +178,16 @@ export async function removeSkill(
       // deleting the unrelated GLOBAL canonical install's fan-out links even
       // though only the workspace copy was meant to go. Fan-out is always
       // global-canonical-to-global-client, so scope must also be checked.
-      if (client === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
+      // 8-i-a-1 gate Major 2: when another install claimed the name, the links
+      // recorded under it are that install's, so they are left alone.
+      if (result.claimedByAnotherInstall === true) {
+        console.log(
+          chalk.yellow(
+            '  Warning: another install claimed this name while it was being removed, so its ' +
+              'cross-client links were left in place for that install.'
+          )
+        )
+      } else if (client === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
         try {
           // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
           // refused to remove (e.g. a recorded fan-out copy that has since

@@ -81,6 +81,7 @@ describe('Q3: uninstall parks the folder (10 runs)', () => {
       expect(sidecar['kind']).toBe('uninstall')
       expect(typeof sidecar['treeHash']).toBe('string')
       expect(entryOf(f)).toBeUndefined()
+      expect(r.claimedByAnotherInstall).toBeUndefined()
       expect(fs.existsSync(f.installPath)).toBe(false)
       expect(contentSnapshot(parkedPath)).toEqual(before)
       expect(r.message).toMatch(/to reclaim about \d+(\.\d)? (B|KB|MB|GB)/)
@@ -113,6 +114,64 @@ describe('Q3: uninstall parks the folder (10 runs)', () => {
     expect(gateCalls.n).toBe(0)
     expect(fs.readdirSync(g.skillsDir)).toEqual([g.name])
     expect(entryOf(g)).toBeDefined()
+  })
+
+  // 8-i-a-1 gate Major 1: an in-place edit after the modification check and
+  // before the gate keeps the folder's identity, and the gate would hash the
+  // edited tree; the hash uninstall took when it read the folder catches it.
+  for (const force of [false, true]) {
+    it(`an edit after the checks and before the gate is refused (force: ${force})`, async () => {
+      const f = fixture()
+      const target = path.join(f.installPath, 'sub', 'a.txt')
+      const before = fs.lstatSync(f.installPath, { bigint: true })
+      const r = await uninstall(f, {
+        force,
+        seams: { afterRefusals: () => fs.writeFileSync(target, 'edited after the checks\n') },
+      })
+      expect(r.success).toBe(false)
+      expect(r.notDone).toMatchObject({ status: 'kept', reason: 'identity-changed' })
+      expect(r.notDone?.detail).toContain('changed after uninstall checked it')
+      // The edit kept the folder's identity, so only the hash could tell.
+      expect(fs.lstatSync(f.installPath, { bigint: true }).ino).toBe(before.ino)
+      expect(fs.readFileSync(target, 'utf8')).toBe('edited after the checks\n')
+      expect(entryOf(f)).toBeDefined()
+      expect(parkedEntries(f)).toEqual([])
+    })
+  }
+
+  // The hash uninstall takes when it reads the folder cannot be taken: it stops
+  // with the walk's own reason and creates nothing (no staging, no probe, no copy).
+  it('a folder the read hash cannot walk stops guard-unreadable, creating nothing', async () => {
+    const f = fixture()
+    const sub = path.join(f.installPath, 'sub')
+    const before = contentSnapshot(f.installPath)
+    let restore: () => void
+    if (process.getuid?.() !== 0) {
+      fs.chmodSync(sub, 0o000)
+      restore = () => fs.chmodSync(sub, 0o755)
+    } else {
+      // Root reads a mode-000 directory anyway, so the unreadable entry is
+      // simulated where the walk lists it: readdirSync of `sub` fails EACCES.
+      restore = stubFs('readdirSync', (orig: AnyFn) => (...a: unknown[]) => {
+        if (a[0] === sub) throw errnoError('EACCES')
+        return orig(...a)
+      })
+    }
+    let r: Awaited<ReturnType<typeof uninstall>>
+    try {
+      r = await uninstall(f)
+    } finally {
+      restore()
+    }
+    expect(r.success).toBe(false)
+    expect(r.notDone).toMatchObject({ status: 'stopped', reason: 'guard-unreadable' })
+    expect(r.notDone?.errno).toBe('EACCES')
+    // Presence: the folder (byte for byte) and its manifest entry are still there.
+    expect(contentSnapshot(f.installPath)).toEqual(before)
+    expect(entryOf(f)).toBeDefined()
+    // Absence, from the same run: nothing else was made in the skills root.
+    expect(fs.readdirSync(f.skillsDir)).toEqual([f.name])
+    expect(gateCalls.n).toBe(0)
   })
 
   it('an edit between read and park ends kept/identity-changed; the edit and the entry stay', async () => {

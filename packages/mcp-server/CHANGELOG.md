@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): `uninstall_skill` no longer removes the
+  cross-client links of an install that claimed the same name while the removal ran; the result's
+  `warning` says they were left for that install.
 - **Changed**: SMI-6531 -- A1 step 8-i-a-1: `uninstall_skill` sets the skill folder aside instead
   of deleting it. The result adds `parkedPath`, `notDone` (when the folder could not be set aside;
   the skill stays installed), `usageWarning` and `hints`.

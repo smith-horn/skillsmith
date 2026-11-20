@@ -4,6 +4,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): `skillsmith remove` refuses (exit 4) when the
+  skill folder changed after it was checked, and no longer removes the cross-client links of an
+  install that claimed the same name while the removal ran; it prints a warning instead. An
+  uninstall that stops after creating `.skillsmith-staging/` still prints its `.gitignore` hint.
 - **Changed**: SMI-6531 -- A1 step 8-i-a-1: `skillsmith remove` sets the skill folder aside
   instead of deleting it, and prints where it went, about how much space it holds, and the
   `skillsmith doctor backups --prune --op <opId>` command. When the folder could not be set aside it

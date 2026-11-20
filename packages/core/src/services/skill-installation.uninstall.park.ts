@@ -10,6 +10,9 @@
  * `force` skips is not. The identity `gateAndBind` binds must be the one
  * `seen.stat` read (dev, ino, birthtime, file type), or the folder changed
  * between the two reads and nothing moves (`kept/identity-changed`).
+ * The guard hash must also equal the tree hash uninstall took when it read the
+ * folder, before its modification check (`readTreeHash`), or an in-place edit
+ * made after that check is refused the same way (8-i-a-1 gate Major 1).
  *
  * `runUninstallPark` then takes lock 1, runs `check`, and parks through the
  * park-result path (`park-report.ts`) with the hash, identity and probe 2's
@@ -32,6 +35,8 @@ import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
 import { LockOrderError } from '../config/lock-tracker.js'
 import { gateAndBind } from '../install/park-clock-gate.js'
+import { computePathTreeHash } from '../install/park-tree.js'
+import type { PathTreeHashResult } from '../install/park-tree.js'
 import type { ParkIdentity, ParkResult } from '../install/park-result.js'
 import { identityOf, sameIdentity } from '../install/park-tree.identity.js'
 import { human } from '../install/parked-usage.js'
@@ -47,7 +52,7 @@ import type {
 import { sameRecord } from './skill-installation.uninstall.helpers.js'
 import { rootKeyOf } from './skill-swap.area.js'
 import { bindSkillsRoot, withSkillWriteLock } from './skill-write-lock.js'
-import { parkedAreaGitignoreHint } from './skill-write-lock.gitignore.js'
+import { parkedAreaGitignoreHint, stagingGitignoreHint } from './skill-write-lock.gitignore.js'
 import { SkillWriteStop } from './skill-write-lock.types.js'
 import type { SkillsRootBinding } from './skill-write-lock.types.js'
 
@@ -73,27 +78,68 @@ const stopOf = (
 })
 
 /**
+ * The §3.4 tree hash of the folder as uninstall read it, taken before the
+ * refusal checks (read-only: no probe, no staging folder, nothing created), so
+ * `prepareUninstallPark` can require the guard hash to equal it.
+ */
+export const readTreeHash = (installPath: string): PathTreeHashResult =>
+  computePathTreeHash(installPath)
+
+/** A prepare that did not finish: why, and the staging hint when its bind made ST (T-N1). */
+export type PrepareFailure = { ok: false; notDone: UninstallNotDone; hints: string[] }
+
+/**
+ * The staging `.gitignore` hint for a bind that made ST, evaluated with no lock
+ * held (a prepare that stops never took lock 1). Advisory: a failure is dropped.
+ */
+async function stagingHintOf(binding: SkillsRootBinding): Promise<string[]> {
+  if (!binding.stagingCreated) return []
+  try {
+    const hint = await stagingGitignoreHint(binding.root)
+    return hint === null ? [] : [hint]
+  } catch (err) {
+    if (err instanceof LockOrderError) throw err
+    return []
+  }
+}
+
+/**
  * Binds R and ST, runs the clock gate, hashes the folder and binds its
- * identity, at the moment uninstall read it. Nothing moves here; the only
- * entries made are ST (when absent) and the gate's two probes, each removed
- * right after it is read.
+ * identity. Nothing moves here; the only entries made are ST (when absent) and
+ * the gate's two probes, each removed right after it is read. The guard hash
+ * must equal `readHash`, the hash uninstall took when it read the folder.
  */
 export async function prepareUninstallPark(a: {
   skillsDir: string
   installPath: string
   seen: BigIntStats
+  readHash: PathTreeHashResult
   seams: UninstallParkSeams
-}): Promise<
-  { ok: true; prepared: PreparedUninstallPark } | { ok: false; notDone: UninstallNotDone }
-> {
+}): Promise<{ ok: true; prepared: PreparedUninstallPark } | PrepareFailure> {
   const opId = a.seams.opId ?? randomBytes(16).toString('hex')
+  if (!a.readHash.ok) {
+    const n: UninstallNotDone = {
+      path: a.installPath,
+      status: 'stopped',
+      // The park's own name for a guard walk that could not run.
+      reason: a.readHash.reason,
+      ...(a.readHash.errno == null ? {} : { errno: a.readHash.errno }),
+      detail: `uninstall could not hash ${a.readHash.path} when it read the folder`,
+    }
+    return { ok: false, notDone: n, hints: [] }
+  }
   let binding: SkillsRootBinding
   try {
     binding = await bindSkillsRoot(a.skillsDir)
   } catch (err) {
-    if (err instanceof SkillWriteStop) return stopOf(a.installPath, err)
+    if (err instanceof SkillWriteStop) return { ...stopOf(a.installPath, err), hints: [] }
     throw err
   }
+  const fail = async (notDone: UninstallNotDone): Promise<PrepareFailure> => ({
+    ok: false,
+    notDone,
+    hints: await stagingHintOf(binding),
+  })
   const name = path.basename(a.installPath)
   const g = await gateAndBind({
     probeDir: binding.stagingDir,
@@ -103,28 +149,32 @@ export async function prepareUninstallPark(a: {
   })
   if (!g.ok) {
     const left = 'leftProbe' in g && g.leftProbe !== null ? ` (probe left at ${g.leftProbe})` : ''
-    return {
-      ok: false,
-      notDone: {
-        path: a.installPath,
-        status: 'stopped',
-        reason: g.reason,
-        ...(g.errno === null ? {} : { errno: g.errno }),
-        detail: `${g.detail}${left}`,
-      },
-    }
+    return fail({
+      path: a.installPath,
+      status: 'stopped',
+      reason: g.reason,
+      ...(g.errno === null ? {} : { errno: g.errno }),
+      detail: `${g.detail}${left}`,
+    })
   }
   // D6: the hash and identity are of the folder `seen.stat` read, or of nothing.
   if (!sameIdentity(identityOf(a.seen), g.expectIdentity)) {
-    return {
-      ok: false,
-      notDone: {
-        path: a.installPath,
-        status: 'kept',
-        reason: 'identity-changed',
-        detail: `${a.installPath} changed between the uninstall's read and its hash`,
-      },
-    }
+    return fail({
+      path: a.installPath,
+      status: 'kept',
+      reason: 'identity-changed',
+      detail: `${a.installPath} changed between the uninstall's read and its hash`,
+    })
+  }
+  // The gate's hash is of the tree now; an edit made after uninstall read and
+  // checked the folder (one the modification check could not see) differs.
+  if (g.guardHash !== a.readHash.treeHash) {
+    return fail({
+      path: a.installPath,
+      status: 'kept',
+      reason: 'identity-changed',
+      detail: `${a.installPath} changed after uninstall checked it (its tree hash differs)`,
+    })
   }
   await a.seams.afterBind?.()
   return {
