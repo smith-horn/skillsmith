@@ -14,6 +14,7 @@ import {
   PARKED_GITIGNORE_HINT,
   STAGING_GITIGNORE_HINT,
 } from '../../../src/services/skill-write-lock.gitignore.js'
+import { bindSkillsRoot } from '../../../src/services/skill-write-lock.js'
 import { makeSandbox } from './skill-write-lock.gitignore.helpers.js'
 import type { Sandbox } from './skill-write-lock.gitignore.helpers.js'
 import type { BigIntStats } from 'node:fs'
@@ -28,6 +29,25 @@ afterEach(() => {
   sandbox?.cleanup()
   sandbox = null
 })
+
+/** Every probe lstat reads a 0n birthtime, so the gate stops after the bind (UD25). */
+const zeroProbeBirthtimes = (): (() => void) =>
+  stubFs('lstatSync', (orig) => (...a: unknown[]) => {
+    const st = orig(...a) as BigIntStats
+    if (!path.basename(String(a[0])).startsWith(PROBE_PREFIX)) return st
+    if (typeof st.birthtimeNs !== 'bigint') return st
+    return Object.defineProperty(Object.create(st), 'birthtimeNs', { value: 0n }) as BigIntStats
+  })
+
+/** The uninstall with the gate stopped by the stub; restored whatever happens. */
+async function stoppedUninstall(f: UFixture): Promise<Awaited<ReturnType<typeof uninstall>>> {
+  const restore = zeroProbeBirthtimes()
+  try {
+    return await uninstall(f)
+  } finally {
+    restore()
+  }
+}
 
 const snapshot = (root: string): Record<string, string | null> => {
   const read = (p: string): string | null => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null)
@@ -92,6 +112,29 @@ describe('T-N1 (uninstall half): the hints for the areas uninstall creates', () 
     expect(r.notDone).toMatchObject({ status: 'stopped', reason: 'identity-unverifiable' })
     expect(fs.existsSync(path.join(f.skillsDir, '.skillsmith-staging'))).toBe(true)
     expect(r.hints).toEqual([STAGING_GITIGNORE_HINT])
+  })
+
+  it('a gate stop where .skillsmith-staging/ already existed: no staging hint', async () => {
+    sandbox = makeSandbox()
+    const f = makeFixture('uninstall-n1-existing-')
+    fixtures.push(f)
+    execFileSync('git', ['init', '-q', f.root], { env: makeFixtureEnv() })
+    // An earlier bind made ST; this uninstall's bind finds it.
+    expect((await bindSkillsRoot(f.skillsDir)).stagingCreated).toBe(true)
+    const r = await stoppedUninstall(f)
+    expect(r.notDone).toMatchObject({ status: 'stopped', reason: 'identity-unverifiable' })
+    expect(fs.existsSync(path.join(f.skillsDir, '.skillsmith-staging'))).toBe(true)
+    expect(r.hints).toBeUndefined()
+  })
+
+  it('a gate stop after the bind made ST outside any git work tree: no hint', async () => {
+    sandbox = makeSandbox()
+    const f = makeFixture('uninstall-n1-stop-nogit-')
+    fixtures.push(f)
+    const r = await stoppedUninstall(f)
+    expect(r.notDone).toMatchObject({ status: 'stopped', reason: 'identity-unverifiable' })
+    expect(fs.existsSync(path.join(f.skillsDir, '.skillsmith-staging'))).toBe(true)
+    expect(r.hints).toBeUndefined()
   })
 
   it('a root outside any git work tree gets no hint', async () => {

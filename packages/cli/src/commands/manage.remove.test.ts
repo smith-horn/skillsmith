@@ -115,6 +115,21 @@ describe('removeSkill', () => {
     expect(logs.join('\n')).not.toContain('cross-client links were left in place')
   })
 
+  it('a claimed name at workspace scope on the canonical client: no links note, no teardown', async () => {
+    mocks.uninstallFn.mockResolvedValue({
+      success: true,
+      skillName: 's',
+      message: 'parked',
+      claimedByAnotherInstall: true,
+    })
+    const workspace = { ...scope, scope: 'workspace' } as Parameters<typeof removeSkill>[4]
+    const outcome = await removeSkill('s', true, dbPath, 'claude-code', workspace)
+    expect(outcome).toBe('removed')
+    expect(mocks.succeed).toHaveBeenCalledWith('parked')
+    expect(mocks.removeLinks).not.toHaveBeenCalled()
+    expect(logs.join('\n')).not.toContain('cross-client links were left in place')
+  })
+
   it('an existing refusal is failed (exit 1)', async () => {
     mocks.uninstallFn.mockResolvedValue({ success: false, skillName: 's', message: 'refused' })
     const outcome = await run()

@@ -6,7 +6,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ uninstall: vi.fn(), removeLinks: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  uninstall: vi.fn(),
+  removeLinks: vi.fn(),
+  scope: 'global' as 'global' | 'workspace',
+}))
 
 vi.mock('@skillsmith/core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@skillsmith/core')>()),
@@ -20,7 +24,7 @@ vi.mock('@skillsmith/core/install', async (importOriginal) => ({
   resolveScopedSkillsDir: () => ({
     dir: '/nonexistent/skills',
     manifestPath: '/nonexistent/manifest.json',
-    scope: 'global',
+    scope: mocks.scope,
   }),
 }))
 
@@ -32,6 +36,7 @@ const savedClient = process.env['SKILLSMITH_CLIENT']
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.scope = 'global'
   delete process.env['SKILLSMITH_CLIENT']
   mocks.removeLinks.mockResolvedValue({ removed: 1, refused: [], warnings: [] })
 })
@@ -62,6 +67,21 @@ describe('uninstall_skill and a name another install claimed', () => {
       claimedByAnotherInstall: true,
     })
     const r = await uninstallSkill({ skillName: 's', force: true, client: 'cursor' }, context)
+    expect(r.success).toBe(true)
+    expect(r.message).toBe('parked')
+    expect(mocks.removeLinks).not.toHaveBeenCalled()
+    expect(r.warning ?? '').not.toContain(CLAIMED_LINKS_NOTE)
+  })
+
+  it('a claimed name at workspace scope on the canonical client: no links note, no teardown', async () => {
+    mocks.scope = 'workspace'
+    mocks.uninstall.mockResolvedValue({
+      success: true,
+      skillName: 's',
+      message: 'parked',
+      claimedByAnotherInstall: true,
+    })
+    const r = await uninstallSkill({ skillName: 's', force: true }, context)
     expect(r.success).toBe(true)
     expect(r.message).toBe('parked')
     expect(mocks.removeLinks).not.toHaveBeenCalled()
