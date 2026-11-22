@@ -9,16 +9,18 @@
  * published, the tree stays in the op dir, the record is kept.
  *
  * The race is planted in the `afterClaim` test hook, which runs after the
- * claim exists and before the re-check.
+ * claim exists and before the re-check. What the next run does after a
+ * refused S2 `--undo` is tested through the CLI
+ * (`packages/cli/src/commands/doctor.recovery.rerun.test.ts`).
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { RecoveryRunOptions } from '../../../../src/services/skill-recovery.run.types.js'
-import { hashOf, makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
+import { makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
 import type { Fixture } from '../skill-swap.helpers.js'
-import { opReport, s1, s2, un1 } from './recovery.helpers.js'
-import { act, done, keptTrees } from './recovery.act.helpers.js'
+import { s1, s2, un1 } from './recovery.helpers.js'
+import { act } from './recovery.act.helpers.js'
 import { fi0, fi1, installFixture } from './install.helpers.js'
 
 useTmpCleanup()
@@ -165,34 +167,4 @@ describe('Major 1: the published tree is re-checked immediately before its renam
       ).toBe(true)
     }
   })
-})
-
-describe('after a refused S2 --undo, the next run finishes the undo', () => {
-  // The refusal left the folder set aside in `undone/`, an empty claim at the skill path,
-  // and the old folder in OP: UN1 (the claim counts as unclaimed). An edited old folder
-  // keeps its identity, so UN1 runs as it is; a replaced one is a copy (identity-changed),
-  // which `--accept-identity` puts back when it still hashes to the recorded old tree.
-  for (const race of ['edit', 'replace'] as const) {
-    it(`${race}: classified, then --apply ends done with O at the skill path and the record gone`, async () => {
-      const st = await s2(makeFixture({ 'SKILL.md': '# v1\n', 'docs/a.md': 'a\n' }))
-      const old = path.join(st.opDir, 'old')
-      const undone = path.join(st.opDir, 'undone')
-      const first = await act(st, 'undo', {}, raceOn(old, race, st.fx.outside))
-      expect(first.result).toMatchObject({ status: 'stopped', reason: 'staging-unsafe' })
-      const oHash = hashOf(old)
-      const uHash = hashOf(undone)
-      const cls = (await opReport(st)).cls
-      if (race === 'edit') {
-        expect(cls).toMatchObject({ kind: 'state', state: 'UN1', postKeep: false })
-      } else {
-        expect(cls).toMatchObject({ kind: 'identity-changed', positions: ['O'] })
-      }
-      const again = await done(st, 'apply', race === 'edit' ? {} : { acceptIdentity: true })
-      expect(again.result.installed).toBe('O')
-      expect(hashOf(st.fx.realDir)).toBe(oHash)
-      expect(Object.values(keptTrees(st.fx))).toContain(uHash)
-      expect(fs.existsSync(path.join(st.opDir, 'record.json'))).toBe(false)
-      expect(fs.existsSync(st.opDir)).toBe(false)
-    })
-  }
 })

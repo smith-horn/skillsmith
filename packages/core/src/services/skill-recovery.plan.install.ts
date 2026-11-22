@@ -44,28 +44,25 @@ function emptyPathNote(f: OpFacts, kind: string): string {
 }
 
 /**
- * FI4's note: where the set-aside folder is and how to get it back.
- * `skillsmith restore` reads the copy's sidecar to learn where it came from,
- * so it refuses a copy that has none (a park killed before its sidecar write,
- * which FI4 still counts, Q1): that copy is copied back by hand. A held copy
- * (its sidecar says `hold`) is restored, and restore says it differs from what
- * was set aside. The classifier reads only the sidecar's opId, kind and hold;
- * restore checks its whole shape, so a damaged sidecar can still be refused,
- * and the note says restore will name the reason.
+ * FI4's note, worded from what `skillsmith restore` itself would do with the
+ * set-aside copy (`ParkedCopyFact.restore`, which the classifier asks of
+ * restore's own functions): when restore would put it back, the command, and,
+ * only when restore's done message will say so, that it differs from what was
+ * set aside; when restore would refuse, the copy's path, restore's own reason,
+ * and that it can be copied back by hand.
  */
 function setAsideNote(f: OpFacts): string {
   const c = f.parked?.[0]
   if (c === undefined) return 'nothing is moved'
-  if (c.sidecar === null) {
+  const at = `nothing is moved; the folder set aside at ${c.path}`
+  if (!c.restore.would) {
     return (
-      `nothing is moved; the folder set aside at ${c.path} has no record of where it came from, ` +
-      `so \`skillsmith restore\` cannot put it back: copy it to ${f.tPath} by hand if you want it`
+      `${at} cannot be put back by \`skillsmith restore\` (${c.restore.reason}: ${c.restore.message}); ` +
+      `copy it to ${f.tPath} by hand if you want it`
     )
   }
-  const restore = `nothing is moved; the folder set aside at ${c.path} can be put back with \`skillsmith restore ${f.opId}\` (restore says why if it cannot)`
-  return c.sidecar.hold
-    ? `${restore}; it was held when it was set aside, so restore will say it differs from what was set aside`
-    : restore
+  const offer = `${at} can be put back with \`skillsmith restore ${f.opId}\``
+  return c.restore.differs ? `${offer}; restore will say it differs from what was set aside` : offer
 }
 
 /** FI0/FI1 `--apply`: N to the skill path and the commit, unless N no longer hashes to `postTree`. */

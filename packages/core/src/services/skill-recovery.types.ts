@@ -252,6 +252,13 @@ export interface ParkedCopyFact {
   } | null
   /** Why a sidecar that exists could not be read or parsed; null otherwise. */
   sidecarError: string | null
+  /**
+   * What `skillsmith restore` would do with it, as far as its sidecar's bytes,
+   * its tree hash and its origin's folder settle (`skill-restore.verdict.ts`):
+   * put it back (and whether its done message says it differs from what was
+   * set aside), or refuse, with restore's own reason and message.
+   */
+  restore: { would: true; differs: boolean } | { would: false; reason: string; message: string }
 }
 
 /** What was observed once a record verified; shared by every class that carries one. */

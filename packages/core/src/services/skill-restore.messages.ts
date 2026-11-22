@@ -13,3 +13,11 @@ export const PLAN_CHANGED =
 /** Something already sits at the origin (§4.3 `origin-occupied`). */
 export const occupiedMessage = (origin: string): string =>
   `Something already exists at \`${origin}\`. Move it aside first, then run \`skillsmith restore <id>\` again.`
+
+/** The folder the origin sits in is gone (§4.3 `origin-parent-missing`). */
+export const parentMissingMessage = (dir: string, name: string): string =>
+  `The folder \`${dir}\` that \`${name}\` came from no longer exists. Create it, then run \`skillsmith restore <id>\` again.`
+
+/** The origin is not beside the parked area (§4.3 `origin-mismatch`). */
+export const originMismatchMessage = (copyPath: string, origin: string, areaDir: string): string =>
+  `\`${copyPath}\` says it came from \`${origin}\`, which is not beside the folder it was set aside in (\`${areaDir}\`). Copy what you need from it by hand.`

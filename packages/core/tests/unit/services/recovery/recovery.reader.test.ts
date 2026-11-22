@@ -126,6 +126,10 @@ describe('the classifier has no filesystem access except through the reader', ()
       '../install/parked-index.name.ts',
       '../install/scope-ids.ts',
       'skill-recovery.plan.clean.ts',
+      // #3283: FI4's note asks restore's own sidecar verdict, fs-free.
+      'skill-restore.verdict.ts',
+      'skill-restore.messages.ts',
+      '../install/prune.sidecar.strict.ts',
     ]) {
       expect(walk.visited).toContain(expected)
     }

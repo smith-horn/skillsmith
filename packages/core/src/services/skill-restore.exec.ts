@@ -19,6 +19,7 @@ import {
 } from '../config/file-lock.parked.js'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
 import { readStable } from '../install/prune.sidecar.js'
+import { saysDiffers } from './skill-restore.verdict.js'
 import { occupiedMessage, PLAN_CHANGED } from './skill-restore.messages.js'
 import { replanUnderLock } from './skill-restore.js'
 import {
@@ -269,8 +270,7 @@ function unlinkSidecar(plan: RestorePlan, hooks: RestoreHooks, guard: () => void
 
 function notesOf(plan: RestorePlan): string[] {
   const out: string[] = []
-  if (plan.held || plan.contents.state === 'changed')
-    out.push('It differs from what was set aside.')
+  if (saysDiffers(plan.held, plan.contents)) out.push('It differs from what was set aside.')
   if (plan.kind === 'uninstall') {
     out.push(
       plan.held

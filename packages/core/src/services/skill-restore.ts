@@ -12,9 +12,12 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { parseSidecarStrict } from '../install/prune.sidecar.js'
 import { S_IFMT } from '../install/park-tree.perms.js'
-import { occupiedMessage } from './skill-restore.messages.js'
+import {
+  occupiedMessage,
+  originMismatchMessage,
+  parentMissingMessage,
+} from './skill-restore.messages.js'
 import { PARKED_DIR } from '../install/prune.list.parked.js'
 import { classifyCopy, type Classification } from '../install/prune.classify.js'
 import type { ListedCopy } from '../install/prune.list.types.js'
@@ -24,12 +27,11 @@ import { listBackups, type ListBackupsOptions } from './skill-backups.listing.js
 import { discoverRoots, type Discovery } from './skill-recovery.discover.js'
 import { assignLocks } from './skill-backups.locks.js'
 import { chooseLock } from './skill-restore.lock.js'
-import { restoreClassOf } from './skill-restore.kinds.js'
+import { contentsOf, sidecarVerdict } from './skill-restore.verdict.js'
 import { allRows, matchRows, parseId } from './skill-restore.resolve.js'
 import type {
   RestorePlan,
   PlanRestoreResult,
-  RestoreContents,
   RestorePlanOptions,
   RestoreRefusalReason,
   RestoreType,
@@ -108,14 +110,6 @@ async function listOptions(o: RestorePlanOptions): Promise<ListBackupsOptions> {
     ...(o.discovery === undefined ? {} : { discovery: o.discovery }),
     ...(o.measure === undefined ? {} : { measure: o.measure }),
   }
-}
-
-function contentsOf(sidecar: Record<string, unknown>, freshHash: string | null): RestoreContents {
-  const recorded = typeof sidecar.treeHash === 'string' ? sidecar.treeHash : null
-  if (recorded === null)
-    return { state: 'not-checked', why: 'no hash was recorded when it was set aside' }
-  if (freshHash === null) return { state: 'not-checked', why: 'the copy could not be hashed now' }
-  return { state: recorded === freshHash ? 'unchanged' : 'changed' }
 }
 
 export async function planRestore(
@@ -251,36 +245,18 @@ async function evaluate(
   const areaDir = s.copy.stagingRoot
   const areaRoot = path.dirname(areaDir)
   const copyPath = s.copy.copyPath
-  const unknownOrigin = refuse(
-    'origin-unknown',
-    `The record beside \`${copyPath}\` can't be read, so where it came from is unknown. Copy what you need from it by hand.`
-  )
-  if (c.sidecarRead === null) return unknownOrigin
   // A held copy skips the strict schema in the listing, yet its originPath decides where
-  // restore writes: the strict parse is run here on the bytes the listing read.
-  const parsed = parseSidecarStrict(c.sidecarRead.bytes, {
+  // restore writes: the strict parse runs here on the bytes the listing read, in the
+  // verdict doctor's FI4 note asks too (`skill-restore.verdict.ts`).
+  const read = c.sidecarRead
+  const v = sidecarVerdict(read === null ? null : read.bytes, {
     copyPath,
     parentName: path.basename(row.copy.parentDir),
-    store: 'parked',
   })
-  if (!parsed.ok) return unknownOrigin
-  const sc = parsed.sidecar
-  const kind = String(sc.kind)
-  const origin = String(sc.originPath)
-  if (!path.isAbsolute(origin)) return unknownOrigin
-  const cls = restoreClassOf(kind)
-  if (cls === null) {
-    return refuse(
-      'restore-kind-unknown',
-      `\`${copyPath}\` has a kind (\`${kind}\`) this version of Skillsmith doesn't know, so it won't restore it.`
-    )
-  }
-  if (!cls.restorable) {
-    return refuse(
-      'nothing-to-restore-into',
-      `\`${copyPath}\` came from Skillsmith's own ${cls.what}, so there is nothing to restore it into. Copy what you need from it by hand.`
-    )
-  }
+  if (!v.ok) return refuse(v.reason, v.message)
+  // Unreachable: no bytes is refused above. Kept so the type narrows for the digest below.
+  if (read === null) return refuse('origin-unknown', 'no sidecar was read')
+  const { sidecar: sc, kind, origin } = v
   if (c.klass === 'mounted') {
     return refuse(
       'restore-mounted',
@@ -303,16 +279,10 @@ async function evaluate(
   const dir = path.dirname(origin)
   const o = realOf(dir)
   if (o === null || !isDirectory(o)) {
-    return refuse(
-      'origin-parent-missing',
-      `The folder \`${dir}\` that \`${path.basename(origin)}\` came from no longer exists. Create it, then run \`skillsmith restore <id>\` again.`
-    )
+    return refuse('origin-parent-missing', parentMissingMessage(dir, path.basename(origin)))
   }
   if (o !== realOf(areaRoot)) {
-    return refuse(
-      'origin-mismatch',
-      `\`${copyPath}\` says it came from \`${origin}\`, which is not beside the folder it was set aside in (\`${areaDir}\`). Copy what you need from it by hand.`
-    )
+    return refuse('origin-mismatch', originMismatchMessage(copyPath, origin, areaDir))
   }
   const chosen = await chooseLock({
     discovery: ctx.discovery,
@@ -336,7 +306,7 @@ async function evaluate(
       String(c.rootIdentity.ino),
       String(c.rootIdentity.birthtimeNs),
       String(c.rootIdentity.fmt),
-      sha(c.sidecarRead.bytes),
+      sha(read.bytes),
       c.freshHash,
       c.klass,
       kind,
@@ -356,7 +326,7 @@ async function evaluate(
       copyPath,
       opId: row.copy.opId,
       kind,
-      held: sc.hold === true,
+      held: v.held,
       type,
       origin,
       target,
@@ -368,8 +338,8 @@ async function evaluate(
       digest,
       copy: row.copy,
       rootIdentity: c.rootIdentity,
-      sidecarBytes: c.sidecarRead.bytes,
-      sidecarIno: c.sidecarRead.ino,
+      sidecarBytes: read.bytes,
+      sidecarIno: read.ino,
       options,
     },
   }

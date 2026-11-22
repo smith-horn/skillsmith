@@ -33,6 +33,8 @@ import path from 'node:path'
 import type { InstallRecord } from './skill-install.record-schema.js'
 import { isParkedNameOf, PARKED_DIR_NAME } from '../install/parked-index.name.js'
 import { ROLE_DIR, SIDECAR_CAP, STARTED_STATES } from './skill-recovery.pstate.js'
+import { originMismatchMessage, parentMissingMessage } from './skill-restore.messages.js'
+import { contentsOf, saysDiffers, sidecarVerdict } from './skill-restore.verdict.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
 import type {
@@ -111,25 +113,29 @@ export function resolveInstallRoles(
   return { roles: { O: { kind: 'absent' }, N: one('N'), U: one('U') }, conflicts, changed }
 }
 
-/** A parked copy's sidecar: what it says, or why it could not be read. */
-function sidecarOf(
-  r: ClassifierReader,
-  p: string
-): Pick<ParkedCopyFact, 'sidecar' | 'sidecarError'> {
+type SidecarFacts = Pick<ParkedCopyFact, 'sidecar' | 'sidecarError'> & { bytes: Buffer | null }
+
+/** A parked copy's sidecar: what it says (and its bytes, for restore's verdict), or why it could not be read. */
+function sidecarOf(r: ClassifierReader, p: string): SidecarFacts {
   const read = r.readFile(`${p}.json`, SIDECAR_CAP + 1)
   if (!read.fact.ok) {
-    if (read.fact.errno === 'ENOENT') return { sidecar: null, sidecarError: null }
-    return { sidecar: null, sidecarError: `its sidecar could not be read (${read.fact.errno})` }
+    if (read.fact.errno === 'ENOENT') return { sidecar: null, sidecarError: null, bytes: null }
+    return {
+      sidecar: null,
+      sidecarError: `its sidecar could not be read (${read.fact.errno})`,
+      bytes: null,
+    }
   }
-  if (read.fact.truncated) return { sidecar: null, sidecarError: 'its sidecar is too large' }
+  const bytes = read.bytes!
+  if (read.fact.truncated) return { sidecar: null, sidecarError: 'its sidecar is too large', bytes }
   let v: unknown
   try {
-    v = JSON.parse(read.bytes!.toString('utf8'))
+    v = JSON.parse(bytes.toString('utf8'))
   } catch {
-    return { sidecar: null, sidecarError: 'its sidecar is not JSON' }
+    return { sidecar: null, sidecarError: 'its sidecar is not JSON', bytes }
   }
   if (typeof v !== 'object' || v === null || Array.isArray(v)) {
-    return { sidecar: null, sidecarError: 'its sidecar is not a JSON object' }
+    return { sidecar: null, sidecarError: 'its sidecar is not a JSON object', bytes }
   }
   const o = v as Record<string, unknown>
   const str = (x: unknown): string | null => (typeof x === 'string' ? x : null)
@@ -141,7 +147,49 @@ function sidecarOf(
       treeHash: str(o.treeHash),
     },
     sidecarError: null,
+    bytes,
   }
+}
+
+/**
+ * `skillsmith restore`'s verdict on the copy at `p`, asked of restore's own
+ * functions on what the reader read (no second read, no restore logic here):
+ * the sidecar's bytes (`sidecarVerdict`), the tree hash (`contentsOf`,
+ * `saysDiffers`), then the origin's folder, which restore requires to exist
+ * and to be the skills root `root` the copy was set aside from. What restore
+ * checks at the time it runs, and this does not: a mount inside the copy,
+ * its lock, and the target being free (FI4 has the skill path absent, and the
+ * strict sidecar's origin name is the copy's, so the target is the skill path).
+ */
+function restoreOf(
+  r: ClassifierReader,
+  root: string,
+  p: string,
+  opId: string,
+  bytes: Buffer | null,
+  freshHash: string | null
+): ParkedCopyFact['restore'] {
+  const v = sidecarVerdict(bytes, { copyPath: p, parentName: opId })
+  if (!v.ok) return { would: false, reason: v.reason, message: v.message }
+  const dir = path.dirname(v.origin)
+  const real = r.realpath(dir)
+  const st = real.ok ? r.stat(real.path) : null
+  if (!real.ok || st === null || !st.ok || st.type !== 'dir') {
+    return {
+      would: false,
+      reason: 'origin-parent-missing',
+      message: parentMissingMessage(dir, path.basename(v.origin)),
+    }
+  }
+  if (real.path !== root) {
+    const areaDir = path.join(root, PARKED_DIR_NAME)
+    return {
+      would: false,
+      reason: 'origin-mismatch',
+      message: originMismatchMessage(p, v.origin, areaDir),
+    }
+  }
+  return { would: true, differs: saysDiffers(v.held, contentsOf(v.sidecar, freshHash)) }
 }
 
 /**
@@ -167,11 +215,13 @@ export function observeParked(
     const p = path.join(dir, n)
     const st = r.stat(p)
     const isDir = st.ok && st.type === 'dir'
-    if (isDir) r.treeHash(p)
+    const h = isDir ? r.treeHash(p) : null
+    const { bytes, ...sidecar } = sidecarOf(r, p)
     copies.push({
       path: p,
       identityMatches: isDir && sameId(st.identity, rec.newIdentity),
-      ...sidecarOf(r, p),
+      ...sidecar,
+      restore: restoreOf(r, root, p, rec.opId, bytes, h !== null && h.ok ? h.hash : null),
     })
   }
   return { ok: true, copies }

@@ -47,9 +47,12 @@ export interface IState {
  * A skills root with no skill folder yet, and a state root whose manifest has
  * no entry for it: under the same temp, or `stateRoot` (an existing directory,
  * another device for the cross-device keeps) and `skillsDir` (an existing
- * directory, a discovered client root for the restore and prune tests).
+ * directory, a discovered client root for the restore and prune tests), and
+ * the skill folder's name `dirName` (default `my-skill`).
  */
-export function installFixture(at: { stateRoot?: string; skillsDir?: string } = {}): Fixture {
+export function installFixture(
+  at: { stateRoot?: string; skillsDir?: string; dirName?: string } = {}
+): Fixture {
   const base = tmp('install-rec-')
   const skillsDir = at.skillsDir ?? path.join(base, 'skills')
   const stateRoot = at.stateRoot ?? path.join(base, 'state')
@@ -61,7 +64,7 @@ export function installFixture(at: { stateRoot?: string; skillsDir?: string } = 
     path.join(stateRoot, 'manifest.json'),
     JSON.stringify({ version: '1.0.0', installedSkills: {} })
   )
-  const dirName = 'my-skill'
+  const dirName = at.dirName ?? 'my-skill'
   const staging = path.join(skillsDir, '.skillsmith-staging')
   return {
     base,

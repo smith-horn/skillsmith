@@ -34,6 +34,7 @@ import {
 } from './skill-swap.record-schema.js'
 import type { OpRecord } from './skill-swap.record-schema.js'
 import { RECORD_FILE } from './skill-swap.types.js'
+import type { RecordIdentity } from './skill-swap.types.js'
 
 export {
   computeRecordSha256,
@@ -84,6 +85,8 @@ export interface PendingRecord {
    * protected path. Null for an install, which has no old tree.
    */
   backupDest: string | null
+  /** An install's: the published folder's identity (`newIdentity`), which its parked copy keeps. */
+  newIdentity?: RecordIdentity
 }
 
 export type RecordScan =
@@ -182,6 +185,7 @@ async function judge(root: string, opId: string, file: string): Promise<Verdict>
       comparedPath: r.target.comparedPath,
       realDir: r.target.realDir,
       backupDest: r.op === 'install' ? null : r.backupDest,
+      ...(r.op === 'install' ? { newIdentity: r.newIdentity } : {}),
     },
   }
 }

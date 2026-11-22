@@ -64,6 +64,7 @@ export function protectAll(
       {
         copyPath: r.copy.copyPath,
         opId: r.copy.opId,
+        identity: r.classification.rootIdentity,
         kind: r.kind,
         sourceUnchanged: null,
         store: 'parked',
