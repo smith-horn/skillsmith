@@ -288,12 +288,13 @@ describe('SMI-745: Skill Management Commands', () => {
         skillName: 'modified-skill',
         message:
           'Skill "modified-skill" has been modified since installation. Use force=true to remove anyway.',
-        warning: 'Local modifications will be lost if you force uninstall.',
+        warning:
+          'A forced uninstall keeps your changes: it sets the folder aside (it is not deleted).',
       })
 
       const result = await mocks.uninstallFn('modified-skill', {})
       expect(result.success).toBe(false)
-      expect(result.warning).toContain('Local modifications')
+      expect(result.warning).toContain('sets the folder aside')
     })
 
     it('displays no-skills hint with author/name format', async () => {

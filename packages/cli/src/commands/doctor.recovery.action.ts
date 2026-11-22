@@ -113,22 +113,6 @@ export type { PromptAnswer, PromptIO } from './confirm-gate.js'
 const exitOf = (r: RecoveryRunResult): number | undefined =>
   r.status !== 'done' ? 1 : r.warnings.some((w) => w.code === 'removal-not-done') ? 4 : undefined
 
-/**
- * D8 (UD66): whether the run set a folder aside: a kept `OP` tree, an extra
- * copy of the op dir, a held park (a `removal-not-done` warning naming where
- * it was parked), or a stop after the park's rename (the op dir is gone).
- */
-export function parked(r: RecoveryRunResult): boolean {
-  if (r.status === 'done') {
-    return (
-      r.kept.some((k) => k.tree === 'OP') ||
-      r.extraCopy !== null ||
-      r.warnings.some((w) => w.code === 'removal-not-done' && typeof w.parkedPath === 'string')
-    )
-  }
-  return r.status === 'stopped' && r.opDir?.stillThere === false
-}
-
 const printLines = (lines: string[]): void => {
   for (const l of lines) console.log(l)
 }
@@ -223,18 +207,27 @@ export async function runRecoveryAction(options: RecoveryActionOptions): Promise
   const gate = await confirmOrStop(options, () => printJson(plan, null), 'doctor recovery: prompt')
   if (gate === 'stop') return
   await options.afterConfirm?.()
-  // UD66: a throw from the action (after a park's rename) or from printing its result must not
-  // skip the warning, so it runs in `finally`: when the run says it parked, and also when it
-  // never returned (the outcome is unknown after the user confirmed).
+  // UD66: the warning comes from the park-result path (core's `usageWarning`), evaluated once
+  // after lock 1 is released, and is printed before the result, so a failure printing the
+  // result (a closed stdout) cannot lose it. Only when the action threw and returned nothing
+  // (the outcome is unknown after the user confirmed) does this command evaluate it itself.
+  const usageListing: ListBackupsOptions = {
+    discovered: found,
+    ...(options.parkedUsage === undefined ? {} : { usage: options.parkedUsage }),
+    ...(options.measure === undefined ? {} : { measure: options.measure }),
+  }
   let result: RecoveryRunResult | undefined
   try {
-    result = await executeRecovery(planned, options.runOptions ?? {})
+    result = await executeRecovery(planned, { ...options.runOptions, usageListing })
+    if (result.status !== 'refused' && result.usageWarning !== undefined) {
+      console.error(result.usageWarning)
+    }
     if (json) printJson(plan, result)
     else printLines(resultLines(result))
     const code = exitOf(result)
     if (code !== undefined) process.exitCode = code
   } finally {
-    if (result === undefined || parked(result)) {
+    if (result === undefined) {
       await printParkedUsageWarning({
         discovered: found,
         ...(options.parkedUsage === undefined ? {} : { parkedUsage: options.parkedUsage }),

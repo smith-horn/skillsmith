@@ -10,6 +10,9 @@ import type { ScanReport, ScannerOptions } from '../security/index.js'
 import type { TrustTier } from '../types/skill.js'
 import type { DependencyDeclaration } from '../types/dependencies.js'
 import type { ClientId } from '../install/paths.js'
+import type { ParkFn } from './park-report.js'
+import type { ListBackupsOptions } from './skill-backups.listing.js'
+import type { SwapWarning } from './skill-swap.types.js'
 
 // ============================================================================
 // Progress Callback
@@ -200,7 +203,33 @@ export interface AiDefenceFeedback {
 export interface UninstallOptions {
   /** Force removal even if skill has been modified since installation */
   force?: boolean
+  /** @internal Test seams for the uninstall park (A1 step 8-i-a-1). */
+  park?: UninstallParkSeams
 }
+
+/** @internal Test seams for the uninstall park (A1 plan §3.8 row 3). */
+export interface UninstallParkSeams {
+  /** Replaces `parkTreeIndexed` (the reporter still records what it returns). */
+  park?: ParkFn
+  /** The space warning's listing: test discovery, `statfs`, the size walk. */
+  usage?: ListBackupsOptions
+  /** The park's operation id (default 128 random bits as hex). */
+  opId?: string
+  /** Runs after the refusal checks, before the gate and the bind. */
+  afterRefusals?: () => void | Promise<void>
+  /** Runs after the gate and the bind, before lock 1 (the folder was read and hashed). */
+  afterBind?: () => void | Promise<void>
+  /** Runs under lock 1, before the last `check` and the park. */
+  beforePark?: () => void | Promise<void>
+}
+
+/**
+ * UD32: an uninstall whose park did not finish (A1 plan §3.8 row 3). The
+ * folder is at its origin (`kept`, `stopped`) or whole in the parked area
+ * (`held`, `parkedPath`); the manifest entry was kept; `skillsmith remove`
+ * exits 4. `restoreCommand` is the row's restore line, present only for `held`.
+ */
+export type UninstallNotDone = Omit<Extract<SwapWarning, { code: 'removal-not-done' }>, 'code'>
 
 /** Result of an uninstall operation */
 export interface UninstallResult {
@@ -209,6 +238,20 @@ export interface UninstallResult {
   message: string
   removedPath?: string
   warning?: string
+  /** Where the folder was set aside (`parked`, or `held` with `notDone`). */
+  parkedPath?: string
+  /** Present when the park did not finish (UD32): `success` is false and the entry stays. */
+  notDone?: UninstallNotDone
+  /** UD66: the space warning from the park-result path, printed to stderr by the CLI. */
+  usageWarning?: string
+  /** T-N1: one-line `.gitignore` hints for a staging or parked area this uninstall created. */
+  hints?: string[]
+  /**
+   * The folder was set aside, but another install had claimed the name in the
+   * manifest, so its record was left alone. A caller must not tear down that
+   * install's fan-out links (8-i-a-1 gate Major 2).
+   */
+  claimedByAnotherInstall?: true
 }
 
 // ============================================================================

@@ -7,6 +7,7 @@
  */
 import type { AppendOnceOutcome } from '../journal/writer.js'
 import type { JournalRecordInput } from '../journal/types.js'
+import type { ListBackupsOptions } from './skill-backups.listing.js'
 import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import type { ReaderOptions } from './skill-recovery.reader.js'
 import type { OpReport } from './skill-recovery.listing.js'
@@ -119,6 +120,12 @@ export interface RecoveryDone {
   audit: AuditOutcome
   warnings: SwapWarning[]
   swept: SweepResult
+  /**
+   * UD66: the space warning, from the park-result path (`park-report.ts`):
+   * present when a park this run made moved a tree and the set-aside folders
+   * are over their threshold, some could not be measured, or the check failed.
+   */
+  usageWarning?: string
 }
 
 /** Stopped partway: the record is kept (unless named otherwise) and the same command resumes it. */
@@ -136,6 +143,12 @@ export interface RecoveryStopped {
    * park's rename), and the same command reports where it was set aside.
    */
   opDir?: { path: string; stillThere: boolean }
+  /**
+   * UD66: the space warning, from the park-result path (`park-report.ts`):
+   * present when a park this run made moved a tree and the set-aside folders
+   * are over their threshold, some could not be measured, or the check failed.
+   */
+  usageWarning?: string
 }
 
 export type RecoveryRunResult = RecoveryRefusal | RecoveryDone | RecoveryStopped
@@ -151,4 +164,9 @@ export interface RecoveryRunOptions {
   afterReplan?: () => void | Promise<void>
   /** Replaces the manifest port built from the record. */
   manifestPort?: ManifestPort
+  /**
+   * The listing the space warning is evaluated over, after lock 1 is
+   * released (doctor passes the roots it discovered, and its test seams).
+   */
+  usageListing?: ListBackupsOptions
 }

@@ -74,6 +74,7 @@ import { backupAreaPath } from './skill-swap.area.js'
 import { describe } from './skill-swap.abort.js'
 import { opPaths, processOwnerNow, rethrowLockOrder, SwapFault } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { createParkReporter } from './park-report.js'
 import { ensureBackupArea } from './skill-swap.publish.js'
 import type { ManifestPort, RecordIdentity, SwapOptions, SwapRecord } from './skill-swap.types.js'
 import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.types.js'
@@ -135,6 +136,7 @@ export function abandonState(i: AbandonStateInput): SwapState {
       manifest: refusingPort,
     },
     options: i.options,
+    reporter: createParkReporter({ park: i.options.park }),
     opId: i.opId,
     binding: i.binding,
     warnings: [],

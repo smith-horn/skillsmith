@@ -4,6 +4,27 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): uninstall takes the folder's tree hash when it
+  reads it, before the modification check, and refuses (`kept/identity-changed`, nothing moved, the
+  entry kept) when the hash bound for the move differs, so an edit made after the check is never
+  set aside as if it were the checked folder. When that hash cannot be taken, uninstall stops with
+  the walk's own reason (`guard-unreadable`, `guard-unsupported-type` or `mount-inside-tree`, not
+  `bind-failed`) and creates nothing. A result whose manifest record was claimed by another
+  install now says so (`claimedByAnotherInstall`). An uninstall that stops after creating
+  `.skillsmith-staging/` still returns its `.gitignore` hint.
+- **Changed**: SMI-6531 -- A1 step 8-i-a-1: uninstall sets the skill folder aside instead of
+  deleting it. `performUninstall` takes the clock gate, the folder's tree hash and its identity when
+  it reads the folder (with or without `force`), then, under the skills root's write lock, moves it
+  to `<skills dir>/.skillsmith-parked/<opId>/<name>-<rnd>` with those as its guard. On success the
+  manifest entry is dropped and the result names the parked path, about how much space it holds,
+  and `skillsmith doctor backups --prune --op <opId>`. When the move does not finish (`kept`,
+  `held` or `stopped`) nothing is deleted, the entry stays, and the result carries `notDone`
+  (path, status, reason, `restoreCommand`). New `UninstallResult` fields: `parkedPath`, `notDone`,
+  `usageWarning`, `hints`.
+- **Added**: SMI-6531 -- A1 step 8-i-a-1: an internal park-result path (`services/park-report.ts`).
+  Every park goes through it, and the set-aside space warning is evaluated once per command from it, after
+  every lock is released. `executeRecovery` now returns that warning as `usageWarning`, and a
+  moved park's result carries `bytes` (its size, from the sidecar).
 - **Added**: SMI-6531 -- A1 step 6d-ii: `planRestore()` and `executeRestore()` put a set-aside copy
   back where it came from. Planning takes no lock and writes nothing; it resolves an id (an op id,
   `<opId>/<name>`, or a full path), refuses a copy whose record cannot be read or whose origin is

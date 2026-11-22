@@ -9,6 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { randomBytes } from 'node:crypto'
+import fsSync from 'node:fs'
 import { SkillInstallationService } from '../../../src/services/skill-installation.service.js'
 import { ManifestManager } from '../../../src/services/skill-manifest.js'
 import { SkillRepository } from '../../../src/repositories/SkillRepository.js'
@@ -366,7 +367,7 @@ let manifestLoadSpy: ReturnType<typeof vi.spyOn> | null = null
 function createService(
   onProgress?: (stage: string, detail: string) => void
 ): SkillInstallationService {
-  return new SkillInstallationService({
+  const service = new SkillInstallationService({
     db,
     skillRepo: new SkillRepository(db),
     skillDependencyRepo: new SkillDependencyRepository(db),
@@ -374,6 +375,49 @@ function createService(
     manifestPath,
     ...(onProgress !== undefined && { onProgress }),
   })
+  // SMI-6531 A1 step 8-i-a-1: uninstall now parks with a synchronous rename,
+  // so the one-shot hooks that rode `removeIfSame`'s promise `rename` fire
+  // from the park's own seam instead: under lock 1, just before the park.
+  const uninstall = service.uninstall.bind(service)
+  service.uninstall = (name, options = {}) =>
+    uninstall(name, { ...options, park: { beforePark: fireParkHooks, ...options.park } })
+  return service
+}
+
+/**
+ * The two one-shots `removeIfSame`'s rename used to fire, fired just before
+ * the park: another program swaps its own folder in (`swapBeforeRename`), or
+ * another install claims the manifest key (`claimOnRename`).
+ */
+async function fireParkHooks(): Promise<void> {
+  const swap = swapBeforeRename.path
+  if (swap !== null) {
+    swapBeforeRename.path = null
+    fsSync.renameSync(swap, `${swap}-moved`)
+    fsSync.mkdirSync(swap)
+    fsSync.writeFileSync(`${swap}/KEEP.md`, 'not ours', 'utf-8')
+  }
+  const manifestFile = claimOnRename.manifestPath
+  if (claimOnRename.path !== null && manifestFile !== null) {
+    claimOnRename.path = null
+    const raw = JSON.parse(fsSync.readFileSync(manifestFile, 'utf-8')) as {
+      installedSkills: Record<
+        string,
+        { installPath: string; installedAt?: string; lastUpdated?: string; version?: string }
+      >
+    }
+    const entry = raw.installedSkills[claimOnRename.key ?? '']
+    if (entry) {
+      if ((claimOnRename.newInstallPath ?? '') !== '')
+        entry.installPath = claimOnRename.newInstallPath ?? ''
+      if (claimOnRename.reinstalledAt !== null) {
+        entry.installedAt = claimOnRename.reinstalledAt
+        entry.lastUpdated = claimOnRename.reinstalledAt
+      }
+      if (claimOnRename.newVersion !== null) entry.version = claimOnRename.newVersion
+    }
+    fsSync.writeFileSync(manifestFile, JSON.stringify(raw, null, 2))
+  }
 }
 
 // F2 (SMI-6732): a timestamp reliably AFTER `track()`'s own +60s
@@ -710,6 +754,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
+    // 8-i-a-1 gate Major 2: the caller must leave that install's fan-out links alone.
+    expect(result.claimedByAnotherInstall).toBe(true)
     expect(await manifestEntry('claimed-skill')).toMatchObject({
       installPath,
       installedAt: '2030-01-01T00:00:00.000Z',
@@ -821,6 +867,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
+    // 8-i-a-1 gate Major 2: the caller must leave that install's fan-out links alone.
+    expect(result.claimedByAnotherInstall).toBe(true)
     expect(await manifestEntry('collide-skill')).toMatchObject({ version: '9.9.9' })
   })
 
@@ -839,6 +887,8 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
 
     expect(result.success).toBe(true)
     expect(result.warning).toContain('Another install claimed this name')
+    // 8-i-a-1 gate Major 2: the caller must leave that install's fan-out links alone.
+    expect(result.claimedByAnotherInstall).toBe(true)
     expect(await manifestEntry('legacy-skill')).toMatchObject({ installPath: claimedPath })
   })
 
@@ -931,21 +981,18 @@ describe('uninstall removes only the folder it checked (SMI-6529 round 15)', () 
 
     const result = await createService().uninstall('swapped-skill', { force: true })
 
+    // The hook must have fired, or this passes for the wrong reason.
+    expect(swapBeforeRename.path).toBeNull()
     expect(result.success).toBe(false)
-    expect(result.message).toMatch(
-      /was not removed: .* was replaced by something else, and that entry is now at /
-    )
-    // Round 17 (cross-model review): their folder is never renamed back over
-    // whatever is at the path now. It is moved aside, and the exact path is
-    // reported, so nothing of theirs is destroyed.
-    const parkedName = (await fs.readdir(skillsDir)).find((n) =>
-      n.startsWith('.swapped-skill.skillsmith-removing-')
-    )
-    expect(parkedName).toBeDefined()
-    expect(await fs.readFile(path.join(skillsDir, parkedName ?? '', 'KEEP.md'), 'utf-8')).toBe(
-      'not ours'
-    )
-    expect(result.warning).toContain(parkedName ?? 'no parked entry')
+    // SMI-6531 A1 step 8-i-a-1: the park refuses the substitute before
+    // anything moves (it is not the identity uninstall bound), so their
+    // folder stays exactly where they put it and nothing is set aside.
+    expect(result.notDone).toMatchObject({ status: 'kept', reason: 'identity-changed' })
+    expect(result.message).toMatch(/was not uninstalled: setting aside .* ended kept/)
+    expect(await fs.readFile(path.join(installPath, 'KEEP.md'), 'utf-8')).toBe('not ours')
+    const parkedArea = path.join(skillsDir, '.skillsmith-parked')
+    const parkedOps = await fs.readdir(parkedArea).catch(() => [] as string[])
+    for (const op of parkedOps) expect(await fs.readdir(path.join(parkedArea, op))).toEqual([])
     // Our own copy is where their swap moved it, untouched.
     expect(await fs.readFile(path.join(`${installPath}-moved`, 'SKILL.md'), 'utf-8')).toBe(
       '# Installed\n'
@@ -2089,7 +2136,23 @@ describe('uninstall compares identity in bigint, not Number (SMI-6732 round 8, C
     lstatFakeInoFor.entries.set(trackedRealIno, inoA)
     lstatFakeInoFor.entries.set(untrackedRealIno, inoB)
 
-    const result = await createService().uninstall('untracked-big-ino', { force: true })
+    // SMI-6531 A1 step 8-i-a-1: the gate and the park read identity through
+    // the SYNC `lstat`, and the park refuses an identity that differs from the
+    // one uninstall read. The fake must agree on both APIs, as a real
+    // filesystem does, or this test measures the fake's own split.
+    const realLstatSync = fsSync.lstatSync
+    fsSync.lstatSync = ((p: fsSync.PathLike, o?: fsSync.StatSyncOptions) => {
+      const st = realLstatSync(p, o as fsSync.StatSyncOptions & { bigint: true })
+      if (st === undefined || typeof st.ino !== 'bigint') return st
+      const fake = lstatFakeInoFor.entries.get(st.ino)
+      return fake === undefined ? st : overrideField(st, 'ino', fake)
+    }) as typeof fsSync.lstatSync
+    let result: Awaited<ReturnType<SkillInstallationService['uninstall']>>
+    try {
+      result = await createService().uninstall('untracked-big-ino', { force: true })
+    } finally {
+      fsSync.lstatSync = realLstatSync
+    }
 
     // A `number`-typed comparison would have read both as the SAME ino and
     // refused this as "already tracked under the name tracked-big-ino" --
@@ -2651,9 +2714,9 @@ describe('uninstall clears skill_dependencies for the exact skill it removed (SM
     )
     expect(deps.getDependencies('author/dep-kept-skill')).toHaveLength(1)
 
-    // Another program swaps its own folder in before the park-rename, so
-    // `removeIfSame` refuses: the entry is no longer the one that was
-    // inspected. This is the existing round-15 mechanism, reused.
+    // Another program swaps its own folder in before the park, so the park
+    // refuses (`kept/identity-changed`): the entry is no longer the one that
+    // was inspected. This is the existing round-15 mechanism, reused.
     swapBeforeRename.path = installPath
 
     const result = await createService().uninstall('dep-kept-skill', { force: true })
@@ -2661,8 +2724,9 @@ describe('uninstall clears skill_dependencies for the exact skill it removed (SM
     // Precondition, asserted rather than assumed: if the removal had
     // SUCCEEDED, the rows would be legitimately gone and the assertion
     // below would be testing the opposite of what it claims.
+    expect(swapBeforeRename.path).toBeNull()
     expect(result.success).toBe(false)
-    expect(result.message).toMatch(/was not removed/)
+    expect(result.message).toMatch(/was not uninstalled/)
     // The property: nothing was removed, so nothing was forgotten either.
     expect(deps.getDependencies('author/dep-kept-skill')).toHaveLength(1)
     expect(await manifestEntry('dep-kept-skill')).toBeDefined()
