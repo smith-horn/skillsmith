@@ -26,8 +26,7 @@ import type { KeepGroup, PState, Role, SidecarFacts } from './skill-recovery.typ
 import type { OpRecord } from './skill-swap.record-schema.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
-/** A sidecar is a few hundred bytes; this is a ceiling, not an expectation. */
-/** The most a sidecar is read (they are small JSON objects): a keep's, or (8-i-a-2) a parked copy's. */
+/** The most of a sidecar that is read, a keep's or a parked copy's: a ceiling, not an expectation (they are a few hundred bytes). */
 export const SIDECAR_CAP = 64 * 1024
 
 /** The kinds a tree is kept as and the role each one keeps (PLAN: role resolution). */
