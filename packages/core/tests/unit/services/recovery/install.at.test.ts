@@ -1,8 +1,10 @@
 /**
- * SMI-6531 (A1 step 8-i-a-3a, design § 1.6 and § 8 item 5): `installAt` with
- * no claim tells "nothing touched" from "the claim may be left" through the
- * caller's per-call `InstallAtOutcome` (never keyed by the error), runs `check` immediately before the claim's `mkdir` and again
- * in claimPublish's `beforeRename` (not its test seam), and stops
+ * SMI-6531 (A1 step 8-i-a-3a, design § 1.6 and § 8 item 5): with no claim,
+ * `installAtReporting` tells "nothing touched" from "the claim may be left"
+ * in a fresh result per call (never keyed by the error, never shared between
+ * calls); `installAt` throws the same error. Both run `check` immediately
+ * before the claim's `mkdir` and again in claimPublish's `beforeRename` (not
+ * its test seam), and stop
  * `write-failed` when the parent the folder left (OP) fails its sync. Every
  * state is a real install record's (`install.helpers.ts`) run under lock 1
  * with `recoveryState`, as doctor runs it. `syncDirectory` is wrapped for the
@@ -29,7 +31,8 @@ vi.mock('../../../../src/install/dir-sync.js', async (importOriginal) => {
 })
 
 const { bindIdentity } = await import('../../../../src/install/park-tree.identity.js')
-const { installAt } = await import('../../../../src/services/skill-recovery.resume.js')
+const { installAt, installAtReporting } =
+  await import('../../../../src/services/skill-recovery.resume.js')
 const { recoveryState } = await import('../../../../src/services/skill-recovery.state.js')
 const { SwapFault } = await import('../../../../src/services/skill-swap.ops.js')
 const { bindSkillsRootReadOnly, withSkillWriteLock } =
@@ -50,16 +53,21 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-/** What one call threw (null: it returned) and what it set on its outcome ('unset': nothing). */
+type Result = Awaited<ReturnType<typeof installAtReporting>>
+
+/**
+ * What one call returned: its error (null: ok), its claim answer ('ok': it
+ * succeeded), and the result itself.
+ */
 interface Ran {
   err: unknown
-  left: boolean | 'unset'
+  left: boolean | 'ok'
+  result: Result
 }
 
 /**
- * Runs `installAt(N, no claim)` under lock 1 as doctor does, with a fresh
- * outcome object; `before` runs under the lock just before the call, with
- * the lock's context.
+ * Runs `installAtReporting(N, no claim)` under lock 1 as doctor does; `before`
+ * runs under the lock just before the call, with the lock's context.
  */
 async function runAt(
   st: IState,
@@ -77,19 +85,13 @@ async function runAt(
       options: o.hooks === undefined ? {} : { hooks: o.hooks },
     })
     o.before?.(ctx)
-    const outcome: { claimLeft: boolean | 'unset' } = { claimLeft: 'unset' }
-    try {
-      await installAt(
-        s,
-        st.newDir,
-        null,
-        { identity: id, hash: st.record.postTree },
-        outcome as { claimLeft: boolean }
-      )
-      return { err: null, left: outcome.claimLeft }
-    } catch (err) {
-      return { err, left: outcome.claimLeft }
-    }
+    const result = await installAtReporting(s, st.newDir, null, {
+      identity: id,
+      hash: st.record.postTree,
+    })
+    return result.ok
+      ? { err: null, left: 'ok' as const, result }
+      : { err: result.error, left: result.claimLeft, result }
   })
   if (!r.ok) throw new Error(`lock 1 refused: ${JSON.stringify(r)}`)
   return r.value
@@ -113,8 +115,7 @@ function replaceLockFile(root: string): void {
 describe('installAt without a claim: nothing touched', () => {
   it('control: N is published at the skill path, and no error', async () => {
     const st = fi0(installFixture())
-    // A return leaves the outcome as it was.
-    expect(await runAt(st)).toEqual({ err: null, left: 'unset' })
+    expect((await runAt(st)).result).toEqual({ ok: true })
     expect(idOf(st.fx.realDir)).toEqual(st.record.newIdentity)
     expect(fs.existsSync(st.newDir)).toBe(false)
   })
@@ -226,6 +227,49 @@ describe('installAt without a claim: the claim may be left', () => {
       expect(left).toBe(true)
       expect(isEmptyDir(st.fx.realDir)).toBe(true)
     }
+  })
+
+  it('a failed call, then a successful one: the second result is exactly ok; the first is unchanged', async () => {
+    const one = fi0(installFixture())
+    fs.mkdirSync(one.fx.realDir)
+    const first = await runAt(one)
+    const firstCopy = { ...first.result }
+    expect(first.result).toMatchObject({ ok: false, claimLeft: false })
+    const two = fi0(installFixture())
+    const second = await runAt(two)
+    // No field of the failure carried over, and the earlier result was not rewritten.
+    expect(second.result).toEqual({ ok: true })
+    expect(first.result).toEqual(firstCopy)
+    expect(first.result).not.toBe(second.result)
+    expect(idOf(two.fx.realDir)).toEqual(two.record.newIdentity)
+  })
+
+  it('installAt (doctor) throws the very error installAtReporting returns', async () => {
+    const st = fi0(installFixture())
+    const thrown = new Error('from the test hook')
+    const binding = await bindSkillsRootReadOnly(st.fx.skillsDir)
+    if (binding === null) throw new Error('no binding')
+    const id = bindIdentity(st.newDir)
+    if (!id.ok) throw new Error('N has no identity')
+    const r = await withSkillWriteLock(binding, 'test installAt', async (ctx) => {
+      const s = recoveryState({
+        record: st.record,
+        binding: ctx,
+        ctx,
+        options: {
+          hooks: {
+            afterClaim: () => {
+              throw thrown
+            },
+          },
+        },
+      })
+      return installAt(s, st.newDir, null, { identity: id, hash: st.record.postTree }).then(
+        () => null,
+        (e: unknown) => e
+      )
+    })
+    expect(r.ok && r.value).toBe(thrown)
   })
 
   it('one error object thrown before the claim in one call and after it in the next: false, then true', async () => {

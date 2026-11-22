@@ -27,9 +27,11 @@ All notable changes to `@skillsmith/core` are documented here.
   touches that folder; the companion file is removed only when its full identity still matches, and
   one with no bound identity is left and reported; one check runs before the companion's
   agents-directory `mkdir -p`, which with any ancestor it creates is not tracked, and the rollback
-  `rmdir`s only the agents directory it created, as before), and
-  an optional per-call `InstallAtOutcome` for doctor's put-back (`installAt`), set on every throw,
-  telling a failure that touched nothing from one that may have left the claim. A fresh `skillsmith install` and a private-registry install behave as before.
+  `rmdir`s only the agents directory it created, as before), and `installAtReporting`, a form of
+  doctor's put-back that never throws and returns, per call, either success or the original error
+  with whether the claim may have been left (false only when nothing was touched). Doctor keeps
+  `installAt`, which throws the same error. A fresh `skillsmith install` and a private-registry
+  install behave as before.
 - **Fixed**: SMI-6531 -- (#3280 retro) a live install record's prune protection covers its own
   set-aside copy by place and identity: the copy at the record's
   `<root>/.skillsmith-parked/<opId>/<dir>-<8 hex>` whose folder identity is the one the install

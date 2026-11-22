@@ -4,7 +4,10 @@
  * one-device sidecar rewrite", UD38; design § 4 "`resumePublish`", "Undo
  * resume").
  *
- *  - `installAt(st, src, claim, expect)`: put O or N at the skill path.
+ *  - `installAt(st, src, claim, expect)`: put O or N at the skill path
+ *    (doctor's callers; it throws). `installAtReporting`, same arguments,
+ *    never throws: it returns `{ ok: true }` or the original error with
+ *    whether the claim may be left (the staged install, 8-i-a-3b).
  *    Without a claim, claim-publish (`mkdir` T, sync R, `check`, `rename`,
  *    sync R), then sync OP. With an existing empty claim (UN1, an S1 or FI1
  *    resume): its identity must be the one the re-plan observed and it must
@@ -17,8 +20,8 @@
  *    rename (an empty claim made by this call is left for the next run, as
  *    S1/FI1); the record is kept. Without a claim, `check` runs immediately
  *    before the claim's `mkdir` and again in claimPublish's `beforeRename`
- *    (not its test seam), and a throw sets the caller's `InstallAtOutcome`:
- *    whether the claim may be left (8-i-a-3a, design § 1.6).
+ *    (not its test seam); `installAtReporting` says, per call, whether the
+ *    claim may be left (8-i-a-3a, design § 1.6).
  *  - `keepRole(st, ...)`: keep a role's tree. A verified keep (P5) is done; a
  *    source with no keep goes through `publishTree`; a started keep resumes
  *    from its sub-state: P0 (a provable temp unlinked, then `publishTree`),
@@ -125,25 +128,22 @@ function assertSourceAsPlanned(src: string, expect: SourceExpect): void {
 }
 
 /**
- * What one `installAt` call says about the skill path when it throws
- * (8-i-a-3a, design § 1.6). The caller passes a fresh object per call;
- * `installAt` sets it on every path that throws and leaves it untouched when
- * it returns. Per call, never keyed by the error: one error object can be
- * thrown before the claim in one call and after it in another.
+ * What one `installAtReporting` call returns (8-i-a-3a, design § 1.6): a
+ * fresh object per call, so no answer is shared with or kept from another
+ * call, and never keyed by the error (one error object can be thrown before
+ * the claim in one call and after it in another). `error` is the thrown value
+ * itself, unchanged (class, message, cause).
+ *
+ * `claimLeft` is false only for a failure known to have touched nothing: the
+ * `check` immediately before the claim's `mkdir`, `target-exists` and
+ * `claim-failed`. It is true for every other failure, an unknown one included
+ * (fail closed): the claim's sync, a stop between the claim and the rename
+ * (the re-check, the source re-check), the rename, every sync after it, and
+ * any failure with a claim passed in (that claim exists already).
  */
-export interface InstallAtOutcome {
-  /**
-   * False only for a failure known to have touched nothing: the `check`
-   * immediately before the claim's `mkdir`, `target-exists` and
-   * `claim-failed`. True for every other throw, an unknown one included (fail
-   * closed): the claim's sync, a stop between the claim and the rename (the
-   * re-check, the source re-check), the rename, every sync after it, and any
-   * throw with a claim passed in (that claim exists already).
-   */
-  claimLeft: boolean
-}
+export type InstallAtResult = { ok: true } | { ok: false; error: unknown; claimLeft: boolean }
 
-/** Where a throw out of `installAt` happened, as far as the claim goes. */
+/** Where a failure of one call happened, as far as the claim goes. */
 interface ClaimPhase {
   /**
    * True only while a throw is known to touch nothing at the skill path (the
@@ -155,23 +155,36 @@ interface ClaimPhase {
 
 /**
  * Puts `src` (O or N, a directory in OP) at the skill path, if it is still
- * `expect`. A throw sets `outcome.claimLeft` (when given) before it propagates;
- * the error itself is unchanged.
+ * `expect`; never throws. A failure comes back with the original error and
+ * whether the claim may be left.
+ */
+export async function installAtReporting(
+  st: SwapState,
+  src: string,
+  claim: RecordIdentity | null,
+  expect: SourceExpect
+): Promise<InstallAtResult> {
+  const phase: ClaimPhase = { touchedNothing: false }
+  try {
+    await installAtUnreported(st, src, claim, expect, phase)
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error, claimLeft: !phase.touchedNothing }
+  }
+}
+
+/**
+ * Puts `src` (O or N, a directory in OP) at the skill path, if it is still
+ * `expect`. Throws the original error (doctor's callers).
  */
 export async function installAt(
   st: SwapState,
   src: string,
   claim: RecordIdentity | null,
-  expect: SourceExpect,
-  outcome?: InstallAtOutcome
+  expect: SourceExpect
 ): Promise<void> {
-  const phase: ClaimPhase = { touchedNothing: false }
-  try {
-    await installAtUnreported(st, src, claim, expect, phase)
-  } catch (err) {
-    if (outcome !== undefined) outcome.claimLeft = !phase.touchedNothing
-    throw err
-  }
+  const r = await installAtReporting(st, src, claim, expect)
+  if (!r.ok) throw r.error
 }
 
 async function installAtUnreported(
