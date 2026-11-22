@@ -67,7 +67,7 @@ export interface PreparedUninstallPark {
 }
 
 /** `skillsmith restore <opId>`: row 3's restore line. */
-export const restoreCommandFor = (opId: string): string => `skillsmith restore ${opId}`
+const restoreCommandFor = (opId: string): string => `skillsmith restore ${opId}`
 
 const stopOf = (
   installPath: string,
@@ -228,11 +228,11 @@ export async function dropManifestEntry(
 }
 
 /** What the park under lock 1 ended as. */
-export type UninstallParkOutcome =
+type UninstallParkOutcome =
   | { status: 'parked'; park: ParkResult; manifest: ManifestDrop }
   | { status: 'not-done'; notDone: UninstallNotDone }
 
-export interface UninstallParkRun {
+interface UninstallParkRun {
   outcome: UninstallParkOutcome
   usageWarning: string | null
   hints: string[]
@@ -273,26 +273,35 @@ export async function runUninstallPark(
   const reporter = createParkReporter({ park: a.seams.park })
   const R = p.binding.root
   const indexPath = path.join(path.dirname(path.resolve(a.manifest.path)), PARKED_INDEX_FILE)
-  const locked = await withSkillWriteLock(p.binding, 'uninstall', async (ctx) => {
-    await a.seams.beforePark?.()
-    ctx.check()
-    const r = await reporter.park(R, p.name, {
-      client: a.client,
-      caller: 'uninstall',
-      kind: 'uninstall',
-      opId: p.opId,
-      guardHash: p.guardHash,
-      expectIdentity: p.expectIdentity,
-      maxBirthtimeNs: p.maxBirthtimeNs,
-      rootKey: rootKeyOf(R),
-      indexPath,
-    })
-    if (r.status !== 'parked') {
-      return { r, outcome: { status: 'not-done', notDone: notDoneOf(a.installPath, p.opId, r) } }
+  const locked = await withSkillWriteLock(
+    p.binding,
+    'uninstall',
+    async (
+      ctx
+    ): Promise<{
+      r: ParkResult
+      outcome: UninstallParkOutcome
+    }> => {
+      await a.seams.beforePark?.()
+      ctx.check()
+      const r = await reporter.park(R, p.name, {
+        client: a.client,
+        caller: 'uninstall',
+        kind: 'uninstall',
+        opId: p.opId,
+        guardHash: p.guardHash,
+        expectIdentity: p.expectIdentity,
+        maxBirthtimeNs: p.maxBirthtimeNs,
+        rootKey: rootKeyOf(R),
+        indexPath,
+      })
+      if (r.status !== 'parked') {
+        return { r, outcome: { status: 'not-done', notDone: notDoneOf(a.installPath, p.opId, r) } }
+      }
+      const manifest = await dropManifestEntry(a.manifest, a.manifestKey, a.loaded)
+      return { r, outcome: { status: 'parked', park: r, manifest } }
     }
-    const manifest = await dropManifestEntry(a.manifest, a.manifestKey, a.loaded)
-    return { r, outcome: { status: 'parked', park: r, manifest } }
-  })
+  )
   // Lock 1 is released here.
   const hints: string[] = []
   if (locked.gitignoreHint !== undefined) hints.push(locked.gitignoreHint)
@@ -308,7 +317,7 @@ export async function runUninstallPark(
     listing: { ...a.seams.usage, roots: [...extraRoots, R] },
   })
   const outcome: UninstallParkOutcome = locked.ok
-    ? (locked.value.outcome as UninstallParkOutcome)
+    ? locked.value.outcome
     : { status: 'not-done', notDone: stopOf(a.installPath, locked.stop).notDone }
   return { outcome, usageWarning, hints }
 }
@@ -337,11 +346,12 @@ export function notDoneMessage(skillName: string, n: UninstallNotDone): string {
   )
 }
 
-/** The parked line: where the folder went, about how much it holds, and the prune command. */
+/** The parked line: where the folder went, how to put it back, how much it holds, and the prune command. */
 export function parkedMessage(skillName: string, park: ParkResult, opId: string): string {
   const bytes = typeof park.bytes === 'number' ? `about ${human(park.bytes)}` : 'its space'
   return (
     `Skill "${skillName}" has been uninstalled successfully. Its folder was set aside at ` +
-    `${String(park.path)}; to reclaim ${bytes}, see \`skillsmith doctor backups --prune --op ${opId}\`.`
+    `${String(park.path)}; \`${restoreCommandFor(opId)}\` puts it back; ` +
+    `to reclaim ${bytes}, see \`skillsmith doctor backups --prune --op ${opId}\`.`
   )
 }

@@ -168,8 +168,11 @@ describe('removeSkill', () => {
 })
 
 describe('printParkResultLines', () => {
-  it('prints nothing when there is nothing to say', () => {
+  it('prints nothing for an empty result and the space warning to stderr when there is one', () => {
     printParkResultLines({})
     expect(errors).toEqual([])
+    // Known-positive for the same instrument: it does print when there is something.
+    printParkResultLines({ usageWarning: 'w' })
+    expect(errors).toEqual(['w'])
   })
 })
