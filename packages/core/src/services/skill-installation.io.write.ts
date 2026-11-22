@@ -32,9 +32,11 @@ import { mkdirNoFollow } from './skill-installation.io.dirs.js'
  * The opt-in staged mode (SMI-6531 8-i-a-3a, design § 1.3): write into
  * `dir`, a folder the caller already made (the staged install's `OP/new`),
  * equal to `installPath`. The call creates nothing outside it except the
- * companion file (and its agents directory), runs `beforeCreate` before every
- * create (each tracked write, each sub-directory `mkdir`, the companion's
- * directory), binds each thing it creates with its full identity, treats the
+ * companion file (and its agents directory), runs `beforeCreate` immediately
+ * before every create (each tracked write, each sub-directory `mkdir`, and once
+ * before the companion's agents-directory `mkdir -p`), binds each file and
+ * directory it creates inside the folder, and the companion file, with its full
+ * identity (the agents directory and its ancestors are not bound), treats the
  * install as fresh for the companion rule, and its rollback (in-call or
  * returned) never restores, unlinks or removes anything under `dir`.
  */
@@ -42,7 +44,12 @@ export interface WriteInstallOptions {
   staged?: { dir: string; beforeCreate: () => void }
 }
 
-/** Staged mode: everything the call created, with the identity bound right after its create (null: the bind failed). */
+/**
+ * Staged mode: one entry the call created (inside the staged folder, or the
+ * companion file), with the identity bound right after its create (null: the
+ * bind failed). The companion's agents directory and its ancestors are not
+ * entries (see `WriteInstallResult.stagedCreated`).
+ */
 export interface StagedCreated {
   path: string
   type: 'file' | 'dir'
@@ -74,7 +81,13 @@ export interface WriteInstallResult {
    * resolves without throwing and the caller should rethrow its own error.
    */
   rollback: (causeError: unknown) => Promise<void>
-  /** Staged mode only: every file and directory the call created, in creation order. */
+  /**
+   * Staged mode only: every file and directory the call created inside the
+   * staged folder, and the companion file, in creation order. Not tracked:
+   * the companion's agents directory and any ancestor its `mkdir -p` creates
+   * (one check runs before that `mkdir`; the rollback `rmdir`s only the
+   * directory-package agent directory it created, as before).
+   */
   stagedCreated?: StagedCreated[]
 }
 
@@ -232,10 +245,12 @@ export async function writeInstallFiles(
   }
 
   async function performTrackedWrite(filePath: string, content: string): Promise<void> {
-    beforeCreate?.()
+    // Staged mode: the caller's check runs immediately before each write
+    // call, after the classification's own await (8-i-a-3a governance 5).
     const classification = await classifyPreWrite(filePath)
     if (classification.kind === 'regular') {
       t.overwritten.push(classification.snapshot)
+      beforeCreate?.()
       await safeWriteFile(filePath, content)
     } else if (classification.kind === 'absent') {
       // SMI-6529 L14(b): exclusive create. Atomic w.r.t. "did this call
@@ -252,6 +267,7 @@ export async function writeInstallFiles(
       // recorded at all, since the `createdFresh.push()` call sat after the
       // awaited call that just threw — leaving an orphan rollback never knew
       // to unlink.
+      beforeCreate?.()
       await safeCreateFile(filePath, content, undefined, (identity) => {
         if (staged === undefined) {
           t.createdFresh.push({ path: filePath, identity })
@@ -274,6 +290,7 @@ export async function writeInstallFiles(
       // 'other' (symlink, directory, etc.) — record nothing. `safeWriteFile`
       // itself refuses to touch it before any byte is written, so there is
       // nothing to roll back and it must never be unlinked.
+      beforeCreate?.()
       await safeWriteFile(filePath, content)
     }
     writtenFiles.push(filePath)

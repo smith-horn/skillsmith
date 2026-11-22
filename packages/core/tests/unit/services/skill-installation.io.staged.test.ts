@@ -14,6 +14,9 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const removals = vi.hoisted(() => ({ calls: [] as Array<{ op: string; path: string }> }))
+// One-shot: the next `open` of this path returns a handle whose `stat` fails
+// (safeCreateFile's fstat), so the create reports no identity.
+const statFails = vi.hoisted(() => ({ path: null as string | null }))
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>()
   const wrap =
@@ -22,8 +25,23 @@ vi.mock('fs/promises', async (importOriginal) => {
       removals.calls.push({ op, path: String(p) })
       return f(p, ...a)
     }
+  const open = async (...a: Parameters<typeof actual.open>) => {
+    const h = await actual.open(...a)
+    if (statFails.path === null || String(a[0]) !== statFails.path) return h
+    statFails.path = null
+    return new Proxy(h, {
+      get(target, key) {
+        if (key === 'stat') {
+          return () => Promise.reject(Object.assign(new Error('forced'), { code: 'EIO' }))
+        }
+        const v = Reflect.get(target, key, target) as unknown
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v
+      },
+    })
+  }
   return {
     ...actual,
+    open,
     unlink: wrap('unlink', actual.unlink as (p: string) => Promise<void>),
     rmdir: wrap('rmdir', actual.rmdir as (p: string) => Promise<void>),
     rm: wrap('rm', actual.rm as (p: string) => Promise<void>),
@@ -32,10 +50,13 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 const { writeInstallFiles } = await import('../../../src/services/skill-installation.io.write.js')
 const { bindIdentity, sameIdentity } = await import('../../../src/install/park-tree.identity.js')
+const { InstallRestoreError } =
+  await import('../../../src/services/skill-installation.io.rollback.js')
 
 const bases: string[] = []
 afterEach(() => {
   removals.calls = []
+  statFails.path = null
   for (const b of bases.splice(0)) fs.rmSync(b, { recursive: true, force: true })
 })
 
@@ -218,6 +239,23 @@ describe('writeInstallFiles staged mode: rollback never touches N', () => {
     fs.writeFileSync(l.companion, 'someone else’s\n')
     await r.rollback(new Error('later'))
     expect(fs.readFileSync(l.companion, 'utf8')).toBe('someone else’s\n')
+    expect(removals.calls.filter((c) => c.op === 'unlink')).toEqual([])
+    expect(fs.existsSync(path.join(l.newDir, 'SKILL.md'))).toBe(true)
+  })
+
+  it('a companion created with no identity (its fstat failed): the rollback leaves it and reports it', async () => {
+    const l = layout()
+    statFails.path = l.companion
+    const r = await write(l, () => {})
+    expect(statFails.path).toBeNull()
+    const companionEntry = (r.stagedCreated ?? []).find((c) => c.path === l.companion)
+    expect(companionEntry).toEqual({ path: l.companion, type: 'file', identity: null })
+    const err = await r.rollback(new Error('later')).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(InstallRestoreError)
+    expect((err as InstanceType<typeof InstallRestoreError>).cleanupFailures).toEqual([
+      `${l.companion} (its identity could not be bound when created; left in place)`,
+    ])
+    expect(fs.existsSync(l.companion)).toBe(true)
     expect(removals.calls.filter((c) => c.op === 'unlink')).toEqual([])
     expect(fs.existsSync(path.join(l.newDir, 'SKILL.md'))).toBe(true)
   })

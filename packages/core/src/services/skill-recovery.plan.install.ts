@@ -86,6 +86,14 @@ function setAsideNote(f: OpFacts): string {
   return r.differs ? `${offer}; restore will say it differs from what was set aside` : offer
 }
 
+/**
+ * FI4 under a manifest entry another writer changed (8-i-a-3a, FI4 widened):
+ * restore puts the folder back under that entry and never changes it.
+ */
+const OTHER_WRITER_NOTE =
+  'the manifest entry for this skill was changed by another writer after the install; ' +
+  '`skillsmith restore` puts the folder back and does not change that entry'
+
 /** FI0/FI1 `--apply`: N to the skill path and the commit, unless N no longer hashes to `postTree`. */
 function installPlan(f: OpFacts, claimed: boolean): ActionPlan {
   if (f.nHashesToPost !== true) {
@@ -220,6 +228,7 @@ export function installRowPlan(
         [...resumes(f)],
         [
           setAsideNote(f),
+          ...(f.manifest === 'other' ? [OTHER_WRITER_NOTE] : []),
           '`--apply` and `--undo` are the same here: the install was already rolled back',
         ]
       )

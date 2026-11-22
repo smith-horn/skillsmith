@@ -256,6 +256,10 @@ describe('T-FI3 and T-FI4', () => {
       expect(a.planned.status === 'planned' && a.planned.plan.notes.join(' ')).toContain(
         `skillsmith restore ${st.parked}`
       )
+      // Under the planned entry, no other-writer line (8-i-a-3a governance 8).
+      expect(a.planned.status === 'planned' && a.planned.plan.notes.join(' ')).not.toContain(
+        'changed by another writer'
+      )
       onlyMetadataRemoved(a.trace, st.fx)
     })
 
@@ -272,6 +276,13 @@ describe('T-FI3 and T-FI4', () => {
       expect(fs.existsSync(st.fx.realDir)).toBe(false)
       expect(fs.existsSync(st.opDir)).toBe(false)
       expect(a.trace.filter((t) => t.op === 'manifest-write')).toHaveLength(0)
+      // The note says another writer changed the entry and restore leaves it; restore is still offered.
+      const notes = a.planned.status === 'planned' ? a.planned.plan.notes : []
+      expect(notes).toContain(
+        'the manifest entry for this skill was changed by another writer after the install; ' +
+          '`skillsmith restore` puts the folder back and does not change that entry'
+      )
+      expect(notes.join(' ')).toContain(`skillsmith restore ${st.parked}`)
       onlyMetadataRemoved(a.trace, st.fx)
     })
   }

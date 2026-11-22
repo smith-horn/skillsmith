@@ -80,7 +80,7 @@ export function newWriteTracker(stagedDir: string | null): WriteTracker {
 }
 
 /** True when `p` is the staged folder or under it (always false in the in-place mode). */
-export function underStaged(t: Pick<WriteTracker, 'stagedDir'>, p: string): boolean {
+function underStaged(t: Pick<WriteTracker, 'stagedDir'>, p: string): boolean {
   if (t.stagedDir === null) return false
   const r = path.resolve(p)
   return r === t.stagedDir || r.startsWith(t.stagedDir + path.sep)
@@ -141,6 +141,15 @@ export async function performRollback(
   const cleanupFailures: string[] = []
   for (const entry of t.createdFresh) {
     if (underStaged(t, entry.path)) continue
+    // Staged mode: a file created without a full identity (the create's
+    // fstat failed, or the path no longer named the inode it opened) is
+    // never unlinked by path alone; it is reported and left.
+    if (t.stagedDir !== null && entry.bound === undefined) {
+      cleanupFailures.push(
+        `${entry.path} (its identity could not be bound when created; left in place)`
+      )
+      continue
+    }
     const same = await stillCreated(entry, cleanupFailures)
     if (same !== true) continue
     await cleanupStep(entry.path, () => fs.unlink(entry.path), ['ENOENT'], cleanupFailures)
@@ -208,7 +217,12 @@ export interface CompanionWrite {
   companionBaseDir: string | undefined
   /** writeInstallFiles' queued, classified write. */
   writeTracked: (filePath: string, content: string) => Promise<void>
-  /** Staged mode: runs before each create outside the staged folder too. */
+  /**
+   * Staged mode: runs once before the agents directory's `mkdir -p` (that
+   * directory and any ancestor it creates are not tracked or bound; the
+   * rollback `rmdir`s only the directory-package agent directory it created,
+   * as before), and, through `writeTracked`, before the companion file's create.
+   */
   beforeCreate: (() => void) | undefined
 }
 

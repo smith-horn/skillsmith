@@ -36,6 +36,7 @@
  * @module @skillsmith/core/services/skill-swap.undo
  */
 import fs from 'node:fs'
+import path from 'node:path'
 import { claimPublish } from './skill-tree.js'
 import { treeHashOf } from './skill-tree.js'
 import {
@@ -117,6 +118,18 @@ async function restoreOld(st: SwapState, oldDir: string, realDir: string): Promi
   trace(st, { op: 'dirsync', path: root })
   trace(st, { op: 'rename', path: oldDir, dest: realDir })
   trace(st, { op: 'dirsync', path: root })
+  // The parent O left (OP), synced by claimPublish after the destination
+  // (8-i-a-3a). Its failure stops the undo here: a later sync of OP on a new
+  // descriptor can report success after the failed write-back (Linux reports
+  // an fsync error once), so the sync below cannot stand in for it.
+  const source = r.syncs.source
+  if (source.outcome === 'failed') {
+    throw new SwapFault(
+      'write-failed',
+      `${path.dirname(oldDir)} could not be synced (${source.code})`,
+      source.error
+    )
+  }
   await syncDir(st, st.opDir)
 }
 

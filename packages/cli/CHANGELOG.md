@@ -8,7 +8,8 @@ All notable changes to `@skillsmith/cli` are documented here.
   folder's records could not be listed says "the records of unfinished operations in `<staging>`";
   `skillsmith restore` warns when the folder the copy was set aside in cannot be synced; `skillsmith
   doctor recovery` shows an install's set-aside copy as FI4 when another writer changed its manifest
-  entry. `skillsmith install` and `skillsmith registry install` are unchanged.
+  entry, with a note that restore does not change that entry; `skillsmith update` whose undo cannot
+  sync the op dir stops instead of reporting the update undone. `skillsmith install` and `skillsmith registry install` are unchanged.
 
 - **Fixed**: SMI-6531 -- (#3280 retro) `skillsmith doctor recovery` offers
   `skillsmith restore <copy path>` (quoted as one shell word when the path needs it) for an FI4 copy only when restore's sidecar and origin-folder
