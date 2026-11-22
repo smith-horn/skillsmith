@@ -109,7 +109,9 @@ export {
   // SMI-5905 Wave 1: content-based install path (private registry).
   type SkillContent,
   type InstallFromContentOptions,
+  type UninstallNotDone,
   type UninstallOptions,
+  type UninstallParkSeams,
   type UninstallResult as CoreUninstallResult,
   type SkillManifest,
   type SkillManifestEntry,

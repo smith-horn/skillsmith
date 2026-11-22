@@ -107,6 +107,11 @@ function buildScopeError(skillName: string, error: Error): UninstallResult {
   }
 }
 
+/** The warning a claimed uninstall carries instead of tearing down fan-out links. */
+export const CLAIMED_LINKS_NOTE =
+  'another install claimed this name while it was being removed, so its cross-client links ' +
+  'were left in place for that install'
+
 /**
  * Uninstall a skill from the local agent skills directory (~/.claude/skills/).
  *
@@ -178,23 +183,32 @@ async function uninstallSkillImpl(
   // was meant to go. Requiring scope === 'global' too closes that — a
   // fan-out is always global-canonical-to-global-client, so BOTH client
   // identity AND scope are correctness-relevant here, not client alone.
+  // SMI-6531 8-i-a-1 gate Major 2: when another install claimed the name while
+  // this one was being removed, the links recorded under it are that install's.
+  // Only the removal that owns fan-out links (canonical, global) says so.
   if (result.success && effectiveClient === CANONICAL_CLIENT && scopeTarget.scope === 'global') {
-    try {
-      // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
-      // refused to remove (e.g. a recorded fan-out copy that has since
-      // become a real `.git` working tree) instead of silently discarding
-      // both the manifest entry and the content. Surface the refusal in
-      // the tool result's `warning` field, not only stderr — matching N7's
-      // "MCP must surface fan-out refusals in the tool result" requirement
-      // for the sibling `install_skill` refusal path.
-      const { refused, warnings } = await removeLinks(input.skillName)
-      const notes = [...refused.map((r) => r.reason), ...(warnings ?? [])]
-      if (notes.length > 0) {
-        const refusalText = notes.join('; ')
-        result.warning = result.warning ? `${result.warning}; ${refusalText}` : refusalText
+    if (result.claimedByAnotherInstall === true) {
+      result.warning = result.warning
+        ? `${result.warning}; ${CLAIMED_LINKS_NOTE}`
+        : CLAIMED_LINKS_NOTE
+    } else {
+      try {
+        // SMI-6529 N6 (round 4): `removeLinks` now reports destinations it
+        // refused to remove (e.g. a recorded fan-out copy that has since
+        // become a real `.git` working tree) instead of silently discarding
+        // both the manifest entry and the content. Surface the refusal in
+        // the tool result's `warning` field, not only stderr — matching N7's
+        // "MCP must surface fan-out refusals in the tool result" requirement
+        // for the sibling `install_skill` refusal path.
+        const { refused, warnings } = await removeLinks(input.skillName)
+        const notes = [...refused.map((r) => r.reason), ...(warnings ?? [])]
+        if (notes.length > 0) {
+          const refusalText = notes.join('; ')
+          result.warning = result.warning ? `${result.warning}; ${refusalText}` : refusalText
+        }
+      } catch {
+        // Manifest read/write failure should never fail the uninstall.
       }
-    } catch {
-      // Manifest read/write failure should never fail the uninstall.
     }
   }
 

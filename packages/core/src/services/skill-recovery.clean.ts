@@ -61,6 +61,7 @@ import type {
 import { SHORTER_STATE_ROOT_REMEDY, writeParkIntent } from './skill-swap.intent.js'
 import { processOwnerNow, check, hook, opPaths, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { createParkReporter } from './park-report.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
 import type { ManifestPort, SwapOptions } from './skill-swap.types.js'
@@ -118,6 +119,7 @@ function noRecordState(ctx: SkillWriteContext, cls: NoRecord, options: SwapOptio
       manifest: refusingPort,
     },
     options,
+    reporter: createParkReporter({ park: options.park }),
     opId: cls.opId,
     binding: ctx,
     warnings: [],

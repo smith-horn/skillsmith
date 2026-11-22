@@ -21,9 +21,8 @@ vi.mock('@skillsmith/core', async (importOriginal) => {
   }
 })
 
-import type { RecoveryRunResult } from '@skillsmith/core'
 import { runDoctorBackups } from './doctor.backups.js'
-import { parked, runRecoveryAction } from './doctor.recovery.action.js'
+import { runRecoveryAction } from './doctor.recovery.action.js'
 import { hermeticDiscovery, plantCrashedUpdate } from './doctor.test-helpers.js'
 import type { PlantedUpdate } from './doctor.test-helpers.js'
 
@@ -114,6 +113,8 @@ function plantNoRecord(stateRoot: string): { root: string; opDir: string } {
 const assertWarned = (): void => {
   const e = err.join('\n')
   expect(e).toContain(WORDS)
+  // Step 8-i-a-1: printed once, from core's park-result path, never also by the CLI.
+  expect(err.filter((line) => line.includes(WORDS))).toHaveLength(1)
   expect(e).toContain('skillsmith doctor backups')
   expect(e).not.toMatch(/trash/i)
   expect(out.join('\n')).not.toContain(WORDS)
@@ -198,73 +199,6 @@ describe('SMI-7127 through the doctor actions: entries that could not be measure
     const u = plantUnreadable()
     await runRecoveryAction({ park: u.opId, yes: true })
     expect(err).toEqual([])
-  })
-})
-
-describe('D8: the predicate that says a park happened', () => {
-  const done = (over: Record<string, unknown>): RecoveryRunResult =>
-    ({
-      status: 'done',
-      opId: 'a',
-      action: 'apply',
-      from: 'S2',
-      installed: null,
-      kept: [],
-      extraCopy: null,
-      manifest: 'committed',
-      audit: { kind: 'none' },
-      warnings: [],
-      swept: {},
-      ...over,
-    }) as unknown as RecoveryRunResult
-  const stopped = (opDir?: { path: string; stillThere: boolean }): RecoveryRunResult =>
-    ({
-      status: 'stopped',
-      opId: 'a',
-      reason: 'r',
-      detail: 'd',
-      recordPath: null,
-      warnings: [],
-      opDir,
-    }) as never
-
-  it('is true for a kept OP tree (--park, --clean-staging finishing abort-new)', () => {
-    expect(parked(done({ kept: [{ tree: 'OP', kind: 'abort-new', path: '/p' }] }))).toBe(true)
-    expect(parked(done({ kept: [{ tree: 'O', kind: 'backup', path: '/p' }] }))).toBe(false)
-  })
-
-  it('is true for an extra copy, and for a held park that names where it moved', () => {
-    expect(parked(done({ extraCopy: '/p' }))).toBe(true)
-    expect(
-      parked(
-        done({
-          warnings: [
-            {
-              code: 'removal-not-done',
-              path: '/op',
-              status: 'held',
-              reason: 'r',
-              parkedPath: '/held',
-            },
-          ],
-        })
-      )
-    ).toBe(true)
-  })
-
-  it('is false when a park was refused before it moved anything', () => {
-    expect(
-      parked(
-        done({ warnings: [{ code: 'removal-not-done', path: '/op', status: 'kept', reason: 'r' }] })
-      )
-    ).toBe(false)
-    expect(parked(done({}))).toBe(false)
-  })
-
-  it('a stop is a park only when the op dir is no longer where it was', () => {
-    expect(parked(stopped({ path: '/op', stillThere: false }))).toBe(true)
-    expect(parked(stopped({ path: '/op', stillThere: true }))).toBe(false)
-    expect(parked(stopped(undefined))).toBe(false)
   })
 })
 

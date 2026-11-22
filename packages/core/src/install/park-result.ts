@@ -81,6 +81,11 @@ export interface ParkResult extends ParkResultFields {
   sidecarError?: string
   /** A failed parked-index append; does not change the status. */
   indexError?: string
+  /**
+   * A moved tree's size, the sidecar's `bytes` (apparent bytes, null when it
+   * could not be counted); present only on `parked` and `held` (A1 step 8-i-a-1).
+   */
+  bytes?: number | null
   /** The parked area's `mkdirWithParentBits` warnings, present only when there are any. */
   warnings?: string[]
   /**

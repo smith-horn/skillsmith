@@ -268,6 +268,10 @@ export function usageFromLedger(rows: readonly LedgerRow[]): ParkedUsageEntry[] 
       unmeasured: d.kind === 'measured' ? 0 : Math.max(1, m?.unmeasured ?? 0),
       originPath: r.originPath,
       opId: r.label,
+      // Structure (a level directory's own inode, a copy's sidecar) counts toward
+      // the total but is never named among the largest; copies, entries holding
+      // data (review (C)) and the old store are.
+      listed: r.item !== null,
     })
   }
   return out

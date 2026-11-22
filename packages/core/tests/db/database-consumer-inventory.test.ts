@@ -156,7 +156,7 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   'packages/cli/src/commands/import.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/info.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/install.action.ts': { sites: 1, note: 'read-write; wrapper' },
-  'packages/cli/src/commands/manage.action.ts': { sites: 1, note: 'read-write; wrapper' },
+  'packages/cli/src/commands/manage.remove.ts': { sites: 1, note: 'read-write; wrapper' },
   'packages/cli/src/commands/manage.update.helpers.ts': { sites: 1, note: 'read-write; wrapper' },
   // `update` does not abort on a refusal the way every other command does: its
   // `getSkillDiff` call sits inside `updateSkillWithOutcome`'s try, whose catch

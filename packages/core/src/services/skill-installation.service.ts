@@ -291,6 +291,7 @@ export class SkillInstallationService {
       skillDependencyRepo: this.skillDependencyRepo,
       onProgress: this.onProgress,
       client: this.client,
+      ...(options.park === undefined ? {} : { park: options.park }),
     })
   }
 }
