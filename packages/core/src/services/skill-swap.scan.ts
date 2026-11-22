@@ -8,7 +8,11 @@
  * Precedence: a staging listing that fails stops `staging-unsafe`; then any
  * unreadable record (`recovery-record-unreadable`, the whole root); then a
  * verified record naming this skill (`recovery-pending`, this skill only).
- * The messages are §3.9's.
+ * The messages are §3.9's. Since 8-i-a-2 they name the kind of operation: a
+ * fresh install's record blocks only its own skill as an update's does, and
+ * says "install"; the root-wide refusal says "update" only when every
+ * blocking record parsed as an update's, and "operation" otherwise (an
+ * install's, or one whose kind cannot be read).
  *
  * A step-1 failure's abort cleanup runs the same scan under the lock 1 it
  * takes (owner decision 2026-10-24, T-X2): after a crash between the renames
@@ -20,6 +24,7 @@
 import { SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { recordsNaming, scanStagingRecords } from './skill-swap.records.js'
+import type { PendingRecord } from './skill-swap.records.js'
 
 const DOCTOR_RECOVERY = 'skillsmith doctor recovery'
 
@@ -27,6 +32,13 @@ const parkCommand = (opIds: readonly string[]): string =>
   opIds.length === 1
     ? `\`skillsmith doctor recovery --park ${opIds[0]}\``
     : `\`skillsmith doctor recovery --park <opId>\` for each of ${opIds.join(', ')}`
+
+/** "install" or "update" when every naming record is of that op; "operation" when they differ. */
+function operationWord(naming: readonly PendingRecord[]): string {
+  const ops = new Set(naming.map((r) => r.op))
+  if (ops.size !== 1) return 'operation'
+  return ops.has('install') ? 'install' : 'update'
+}
 
 /** Step 3. Throws `SwapFault` (`staging-unsafe`, `recovery-record-unreadable`, `recovery-pending`). */
 export async function refuseIfRecorded(st: SwapState): Promise<void> {
@@ -93,9 +105,11 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
           ]
         : []),
     ].join(' ')
+    // "update" only when every blocking record parsed as one; any other kind, or none known, is an operation.
+    const what = scan.unreadable.every((r) => r.op === 'update') ? 'update' : 'operation'
     return new SwapFault(
       'recovery-record-unreadable',
-      `A record of an unfinished update in ${root} can't be read, so no skill in that folder can ` +
+      `A record of an unfinished ${what} in ${root} can't be read, so no skill in that folder can ` +
         `be changed until it is inspected. ${advice}`
     )
   }
@@ -104,8 +118,8 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
     st.blockedBy = naming.map((r) => r.opId)
     return new SwapFault(
       'recovery-pending',
-      `The last update of ${st.input.comparedPath} did not finish. Only this skill is blocked. ` +
-        'Run `skillsmith doctor recovery` to finish or undo it.'
+      `The last ${operationWord(naming)} of ${st.input.comparedPath} did not finish. ` +
+        'Only this skill is blocked. Run `skillsmith doctor recovery` to finish or undo it.'
     )
   }
   return null

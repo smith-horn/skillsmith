@@ -39,9 +39,11 @@ const PARK_TREE_GRAPH = [
   'park-tree.ts',
   'park-tree.verify.ts',
   'tree-hash.ts',
+  // 8-i-a-2: the parked area's name (`PARKED_DIR_NAME`), which park-tree.destination.ts takes from it.
+  'parked-index.name.ts',
 ]
-/** Every module under the boundary: the walk above plus the parked-index entry and its fs-free name module. */
-const PARK_MODULES = [...PARK_TREE_GRAPH, 'parked-index.ts', 'parked-index.name.ts']
+/** Every module under the boundary: the walk above plus the parked-index entry. */
+const PARK_MODULES = [...PARK_TREE_GRAPH, 'parked-index.ts']
 const FS_USERS = [
   'mkdir-parent-bits.ts',
   'park-tree.destination.ts',

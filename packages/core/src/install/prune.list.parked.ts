@@ -21,12 +21,13 @@ import fs from 'node:fs'
 import type { BigIntStats } from 'node:fs'
 import path from 'node:path'
 import { errCode } from './park-result.js'
+import { PARKED_DIR_NAME } from './parked-index.name.js'
 import { inspectLeftover } from './prune.leftovers.js'
 import { mountAt } from './prune.classify.js'
 import type { ListedCopy, ParkedAreaListing } from './prune.list.types.js'
 
 /** The parked area's directory name, under the directory it sits next to. */
-export const PARKED_DIR = '.skillsmith-parked'
+export const PARKED_DIR = PARKED_DIR_NAME
 /** A staging directory's name prefix. */
 export const STAGING_PREFIX = '.prune-'
 /** The name of a parked copy of a dot-named entry: `<name>-<8 hex>` (ADR-166 D-3). */

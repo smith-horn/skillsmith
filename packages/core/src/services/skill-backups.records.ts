@@ -11,6 +11,13 @@
  * normally `<area>/<opId>`, which rule (b) also covers by opId, so (a) is
  * checked first and named when it applies.
  *
+ * Q2 (8-i-a-2): a live fresh-install record protects the parked copy its own
+ * post-claim park made (kind `install-rollback`, the record's opId), the
+ * parked-store analogue of rule (b): while the record is live, doctor's FI4
+ * row names that copy, and a prune that took it would leave the install with
+ * nothing to restore. An install record has no `backupDest`, so rule (a)
+ * gets nothing from it.
+ *
  * `protectionOf` is the one rule set for both stores (6c-ii-b): the listing
  * applies it to every backup tree and every parked copy
  * (`skill-backups.protect.ts`), and the planner adds no rule of its own.
@@ -49,6 +56,12 @@ export interface RecordFacts {
    * hand-built fact set without records stays valid.
    */
   backupDests?: Map<string, string>
+  /**
+   * Q2: verified live install records by opId (the record's path): each
+   * protects the parked `install-rollback` copy carrying its opId. Optional
+   * for the same reason as `backupDests`.
+   */
+  liveInstalls?: Map<string, string>
   /** Records that could not be verified, by root: they block every write there. */
   unreadable: { root: string; record: UnreadableRecord }[]
   /** A root's staging directory could not be scanned: nothing about its records is known. */
@@ -60,6 +73,7 @@ export async function collectRecordFacts(roots: readonly string[]): Promise<Reco
   const facts: RecordFacts = {
     live: new Map(),
     backupDests: new Map(),
+    liveInstalls: new Map(),
     unreadable: [],
     scanFailures: [],
   }
@@ -71,7 +85,13 @@ export async function collectRecordFacts(roots: readonly string[]): Promise<Reco
     }
     for (const r of scan.pending) {
       if (!facts.live.has(r.opId)) facts.live.set(r.opId, r.path)
-      if (!facts.backupDests?.has(r.backupDest)) facts.backupDests?.set(r.backupDest, r.path)
+      // An install record has no backup (`backupDest` null): rule (a) has nothing to protect.
+      if (r.backupDest !== null && !facts.backupDests?.has(r.backupDest)) {
+        facts.backupDests?.set(r.backupDest, r.path)
+      }
+      if (r.op === 'install' && !facts.liveInstalls?.has(r.opId)) {
+        facts.liveInstalls?.set(r.opId, r.path)
+      }
     }
     for (const u of scan.unreadable) facts.unreadable.push({ root, record: u })
   }
@@ -111,7 +131,8 @@ export interface ParkedUnseen {
  * UD61 as a fact, one rule set for both stores: (a) the live record whose
  * `backupDest` is this copy's path; else, for a backup tree, (b) the live
  * record whose opId the tree carries (except a `partial-copy` with
- * `sourceUnchanged: true`); else (c) the parked unreadable record with that
+ * `sourceUnchanged: true`), and for a parked `install-rollback` copy the live
+ * install record whose opId it carries (Q2); else (c) the parked unreadable record with that
  * opId (`parkedUnreadable` maps an opId to the parked copy's path), unless the
  * copy is itself a parked `unreadable-record`. With none, the answer is
  * `unknown` when an unreadable live record carries this opId (D17, named), some
@@ -132,6 +153,10 @@ export function protectionOf(
   const exempt = q.kind === 'partial-copy' && q.sourceUnchanged === true
   const live = parkedStore ? undefined : facts.live.get(q.opId)
   if (live !== undefined && !exempt) return { status: 'protected', rule: 'live-record', path: live }
+  // Q2: the parked copy a live install record's own post-claim park made (FI4).
+  const install =
+    parkedStore && q.kind === 'install-rollback' ? facts.liveInstalls?.get(q.opId) : undefined
+  if (install !== undefined) return { status: 'protected', rule: 'live-record', path: install }
   // Rule (c) and what may hide it do not apply to the parked record copy itself.
   const ruleC = !(parkedStore && q.kind === 'unreadable-record')
   const parked = ruleC ? parkedUnreadable.get(q.opId) : undefined

@@ -52,11 +52,18 @@ function factsLines(f: OpFacts): string[] {
       : r.kind === 'kept'
         ? `kept as ${r.keep.kind} at ${r.keep.destPath}`
         : 'absent'
+  const t = f.record.target
+  const install = f.record.op === 'install'
   const lines = [
-    `    skill: ${f.record.target.comparedPath} (${f.record.target.client}, ${f.record.target.scope})`,
+    // 8-i-a-2: the first line names the operation.
+    ...(install
+      ? [`    install of ${t.dirName} into ${t.skillsDir} (manifest key ${t.manifestKey})`]
+      : []),
+    `    skill: ${t.comparedPath} (${t.client}, ${t.scope})`,
     treeLine('T (skill path)', f.tState, f.t),
   ]
-  for (const role of ['O', 'N', 'U'] as const) {
+  // An install has no old folder, so it has no O line.
+  for (const role of install ? (['N', 'U'] as const) : (['O', 'N', 'U'] as const)) {
     const res = f.roles[role]
     const name = role === 'O' ? 'O (old)' : role === 'N' ? 'N (new)' : 'U (undone)'
     lines.push(
@@ -74,6 +81,15 @@ function factsLines(f: OpFacts): string[] {
       g.otherCopy
         ? `    keep ${g.base}: another copy's keep (an abandon of another op dir with this id); not this op's`
         : `    keep ${g.base}: ${g.state ?? `not classified (${g.unclassified})`}${g.verified ? ', verified' : ''}`
+    )
+  }
+  for (const c of f.parked ?? []) {
+    const sidecar = c.sidecarError ?? (c.sidecar === null ? 'missing' : 'present')
+    const held = c.sidecar?.hold === true ? 'yes' : 'no'
+    lines.push(
+      c.identityMatches
+        ? `    set aside at ${c.path} (sidecar: ${sidecar}; held: ${held})`
+        : `    set aside at ${c.path}: not the installed folder (sidecar: ${sidecar})`
     )
   }
   if (f.fullDevice !== null) {

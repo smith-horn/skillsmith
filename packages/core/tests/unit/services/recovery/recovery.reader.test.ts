@@ -99,6 +99,12 @@ const CLASSIFIER = [
   'skill-recovery.plan.finish.ts',
   // The one-to-one pairing of a partial-copy keep killed before its rename.
   'skill-recovery.pending.ts',
+  // 8-i-a-2: a fresh install's rows, its record's schema and the shape checks both schemas share.
+  'skill-recovery.classify.install.ts',
+  'skill-recovery.plan.install.ts',
+  'skill-recovery.plan.rows.ts',
+  'skill-install.record-schema.ts',
+  'skill-swap.record-shape.ts',
 ]
 const READER = 'skill-recovery.reader.ts'
 

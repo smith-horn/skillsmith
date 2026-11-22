@@ -19,6 +19,11 @@
  * | UN1 | install O (claim, or over the bound empty claim); keep U; finish |
  * | UN2 | keep U unless kept; finish |
  *
+ * Every install of O or N re-checks the tree's identity and the hash the plan
+ * observed immediately before its publishing rename (`installAt`'s `expect`,
+ * 8-i-a-2 Major 1). A fresh install's rows (FI0-FI4, 8-i-a-2) run in
+ * `skill-recovery.run.install.ts` with the same prologue and finish.
+ *
  * Every keep resumes a started one (`skill-recovery.resume.ts`); the kinds are
  * the confirmed plan's. When the commit is the first mutation (S2), a CAS miss
  * is `plan-changed` with zero mutation; after the install (S1) it stops
@@ -46,9 +51,11 @@ import { appendJournalRecordOnce } from '../journal/writer.js'
 import { finishRecovered, sweepRoot } from './skill-recovery.finish.js'
 import { adoptAll, adoptInto, listedNames, preMutationBlocks } from './skill-recovery.adopt.js'
 import { finishRecoveredAcross } from './skill-recovery.park.js'
-import { installAt, keepRole } from './skill-recovery.resume.js'
-import type { KeepContext } from './skill-recovery.resume.js'
+import { installAt } from './skill-recovery.resume.js'
 import { recoveryState } from './skill-recovery.state.js'
+import { claimOf, commitFirst, expectOf, keep, kindIn } from './skill-recovery.run.row.js'
+import type { Row, RowClass } from './skill-recovery.run.row.js'
+import { runInstallRow } from './skill-recovery.run.install.js'
 import { waives } from './skill-recovery.plan.actions.js'
 import type { IdentityWaiver } from './skill-recovery.plan.actions.js'
 import type {
@@ -59,47 +66,13 @@ import type {
   RecoveryRunOptions,
   RecoveryRunResult,
 } from './skill-recovery.run.types.js'
-import type { OpFacts, PlanStep, ReadTranscript, RecoveryClass } from './skill-recovery.types.js'
+import type { OpFacts, ReadTranscript } from './skill-recovery.types.js'
 import { commit, journalInput } from './skill-swap.commit.js'
 import { hook, opPaths, rethrowLockOrder, SwapFault, trace } from './skill-swap.ops.js'
-import type { SwapState } from './skill-swap.ops.js'
 import { publishTree } from './skill-swap.publish.js'
 import { describe } from './skill-swap.abort.js'
 import { undoAside } from './skill-swap.undo.js'
 import type { SkillWriteContext } from './skill-write-lock.types.js'
-
-type RowClass = Extract<RecoveryClass, { kind: 'state' }>
-
-/** The kind the confirmed plan keeps `tree` as. */
-function kindIn(steps: readonly PlanStep[], tree: PlanStep['tree']): string | null {
-  const s = steps.find((x) => x.tree === tree)
-  return s !== undefined && s.disposition.kind === 'kept' ? s.disposition.as : null
-}
-
-interface Row {
-  st: SwapState
-  cls: RowClass
-  steps: readonly PlanStep[]
-  k: KeepContext
-  out: RecoveryDone
-  opts: RecoveryRunOptions
-  journalFile: string
-}
-
-/** Keeps `tree` (a role) as the plan says, recording where. */
-async function keep(row: Row, tree: 'O' | 'N' | 'U'): Promise<void> {
-  const kind = kindIn(row.steps, tree) ?? (tree === 'O' ? 'backup' : null)
-  if (kind === null) return
-  const before = row.k.partials.length
-  const dest = await keepRole(row.st, tree, kind, row.k)
-  // A cross-device resume keeps a copy temp that was not the source (P2) before it copies again.
-  for (const p of row.k.partials.slice(before)) {
-    row.out.kept.push({ tree, kind: 'partial-copy', path: p })
-  }
-  if (dest === null) return
-  row.out.kept.push({ tree, kind, path: dest })
-  if (kind === 'conflict') row.st.warnings.push({ code: 'conflict-kept', path: dest })
-}
 
 /** Step 11 once: `appended`, `present`, or `not-recorded` on a torn tail. */
 async function audit(row: Row): Promise<AuditOutcome> {
@@ -131,18 +104,7 @@ async function audit(row: Row): Promise<AuditOutcome> {
   return { kind: r.outcome, file: r.file }
 }
 
-/** The commit when nothing has moved yet: a CAS miss is the plan having changed. */
-async function commitFirst(row: Row): Promise<'plan-changed' | null> {
-  if ((await commit(row.st)) === 'cas-failed') return 'plan-changed'
-  row.out.manifest = 'committed'
-  await hook(row.st, 'afterCommit')
-  return null
-}
-
-/** The claim at T the re-plan saw, when T is one. */
-const claimOf = (f: OpFacts) => (f.tState === 'claim' && f.t.present ? f.t.identity : null)
-
-/** Runs the row. Returns `plan-changed` when the first mutation found the plan stale. */
+/** Runs an update's row. Returns `plan-changed` when the first mutation found the plan stale. */
 async function runRow(row: Row, action: 'apply' | 'undo'): Promise<'plan-changed' | null> {
   const { st, cls } = row
   const f = cls.facts
@@ -153,7 +115,7 @@ async function runRow(row: Row, action: 'apply' | 'undo'): Promise<'plan-changed
       return null
     case 'S1':
       if (action === 'apply') {
-        await installAt(st, p.newDir, claimOf(f))
+        await installAt(st, p.newDir, claimOf(f), expectOf(st, f, 'N'))
         row.out.installed = 'N'
         if ((await commit(st)) === 'cas-failed') {
           throw new SwapFault(
@@ -167,7 +129,7 @@ async function runRow(row: Row, action: 'apply' | 'undo'): Promise<'plan-changed
         await keep(row, 'O')
         return null
       }
-      await installAt(st, p.oldDir, claimOf(f))
+      await installAt(st, p.oldDir, claimOf(f), expectOf(st, f, 'O'))
       row.out.installed = 'O'
       await keep(row, 'N')
       return null
@@ -186,13 +148,21 @@ async function runRow(row: Row, action: 'apply' | 'undo'): Promise<'plan-changed
       if (!cls.postKeep) await keep(row, 'O')
       return null
     case 'UN1':
-      await installAt(st, p.oldDir, claimOf(f))
+      await installAt(st, p.oldDir, claimOf(f), expectOf(st, f, 'O'))
       row.out.installed = 'O'
       await keep(row, 'U')
       return null
     case 'UN2':
       await keep(row, 'U')
       return null
+    case 'FI0':
+    case 'FI1':
+    case 'FI2':
+    case 'FI2prime':
+    case 'FI2u':
+    case 'FI3':
+    case 'FI4':
+      return runInstallRow(row, cls.state, action)
   }
 }
 
@@ -202,7 +172,7 @@ async function undoSwapped(row: Row): Promise<null> {
   const f = row.cls.facts
   const p = opPaths(st)
   if (f.t.present) await undoAside(st)
-  await installAt(st, p.oldDir, null)
+  await installAt(st, p.oldDir, null, expectOf(st, f, 'O'))
   row.out.installed = 'O'
   if (f.t.present) {
     const kind = kindIn(row.steps, 'T') ?? 'conflict'

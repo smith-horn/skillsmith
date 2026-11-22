@@ -12,7 +12,10 @@
  *    `ab` once its abandon began);
  *  - with one: `identity-changed`, `ab` (an abandon began), a §3.3 row (`S0`,
  *    `S1`, `S2`, `S2'`, `S2x`, `S3`, `UN1`, `UN2`, each with its post-keep
- *    form) matched on **logical roles**, or `anything-else`.
+ *    form) matched on **logical roles**, or `anything-else`. A fresh
+ *    install's record (8-i-a-2) goes through the same gates; its T state, its
+ *    roles (N and U only), its parked copy and its rows (FI0-FI4) are
+ *    `skill-recovery.classify.install.ts`'s.
  *
  * Each of O, N and U resolves to its op-dir source, one verified keep of this
  * op, or nothing; both a source and a verified keep, or two keeps, is
@@ -43,6 +46,12 @@ import type { OwnerProbe } from './skill-recovery.clean.types.js'
 import { waives } from './skill-recovery.plan.actions.js'
 import type { IdentityWaiver } from './skill-recovery.plan.actions.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
+import {
+  matchInstallRow,
+  observeParked,
+  resolveInstallRoles,
+  tStateOfInstall,
+} from './skill-recovery.classify.install.js'
 import { observeTree, sourceCheck, tStateOf } from './skill-recovery.trees.js'
 import type {
   KeepGroup,
@@ -59,6 +68,7 @@ import type {
 } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
 import { MAX_RECORD_BYTES, parseRecordBytes } from './skill-swap.record-schema.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
 import { OWNER_FILE, PARK_INTENT_FILE, RECORD_FILE } from './skill-swap.types.js'
 import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
 import type { EntryState } from './skill-manifest.entry.js'
@@ -92,22 +102,26 @@ export interface ClassifyContext {
 
 const DENIED = new Set(['EACCES', 'EPERM'])
 
-/** What a recorded op dir may hold: the role trees and the metadata files its finish adopts. */
-const OP_ENTRIES: ReadonlySet<string> = new Set([
-  ...Object.values(ROLE_DIR),
+const METADATA = [
   RECORD_FILE,
   `${RECORD_FILE}.tmp`,
   OWNER_FILE,
   PARK_INTENT_FILE,
   `${PARK_INTENT_FILE}.tmp`,
-])
+]
+
+/** What a recorded op dir may hold: the role trees and the metadata files its finish adopts. */
+const OP_ENTRIES: ReadonlySet<string> = new Set([...Object.values(ROLE_DIR), ...METADATA])
+
+/** An install has no old folder: `old/` in its op dir is a stray (UD56). */
+const INSTALL_OP_ENTRIES: ReadonlySet<string> = new Set([ROLE_DIR.N, ROLE_DIR.U, ...METADATA])
 
 /** A `record.json.tmp` beside the record: its inode, marker and body, as facts. */
 function analyzeRecordTmp(
   r: ClassifierReader,
   opDir: string,
   names: readonly string[],
-  rec: SwapRecord
+  rec: OpRecord
 ): { tmp: NonNullable<OpFacts['recordTmp']>; marker: OpFacts['fullDevice'] } | null {
   if (!names.includes(`${RECORD_FILE}.tmp`)) return null
   const tmp = path.join(opDir, `${RECORD_FILE}.tmp`)
@@ -117,7 +131,7 @@ function analyzeRecordTmp(
     a.ok && b.ok && a.identity.dev === b.identity.dev && a.identity.ino === b.identity.ino
   const read = r.readFile(tmp, MAX_RECORD_BYTES + 1)
   const parsed = read.bytes === null ? null : parseRecordBytes(read.bytes)
-  const strip = (x: SwapRecord): string => {
+  const strip = (x: OpRecord): string => {
     const { recordSha256: _h, fullDevice: _m, ...rest } = x
     return canonicalJson(rest)
   }
@@ -221,7 +235,7 @@ function matchRow(
 interface Verified {
   opId: string
   opDir: string
-  rec: SwapRecord
+  rec: OpRecord
   names: readonly string[]
   /** OP's identity, from its `lstat`. */
   opIdentity: RecordIdentity
@@ -244,7 +258,7 @@ async function classifyRecorded(
   const accept = waives(ctx.waiver)
   const tPath = moved === null ? rec.target.realDir : path.join(ctx.root, rec.target.dirName)
   const area =
-    moved === null
+    moved === null && rec.op === 'update'
       ? path.dirname(rec.backupDest)
       : backupAreaPath(stateRealOf(r, rec), rec.target.client, ctx.root, rec.target.dirName)
   const expect = moved === null ? expectOfRecord(rec) : expectOfMoved(rec, ctx.root)
@@ -261,15 +275,20 @@ async function classifyRecorded(
   )
   const t: TreeObs = observeTree(r, tPath)
   const view = observeGroups(r, { opDir, opId, area, expect, opIdentity: v.opIdentity })
-  const resolved = resolveRoles(r, opDir, rec, view.groups, accept, moved === null)
+  const resolved =
+    rec.op === 'install'
+      ? resolveInstallRoles(r, opDir, rec, view.groups, accept, moved === null)
+      : resolveRoles(r, opDir, rec, view.groups, accept, moved === null)
   const tmpRead = analyzeRecordTmp(r, opDir, names, rec)
   // `owner.json` is a metadata file doctor unlinks: read through the reader so
   // its identity and bytes are in the digest, which is what adoption checks.
   if (names.includes(OWNER_FILE)) r.readFile(path.join(opDir, OWNER_FILE), OWNER_CAP)
   const recordTmp = tmpRead === null ? null : tmpRead.tmp
-  const journal = r.journalHasUpdate(opId, ctx.journalFile)
+  // A fresh install appends no audit line, so its journal is not read.
+  const journal = rec.op === 'update' ? r.journalHasUpdate(opId, ctx.journalFile) : null
   const nSource = resolved.roles.N.kind === 'source' ? resolved.roles.N.obs : null
-  const tS = tStateOf(t, rec, accept)
+  const tS = rec.op === 'install' ? tStateOfInstall(t, rec, accept) : tStateOf(t, rec, accept)
+  const parked = rec.op === 'install' ? observeParked(r, ctx.root, rec) : null
   const facts: OpFacts = {
     opId,
     opDir,
@@ -285,14 +304,17 @@ async function classifyRecorded(
     moved: moved?.why ?? null,
     opIdentity: v.opIdentity,
     hasOwnerFile: names.includes(OWNER_FILE),
-    strays: names.filter((n) => !OP_ENTRIES.has(n)).sort(),
-    journal: journal.ok ? journal : null,
+    strays: names
+      .filter((n) => !(rec.op === 'install' ? INSTALL_OP_ENTRIES : OP_ENTRIES).has(n))
+      .sort(),
+    journal: journal?.ok === true ? journal : null,
     otherUid: rec.uid !== ctx.euid ? rec.uid : null,
     // A moved op's marker names the record's own area; it is followed only when that is this one.
     fullDevice: moved === null || rec.fullDevice?.area === area ? (rec.fullDevice ?? null) : null,
     recordTmp,
     nHashesToPost: nSource === null ? null : nSource.hash === rec.postTree,
     ...analyzeParkIntent(r, opDir, names, intentOp),
+    ...(parked === null ? {} : { parked: parked.ok ? parked.copies : [] }),
   }
   const base = { opId, opDir }
   // O4: only this op dir's own abandon makes AB, never another copy's keeps.
@@ -359,6 +381,13 @@ async function classifyRecorded(
   ]
   if (changed.length > 0) return { kind: 'identity-changed', ...base, positions: changed, facts }
   if (resolved.conflicts.length > 0) return elseWith(resolved.conflicts.join('; '))
+  if (rec.op === 'install') {
+    if (parked !== null && !parked.ok) return elseWith(parked.error)
+    const m = matchInstallRow(tS, resolved.roles, facts.parked ?? [], entry.state, opId)
+    return m.ok
+      ? { kind: 'state', ...base, state: m.state, postKeep: m.postKeep, facts }
+      : elseWith(m.reason)
+  }
   const row = matchRow(tS, resolved.roles, entry.state)
   if (row === null) return elseWith('no row of the state table matches the trees and the manifest')
   return { kind: 'state', ...base, ...row, facts }

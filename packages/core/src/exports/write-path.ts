@@ -111,6 +111,8 @@ export {
   type UnreadableRecord,
   type UnreadableRecordWhy,
 } from '../services/skill-swap.records.js'
+// SMI-6531 A1 step 8-i-a-2: the install record's sealer, which the CLI's doctor tests plant records with.
+export { sealInstallRecord } from '../services/skill-install.record-seal.js'
 // SMI-6531 A1 step 4a: the absent-root rule (UD22), run by `swapInPlace` before R is bound.
 export {
   ensureSkillsRoot,

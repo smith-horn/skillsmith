@@ -17,8 +17,8 @@
  */
 import type { EntryState } from './skill-manifest.entry.js'
 import type { NoRecordObservation } from './skill-recovery.clean.types.js'
-import type { RecordParseWhy } from './skill-swap.record-schema.js'
-import type { FullDeviceMarker, RecordIdentity, SwapRecord } from './skill-swap.types.js'
+import type { OpRecord, RecordParseWhy } from './skill-swap.record-schema.js'
+import type { FullDeviceMarker, RecordIdentity } from './skill-swap.types.js'
 
 // ---------------------------------------------------------------------------
 // The reader's facts
@@ -224,13 +224,42 @@ export type RoleRes =
 // What the classifier returns
 // ---------------------------------------------------------------------------
 
-export type RowState = 'S0' | 'S1' | 'S2' | 'S2prime' | 'S2x' | 'S3' | 'UN1' | 'UN2'
+/** The update's §3.3 rows. */
+export type UpdateRowState = 'S0' | 'S1' | 'S2' | 'S2prime' | 'S2x' | 'S3' | 'UN1' | 'UN2'
+
+/** A fresh install's rows (8-i-a-2, D2): FI0-FI4, the manifest-changed FI2′ and the undo's FI2u. */
+export type InstallRowState = 'FI0' | 'FI1' | 'FI2' | 'FI2prime' | 'FI2u' | 'FI3' | 'FI4'
+
+export type RowState = UpdateRowState | InstallRowState
+
+/**
+ * 8-i-a-2: one entry of `R/.skillsmith-parked/<opId>/` named `<dirName>-<8 hex>`:
+ * a candidate for the copy an install's post-claim park set aside (FI4).
+ */
+export interface ParkedCopyFact {
+  path: string
+  /** A directory whose identity is the record's `newIdentity`: the published folder, moved. */
+  identityMatches: boolean
+  /**
+   * Its `<path>.json` sidecar, when one parsed: what it says. `null` when there
+   * is none (a park killed before its `wx` sidecar write).
+   */
+  sidecar: {
+    opId: string | null
+    kind: string | null
+    hold: boolean
+    treeHash: string | null
+  } | null
+  /** Why a sidecar that exists could not be read or parsed; null otherwise. */
+  sidecarError: string | null
+}
 
 /** What was observed once a record verified; shared by every class that carries one. */
 export interface OpFacts {
   opId: string
   opDir: string
-  record: SwapRecord
+  /** An update's record, or (8-i-a-2) a fresh install's. */
+  record: OpRecord
   /** `record.target.realDir`. */
   tPath: string
   tState: TState
@@ -241,7 +270,7 @@ export interface OpFacts {
   roles: { O: RoleRes; N: RoleRes; U: RoleRes }
   /** Every keep group of this op in its area, in name order. */
   groups: KeepGroup[]
-  /** The area: `dirname(record.backupDest)`; for a moved op (6b-iii), the scanned root's area. */
+  /** The area: `dirname(record.backupDest)` (an install: the same area, computed); moved (6b-iii): the scanned root's. */
   area: string
   /** 6b-iii: why the record belongs elsewhere (`--abandon` only), or null. */
   moved: MovedWhy | null
@@ -264,7 +293,7 @@ export interface OpFacts {
     bodyMatches: boolean
     emptySingleLink: boolean
   } | null
-  /** N hashes to `postTree`: S1 `--apply` installs it only then. */
+  /** N hashes to `postTree`: S1 and FI0/FI1 `--apply` install it only then. */
   nHashesToPost: boolean | null
   /**
    * 6a-iii: a `park-intent.json` beside the record (a cross-device finish that
@@ -274,6 +303,8 @@ export interface OpFacts {
   parkIntent: { path: string; valid: boolean } | null
   /** Its temp: `provable` when it parses as that same intent, or is an empty file with one link. */
   parkIntentTmp: { path: string; provable: boolean } | null
+  /** An install's parked-copy candidates (FI4); absent for an update. */
+  parked?: ParkedCopyFact[]
 }
 
 /**

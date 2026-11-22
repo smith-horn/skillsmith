@@ -154,6 +154,12 @@ function blockOf(f: OpFacts): string | null {
     if (res.kind === 'source' && res.obs.type !== 'dir') {
       return `${path.join(f.opDir, ROLE_DIR[role])} is not a directory, so it is not kept; ${BY_HAND}`
     }
+    // 8-i-a-2: a source that is the folder at the skill path (one directory under two
+    // names, which only a crash before the op dir was synced can leave): keeping it
+    // would move the folder at the skill path, which `--abandon` never touches.
+    if (res.kind === 'source' && f.t.present && sameId(res.obs.identity, f.t.identity)) {
+      return `${path.join(f.opDir, ROLE_DIR[role])} is the same folder as ${f.tPath}, so keeping it would move the skill folder; resolve it by hand, and run the command again`
+    }
   }
   const unprovable = unprovableTemp(f)
   if (unprovable !== null) {
@@ -289,6 +295,9 @@ export function abandonOf(opId: string, f: OpFacts): ActionPlan {
             : `the skill path stays empty; the old folder is kept at ${old}`,
         ]),
     'the skill folder, the manifest entry and the audit journal are untouched',
+    ...((f.parked ?? []).length > 0
+      ? ['the copies this install set aside in its parked area are untouched']
+      : []),
   ]
   return offer('abandon', steps, 'untouched', remaining, notes)
 }

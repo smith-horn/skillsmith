@@ -21,7 +21,7 @@ import type {
   ActionPlan,
   RecoveryAction,
   RecoveryClass,
-  RowState,
+  UpdateRowState,
 } from '../../../../src/services/skill-recovery.types.js'
 import { computeRecordSha256 } from '../../../../src/services/skill-swap.js'
 import type { SwapRecord } from '../../../../src/services/skill-swap.js'
@@ -547,7 +547,7 @@ describe('what every other class says', () => {
       writeEntry(fx, { version: '9.9.9' })
       return st
     }
-    // Every RowState, each with and without its keep where the row has one; a new row fails to compile here.
+    // Every update RowState (an install's rows are in install.classify.test.ts), each with and without its keep where the row has one; a new row fails to compile here.
     const rows = {
       S0: [
         [false, () => s0(file())],
@@ -581,7 +581,7 @@ describe('what every other class says', () => {
         [false, () => un2(file())],
         [true, async () => keepUndone(await un2(file()))],
       ],
-    } satisfies Record<RowState, Array<[boolean, () => Promise<State>]>>
+    } satisfies Record<UpdateRowState, Array<[boolean, () => Promise<State>]>>
     const offeredAbandon: string[] = []
     let checked = 0
     for (const [row, cases] of Object.entries(rows)) {

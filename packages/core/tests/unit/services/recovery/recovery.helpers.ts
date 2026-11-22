@@ -212,7 +212,7 @@ export async function report(
 
 /** The report of one op of the fixture. */
 export async function opReport(
-  st: State,
+  st: Pick<State, 'fx' | 'opId'>,
   over: ListOptions = {},
   waiver: IdentityWaiver | null = null
 ): Promise<OpReport> {

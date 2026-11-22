@@ -302,7 +302,8 @@ describe('scanStagingRecords: a record that cannot be trusted is unreadable', ()
       put(st, BAD, textOf(bodyOf(root, 'c'.repeat(32))))
     })
     expect(scan.unreadable).toEqual([
-      { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'foreign-op-dir' },
+      // 8-i-a-2: a record that parsed says what it is of.
+      { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'foreign-op-dir', op: 'update' },
     ])
   })
 
@@ -312,7 +313,7 @@ describe('scanStagingRecords: a record that cannot be trusted is unreadable', ()
       put(st, BAD, textOf({ ...b, target: { ...b.target, skillsDir: `${root}-moved` } }))
     })
     expect(scan.unreadable).toEqual([
-      { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'foreign-root' },
+      { opId: BAD, path: path.join(st, BAD, 'record.json'), why: 'foreign-root', op: 'update' },
     ])
   })
 
@@ -407,6 +408,7 @@ describe('scanStagingRecords: a record written by the real writer', () => {
       {
         opId: OP_ID,
         path: recordPath,
+        op: 'update',
         comparedPath: fx.realDir,
         realDir: fx.realDir,
         backupDest: written.backupDest,
@@ -438,6 +440,7 @@ describe('recordsNaming', () => {
   const rec = (opId: string, realDir: string, comparedPath: string): PendingRecord => ({
     opId,
     path: `/st/${opId}/record.json`,
+    op: 'update',
     realDir,
     comparedPath,
     backupDest: `/b/${opId}`,

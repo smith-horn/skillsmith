@@ -298,7 +298,7 @@ export type SwapRefuseReason =
   | 'backup-unsafe'
   | 'root-unsafe'
   | 'busy'
-  /** Step 3: a verified record of an unfinished update names this skill (R1). */
+  /** Step 3: a verified record of an unfinished operation names this skill (R1). */
   | 'recovery-pending'
   /** Step 3: a record in this root's staging can't be verified; every write in the root refuses. */
   | 'recovery-record-unreadable'
@@ -416,7 +416,7 @@ export interface RecordIdentity {
 /** `record.json` (plan §3.3 step 5), in its fixed key order. */
 export interface SwapRecord {
   schema: 1
-  /** The kind of operation; only the in-place update writes a record (A1 step 6a-i). */
+  /** The kind of operation; a fresh install's record is `InstallRecord` (8-i-a-2). */
   op: 'update'
   opId: string
   pid: number

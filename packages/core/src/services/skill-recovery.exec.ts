@@ -24,7 +24,7 @@
  *       whose `move-source` intent verifies: `finishFromIntent` (6a-iii);
  *     - `--abandon` of a verified record: `runAbandon`
  *       (`skill-recovery.abandon.ts`);
- *     - `--apply` / `--undo` of a §3.3 row: `runRecorded`
+ *     - `--apply` / `--undo` of a row (a §3.3 row, or 8-i-a-2 an install's FI row): `runRecorded`
  *       (`skill-recovery.run.ts`);
  *  4. after a finished action, `sweepRoot` removes the probes and empty op
  *     dirs the plan listed.
