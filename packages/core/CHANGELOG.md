@@ -4,6 +4,20 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- (#3280 retro) a live install record's prune protection covers its own
+  set-aside copy by place and identity: the copy at the record's
+  `<root>/.skillsmith-parked/<opId>/<dir>-<8 hex>` whose folder identity is the one the install
+  published, however prune read its sidecar (a held park, or none). A different folder put at that
+  path, a copy of another operation, or a copy whose identity cannot be read is not covered; every
+  live install record counts, so two with one opId in different roots each cover their own copy.
+  Doctor's FI4 note is worded from `skillsmith restore`'s own verdict on the copy's sidecar (its
+  strict check) and origin folder: it offers `skillsmith restore <copy path>` (the full path, quoted as one shell word when it needs it, which
+  restore resolves to one copy even when another root's copy shares the opId) only when those
+  checks pass, adds that restore will say the copy differs only when restore's done message will,
+  says what to create when the origin's folder is missing, and otherwise gives restore's reason and
+  says to copy the folder back by hand. Restore still checks a mount inside the copy, its lock, the
+  target and an ambiguous id when it runs. `planRestore` and the note share one function for the
+  sidecar verdict.
 - **Added**: SMI-6531 -- A1 step 8-i-a-2: the fresh install's recovery record (`op: "install"`,
   its own exact key set in schema 1; `sealInstallRecord` exported). Nothing writes one yet (8-i-a-3
   does); an update record's bytes and hash are unchanged. The record scan treats an install record
@@ -11,7 +25,8 @@ All notable changes to `@skillsmith/core` are documented here.
   an install), and the refusal names the install. `doctor recovery` classifies an install record
   into rows FI0-FI4 (with their post-keep forms, FI2' and FI2u) and runs `--apply` and `--undo` on
   them; `--abandon` is refused on every FI row and offered for the install states no row matches. A
-  live install record protects its parked `install-rollback` copy from prune (rule `live-record`).
+  live install record protects its own set-aside copy from prune (rule `live-record`), by place and
+  identity.
 - **Fixed**: SMI-6531 -- A1 step 8-i-a-2: doctor's `--apply`/`--undo` re-checks the folder it puts
   back at the skill path (its identity and the tree hash the plan saw) immediately before the
   publishing rename, on both the claim-publish path and the rename over an existing empty claim. A

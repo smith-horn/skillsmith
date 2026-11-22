@@ -254,7 +254,7 @@ describe('T-FI3 and T-FI4', () => {
       expect(entryOf(st.fx)).toBeUndefined()
       expect(fs.existsSync(st.opDir)).toBe(false)
       expect(a.planned.status === 'planned' && a.planned.plan.notes.join(' ')).toContain(
-        `skillsmith restore ${st.opId}`
+        `skillsmith restore ${st.parked}`
       )
       onlyMetadataRemoved(a.trace, st.fx)
     })

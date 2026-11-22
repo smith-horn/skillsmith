@@ -9,7 +9,9 @@
  * published, the tree stays in the op dir, the record is kept.
  *
  * The race is planted in the `afterClaim` test hook, which runs after the
- * claim exists and before the re-check.
+ * claim exists and before the re-check. What the next run does after a
+ * refused S2 `--undo` is tested through the CLI
+ * (`packages/cli/src/commands/doctor.recovery.rerun.test.ts`).
  */
 import fs from 'node:fs'
 import path from 'node:path'
