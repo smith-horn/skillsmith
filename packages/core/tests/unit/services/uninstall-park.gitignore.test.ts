@@ -3,7 +3,10 @@
  * takes lock 1 and parks, so in a root that never had a staging or parked area
  * it creates both. In a git work tree that ignores neither, the first
  * uninstall returns one staging hint and one parked-area hint; the next one in
- * the same root returns neither. No git file is written.
+ * the same root returns neither. No git file is written. An uninstall the gate
+ * stops still gives the staging hint when it created the staging area in a git
+ * work tree, and none when `.skillsmith-staging/` already existed or the root
+ * is outside any git work tree.
  */
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
