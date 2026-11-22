@@ -114,6 +114,45 @@ describe('Major 1: the published tree is re-checked immediately before its renam
     }
   }
 
+  // The existing-claim path also re-checks the claim itself just before the rename
+  // (gate on bf928bc3c: the races above change only the source).
+  for (const c of CASES.filter((x) => x.claimed)) {
+    for (const race of ['swap', 'fill'] as const) {
+      it(`${c.name}, claim ${race === 'swap' ? 'swapped' : 'filled'} after the hook: target-changed, nothing published`, async () => {
+        const st = await c.build()
+        const src = path.join(st.opDir, c.role)
+        const t = st.fx.realDir
+        // swap: the planned claim moved aside (so its inode stays in use) and a new
+        // empty folder in its place; fill: a file written into the planned claim.
+        const a = await act(
+          st,
+          c.action,
+          {},
+          {
+            swap: {
+              hooks: {
+                afterClaim: () => {
+                  if (race === 'swap') {
+                    fs.renameSync(t, path.join(st.fx.outside, 'claim-away'))
+                    fs.mkdirSync(t)
+                  } else {
+                    fs.writeFileSync(path.join(t, 'planted.txt'), 'x')
+                  }
+                },
+              },
+            },
+          }
+        )
+        expect(a.result).toMatchObject({ status: 'stopped', reason: 'target-changed' })
+        // What the race left at the skill path is untouched; the tree is still in OP.
+        expect(fs.readdirSync(t)).toEqual(race === 'swap' ? [] : ['planted.txt'])
+        expect(fs.existsSync(path.join(src, 'SKILL.md'))).toBe(true)
+        expect(a.trace.some((x) => x.op === 'rename' && x.path === src)).toBe(false)
+        expect(fs.existsSync(path.join(st.opDir, 'record.json'))).toBe(true)
+      })
+    }
+  }
+
   it('control: the same actions with a hook that changes nothing publish the tree', async () => {
     for (const c of CASES) {
       const st = await c.build()
