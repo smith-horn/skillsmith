@@ -207,7 +207,9 @@ async function uninstallSkillImpl(
         }
       } catch (linkErr) {
         // A manifest read/write failure never fails the uninstall, but it is
-        // reported (the CLI's `removeSkill` warns the same way).
+        // reported, as the CLI's `removeSkill` reports it. The CLI folds home
+        // paths to `~`; this keeps the raw message, like the full paths this
+        // result already carries in `message` and `parkedPath`.
         const note = `could not clean up cross-client links: ${
           linkErr instanceof Error ? linkErr.message : String(linkErr)
         }`
