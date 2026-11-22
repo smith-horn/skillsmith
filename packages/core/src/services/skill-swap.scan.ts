@@ -10,8 +10,9 @@
  * verified record naming this skill (`recovery-pending`, this skill only).
  * The messages are §3.9's. Since 8-i-a-2 they name the kind of operation: a
  * fresh install's record blocks only its own skill as an update's does, and
- * says "install"; the root-wide refusal says "operation" when any blocking
- * record that could be parsed is an install's.
+ * says "install"; the root-wide refusal says "update" only when every
+ * blocking record parsed as an update's, and "operation" otherwise (an
+ * install's, or one whose kind cannot be read).
  *
  * A step-1 failure's abort cleanup runs the same scan under the lock 1 it
  * takes (owner decision 2026-10-24, T-X2): after a crash between the renames
@@ -104,7 +105,8 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
           ]
         : []),
     ].join(' ')
-    const what = scan.unreadable.some((r) => r.op === 'install') ? 'operation' : 'update'
+    // "update" only when every blocking record parsed as one; any other kind, or none known, is an operation.
+    const what = scan.unreadable.every((r) => r.op === 'update') ? 'update' : 'operation'
     return new SwapFault(
       'recovery-record-unreadable',
       `A record of an unfinished ${what} in ${root} can't be read, so no skill in that folder can ` +

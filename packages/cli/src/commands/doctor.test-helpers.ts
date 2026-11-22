@@ -160,10 +160,11 @@ export interface PlantedInstall {
  * SMI-6531 (A1 step 8-i-a-2): a skills root holding a fresh install that
  * stopped at `stage` (the design's FI0, FI2 or FI4): the staged folder in the
  * op dir, its record sealed by `sealInstallRecord` (the staged install's own
- * sealer), the manifest with no entry. FI2 publishes it with `claimPublish`;
- * FI4 then moves it to the install's parked area with its identity kept (a
- * rename, as the park makes one; no sidecar, as a park killed before its
- * sidecar write leaves it).
+ * sealer), the manifest with no entry. FI2 publishes it with `claimPublish`.
+ * FI4 is modelled, not made by the park: the CLI tests reach no public park,
+ * so the folder is renamed into the install's parked area (identity kept, as
+ * the park's rename keeps it) with no sidecar, the state a park killed before
+ * its sidecar write leaves. Core's tests make FI4 with the real park.
  */
 export async function plantInstall(
   base: string,

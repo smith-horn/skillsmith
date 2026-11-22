@@ -17,6 +17,7 @@
 import { computeInstallRecordSha256, EMPTY_TREE_HASH } from './skill-install.record-schema.js'
 import type { InstallRecord } from './skill-install.record-schema.js'
 import { verifyRecordBytes } from './skill-swap.record-schema.js'
+import { HEX64 } from './skill-swap.record-shape.js'
 
 /** Why `sealInstallRecord` refused a body. */
 export type InstallSealWhy =
@@ -30,8 +31,6 @@ export type InstallSealWhy =
 export type InstallSeal =
   | { ok: true; bytes: Buffer; record: InstallRecord }
   | { ok: false; why: InstallSealWhy; detail: string }
-
-const HEX64 = /^[0-9a-f]{64}$/
 
 /** Seals `body` as the install record of op dir `opId` in the skills root `root`. */
 export function sealInstallRecord(

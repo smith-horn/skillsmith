@@ -27,7 +27,8 @@ import type { OpRecord } from './skill-swap.record-schema.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 /** A sidecar is a few hundred bytes; this is a ceiling, not an expectation. */
-const SIDECAR_CAP = 64 * 1024
+/** The most a sidecar is read (they are small JSON objects): a keep's, or (8-i-a-2) a parked copy's. */
+export const SIDECAR_CAP = 64 * 1024
 
 /** The kinds a tree is kept as and the role each one keeps (PLAN: role resolution). */
 export const KIND_ROLE: Readonly<Record<string, Role | null>> = {

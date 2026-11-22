@@ -16,6 +16,7 @@ import type { BigIntStats, Stats } from 'node:fs'
 import path from 'node:path'
 import { errCode } from './park-result.js'
 import type { PartialParkResult } from './park-result.js'
+import { PARKED_DIR_NAME } from './parked-index.name.js'
 import { opDirOwnerModeProblem } from './park-tree.perms.js'
 import { bindIdentity, identityOf, sameIdentity } from './park-tree.identity.js'
 import type { BoundIdentity } from './park-tree.identity.js'
@@ -25,7 +26,7 @@ import { modeProblemOf } from './mkdir-parent-bits.policy.js'
 import type { ModeProblem } from './mkdir-parent-bits.policy.js'
 
 /** The parked area's name inside the parent (ADR-166 D-9, UD26). */
-export const PARKED_DIR_NAME = '.skillsmith-parked'
+export { PARKED_DIR_NAME }
 
 export type ParkedRootResult =
   | {

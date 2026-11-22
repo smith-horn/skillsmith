@@ -30,7 +30,7 @@
  */
 import fs from 'node:fs'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
-import { assertSourceAsPlanned, installAt } from './skill-recovery.resume.js'
+import { installAt } from './skill-recovery.resume.js'
 import { claimOf, commitFirst, expectOf, keep, kindIn } from './skill-recovery.run.row.js'
 import type { Row } from './skill-recovery.run.row.js'
 import { boundOf } from './skill-recovery.state.js'
@@ -49,14 +49,17 @@ async function installNew(row: Row): Promise<null> {
   const f = row.cls.facts
   const newDir = opPaths(st).newDir
   const expect = expectOf(st, f, 'N')
-  // Before the claim (design § 4): N's identity and hash, so a folder changed
-  // since the plan is refused with nothing moved, not left behind a claim.
+  // Before the claim (design § 4): N's hash, then its identity, so a folder
+  // changed since the plan is refused with nothing moved, not left behind a claim.
   check(st)
   const now = treeHashOf(newDir)
   if (!now.ok || now.hash !== st.postTree) {
     throw new SwapFault('recovery-conflict', `${newDir} no longer hashes to what was built`)
   }
-  assertSourceAsPlanned(newDir, expect)
+  const id = bindIdentity(newDir)
+  if (!id.ok || !sameIdentity(expect.identity, id)) {
+    throw new SwapFault('staging-unsafe', `${newDir} is not the folder the plan saw; nothing moved`)
+  }
   // `installAt` checks N again immediately before its publishing rename (Major 1).
   await installAt(st, newDir, claimOf(f), expect)
   row.out.installed = 'N'

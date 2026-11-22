@@ -7,7 +7,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Added**: SMI-6531 -- A1 step 8-i-a-2: `skillsmith doctor recovery` lists a fresh install's
   unfinished record with its row (`FI0 not claimed` ... `FI4 rolled back`), a first facts line
   `install of <dir> into <root> (manifest key <key>)`, no old-folder line, and (FI4) where the folder
-  was set aside; `--json` adds `class.facts.parked`.
+  was set aside; `--json` adds `class.facts.parked`. `doctor backups` says an unreadable
+  "operation record" (was "update record"), since it may be an install's.
 - **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): `skillsmith remove` refuses (exit 4) when the
   skill folder changed after it was checked, and no longer removes the cross-client links of an
   install that claimed the same name while the removal ran; it prints a warning instead. An

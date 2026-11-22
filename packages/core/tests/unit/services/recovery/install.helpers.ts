@@ -1,11 +1,14 @@
 /**
  * SMI-6531 (A1 step 8-i-a-2): fixtures for a fresh install's recovery rows
  * (FI0-FI4). Nothing writes an install record in production yet (8-i-a-3), so
- * each state is built the way the staged install will leave it, with the
- * production primitives: the record's bytes from `sealInstallRecord`, the
- * claim and the publish from `claimPublish`, the post-claim park from
- * `parkTree` (caller `install-rollback`), and every keep from `publishTree`
- * under lock 1. No record, sidecar or keep is written by hand.
+ * each state is built the way the staged install will leave it: the record's
+ * bytes from `sealInstallRecord`, the claim and the publish from
+ * `claimPublish`, the post-claim park from `parkTree` (caller
+ * `install-rollback`), and every keep from `publishTree` under lock 1. No
+ * record, sidecar or keep is written by hand. Two steps are modelled with a
+ * plain rename: the staged folder written into `OP/new` (8-i-a-3's build), and
+ * FI2u's set-aside of the published folder to `OP/undone` (the rename doctor's
+ * undo makes with `undoAside`).
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -39,14 +42,18 @@ export interface IState {
   record: InstallRecord
 }
 
-/** A skills root with no skill folder yet, and a state root whose manifest has no entry for it. */
-export function installFixture(): Fixture {
+/**
+ * A skills root with no skill folder yet, and a state root whose manifest has
+ * no entry for it: under the same temp, or `stateRoot` (an existing directory,
+ * another device for the cross-device keeps).
+ */
+export function installFixture(at: { stateRoot?: string } = {}): Fixture {
   const base = tmp('install-rec-')
   const skillsDir = path.join(base, 'skills')
-  const stateRoot = path.join(base, 'state')
+  const stateRoot = at.stateRoot ?? path.join(base, 'state')
   const outside = path.join(base, 'outside')
   fs.mkdirSync(skillsDir)
-  fs.mkdirSync(stateRoot)
+  if (at.stateRoot === undefined) fs.mkdirSync(stateRoot)
   fs.mkdirSync(outside)
   fs.writeFileSync(
     path.join(stateRoot, 'manifest.json'),
@@ -163,7 +170,7 @@ export async function fi2prime(fx: Fixture, o: BuildOptions = {}): Promise<IStat
   return st
 }
 
-/** FI2u: FI2 with the published folder set aside to `OP/undone` (the undo's first rename). */
+/** FI2u: FI2 with the published folder set aside to `OP/undone`, modelled by the rename `undoAside` makes. */
 export async function fi2u(fx: Fixture, o: BuildOptions = {}): Promise<IState> {
   const st = await fi2(fx, o)
   fs.renameSync(fx.realDir, path.join(st.opDir, 'undone'))

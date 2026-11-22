@@ -12,8 +12,8 @@
  *    record that root is R. They are per op (8-i-a-2): both ops check the
  *    target's components, `dirName`, the manifest path, `realDir`'s parent and
  *    the manifest port; an update also its `backupDest`, an install also that
- *    `realDir` is `<root>/<dirName>` and that `postTree` is a hash. Any other
- *    op is inconsistent, named.
+ *    `realDir` is `<root>/<dirName>` and that `postTree` is a hash, and not
+ *    the empty tree's. Any other op is inconsistent, named.
  *
  * Read-only, through the reader only (this module has no `fs`).
  *
@@ -24,7 +24,9 @@ import type { ClassifierReader } from './skill-recovery.reader.js'
 import { sameId } from './skill-recovery.trees.js'
 import type { MovedWhy } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
+import { EMPTY_TREE_HASH } from './skill-install.record-schema.js'
 import type { OpRecord } from './skill-swap.record-schema.js'
+import { HEX64 } from './skill-swap.record-shape.js'
 import type { RecordIdentity } from './skill-swap.types.js'
 
 /** One path component: not empty, not `.`/`..`, no separator or NUL. */
@@ -67,14 +69,12 @@ function targetInconsistency(r: ClassifierReader, rec: OpRecord): string | null 
   return null
 }
 
-const HEX64 = /^[0-9a-f]{64}$/
-
 /** `record.json` is internally consistent (see the module comment); the reason, or null. */
 export function inconsistency(r: ClassifierReader, rec: OpRecord): string | null {
   // An update-shaped record may carry an op this version does not know (`isSwapRecord`).
   const op: string = rec.op
   if (op !== 'update' && op !== 'install') {
-    return `its op is ${JSON.stringify(op)}, not "update"`
+    return `its op is ${JSON.stringify(op)}, not "update" or "install"`
   }
   const shared = targetInconsistency(r, rec)
   if (shared !== null) return shared
@@ -84,6 +84,8 @@ export function inconsistency(r: ClassifierReader, rec: OpRecord): string | null
       if (path.basename(t.realDir) !== t.dirName)
         return 'realDir is not the skills root plus dirName'
       if (!HEX64.test(rec.postTree)) return 'postTree is not a tree hash'
+      // A built install always holds `SKILL.md`; an empty claim must never read as the published folder.
+      if (rec.postTree === EMPTY_TREE_HASH) return "postTree is not a built tree's hash"
       return null
     case 'update': {
       const area = backupAreaPath(stateRealOf(r, rec), t.client, t.skillsDir, t.dirName)

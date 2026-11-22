@@ -1,8 +1,12 @@
 /**
  * SMI-6531 (A1 step 8-i-a-2), T-FIC and T-FI4: the install classifier against
  * every combination of where the published folder (the inode with
- * `newIdentity`) is and what else is at each position, built with the
- * production primitives (`install.helpers.ts`). The expected class comes from
+ * `newIdentity`) is and what else is at each position. The record, the claim,
+ * the publish, the park and every keep are the production primitives
+ * (`install.helpers.ts`); the other trees (a foreign folder, a copy with the
+ * built hash, the folder moved to `undone/` or out of the root) are made with
+ * plain fs calls, modelling what a user, a crash or the undo's own rename
+ * leaves. The expected class comes from
  * an oracle written from the design's § 3 tables, not from the classifier:
  * only the tuples of the row table are a row; every other tuple is
  * `identity-changed` or `anything-else`, with a reason.
@@ -14,8 +18,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parkTree } from '../../../../src/install/park-tree.js'
-import { PARKED_DIR } from '../../../../src/services/skill-recovery.classify.install.js'
-import { PARKED_DIR_NAME } from '../../../../src/install/park-tree.destination.js'
 import type { RecoveryClass } from '../../../../src/services/skill-recovery.types.js'
 import { claimPublish } from '../../../../src/services/skill-tree.js'
 import { useTmpCleanup } from '../skill-swap.helpers.js'
@@ -174,10 +176,6 @@ const shapeOf = (cls: RecoveryClass): Expected =>
       : { kind: 'anything-else' }
 
 describe('T-FIC: every tuple lands in exactly the class the design tables give', () => {
-  it('the parked area name is the park primitive’s', () => {
-    expect(PARKED_DIR).toBe(PARKED_DIR_NAME)
-  })
-
   for (const l of ['T', 'Nsrc', 'Nkept', 'Usrc', 'Ukept', 'P', 'none'] as const) {
     it(`the published folder at ${l}`, { timeout: 120_000 }, async () => {
       const rows = new Set<string>()

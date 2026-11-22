@@ -77,6 +77,31 @@ describe('doctor recovery: a fresh install', () => {
     expect(text).toContain(`skillsmith restore ${u.opId}`)
   })
 
+  it('a set-aside copy with a sidecar says present and held yes or no; another folder is named as one', async () => {
+    const u = await plantInstall(base, 'FI4')
+    // No public park reaches the CLI tests, so the sidecar is written here with the fields the
+    // classifier reads; core's tests read the real park's own sidecar (install.classify.test.ts).
+    const sidecar = (hold: boolean) =>
+      JSON.stringify({ opId: u.opId, kind: 'install-rollback', hold, treeHash: null })
+    fs.writeFileSync(`${u.parked}.json`, sidecar(true))
+    await runDoctorRecovery({})
+    expect(out.join('\n')).toContain(`    set aside at ${u.parked} (sidecar: present; held: yes)`)
+
+    out = []
+    fs.writeFileSync(`${u.parked}.json`, sidecar(false))
+    await runDoctorRecovery({})
+    expect(out.join('\n')).toContain(`    set aside at ${u.parked} (sidecar: present; held: no)`)
+
+    out = []
+    const other = path.join(path.dirname(u.parked!), 'my-skill-deadbeef')
+    fs.cpSync(u.parked!, other, { recursive: true })
+    await runDoctorRecovery({})
+    const text = out.join('\n')
+    expect(text).toContain(`    set aside at ${other}: not the installed folder (sidecar: missing)`)
+    expect(text).toContain(`    set aside at ${u.parked} (sidecar: present; held: no)`)
+    expect(text).toContain(`${u.opId}  anything else`)
+  })
+
   it('--json carries the state, the record op and the parked copies', async () => {
     const u = await plantInstall(base, 'FI4')
     await runDoctorRecovery({ json: true })

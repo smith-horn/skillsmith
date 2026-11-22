@@ -166,7 +166,7 @@ export function assertAdopted(
 }
 
 /** The identity an install's absent old folder is checked by: file type -1 matches no file. */
-export const NO_OLD_IDENTITY: RecordIdentity = {
+const NO_OLD_IDENTITY: RecordIdentity = {
   dev: '-1',
   ino: '-1',
   birthtimeNs: '-1',

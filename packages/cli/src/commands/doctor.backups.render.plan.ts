@@ -25,7 +25,7 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 function preconditionLine(p: Precondition): string {
   if (p.code === 'unreadable-record') {
     return (
-      `--apply would refuse: ${p.root} holds an update record that could not be read ` +
+      `--apply would refuse: ${p.root} holds an operation record that could not be read ` +
       `(${p.recordPath}); see \`skillsmith doctor recovery\` to set it aside.`
     )
   }

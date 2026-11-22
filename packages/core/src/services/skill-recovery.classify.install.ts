@@ -31,7 +31,8 @@
  */
 import path from 'node:path'
 import type { InstallRecord } from './skill-install.record-schema.js'
-import { ROLE_DIR, STARTED_STATES } from './skill-recovery.pstate.js'
+import { PARKED_DIR_NAME } from '../install/parked-index.name.js'
+import { ROLE_DIR, SIDECAR_CAP, STARTED_STATES } from './skill-recovery.pstate.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
 import type {
@@ -46,14 +47,8 @@ import type {
 } from './skill-recovery.types.js'
 import type { EntryState } from './skill-manifest.entry.js'
 
-/** The parked area's name under a parent (`PARKED_DIR_NAME`, `install/park-tree.destination.ts`). */
-export const PARKED_DIR = '.skillsmith-parked'
-
 /** The parked kind of the install's post-claim park (§3.8 row 9). */
-export const INSTALL_ROLLBACK_KIND = 'install-rollback'
-
-/** The most a parked copy's sidecar is read (they are small JSON objects). */
-const SIDECAR_CAP = 64 * 1024
+const INSTALL_ROLLBACK_KIND = 'install-rollback'
 
 /** How T stands against an install's record (see the module comment). */
 export function tStateOfInstall(obs: TreeObs, rec: InstallRecord, acceptIdentity: boolean): TState {
@@ -162,7 +157,7 @@ export function observeParked(
   root: string,
   rec: InstallRecord
 ): { ok: true; copies: ParkedCopyFact[] } | { ok: false; error: string } {
-  const dir = path.join(root, PARKED_DIR, rec.opId)
+  const dir = path.join(root, PARKED_DIR_NAME, rec.opId)
   const listed = r.list(dir, { name: 'all' })
   if (!listed.ok) {
     if (listed.errno === 'ENOENT') return { ok: true, copies: [] }

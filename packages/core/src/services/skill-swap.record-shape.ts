@@ -20,7 +20,10 @@ export const TARGET_KEYS = [
   'scope',
   'dirName',
 ] as const
-export const IDENTITY_KEYS = ['dev', 'ino', 'birthtimeNs', 'fmt'] as const
+const IDENTITY_KEYS = ['dev', 'ino', 'birthtimeNs', 'fmt'] as const
+
+/** A tree hash's form: 64 lowercase hex characters (`postTree`, `preTree`, a sidecar's `treeHash`). */
+export const HEX64 = /^[0-9a-f]{64}$/
 const MARKER_KEYS = ['cause', 'stage', 'area', 'opId', 'dest'] as const
 const STAGES: ReadonlySet<string> = new Set<FullDeviceStage>([
   'copy',

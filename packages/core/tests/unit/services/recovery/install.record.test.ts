@@ -9,6 +9,9 @@
  *    refused `recovery-pending`, naming the install.
  *  - T-FIR4: each per-op consistency rule makes the record `inconsistent-record`;
  *    the consistent record (same run) is a row.
+ *  - The root-wide refusal says "update" only for records that parsed as
+ *    updates; a copied install record, or one that does not parse, is an
+ *    "operation".
  *  - T-FIR5: prune facts: no `backupDest` from an install record; its parked
  *    `install-rollback` copy is protected by rule `live-record` (Q2).
  */
@@ -30,8 +33,8 @@ import {
 import { scanStagingRecords } from '../../../../src/services/skill-swap.records.js'
 import { refuseIfRecorded } from '../../../../src/services/skill-swap.scan.js'
 import type { SwapState } from '../../../../src/services/skill-swap.ops.js'
-import { useTmpCleanup } from '../skill-swap.helpers.js'
-import { opReport } from './recovery.helpers.js'
+import { makeFixture, useTmpCleanup } from '../skill-swap.helpers.js'
+import { opReport, s2 } from './recovery.helpers.js'
 import { fi0, fi4, installFixture } from './install.helpers.js'
 import type { IState } from './install.helpers.js'
 
@@ -207,6 +210,60 @@ describe('T-FIR4: the install consistency rules', () => {
       why: 'inconsistent-record',
       detail: 'postTree is not a tree hash',
     })
+  })
+
+  it('postTree of the empty tree: inconsistent-record; a built tree’s hash is a row (control)', async () => {
+    const st = fi0(installFixture())
+    expect((await opReport(st)).cls).toMatchObject({ kind: 'state', state: 'FI0' })
+    const b = { ...bodyOf(st.record), postTree: EMPTY_TREE_HASH }
+    const bytes = bytesOf({ ...b, recordSha256: computeInstallRecordSha256(b) })
+    fs.writeFileSync(path.join(st.opDir, 'record.json'), bytes)
+    expect((await opReport(st)).cls).toMatchObject({
+      kind: 'unreadable',
+      why: 'inconsistent-record',
+      detail: "postTree is not a built tree's hash",
+    })
+  })
+})
+
+describe('the root-wide refusal names the kind of operation only when it is known', () => {
+  /** Copies `from`'s record into another op dir of `st`'s root: it parses, but names another op dir. */
+  function copyRecordInto(st: IState, from: string): void {
+    const dir = path.join(st.fx.staging, 'e'.repeat(32))
+    fs.mkdirSync(dir)
+    fs.copyFileSync(from, path.join(dir, 'record.json'))
+  }
+  const refusal = async (st: IState) => {
+    const other = writeState(st, 'other-skill')
+    let detail = ''
+    await refuseIfRecorded(other).catch((e: { reason: string; detail: string }) => {
+      expect(e.reason).toBe('recovery-record-unreadable')
+      detail = e.detail
+    })
+    return detail
+  }
+
+  it('a copied install record: "unfinished operation"; a copied update record: "unfinished update"', async () => {
+    const st = fi0(installFixture())
+    copyRecordInto(st, path.join(st.opDir, 'record.json'))
+    const scan = await scanStagingRecords(st.fx.skillsDir, st.fx.staging)
+    expect(scan.ok && scan.unreadable).toEqual([
+      expect.objectContaining({ why: 'foreign-op-dir', op: 'install' }),
+    ])
+    expect(await refusal(st)).toContain('A record of an unfinished operation in')
+
+    const u = await s2(makeFixture({ 'SKILL.md': '# v1\n' }))
+    const v = fi0(installFixture())
+    copyRecordInto(v, path.join(u.opDir, 'record.json'))
+    expect(await refusal(v)).toContain('A record of an unfinished update in')
+  })
+
+  it('a record that does not parse: its kind is unknown, so "operation"', async () => {
+    const st = fi0(installFixture())
+    const dir = path.join(st.fx.staging, 'e'.repeat(32))
+    fs.mkdirSync(dir)
+    fs.writeFileSync(path.join(dir, 'record.json'), '{')
+    expect(await refusal(st)).toContain('A record of an unfinished operation in')
   })
 })
 

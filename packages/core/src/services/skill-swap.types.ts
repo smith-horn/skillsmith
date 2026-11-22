@@ -298,7 +298,7 @@ export type SwapRefuseReason =
   | 'backup-unsafe'
   | 'root-unsafe'
   | 'busy'
-  /** Step 3: a verified record of an unfinished update names this skill (R1). */
+  /** Step 3: a verified record of an unfinished operation names this skill (R1). */
   | 'recovery-pending'
   /** Step 3: a record in this root's staging can't be verified; every write in the root refuses. */
   | 'recovery-record-unreadable'
