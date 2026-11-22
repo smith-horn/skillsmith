@@ -4784,6 +4784,8 @@ console.log(`\n${BOLD}52. SECURITY DEFINER anon-Grant Lockdown (SMI-5526)${RESET
   // see docs/internal/implementation/smi-5526-definer-grant-audit.md Bucket C.
   const SECDEF_ANON_ALLOWLIST = [
     'search_skills', // public catalog search, reached anon/JWT via skills-search/skills-recommend/health
+    'browse_category_skills', // SMI-7239: public category browse via skills-search; definer reads the service-role-only rank table
+    'fuzzy_search_skills', // SMI-7239: public fuzzy fallback via skills-recommend; definer reads the service-role-only tiered table
     'resolve_team_from_license', // MCP anon-key caller; the license key itself is the credential
     'user_team_ids', // RLS-policy helper: evaluated with the invoking role's EXECUTE, zero-arg/auth.uid()-based
     'user_admin_team_ids', // RLS-policy helper: evaluated with the invoking role's EXECUTE, zero-arg/auth.uid()-based
