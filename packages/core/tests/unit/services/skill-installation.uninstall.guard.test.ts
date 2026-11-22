@@ -850,6 +850,21 @@ describe('uninstall keeps the manifest honest (SMI-6529 round 16)', () => {
     expect(result.removedPath).toBe(installPath)
   })
 
+  it('says the folder was not on disk, not that it was removed, when only the record write fails', async () => {
+    const installPath = path.join(skillsDir, 'absent-skill')
+    await track('absent-skill', installPath)
+    await expect(fs.lstat(installPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    failRenameTo.path = manifestPath
+
+    const result = await createService().uninstall('absent-skill', { force: true })
+
+    expect(result.success).toBe(false)
+    expect(result.message).toContain('could not be updated')
+    expect(result.message).toContain(`was not on disk at ${installPath}`)
+    expect(result.message).not.toContain('was removed from')
+    expect(result.parkedPath).toBeUndefined()
+  })
+
   // Round 18 (cross-model review): timestamps are not a unique generation
   // token — two installs can share a millisecond, and an older writer omits
   // them — so the whole record is compared.

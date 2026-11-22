@@ -26,7 +26,7 @@ import type { ListBackupsOptions } from './skill-backups.listing.js'
 export type ParkFn = (parentAbs: string, name: string, options: ParkOptions) => Promise<ParkResult>
 
 /** What `finish` reads. */
-export interface ParkReportContext {
+interface ParkReportContext {
   /** The listing the warning is evaluated over (roots to add, test seams). */
   listing?: ListBackupsOptions
 }
@@ -34,8 +34,6 @@ export interface ParkReportContext {
 export interface ParkReporter {
   /** Parks through `parkTreeIndexed` (or the injected park) and records a move. The result is unchanged. */
   readonly park: ParkFn
-  /** True once any park through this reporter moved a tree (`parked` or `held`). */
-  readonly moved: boolean
   /**
    * The space warning, or null: null when nothing moved, or when the listing
    * finds nothing over its threshold and every entry measured. Call it once,
@@ -45,7 +43,7 @@ export interface ParkReporter {
 }
 
 /** The line `finish` returns when the listing itself failed. */
-export const usageCheckFailed = (err: unknown): string =>
+const usageCheckFailed = (err: unknown): string =>
   `Could not check how much space Skillsmith's set-aside folders take: ${
     err instanceof Error ? err.message : String(err)
   }`
@@ -64,9 +62,6 @@ export function createParkReporter(o: { park?: ParkFn | undefined } = {}): ParkR
   }
   return {
     park,
-    get moved() {
-      return moved
-    },
     async finish(ctx: ParkReportContext = {}): Promise<string | null> {
       if (!moved) return null
       try {

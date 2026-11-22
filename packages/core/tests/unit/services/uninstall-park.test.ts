@@ -11,6 +11,7 @@ import type { BigIntStats } from 'node:fs'
 import { parkTreeIndexed } from '../../../src/install/park-call.js'
 import { measure as realMeasure } from '../../../src/install/prune.measure.js'
 import { removeIfSame } from '../../../src/install/remove-if-same.js'
+import { createParkReporter } from '../../../src/services/park-report.js'
 import { dropManifestEntry } from '../../../src/services/skill-installation.uninstall.park.js'
 import type { SkillManifestEntry } from '../../../src/services/skill-installation.types.js'
 import {
@@ -86,6 +87,7 @@ describe('Q3: uninstall parks the folder (10 runs)', () => {
       expect(contentSnapshot(parkedPath)).toEqual(before)
       expect(r.message).toMatch(/to reclaim about \d+(\.\d)? (B|KB|MB|GB)/)
       expect(r.message).toContain(`skillsmith doctor backups --prune --op ${opId}`)
+      expect(r.message).toContain(`\`skillsmith restore ${opId}\` puts it back`)
       expect(subjectDeletes(f, deletes)).toEqual([])
     }
     // The opId is random per run, not a constant that happens to be hex.
@@ -371,15 +373,23 @@ describe('T-PW1 (park-caller half): the space warning comes from the park-result
     expect(r.usageWarning).not.toContain(`(${path.dirname(String(r.parkedPath))})`)
   })
 
-  it('control: a park that bypasses the reporter carries no warning', async () => {
-    const f = fixture()
-    const r = await parkTreeIndexed(f.skillsDir, f.name, {
-      client: 'claude-code',
-      caller: 'uninstall',
-      kind: 'uninstall',
-    })
+  it('control: only a park made through the reporter produces a warning', async () => {
+    const opts = { client: 'claude-code', caller: 'uninstall', kind: 'uninstall' } as const
+    const bypassed = fixture()
+    const bypass = createParkReporter()
+    const r = await parkTreeIndexed(bypassed.skillsDir, bypassed.name, opts)
     expect(r.status).toBe('parked')
-    expect('usageWarning' in r).toBe(false)
+    const listingOf = (f: UFixture) => ({ usage: overThreshold, roots: [f.skillsDir] })
+    // Same over-threshold listing, same kind of park: the reporter never saw it.
+    expect(await bypass.finish({ listing: listingOf(bypassed) })).toBeNull()
+
+    const through = fixture()
+    const reporter = createParkReporter()
+    const r2 = await reporter.park(through.skillsDir, through.name, opts)
+    expect(r2.status).toBe('parked')
+    expect(await reporter.finish({ listing: listingOf(through) })).toContain(
+      "Skillsmith's set-aside folders"
+    )
   })
 
   it('one unmeasured entry far below the threshold still prints (SMI-7127)', async () => {

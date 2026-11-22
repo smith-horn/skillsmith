@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- (#3274 retro) a done uninstall's message now names
+  `skillsmith restore <opId>`, the command the forced-uninstall refusal already promised. When only
+  the manifest write fails for a skill that was not on disk, the message says the folder "was not on
+  disk" instead of "was removed". `ParkReporter` no longer exposes an unused `moved` getter, and
+  `UninstallParkSeams` is no longer exported from the package entry.
 - **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): uninstall takes the folder's tree hash when it
   reads it, before the modification check, and refuses (`kept/identity-changed`, nothing moved, the
   entry kept) when the hash bound for the move differs, so an edit made after the check is never

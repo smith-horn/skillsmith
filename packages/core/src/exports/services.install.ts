@@ -111,7 +111,6 @@ export {
   type InstallFromContentOptions,
   type UninstallNotDone,
   type UninstallOptions,
-  type UninstallParkSeams,
   type UninstallResult as CoreUninstallResult,
   type SkillManifest,
   type SkillManifestEntry,

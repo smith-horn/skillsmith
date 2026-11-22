@@ -7,7 +7,7 @@
  * - Manifest-based tracking of installed skills
  * - Modification detection (warns if files changed since install)
  * - Force removal option for modified or untracked skills
- * - Clean removal from ~/.claude/skills/ directory
+ * - Removal sets the folder aside into `.skillsmith-parked/` (restorable)
  * - Orphan fallback: if skill not in manifest but exists on disk
  *
  * The core uninstall logic lives in @skillsmith/core SkillInstallationService.
@@ -169,8 +169,7 @@ async function uninstallSkillImpl(
   // SMI-4578: tear down any --also-link fan-out destinations recorded
   // for this skill. Best-effort — uninstall must succeed even if the
   // manifest is missing or a destination was already cleaned up. Match
-  // the CLI's parity behavior in `manage.action.ts` (`createRemoveCommand`'s
-  // action impl).
+  // the CLI's parity behavior in `manage.remove.ts` (`removeSkill`).
   //
   // ADR-139 (SMI-6274 Wave 4) / GPT-5.6-Sol PR review round 3: fan-out links
   // are always recorded FROM the GLOBAL canonical install — `removeLinks
@@ -206,8 +205,15 @@ async function uninstallSkillImpl(
           const refusalText = notes.join('; ')
           result.warning = result.warning ? `${result.warning}; ${refusalText}` : refusalText
         }
-      } catch {
-        // Manifest read/write failure should never fail the uninstall.
+      } catch (linkErr) {
+        // A manifest read/write failure never fails the uninstall, but it is
+        // reported, as the CLI's `removeSkill` reports it. The CLI folds home
+        // paths to `~`; this keeps the raw message, like the full paths this
+        // result already carries in `message` and `parkedPath`.
+        const note = `could not clean up cross-client links: ${
+          linkErr instanceof Error ? linkErr.message : String(linkErr)
+        }`
+        result.warning = result.warning ? `${result.warning}; ${note}` : note
       }
     }
   }
