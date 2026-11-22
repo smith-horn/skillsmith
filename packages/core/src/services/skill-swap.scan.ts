@@ -69,7 +69,7 @@ async function recordedRefusal(st: SwapState): Promise<SwapFault | null> {
   if (!scan.ok) {
     return new SwapFault(
       'staging-unsafe',
-      `the update records in ${stagingDir} could not be listed (${scan.path}: ${scan.errno})`
+      `the records of unfinished operations in ${stagingDir} could not be listed (${scan.path}: ${scan.errno})`
     )
   }
   trace(st, { op: 'record-scan', path: stagingDir })

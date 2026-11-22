@@ -70,6 +70,7 @@ import { intentPrecheck, writeParkIntent } from './skill-swap.intent.js'
 import {
   hook,
   messageOf,
+  operationNoun,
   opPaths,
   rethrowLockOrder,
   rmdirChecked,
@@ -260,7 +261,7 @@ function notTheBuild(
     return {
       status: 'kept',
       reason: 'identity-changed',
-      detail: `${newDir} is not the directory this update built; it was left for doctor`,
+      detail: `${newDir} is not the directory this ${operationNoun(st)} built; it was left for doctor`,
     }
   }
   return null

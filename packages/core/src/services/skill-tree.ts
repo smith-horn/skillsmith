@@ -17,6 +17,10 @@
  *    replaced (ADR-155 residual, SMI-6559). That includes another process
  *    removing the claim and making its own empty directory before the rename:
  *    Node has no `renameat2(RENAME_NOREPLACE)`, so the window is the residual's.
+ *    After the rename it syncs the destination's parent, then the parent the
+ *    staged folder was renamed out of (destination before source, the plan's
+ *    sync rule; 8-i-a-3a, Q-G), so a caller that does not sync the source
+ *    side itself (restore) still has the move durable on both sides.
  *
  * A claim whose rename failed is left in place: a directory at the target,
  * empty unless something wrote into it first (`ENOTEMPTY`), and removing it
@@ -65,8 +69,12 @@ export function treeHashOf(absRoot: string): TreeHashResult {
 export type ClaimPublishResult =
   | {
       ok: true
-      /** What each parent sync reported; `failed` means durability is not assured. */
-      syncs: { claim: DirSyncOutcome; publish: DirSyncOutcome }
+      /**
+       * What each parent sync reported; `failed` means durability is not
+       * assured. `claim` and `publish` are the destination's parent (after the
+       * claim, after the rename); `source` the parent the staged folder left.
+       */
+      syncs: { claim: DirSyncOutcome; publish: DirSyncOutcome; source: DirSyncOutcome }
     }
   /** Something exists at `destAbs`; nothing was touched. */
   | { ok: false; reason: 'target-exists' }
@@ -135,5 +143,7 @@ export async function claimPublish(
   } catch (err) {
     return { ok: false, reason: 'rename-failed', errno: codeOf(err), claimLeft: true }
   }
-  return { ok: true, syncs: { claim, publish: await syncDirectory(parent) } }
+  const publish = await syncDirectory(parent)
+  const source = await syncDirectory(path.dirname(stagedAbs))
+  return { ok: true, syncs: { claim, publish, source } }
 }

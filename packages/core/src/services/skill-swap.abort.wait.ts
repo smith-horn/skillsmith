@@ -26,7 +26,7 @@ import { withSkillWriteLock } from './skill-write-lock.js'
 import type { SkillWriteResult, SkillWriteStop } from './skill-write-lock.types.js'
 import { noneResult, refused, runCleanup, say } from './skill-swap.abort.js'
 import type { Refused } from './skill-swap.abort.js'
-import { hook } from './skill-swap.ops.js'
+import { hook, operationNoun } from './skill-swap.ops.js'
 import { recordedReason } from './skill-swap.scan.js'
 import type { SwapState } from './skill-swap.ops.js'
 import type { SwapRefuseReason, SwapResult } from './skill-swap.types.js'
@@ -93,7 +93,7 @@ export async function abortAfterBusy(
   say(
     st,
     `Another Skillsmith operation is changing ${st.binding.root}; waiting up to ` +
-      `${Math.ceil(waitMs / 1000)} s to set aside this update's unused staged copy.`
+      `${Math.ceil(waitMs / 1000)} s to set aside this ${operationNoun(st)}'s unused staged copy.`
   )
   await hook(st, 'secondWaitStart')
   let hint = first.gitignoreHint

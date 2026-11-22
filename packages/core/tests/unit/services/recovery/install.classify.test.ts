@@ -69,7 +69,8 @@ function oracle(x: Tuple): Expected {
   const nPresent = x.l === 'Nsrc' || x.l === 'Nkept'
   const uPresent = x.l === 'Usrc' || x.l === 'Ukept' || x.u === 'other'
   if (p === 1) {
-    return tS === 'absent' && !nPresent && !uPresent && x.m === 'pre'
+    // FI4: the manifest not the installed entry (8-i-a-3a, owner decision A).
+    return tS === 'absent' && !nPresent && !uPresent && x.m !== 'post'
       ? { kind: 'state', state: 'FI4', postKeep: false }
       : { kind: 'anything-else' }
   }

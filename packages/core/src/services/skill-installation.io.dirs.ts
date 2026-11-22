@@ -26,7 +26,11 @@ import * as path from 'path'
  * ultimately wins the create below (the benign EEXIST race) — so a failed install can roll
  * a nested directory back instead of leaving it orphaned inside a pre-existing `installPath`.
  */
-async function ensureDirNoFollow(dirPath: string, freshDirs: Set<string>): Promise<void> {
+async function ensureDirNoFollow(
+  dirPath: string,
+  freshDirs: Set<string>,
+  hooks?: MkdirHooks
+): Promise<void> {
   const check = async (): Promise<'ok' | 'missing'> => {
     let stats
     try {
@@ -46,12 +50,16 @@ async function ensureDirNoFollow(dirPath: string, freshDirs: Set<string>): Promi
 
   if ((await check()) === 'ok') return
 
+  // SMI-6531 8-i-a-3a: the staged mode's check runs before every create.
+  hooks?.beforeCreate()
+
   // This segment did not exist at the point we checked it — record it as a rollback
   // candidate BEFORE attempting to create it (mirrors F1's write-side ordering).
   freshDirs.add(dirPath)
 
   try {
     await fs.mkdir(dirPath)
+    hooks?.onCreated(dirPath)
   } catch (err) {
     // EEXIST here is a benign race between our own concurrent sub-skill writes under the
     // same new subdirectory (writeInstallFiles writes them in parallel) — re-check below
@@ -66,6 +74,12 @@ async function ensureDirNoFollow(dirPath: string, freshDirs: Set<string>): Promi
   }
 }
 
+/** SMI-6531 8-i-a-3a (staged mode): a check before each `mkdir`, and a report of each one this call made. */
+export interface MkdirHooks {
+  beforeCreate: () => void
+  onCreated: (dir: string) => void
+}
+
 /**
  * Create every path segment of `dir` (relative to `baseDir`) via `ensureDirNoFollow()`,
  * so no intermediate segment can be a pre-existing symlink. `dir` must already be lexically
@@ -75,7 +89,9 @@ async function ensureDirNoFollow(dirPath: string, freshDirs: Set<string>): Promi
 export async function mkdirNoFollow(
   baseDir: string,
   dir: string,
-  freshDirs: Set<string>
+  freshDirs: Set<string>,
+  /** Staged mode only; omitted, unchanged. */
+  hooks?: MkdirHooks
 ): Promise<void> {
   const relative = path.relative(baseDir, dir)
   if (relative === '' || relative.startsWith('..')) return
@@ -83,6 +99,6 @@ export async function mkdirNoFollow(
   let current = baseDir
   for (const segment of segments) {
     current = path.join(current, segment)
-    await ensureDirNoFollow(current, freshDirs)
+    await ensureDirNoFollow(current, freshDirs, hooks)
   }
 }

@@ -31,7 +31,6 @@ import type { BigIntStats } from 'node:fs'
 import { errCode } from './park-result.js'
 
 export { parseSidecarStrict } from './prune.sidecar.strict.js'
-export type { SidecarParse, SidecarShape, SidecarStore } from './prune.sidecar.strict.js'
 
 /** A stable read that succeeded: the bytes, and the descriptor's metadata. */
 export interface StableReadOk {

@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { operationNoun } from '../../../src/services/skill-swap.ops.js'
 import { MAX_RECORD_BYTES, scanStagingRecords } from '../../../src/services/skill-swap.records.js'
 import type { SwapOptions } from '../../../src/services/skill-swap.js'
 import {
@@ -339,6 +340,9 @@ describe('T-R3 (swap half): a staging that cannot be listed', () => {
     expect(refused.reason).toBe('staging-unsafe')
     expect(refused.detail).toContain('EACCES')
     expect(refused.detail).toContain(fx.staging)
+    // 8-i-a-3a: the listing covers install and update records alike, so the words name neither.
+    expect(refused.detail).toContain('the records of unfinished operations in')
+    expect(refused.detail).not.toContain('update records')
     expect(hits.length).toBeGreaterThan(0)
     expect(hashOf(fx.realDir)).toBe(r.p.input.preTree)
   })
@@ -514,5 +518,14 @@ describe('T-R1 (swap half): a record never holds an entry JSON drops (retro of P
       fs.readFileSync(path.join(opDirOf(fx, opIdN('f')), 'record.json'), 'utf8')
     ) as { preEntry: unknown }
     expect(rec.preEntry).toEqual({ size: null })
+  })
+})
+
+/** 8-i-a-3a (design § 1.4): the word the abort and wait messages use for the operation. */
+describe('operationNoun', () => {
+  it('an unset operation is an update (every state before 8-i-a-3b); install only when set', () => {
+    expect(operationNoun({})).toBe('update')
+    expect(operationNoun({ operation: 'update' })).toBe('update')
+    expect(operationNoun({ operation: 'install' })).toBe('install')
   })
 })
