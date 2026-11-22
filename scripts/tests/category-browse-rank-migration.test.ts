@@ -248,7 +248,7 @@ describe('SMI-7239: category browse rank table and tiered fuzzy search', () => {
     expect(grant).toBeGreaterThan(revoke)
   })
 
-  it('the gate checks all five new indexes and reconciles the rank table in both directions', () => {
+  it('the gate checks all five new indexes and the rank row count, with no reconcile inside the lock', () => {
     const sql = read(FIX)
     const gate = sql.slice(sql.lastIndexOf('DO $$'))
     for (const idx of [
@@ -260,7 +260,12 @@ describe('SMI-7239: category browse rank table and tiered fuzzy search', () => {
     ]) {
       expect(gate).toContain(`'${idx}'`)
     }
-    expect(gate.match(/\bEXCEPT\b/g)?.length).toBeGreaterThanOrEqual(2)
+    // Row-count check inside the locked window; the full reconcile runs after COMMIT
+    // (the in-gate EXCEPT pair took about 2 min on prod and timed out the first apply).
+    expect(gate).toMatch(
+      /SELECT \(SELECT count\(\*\) FROM public\.skills_category_rank\)\s+- \(SELECT count\(\*\) FROM public\.skill_categories sc JOIN public\.skills s ON s\.id = sc\.skill_id\s+WHERE NOT s\.quarantined\)\s+INTO drift;\s+IF drift <> 0 THEN\s+RAISE EXCEPTION/
+    )
+    expect(gate).not.toMatch(/\bEXCEPT\b/)
     expect(gate).toMatch(/RAISE\s+EXCEPTION/)
   })
 
