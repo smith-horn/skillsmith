@@ -176,7 +176,60 @@ describe('SMI-7239: category browse rank table and tiered fuzzy search', () => {
     const edge = readFileSync(EDGE, 'utf8').match(/export const CATEGORY_MAX_OFFSET = (\d+)/)
     expect(edge).not.toBeNull()
     expect(Number(cap?.[1])).toBe(Number(edge?.[1]))
+    // Independent policy pin (review R1): the two caps agreeing on an unsafe value
+    // must still fail. Each call walks up to offset + limit entries per tier, so
+    // the cap bounds anon work; raising it needs a measured cold prod plan.
+    expect(Number(cap?.[1])).toBeLessThanOrEqual(10000)
+    // Tier strings are length-bounded before use.
+    expect(body).toMatch(
+      /EXISTS\s*\(SELECT 1 FROM unnest\(p_tiers\) AS u\(t\) WHERE length\(u\.t\) > 32\)/
+    )
     expect(body).toMatch(/WHERE\s+NOT\s+s\.quarantined/)
+  })
+
+  it('browse applies the same predicates and order as the old query in both branches', () => {
+    const body = fnBody(read(FIX), 'browse_category_skills')
+    for (const pred of [
+      /\(p_min_score IS NULL OR r\.quality_score >= p_min_score\)/g,
+      /\(p_max_risk IS NULL OR r\.security_score IS NULL OR r\.security_score <= p_max_risk\)/g,
+      /\(NOT COALESCE\(p_safe_only, FALSE\) OR \(r\.scanned AND r\.security_score = 0\)\)/g,
+      /ORDER BY r\.quality_score DESC NULLS LAST, r\.skill_id\s+LIMIT v_take/g,
+    ]) {
+      // Once in the unfiltered branch, once in the per-tier branch.
+      expect(body.match(pred)?.length).toBe(2)
+    }
+    expect(body).toMatch(/AND r\.trust_tier = tv\.tier/)
+    expect(body).toMatch(
+      /ORDER BY cand\.q DESC NULLS LAST, cand\.skill_id\s+LIMIT p_limit OFFSET p_offset/
+    )
+    expect(body).toMatch(/ORDER BY page\.q DESC NULLS LAST, page\.skill_id;/)
+  })
+
+  it('the link trigger locks its skill rows FOR SHARE before writing (review R1 race)', () => {
+    const body = fnBody(read(FIX), 'sync_skills_category_rank_from_link')
+    const lock = body.search(
+      /PERFORM 1\s+FROM public\.skills s[\s\S]*?ORDER BY s\.id\s+FOR SHARE OF s;/
+    )
+    const firstWrite = body.search(/\b(DELETE FROM|INSERT INTO) public\.skills_category_rank/)
+    expect(lock).toBeGreaterThan(0)
+    expect(firstWrite).toBeGreaterThan(lock)
+    // Both the old and the new skill id are locked.
+    expect(body).toMatch(/CASE WHEN TG_OP IN \('DELETE', 'UPDATE'\) THEN OLD\.skill_id END/)
+    expect(body).toMatch(/CASE WHEN TG_OP IN \('INSERT', 'UPDATE'\) THEN NEW\.skill_id END/)
+  })
+
+  it('fuzzy name arm caps its candidates before scoring', () => {
+    const body = fnBody(read(FIX), 'fuzzy_search_skills')
+    const nameArm = body.slice(0, body.indexOf('GET DIAGNOSTICS'))
+    expect(nameArm).toMatch(
+      /SELECT t\.id, t\.name\s+FROM public\.skills_search_tiered t\s+WHERE search_query OPERATOR\(extensions\.<%\) t\.name\s+LIMIT 1000\s+\) c\s+ORDER BY 2 DESC, c\.id/
+    )
+  })
+
+  it('waits at most 3 s for a lock', () => {
+    const sql = read(FIX)
+    expect(sql).toMatch(/SET LOCAL lock_timeout = '3s';/)
+    expect(sql).not.toMatch(/lock_timeout = '(?!3s')/)
   })
 
   it('browse: PUBLIC revoked before clients are granted', () => {
