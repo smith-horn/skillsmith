@@ -60,7 +60,6 @@ async function doctorSays(st: Pick<Fi4, 'fx' | 'opId'>) {
   return { verdict: op.cls.facts.parked![0]!.restore, note: apply.notes.join('\n') }
 }
 
-/** The argument the note tells the user to give `skillsmith restore`, or null when it offers none. */
 /**
  * The words a POSIX shell makes of `text` (single quotes, backslash escapes,
  * unquoted blanks between words): what the program would be given.

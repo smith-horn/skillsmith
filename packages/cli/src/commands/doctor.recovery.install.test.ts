@@ -76,7 +76,8 @@ describe('doctor recovery: a fresh install', () => {
     expect(text).toContain(`    set aside at ${u.parked} (sidecar: missing; held: no)`)
     // `skillsmith restore` refuses a copy with no sidecar (origin-unknown), so the note does not offer it.
     expect(text).toContain(`copy it to ${u.skillDir} by hand`)
-    expect(text).not.toContain(`skillsmith restore ${u.parked}`)
+    // No offer in any form (path, quoted path or opId).
+    expect(text).not.toMatch(/can be put back with/)
   })
 
   it('a set-aside copy with a sidecar says present and held yes or no; another folder is named as one', async () => {
@@ -92,7 +93,7 @@ describe('doctor recovery: a fresh install', () => {
     // and the note, worded from restore's own verdict, does not offer restore. Core's
     // install.parked.test.ts checks the verdict against the real planRestore with a real park.
     expect(out.join('\n')).toContain('cannot be put back by `skillsmith restore` (origin-unknown:')
-    expect(out.join('\n')).not.toContain(`skillsmith restore ${u.parked}\``)
+    expect(out.join('\n')).not.toMatch(/can be put back with/)
 
     out = []
     fs.writeFileSync(`${u.parked}.json`, sidecar(false))
