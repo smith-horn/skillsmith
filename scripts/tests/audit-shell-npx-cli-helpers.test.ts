@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+import { timeAlternating } from './_lib/ratio-timing.js'
 // @ts-expect-error - .mjs helper has no typings
 import {
   scanShellText,
@@ -122,7 +123,6 @@ const LEXER_ROWS: LexRow[] = [
   ['identifier shift', 'x=$((a<<b))\nnpx supabase deploy', 1],
   ['$[ ] shift', 'x=$[a<<EOF]\nnpx supabase status', 1],
   ['heredoc in $( ) inside (( ))', '(( x = $(cat <<EOF\nnpx supabase prose\nEOF\n) ))', 0],
-  ['(( )) test', 'if (( a < b )); then npx supabase status; fi', 1],
   ['for (( )) loop', 'for ((i=0;i<3;i++)); do npx supabase s; done', 1],
   ['nested parens in $(( ))', 'x=$(( (1+2) * 3 )); npx supabase s', 1],
   ['spaced shift in $(( ))', 'echo $(( 1 << 2 )) && npx supabase s', 1],
@@ -143,8 +143,6 @@ const LEXER_ROWS: LexRow[] = [
   ["'$( )' is literal", "echo '$(npx supabase)'", 0],
   ['plain "…" prose', 'echo "npx supabase deploy"', 0],
   // case…esac: a pattern's ) does not close a substitution.
-  ['case in "$( )"', 'x="$(case x in a) npx supabase status;; esac)"', 1],
-  ['top-level case arm', 'case "$x" in a) npx supabase status ;; esac', 1],
   ['case after then', 'if x; then case $y in a) npx supabase s;; esac; fi', 1],
   ['echo case is a word', 'x="$(echo case) npx supabase status"', 0],
   ['x=case is a word', 'x="$(y=case; echo) npx supabase status"', 0],
@@ -423,5 +421,344 @@ describe('findBareNpxCliInShellAndWorkflows (SMI-7223)', () => {
       '.github/workflows/w.yaml',
       'scripts/a.sh',
     ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SMI-7241 (Addendum B): bash-truth rows. Each is [row, expected hits]; the
+// expectation is what bash 5.2 did with a stub npx on PATH (yes -> 1, no -> 0).
+// The rows bash disagrees with are in the named blocks below.
+// ---------------------------------------------------------------------------
+const B2_ROWS: Array<[string, number]> = [
+  ["bash -c $'npx supabase status'", 1],
+  ["sh -c $'npx supabase status'", 1],
+  ["bash -ec $'npx supabase status'", 1],
+  ["bash -c -- $'npx supabase status'", 1],
+  ["x=$(bash -c $'npx supabase status')", 1],
+  ["echo hi; bash -c $'npx supabase status'", 1],
+  ["bash -c $'npx wrangler deploy'", 1],
+  ["bash -c $'npx supabase status' # trailing comment", 1],
+  ['bash -c $"npx supabase status"', 1],
+  ['sh -c $"npx supabase status"', 1],
+  ["$'npx' supabase status", 1],
+  ["x=1 $'npx' supabase status", 1],
+  ['$"npx" supabase status', 1],
+  ['echo $"$(npx supabase status)"', 1],
+  ['echo $"`npx supabase status`"', 1],
+  ["bash -c $'npx supabase@2.111.0 status'", 0],
+  ["echo $'npx supabase status'", 0],
+  ["echo -c $'npx supabase status'", 0],
+  ["bash -c x$'npx supabase status'", 0],
+  ["bash -c \\$'npx supabase status'", 0],
+  ['echo $"npx supabase status"', 0],
+  ["echo $'$(npx supabase status)'", 0],
+  ["bash -c$'npx supabase status'", 0],
+]
+
+const B4_ROWS: Array<[string, number]> = [
+  ["bash -c $'\\156px supabase status'", 1],
+  ["bash -c $'\\u006epx supabase status'", 1],
+  ["echo $'\\x6epx supabase status'", 0],
+  ["bash -c $'\\\\x6epx supabase status'", 0],
+  ["bash -c $'npx\\0 supabase status'", 0],
+]
+
+const GOV_ROWS: Array<[string, number]> = [
+  ['cat <<END-OF\nhello\nEND-OF\nnpx supabase status', 1],
+  ["cat <<'END-OF'\nnpx supabase prose\nEND-OF\nnpx supabase status", 1],
+  ['cat <<"END-OF"\nnpx supabase prose\nEND-OF', 0],
+  ['cat <<\\EOF\nnpx supabase prose\nEOF\nnpx supabase status', 1],
+  ['cat <<-EOF\n\tnpx supabase prose\n\tEOF\nnpx supabase status', 1],
+  ['cat <<EOF\n  EOF\nnpx supabase prose\nEOF', 0],
+  ["sh -ec 'npx supabase status'", 1],
+  ['bash -o pipefail -c "npx supabase status"', 1],
+  ['npx --prefix ./x supabase status', 1],
+  ['npx "supabase" status', 1],
+  ['npx supabase@latest status', 1],
+  ['npx wrangler@3 deploy', 1],
+  ['npx\\\nsupabase status', 0],
+  ['npx \\\nsupabase status', 1],
+  ["bash -ce 'npx supabase x'", 1],
+  ["bash -c -e 'npx supabase x'", 1],
+  ["bash -c -- 'npx supabase x'", 1],
+  ["/bin/bash -c 'npx supabase x'", 1],
+  ["bash -O extglob -c 'npx supabase x'", 1],
+  ['bash script.sh "npx supabase x"', 0],
+  ['cat <<EOF\n$(npx supabase x)\nEOF', 1],
+  ['cat <<EOF\n`npx supabase x`\nEOF', 1],
+  ['cat <<EOF\nrun npx supabase x "here"\nEOF', 0],
+  ["cat <<'EOF'\n$(npx supabase x)\nEOF", 0],
+  ['cat <<EOF\n\\$(npx supabase x)\nEOF', 0],
+  ['npx -p supabase@2.111.0 supabase db push', 0],
+  ['npx -p supabase@latest supabase db push', 1],
+  ['v=$(npx supabase@2.111.0)', 0],
+  ['cat <<-EOF\n  EOF\nnpx supabase prose\n\tEOF', 0],
+]
+
+const CTL_ROWS: Array<[string, number]> = [
+  ["echo 'np''x supabase status'", 0],
+  ["echo np'x supabase status'", 0],
+  ["printf '%s\\n' \"np\"'x supabase status'", 0],
+  ["bash -c 'echo' 'npx supabase status'", 0],
+  ['bash -c "$x" \'npx supabase status\'', 0],
+  ["bash -c 'np''x supabase@2.111.0 status'", 0],
+  ["$'\\x6epx' supabase@2.111.0 status", 0],
+  ["'np'x 'supabase@2.111.0' status", 0],
+  ['npx supabase@"2.111.0" status', 0],
+  ["cat <<EOF\nbash -c 'np''x supabase status'\nEOF", 0],
+  ["cat <<EOF\nnp''x supabase status\nEOF", 0],
+  ["cat <<'EOF'\n$(np''x supabase status)\nEOF", 0],
+  ["bash -c $'npx\\\\nsupabase'", 0],
+  ["bash -c $'npx\\nsupabase status'", 0],
+  ['echo "$(echo np\'\'x) supabase status"', 0],
+  ["echo ${x:-'npx supabase status'}", 0],
+  ["$'\\x6e'px\\ supabase status", 0],
+  ['bash -c "$cmd"', 0],
+  ["x='np'x; echo $x supabase", 0],
+  ["bash -c 'np' 'x supabase status'", 0],
+  ["bash -c 'cat' <<'EOF'\nnpx supabase status\nEOF", 0],
+  ["bash -c $'echo\\0; npx supabase status'", 0],
+  ["$(echo hi)bash -c 'npx supabase status'", 0],
+]
+
+const OWN_ROWS: Array<[string, number]> = [
+  ['n${x}px supabase status', 1],
+  ['npx $x supabase status', 1],
+  ["bash -c 'np''x wrangler deploy'", 1],
+  ["bash -c \"bash -c 'np''x supabase status'\"", 1],
+  ["bash -c 'echo hi; np''x supabase status'", 1],
+  ["cat <<EOF\n$(bash -c 'np''x supabase status')\nEOF", 1],
+  ["cat <<EOF\n$(np''x supabase status)\nEOF", 1],
+  ['echo "$(np\'\'x supabase status)"', 1],
+  ['x="$(np\'\'x supabase status)"y', 1],
+  ["echo a\nbash -c 'np'\\\n'x supabase status'", 1],
+  ["npx 'supabase'@latest status", 1],
+  ['bash -c "np\\"\\"x supabase status"', 1],
+  ['"$(echo)"np\'x\' supabase status', 1],
+  ['"$(np\'\'x supabase status)"y', 1],
+]
+
+// Review fixes on 9945f1fe4, each run under bash 5.2.15 with a stub npx and
+// no network. F6: bash's blanks are space and tab only, so `echo\rnpx` is one
+// word. F7: a backslash ending a comment does not continue the line.
+const FIX3_ROWS: Array<[string, number]> = [
+  ["bash -c $'echo\\rnpx supabase status'", 0],
+  ["bash -c $'echo\\fnpx supabase status'", 0],
+  ["bash -c $'echo\\vnpx supabase status'", 0],
+  ['# deploy \\\nnpx supabase status', 1],
+  ['echo a # note \\\nnpx supabase status', 1],
+  ['npx \\\n  supabase status', 1],
+  // Review round 3 (R12): formerly known misses. A `+` flag with no o before
+  // or after the -c keeps the `sh -c` shape.
+  ["bash +e -c 'npx supabase status'", 1],
+  ["bash -c +e 'npx supabase status'", 1],
+]
+
+const LOGIN_SHELL_ROWS: Array<[string, number]> = [
+  ['bash -lc "npx supabase status"', 1],
+  ['bash -l "npx supabase status"', 0],
+]
+
+const ACCEPTED_OVER_APPROXIMATIONS: Array<[string]> = [
+  // a quoted `npx` word after `echo`, the family base already over-approximates (`echo "npx" supabase status`)
+  ["echo $'npx' supabase status"],
+  // base already flags it: the glued `-c'…'` reads as a `sh -c` argument
+  ["bash -c'npx supabase status'"],
+  // case arms and conditions are not evaluated (B.8), so an arm that never runs still counts
+  ['x="$(case $a in b) case $c in d) :;; esac;; e) npx supabase status;; esac)"'],
+  // conditions and case arms are not evaluated (B.8): bash runs no npx for these three, the scanner reads the header
+  ['if (( a < b )); then npx supabase status; fi'],
+  ['x="$(case x in a) npx supabase status;; esac)"'],
+  ['case "$x" in a) npx supabase status ;; esac'],
+  // the rebuilt script `echo npx supabase status` is the `echo npx` family base already flags
+  ["bash -c 'echo np''x supabase status'"],
+  // the decoded script `echo npx supabase status` is the same `echo npx` family
+  ["bash -c $'echo npx supabase status'"],
+  // base already flags it: inside `"…"` the `\$` is a literal `$`, and the raw pass sees `npx` in a `bash -c` argument
+  ['bash -c "\\$\'npx supabase status\'"'],
+  // a decoded `echo npx supabase status`, the same `echo npx` family
+  ["echo $'\\x6epx' supabase status"],
+  // base already flags it: a backtick substitution before `bash` ends the word, and the raw pass sees `bash -c 'npx…'`
+  ["`echo hi`bash -c 'npx supabase status'"],
+  // a group counts as fed when any command in it reads stdin, even one an earlier stage starves (bash ran nothing)
+  ['( true | bash ) <<EOF\nnpx supabase status\nEOF'],
+  // `command -v` only looks the name up; read as sourcing stdin (SMI-7248; bash ran nothing)
+  ['command -v source /dev/stdin <<EOF\nnpx supabase status\nEOF'],
+]
+
+const EXPANSION_AS_EMPTY_FALSE_POSITIVE: Array<[string]> = [
+  ['"$(echo hi)"bash -c \'npx supabase status\''],
+]
+
+const KNOWN_MISSES: Array<[string]> = [
+  // a `${x:-word}` default is taken as empty (B.8), so the quoted default never reaches `sh -c`
+  ["bash -c ${x:-'npx supabase status'}"],
+  // eval, ssh, docker exec and other interpreters of a quoted string are not followed (B.8)
+  ["eval 'np''x supabase status'"],
+  // the raw comment cut reads a `#` inside `${…}` or after an escaped space as a comment (SMI-7248)
+  ['echo ${y:- #} ; npx supabase status'],
+  ['x=a\\ #b npx supabase status'],
+  // filed in SMI-7248, each measured under bash 5.2.15 (bash ran npx): a quoted or empty version spec
+  ['npx supabase@"^2" status'],
+  ['npx supabase@ status'],
+  // an option taking a value after the -c, and --rcfile/--init-file before it
+  ["bash -c -o pipefail 'npx supabase status'"],
+  ["bash -c +o posix 'npx supabase status'"],
+  ["bash -c -euo pipefail 'npx supabase status'"],
+  ["bash -c +O extglob 'npx supabase status'"],
+  ["bash --rcfile /dev/null -c 'npx supabase status'"],
+  ["bash --init-file /dev/null -c 'npx supabase status'"],
+  // a pipeline into a group holding && or ;, and a -c string that sources stdin
+  ['cat <<EOF | ( cd /tmp && bash )\nnpx supabase status\nEOF'],
+  ["bash -c 'source /dev/stdin' <<EOF\nnpx supabase status\nEOF"],
+]
+
+describe('SMI-7241 shell rows agree with bash', () => {
+  const rows: Array<[string, [string, number][]]> = [
+    ['B.2 table', B2_ROWS],
+    ['ANSI-C', B4_ROWS],
+    ['governance', GOV_ROWS],
+    ['must-not-flag controls', CTL_ROWS],
+    ['other', OWN_ROWS],
+    ['review fixes', FIX3_ROWS],
+  ]
+  for (const [name, table] of rows) {
+    describe(name, () => {
+      it.each(table)('%j -> %i hit(s)', (row, want) => {
+        const hits = scanShellText(row)
+        expect(hits).toHaveLength(want)
+        for (const h of hits) expect(['supabase', 'wrangler']).toContain(h.tool)
+      })
+    })
+  }
+
+  // Login-shell rows were never executed: a login shell sources /etc/profile,
+  // which resets PATH past the stub and reaches the real npx. They keep the
+  // expectation of the existing tests above.
+  describe('login-shell rows (not run under bash)', () => {
+    it.each(LOGIN_SHELL_ROWS)('%j -> %i hit(s)', (row, want) => {
+      expect(scanShellText(row)).toHaveLength(want)
+    })
+  })
+})
+
+// Sizes for the ratio rows below (even, so the quote shapes pair up and the
+// final call runs).
+const N_COMMENT = 300_000
+const N_TRAILING = 10_000
+const N_CONTINUED = 30_000
+const N_R6 = 20_000
+const CALL_X = 'npx supabase x'
+
+// F7: the lines after a comment ending in a backslash are their own lines.
+describe('SMI-7241 comments do not continue lines', () => {
+  it.each([
+    ['# deploy \\\nnpx supabase status', [2]],
+    ['echo a # note \\\nnpx supabase status', [2]],
+    ['npx \\\n  supabase status', [1]],
+    ['echo a \\\n # b \\\nnpx supabase status', [3]],
+    ['# a \\\n# b \\\nnpx supabase status\nnpx wrangler deploy', [3, 4]],
+  ] as Array<[string, number[]]>)('%j hits at lines %j', (row, want) => {
+    expect(scanShellText(row).map((h: { line: number }) => h.line)).toEqual(want)
+  })
+
+  // An open `$((` spanning two comment-ended pieces: the window must lex with
+  // the whole run as lookahead, or the call lands on line 5 (R6b). Bash reads
+  // the `#y` inside `$(( ))` as arithmetic and stops on a syntax error, so it
+  // runs no npx; flagging it is accepted, since a miss costs more than a
+  // false positive.
+  it('accepted over-approximation: a # inside an open $(( run keeps the call at line 3', () => {
+    const row = 'echo \\\n # c \\\nx=$(( 1 + \\\n #y \\\n+ 2 )); npx supabase status'
+    expect(scanShellText(row).map((h: { line: number }) => h.line)).toEqual([3])
+  })
+
+  // One lex per physical line, not per logical line: a run of comment lines
+  // ending in backslashes must not be re-joined line by line. The last three
+  // rows reach the restart path (review round 2, R6): each comment ends a
+  // logical line inside one run of backslash-ended lines, and re-joining to
+  // the end of the run on each restart was quadratic (1.4 s at 4,000, 26 s at
+  // 16,000 for the first). n is set so the small input takes 15 ms or more
+  // in the dev container: a ratio of two few-millisecond timings flaked.
+  it.each([
+    ['comment lines', (n: number) => '# x \\\n'.repeat(n) + 'npx supabase status', N_COMMENT],
+    [
+      'trailing comments',
+      (n: number) => 'echo a # x \\\n'.repeat(n) + 'npx supabase status',
+      N_TRAILING,
+    ],
+    [
+      'real continuations',
+      (n: number) => 'echo a \\\n'.repeat(n) + 'x\nnpx supabase status',
+      N_CONTINUED,
+    ],
+    ['restart: echo / comment', (n: number) => 'echo \\\n # c \\\n'.repeat(n) + CALL_X, N_R6],
+    ["restart: ' #\\", (n: number) => "' #\\\n".repeat(n) + CALL_X, N_R6],
+    ['restart: " #\\', (n: number) => '" #\\\n'.repeat(n) + CALL_X, N_R6],
+  ] as Array<[string, (n: number) => string, number]>)(
+    '%s: 4n costs under 8x n',
+    (_name, make, n) => {
+      // Alternating timing, fastest of 7 pairs: see _lib/ratio-timing.ts.
+      const t = timeAlternating((text) => scanShellText(text).length, make(n), make(4 * n), {
+        failFast: 16,
+      })
+      expect(t.smallHits).toBe(1)
+      expect(t.largeHits).toBe(1)
+      expect(t.ratio, `failedFast=${t.failedFast}`).toBeLessThan(8)
+    },
+    // Above the preset's 15 s, so a passing run on a loaded host is not
+    // failed (and retried) as a timeout.
+    60_000
+  )
+})
+
+describe('SMI-7241 accepted over-approximations', () => {
+  // Bash does NOT run npx for these; the scanner flags them on purpose
+  // (A.1 prefers a false positive to a miss). Named so that a later precision
+  // fix reads as an intended change, not a regression.
+  it.each(ACCEPTED_OVER_APPROXIMATIONS)('accepted over-approximation: %j is flagged', (row) => {
+    expect(scanShellText(row)).toHaveLength(1)
+  })
+
+  // Expansions are taken as empty: bash runs `hibash`, the scanner reads `bash`.
+  it.each(EXPANSION_AS_EMPTY_FALSE_POSITIVE)(
+    'accepted false positive (expansion taken as empty): %j is flagged',
+    (row) => {
+      expect(scanShellText(row)).toHaveLength(1)
+    }
+  )
+})
+
+// R4: the `tools` option is an argument threaded through every scan
+// function, not a module-level pattern swapped and restored.
+describe('SMI-7241 scanShellText tools option', () => {
+  it('does not leak a restricted scan into a later unrestricted one', () => {
+    // The last restricted scan excludes wrangler, so a leaked restriction
+    // hides the unrestricted call below.
+    expect(scanShellText('npx supabase status', { tools: ['wrangler'] })).toEqual([])
+    expect(scanShellText('npx wrangler deploy', { tools: ['supabase'] })).toEqual([])
+    expect(scanShellText('npx wrangler deploy')).toHaveLength(1)
+  })
+
+  it('keeps the restriction inside a nested sh -c script', () => {
+    expect(scanShellText("bash -c 'npx wrangler deploy'", { tools: ['supabase'] })).toEqual([])
+    expect(scanShellText("bash -c 'npx wrangler deploy'", { tools: ['wrangler'] })).toHaveLength(1)
+  })
+
+  it('rejects an empty tools list', () => {
+    expect(() => scanShellText('npx supabase status', { tools: [] })).toThrow(/non-empty/)
+  })
+
+  it('names an unwatched tool', () => {
+    expect(() => scanShellText('npx supabase status', { tools: ['supabase', 'vercel'] })).toThrow(
+      /"vercel"/
+    )
+  })
+})
+
+describe('SMI-7241 known misses (documented blind spots)', () => {
+  // Bash runs npx for each of these; the scanner reads 0. Pinned so that
+  // closing one is a deliberate change that also updates the header (B.8).
+  it.each(KNOWN_MISSES)('known miss: %j is not flagged', (row) => {
+    expect(scanShellText(row)).toEqual([])
   })
 })

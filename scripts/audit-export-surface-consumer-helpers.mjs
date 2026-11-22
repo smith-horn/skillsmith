@@ -465,10 +465,11 @@ export function evaluateExportSurfaceCoherence(groups, resolveExportSet) {
  * extracted out of audit-standards.mjs's inline Check 63 driver block so
  * the gate/marker behavior is unit-testable without spawning the whole
  * audit-standards.mjs script. Matches the inline pattern already used by
- * Check 59/60 in audit-standards.mjs (`CHECK_N_SHADOW_END_DATE` /
- * `inShadow` / `shadowSuffix` / `skipAcknowledged`) — factored out here
- * specifically for Check 63's own driver rather than touching those
- * existing inline blocks.
+ * Check 60 in audit-standards.mjs (`CHECK_N_SHADOW_END_DATE` /
+ * `inShadow` / `shadowSuffix` / `skipAcknowledged`; Check 59 used it too
+ * until SMI-7241 removed its expired shadow plumbing) — factored out here
+ * specifically for Check 63's own driver rather than touching that
+ * existing inline block.
  *
  * @param {object} params
  * @param {string} params.shadowEndDate - ISO date string, e.g. '2026-09-01'

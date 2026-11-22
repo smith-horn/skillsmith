@@ -599,7 +599,7 @@ describe('RUFLO_CLI_PIN pin coupling (SMI-6744 A1.5)', () => {
   const LAUNCHER_PATH =
     process.env.RUFLO_LAUNCHER_PATH_OVERRIDE ?? path.join(here, '..', 'mcp-ruflo-launcher.sh')
 
-  // findUnpinnedRufloLauncherPin (scripts/audit-cli-pin-drift-helpers.mjs,
+  // findUnpinnedRufloLauncherPin (scripts/audit-cli-pin-drift-ruflo.mjs,
   // SMI-5746 Check 59 sub-check 3) reads RUFLO_CLI_PIN with this exact
   // anchored regex, but only to DETECT drift: on a well-formed exact-semver
   // pin it returns null and never exposes the matched value, so it cannot

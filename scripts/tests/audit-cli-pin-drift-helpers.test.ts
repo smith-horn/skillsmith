@@ -156,6 +156,137 @@ describe('findUnpinnedBareNpxCliInPackageJson (SMI-5746 Check 59, sub-check 2)',
 
     expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
   })
+
+  // SMI-7241 F9: script bodies are read with Check 59's shell scanner, so a
+  // call bash runs (each row measured under bash 5.2.15 with a stub npx) is
+  // found however it is quoted.
+  it.each([
+    ["sh -c $'npx supabase status'", 'supabase'],
+    ["bash -c 'np''x supabase status'", 'supabase'],
+    ["bash -c 'np''x wrangler deploy'", 'wrangler'],
+  ])('flags %j', (body, tool) => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ scripts: { s: body }, devDependencies: {} })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 's', tool },
+    ])
+  })
+
+  it('reports each tool once per script, in WATCHED order', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        scripts: { s: 'npx supabase db push && npx wrangler deploy && npx supabase status' },
+      })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 's', tool: 'wrangler' },
+      { file: 'package.json', script: 's', tool: 'supabase' },
+    ])
+  })
+
+  it('does not flag a scanner-found call when the tool is a devDependency', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        scripts: { s: "bash -c 'np''x supabase status'" },
+        devDependencies: { supabase: '2.107.0' },
+      })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([])
+  })
+
+  it('does not flag a comment that mentions npx', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          b: ': # npx wrangler',
+          c: 'echo ok # npx supabase start',
+          d: 'npx supabase start',
+        },
+      })
+    )
+    // `d` is the positive control: the same file is read and a real call found.
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 'd', tool: 'supabase' },
+    ])
+  })
+
+  // Accepted false positive (review round 2, R2): every quoted argument is
+  // scanned as a script, because runners execute them, so quoted prose that
+  // mentions an npx call reads as one. A miss costs more here.
+  it('flags quoted prose that mentions an npx call (accepted)', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ scripts: { a: 'echo "run npx supabase start"' } })
+    )
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 'a', tool: 'supabase' },
+    ])
+  })
+
+  // Review round 2, R2: runners execute their string arguments, so a quoted
+  // argument is scanned as a script.
+  it.each([
+    ['concurrently "npm run dev" "sleep 2 && npx supabase start"', 'supabase'],
+    ["concurrently 'npm:a' 'cd x; npx wrangler dev'", 'wrangler'],
+    ['nodemon --exec "tsc && npx wrangler dev"', 'wrangler'],
+  ])('flags a call in a runner command string: %j', (body, tool) => {
+    const dir = scratchDir()
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts: { s: body } }))
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 's', tool },
+    ])
+  })
+
+  it('still does not flag a comment inside a runner command string', () => {
+    const dir = scratchDir()
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({
+        scripts: { s: 'concurrently "echo a # npx supabase start"', d: 'npx supabase start' },
+      })
+    )
+    // `d` is the positive control: the same file is read and a real call found.
+    expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual([
+      { file: 'package.json', script: 'd', tool: 'supabase' },
+    ])
+  })
+
+  // Review round 2, R3 (owner decision): a devDependency exempts only a bare
+  // `npx tool`; any version spec that is not exact is flagged regardless.
+  it.each([
+    ['npx supabase status', { supabase: '2.107.0' }, false],
+    ['npx supabase@latest status', { supabase: '2.107.0' }, true],
+    ['npx supabase@3 status', { supabase: '2.107.0' }, true],
+    ['npx -p supabase@latest supabase status', { supabase: '2.107.0' }, true],
+    ['npx supabase@2.107.0 status', {}, false],
+    ['npx -y supabase status', {}, true],
+    ['npx --yes supabase status', {}, true],
+    ['npx -y supabase status', { supabase: '2.107.0' }, false],
+    ['npx --yes supabase status', { supabase: '2.107.0' }, false],
+    ['npx supabase@2.107.0 x && npx supabase status', {}, true],
+  ] as Array<[string, Record<string, string>, boolean]>)(
+    '%j with devDependencies %j flagged: %s',
+    (body, devDependencies, flagged) => {
+      const dir = scratchDir()
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ scripts: { s: body }, devDependencies })
+      )
+      expect(findUnpinnedBareNpxCliInPackageJson(dir)).toEqual(
+        flagged ? [{ file: 'package.json', script: 's', tool: 'supabase' }] : []
+      )
+    }
+  )
 })
 
 describe('findUnpinnedRufloLauncherPin (SMI-5746 Check 59, sub-check 3; SMI-6744 ADR-170 §7)', () => {
