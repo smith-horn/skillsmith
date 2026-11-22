@@ -15,7 +15,10 @@
  *    the rename, and a folder edited or replaced in that window would
  *    otherwise be published. A mismatch stops `staging-unsafe` before the
  *    rename (an empty claim made by this call is left for the next run, as
- *    S1/FI1); the record is kept.
+ *    S1/FI1); the record is kept. Without a claim, `check` runs immediately
+ *    before the claim's `mkdir` and again in claimPublish's `beforeRename`
+ *    (not its test seam), and a throw says through `claimLeftBy` whether the
+ *    claim may be left (8-i-a-3a, design § 1.6).
  *  - `keepRole(st, ...)`: keep a role's tree. A verified keep (P5) is done; a
  *    source with no keep goes through `publishTree`; a started keep resumes
  *    from its sub-state: P0 (a provable temp unlinked, then `publishTree`),
@@ -121,6 +124,32 @@ function assertSourceAsPlanned(src: string, expect: SourceExpect): void {
   }
 }
 
+/**
+ * The errors `installAt` threw with nothing touched at the skill path (8-i-a-3a,
+ * design § 1.6): its `check` before the claim, `target-exists` and
+ * `claim-failed`. Kept beside the errors rather than on them, so no error's
+ * class, message or cause changes for doctor.
+ */
+const touchedNothing = new WeakSet<object>()
+
+/** Marks `err` as thrown before any claim existed; returns it. */
+function beforeClaim<E>(err: E): E {
+  if (typeof err === 'object' && err !== null) touchedNothing.add(err)
+  return err
+}
+
+/**
+ * Whether a throw out of `installAt` (with no claim passed in) may have left
+ * a claim at the skill path: false only for a failure known to have touched
+ * nothing (the `check` before the claim, `target-exists`, `claim-failed`).
+ * Every other throw, an unknown one included, answers true (fail closed): the
+ * claim's sync, a stop between the claim and the rename (the re-check, the
+ * source re-check), the rename, and every sync after it.
+ */
+export function claimLeftBy(err: unknown): boolean {
+  return !(typeof err === 'object' && err !== null && touchedNothing.has(err))
+}
+
 /** Puts `src` (O or N, a directory in OP) at the skill path, if it is still `expect`. */
 export async function installAt(
   st: SwapState,
@@ -131,27 +160,37 @@ export async function installAt(
   const t = st.input.realDir
   const root = st.binding.root
   if (claim === null) {
+    // Immediately before the claim's mkdir (8-i-a-3a, design § 8 item 5).
+    try {
+      check(st)
+    } catch (err) {
+      throw beforeClaim(err)
+    }
     const r = await claimPublish(
       src,
       t,
       {
-        afterClaim: () => {
-          check(st)
-          // claimPublish's `afterClaim` is synchronous (it runs between its own
-          // mkdir and rename, with no await between them), so a test hook here
-          // can only act synchronously: a throw stops before the rename, and a
-          // returned promise cannot be waited on without changing claimPublish.
-          void st.options.hooks?.afterClaim?.()
-        },
+        // claimPublish's `afterClaim` is synchronous (it runs between its own
+        // mkdir and rename, with no await between them), so a test hook here
+        // can only act synchronously: a throw stops before the rename, and a
+        // returned promise cannot be waited on without changing claimPublish.
+        afterClaim: () => void st.options.hooks?.afterClaim?.(),
       },
-      // After the test hook, immediately before the rename (Major 1).
-      { beforeRename: () => assertSourceAsPlanned(src, expect) }
+      // The production re-checks, after the test hook and immediately before
+      // the rename (Major 1): `check`, then the source as planned.
+      {
+        beforeRename: () => {
+          check(st)
+          assertSourceAsPlanned(src, expect)
+        },
+      }
     )
     if (!r.ok) {
-      throw new SwapFault(
+      const fault = new SwapFault(
         r.reason === 'target-exists' ? 'target-changed' : 'write-failed',
         `${src} could not be put at ${t} (${r.reason})`
       )
+      throw r.reason === 'target-exists' || r.reason === 'claim-failed' ? beforeClaim(fault) : fault
     }
     if (r.syncs.publish.outcome === 'failed') {
       throw new SwapFault('write-failed', `${root} could not be synced (${r.syncs.publish.code})`)
@@ -160,6 +199,17 @@ export async function installAt(
     trace(st, { op: 'dirsync', path: root })
     trace(st, { op: 'rename', path: src, dest: t })
     trace(st, { op: 'dirsync', path: root })
+    // The parent `src` left (OP), synced by claimPublish (destination, then
+    // source): a failure is this function's own OP sync failing, as below.
+    const source = r.syncs.source
+    if (source.outcome === 'failed') {
+      const from = path.dirname(src)
+      throw new SwapFault(
+        'write-failed',
+        `${from} could not be synced (${source.code})`,
+        source.error
+      )
+    }
   } else {
     check(st)
     await assertClaim(t, claim)

@@ -152,6 +152,12 @@ const bodyOf =
             `Restored, but the folder holding it could not be synced (${claim.syncs.publish.code ?? 'unknown'}); it may not survive a power loss.`
           )
         }
+        // 8-i-a-3a (Q-G): claimPublish also syncs the folder the copy was set aside in.
+        if (claim.syncs.source.outcome === 'failed') {
+          warnings.push(
+            `Restored, but the folder it was set aside in could not be synced (${claim.syncs.source.code ?? 'unknown'}); it may not survive a power loss.`
+          )
+        }
         state.changed = true
       } else {
         const run = plan.type === 'file' ? restoreFileEntry : restoreSymlinkEntry

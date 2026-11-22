@@ -24,6 +24,8 @@
  *    `held` park is still set aside and restorable. A sidecar that parses but
  *    names another opId or another kind than `install-rollback`, or one that
  *    does not parse, or a candidate with another identity, is "anything else".
+ *    FI4 (the copy set aside, T absent, N and U absent) holds whenever the
+ *    manifest entry is not the installed one (`pre` or `other`; 8-i-a-3a).
  *
  * Read-only, through the reader only.
  *
@@ -259,7 +261,12 @@ export function matchInstallRow(
   const p = parked.length
   if (p > 1) return { ok: false, reason: `${p} copies of this install were set aside` }
   if (p === 1) {
-    if (tS === 'absent' && none(N) && none(U) && m === 'pre') {
+    // 8-i-a-3a (owner decision A): the manifest is anything but the installed
+    // entry. The install parks only when it classified the entry `pre`, but
+    // another writer can change the key between that and a kill before the
+    // record is unlinked; FI4 still owns that state (`--apply`/`--undo` touch
+    // no manifest entry).
+    if (tS === 'absent' && none(N) && none(U) && m !== 'post') {
       return { ok: true, state: 'FI4', postKeep: false }
     }
     return { ok: false, reason: 'a copy of this install was set aside, and something else remains' }

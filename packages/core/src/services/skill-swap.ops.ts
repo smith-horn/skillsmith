@@ -146,6 +146,12 @@ export interface SwapState {
    * record this run wrote). Unset for the transaction.
    */
   rewriteMarker?: (marker: FullDeviceMarker) => Promise<void>
+  /**
+   * The operation this state runs, for the words its messages use (8-i-a-3a,
+   * design § 1.4). Unset: an update, as every state was before the staged
+   * fresh install (8-i-a-3b) sets `install`.
+   */
+  operation?: 'install' | 'update'
   /** `staging` → `locked` (lock 1 held) → `swapped` (rename 1 ran) → `committed` (manifest written). */
   phase: 'staging' | 'locked' | 'swapped' | 'committed'
   step: PostCommitStep
@@ -159,6 +165,10 @@ export const opPaths = (st: SwapState) => ({
   owner: path.join(st.opDir, OWNER_FILE),
   intent: path.join(st.opDir, PARK_INTENT_FILE),
 })
+
+/** "install" or "update": the word a message uses for the operation `st` runs. */
+export const operationNoun = (st: Pick<SwapState, 'operation'>): 'install' | 'update' =>
+  st.operation === 'install' ? 'install' : 'update'
 
 export const codeOf = (err: unknown): string | null => {
   const c = (err as { code?: unknown } | null)?.code

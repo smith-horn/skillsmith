@@ -4,6 +4,26 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Changed**: SMI-6531 -- A1 step 8-i-a-3a: doctor classifies an install's set-aside copy (FI4:
+  the skill path empty, nothing left in the op dir) whenever the manifest entry is not the
+  installed one, `pre` or changed by another writer, where it required `pre`. FI4's `--apply` and
+  `--undo` touch no manifest entry, so another writer's entry is kept. Update rows are unchanged.
+- **Changed**: SMI-6531 -- A1 step 8-i-a-3a: the publish primitive (`claimPublish`) also syncs the
+  folder the published tree left, after the destination's, and reports it (`syncs.source`).
+  `skillsmith restore` warns when the folder the copy was set aside in cannot be synced, as it
+  already did for the folder it restores into. Doctor's put-back checks the skills root immediately
+  before the claim and again before the rename, and stops `write-failed` when the op dir's sync
+  after the publish fails.
+- **Changed**: SMI-6531 -- A1 step 8-i-a-3a: an update stopped because the staging folder's records
+  could not be listed now says "the records of unfinished operations in `<staging>`" (they include
+  install records), not "the update records".
+- **Added**: SMI-6531 -- A1 step 8-i-a-3a: building blocks for the staged fresh install, unused by
+  any install yet (8-i-a-3c wires them): `writeInstallFiles`' opt-in staged mode (writes into a
+  folder the caller made, checks before every create, binds each create's full identity, and its
+  rollback never touches that folder; the companion file keeps its identity-checked removal), and
+  `claimLeftBy` for doctor's put-back, telling a failure that touched nothing from one that may have
+  left the claim. A fresh `skillsmith install` and a private-registry install behave as before.
+
 - **Fixed**: SMI-6531 -- (#3280 retro) a live install record's prune protection covers its own
   set-aside copy by place and identity: the copy at the record's
   `<root>/.skillsmith-parked/<opId>/<dir>-<8 hex>` whose folder identity is the one the install

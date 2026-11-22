@@ -8,30 +8,46 @@
  *   `from './skill-installation.io.js'` import site is unaffected.
  * @see SMI-6529 round 4 (N1/N2/N8/N9/N11/N12): confirmation-review fixes —
  *   see each inline comment below for the specific finding it closes.
+ * @see SMI-6531 (A1 step 8-i-a-3a, design § 1.3): the companion write and the
+ *   rollback body moved to skill-installation.io.companion.ts; an opt-in
+ *   staged mode ({@link WriteInstallOptions}) writes into a folder the caller
+ *   made. No production caller uses it yet (8-i-a-3c).
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { safeWriteFile, safeCreateFile } from '../utils/safe-fs.js'
+import { bindIdentity } from '../install/park-tree.identity.js'
+import type { BoundIdentity } from '../install/park-tree.identity.js'
+import { CANONICAL_CLIENT, type ClientId } from '../install/paths.js'
+import { classifyPreWrite, InstallRestoreError } from './skill-installation.io.rollback.js'
 import {
-  CANONICAL_CLIENT,
-  getCompanionAgentTarget,
-  resolveCompanionAgentPath,
-  type ClientId,
-} from '../install/paths.js'
-import {
-  classifyPreWrite,
-  cleanupStep,
-  removeCreatedDirectory,
-  restoreSnapshots,
-  InstallRestoreError,
-  type EntryIdentity,
-  type FileSnapshot,
-} from './skill-installation.io.rollback.js'
-
-/** Errors a non-recursive rmdir in rollback can ignore: already gone, or holding content this call didn't create. */
-const DIR_GONE_OR_NOT_OURS = ['ENOENT', 'ENOTEMPTY', 'EEXIST'] as const
+  newWriteTracker,
+  performRollback as rollbackTracked,
+  writeCompanion,
+} from './skill-installation.io.companion.js'
 import { mkdirNoFollow } from './skill-installation.io.dirs.js'
+
+/**
+ * The opt-in staged mode (SMI-6531 8-i-a-3a, design § 1.3): write into
+ * `dir`, a folder the caller already made (the staged install's `OP/new`),
+ * equal to `installPath`. The call creates nothing outside it except the
+ * companion file (and its agents directory), runs `beforeCreate` before every
+ * create (each tracked write, each sub-directory `mkdir`, the companion's
+ * directory), binds each thing it creates with its full identity, treats the
+ * install as fresh for the companion rule, and its rollback (in-call or
+ * returned) never restores, unlinks or removes anything under `dir`.
+ */
+export interface WriteInstallOptions {
+  staged?: { dir: string; beforeCreate: () => void }
+}
+
+/** Staged mode: everything the call created, with the identity bound right after its create (null: the bind failed). */
+export interface StagedCreated {
+  path: string
+  type: 'file' | 'dir'
+  identity: BoundIdentity | null
+}
 
 /** What {@link writeInstallFiles} wrote, plus a `rollback` that undoes it. */
 export interface WriteInstallResult {
@@ -58,6 +74,8 @@ export interface WriteInstallResult {
    * resolves without throwing and the caller should rethrow its own error.
    */
   rollback: (causeError: unknown) => Promise<void>
+  /** Staged mode only: every file and directory the call created, in creation order. */
+  stagedCreated?: StagedCreated[]
 }
 
 /**
@@ -92,26 +110,30 @@ export async function writeInstallFiles(
    * client (PR-review follow-up), so whether an omitted `companionBaseDir`
    * is acceptable is that function's call to make, not this one's.
    */
-  companionBaseDir?: string
+  companionBaseDir?: string,
+  /** SMI-6531 8-i-a-3a: the opt-in staged mode; omitted, the in-place mode unchanged. */
+  options: WriteInstallOptions = {}
 ): Promise<WriteInstallResult> {
   const writtenFiles: string[] = []
+  const staged = options.staged
+  if (staged !== undefined && path.resolve(staged.dir) !== path.resolve(installPath)) {
+    throw new TypeError('writeInstallFiles: the staged folder must be installPath')
+  }
   // SMI-6529: files this call OVERWROTE (snapshotted, restorable) vs. files it
   // CREATED FRESH (safe to unlink). A pre-existing file must never be deleted —
-  // only ever restored to its original bytes/mode.
-  const overwritten: FileSnapshot[] = []
-  // SMI-6529 R5 (round 5): each fresh file carries the (dev, ino) it had when
-  // this call created it, so rollback never unlinks a file another process
-  // has since put at the same path.
-  const createdFresh: Array<{ path: string; identity?: { dev: number; ino: number } }> = []
-  // F4: nested sub-skill directories (e.g. "scripts/") THIS call created fresh —
-  // removed on rollback, non-recursively, deepest first.
-  const freshDirs = new Set<string>()
-  let subagentPath: string | undefined
-  let companionSkipped = false
-  // SMI-6529 L15: whether the directory-package per-skill agent directory
-  // (Antigravity's <agentsDir>/<skillName>/) already existed before this call
-  // — only a directory THIS call created may ever be rmdir'd on rollback.
-  let agentDirPreExisted = true
+  // only ever restored to its original bytes/mode. SMI-6529 R5 (round 5): each
+  // fresh file carries the (dev, ino) it had when this call created it, so
+  // rollback never unlinks a file another process has since put at the same
+  // path. F4: nested sub-skill directories (e.g. "scripts/") THIS call created
+  // fresh — removed on rollback, non-recursively, deepest first. SMI-6529 L15:
+  // whether the directory-package per-skill agent directory (Antigravity's
+  // <agentsDir>/<skillName>/) already existed before this call — only a
+  // directory THIS call created may ever be rmdir'd on rollback. All of it
+  // lives on one tracker the rollback reads (skill-installation.io.companion.ts).
+  const t = newWriteTracker(staged === undefined ? null : path.resolve(staged.dir))
+  const stagedCreated: StagedCreated[] = []
+  /** Staged mode: the check before a create, then nothing; in place: nothing. */
+  const beforeCreate = staged?.beforeCreate
   // SMI-6529 M4/N1: per-target write queue — serializes every write racing
   // for the same on-disk target (see `writeTracked`'s own doc comment).
   const writeQueues = new Map<string, Promise<void>>()
@@ -128,27 +150,35 @@ export async function writeInstallFiles(
   ) {
     throw new Error('Install path escapes skills directory (lexical): ' + installPath)
   }
-  // Only set true once installPath is PROVEN inside skillsDir (both the lexical check
-  // above and the realpath check below). The recursive rollback rm keys off this so it
-  // can never force-delete an out-of-bounds path (e.g. a symlink-escape the realpath
-  // check rejects after mkdir).
-  let pathValidated = false
-  // Round 13: the identity of the directory this call created, if it did.
-  let installDirIdentity: EntryIdentity | undefined
+  // Only set true (t.pathValidated) once installPath is PROVEN inside skillsDir (both
+  // the lexical check above and the realpath check below). The recursive rollback rm
+  // keys off this so it can never force-delete an out-of-bounds path (e.g. a
+  // symlink-escape the realpath check rejects after mkdir). Round 13: the identity of
+  // the directory this call created, if it did, is t.installDirIdentity.
+  //
   // SMI-6529: determine BEFORE any mutation whether installPath already existed — a
   // rollback must NEVER remove a directory that existed before this call started
   // (the data-loss bug: a real user's git-cloned skill directory, `.git` included, got
   // force-deleted by a failed reinstall). `false` only on a genuine ENOENT; any other
-  // lstat error is rethrown (fail closed, never guessed).
-  let preExisted: boolean
-  try {
-    await fs.lstat(installPath)
-    preExisted = true
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      preExisted = false
-    } else {
-      throw err
+  // lstat error is rethrown (fail closed, never guessed). Staged mode: the folder must
+  // be a directory the caller made (no link); the install is fresh (`preExisted`
+  // false, for the companion rule) and the folder is never created or removed here.
+  if (staged !== undefined) {
+    const st = await fs.lstat(installPath)
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      throw new Error('Staged install folder is not a directory: ' + installPath)
+    }
+    t.preExisted = false
+  } else {
+    try {
+      await fs.lstat(installPath)
+      t.preExisted = true
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        t.preExisted = false
+      } else {
+        throw err
+      }
     }
   }
 
@@ -202,9 +232,10 @@ export async function writeInstallFiles(
   }
 
   async function performTrackedWrite(filePath: string, content: string): Promise<void> {
+    beforeCreate?.()
     const classification = await classifyPreWrite(filePath)
     if (classification.kind === 'regular') {
-      overwritten.push(classification.snapshot)
+      t.overwritten.push(classification.snapshot)
       await safeWriteFile(filePath, content)
     } else if (classification.kind === 'absent') {
       // SMI-6529 L14(b): exclusive create. Atomic w.r.t. "did this call
@@ -221,9 +252,24 @@ export async function writeInstallFiles(
       // recorded at all, since the `createdFresh.push()` call sat after the
       // awaited call that just threw — leaving an orphan rollback never knew
       // to unlink.
-      await safeCreateFile(filePath, content, undefined, (identity) =>
-        createdFresh.push({ path: filePath, identity })
-      )
+      await safeCreateFile(filePath, content, undefined, (identity) => {
+        if (staged === undefined) {
+          t.createdFresh.push({ path: filePath, identity })
+          return
+        }
+        // Staged mode: the full identity, bound by path right after the
+        // exclusive create, kept only when it is the inode the create opened.
+        const b = bindIdentity(filePath)
+        const bound =
+          b.ok &&
+          identity !== undefined &&
+          b.dev === BigInt(identity.dev) &&
+          b.ino === BigInt(identity.ino)
+            ? b
+            : null
+        t.createdFresh.push({ path: filePath, identity, ...(bound === null ? {} : { bound }) })
+        stagedCreated.push({ path: filePath, type: 'file', identity: bound })
+      })
     } else {
       // 'other' (symlink, directory, etc.) — record nothing. `safeWriteFile`
       // itself refuses to touch it before any byte is written, so there is
@@ -233,95 +279,8 @@ export async function writeInstallFiles(
     writtenFiles.push(filePath)
   }
 
-  /**
-   * SMI-6529 M7: shared cleanup — restores every overwritten file and
-   * removes everything created fresh. Runs from the internal catch block on
-   * a write failure, AND is exposed as `rollback()` on the returned result
-   * for a caller whose LATER step (after a successful write) fails.
-   */
-  async function performRollback(): Promise<{
-    restoreFailures: string[]
-    cleanupFailures: string[]
-  }> {
-    const restoreFailures = await restoreSnapshots(overwritten)
-    // Round 13 (cross-model review): every cleanup failure is collected and
-    // reported through InstallRestoreError instead of swallowed.
-    const cleanupFailures: string[] = []
-    for (const entry of createdFresh) {
-      if (entry.identity) {
-        // R5: skip a path that no longer names the file this call created.
-        let current
-        try {
-          current = await fs.lstat(entry.path)
-        } catch (err) {
-          // Round 25 (cross-model review): only absence means "already gone".
-          // Any other failure means this call could not tell what is at the
-          // path, so it is reported rather than counted as a clean rollback.
-          const code = (err as NodeJS.ErrnoException).code
-          if (code !== 'ENOENT') {
-            cleanupFailures.push(
-              `${entry.path} (${code ?? (err instanceof Error ? err.message : String(err))})`
-            )
-          }
-          continue
-        }
-        if (current.dev !== entry.identity.dev || current.ino !== entry.identity.ino) continue
-      }
-      await cleanupStep(entry.path, () => fs.unlink(entry.path), ['ENOENT'], cleanupFailures)
-    }
-    // F4 (review round 1): remove nested sub-skill directories THIS call created
-    // fresh (e.g. "scripts/") — files must be gone first (done above), and a
-    // non-recursive rmdir requires children removed before parents, hence the
-    // deepest-first ordering (sorted by path-separator count, not string length —
-    // a short deep path must still sort before a long shallow one). ENOENT
-    // (already removed by a sibling's identical cleanup) and non-empty
-    // (content this call didn't create) mean nothing of ours is left.
-    const deepestFirst = [...freshDirs].sort(
-      (a, b) => b.split(path.sep).length - a.split(path.sep).length
-    )
-    for (const dir of deepestFirst) {
-      await cleanupStep(dir, () => fs.rmdir(dir), DIR_GONE_OR_NOT_OURS, cleanupFailures)
-    }
-    // SMI-5982 (Wave 6) / SMI-6529 L15: 'directory-package' mode (Antigravity)
-    // creates a skill-named subdirectory OUTSIDE installPath
-    // (<agentsDir>/<skillName>/agent.md) that 'flat' mode never needed —
-    // every other client's agents dir is a shared, pre-existing directory,
-    // never created per-skill. Only rmdir it when THIS call created it
-    // (`!agentDirPreExisted`) — a forced reinstall's per-skill directory that
-    // pre-existed must never be removed just because this rollback ran; the
-    // rmdir is non-recursive regardless (a safe no-op on non-empty content).
-    if (
-      subagentPath &&
-      !agentDirPreExisted &&
-      getCompanionAgentTarget(client).fileMode === 'directory-package'
-    ) {
-      const agentDir = path.dirname(subagentPath)
-      await cleanupStep(agentDir, () => fs.rmdir(agentDir), DIR_GONE_OR_NOT_OURS, cleanupFailures)
-    }
-    // SMI-6529: NEVER remove installPath once it is known to have preExisted — the
-    // caller (or a prior install) owned that directory before this call started.
-    // Only a directory THIS call created may ever be removed, and only once it has
-    // been PROVEN inside skillsDir (pathValidated) — so an untracked orphan from a
-    // mid-batch Promise.all write can't survive. If mkdir or the realpath escape
-    // guard threw, installPath was never validated; fall back to a non-recursive
-    // rmdir, a safe no-op on a non-empty or out-of-bounds directory (NEVER a
-    // recursive force-delete of an unvalidated path). Round 13: and the
-    // recursive delete runs only while installPath is still the directory
-    // this call created; anything put there since is left and reported.
-    if (!preExisted) {
-      if (pathValidated) {
-        await removeCreatedDirectory(installPath, installDirIdentity, cleanupFailures)
-      } else {
-        await cleanupStep(
-          installPath,
-          () => fs.rmdir(installPath),
-          DIR_GONE_OR_NOT_OURS,
-          cleanupFailures
-        )
-      }
-    }
-    return { restoreFailures, cleanupFailures }
-  }
+  /** SMI-6529 M7: the shared cleanup, in-call and returned (skill-installation.io.companion.ts). */
+  const performRollback = () => rollbackTracked(t, installPath, client)
 
   const rollback = async (causeError: unknown): Promise<void> => {
     const { restoreFailures, cleanupFailures } = await performRollback()
@@ -336,7 +295,7 @@ export async function writeInstallFiles(
   }
 
   try {
-    if (preExisted) {
+    if (t.preExisted || staged !== undefined) {
       // Already confirmed to exist (by the caller's own pre-write guard AND
       // this function's own lstat above) — nothing to create.
     } else {
@@ -353,7 +312,7 @@ export async function writeInstallFiles(
         // Round 13: remember which directory this call created, so rollback
         // never recursively deletes something put at this path since.
         const created = await fs.lstat(installPath)
-        installDirIdentity = { dev: created.dev, ino: created.ino }
+        t.installDirIdentity = { dev: created.dev, ino: created.ino }
       } catch (mkdirErr) {
         if ((mkdirErr as NodeJS.ErrnoException).code === 'EEXIST') {
           // SMI-6529 N8 (round 4): the directory that "appeared" belongs to
@@ -364,7 +323,7 @@ export async function writeInstallFiles(
           // freshly-created directory out from under it. Flip it to `true`
           // BEFORE throwing so rollback never touches a directory this call
           // did not create.
-          preExisted = true
+          t.preExisted = true
           throw new Error(
             'Install target "' + installPath + '" appeared during install (race) — aborting.'
           )
@@ -381,7 +340,7 @@ export async function writeInstallFiles(
     ) {
       throw new Error('Install path escapes skills directory (realpath): ' + installPath)
     }
-    pathValidated = true
+    t.pathValidated = true
 
     const mainSkillPath = path.join(installPath, 'SKILL.md')
     await writeTracked(mainSkillPath, finalSkillContent)
@@ -418,7 +377,20 @@ export async function writeInstallFiles(
           }
           const subDir = path.dirname(subPath)
           if (subDir !== installPath) {
-            await mkdirNoFollow(installPath, subDir, freshDirs)
+            await mkdirNoFollow(
+              installPath,
+              subDir,
+              t.freshDirs,
+              staged === undefined
+                ? undefined
+                : {
+                    beforeCreate: staged.beforeCreate,
+                    onCreated: (dir) => {
+                      const b = bindIdentity(dir)
+                      stagedCreated.push({ path: dir, type: 'dir', identity: b.ok ? b : null })
+                    },
+                  }
+            )
           }
           await writeTracked(subPath, subSkill.content)
         })
@@ -430,50 +402,16 @@ export async function writeInstallFiles(
         throw firstRejection.reason
       }
     }
-    // Write companion subagent if generated
+    // Write companion subagent if generated (skill-installation.io.companion.ts).
     if (subagentContent) {
-      subagentPath = resolveCompanionAgentPath(skillName, client, companionBaseDir)
-      const agentsDir = path.dirname(subagentPath)
-      if (getCompanionAgentTarget(client).fileMode === 'directory-package') {
-        // Round 27 (cross-model review): only absence means "this call created
-        // it". Any other lstat failure used to record `false`, and rollback
-        // rmdirs this directory precisely when that is false — so one
-        // unreadable moment could cost the user a directory that was already
-        // there. Fail closed instead: nothing has been written yet, so
-        // throwing here leaves nothing behind.
-        try {
-          await fs.lstat(agentsDir)
-          agentDirPreExisted = true
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw err
-          agentDirPreExisted = false
-        }
-      }
-      await fs.mkdir(agentsDir, { recursive: true })
-      // SMI-6529 M10: a FRESH install must never silently overwrite an
-      // existing companion agent file — it could belong to an unrelated
-      // skill/agent the user created by hand. A forced reinstall of an
-      // already-tracked skill (`preExisted`) still overwrites it, tracked
-      // and restorable like everything else.
-      if (!preExisted) {
-        const companionClassification = await classifyPreWrite(subagentPath)
-        // SMI-6529 N11 (round 4): treat ANY existing non-absent entry the
-        // same way — not just a 'regular' file. The old check only skipped a
-        // 'regular' file, so a SYMLINKED companion path (a stale/planted
-        // link) fell to the `else` branch and went through `writeTracked()`,
-        // whose `safeWriteFile()` throws `SymlinkError` on it — rolling back
-        // the ENTIRE install (SKILL.md, every sub-skill) over an unrelated
-        // pre-existing symlink at a completely different path. A fresh
-        // install must skip ('other' or 'regular') exactly the same way.
-        if (companionClassification.kind !== 'absent') {
-          companionSkipped = true
-          subagentPath = undefined
-        } else {
-          await writeTracked(subagentPath, subagentContent)
-        }
-      } else {
-        await writeTracked(subagentPath, subagentContent)
-      }
+      await writeCompanion(t, {
+        skillName,
+        subagentContent,
+        client,
+        companionBaseDir,
+        writeTracked,
+        beforeCreate,
+      })
     }
   } catch (writeError) {
     // SMI-6529 rollback: restore every OVERWRITTEN file to its pre-install bytes/mode
@@ -492,5 +430,11 @@ export async function writeInstallFiles(
     }
     throw writeError
   }
-  return { writtenFiles, subagentPath, companionSkipped, rollback }
+  return {
+    writtenFiles,
+    subagentPath: t.subagentPath,
+    companionSkipped: t.companionSkipped,
+    rollback,
+    ...(staged === undefined ? {} : { stagedCreated }),
+  }
 }
