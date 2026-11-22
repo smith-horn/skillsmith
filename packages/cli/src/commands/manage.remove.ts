@@ -31,6 +31,7 @@ import {
 import { openCliDatabase } from '../utils/open-database.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkillsForClient } from '../utils/skills-directory.js'
+import { installedViaFor } from './manage.update.helpers.js'
 
 /** What one `remove` ended as. */
 export type RemoveOutcome = 'removed' | 'failed' | 'not-done'
@@ -49,20 +50,9 @@ export function printParkResultLines(
 }
 
 /**
- * ADR-139: the `installedVia` label an entry from `getInstalledSkillsForClient`
- * carries for `client`'s OWN installs — `'local'` for the canonical client
- * (matching the existing SMI-1630 convention), else `client` itself. Used to
- * filter out an unrelated same-scope entry belonging to a DIFFERENT client
- * (e.g. the always-present claude-code/'local' workspace scan) when
- * resolving the exact `(scope, client, name)` triple a write must target.
- */
-export function installedViaFor(client: ClientId): ClientId | 'local' {
-  return client === CANONICAL_CLIENT ? 'local' : client
-}
-
-/**
  * Remove a skill using SkillInstallationService for manifest-aware removal.
- * Falls back to direct removal for orphan skills (on disk but not in manifest).
+ * An orphan skill (on disk but not in the manifest) is adopted by core and
+ * then set aside like any other.
  *
  * SMI-5894 (Wave 1 Steps 2/3): `client` selects which agent's copy to
  * target — resolved by the caller via `resolveEffectiveClient()` (explicit

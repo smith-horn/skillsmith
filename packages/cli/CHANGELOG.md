@@ -10,9 +10,11 @@ All notable changes to `@skillsmith/cli` are documented here.
   uninstall that stops after creating `.skillsmith-staging/` still prints its `.gitignore` hint.
 - **Changed**: SMI-6531 -- A1 step 8-i-a-1: `skillsmith remove` sets the skill folder aside
   instead of deleting it, and prints where it went, about how much space it holds, and the
-  `skillsmith doctor backups --prune --op <opId>` command. When the folder could not be set aside it
-  says why on one line, keeps the skill installed, and exits 4 (other refusals still exit 1). The
-  space warning and any `.gitignore` hint go to stderr.
+  `skillsmith doctor backups --prune --op <opId>` command. When setting the folder aside does not
+  finish it says why on one line, keeps the manifest entry, and exits 4 (other refusals still exit
+  1). If the folder stayed where it was, the skill is still installed; if it had already moved
+  (`held`), the copy is whole in `.skillsmith-parked/` and the line names the `skillsmith restore`
+  command that puts it back. The space warning and any `.gitignore` hint go to stderr.
 - **Changed**: SMI-6531 -- `skillsmith doctor recovery` prints the space warning from core's result,
   once, before the result, instead of computing it itself.
 - **Added**: SMI-6531 -- A1 step 6d-ii: `skillsmith restore <id>` puts a set-aside copy back where

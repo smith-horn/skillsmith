@@ -8,8 +8,13 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
   cross-client links of an install that claimed the same name while the removal ran; the result's
   `warning` says they were left for that install.
 - **Changed**: SMI-6531 -- A1 step 8-i-a-1: `uninstall_skill` sets the skill folder aside instead
-  of deleting it. The result adds `parkedPath`, `notDone` (when the folder could not be set aside;
-  the skill stays installed), `usageWarning` and `hints`.
+  of deleting it. The result adds `parkedPath`, `notDone` (when setting it aside did not finish; the
+  manifest entry is kept, and the folder stays in place unless `status` is `held`, where the copy
+  is whole at `parkedPath`), `usageWarning` and `hints`.
+- **Fixed**: SMI-6531 -- (#3274 retro) `uninstall_skill` now reports a failed cross-client link
+  cleanup in the result's `warning` ("could not clean up cross-client links: ..."), as the CLI
+  does, instead of swallowing it. The message is the raw error, like the full paths elsewhere in
+  the result; the CLI folds home paths to `~`.
 - **Fixed**: SMI-7246 -- the `search` tool's `trust_tier` description no longer claims unknown
   skills "never match a query". The registry never returns them for a query, but this tool falls
   back to the local database when the registry rejects a filter, so the text now states only the

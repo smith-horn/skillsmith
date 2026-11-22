@@ -28,7 +28,9 @@ export async function failedDropResult(
   const { skillName, installPath, parkedPath } = a
   const parked = [...(await parkedWarnings(installPath)), ...a.listenerProblems]
   const gone =
-    parkedPath === undefined ? `was removed from ${installPath}` : `was set aside at ${parkedPath}`
+    parkedPath === undefined
+      ? `was not on disk at ${installPath}`
+      : `was set aside at ${parkedPath}`
   return {
     success: false,
     skillName,
