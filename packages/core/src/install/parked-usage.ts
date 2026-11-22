@@ -38,6 +38,12 @@ export interface ParkedUsageEntry {
   originPath: string | null
   /** The op id, or the entry's name: what is shown when there is no origin. */
   opId: string
+  /**
+   * Whether the "Largest" list may name it (default true). A directory's own
+   * inode counts toward the total but is structure, not something the user set
+   * aside, so the listing passes false for it (A1 step 8-i-a-1).
+   */
+  listed?: boolean
 }
 
 export interface StatfsResult {
@@ -166,6 +172,7 @@ export function judgeParkedUsage(
     const unmeasuredEntries = v.entries.reduce((n, e) => n + e.unmeasured, 0)
     const overThreshold = heldBytes > thresholdBytes
     const largest = v.entries
+      .filter((e) => e.listed !== false)
       .map((e) => ({ path: e.path, bytes: sumOf(e.units), label: labelOf(e) }))
       .sort((a, b) => b.bytes - a.bytes)
       .slice(0, top)

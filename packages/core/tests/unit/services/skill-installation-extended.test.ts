@@ -454,7 +454,7 @@ describe('SkillInstallationService (extended)', () => {
 
       const result = await service.uninstall('test-repo')
       expect(result.success).toBe(false)
-      expect(result.warning).toContain('modifications will be lost')
+      expect(result.warning).toContain('sets the folder aside (it is not deleted)')
 
       const forceResult = await service.uninstall('test-repo', { force: true })
       expect(forceResult.success).toBe(true)

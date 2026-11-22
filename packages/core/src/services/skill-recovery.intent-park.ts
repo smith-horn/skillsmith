@@ -51,6 +51,7 @@ import {
 } from './skill-recovery.attribution.js'
 import { processOwnerNow, check, hook, SwapFault, syncDir } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
+import { createParkReporter } from './park-report.js'
 import { opDiffers, parkOpFromStaging } from './skill-swap.park-op.js'
 import type { ParkOpOutcome } from './skill-swap.park-op.js'
 import { OWNER_FILE, PARK_INTENT_FILE } from './skill-swap.types.js'
@@ -144,6 +145,7 @@ function intentState(
       manifest: refusingPort,
     },
     options,
+    reporter: createParkReporter({ park: options.park }),
     opId: cls.opId,
     binding: ctx,
     warnings: [],

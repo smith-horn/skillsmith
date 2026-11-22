@@ -16,15 +16,21 @@
  * the ADR-171 § 5 retraction) is gone — it wrote around a caller-injected
  * `ManifestManager` rather than through it; tolerance is now
  * `ManifestManager.updateSafely()`'s own `{ tolerant: true }` option.
+ *
+ * SMI-6531 A1 step 8-i-a-1: the folder is parked, never deleted
+ * (`.uninstall.park.ts`, §3.8 row 3); a park that does not finish keeps the
+ * manifest entry and returns `notDone` (UD32).
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
 
-import { removeIfSame } from '../install/remove-if-same.js'
-
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
-import type { ProgressCallback, UninstallResult } from './skill-installation.types.js'
+import type {
+  ProgressCallback,
+  UninstallParkSeams,
+  UninstallResult,
+} from './skill-installation.types.js'
 import { checkForModifications } from './skill-installation.io.js'
 import {
   checkExactEntryName,
@@ -49,8 +55,19 @@ import {
   inspectForRemoval,
   notify,
   parkedWarnings,
-  sameRecord,
 } from './skill-installation.uninstall.helpers.js'
+import {
+  dropManifestEntry,
+  notDoneMessage,
+  parkedMessage,
+  parkExtras,
+  prepareUninstallPark,
+  readTreeHash,
+  runUninstallPark,
+  type ManifestDrop,
+  type PreparedUninstallPark,
+} from './skill-installation.uninstall.park.js'
+import { doneResult, failedDropResult } from './skill-installation.uninstall.result.js'
 
 // ADR-171 § 5 retraction resolution: re-exported so nothing outside this pair
 // of files (`exports/services.install.ts`'s barrel re-export in particular)
@@ -73,6 +90,8 @@ export async function performUninstall(params: {
   /** SMI-5894 Wave 1 Step 3: defaults to the canonical client for callers
    *  that don't yet resolve a client (preserves pre-existing behavior). */
   client?: ClientId
+  /** @internal Test seams for the park (A1 step 8-i-a-1). */
+  park?: UninstallParkSeams
 }): Promise<UninstallResult> {
   const {
     skillName,
@@ -82,6 +101,7 @@ export async function performUninstall(params: {
     skillDependencyRepo,
     onProgress,
     client = CANONICAL_CLIENT,
+    park: seams = {},
   } = params
   const manifestKey = manifestKeyFor(skillName, client)
 
@@ -303,12 +323,14 @@ export async function performUninstall(params: {
       return { success: false, skillName, message: seen.refusal, ...listenerWarning() }
     }
     // Round 7 (F2): prove this is still the directory the guard identified.
-    // `removeIfSame` anchors on `seen.stat`, which is read HERE -- after
+    // The park's identity is checked against `seen.stat`, which is read HERE -- after
     // adoption -- so a swap before this point was invisible to everything.
     const swapped = identityChanged(adoptedIdentity, seen.stat, skillName)
     if (swapped !== null) {
       return { success: false, skillName, message: swapped, ...listenerWarning() }
     }
+    // The tree hash as read, before the checks below (read-only); the guard hash must equal it.
+    const readHash = seen.stat === null ? null : readTreeHash(installPath)
 
     if (!force) {
       // ADR-171 § 5 retraction resolution, Part B: every identity/containment
@@ -339,35 +361,78 @@ export async function performUninstall(params: {
             'Skill "' +
             skillName +
             '" has been modified since installation. Use force=true to remove anyway.',
-          warning: ['Local modifications will be lost if you force uninstall.', ...listenerProblems]
+          warning: [
+            'A forced uninstall keeps your changes: it sets the folder aside (it is not deleted), ' +
+              'and `skillsmith restore <opId>` with the operation id it reports puts it back.',
+            ...listenerProblems,
+          ]
             .join(' ')
             .trim(),
         }
       }
     }
 
-    notify(onProgress, listenerProblems, 'remove', 'Removing skill directory')
-    // SMI-6529 round 15 (cross-model review, Critical): remove only the entry
-    // checked above. Anything another program put there since is left in
-    // place, and so is the manifest entry, so the user can retry.
-    if (seen.stat !== null) {
-      const removal = await removeIfSame(installPath, seen.stat)
-      if (!removal.removed) {
+    // A1 step 8-i-a-1 (§3.8 row 3, early-bound): gate, guard hash and identity,
+    // with or without `force` (UD27), after the refusals so a refused uninstall
+    // makes nothing. D6 and `readHash` cover any change since the read.
+    await seams.afterRefusals?.()
+    let prepared: PreparedUninstallPark | null = null
+    if (seen.stat !== null && readHash !== null) {
+      const b = await prepareUninstallPark({
+        skillsDir,
+        installPath,
+        seen: seen.stat,
+        readHash,
+        seams,
+      })
+      if (!b.ok) {
+        return {
+          success: false,
+          skillName,
+          message: notDoneMessage(skillName, b.notDone),
+          notDone: b.notDone,
+          ...(b.hints.length === 0 ? {} : { hints: b.hints }),
+          ...listenerWarning(),
+        }
+      }
+      prepared = b.prepared
+    }
+
+    notify(onProgress, listenerProblems, 'remove', 'Setting the skill folder aside')
+    let drop: ManifestDrop
+    let extras: { usageWarning?: string; hints?: string[] } = {}
+    let parkedPath: string | undefined
+    let doneLine: string | null = null
+    if (prepared !== null) {
+      const run = await runUninstallPark(prepared, {
+        installPath,
+        client,
+        manifest,
+        manifestKey,
+        loaded: skillEntry,
+        seams,
+      })
+      extras = parkExtras(run)
+      if (run.outcome.status === 'not-done') {
+        const n = run.outcome.notDone
         const parked = [...(await parkedWarnings(installPath)), ...listenerProblems]
         return {
           success: false,
           skillName,
-          message:
-            'Skill "' +
-            skillName +
-            '" was not removed: ' +
-            installPath +
-            ' ' +
-            removal.reason +
-            '.',
+          message: notDoneMessage(skillName, n),
+          notDone: n,
+          ...(n.parkedPath === undefined ? {} : { parkedPath: n.parkedPath }),
+          ...extras,
           ...(parked.length > 0 && { warning: parked.join(' ') }),
         }
       }
+      drop = run.outcome.manifest
+      parkedPath = String(run.outcome.park.path)
+      doneLine = parkedMessage(skillName, run.outcome.park, prepared.opId)
+    } else {
+      // Nothing was on disk to set aside: only the record goes.
+      notify(onProgress, listenerProblems, 'manifest', 'Updating manifest')
+      drop = await dropManifestEntry(manifest, manifestKey, skillEntry)
     }
 
     try {
@@ -376,99 +441,12 @@ export async function performUninstall(params: {
       // Table may not exist pre-migration
     }
 
-    notify(onProgress, listenerProblems, 'manifest', 'Updating manifest')
-    // SMI-6007: route the final mutation through updateSafely() (lock +
-    // fresh re-read + save) instead of saving the `manifestData` snapshot
-    // loaded above. That snapshot can be stale by the time we get here —
-    // filesystem cleanup and the dependency-repo clear happened in between —
-    // so saving it directly could clobber an *unrelated* manifest entry
-    // written by a concurrent install/uninstall in that window. This closes
-    // that lost-update hazard for entries other than this one.
-    //
-    // Scope: this does NOT make the full uninstall sequence (lookup ->
-    // filesystem cleanup -> manifest mutation) atomic. A concurrent
-    // operation racing on the SAME key (e.g. a reinstall of this exact
-    // skill while its uninstall is mid-flight) can still leave disk and
-    // manifest inconsistent — only the unrelated-entry data loss is fixed
-    // here, not full transactional safety across the whole method.
-    //
-    // Round 16 (cross-model review): the record is dropped only while it still
-    // describes the skill just removed. A concurrent install of the same name
-    // rewrites this key, and an unconditional delete would lose that install's
-    // record. And a manifest write that fails after the folder is gone is
-    // reported for what it is, rather than surfacing as a bare lock error.
-    let claimedByAnotherInstall = false
-    try {
-      await manifest.updateSafely((current) => {
-        // Reset: a lost lock reruns this callback once (SMI-7143), so it starts from what it found, not from a prior run.
-        claimedByAnotherInstall = false
-        // SMI-6733 MAJOR 3: `updateSafely` re-reads under the lock, so this
-        // is a SECOND classification of a file that may have changed since
-        // the read above — a nullish `installedSkills` reaches here even
-        // though the earlier read found an object.
-        const entry = installedSkillsOf(current)[manifestKey]
-        // Round 17 (cross-model review): a reinstall can land at the SAME
-        // path, so the path alone does not identify the generation just
-        // removed — and comparing paths alone also keeps a stale record
-        // forever whenever the spelling differs (a case-insensitive volume, a
-        // symlinked parent). Round 18: the whole record identifies it.
-        const describesWhatWasRemoved = entry === undefined || sameRecord(entry, skillEntry)
-        if (!describesWhatWasRemoved) {
-          claimedByAnotherInstall = true
-          return current
-        }
-        const next: typeof current = {
-          ...current,
-          installedSkills: { ...installedSkillsOf(current) },
-        }
-        delete next.installedSkills[manifestKey]
-        return next
-      })
-    } catch (error) {
-      const parked = [...(await parkedWarnings(installPath)), ...listenerProblems]
-      return {
-        success: false,
-        skillName,
-        removedPath: installPath,
-        message:
-          'Skill "' +
-          skillName +
-          '" was removed from ' +
-          installPath +
-          ', but its record in ' +
-          manifest.path +
-          ' could not be updated (' +
-          (error instanceof Error ? error.message : String(error)) +
-          '). Its folder is already gone; run the same remove again once that file is writable, ' +
-          'which acts on whatever that record names at the time.',
-        ...(parked.length > 0 && { warning: parked.join(' ') }),
-      }
+    const after = { skillName, installPath, parkedPath, extras, listenerProblems }
+    if (drop.kind === 'failed') {
+      return failedDropResult({ ...after, manifestPath: manifest.path, error: drop.error })
     }
-
     notify(onProgress, listenerProblems, 'done', 'Uninstall complete')
-    // Round 16 (both reviewers): away from a fan-out destination nothing swept
-    // what a failed removal parked, so it was named once and never again.
-    const warnings = [
-      ...(adopted
-        ? [
-            'This skill had no manifest entry (untracked) — it was adopted from disk state before removal.',
-          ]
-        : []),
-      ...(claimedByAnotherInstall
-        ? [
-            'Another install claimed this name while this one was being removed, so that record was left alone.',
-          ]
-        : []),
-      ...(await parkedWarnings(installPath)),
-      ...listenerProblems,
-    ]
-    return {
-      success: true,
-      skillName,
-      message: 'Skill "' + skillName + '" has been uninstalled successfully.',
-      removedPath: installPath,
-      ...(warnings.length > 0 && { warning: warnings.join(' ') }),
-    }
+    return doneResult({ ...after, drop, doneLine, adopted })
   } catch (error) {
     return {
       success: false,

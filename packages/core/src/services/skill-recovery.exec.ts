@@ -37,6 +37,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getJournalFilePath } from '../journal/path.js'
+import { createParkReporter } from './park-report.js'
 import { classifyOp } from './skill-recovery.classify.js'
 import { cleanStaging } from './skill-recovery.clean.js'
 import { defaultOwnerProbe } from './skill-recovery.owner.js'
@@ -96,13 +97,21 @@ export async function executeRecovery(
     stateRoots: req.stateRoots ?? [],
     ownerProbe: req.ownerProbe ?? defaultOwnerProbe(),
   }
+  // The park-result path: every park this run makes goes through `reporter`,
+  // and the warning is evaluated once, after lock 1 is released.
+  const reporter = createParkReporter({ park: opts.swap?.park })
+  const run: RecoveryRunOptions = { ...opts, swap: { ...opts.swap, park: reporter.park } }
   const locked = await withSkillWriteLock(
     binding,
     'doctor recovery',
-    (ctx) => underLock(planned, opts, ctx, classifyCtx, journalFile),
+    (ctx) => underLock(planned, run, ctx, classifyCtx, journalFile),
     opts.lockTimeoutMs === undefined ? {} : { timeoutMs: opts.lockTimeoutMs }
   )
-  if (locked.ok) return locked.value
+  if (locked.ok) {
+    const r = locked.value
+    const usageWarning = await reporter.finish({ listing: opts.usageListing ?? {} })
+    return usageWarning === null || r.status === 'refused' ? r : { ...r, usageWarning }
+  }
   return {
     status: 'refused',
     reason: locked.stop.code,

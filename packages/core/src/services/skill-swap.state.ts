@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { SkillsRootBinding } from './skill-write-lock.types.js'
+import { createParkReporter } from './park-report.js'
 import { processOwnerNow } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { backupAreaPath } from './skill-swap.area.js'
@@ -55,6 +56,7 @@ export function newState(
   return {
     input,
     options,
+    reporter: createParkReporter({ park: options.park }),
     opId,
     binding,
     warnings,
