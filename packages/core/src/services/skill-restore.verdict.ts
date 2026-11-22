@@ -26,7 +26,7 @@ import { parseSidecarStrict } from '../install/prune.sidecar.strict.js'
 import { restoreClassOf } from './skill-restore.kinds.js'
 import type { RestoreContents, RestoreRefusalReason } from './skill-restore.types.js'
 
-export type SidecarVerdict<R extends { bytes: Buffer } = { bytes: Buffer }> =
+type SidecarVerdict<R extends { bytes: Buffer } = { bytes: Buffer }> =
   | {
       ok: true
       /** The sidecar read the verdict came from (never null once it is ok). */
