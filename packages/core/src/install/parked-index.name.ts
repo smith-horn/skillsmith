@@ -1,10 +1,12 @@
 /**
  * The parked index's file name and the parked area's directory name, in a
- * module with no filesystem import (with the name a park gives what it moves), so doctor's classifier-side attribution
+ * module with no filesystem import, so doctor's classifier-side attribution
  * (SMI-6531 6b-ii) can name the index a park appends to, and its install
  * classifier (8-i-a-2) the area a park moves into. `parked-index.ts`
  * re-exports the index name and stays its public home;
  * `park-tree.destination.ts` and `prune.list.parked.ts` re-export the area's.
+ * Also the test a parked copy's `<base>-<8 hex>` name must pass
+ * (`isParkedNameOf`), shared by the install classifier and prune protection.
  *
  * @module @skillsmith/core/install/parked-index.name
  */

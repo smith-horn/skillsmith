@@ -49,7 +49,9 @@ function emptyPathNote(f: OpFacts, kind: string): string {
  * so it refuses a copy that has none (a park killed before its sidecar write,
  * which FI4 still counts, Q1): that copy is copied back by hand. A held copy
  * (its sidecar says `hold`) is restored, and restore says it differs from what
- * was set aside.
+ * was set aside. The classifier reads only the sidecar's opId, kind and hold;
+ * restore checks its whole shape, so a damaged sidecar can still be refused,
+ * and the note says restore will name the reason.
  */
 function setAsideNote(f: OpFacts): string {
   const c = f.parked?.[0]
@@ -60,7 +62,7 @@ function setAsideNote(f: OpFacts): string {
       `so \`skillsmith restore\` cannot put it back: copy it to ${f.tPath} by hand if you want it`
     )
   }
-  const restore = `nothing is moved; the folder set aside at ${c.path} can be put back with \`skillsmith restore ${f.opId}\``
+  const restore = `nothing is moved; the folder set aside at ${c.path} can be put back with \`skillsmith restore ${f.opId}\` (restore says why if it cannot)`
   return c.sidecar.hold
     ? `${restore}; it was held when it was set aside, so restore will say it differs from what was set aside`
     : restore
