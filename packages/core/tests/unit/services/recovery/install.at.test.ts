@@ -1,7 +1,7 @@
 /**
  * SMI-6531 (A1 step 8-i-a-3a, design § 1.6 and § 8 item 5): `installAt` with
- * no claim tells "nothing touched" from "the claim may be left" through
- * `claimLeftBy`, runs `check` immediately before the claim's `mkdir` and again
+ * no claim tells "nothing touched" from "the claim may be left" through the
+ * caller's per-call `InstallAtOutcome` (never keyed by the error), runs `check` immediately before the claim's `mkdir` and again
  * in claimPublish's `beforeRename` (not its test seam), and stops
  * `write-failed` when the parent the folder left (OP) fails its sync. Every
  * state is a real install record's (`install.helpers.ts`) run under lock 1
@@ -29,7 +29,7 @@ vi.mock('../../../../src/install/dir-sync.js', async (importOriginal) => {
 })
 
 const { bindIdentity } = await import('../../../../src/install/park-tree.identity.js')
-const { claimLeftBy, installAt } = await import('../../../../src/services/skill-recovery.resume.js')
+const { installAt } = await import('../../../../src/services/skill-recovery.resume.js')
 const { recoveryState } = await import('../../../../src/services/skill-recovery.state.js')
 const { SwapFault } = await import('../../../../src/services/skill-swap.ops.js')
 const { bindSkillsRootReadOnly, withSkillWriteLock } =
@@ -37,6 +37,7 @@ const { bindSkillsRootReadOnly, withSkillWriteLock } =
 const { hashOf, useTmpCleanup } = await import('../skill-swap.helpers.js')
 const { fi0, idOf, installFixture } = await import('./install.helpers.js')
 type IState = import('./install.helpers.js').IState
+type Ctx = import('../../../../src/services/skill-write-lock.types.js').SkillWriteContext
 type SwapHooks = NonNullable<
   import('../../../../src/services/skill-swap.types.js').SwapOptions['hooks']
 >
@@ -49,14 +50,21 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+/** What one call threw (null: it returned) and what it set on its outcome ('unset': nothing). */
+interface Ran {
+  err: unknown
+  left: boolean | 'unset'
+}
+
 /**
- * Runs `installAt(N, no claim)` under lock 1 as doctor does; returns what it
- * threw (or null), with `before` run under the lock just before the call.
+ * Runs `installAt(N, no claim)` under lock 1 as doctor does, with a fresh
+ * outcome object; `before` runs under the lock just before the call, with
+ * the lock's context.
  */
 async function runAt(
   st: IState,
-  o: { hooks?: SwapHooks; before?: () => void } = {}
-): Promise<unknown> {
+  o: { hooks?: SwapHooks; before?: (ctx: Ctx) => void } = {}
+): Promise<Ran> {
   const binding = await bindSkillsRootReadOnly(st.fx.skillsDir)
   if (binding === null) throw new Error('no binding')
   const id = bindIdentity(st.newDir)
@@ -68,12 +76,19 @@ async function runAt(
       ctx,
       options: o.hooks === undefined ? {} : { hooks: o.hooks },
     })
-    o.before?.()
+    o.before?.(ctx)
+    const outcome: { claimLeft: boolean | 'unset' } = { claimLeft: 'unset' }
     try {
-      await installAt(s, st.newDir, null, { identity: id, hash: st.record.postTree })
-      return null
+      await installAt(
+        s,
+        st.newDir,
+        null,
+        { identity: id, hash: st.record.postTree },
+        outcome as { claimLeft: boolean }
+      )
+      return { err: null, left: outcome.claimLeft }
     } catch (err) {
-      return err
+      return { err, left: outcome.claimLeft }
     }
   })
   if (!r.ok) throw new Error(`lock 1 refused: ${JSON.stringify(r)}`)
@@ -98,24 +113,25 @@ function replaceLockFile(root: string): void {
 describe('installAt without a claim: nothing touched', () => {
   it('control: N is published at the skill path, and no error', async () => {
     const st = fi0(installFixture())
-    expect(await runAt(st)).toBeNull()
+    // A return leaves the outcome as it was.
+    expect(await runAt(st)).toEqual({ err: null, left: 'unset' })
     expect(idOf(st.fx.realDir)).toEqual(st.record.newIdentity)
     expect(fs.existsSync(st.newDir)).toBe(false)
   })
 
-  it('something at the skill path: target-changed, claimLeftBy false, the entry and N untouched', async () => {
+  it('something at the skill path: target-changed, claimLeft false, the entry and N untouched', async () => {
     const st = fi0(installFixture())
     fs.mkdirSync(st.fx.realDir)
     fs.writeFileSync(path.join(st.fx.realDir, 'mine.txt'), 'user\n')
     const before = idOf(st.fx.realDir)
-    const err = await runAt(st)
+    const { err, left } = await runAt(st)
     expect(reasonOf(err)).toBe('target-changed')
-    expect(claimLeftBy(err)).toBe(false)
+    expect(left).toBe(false)
     expect(idOf(st.fx.realDir)).toEqual(before)
     expect(hashOf(st.newDir)).toBe(st.record.postTree)
   })
 
-  it('the claim mkdir fails: write-failed, claimLeftBy false, the skill path absent', async () => {
+  it('the claim mkdir fails: write-failed, claimLeft false, the skill path absent', async () => {
     const st = fi0(installFixture())
     const mkdir = fs.promises.mkdir
     const spy = vi
@@ -124,79 +140,120 @@ describe('installAt without a claim: nothing touched', () => {
         String(p) === st.fx.realDir
           ? Promise.reject(Object.assign(new Error('forced'), { code: 'EACCES' }))
           : mkdir(p, ...rest)) as typeof fs.promises.mkdir)
-    const err = await runAt(st)
+    const { err, left } = await runAt(st)
     expect(spy).toHaveBeenCalledWith(st.fx.realDir)
     expect(reasonOf(err)).toBe('write-failed')
     expect(String((err as Error).message)).toContain('claim-failed')
-    expect(claimLeftBy(err)).toBe(false)
+    expect(left).toBe(false)
     expect(fs.existsSync(st.fx.realDir)).toBe(false)
     expect(hashOf(st.newDir)).toBe(st.record.postTree)
   })
 
-  it('the root changed before the call: check refuses before the claim; claimLeftBy false, no claim', async () => {
+  it('the root changed before the call: check refuses before the claim; claimLeft false, no claim', async () => {
     const st = fi0(installFixture())
-    const err = await runAt(st, { before: () => replaceLockFile(st.fx.skillsDir) })
+    const { err, left } = await runAt(st, { before: () => replaceLockFile(st.fx.skillsDir) })
     expect(err).not.toBeNull()
-    expect(claimLeftBy(err)).toBe(false)
+    expect(left).toBe(false)
     expect(fs.existsSync(st.fx.realDir)).toBe(false)
     expect(hashOf(st.newDir)).toBe(st.record.postTree)
   })
 })
 
 describe('installAt without a claim: the claim may be left', () => {
-  it('the rename fails: write-failed, claimLeftBy true, the empty claim and N in place', async () => {
+  it('the rename fails: write-failed, claimLeft true, the empty claim and N in place', async () => {
     const st = fi0(installFixture())
     vi.spyOn(fs.promises, 'rename').mockRejectedValue(
       Object.assign(new Error('forced'), { code: 'EIO' })
     )
-    const err = await runAt(st)
+    const { err, left } = await runAt(st)
     expect(reasonOf(err)).toBe('write-failed')
     expect(String((err as Error).message)).toContain('rename-failed')
-    expect(claimLeftBy(err)).toBe(true)
+    expect(left).toBe(true)
     expect(isEmptyDir(st.fx.realDir)).toBe(true)
     expect(hashOf(st.newDir)).toBe(st.record.postTree)
   })
 
-  it('N edited between the claim and the rename: staging-unsafe, claimLeftBy true, the claim empty', async () => {
+  it('N edited between the claim and the rename: staging-unsafe, claimLeft true, the claim empty', async () => {
     const st = fi0(installFixture())
-    const err = await runAt(st, {
+    const { err, left } = await runAt(st, {
       hooks: { afterClaim: () => fs.writeFileSync(path.join(st.newDir, 'SKILL.md'), '# edited\n') },
     })
     expect(reasonOf(err)).toBe('staging-unsafe')
-    expect(claimLeftBy(err)).toBe(true)
+    expect(left).toBe(true)
     expect(isEmptyDir(st.fx.realDir)).toBe(true)
     expect(fs.existsSync(path.join(st.newDir, 'SKILL.md'))).toBe(true)
   })
 
   it('lock 1 replaced between the claim and the rename: check in beforeRename refuses; N not published', async () => {
     const st = fi0(installFixture())
-    const err = await runAt(st, { hooks: { afterClaim: () => replaceLockFile(st.fx.skillsDir) } })
+    const { err, left } = await runAt(st, {
+      hooks: { afterClaim: () => replaceLockFile(st.fx.skillsDir) },
+    })
     expect(err).not.toBeNull()
-    expect(claimLeftBy(err)).toBe(true)
+    expect(left).toBe(true)
     expect(isEmptyDir(st.fx.realDir)).toBe(true)
     expect(hashOf(st.newDir)).toBe(st.record.postTree)
   })
 
-  it('OP fails its sync after the publish: write-failed naming OP, claimLeftBy true, N published', async () => {
+  it('OP fails its sync after the publish: write-failed naming OP, claimLeft true, N published', async () => {
     const st = fi0(installFixture())
     // Only claimPublish's source sync fails (the first sync of OP): the
     // failure it reports must stop the run, though OP would sync again later.
     sync.failDir = st.opDir
     sync.failTimes = 1
-    const err = await runAt(st)
+    const { err, left } = await runAt(st)
     expect(sync.failed).toBe(1)
     expect(reasonOf(err)).toBe('write-failed')
     expect((err as InstanceType<typeof SwapFault>).detail).toBe(
       `${st.opDir} could not be synced (EDQUOT)`
     )
-    expect(claimLeftBy(err)).toBe(true)
+    expect(left).toBe(true)
     expect(idOf(st.fx.realDir)).toEqual(st.record.newIdentity)
     expect(fs.existsSync(st.newDir)).toBe(false)
   })
 
-  it('an unknown throw answers true (fail closed)', () => {
-    expect(claimLeftBy(new Error('anything'))).toBe(true)
-    expect(claimLeftBy('a string')).toBe(true)
-    expect(claimLeftBy(null)).toBe(true)
+  it('an unknown throw after the claim (a plain Error, a string): claimLeft true (fail closed)', async () => {
+    for (const thrown of [new Error('anything'), 'a string']) {
+      const st = fi0(installFixture())
+      const { err, left } = await runAt(st, {
+        hooks: {
+          afterClaim: () => {
+            throw thrown
+          },
+        },
+      })
+      expect(err).toBe(thrown)
+      expect(left).toBe(true)
+      expect(isEmptyDir(st.fx.realDir)).toBe(true)
+    }
+  })
+
+  it('one error object thrown before the claim in one call and after it in the next: false, then true', async () => {
+    // The same object both times, so only a per-call answer can tell them apart.
+    const reused = new Error('the root changed')
+    /** Makes the lock context's `check` throw `reused` on its `nth` call (1-based). */
+    const throwOn =
+      (nth: number) =>
+      (ctx: Ctx): void => {
+        const orig = ctx.check.bind(ctx)
+        let n = 0
+        ctx.check = ((...a: Parameters<Ctx['check']>) => {
+          n++
+          if (n === nth) throw reused
+          return orig(...a)
+        }) as Ctx['check']
+      }
+    // Call 1: the first check is the one before the claim's mkdir.
+    const one = fi0(installFixture())
+    const first = await runAt(one, { before: throwOn(1) })
+    expect(first.err).toBe(reused)
+    expect(first.left).toBe(false)
+    expect(fs.existsSync(one.fx.realDir)).toBe(false)
+    // Call 2: the second check is in beforeRename, after the claim exists.
+    const two = fi0(installFixture())
+    const second = await runAt(two, { before: throwOn(2) })
+    expect(second.err).toBe(reused)
+    expect(isEmptyDir(two.fx.realDir)).toBe(true)
+    expect(second.left).toBe(true)
   })
 })
