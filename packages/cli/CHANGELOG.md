@@ -4,6 +4,9 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- (#3280 retro) `skillsmith doctor recovery` no longer offers
+  `skillsmith restore` for an FI4 copy that has no sidecar (restore would refuse it); it says to
+  copy the folder back by hand.
 - **Added**: SMI-6531 -- A1 step 8-i-a-2: `skillsmith doctor recovery` lists a fresh install's
   unfinished record with its row (`FI0 not claimed` ... `FI4 rolled back`), a first facts line
   `install of <dir> into <root> (manifest key <key>)`, no old-folder line, and (FI4) where the folder

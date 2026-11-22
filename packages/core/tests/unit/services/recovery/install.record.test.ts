@@ -12,8 +12,9 @@
  *  - The root-wide refusal says "update" only for records that parsed as
  *    updates; a copied install record, or one that does not parse, is an
  *    "operation".
- *  - T-FIR5: prune facts: no `backupDest` from an install record; its parked
- *    `install-rollback` copy is protected by rule `live-record` (Q2).
+ *  - T-FIR5: prune facts: no `backupDest` from an install record; its own
+ *    parked copy (by place, whatever kind prune read) is protected by rule
+ *    `live-record` (Q2). Through the real listing: `install.parked.test.ts`.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -268,12 +269,12 @@ describe('the root-wide refusal names the kind of operation only when it is know
 })
 
 describe('T-FIR5: prune facts of a live install record', () => {
-  it('no backupDest; its parked install-rollback copy is protected live-record, others are not', async () => {
+  it('no backupDest; its own parked copy is protected live-record, a copy elsewhere is not', async () => {
     const st = await fi4(installFixture())
     const facts = await collectRecordFacts([st.fx.skillsDir])
     const recordPath = path.join(st.opDir, 'record.json')
     expect(facts.live.get(st.opId)).toBe(recordPath)
-    expect(facts.liveInstalls?.get(st.opId)).toBe(recordPath)
+    expect(facts.liveInstalls?.get(st.opId)).toEqual({ path: recordPath, realDir: st.fx.realDir })
     expect([...(facts.backupDests?.keys() ?? [])]).toEqual([])
     const q = (kind: string) => ({
       copyPath: st.parked,
@@ -287,8 +288,28 @@ describe('T-FIR5: prune facts of a live install record', () => {
       rule: 'live-record',
       path: recordPath,
     })
-    // Another kind with the same opId is not this rule's.
-    expect(protectionOf(facts, new Map(), q('uninstall'))).toEqual({ status: 'unprotected' })
+    // Whatever kind prune read for it (none, for a held park or no sidecar): the place decides.
+    expect(protectionOf(facts, new Map(), { ...q('install-rollback'), kind: null })).toMatchObject({
+      status: 'protected',
+    })
+    // A copy with the same opId anywhere else is not this rule's (another area, another name).
+    const elsewhere = path.join(
+      st.fx.staging,
+      '.skillsmith-parked',
+      st.opId,
+      `${st.fx.dirName}-0123abcd`
+    )
+    expect(
+      protectionOf(facts, new Map(), { ...q('install-rollback'), copyPath: elsewhere })
+    ).toEqual({
+      status: 'unprotected',
+    })
+    const renamed = path.join(path.dirname(st.parked), 'other-skill-0123abcd')
+    expect(protectionOf(facts, new Map(), { ...q('install-rollback'), copyPath: renamed })).toEqual(
+      {
+        status: 'unprotected',
+      }
+    )
     // A backup-store copy of the opId stays covered by rule (b), as before.
     expect(protectionOf(facts, new Map(), { ...q('unused-new'), store: 'backup' })).toMatchObject({
       status: 'protected',

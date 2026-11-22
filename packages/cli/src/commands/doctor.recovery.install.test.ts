@@ -68,13 +68,15 @@ describe('doctor recovery: a fresh install', () => {
     expect(process.exitCode).toBeUndefined()
   })
 
-  it('lists FI4 with where the folder was set aside, and the restore command', async () => {
+  it('lists FI4 with where the folder was set aside; with no sidecar, to copy it back by hand', async () => {
     const u = await plantInstall(base, 'FI4')
     await runDoctorRecovery({})
     const text = out.join('\n')
     expect(text).toContain(`${u.opId}  FI4 rolled back`)
     expect(text).toContain(`    set aside at ${u.parked} (sidecar: missing; held: no)`)
-    expect(text).toContain(`skillsmith restore ${u.opId}`)
+    // `skillsmith restore` refuses a copy with no sidecar (origin-unknown), so the note does not offer it.
+    expect(text).toContain(`copy it to ${u.skillDir} by hand`)
+    expect(text).not.toContain(`skillsmith restore ${u.opId}`)
   })
 
   it('a set-aside copy with a sidecar says present and held yes or no; another folder is named as one', async () => {
@@ -86,6 +88,10 @@ describe('doctor recovery: a fresh install', () => {
     fs.writeFileSync(`${u.parked}.json`, sidecar(true))
     await runDoctorRecovery({})
     expect(out.join('\n')).toContain(`    set aside at ${u.parked} (sidecar: present; held: yes)`)
+    // With a sidecar the note offers restore, and says a held copy will be reported as different.
+    expect(out.join('\n')).toContain(
+      `skillsmith restore ${u.opId}\`; it was held when it was set aside`
+    )
 
     out = []
     fs.writeFileSync(`${u.parked}.json`, sidecar(false))

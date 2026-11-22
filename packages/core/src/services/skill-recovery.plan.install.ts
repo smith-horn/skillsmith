@@ -12,7 +12,7 @@
  * | FI2′ | refused `recovery-conflict` | as FI2 |
  * | FI2u | keep U unless kept (= `--undo`) | same |
  * | FI3 | finish (nothing moves) | refused `recovery-not-offered`: the install is complete |
- * | FI4 | finish: nothing moves, the set-aside copy stays where it is | same |
+ * | FI4 | finish: nothing moves, the set-aside copy stays where it is (the note says how to get it back) | same |
  *
  * `--abandon` is not offered on a row: each one has an action that finishes
  * it. Pure: no filesystem access.
@@ -41,6 +41,29 @@ const SAME_UNDO = '`--apply` and `--undo` are the same here: they finish the und
 /** The note an install's undo ends with: where the folder is kept, and that the skill path stays empty. */
 function emptyPathNote(f: OpFacts, kind: string): string {
   return `the skill path stays empty; the new folder is kept at ${path.join(f.area, `${f.opId}.${kind}`)}`
+}
+
+/**
+ * FI4's note: where the set-aside folder is and how to get it back.
+ * `skillsmith restore` reads the copy's sidecar to learn where it came from,
+ * so it refuses a copy that has none (a park killed before its sidecar write,
+ * which FI4 still counts, Q1): that copy is copied back by hand. A held copy
+ * (its sidecar says `hold`) is restored, and restore says it differs from what
+ * was set aside.
+ */
+function setAsideNote(f: OpFacts): string {
+  const c = f.parked?.[0]
+  if (c === undefined) return 'nothing is moved'
+  if (c.sidecar === null) {
+    return (
+      `nothing is moved; the folder set aside at ${c.path} has no record of where it came from, ` +
+      `so \`skillsmith restore\` cannot put it back: copy it to ${f.tPath} by hand if you want it`
+    )
+  }
+  const restore = `nothing is moved; the folder set aside at ${c.path} can be put back with \`skillsmith restore ${f.opId}\``
+  return c.sidecar.hold
+    ? `${restore}; it was held when it was set aside, so restore will say it differs from what was set aside`
+    : restore
 }
 
 /** FI0/FI1 `--apply`: N to the skill path and the commit, unless N no longer hashes to `postTree`. */
@@ -168,8 +191,7 @@ export function installRowPlan(
         'untouched',
         [...resumes(f)]
       )
-    case 'FI4': {
-      const at = f.parked?.[0]?.path ?? 'its parked area'
+    case 'FI4':
       return rowOffer(
         f,
         action,
@@ -177,11 +199,10 @@ export function installRowPlan(
         'untouched',
         [...resumes(f)],
         [
-          `nothing is moved; the folder set aside at ${at} can be put back with \`skillsmith restore ${f.opId}\``,
+          setAsideNote(f),
           '`--apply` and `--undo` are the same here: the install was already rolled back',
         ]
       )
-    }
   }
 }
 

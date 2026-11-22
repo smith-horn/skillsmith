@@ -103,7 +103,7 @@ export interface SourceExpect {
  * claimPublish's `beforeRename` with no await before the rename. A swap
  * between this check and the rename is the §3.0 item 9 residual.
  */
-export function assertSourceAsPlanned(src: string, expect: SourceExpect): void {
+function assertSourceAsPlanned(src: string, expect: SourceExpect): void {
   const id = bindIdentity(src)
   if (!id.ok || !sameIdentity(expect.identity, id)) {
     throw new SwapFault(

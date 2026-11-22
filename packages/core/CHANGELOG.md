@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-6531 -- (#3280 retro) a live install record's prune protection now covers its
+  set-aside copy when the park held it or never wrote its sidecar (prune reads no kind for either),
+  by the copy's place rather than its kind; a copy of another operation is still not covered.
+  Doctor's FI4 note offers `skillsmith restore <opId>` only when the copy has its sidecar (restore
+  refuses one without, `origin-unknown`); otherwise it says to copy the folder back by hand, and for
+  a held copy it says restore will report it as different.
 - **Added**: SMI-6531 -- A1 step 8-i-a-2: the fresh install's recovery record (`op: "install"`,
   its own exact key set in schema 1; `sealInstallRecord` exported). Nothing writes one yet (8-i-a-3
   does); an update record's bytes and hash are unchanged. The record scan treats an install record
@@ -11,7 +17,8 @@ All notable changes to `@skillsmith/core` are documented here.
   an install), and the refusal names the install. `doctor recovery` classifies an install record
   into rows FI0-FI4 (with their post-keep forms, FI2' and FI2u) and runs `--apply` and `--undo` on
   them; `--abandon` is refused on every FI row and offered for the install states no row matches. A
-  live install record protects its parked `install-rollback` copy from prune (rule `live-record`).
+  live install record protects its own set-aside copy from prune (rule `live-record`): the copy at
+  `<root>/.skillsmith-parked/<opId>/<dir>-<8 hex>`, whatever kind prune read for it.
 - **Fixed**: SMI-6531 -- A1 step 8-i-a-2: doctor's `--apply`/`--undo` re-checks the folder it puts
   back at the skill path (its identity and the tree hash the plan saw) immediately before the
   publishing rename, on both the claim-publish path and the rename over an existing empty claim. A

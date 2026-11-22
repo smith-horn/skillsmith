@@ -31,7 +31,7 @@
  */
 import path from 'node:path'
 import type { InstallRecord } from './skill-install.record-schema.js'
-import { PARKED_DIR_NAME } from '../install/parked-index.name.js'
+import { isParkedNameOf, PARKED_DIR_NAME } from '../install/parked-index.name.js'
 import { ROLE_DIR, SIDECAR_CAP, STARTED_STATES } from './skill-recovery.pstate.js'
 import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
@@ -111,8 +111,6 @@ export function resolveInstallRoles(
   return { roles: { O: { kind: 'absent' }, N: one('N'), U: one('U') }, conflicts, changed }
 }
 
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
 /** A parked copy's sidecar: what it says, or why it could not be read. */
 function sidecarOf(
   r: ClassifierReader,
@@ -163,10 +161,9 @@ export function observeParked(
     if (listed.errno === 'ENOENT') return { ok: true, copies: [] }
     return { ok: false, error: `${dir} could not be listed (${listed.errno})` }
   }
-  const name = new RegExp(`^${escapeRe(rec.target.dirName)}-[0-9a-f]{8}$`)
   const copies: ParkedCopyFact[] = []
   for (const n of [...listed.names].sort()) {
-    if (!name.test(n)) continue
+    if (!isParkedNameOf(n, rec.target.dirName)) continue
     const p = path.join(dir, n)
     const st = r.stat(p)
     const isDir = st.ok && st.type === 'dir'

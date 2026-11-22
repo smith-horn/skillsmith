@@ -15,6 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { expect } from 'vitest'
 import { parkTree } from '../../../../src/install/park-tree.js'
+import { withFsStub, writeAfterRename } from '../../install/park-tree.helpers.js'
 import type { InstallRecord } from '../../../../src/services/skill-install.record-schema.js'
 import { sealInstallRecord } from '../../../../src/services/skill-install.record-seal.js'
 import { recoveryState } from '../../../../src/services/skill-recovery.state.js'
@@ -45,14 +46,15 @@ export interface IState {
 /**
  * A skills root with no skill folder yet, and a state root whose manifest has
  * no entry for it: under the same temp, or `stateRoot` (an existing directory,
- * another device for the cross-device keeps).
+ * another device for the cross-device keeps) and `skillsDir` (an existing
+ * directory, a discovered client root for the restore and prune tests).
  */
-export function installFixture(at: { stateRoot?: string } = {}): Fixture {
+export function installFixture(at: { stateRoot?: string; skillsDir?: string } = {}): Fixture {
   const base = tmp('install-rec-')
-  const skillsDir = path.join(base, 'skills')
+  const skillsDir = at.skillsDir ?? path.join(base, 'skills')
   const stateRoot = at.stateRoot ?? path.join(base, 'state')
   const outside = path.join(base, 'outside')
-  fs.mkdirSync(skillsDir)
+  if (at.skillsDir === undefined) fs.mkdirSync(skillsDir)
   if (at.stateRoot === undefined) fs.mkdirSync(stateRoot)
   fs.mkdirSync(outside)
   fs.writeFileSync(
@@ -180,19 +182,26 @@ export async function fi2u(fx: Fixture, o: BuildOptions = {}): Promise<IState> {
 /**
  * FI4: FI2 with the published folder set aside by the install's post-claim
  * park (`parkTree`, caller `install-rollback`, the record's opId). Returns the
- * parked copy's path too.
+ * parked copy's path too. `held`: a write lands in the folder during the
+ * park's rename (the stub `park-call.test.ts` uses), so the production park
+ * holds it and writes a `hold` sidecar.
  */
-export async function fi4(fx: Fixture, o: BuildOptions = {}): Promise<IState & { parked: string }> {
+export async function fi4(
+  fx: Fixture,
+  o: BuildOptions & { held?: boolean } = {}
+): Promise<IState & { parked: string }> {
   const st = await fi2(fx, o)
-  const r = parkTree(fx.skillsDir, fx.dirName, {
-    client: 'claude-code',
-    caller: 'install-rollback',
-    kind: 'install-rollback',
-    opId: st.opId,
-    guardHash: st.record.postTree,
-  })
-  expect(r.status).toBe('parked')
-  return { ...st, parked: r.path! }
+  const park = (): ReturnType<typeof parkTree> =>
+    parkTree(fx.skillsDir, fx.dirName, {
+      client: 'claude-code',
+      caller: 'install-rollback',
+      kind: 'install-rollback',
+      opId: st.opId,
+      guardHash: st.record.postTree,
+    })
+  const r = o.held === true ? withFsStub('renameSync', writeAfterRename(fx.realDir), park) : park()
+  expect(r.status).toBe(o.held === true ? 'held' : 'parked')
+  return { ...st, parked: (o.held === true ? r.heldPath : r.path)! }
 }
 
 /**

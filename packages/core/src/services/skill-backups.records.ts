@@ -12,11 +12,16 @@
  * checked first and named when it applies.
  *
  * Q2 (8-i-a-2): a live fresh-install record protects the parked copy its own
- * post-claim park made (kind `install-rollback`, the record's opId), the
- * parked-store analogue of rule (b): while the record is live, doctor's FI4
- * row names that copy, and a prune that took it would leave the install with
- * nothing to restore. An install record has no `backupDest`, so rule (a)
- * gets nothing from it.
+ * post-claim park made, the parked-store analogue of rule (b): while the
+ * record is live, doctor's FI4 row names that copy, and a prune that took it
+ * would leave the install with nothing to put back. The copy is matched by
+ * where it is, not by its kind: `<root>/.skillsmith-parked/<opId>/<dirName>-<8 hex>`
+ * for the record's root, opId and folder name, the one place that park puts
+ * it (and the place doctor's FI4 looks). Prune reads no kind for a held
+ * park's sidecar or for a copy whose sidecar was never written, and both are
+ * FI4, so a kind test would leave them unprotected; an opId alone would also
+ * cover any other copy that carried it, in any area. An install record has no
+ * `backupDest`, so rule (a) gets nothing from it.
  *
  * `protectionOf` is the one rule set for both stores (6c-ii-b): the listing
  * applies it to every backup tree and every parked copy
@@ -27,6 +32,7 @@
  * @module @skillsmith/core/services/skill-backups.records
  */
 import path from 'node:path'
+import { isParkedNameOf, PARKED_DIR_NAME } from '../install/parked-index.name.js'
 import { scanStagingRecords } from './skill-swap.records.js'
 import type { UnreadableRecord } from './skill-swap.records.js'
 import { STAGING_DIR } from './skill-backups.areas.js'
@@ -57,11 +63,12 @@ export interface RecordFacts {
    */
   backupDests?: Map<string, string>
   /**
-   * Q2: verified live install records by opId (the record's path): each
-   * protects the parked `install-rollback` copy carrying its opId. Optional
-   * for the same reason as `backupDests`.
+   * Q2: verified live install records by opId (the record's path and its
+   * `realDir`): each protects the copy its own post-claim park made, found by
+   * place (`isInstallParked`), whatever kind prune read for it. Optional for
+   * the same reason as `backupDests`.
    */
-  liveInstalls?: Map<string, string>
+  liveInstalls?: Map<string, { path: string; realDir: string }>
   /** Records that could not be verified, by root: they block every write there. */
   unreadable: { root: string; record: UnreadableRecord }[]
   /** A root's staging directory could not be scanned: nothing about its records is known. */
@@ -90,12 +97,24 @@ export async function collectRecordFacts(roots: readonly string[]): Promise<Reco
         facts.backupDests?.set(r.backupDest, r.path)
       }
       if (r.op === 'install' && !facts.liveInstalls?.has(r.opId)) {
-        facts.liveInstalls?.set(r.opId, r.path)
+        facts.liveInstalls?.set(r.opId, { path: r.path, realDir: r.realDir })
       }
     }
     for (const u of scan.unreadable) facts.unreadable.push({ root, record: u })
   }
   return facts
+}
+
+/**
+ * `copyPath` is where an install's post-claim park puts its folder:
+ * `<dirname(realDir)>/.skillsmith-parked/<opId>/<basename(realDir)>-<8 hex>`.
+ */
+function isInstallParked(copyPath: string, opId: string, realDir: string): boolean {
+  const area = path.join(path.dirname(realDir), PARKED_DIR_NAME, opId)
+  return (
+    path.dirname(copyPath) === area &&
+    isParkedNameOf(path.basename(copyPath), path.basename(realDir))
+  )
 }
 
 /** What a kept tree or a parked copy needs for the protection question. */
@@ -153,10 +172,15 @@ export function protectionOf(
   const exempt = q.kind === 'partial-copy' && q.sourceUnchanged === true
   const live = parkedStore ? undefined : facts.live.get(q.opId)
   if (live !== undefined && !exempt) return { status: 'protected', rule: 'live-record', path: live }
-  // Q2: the parked copy a live install record's own post-claim park made (FI4).
-  const install =
-    parkedStore && q.kind === 'install-rollback' ? facts.liveInstalls?.get(q.opId) : undefined
-  if (install !== undefined) return { status: 'protected', rule: 'live-record', path: install }
+  // Q2: the parked copy a live install record's own post-claim park made (FI4), by its place.
+  const install = parkedStore ? facts.liveInstalls?.get(q.opId) : undefined
+  if (
+    install !== undefined &&
+    q.copyPath !== undefined &&
+    isInstallParked(q.copyPath, q.opId, install.realDir)
+  ) {
+    return { status: 'protected', rule: 'live-record', path: install.path }
+  }
   // Rule (c) and what may hide it do not apply to the parked record copy itself.
   const ruleC = !(parkedStore && q.kind === 'unreadable-record')
   const parked = ruleC ? parkedUnreadable.get(q.opId) : undefined
