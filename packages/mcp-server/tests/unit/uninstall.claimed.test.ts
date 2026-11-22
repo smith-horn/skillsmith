@@ -104,6 +104,24 @@ describe('uninstall_skill and a name another install claimed', () => {
     )
   })
 
+  it('a link teardown that throws with no earlier warning: the note alone is the warning', async () => {
+    mocks.removeLinks.mockRejectedValue(new Error('manifest unreadable'))
+    mocks.uninstall.mockResolvedValue({ success: true, skillName: 's', message: 'parked' })
+    const r = await uninstallSkill({ skillName: 's', force: true }, context)
+    expect(mocks.removeLinks).toHaveBeenCalledWith('s')
+    expect(r.success).toBe(true)
+    expect(r.warning).toBe('could not clean up cross-client links: manifest unreadable')
+  })
+
+  it('a link teardown that rejects with a non-Error: its string form is reported', async () => {
+    mocks.removeLinks.mockRejectedValue('lock busy')
+    mocks.uninstall.mockResolvedValue({ success: true, skillName: 's', message: 'parked' })
+    const r = await uninstallSkill({ skillName: 's', force: true }, context)
+    expect(mocks.removeLinks).toHaveBeenCalledWith('s')
+    expect(r.success).toBe(true)
+    expect(r.warning).toBe('could not clean up cross-client links: lock busy')
+  })
+
   it('control: an unclaimed global uninstall still tears the links down', async () => {
     mocks.uninstall.mockResolvedValue({ success: true, skillName: 's', message: 'parked' })
     const r = await uninstallSkill({ skillName: 's', force: true }, context)
