@@ -248,15 +248,12 @@ async function evaluate(
   // A held copy skips the strict schema in the listing, yet its originPath decides where
   // restore writes: the strict parse runs here on the bytes the listing read, in the
   // verdict doctor's FI4 note asks too (`skill-restore.verdict.ts`).
-  const read = c.sidecarRead
-  const v = sidecarVerdict(read === null ? null : read.bytes, {
+  const v = sidecarVerdict(c.sidecarRead, {
     copyPath,
     parentName: path.basename(row.copy.parentDir),
   })
   if (!v.ok) return refuse(v.reason, v.message)
-  // Unreachable: no bytes is refused above. Kept so the type narrows for the digest below.
-  if (read === null) return refuse('origin-unknown', 'no sidecar was read')
-  const { sidecar: sc, kind, origin } = v
+  const { read, sidecar: sc, kind, origin } = v
   if (c.klass === 'mounted') {
     return refuse(
       'restore-mounted',

@@ -10,11 +10,14 @@ All notable changes to `@skillsmith/core` are documented here.
   published, however prune read its sidecar (a held park, or none). A different folder put at that
   path, a copy of another operation, or a copy whose identity cannot be read is not covered; every
   live install record counts, so two with one opId in different roots each cover their own copy.
-  Doctor's FI4 note is worded from `skillsmith restore`'s own verdict on the copy (the strict
-  sidecar check restore makes, its origin folder and its contents): it offers
-  `skillsmith restore <opId>` only when restore would put the copy back, adds that restore will say
-  it differs only when restore's done message will, and otherwise gives restore's reason and says to
-  copy the folder back by hand. `planRestore` and the note share one function for that verdict.
+  Doctor's FI4 note is worded from `skillsmith restore`'s own verdict on the copy's sidecar (its
+  strict check) and origin folder: it offers `skillsmith restore <copy path>` (the full path, quoted as one shell word when it needs it, which
+  restore resolves to one copy even when another root's copy shares the opId) only when those
+  checks pass, adds that restore will say the copy differs only when restore's done message will,
+  says what to create when the origin's folder is missing, and otherwise gives restore's reason and
+  says to copy the folder back by hand. Restore still checks a mount inside the copy, its lock, the
+  target and an ambiguous id when it runs. `planRestore` and the note share one function for the
+  sidecar verdict.
 - **Added**: SMI-6531 -- A1 step 8-i-a-2: the fresh install's recovery record (`op: "install"`,
   its own exact key set in schema 1; `sealInstallRecord` exported). Nothing writes one yet (8-i-a-3
   does); an update record's bytes and hash are unchanged. The record scan treats an install record

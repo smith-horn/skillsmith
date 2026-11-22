@@ -117,7 +117,7 @@ export async function collectRecordFacts(roots: readonly string[]): Promise<Reco
 }
 
 /** One live install record, as Q2 reads it. */
-export interface LiveInstall {
+interface LiveInstall {
   path: string
   realDir: string
   newIdentity: RecordIdentity

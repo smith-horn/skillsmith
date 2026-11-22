@@ -258,7 +258,10 @@ export interface ParkedCopyFact {
    * put it back (and whether its done message says it differs from what was
    * set aside), or refuse, with restore's own reason and message.
    */
-  restore: { would: true; differs: boolean } | { would: false; reason: string; message: string }
+  restore:
+    | { would: true; differs: boolean }
+    /** `originDir`: the origin's folder restore needs, for `origin-parent-missing` (null otherwise). */
+    | { would: false; reason: string; message: string; originDir: string | null }
 }
 
 /** What was observed once a record verified; shared by every class that carries one. */

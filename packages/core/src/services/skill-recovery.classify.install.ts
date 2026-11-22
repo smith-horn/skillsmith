@@ -169,8 +169,8 @@ function restoreOf(
   bytes: Buffer | null,
   freshHash: string | null
 ): ParkedCopyFact['restore'] {
-  const v = sidecarVerdict(bytes, { copyPath: p, parentName: opId })
-  if (!v.ok) return { would: false, reason: v.reason, message: v.message }
+  const v = sidecarVerdict(bytes === null ? null : { bytes }, { copyPath: p, parentName: opId })
+  if (!v.ok) return { would: false, reason: v.reason, message: v.message, originDir: null }
   const dir = path.dirname(v.origin)
   const real = r.realpath(dir)
   const st = real.ok ? r.stat(real.path) : null
@@ -179,6 +179,7 @@ function restoreOf(
       would: false,
       reason: 'origin-parent-missing',
       message: parentMissingMessage(dir, path.basename(v.origin)),
+      originDir: dir,
     }
   }
   if (real.path !== root) {
@@ -187,6 +188,7 @@ function restoreOf(
       would: false,
       reason: 'origin-mismatch',
       message: originMismatchMessage(p, v.origin, areaDir),
+      originDir: null,
     }
   }
   return { would: true, differs: saysDiffers(v.held, contentsOf(v.sidecar, freshHash)) }

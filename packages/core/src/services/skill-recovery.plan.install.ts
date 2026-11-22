@@ -20,6 +20,7 @@
  * @module @skillsmith/core/services/skill-recovery.plan.install
  */
 import path from 'node:path'
+import { shellQuote } from '../utils/shell-quote.js'
 import { INSTALLED, kept, refuse, step, UNTOUCHED } from './skill-recovery.plan.actions.js'
 import { keptKindOf, resumes, rowOffer } from './skill-recovery.plan.rows.js'
 import type { ActionPlan, InstallRowState, OpFacts, RecoveryClass } from './skill-recovery.types.js'
@@ -46,23 +47,43 @@ function emptyPathNote(f: OpFacts, kind: string): string {
 /**
  * FI4's note, worded from what `skillsmith restore` itself would do with the
  * set-aside copy (`ParkedCopyFact.restore`, which the classifier asks of
- * restore's own functions): when restore would put it back, the command, and,
- * only when restore's done message will say so, that it differs from what was
- * set aside; when restore would refuse, the copy's path, restore's own reason,
- * and that it can be copied back by hand.
+ * restore's own functions on its sidecar and origin folder). The command it
+ * offers names the copy's full path (one shell word, `shellQuote`), never the opId: restore resolves a bare
+ * opId across every root and refuses `restore-ambiguous` when two copies
+ * carry it (two installs with one op dir name in two roots).
+ *
+ *  - restore would put it back: the command, and, only when restore's done
+ *    message will say so, that it differs from what was set aside;
+ *  - restore would refuse because the origin's folder is missing: the one
+ *    refusal the user can fix, so the note says what to create and the
+ *    command to run then;
+ *  - any other refusal: the copy's path, restore's own reason and message,
+ *    and that it can be copied back by hand.
+ *
+ * Restore still checks a mount inside the copy, its lock and the target when
+ * it runs.
  */
 function setAsideNote(f: OpFacts): string {
   const c = f.parked?.[0]
   if (c === undefined) return 'nothing is moved'
   const at = `nothing is moved; the folder set aside at ${c.path}`
-  if (!c.restore.would) {
+  // One shell word: a root under `Application Support` has a space (`shellQuote`).
+  const command = `\`skillsmith restore ${shellQuote(c.path)}\``
+  const r = c.restore
+  if (!r.would) {
+    if (r.reason === 'origin-parent-missing') {
+      return (
+        `${at}: restore will refuse until ${r.originDir} exists; create it and run ${command}, ` +
+        `or copy the folder to ${f.tPath} by hand`
+      )
+    }
     return (
-      `${at} cannot be put back by \`skillsmith restore\` (${c.restore.reason}: ${c.restore.message}); ` +
+      `${at} cannot be put back by \`skillsmith restore\` (${r.reason}: ${r.message}); ` +
       `copy it to ${f.tPath} by hand if you want it`
     )
   }
-  const offer = `${at} can be put back with \`skillsmith restore ${f.opId}\``
-  return c.restore.differs ? `${offer}; restore will say it differs from what was set aside` : offer
+  const offer = `${at} can be put back with ${command}`
+  return r.differs ? `${offer}; restore will say it differs from what was set aside` : offer
 }
 
 /** FI0/FI1 `--apply`: N to the skill path and the commit, unless N no longer hashes to `postTree`. */

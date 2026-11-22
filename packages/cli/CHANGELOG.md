@@ -4,10 +4,12 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
-- **Fixed**: SMI-6531 -- (#3280 retro) `skillsmith doctor recovery` offers `skillsmith restore`
-  for an FI4 copy only when restore would put it back (no sidecar, or one restore's strict check
-  refuses, gets restore's own reason and "copy it back by hand" instead), and says restore will call
-  the copy different only when restore will.
+- **Fixed**: SMI-6531 -- (#3280 retro) `skillsmith doctor recovery` offers
+  `skillsmith restore <copy path>` (quoted as one shell word when the path needs it) for an FI4 copy only when restore's sidecar and origin-folder
+  checks pass (no sidecar, or one restore's strict check refuses, gets restore's own reason and "copy
+  it back by hand"; a missing origin folder gets what to create first), and says restore will call
+  the copy different only when restore will. The mount, lock, target and ambiguity checks happen
+  when restore runs.
 - **Added**: SMI-6531 -- A1 step 8-i-a-2: `skillsmith doctor recovery` lists a fresh install's
   unfinished record with its row (`FI0 not claimed` ... `FI4 rolled back`), a first facts line
   `install of <dir> into <root> (manifest key <key>)`, no old-folder line, and (FI4) where the folder

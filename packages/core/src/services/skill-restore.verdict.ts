@@ -26,9 +26,11 @@ import { parseSidecarStrict } from '../install/prune.sidecar.strict.js'
 import { restoreClassOf } from './skill-restore.kinds.js'
 import type { RestoreContents, RestoreRefusalReason } from './skill-restore.types.js'
 
-export type SidecarVerdict =
+export type SidecarVerdict<R extends { bytes: Buffer } = { bytes: Buffer }> =
   | {
       ok: true
+      /** The sidecar read the verdict came from (never null once it is ok). */
+      read: R
       /** The strictly parsed sidecar. */
       sidecar: Record<string, unknown>
       kind: string
@@ -41,19 +43,20 @@ export type SidecarVerdict =
 
 /**
  * Restore's sidecar-settled verdict on the parked copy at `copyPath`, whose
- * op directory is named `parentName`, from its sidecar's bytes (null: none).
+ * op directory is named `parentName`, from its sidecar's read (null: none).
+ * On `ok: true` it returns that read, so a caller's type narrows to non-null.
  */
-export function sidecarVerdict(
-  bytes: Buffer | null,
+export function sidecarVerdict<R extends { bytes: Buffer }>(
+  read: R | null,
   copy: { copyPath: string; parentName: string }
-): SidecarVerdict {
-  const unknownOrigin: SidecarVerdict = {
+): SidecarVerdict<R> {
+  const unknownOrigin: SidecarVerdict<R> = {
     ok: false,
     reason: 'origin-unknown',
     message: `The record beside \`${copy.copyPath}\` can't be read, so where it came from is unknown. Copy what you need from it by hand.`,
   }
-  if (bytes === null) return unknownOrigin
-  const parsed = parseSidecarStrict(bytes, { ...copy, store: 'parked' })
+  if (read === null) return unknownOrigin
+  const parsed = parseSidecarStrict(read.bytes, { ...copy, store: 'parked' })
   if (!parsed.ok) return unknownOrigin
   const sc = parsed.sidecar
   const kind = String(sc.kind)
@@ -74,7 +77,7 @@ export function sidecarVerdict(
       message: `\`${copy.copyPath}\` came from Skillsmith's own ${cls.what}, so there is nothing to restore it into. Copy what you need from it by hand.`,
     }
   }
-  return { ok: true, sidecar: sc, kind, origin, held: sc.hold === true }
+  return { ok: true, read, sidecar: sc, kind, origin, held: sc.hold === true }
 }
 
 /** Whether the copy still holds what its sidecar recorded, from the hash taken now. */

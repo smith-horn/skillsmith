@@ -30,8 +30,8 @@ import { fi4, installFixture } from './install.helpers.js'
 useTmpCleanup()
 
 /** A discovered machine: two client roots and a state root, with the options restore and prune take. */
-function machine() {
-  const base = tmp('install-prk-')
+function machine(prefix = 'install-prk-') {
+  const base = tmp(prefix)
   const discovery = hermetic(base)
   const stateRoot = path.join(base, 'state')
   fs.mkdirSync(stateRoot)
@@ -40,8 +40,8 @@ function machine() {
 }
 
 /** An FI4 in the claude-code root of a fresh machine. */
-async function discoveredFi4(held = false) {
-  const m = machine()
+async function discoveredFi4(held = false, prefix?: string) {
+  const m = machine(prefix)
   const st = await fi4(
     installFixture({ skillsDir: m.root('claude-code'), stateRoot: m.opts.stateRoot }),
     { held }
@@ -52,7 +52,7 @@ async function discoveredFi4(held = false) {
 type Fi4 = Awaited<ReturnType<typeof discoveredFi4>>
 
 /** What doctor recorded for the copy, and the FI4 note it printed. */
-async function doctorSays(st: Fi4) {
+async function doctorSays(st: Pick<Fi4, 'fx' | 'opId'>) {
   const op = await opReport(st)
   if (op.cls.kind !== 'state' || op.cls.state !== 'FI4') throw new Error(`not FI4: ${op.label}`)
   const apply = op.plans.find((p) => p.action === 'apply')
@@ -60,12 +60,62 @@ async function doctorSays(st: Fi4) {
   return { verdict: op.cls.facts.parked![0]!.restore, note: apply.notes.join('\n') }
 }
 
-/** The property: doctor's verdict is the real restore's, and the note offers restore exactly then. */
-async function agrees(st: Fi4) {
+/** The argument the note tells the user to give `skillsmith restore`, or null when it offers none. */
+/**
+ * The words a POSIX shell makes of `text` (single quotes, backslash escapes,
+ * unquoted blanks between words): what the program would be given.
+ */
+function shellWords(text: string): string[] {
+  const words: string[] = []
+  let cur: string | null = null
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    if (ch === "'") {
+      const end = text.indexOf("'", i + 1)
+      if (end < 0) throw new Error(`unterminated quote in ${text}`)
+      cur = (cur ?? '') + text.slice(i + 1, end)
+      i = end
+    } else if (ch === '\\') {
+      cur = (cur ?? '') + (text[i + 1] ?? '')
+      i++
+    } else if (ch === ' ' || ch === '\t' || ch === '\n') {
+      if (cur !== null) words.push(cur)
+      cur = null
+    } else {
+      cur = (cur ?? '') + ch
+    }
+  }
+  if (cur !== null) words.push(cur)
+  return words
+}
+
+/**
+ * The argument the note's restore command gives `skillsmith restore`, as a
+ * shell would pass it, or null when the note offers none. It must be exactly
+ * one word: a path a shell would split is not one argument.
+ */
+function offeredArg(note: string): string | null {
+  const m = /can be put back with `skillsmith restore ([^`]+)`/.exec(note)
+  if (m === null) return null
+  const words = shellWords(m[1]!)
+  expect(words).toHaveLength(1)
+  return words[0]!
+}
+
+/**
+ * The property: doctor's verdict is the real restore's, and the note offers
+ * restore exactly then. The real `planRestore` is run with the argument the
+ * note offers (the copy's path when it offers none), never an id the test picks.
+ */
+async function agrees(st: Pick<Fi4, 'fx' | 'opId' | 'opts' | 'parked'>) {
   const { verdict, note } = await doctorSays(st)
-  const real = await planRestore(st.opId, st.opts)
-  const offers = note.includes(`can be put back with \`skillsmith restore ${st.opId}\``)
-  expect(offers).toBe(real.status === 'planned')
+  const offered = offeredArg(note)
+  const real = await planRestore(offered ?? st.parked, st.opts)
+  // An offered command must plan as given (an ambiguous id would not): a refusal shows its reason.
+  if (offered !== null) expect(real.status === 'planned' ? 'planned' : real.reason).toBe('planned')
+  expect(offered !== null).toBe(real.status === 'planned')
+  // And it names this copy, by its full path.
+  if (offered !== null) expect(offered).toBe(st.parked)
   expect(verdict.would).toBe(real.status === 'planned')
   if (real.status === 'planned') {
     const differs = real.plan.held || real.plan.contents.state === 'changed'
@@ -73,8 +123,10 @@ async function agrees(st: Fi4) {
     expect(note.includes('restore will say it differs from what was set aside')).toBe(differs)
   } else {
     expect(verdict).toMatchObject({ would: false, reason: real.reason, message: real.message })
-    expect(note).toContain(`cannot be put back by \`skillsmith restore\` (${real.reason}:`)
-    expect(note).toContain(`copy it to ${st.fx.realDir} by hand`)
+    if (real.reason !== 'origin-parent-missing') {
+      expect(note).toContain(`cannot be put back by \`skillsmith restore\` (${real.reason}:`)
+      expect(note).toContain(`copy it to ${st.fx.realDir} by hand`)
+    }
   }
   return real
 }
@@ -116,9 +168,17 @@ describe('FI4: the note is restore’s own verdict', () => {
 
   it('an origin whose folder does not exist: restore refuses origin-parent-missing; so does doctor', async () => {
     const st = await discoveredFi4()
-    originAt(st, path.join(st.fx.outside, 'gone', st.fx.dirName))
+    const gone = path.join(st.fx.outside, 'gone')
+    originAt(st, path.join(gone, st.fx.dirName))
     const real = await agrees(st)
     expect(real).toMatchObject({ status: 'refused', reason: 'origin-parent-missing' })
+    // The fixable refusal: what to create and what to run then, with no placeholder id.
+    const { note } = await doctorSays(st)
+    expect(note).toContain(
+      `the folder set aside at ${st.parked}: restore will refuse until ${gone} exists; ` +
+        `create it and run \`skillsmith restore ${st.parked}\`, or copy the folder to ${st.fx.realDir} by hand`
+    )
+    expect(note).not.toContain('<id>')
   })
 
   it('an origin in another discovered root: restore refuses origin-mismatch; so does doctor', async () => {
@@ -136,6 +196,17 @@ describe('FI4: the note is restore’s own verdict', () => {
     originAt(st, path.join(link, st.fx.dirName))
     const real = await agrees(st)
     expect(real).toMatchObject({ status: 'planned', plan: { target: st.fx.realDir } })
+  })
+
+  it('a root whose path has a space and a quote: the note quotes it, and restore plans it as one argument', async () => {
+    const st = await discoveredFi4(false, "install prk o'q-")
+    expect(st.parked).toContain(' ')
+    expect(st.parked).toContain("'")
+    const { note } = await doctorSays(st)
+    // Quoted as one shell word, with the quote written as '\''.
+    expect(note).toContain(`\`skillsmith restore '${st.parked.replace(/'/g, `'\\''`)}'\``)
+    const real = await agrees(st)
+    expect(real).toMatchObject({ status: 'planned', plan: { copyPath: st.parked } })
   })
 })
 
@@ -184,7 +255,7 @@ describe('FI4 and prune’s protection: place and identity', () => {
     expect((await rowOf(st.opts, st.parked)).protection).toEqual({ status: 'unprotected' })
   })
 
-  it('two live installs with one opId in two roots: each protects its own copy', async () => {
+  it('two live installs with one opId in two roots: each restorable by its note, each protected', async () => {
     const m = machine()
     const a = await fi4(
       installFixture({ skillsDir: m.root('claude-code'), stateRoot: m.opts.stateRoot })
@@ -197,6 +268,13 @@ describe('FI4 and prune’s protection: place and identity', () => {
       })
     )
     expect(a.opId).toBe(b.opId)
+    // Restore, given the argument each FI4 note offers, plans each copy: no ambiguity across roots.
+    for (const x of [a, b]) {
+      expect(await agrees({ ...x, opts: m.opts })).toMatchObject({
+        status: 'planned',
+        plan: { copyPath: x.parked, target: x.fx.realDir },
+      })
+    }
     expect((await rowOf(m.opts, a.parked)).protection).toEqual({
       status: 'protected',
       rule: 'live-record',
