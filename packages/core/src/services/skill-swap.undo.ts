@@ -4,10 +4,13 @@
  *
  *  1. `check`; `rename(realDir, OP/undone)`; sync OP, then R.
  *  2. `check`; claim `realDir` with `mkdir`; sync R; `rename(O, realDir)`; sync
- *     R, then OP. `claimPublish` makes the claim, syncs R, renames, and syncs R
- *     again; this module adds the `check` before the rename (claimPublish's
- *     `afterClaim`), refuses a failed sync it reports, and adds the final sync
- *     of OP, the source parent, which `claimPublish` does not make.
+ *     R, then OP. `claimPublish` makes the claim, syncs R, renames, syncs R
+ *     again, then syncs OP, the source parent (`syncs.source`); this module
+ *     adds the `check` before the rename (claimPublish's `afterClaim`) and
+ *     refuses a failed publish or source sync with `write-failed`. Its own
+ *     `syncDir(OP)` afterwards runs on a fresh descriptor, which can report
+ *     success after an earlier fsync error, so it does not stand in for the
+ *     source sync.
  *  3. Hash `undone/`: `postTree` is kind `undone`, anything else `conflict`
  *     (warned, `conflict-kept`).
  *  4. `publishTree(undone/, kind)`; the caller then runs step 13.
