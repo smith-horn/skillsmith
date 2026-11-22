@@ -29,8 +29,13 @@ export function planLines(p: PlannedRecovery): string[] {
     const rec = f.record
     const now = (o: typeof f.t) =>
       o.present ? `${o.identity.dev}/${o.identity.ino}/${o.identity.birthtimeNs}` : 'absent'
+    // An install records no old folder (8-i-a-2).
+    const old =
+      rec.op === 'update'
+        ? `old ${rec.oldIdentity.dev}/${rec.oldIdentity.ino}/${rec.oldIdentity.birthtimeNs}, `
+        : ''
     lines.push(
-      `  identity (dev/ino/birthtime) recorded old ${rec.oldIdentity.dev}/${rec.oldIdentity.ino}/${rec.oldIdentity.birthtimeNs}, new ${rec.newIdentity.dev}/${rec.newIdentity.ino}/${rec.newIdentity.birthtimeNs}; T now ${now(f.t)}`
+      `  identity (dev/ino/birthtime) recorded ${old}new ${rec.newIdentity.dev}/${rec.newIdentity.ino}/${rec.newIdentity.birthtimeNs}; T now ${now(f.t)}`
     )
   }
   return lines

@@ -43,6 +43,7 @@ import {
 } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import type {
+  FullDeviceMarker,
   RecordIdentity,
   SwapHookPoint,
   SwapRecord,
@@ -50,6 +51,8 @@ import type {
 } from './skill-swap.types.js'
 import { computeRecordSha256, MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.records.js'
 import type { RecordBytesWhy } from './skill-swap.records.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
+import { sealInstallRecord } from './skill-install.record-seal.js'
 import { applyWriteSet, outsideWriteSet } from './skill-swap.writeset.js'
 import { attributionOf } from './skill-swap.attribution.js'
 
@@ -269,7 +272,37 @@ export function sealRecord(
       `the record would be read as unreadable (${v.why}): ${SEAL_HINT[v.why]}`
     )
   }
+  if (v.record.op === 'install') {
+    throw new SwapFault('write-failed', 'an update record parsed as an install record')
+  }
   return { bytes, record: v.record }
+}
+
+/**
+ * `record` with the full-device `marker`, sealed by its own op's sealer (an
+ * update's `sealRecord`, an install's `sealInstallRecord`): the transaction's
+ * rewrite and doctor's both mark through it. Throws `write-failed` as
+ * `sealRecord` does.
+ */
+export function sealWithMarker(
+  record: OpRecord,
+  marker: FullDeviceMarker,
+  root: string,
+  opId: string
+): { bytes: Buffer; record: OpRecord } {
+  if (record.op === 'install') {
+    const { recordSha256: _old, ...rest } = record
+    const s = sealInstallRecord({ ...rest, fullDevice: marker }, root, opId)
+    if (!s.ok) {
+      throw new SwapFault(
+        'write-failed',
+        `the install record can't be sealed (${s.why}: ${s.detail})`
+      )
+    }
+    return { bytes: s.bytes, record: s.record }
+  }
+  const { recordSha256: _old, ...rest } = record
+  return sealRecord({ ...rest, fullDevice: marker }, root, opId)
 }
 
 /** Step 5: `record.json`, published through its temp under lock 1. */

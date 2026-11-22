@@ -16,7 +16,9 @@
  * right skill, so it blocks every write in the root until `doctor recovery
  * --park <opId>` (`recovery-record-unreadable`). A verified record blocks
  * only the skill whose `realDir` or `comparedPath` it names
- * (`recovery-pending`).
+ * (`recovery-pending`). Since 8-i-a-2 that holds for a fresh install's record
+ * too (`op: 'install'`): it is pending, not unreadable, and has no
+ * `backupDest` (an install keeps no old folder).
  *
  * Read-only: the scan changes nothing, so a crashed state stays exactly as
  * the crash left it for doctor (R1: automatic recovery never mutates).
@@ -25,7 +27,12 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { MAX_RECORD_BYTES, verifyRecordBytes } from './skill-swap.record-schema.js'
+import {
+  MAX_RECORD_BYTES,
+  parseRecordBytes,
+  verifyRecordBytes,
+} from './skill-swap.record-schema.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
 import { RECORD_FILE } from './skill-swap.types.js'
 
 export {
@@ -60,16 +67,23 @@ export interface UnreadableRecord {
   path: string
   why: UnreadableRecordWhy
   errno?: string
+  /** The record's kind of operation, when its bytes parsed (it names another root or op dir). */
+  op?: OpRecord['op']
 }
 
 /** A record that verified as this root's. */
 export interface PendingRecord {
   opId: string
   path: string
+  /** The kind of operation the record is of: the refusal names it. */
+  op: OpRecord['op']
   comparedPath: string
   realDir: string
-  /** Where the update publishes (or published) the old tree: UD61(a)'s protected path. */
-  backupDest: string
+  /**
+   * Where the update publishes (or published) the old tree: UD61(a)'s
+   * protected path. Null for an install, which has no old tree.
+   */
+  backupDest: string | null
 }
 
 export type RecordScan =
@@ -138,24 +152,36 @@ export async function readRecordFile(file: string): Promise<RecordFileRead> {
 
 /** One op dir's `record.json`, judged against `root` (see the module comment). */
 async function judge(root: string, opId: string, file: string): Promise<Verdict> {
-  const unreadable = (why: UnreadableRecordWhy, errno?: string): Verdict => ({
+  const unreadable = (why: UnreadableRecordWhy, errno?: string, op?: string): Verdict => ({
     kind: 'unreadable',
-    record: { opId, path: file, why, ...(errno === undefined ? {} : { errno }) },
+    record: {
+      opId,
+      path: file,
+      why,
+      ...(errno === undefined ? {} : { errno }),
+      ...(op === 'install' || op === 'update' ? { op } : {}),
+    },
   })
   const read = await readRecordFile(file)
   if (!read.ok) {
     return read.kind === 'none' ? { kind: 'none' } : unreadable(read.why, read.errno)
   }
   const v = verifyRecordBytes(read.bytes, root, opId)
-  if (!v.ok) return unreadable(v.why)
+  if (!v.ok) {
+    // A record that parsed but names another root or op dir still says what it is of.
+    const parsed = parseRecordBytes(read.bytes)
+    return unreadable(v.why, undefined, parsed.ok ? parsed.record.op : undefined)
+  }
+  const r = v.record
   return {
     kind: 'pending',
     record: {
       opId,
       path: file,
-      comparedPath: v.record.target.comparedPath,
-      realDir: v.record.target.realDir,
-      backupDest: v.record.backupDest,
+      op: r.op,
+      comparedPath: r.target.comparedPath,
+      realDir: r.target.realDir,
+      backupDest: r.op === 'install' ? null : r.backupDest,
     },
   }
 }

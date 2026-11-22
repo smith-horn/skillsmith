@@ -17,7 +17,9 @@
  * `--abandon` (6b-iii) is `skill-recovery.plan.abandon.ts`'s, but for the one
  * row it is offered in (`rowAbandon`). Each finish is stated as its executor
  * takes it (`skill-recovery.plan.finish.ts`). A refusal names no other
- * action itself: its hint is derived from this table (`.plan.hint.ts`).
+ * action itself: its hint is derived from this table (`.plan.hint.ts`). A
+ * fresh install's rows (FI0-FI4, 8-i-a-2) are planned in
+ * `skill-recovery.plan.install.ts`.
  *
  * @module @skillsmith/core/services/skill-recovery.plan
  */
@@ -33,22 +35,26 @@ import {
   step,
   UNTOUCHED,
 } from './skill-recovery.plan.actions.js'
+import {
+  INSTALL_ROW_LABEL,
+  installRowAbandon,
+  installRowPlan,
+} from './skill-recovery.plan.install.js'
+import { keptKindOf, resumes, rowOffer } from './skill-recovery.plan.rows.js'
 import { abandonOf, abandonPlan, refusedWord } from './skill-recovery.plan.abandon.js'
 import { withHint } from './skill-recovery.plan.hint.js'
-import { pendingOf } from './skill-recovery.pending.js'
 import { noRecordPlan } from './skill-recovery.plan.clean.js'
-import { finishLines, keepsSource, strayRefusal } from './skill-recovery.plan.finish.js'
+import { strayRefusal } from './skill-recovery.plan.finish.js'
 import { FREE_SPACE_REMEDY, OWNER_FILE } from './skill-swap.types.js'
 import type {
   ActionPlan,
-  ManifestEffect,
   NoRecordIntent,
   OpFacts,
   PlanOptions,
-  PlanStep,
   RecoveryAction,
   RecoveryClass,
   RowState,
+  UpdateRowState,
 } from './skill-recovery.types.js'
 
 export {
@@ -57,7 +63,8 @@ export {
   RECOVERY_ACTIONS,
 } from './skill-recovery.plan.actions.js'
 
-const ROW_LABEL: Record<RowState, string> = {
+const ROW_LABEL: Readonly<Record<RowState, string>> = {
+  ...INSTALL_ROW_LABEL,
   S0: 'S0 not swapped',
   S1: 'S1 between renames',
   S2: 'S2 swapped',
@@ -86,37 +93,9 @@ export function classLabel(cls: RecoveryClass): string {
   }
 }
 
-/** The kind a staged or set-aside tree is kept as: a started keep's own kind, else by its hash. */
-function keptKindOf(
-  role: 'N' | 'U',
-  f: OpFacts,
-  matches: 'unused-new' | 'undone',
-  differs: 'edited-new' | 'conflict'
-): string {
-  const res = f.roles[role]
-  if (res.kind === 'kept') return res.keep.kind
-  if (res.kind === 'source' && res.started !== null) return res.started.kind
-  // A staged tree that cannot be hashed is kept as `unrecorded-new` (PLAN:1400-1402).
-  if (res.kind === 'source' && role === 'N' && res.obs.hash === null) return 'unrecorded-new'
-  if (res.kind === 'source') return res.obs.hash === f.record.postTree ? matches : differs
-  return differs
-}
-
-/** What is left of any keep that began: resumed from its sub-state before anything else. */
-function resumes(f: OpFacts): string[] {
-  return f.groups
-    .filter((g) => g.state !== null && g.state !== 'P5')
-    .map((g) => {
-      const pending = pendingOf(f, g)
-      const tail =
-        pending === null ? '' : `, finishing its copy temp's partial-copy keep as ${pending}`
-      return `resume the keep of ${g.base} from ${g.state}${tail}`
-    })
-}
-
-/** Notes every row of the plan states: where the old folder is kept, and what a cross-device keep needs. */
-function commonNotes(f: OpFacts): string[] {
-  const notes = [`the old folder is kept at ${f.record.backupDest}`]
+/** Notes every update row's plan states: where the old folder is kept, and what a cross-device keep needs. */
+function commonNotes(f: OpFacts, backupDest: string): string[] {
+  const notes = [`the old folder is kept at ${backupDest}`]
   if (f.groups.some((g) => g.crossDevice)) {
     notes.push(
       'part of the keep is across devices: each copy is verified before its source is parked with the op dir'
@@ -153,32 +132,39 @@ function foreignUid(cls: RecoveryClass): number | null {
   }
 }
 
-/** `offer` for a row: what is left, then the finish its executor takes (`skill-recovery.plan.finish.ts`). */
-function rowOffer(
-  f: OpFacts,
-  action: RecoveryAction,
-  steps: PlanStep[],
-  manifest: ManifestEffect,
-  before: string[],
-  notes: string[] = []
-): ActionPlan {
-  return offer(
-    action,
-    steps,
-    manifest,
-    [...before, ...finishLines(f, keepsSource(f, steps))],
-    notes
-  )
-}
-
-/** `--apply` and `--undo` for a §3.3 row; null when the row says nothing about this action. */
+/** `--apply` and `--undo` for a row: an install's (FI0-FI4) or a §3.3 row of an update. */
 function rowPlan(
   cls: Extract<RecoveryClass, { kind: 'state' }>,
   action: 'apply' | 'undo'
 ): ActionPlan {
+  const state = cls.state
+  switch (state) {
+    case 'FI0':
+    case 'FI1':
+    case 'FI2':
+    case 'FI2prime':
+    case 'FI2u':
+    case 'FI3':
+    case 'FI4':
+      return installRowPlan(cls, state, action)
+    default:
+      return updateRowPlan(cls, state, action)
+  }
+}
+
+/** `--apply` and `--undo` for a §3.3 row of an update. */
+function updateRowPlan(
+  cls: Extract<RecoveryClass, { kind: 'state' }>,
+  state: UpdateRowState,
+  action: 'apply' | 'undo'
+): ActionPlan {
   const f = cls.facts
-  const { state, postKeep } = cls
-  const fixed = commonNotes(f)
+  const { postKeep } = cls
+  // The classifier matches §3.3 rows only for an update's record.
+  if (f.record.op !== 'update') {
+    return refuse(action, 'recovery-not-offered', `${state} is an update row, not an install's`)
+  }
+  const fixed = commonNotes(f, f.record.backupDest)
   const nKind = keptKindOf('N', f, 'unused-new', 'edited-new')
   const uKind = keptKindOf('U', f, 'undone', 'conflict')
   const tKind = f.t.present && f.t.hash === f.record.postTree ? 'undone' : 'conflict'
@@ -395,6 +381,7 @@ function intentParkPlan(
  * runs there (E34: abandoning S1 would leave the skill path empty).
  */
 function rowAbandon(cls: Extract<RecoveryClass, { kind: 'state' }>): ActionPlan {
+  if (cls.facts.record.op === 'install') return installRowAbandon()
   if (cls.state === 'S2prime' && cls.postKeep) return abandonOf(cls.opId, cls.facts)
   return refuse(
     'abandon',

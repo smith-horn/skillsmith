@@ -45,8 +45,8 @@ import { messageOf, renameChecked, SwapFault, syncDir, writeNewFile } from './sk
 import type { SwapState } from './skill-swap.ops.js'
 import { intentPrecheck } from './skill-swap.intent.js'
 import { bytesNeeded, FREE_SPACE_REMEDY, inodesNeeded, shapeOf } from './skill-swap.space.js'
-import { sealRecord } from './skill-swap.staging.js'
-import type { FullDeviceMarker, SwapRecord } from './skill-swap.types.js'
+import { sealWithMarker } from './skill-swap.staging.js'
+import type { FullDeviceMarker } from './skill-swap.types.js'
 import { ROLE_DIR } from './skill-recovery.pstate.js'
 import { assertAdopted, unlinkAdopted } from './skill-recovery.state.js'
 import type { Adopted } from './skill-recovery.state.js'
@@ -68,9 +68,7 @@ export async function rewriteMarkerAdopted(
     await unlinkAdopted(st, tmp)
     await syncDir(st, st.opDir)
   }
-  const { recordSha256: _old, ...rest } = st.record
-  const body: Omit<SwapRecord, 'recordSha256'> = { ...rest, fullDevice: marker }
-  const sealed = sealRecord(body, st.binding.root, st.opId)
+  const sealed = sealWithMarker(st.record, marker, st.binding.root, st.opId)
   await writeNewFile(st, temp, sealed.bytes, 0o600)
   assertAdopted(record)
   await renameChecked(st, temp, final)

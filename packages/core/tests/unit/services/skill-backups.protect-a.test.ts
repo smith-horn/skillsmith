@@ -79,6 +79,7 @@ describe('UD61(a): the backupDest fact', () => {
         {
           opId: 'op-a',
           path: rec,
+          op: 'update',
           comparedPath: path.join(root, 'foo'),
           realDir: path.join(root, 'foo'),
           backupDest: dest,

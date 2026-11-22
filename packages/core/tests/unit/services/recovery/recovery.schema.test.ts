@@ -113,8 +113,11 @@ describe('record schema 1 carries op, target.scope and target.dirName', () => {
       why: 'malformed',
     })
     expect(verdict({ ...r.json, extra: 'x' })).toEqual({ ok: false, why: 'malformed' })
+    // 8-i-a-2: `install` is the fresh install's op, whose shape is its own keys, so the
+    // update's keys with it are malformed (never read as an install).
+    expect(verdict({ ...r.json, op: 'install' })).toEqual({ ok: false, why: 'malformed' })
     // Right shape, but the hash no longer matches: the new fields are inside it.
-    expect(verdict({ ...r.json, op: 'install' })).toEqual({ ok: false, why: 'hash-mismatch' })
+    expect(verdict({ ...r.json, op: 'later-op' })).toEqual({ ok: false, why: 'hash-mismatch' })
     expect(verdict({ ...r.json, target: { ...target, scope: 'workspace' } })).toEqual({
       ok: false,
       why: 'hash-mismatch',

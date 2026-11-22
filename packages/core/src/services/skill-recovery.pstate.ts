@@ -23,7 +23,8 @@ import type { ClassifierReader } from './skill-recovery.reader.js'
 import { observeTree, sameId } from './skill-recovery.trees.js'
 import { markPendingPartials } from './skill-recovery.pending.js'
 import type { KeepGroup, PState, Role, SidecarFacts } from './skill-recovery.types.js'
-import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
+import type { RecordIdentity } from './skill-swap.types.js'
 
 /** A sidecar is a few hundred bytes; this is a ceiling, not an expectation. */
 const SIDECAR_CAP = 64 * 1024
@@ -184,7 +185,7 @@ interface SidecarExpect {
 }
 
 /** A recorded op's sidecar expectations: its record's target. */
-export const expectOfRecord = (rec: SwapRecord): SidecarExpect => ({
+export const expectOfRecord = (rec: Pick<OpRecord, 'target'>): SidecarExpect => ({
   dirName: rec.target.dirName,
   client: rec.target.client,
   skillsDir: rec.target.skillsDir,
@@ -198,7 +199,7 @@ export const expectOfRecord = (rec: SwapRecord): SidecarExpect => ({
  * the record's skill, with `skillsDir` R, which is what `--abandon` keeps
  * into (its sidecar names `st.binding.root`) and the area is keyed by.
  */
-export const expectOfMoved = (rec: SwapRecord, root: string): SidecarExpect => ({
+export const expectOfMoved = (rec: Pick<OpRecord, 'target'>, root: string): SidecarExpect => ({
   ...expectOfRecord(rec),
   skillsDir: root,
   from: 'the record (in this root)',

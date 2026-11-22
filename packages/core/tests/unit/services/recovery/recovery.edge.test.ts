@@ -151,8 +151,8 @@ describe('an unreadable record', () => {
   const inconsistent: Array<[string, (b: Omit<SwapRecord, 'recordSha256'>) => void, string]> = [
     [
       'an op that is not update',
-      (b) => void ((b as { op: string }).op = 'install'),
-      'its op is "install"',
+      (b) => void ((b as { op: string }).op = 'later-op'),
+      'its op is "later-op"',
     ],
     [
       'a client that is not one path component',

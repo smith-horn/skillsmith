@@ -15,6 +15,14 @@
  * and stays untouched. The window between that byte check and the `unlink` is
  * the plan's §3.0 item 9 residual (no `unlinkat`).
  *
+ * 8-i-a-2: `recoveryState` takes a fresh install's record too. An install has
+ * no old folder, so the update-only fields are set fail-closed: `oldIdentity`
+ * an identity of file type -1 (it matches no file, so any check that wanted
+ * an old folder refuses), `preTree` empty (no hash is empty), and the backup
+ * path `<area>/<opId>` (nothing publishes a `backup` for an install). The
+ * shared primitives (`check`, `commit`, `installAt`, `keepRole`,
+ * `publishTree`, `undoAside`, the finish) then run unchanged.
+ *
  * @module @skillsmith/core/services/skill-recovery.state
  */
 import crypto from 'node:crypto'
@@ -27,7 +35,8 @@ import { backupAreaPath } from './skill-swap.area.js'
 import { processOwnerNow, check, codeOf, SwapFault, trace } from './skill-swap.ops.js'
 import type { SwapState } from './skill-swap.ops.js'
 import { createParkReporter } from './park-report.js'
-import type { ManifestPort, RecordIdentity, SwapOptions, SwapRecord } from './skill-swap.types.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
+import type { ManifestPort, RecordIdentity, SwapOptions } from './skill-swap.types.js'
 import type { ReadTranscript } from './skill-recovery.types.js'
 import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.types.js'
 
@@ -156,8 +165,28 @@ export function assertAdopted(
   }
 }
 
+/** The identity an install's absent old folder is checked by: file type -1 matches no file. */
+export const NO_OLD_IDENTITY: RecordIdentity = {
+  dev: '-1',
+  ino: '-1',
+  birthtimeNs: '-1',
+  fmt: '-1',
+}
+
+/** The update-only fields of `rec`, or an install's fail-closed stand-ins (see the module comment). */
+export function oldSideOf(
+  rec: OpRecord,
+  areaPath: string
+): { oldIdentity: RecordIdentity; preTree: string; backupDest: string } {
+  // Discriminated on the install's own op: an update-shaped record keeps its fields whatever its op says.
+  if (rec.op === 'install') {
+    return { oldIdentity: NO_OLD_IDENTITY, preTree: '', backupDest: path.join(areaPath, rec.opId) }
+  }
+  return { oldIdentity: rec.oldIdentity, preTree: rec.preTree, backupDest: rec.backupDest }
+}
+
 export interface RecoveryStateInput {
-  record: SwapRecord
+  record: OpRecord
   binding: SkillsRootBinding
   ctx: SkillWriteContext
   options: SwapOptions
@@ -168,7 +197,7 @@ export interface RecoveryStateInput {
 }
 
 /**
- * A `SwapState` for a recorded update, the second constructor beside
+ * A `SwapState` for a recorded update or install, the second constructor beside
  * `newState`: the input comes from the record (`writeSet: []`, `stateRoot =
  * dirname(manifestPath)`, the manifest port from its entries), the op dir is
  * adopted with the record's `opDirIdentity`, and lock 1 is already held.
@@ -184,7 +213,9 @@ export function recoveryState(i: RecoveryStateInput): SwapState {
     stateRootReal = path.resolve(stateRoot)
   }
   const ports = { manifestPath: t.manifestPath, manifestKey: t.manifestKey }
-  const oldId = boundOf(i.identities?.old ?? rec.oldIdentity)
+  const areaPath = backupAreaPath(stateRootReal, t.client, i.binding.root, t.dirName)
+  const old = oldSideOf(rec, areaPath)
+  const oldId = boundOf(i.identities?.old ?? old.oldIdentity)
   const opDir = path.join(i.binding.stagingDir, rec.opId)
   return {
     input: {
@@ -198,7 +229,7 @@ export function recoveryState(i: RecoveryStateInput): SwapState {
       realDir: t.realDir,
       dirName: t.dirName,
       oldIdentity: oldId,
-      preTree: rec.preTree,
+      preTree: old.preTree,
       writeSet: [],
       preEntry: rec.preEntry,
       postEntry: rec.postEntry,
@@ -225,8 +256,8 @@ export function recoveryState(i: RecoveryStateInput): SwapState {
     postTree: rec.postTree,
     postRecord: null,
     stateRootReal,
-    areaPath: backupAreaPath(stateRootReal, t.client, i.binding.root, t.dirName),
-    backupDest: rec.backupDest,
+    areaPath,
+    backupDest: old.backupDest,
     recordRemoved: false,
     record: rec,
     owned: new Map(),
@@ -237,6 +268,9 @@ export function recoveryState(i: RecoveryStateInput): SwapState {
 }
 
 /** OP bound with the record's `opDirIdentity`: every later `check` requires it. */
-export function adoptOp(opDir: string, rec: SwapRecord): { path: string; identity: BoundIdentity } {
+export function adoptOp(
+  opDir: string,
+  rec: Pick<OpRecord, 'opDirIdentity'>
+): { path: string; identity: BoundIdentity } {
   return { path: opDir, identity: boundOf(rec.opDirIdentity) }
 }

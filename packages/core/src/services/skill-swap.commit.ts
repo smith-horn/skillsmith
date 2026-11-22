@@ -52,6 +52,13 @@ export function assertIdentity(
  * Step 10's advisory re-hash, before lock 3: a foreign write after rename 2
  * only warns. The changed paths are named when the built tree's walk record is
  * known (the transaction); doctor has only `postTree`, so it names none.
+ *
+ * It runs before lock 3, so an edit after this hash and before the commit is
+ * not warned: an accepted residual under ADR-166 D-0 (owner decision,
+ * 8-i-a-2 design review round 1). The manifest records `postTree`, so such an
+ * edit is indistinguishable from one made just after the commit, and
+ * modification detection reports both; walking the folder under lock 3 would
+ * hold the machine-wide manifest lock for the length of a tree walk.
  */
 export function warnIfLiveFolderChanged(st: SwapState): void {
   const live = treeHashOf(st.input.realDir)

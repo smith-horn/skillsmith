@@ -4,11 +4,18 @@
  * one-device sidecar rewrite", UD38; design § 4 "`resumePublish`", "Undo
  * resume").
  *
- *  - `installAt(st, src, claim)`: put O or N at the skill path. Without a
- *    claim, claim-publish (`mkdir` T, sync R, `check`, `rename`, sync R), then
- *    sync OP. With an existing empty claim (UN1, an S1 resume): its identity
- *    must be the one the re-plan observed and it must still be empty; `check`,
- *    `rename(src, T)` over it, sync R, then OP.
+ *  - `installAt(st, src, claim, expect)`: put O or N at the skill path.
+ *    Without a claim, claim-publish (`mkdir` T, sync R, `check`, `rename`,
+ *    sync R), then sync OP. With an existing empty claim (UN1, an S1 or FI1
+ *    resume): its identity must be the one the re-plan observed and it must
+ *    still be empty; `check`, `rename(src, T)` over it, sync R, then OP. Either
+ *    way, immediately before the publishing rename, `src` must still have the
+ *    identity and tree hash `expect` names (8-i-a-2, design review round 1
+ *    Major 1): the claim's `mkdir` and sync run between the plan's hash and
+ *    the rename, and a folder edited or replaced in that window would
+ *    otherwise be published. A mismatch stops `staging-unsafe` before the
+ *    rename (an empty claim made by this call is left for the next run, as
+ *    S1/FI1); the record is kept.
  *  - `keepRole(st, ...)`: keep a role's tree. A verified keep (P5) is done; a
  *    source with no keep goes through `publishTree`; a started keep resumes
  *    from its sub-state: P0 (a provable temp unlinked, then `publishTree`),
@@ -32,6 +39,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { bindIdentity, sameIdentity } from '../install/park-tree.identity.js'
+import type { BoundIdentity } from '../install/park-tree.identity.js'
 import { claimPublish, treeHashOf } from './skill-tree.js'
 import {
   check,
@@ -78,25 +86,67 @@ async function assertClaim(t: string, claim: RecordIdentity): Promise<void> {
   }
 }
 
-/** Puts `src` (O or N, a directory in OP) at the skill path. */
+/**
+ * What the tree `installAt` publishes must still be: its role's identity (the
+ * record's, or the one `--accept-identity` observed) and the tree hash the
+ * confirmed plan observed for it (null: the plan could not hash it, and it
+ * must still not hash).
+ */
+export interface SourceExpect {
+  identity: BoundIdentity
+  hash: string | null
+}
+
+/**
+ * `src` still has `expect`'s identity and tree hash, else
+ * `SwapFault('staging-unsafe')`. Synchronous, so it runs inside
+ * claimPublish's `beforeRename` with no await before the rename. A swap
+ * between this check and the rename is the §3.0 item 9 residual.
+ */
+export function assertSourceAsPlanned(src: string, expect: SourceExpect): void {
+  const id = bindIdentity(src)
+  if (!id.ok || !sameIdentity(expect.identity, id)) {
+    throw new SwapFault(
+      'staging-unsafe',
+      `${src} is not the folder the plan saw (its identity changed); nothing was published`
+    )
+  }
+  const h = treeHashOf(src)
+  const now = h.ok ? h.hash : null
+  if (now !== expect.hash) {
+    throw new SwapFault(
+      'staging-unsafe',
+      `${src} changed after the plan (its content no longer hashes to what the plan saw); nothing was published`
+    )
+  }
+}
+
+/** Puts `src` (O or N, a directory in OP) at the skill path, if it is still `expect`. */
 export async function installAt(
   st: SwapState,
   src: string,
-  claim: RecordIdentity | null
+  claim: RecordIdentity | null,
+  expect: SourceExpect
 ): Promise<void> {
   const t = st.input.realDir
   const root = st.binding.root
   if (claim === null) {
-    const r = await claimPublish(src, t, {
-      afterClaim: () => {
-        check(st)
-        // claimPublish's `afterClaim` is synchronous (it runs between its own
-        // mkdir and rename, with no await between them), so a test hook here
-        // can only act synchronously: a throw stops before the rename, and a
-        // returned promise cannot be waited on without changing claimPublish.
-        void st.options.hooks?.afterClaim?.()
+    const r = await claimPublish(
+      src,
+      t,
+      {
+        afterClaim: () => {
+          check(st)
+          // claimPublish's `afterClaim` is synchronous (it runs between its own
+          // mkdir and rename, with no await between them), so a test hook here
+          // can only act synchronously: a throw stops before the rename, and a
+          // returned promise cannot be waited on without changing claimPublish.
+          void st.options.hooks?.afterClaim?.()
+        },
       },
-    })
+      // After the test hook, immediately before the rename (Major 1).
+      { beforeRename: () => assertSourceAsPlanned(src, expect) }
+    )
     if (!r.ok) {
       throw new SwapFault(
         r.reason === 'target-exists' ? 'target-changed' : 'write-failed',
@@ -116,10 +166,12 @@ export async function installAt(
     await hook(st, 'afterClaim')
     // Immediately before the rename: the claim must still be the planned one
     // (identity, file type included) and empty, or a replacement would be
-    // renamed over. A swap between this check and the rename is the §3.0
-    // item 9 residual (no renameat2).
+    // renamed over; and the source must still be the planned tree (Major 1).
+    // A swap between these checks and the rename is the §3.0 item 9 residual
+    // (no renameat2).
     check(st)
     await assertClaim(t, claim)
+    assertSourceAsPlanned(src, expect)
     await fs.promises.rename(src, t)
     trace(st, { op: 'rename', path: src, dest: t })
     await syncDir(st, root)

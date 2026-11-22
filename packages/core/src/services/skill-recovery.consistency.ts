@@ -9,7 +9,11 @@
  *  - `inconsistency`: the record is not internally consistent. Its checks are
  *    keyed by the record's own skills root (`target.skillsDir`), not the
  *    scanned one, so they run the same for a moved record; for any other
- *    record that root is R.
+ *    record that root is R. They are per op (8-i-a-2): both ops check the
+ *    target's components, `dirName`, the manifest path, `realDir`'s parent and
+ *    the manifest port; an update also its `backupDest`, an install also that
+ *    `realDir` is `<root>/<dirName>` and that `postTree` is a hash. Any other
+ *    op is inconsistent, named.
  *
  * Read-only, through the reader only (this module has no `fs`).
  *
@@ -20,24 +24,23 @@ import type { ClassifierReader } from './skill-recovery.reader.js'
 import { sameId } from './skill-recovery.trees.js'
 import type { MovedWhy } from './skill-recovery.types.js'
 import { backupAreaPath } from './skill-swap.area.js'
-import type { RecordIdentity, SwapRecord } from './skill-swap.types.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
+import type { RecordIdentity } from './skill-swap.types.js'
 
 /** One path component: not empty, not `.`/`..`, no separator or NUL. */
 const oneComponent = (s: string): boolean =>
   s !== '' && s !== '.' && s !== '..' && !s.includes('/') && !s.includes('\\') && !s.includes('\0')
 
 /** The native real path of the record's state root, `dirname(manifestPath)` (or its resolved spelling). */
-export function stateRealOf(r: ClassifierReader, rec: SwapRecord): string {
+export function stateRealOf(r: ClassifierReader, rec: Pick<OpRecord, 'target'>): string {
   const stateDir = path.dirname(rec.target.manifestPath)
   const real = r.realpath(stateDir)
   return real.ok ? real.path : path.resolve(stateDir)
 }
 
-/** `record.json` is internally consistent (see the module comment); the reason, or null. */
-export function inconsistency(r: ClassifierReader, rec: SwapRecord): string | null {
+/** The checks both ops share: the target's components and paths, and the manifest port. */
+function targetInconsistency(r: ClassifierReader, rec: OpRecord): string | null {
   const t = rec.target
-  const root = t.skillsDir
-  if (rec.op !== 'update') return `its op is ${JSON.stringify(rec.op)}, not "update"`
   for (const [name, v] of [
     ['client', t.client],
     ['scope', t.scope],
@@ -49,11 +52,8 @@ export function inconsistency(r: ClassifierReader, rec: SwapRecord): string | nu
   if (!path.isAbsolute(t.manifestPath) || path.basename(t.manifestPath) !== 'manifest.json') {
     return 'manifestPath is not an absolute path to a manifest.json'
   }
-  if (path.dirname(t.realDir) !== root) return 'realDir is not directly inside the skills root'
-  const area = backupAreaPath(stateRealOf(r, rec), t.client, root, t.dirName)
-  if (rec.backupDest !== path.join(area, rec.opId)) {
-    return 'backupDest is not the backup area the update computes for it, plus its opId'
-  }
+  if (path.dirname(t.realDir) !== t.skillsDir)
+    return 'realDir is not directly inside the skills root'
   if (
     !r.portAccepts({
       manifestPath: t.manifestPath,
@@ -65,6 +65,34 @@ export function inconsistency(r: ClassifierReader, rec: SwapRecord): string | nu
     return 'the manifest port rejects its preEntry and postEntry'
   }
   return null
+}
+
+const HEX64 = /^[0-9a-f]{64}$/
+
+/** `record.json` is internally consistent (see the module comment); the reason, or null. */
+export function inconsistency(r: ClassifierReader, rec: OpRecord): string | null {
+  // An update-shaped record may carry an op this version does not know (`isSwapRecord`).
+  const op: string = rec.op
+  if (op !== 'update' && op !== 'install') {
+    return `its op is ${JSON.stringify(op)}, not "update"`
+  }
+  const shared = targetInconsistency(r, rec)
+  if (shared !== null) return shared
+  const t = rec.target
+  switch (rec.op) {
+    case 'install':
+      if (path.basename(t.realDir) !== t.dirName)
+        return 'realDir is not the skills root plus dirName'
+      if (!HEX64.test(rec.postTree)) return 'postTree is not a tree hash'
+      return null
+    case 'update': {
+      const area = backupAreaPath(stateRealOf(r, rec), t.client, t.skillsDir, t.dirName)
+      if (rec.backupDest !== path.join(area, rec.opId)) {
+        return 'backupDest is not the backup area the update computes for it, plus its opId'
+      }
+      return null
+    }
+  }
 }
 
 /** Why a verified record belongs elsewhere: its verdict and the words for it. */
@@ -82,7 +110,7 @@ export function movedOf(
   r: ClassifierReader,
   root: string,
   opId: string,
-  rec: SwapRecord,
+  rec: OpRecord,
   opIdentity: RecordIdentity
 ): MovedVerdict | null {
   if (rec.opId !== opId) {

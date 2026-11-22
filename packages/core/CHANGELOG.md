@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Added**: SMI-6531 -- A1 step 8-i-a-2: the fresh install's recovery record (`op: "install"`,
+  its own exact key set in schema 1; `sealInstallRecord`, `isInstallRecord`,
+  `computeInstallRecordSha256`, `InstallRecord` and `OpRecord` exported). Nothing writes one yet
+  (8-i-a-3 does); an update record's bytes and hash are unchanged. The record scan treats an install
+  record as pending, blocking only its own skill (`PendingRecord` gains `op`; its `backupDest` is
+  null for an install), and the refusal names the install. `doctor recovery` classifies an install
+  record into rows FI0-FI4 (with their post-keep forms, FI2' and FI2u) and runs `--apply`, `--undo`
+  and `--abandon` on them; a live install record protects its parked `install-rollback` copy from
+  prune (rule `live-record`).
+- **Fixed**: SMI-6531 -- A1 step 8-i-a-2: doctor's `--apply`/`--undo` re-checks the folder it puts
+  back at the skill path (its identity and the tree hash the plan saw) immediately before the
+  publishing rename, on both the claim-publish path and the rename over an existing empty claim. A
+  folder edited or replaced after the claim was made is no longer published: the action stops
+  `staging-unsafe` with the folder still in the op dir and the record kept. This applies to the
+  update's rows (S1, UN1, S2 `--undo`) as well as the install's.
+- **Changed**: SMI-6531 -- A1 step 8-i-a-2: an update-shaped `record.json` whose `op` is `install`
+  is now `malformed` (the install has its own shape) instead of `inconsistent-record`; any other
+  unknown op is still `inconsistent-record`.
 - **Fixed**: SMI-6531 -- (#3274 retro) a done uninstall's message now names
   `skillsmith restore <opId>`, the command the forced-uninstall refusal already promised. When only
   the manifest write fails for a skill that was not on disk, the message says the folder "was not on

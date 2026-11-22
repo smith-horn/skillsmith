@@ -61,7 +61,7 @@ import type {
   RecoveryRunOptions,
   RecoveryRunResult,
 } from './skill-recovery.run.types.js'
-import { boundOf } from './skill-recovery.state.js'
+import { boundOf, oldSideOf } from './skill-recovery.state.js'
 import type {
   OpFacts,
   PlanStep,
@@ -76,7 +76,8 @@ import { opPaths, processOwnerNow, rethrowLockOrder, SwapFault } from './skill-s
 import type { SwapState } from './skill-swap.ops.js'
 import { createParkReporter } from './park-report.js'
 import { ensureBackupArea } from './skill-swap.publish.js'
-import type { ManifestPort, RecordIdentity, SwapOptions, SwapRecord } from './skill-swap.types.js'
+import type { OpRecord } from './skill-swap.record-schema.js'
+import type { ManifestPort, RecordIdentity, SwapOptions } from './skill-swap.types.js'
 import type { SkillsRootBinding, SkillWriteContext } from './skill-write-lock.types.js'
 
 /** The classes `--abandon` acts on with a record: everything but a no-record intent or an empty op dir. */
@@ -92,7 +93,8 @@ const refusingPort: ManifestPort = {
 }
 
 export interface AbandonStateInput {
-  record: SwapRecord
+  /** An update's record, or (8-i-a-2) a fresh install's, whose old side is fail-closed (`oldSideOf`). */
+  record: OpRecord
   /** The command's argument: the op dir's own name, which the keeps and the intent are named for. */
   opId: string
   /** OP's identity as the re-plan saw it. */
@@ -117,6 +119,7 @@ export function abandonState(i: AbandonStateInput): SwapState {
   const opDir = path.join(i.binding.stagingDir, i.opId)
   const areaPath = backupAreaPath(stateRootReal, t.client, R, t.dirName)
   const realDir = path.join(R, t.dirName)
+  const old = oldSideOf(rec, areaPath)
   return {
     input: {
       skillsDir: R,
@@ -128,8 +131,8 @@ export function abandonState(i: AbandonStateInput): SwapState {
       comparedPath: realDir,
       realDir,
       dirName: t.dirName,
-      oldIdentity: boundOf(rec.oldIdentity),
-      preTree: rec.preTree,
+      oldIdentity: boundOf(old.oldIdentity),
+      preTree: old.preTree,
       writeSet: [],
       preEntry: rec.preEntry,
       postEntry: rec.postEntry,

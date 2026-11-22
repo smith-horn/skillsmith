@@ -6,9 +6,15 @@
  */
 
 import { createHash } from 'node:crypto'
-import { lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { computeRecordSha256, treeHashOf, type DiscoverOptions } from '@skillsmith/core'
+import {
+  claimPublish,
+  computeRecordSha256,
+  sealInstallRecord,
+  treeHashOf,
+  type DiscoverOptions,
+} from '@skillsmith/core'
 
 /** The nine client ids, as `CLIENT_NATIVE_PATHS` keys them. */
 export const CLIENT_IDS = [
@@ -138,4 +144,87 @@ export function plantCrashedUpdate(
     JSON.stringify({ version: '1.0.0', installedSkills: { 'my-skill': { version: '1.0.0' } } })
   )
   return { root, opId, opDir, skillDir, stateRoot, backupDest }
+}
+
+export interface PlantedInstall {
+  root: string
+  opId: string
+  opDir: string
+  skillDir: string
+  stateRoot: string
+  /** Where FI4's set-aside copy is (FI4 only). */
+  parked: string | null
+}
+
+/**
+ * SMI-6531 (A1 step 8-i-a-2): a skills root holding a fresh install that
+ * stopped at `stage` (the design's FI0, FI2 or FI4): the staged folder in the
+ * op dir, its record sealed by `sealInstallRecord` (the staged install's own
+ * sealer), the manifest with no entry. FI2 publishes it with `claimPublish`;
+ * FI4 then moves it to the install's parked area with its identity kept (a
+ * rename, as the park makes one; no sidecar, as a park killed before its
+ * sidecar write leaves it).
+ */
+export async function plantInstall(
+  base: string,
+  stage: 'FI0' | 'FI2' | 'FI4',
+  opId = 'c'.repeat(32)
+): Promise<PlantedInstall> {
+  const root = realpathSync(join(base, 'clients', 'claude-code'))
+  const stateRoot = join(base, '.skillsmith')
+  mkdirSync(stateRoot, { recursive: true })
+  writeFileSync(
+    join(stateRoot, 'manifest.json'),
+    JSON.stringify({ version: '1.0.0', installedSkills: {} })
+  )
+  const opDir = join(root, '.skillsmith-staging', opId)
+  mkdirSync(opDir, { recursive: true, mode: 0o700 })
+  const newDir = join(opDir, 'new')
+  mkdirSync(newDir)
+  writeFileSync(join(newDir, 'SKILL.md'), '# installed\n')
+  const skillDir = join(root, 'my-skill')
+  const h = treeHashOf(newDir)
+  if (!h.ok) throw new Error('cannot hash the staged folder')
+  const sealed = sealInstallRecord(
+    {
+      schema: 1,
+      op: 'install',
+      opId,
+      pid: process.pid,
+      host: 'test-host',
+      uid: process.geteuid?.() ?? -1,
+      target: {
+        comparedPath: skillDir,
+        realDir: skillDir,
+        skillsDir: root,
+        manifestPath: join(realpathSync(stateRoot), 'manifest.json'),
+        manifestKey: 'my-skill',
+        client: 'claude-code',
+        scope: 'global',
+        dirName: 'my-skill',
+      },
+      rootIdentity: identityOf(root),
+      opDirIdentity: identityOf(opDir),
+      newIdentity: identityOf(newDir),
+      postTree: h.hash,
+      preEntry: null,
+      postEntry: { version: '1.0.0', source: 'github:o/r' },
+    },
+    root,
+    opId
+  )
+  if (!sealed.ok) throw new Error(`seal failed: ${sealed.why}`)
+  writeFileSync(join(opDir, 'record.json'), sealed.bytes)
+  let parked: string | null = null
+  if (stage !== 'FI0') {
+    const r = await claimPublish(newDir, skillDir)
+    if (!r.ok) throw new Error(`publish failed: ${r.reason}`)
+  }
+  if (stage === 'FI4') {
+    const area = join(root, '.skillsmith-parked', opId)
+    mkdirSync(area, { recursive: true })
+    parked = join(area, 'my-skill-0123abcd')
+    renameSync(skillDir, parked)
+  }
+  return { root, opId, opDir, skillDir, stateRoot, parked }
 }
