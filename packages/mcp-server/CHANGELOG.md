@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7260 -- on the WASM SQLite driver, periodic autosave stops when the database is
+  read-only for the session (another process may hold it, or changed it after the server read it),
+  and says so once, instead of logging "Periodic autosave persist failed" every interval. A save
+  refused because another process changed the file is logged as a warning naming that cause.
+
 - **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): `uninstall_skill` no longer removes the
   cross-client links of an install that claimed the same name while the removal ran; the result's
   `warning` says they were left for that install.

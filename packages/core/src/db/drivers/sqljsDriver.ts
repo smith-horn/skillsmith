@@ -21,10 +21,13 @@ import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 
 import { corruptDatabaseError } from '../corrupt-refusal.js'
 import { sqlJsCorruptionCode, refuseIfCorrupt } from './sqljsDriver.corruption.js'
 import {
+  fileIdentityOf,
   heldElsewhereError,
-  heldElsewhereMessage,
+  heldElsewhereReason,
   rethrowWriteError,
+  sameFileIdentity,
   sidecarsOf,
+  type FileIdentity,
 } from './sqljsDriver.holder.js'
 import { SqlJsStatementAdapter, type SqlJsDatabase } from './sqljsDriver.statement.js'
 
@@ -94,27 +97,44 @@ export class SqlJsDatabaseAdapter implements Database {
   // Track transaction nesting depth for SAVEPOINT-based nested transactions
   private _transactionDepth = 0
 
+  // SMI-7260 (sqljsDriver.holder.ts): set once the database is found held by,
+  // or changed by, another process; the handle is then read-only for good.
+  // An empty list means "changed", a non-empty one names the sidecars found.
+  private _heldBy: readonly string[] | undefined
+  // SMI-7260: the file this handle last read or wrote, checked before a rename.
+  private _identity: FileIdentity | null
+
   /**
    * @param heldBy - SMI-7260: SQLite sidecar files found beside the database at
    *   open. When set, the handle is read-only (`query_only`), a write throws
    *   `DatabaseHeldElsewhereError`, and nothing is ever persisted — not even
    *   after the sidecars disappear, since this image may predate a holder's
    *   checkpoint. See sqljsDriver.holder.ts.
+   * @param identity - the file's identity when this handle read it (`null`
+   *   when it did not exist).
    */
   constructor(
     private readonly db: SqlJsDatabase,
     private readonly filePath: string,
     options?: DatabaseOptions,
-    private readonly heldBy?: readonly string[]
+    heldBy?: readonly string[],
+    identity: FileIdentity | null = null
   ) {
     this._memory = filePath === ':memory:'
     this._readonly = options?.readonly ?? false
-    if (heldBy !== undefined) this.db.run('PRAGMA query_only = ON')
+    this._identity = identity
+    if (heldBy !== undefined) this.markHeld(heldBy)
+  }
+
+  /** Make this handle read-only for the rest of the session (SMI-7260). */
+  private markHeld(sidecars: readonly string[]): void {
+    this._heldBy = sidecars
+    this.db.run('PRAGMA query_only = ON')
   }
 
   /** Rethrow a sql.js error, naming a write refused because the file is held. */
   private readonly onError = (error: unknown): never =>
-    rethrowWriteError(error, this.filePath, this.heldBy)
+    rethrowWriteError(error, this.filePath, this._heldBy)
 
   exec(sql: string): void {
     try {
@@ -196,7 +216,7 @@ export class SqlJsDatabaseAdapter implements Database {
     // held by another process — SMI-7260). The handle is freed even when the
     // persist refuses, so the refusal is reported without leaking WASM memory.
     try {
-      if (!this._memory && !this._readonly && this.heldBy === undefined && this.filePath) {
+      if (!this._memory && !this._readonly && this._heldBy === undefined && this.filePath) {
         this.persist()
       }
     } finally {
@@ -216,21 +236,30 @@ export class SqlJsDatabaseAdapter implements Database {
    * instead of a corrupt file — see schema.ts. rename() is atomic on the
    * same filesystem, so the target is only ever fully-old or fully-new.
    *
-   * SMI-7260: never renames over a database another process may hold. Refuses
-   * when sidecars were present at open, and re-checks immediately before the
-   * rename, because a native process can open the file after this one did.
+   * SMI-7260: never renames over a database another process may hold or has
+   * changed. Refuses once the handle is held; otherwise checks, immediately
+   * before the rename, for sidecars and for a file that is no longer the one
+   * this handle last read or wrote. Either makes the handle held for good.
    */
   persist(): void {
     if (this._memory || !this.filePath) return
-    if (this.heldBy !== undefined) throw heldElsewhereError(this.filePath, this.heldBy)
+    if (this._heldBy !== undefined) throw heldElsewhereError(this.filePath, this._heldBy)
 
     const data = this.db.export()
     const tmpPath = `${this.filePath}.tmp`
     try {
       writeFileSync(tmpPath, Buffer.from(data))
       const lateSidecars = sidecarsOf(this.filePath)
-      if (lateSidecars.length > 0) throw heldElsewhereError(this.filePath, lateSidecars)
+      if (lateSidecars.length > 0) {
+        this.markHeld(lateSidecars)
+        throw heldElsewhereError(this.filePath, lateSidecars)
+      }
+      if (!sameFileIdentity(fileIdentityOf(this.filePath), this._identity)) {
+        this.markHeld([])
+        throw heldElsewhereError(this.filePath, [])
+      }
       renameSync(tmpPath, this.filePath)
+      this._identity = fileIdentityOf(this.filePath)
     } catch (error) {
       try {
         if (existsSync(tmpPath)) unlinkSync(tmpPath)
@@ -270,7 +299,7 @@ export class SqlJsDatabaseAdapter implements Database {
    * `undefined` when it may write. Set only for a database found held at open.
    */
   get readOnlyReason(): string | undefined {
-    return this.heldBy === undefined ? undefined : heldElsewhereMessage(this.filePath, this.heldBy)
+    return this._heldBy === undefined ? undefined : heldElsewhereReason(this.filePath, this._heldBy)
   }
 
   /**
@@ -300,6 +329,9 @@ export async function createSqlJsDatabase(
   // holds data not yet in it). Checked BEFORE the read, so the image this handle
   // loads is never treated as writable when a holder was present.
   const sidecars = path === ':memory:' || options?.readonly ? [] : sidecarsOf(path)
+  // ...and the file's identity BEFORE the read, so a change that lands while
+  // reading is caught (as a change) at the first save rather than missed.
+  const identity = path === ':memory:' ? null : fileIdentityOf(path)
 
   // Load existing database from file if it exists
   let data: Uint8Array | undefined
@@ -378,7 +410,13 @@ export async function createSqlJsDatabase(
     refuseIfCorrupt(db, path)
   }
 
-  return new SqlJsDatabaseAdapter(db, path, options, sidecars.length > 0 ? sidecars : undefined)
+  return new SqlJsDatabaseAdapter(
+    db,
+    path,
+    options,
+    sidecars.length > 0 ? sidecars : undefined,
+    identity
+  )
 }
 
 /**

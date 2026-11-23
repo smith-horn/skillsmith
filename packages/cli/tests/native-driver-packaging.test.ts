@@ -49,6 +49,8 @@ describe('CLI ships the native SQLite driver (SMI-7260)', () => {
     expect(runtimeVersion(cli, 'better-sqlite3')).toBe(runtimeVersion(core, 'better-sqlite3'))
   })
 
+  // Today core loads the driver through `createRequire`, which esbuild never
+  // bundles, so this flag is what keeps a future static `import` external.
   it('keeps better-sqlite3 external to the bundle, so the native binding can load', () => {
     const build = cli.scripts?.['build'] ?? ''
     expect(build.split(/\s+/)).toContain('--external:better-sqlite3')
@@ -60,10 +62,17 @@ describe('CLI ships the native SQLite driver (SMI-7260)', () => {
     'the built bundle requires better-sqlite3 rather than inlining it',
     () => {
       const bundle = readFileSync(bundlePath, 'utf8')
+      // Booleans, not the bundle string: a 2.6 MB diff buries the failure.
       // esbuild renames core's `createRequire` result (`require2`, ...).
-      expect(bundle).toMatch(/\brequire\d*\("better-sqlite3"\)/)
-      // better-sqlite3's own loader names its addon; inlined, this string appears.
-      expect(bundle).not.toContain('better_sqlite3.node')
+      expect(
+        /\brequire\d*\("better-sqlite3"\)/.test(bundle),
+        'bundle requires better-sqlite3'
+      ).toBe(true)
+      // better-sqlite3's own loader (lib/database.js) names its addon file, so
+      // the string appears only if the package was inlined. Measured with
+      // esbuild on a static `import Database from 'better-sqlite3'` entry: 1
+      // occurrence without `--external:better-sqlite3`, 0 with it.
+      expect(bundle.includes('better_sqlite3.node'), 'bundle inlines better-sqlite3').toBe(false)
     }
   )
 })

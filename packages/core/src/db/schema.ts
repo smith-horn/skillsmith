@@ -25,6 +25,7 @@ import { SCHEMA_SQL } from './schema-sql.js'
 // Re-export migration runner functions and types (extracted in SMI-3910)
 export {
   MIGRATIONS,
+  LATEST_SCHEMA_VERSION,
   getSchemaVersion,
   runMigrations,
   runMigrationsSafe,
@@ -32,7 +33,11 @@ export {
 export type { Migration } from './migration-runner.js'
 
 // Re-import for use within this file (openDatabase, openDatabaseAsync, initializeSchema)
-import { runMigrations, runMigrationsSafe } from './migration-runner.js'
+import {
+  isReadOnlyWithCurrentSchema,
+  runMigrations,
+  runMigrationsSafe,
+} from './migration-runner.js'
 
 export type DatabaseType = Database
 
@@ -57,6 +62,11 @@ export const SCHEMA_VERSION = 18
  * migrations to reach the current version.
  */
 export function initializeSchema(db: DatabaseType): void {
+  // SMI-7260: a handle that refuses writes (another process may hold the file)
+  // and is already at the current schema has nothing to initialize — skip it so
+  // reads still work. Not current: fall through, and the first write throws
+  // `DatabaseHeldElsewhereError`, which is the right refusal.
+  if (isReadOnlyWithCurrentSchema(db)) return
   db.exec(SCHEMA_SQL)
   db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (1)').run()
   runMigrations(db)

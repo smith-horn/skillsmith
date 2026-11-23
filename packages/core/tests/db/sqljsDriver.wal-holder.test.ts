@@ -1,6 +1,6 @@
 /**
  * SMI-7260: the sql.js driver must never replace a database a native process
- * may hold.
+ * may hold, or has changed since the sql.js handle read it.
  *
  * Real primitives throughout: a real better-sqlite3 connection in WAL mode with
  * uncheckpointed frames, and the real sql.js driver opening the same path. Both
@@ -25,8 +25,10 @@ import { createDatabaseAsync } from '../../src/db/createDatabase.js'
 import { DB_HELD_ELSEWHERE_CODE, isDatabaseHeldElsewhereError } from '../../src/db/db-errors.js'
 import type { Database } from '../../src/db/database-interface.js'
 
+const ROWS_CHECKPOINTED = 5
 const ROWS_BEFORE = 40
 const ROWS_AFTER = 10
+const CREATE_T = 'CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL)'
 
 function count(db: Database): number {
   return (db.prepare('SELECT count(*) AS n FROM t').get() as { n: number }).n
@@ -53,19 +55,28 @@ function attempt(fn: () => unknown): unknown {
 }
 
 /**
- * A native connection holding `path` in WAL mode, with the schema checkpointed
- * into the main file (so sql.js can open it) and `ROWS_BEFORE` rows left in the
- * WAL, not in the main file.
+ * A native connection holding `path` in WAL mode: the schema and
+ * `ROWS_CHECKPOINTED` rows checkpointed into the main file (so sql.js can open
+ * it and has rows to read), and `ROWS_BEFORE` more rows left in the WAL only.
  */
 function holdInWal(path: string): Database {
   const native = createBetterSqlite3Database(path)
   native.pragma('journal_mode = WAL')
   native.pragma('wal_autocheckpoint = 0')
-  native.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL)')
-  native.pragma('wal_checkpoint(TRUNCATE)')
+  native.exec(CREATE_T)
   const insert = native.prepare('INSERT INTO t (v) VALUES (?)')
+  for (let i = 0; i < ROWS_CHECKPOINTED; i++) insert.run(`checkpointed-${i}`)
+  native.pragma('wal_checkpoint(TRUNCATE)')
   for (let i = 0; i < ROWS_BEFORE; i++) insert.run(`native-${i}`)
   return native
+}
+
+/** A WAL-mode database with table `t` and no connection open (no sidecars). */
+function seedClosed(path: string): void {
+  const seed = createBetterSqlite3Database(path)
+  seed.pragma('journal_mode = WAL')
+  seed.exec(CREATE_T)
+  seed.close()
 }
 
 describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
@@ -79,6 +90,7 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     for (const db of open.splice(0)) {
       try {
         if (db.open) db.close()
@@ -90,6 +102,7 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
   })
 
   it('refuses writes when the database is held at open, and never replaces the file', async () => {
+    vi.stubEnv('SKILLSMITH_FORCE_WASM', '')
     const native = holdInWal(path)
     open.push(native)
     // Precondition: the rows really are uncheckpointed, so losing the WAL loses them.
@@ -116,30 +129,29 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
     const insert = native.prepare('INSERT INTO t (v) VALUES (?)')
     for (let i = 0; i < ROWS_AFTER; i++) insert.run(`native-late-${i}`)
     native.pragma('wal_checkpoint(TRUNCATE)')
-    expect(count(native)).toBe(ROWS_BEFORE + ROWS_AFTER)
+    expect(count(native)).toBe(ROWS_CHECKPOINTED + ROWS_BEFORE + ROWS_AFTER)
     expect(integrity(native)).toEqual(['ok'])
     native.close()
     const reopened = createBetterSqlite3Database(path)
     open.push(reopened)
-    expect(count(reopened)).toBe(ROWS_BEFORE + ROWS_AFTER)
+    expect(count(reopened)).toBe(ROWS_CHECKPOINTED + ROWS_BEFORE + ROWS_AFTER)
     expect(integrity(reopened)).toEqual(['ok'])
 
     // 3. The writes were refused with the named error, and close() succeeded.
     expect(isDatabaseHeldElsewhereError(viaStatement)).toBe(true)
     expect((viaStatement as { code: string }).code).toBe(DB_HELD_ELSEWHERE_CODE)
-    expect((viaStatement as Error).message).toContain('native better-sqlite3 is not available')
+    expect((viaStatement as Error).message).toContain(
+      'the native better-sqlite3 driver did not load'
+    )
     expect(isDatabaseHeldElsewhereError(viaExec)).toBe(true)
     expect(isDatabaseHeldElsewhereError(viaPersist)).toBe(true)
     expect(viaClose).toBeUndefined()
     expect(wasm.open).toBe(false)
-    expect(wasm.readOnlyReason).toContain('another Skillsmith process may have the database open')
+    expect(wasm.readOnlyReason).toContain('another process may be using it')
   })
 
   it('refuses the persist when a holder appears after open', async () => {
-    const seed = createBetterSqlite3Database(path)
-    seed.pragma('journal_mode = WAL')
-    seed.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL)')
-    seed.close()
+    seedClosed(path)
     expect(sidecarsOf(path)).toEqual([])
 
     const wasm = await createSqlJsDatabase(path)
@@ -171,6 +183,63 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
     expect(wasm.open).toBe(false)
   })
 
+  it('refuses the persist when another process wrote and closed after open, and stays read-only', async () => {
+    seedClosed(path)
+    const wasm = await createSqlJsDatabase(path)
+    open.push(wasm)
+    expect(wasm.readOnlyReason).toBeUndefined()
+    wasm.prepare("INSERT INTO t (v) VALUES ('wasm')").run()
+
+    // Another process writes and closes: its checkpoint folds its WAL into the
+    // main file and removes -wal/-shm, so no sidecar is left for a check to see.
+    const other = createBetterSqlite3Database(path)
+    other.prepare("INSERT INTO t (v) VALUES ('native-closed')").run()
+    other.close()
+    expect(sidecarsOf(path)).toEqual([])
+    const inodeBefore = statSync(path).ino
+    const bytesBefore = readFileSync(path)
+
+    const viaPersist = attempt(() => wasm.persist())
+    const laterWrite = attempt(() => wasm.prepare("INSERT INTO t (v) VALUES ('later')").run())
+    const viaClose = attempt(() => wasm.close())
+
+    // 1. The other process's file was not replaced, and its row survives.
+    expect(statSync(path).ino).toBe(inodeBefore)
+    expect(readFileSync(path).equals(bytesBefore)).toBe(true)
+    expect(existsSync(`${path}.tmp`)).toBe(false)
+    const reopened = createBetterSqlite3Database(path)
+    open.push(reopened)
+    expect(reopened.prepare('SELECT v FROM t ORDER BY id').all()).toEqual([{ v: 'native-closed' }])
+    expect(integrity(reopened)).toEqual(['ok'])
+
+    // 2. The save was refused, and the handle is read-only from then on.
+    expect(isDatabaseHeldElsewhereError(viaPersist)).toBe(true)
+    expect((viaPersist as Error).message).toContain('has changed')
+    expect(isDatabaseHeldElsewhereError(laterWrite)).toBe(true)
+    expect(viaClose).toBeUndefined()
+    expect(wasm.readOnlyReason).toContain('changed it after this session read it')
+  })
+
+  it('control: the same handle saves repeatedly when nothing else changed the file', async () => {
+    const wasm = await createSqlJsDatabase(path)
+    open.push(wasm)
+    wasm.exec(`${CREATE_T}; INSERT INTO t (v) VALUES ('a')`)
+    wasm.persist()
+    wasm.exec("INSERT INTO t (v) VALUES ('b')")
+    wasm.persist()
+    wasm.prepare("INSERT INTO t (v) VALUES ('c')").run()
+    wasm.close()
+    expect(wasm.readOnlyReason).toBeUndefined()
+
+    const reopened = await createSqlJsDatabase(path)
+    open.push(reopened)
+    expect(reopened.prepare('SELECT v FROM t ORDER BY id').all()).toEqual([
+      { v: 'a' },
+      { v: 'b' },
+      { v: 'c' },
+    ])
+  })
+
   it('control: with no sidecars present, a WAL-header database is written back', async () => {
     const native = holdInWal(path)
     native.close()
@@ -186,15 +255,13 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
 
     const reopened = createBetterSqlite3Database(path)
     open.push(reopened)
-    expect(count(reopened)).toBe(ROWS_BEFORE + 1)
+    expect(count(reopened)).toBe(ROWS_CHECKPOINTED + ROWS_BEFORE + 1)
     expect(integrity(reopened)).toEqual(['ok'])
   })
 
   it('control: a fresh file with no sidecars is written back', async () => {
     const wasm = await createSqlJsDatabase(path)
-    wasm.exec(
-      "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL); INSERT INTO t (v) VALUES ('a')"
-    )
+    wasm.exec(`${CREATE_T}; INSERT INTO t (v) VALUES ('a')`)
     wasm.close()
 
     const reopened = await createSqlJsDatabase(path)
@@ -204,7 +271,7 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
 
   it('treats a leftover rollback journal as a holder', async () => {
     const wasm = await createSqlJsDatabase(path)
-    wasm.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL)')
+    wasm.exec(CREATE_T)
     wasm.close()
     writeFileSync(`${path}-journal`, '')
 
@@ -222,10 +289,12 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
     const wasm = await createSqlJsDatabase(path, { readonly: true })
     open.push(wasm)
     expect(wasm.readOnlyReason).toBeUndefined()
-    expect(() => count(wasm)).not.toThrow()
+    // Paired presence: the read returns the main file's rows (the WAL-only rows
+    // are invisible to sql.js), so it ran and read real data.
+    expect(count(wasm)).toBe(ROWS_CHECKPOINTED)
   })
 
-  it('createDatabaseAsync prints the read-only reason once, on stderr', async () => {
+  it('createDatabaseAsync warns once; a refused write explains itself without repeating it', async () => {
     const native = holdInWal(path)
     open.push(native)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -234,11 +303,22 @@ describe('sql.js driver vs a native WAL holder (SMI-7260)', () => {
     try {
       const db = await createDatabaseAsync(path)
       open.push(db)
-      const messages = warn.mock.calls.map((call) => String(call[0]))
-      expect(messages.filter((m) => m.includes('this session is read-only'))).toHaveLength(1)
+      const refusal = attempt(() => db.exec("INSERT INTO t (v) VALUES ('x')"))
+      const notices = warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((m) => m.includes('read-only for this session'))
+      expect(notices).toHaveLength(1)
+      expect(isDatabaseHeldElsewhereError(refusal)).toBe(true)
+      const message = (refusal as Error).message
+      // Under FORCE_WASM the native driver may be fine: the error must say why
+      // WASM is in use rather than claim the native driver did not load.
+      expect(message).toContain('SKILLSMITH_FORCE_WASM is set')
+      expect(message).not.toContain('did not load')
+      // The warning and the error are different lines, not one text twice.
+      expect(message).not.toContain(notices[0])
+      expect(notices[0]).not.toContain('Not writing')
     } finally {
       warn.mockRestore()
-      vi.unstubAllEnvs()
     }
   })
 })

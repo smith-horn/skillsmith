@@ -7,8 +7,10 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Fixed**: SMI-7260 -- the CLI now installs the native SQLite driver (`better-sqlite3`, an
   optional dependency, the version core uses). It was bundled out and never installed, so every
   install used the WASM driver, whose saves could lose the MCP server's writes and corrupt the
-  database. Where the native driver cannot load and another Skillsmith process has the database
-  open, a writing command now stops with one line saying so instead of writing.
+  database. Where the WASM driver is still in use and another Skillsmith process has the
+  database open, the CLI opens it read-only and says so in one line: read commands (`search`,
+  `info`, `sync status`) work, and a command that changes the database stops with an error
+  saying why and what to do instead of writing.
 
 - **Changed**: SMI-6531 -- A1 step 8-i-a-3a: `skillsmith update` stopped because the staging
   folder's records could not be listed says "the records of unfinished operations in `<staging>`";

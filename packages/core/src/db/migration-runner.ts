@@ -29,6 +29,7 @@ import { applyMigrationV16 } from './migrations/v16-skill-source.js'
 import { applyMigrationV17 } from './migrations/v17-curated-trust-tier.js'
 import { MIGRATION_V18_SQL } from './migrations/v18-skill-versions-real-content-hash.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
+import { readOnlyReasonOf } from './read-only-reason.js'
 
 /**
  * Migration definition for schema upgrades.
@@ -132,6 +133,19 @@ export const MIGRATIONS: Migration[] = [
   },
 ]
 
+/** The newest schema version any migration produces. */
+export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0)
+
+/**
+ * SMI-7260: a handle that refuses writes but whose schema is already current,
+ * so schema initialization and migrations have nothing to do and may be
+ * skipped. On such a handle they would fail at their first write — including
+ * the no-op `INSERT OR IGNORE` stamps — and turn every read into a refusal.
+ */
+export function isReadOnlyWithCurrentSchema(db: Database): boolean {
+  return readOnlyReasonOf(db) !== undefined && getSchemaVersion(db) >= LATEST_SCHEMA_VERSION
+}
+
 /**
  * Get the current schema version from the database
  */
@@ -214,6 +228,19 @@ function applyMigration(db: Database, migration: Migration): void {
 export function runMigrationsSafe(db: Database): number {
   const currentVersion = getSchemaVersion(db)
   let migrationsRun = 0
+
+  // SMI-7260: a read-only handle cannot migrate. Say that once, plainly,
+  // instead of letting every migration fail and warn "Migration N failed".
+  if (readOnlyReasonOf(db) !== undefined) {
+    if (currentVersion < LATEST_SCHEMA_VERSION) {
+      console.warn(
+        `[Skillsmith] The database schema is at version ${currentVersion}; this Skillsmith ` +
+          `expects ${LATEST_SCHEMA_VERSION}. It was not upgraded because the database is ` +
+          'read-only for this session, so features that need the newer schema may fail.'
+      )
+    }
+    return 0
+  }
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {

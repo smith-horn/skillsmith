@@ -135,6 +135,7 @@ export async function flushTelemetryOnShutdown(
 export function _resetShutdownGuardForTests(): void {
   shuttingDown = false
   shutdownPromise = null
+  readOnlyAutosaveNoticeLogged = false
   stopPeriodicFlush()
 }
 
@@ -261,7 +262,20 @@ export function createShutdownTrigger(onDone: () => void, hooks: ShutdownHooks =
  * rather than widening the shared interface, since the native
  * (better-sqlite3) driver has no meaningful equivalent — it writes through
  * to disk on every statement and needs no timer. */
-type Persistable = { persist: () => void }
+type Persistable = { persist: () => void; readonly readOnlyReason?: string }
+
+/**
+ * SMI-7260: the WASM driver makes a handle read-only when another process may
+ * hold, or has changed, the database file. Autosave then has nothing it may
+ * write; this guards the one line saying so from repeating every interval.
+ */
+let readOnlyAutosaveNoticeLogged = false
+
+function logReadOnlyAutosaveOnce(reason: string): void {
+  if (readOnlyAutosaveNoticeLogged) return
+  readOnlyAutosaveNoticeLogged = true
+  logger.warn(`${reason} Autosave is off for this session; nothing will be written to it.`)
+}
 
 function isPersistable(db: unknown): db is Persistable {
   return !!db && typeof (db as Partial<Persistable>).persist === 'function'
@@ -275,12 +289,32 @@ function isPersistable(db: unknown): db is Persistable {
  * `persist` method and needs none — and on a closed or in-memory db.
  */
 export function persistDbIfSupported(getDb?: () => DatabaseType | undefined): void {
+  let db: DatabaseType | undefined
   try {
-    const db = getDb?.()
+    db = getDb?.()
     if (db && db.open && !db.memory && isPersistable(db)) {
+      // SMI-7260: a read-only handle refuses every persist by design; calling
+      // it would log a false "recent writes may not survive" each interval.
+      if (db.readOnlyReason !== undefined) {
+        logReadOnlyAutosaveOnce(db.readOnlyReason)
+        return
+      }
       db.persist()
     }
   } catch (error) {
+    // SMI-7260: this persist found the file held or changed and refused; the
+    // handle is now read-only. That is a deliberate refusal, not a failure.
+    const reason = isPersistable(db) ? db.readOnlyReason : undefined
+    if (reason !== undefined) {
+      readOnlyAutosaveNoticeLogged = true
+      logger.warn(
+        `${reason} Autosave did not write it, because that would replace the other ` +
+          "process's changes; changes this session made since its last save were not " +
+          'written. Autosave is off for this session.',
+        { err: error }
+      )
+      return
+    }
     logger.error(
       '[skillsmith] Periodic autosave persist failed — recent writes may not survive an ungraceful kill',
       { err: error }
@@ -311,6 +345,11 @@ export function startPeriodicFlush(getDb: () => DatabaseType | undefined): void 
   if (process.env.SKILLSMITH_AUTOSAVE_DISABLE === '1') return
   const db = getDb()
   if (!db || db.memory || !isPersistable(db)) return // WASM + file-backed only
+  // SMI-7260: a handle already read-only at start has nothing autosave may write.
+  if (db.readOnlyReason !== undefined) {
+    logReadOnlyAutosaveOnce(db.readOnlyReason)
+    return
+  }
   const intervalMs =
     Number(process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS) || DEFAULT_AUTOSAVE_INTERVAL_MS
   flushTimer = setInterval(() => {

@@ -45,6 +45,10 @@ export async function openCliDatabase(
   let db: DatabaseType | undefined
   try {
     db = await createDatabaseAsync(path)
+    // SMI-7260: on a WASM handle another process may hold (read-only for the
+    // session), `initializeSchema` is a no-op when the schema is current, so
+    // read commands still work and writes fail with DatabaseHeldElsewhereError.
+    // When the schema is NOT current it throws that error itself.
     initializeSchema(db)
     return db
   } catch (err) {
