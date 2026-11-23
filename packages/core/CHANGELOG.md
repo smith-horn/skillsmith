@@ -4,6 +4,15 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7260 -- the WASM (sql.js) SQLite driver no longer replaces a database another
+  process may hold. When `-wal`, `-shm` or `-journal` exists beside the file at open, the handle
+  is read-only: writes throw `DatabaseHeldElsewhereError` (code `SKILLSMITH_DB_HELD_ELSEWHERE`,
+  exported with `isDatabaseHeldElsewhereError`), `close()` does not save, and
+  `createDatabaseAsync` prints the reason once. Saving re-checks those files immediately before
+  renaming over the database and refuses if one has appeared. Previously a save renamed a new
+  file over the database, so a native process holding it lost its writes and a later checkpoint
+  could corrupt the file.
+
 - **Changed**: SMI-6531 -- A1 step 8-i-a-3a: doctor classifies an install's set-aside copy (FI4:
   the skill path empty, nothing left in the op dir) whenever the manifest entry is not the
   installed one, `pre` or changed by another writer, where it required `pre`. FI4's `--apply` and

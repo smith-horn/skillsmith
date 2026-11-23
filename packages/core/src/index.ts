@@ -48,6 +48,10 @@ export {
   isCorruptDatabaseError,
   DB_CORRUPT_CODE,
   type RemedyKind,
+  // SMI-7260: the WASM driver refused to write a database another process may hold.
+  DatabaseHeldElsewhereError,
+  isDatabaseHeldElsewhereError,
+  DB_HELD_ELSEWHERE_CODE,
 } from './db/db-errors.js'
 export {
   classifyProbeFailure,

@@ -23,7 +23,11 @@ import {
   isBetterSqlite3Available,
   getBetterSqlite3FailureReason,
 } from './drivers/betterSqlite3Driver.js'
-import { createSqlJsDatabase, isSqlJsAvailable } from './drivers/sqljsDriver.js'
+import {
+  createSqlJsDatabase,
+  isSqlJsAvailable,
+  type SqlJsDatabaseAdapter,
+} from './drivers/sqljsDriver.js'
 // SMI-5897 (C-18/C-19, Wave 4 fix): shared SKILLSMITH_QUIET guard — this was
 // the second, unguarded fallback-warning path C-18/C-19 didn't originally
 // cover; the WASM-driver notice below always printed at least once per
@@ -35,6 +39,18 @@ import { isQuietModeEnabled } from '../utils/quiet-mode.js'
  * process, no matter how many database connections are opened.
  */
 let wasmFallbackNoticeEmitted = false
+
+/**
+ * SMI-7260: open with sql.js and, when the handle came back read-only because
+ * another process may hold the file, say so once on stderr — before any write
+ * fails, so the user sees the cause rather than only the refusal.
+ */
+async function openSqlJs(path: string, options?: DatabaseOptions): Promise<SqlJsDatabaseAdapter> {
+  const db = await createSqlJsDatabase(path, options)
+  const reason = db.readOnlyReason
+  if (reason !== undefined && !isQuietModeEnabled()) console.warn(reason)
+  return db
+}
 
 /**
  * Driver type used for database connections
@@ -161,7 +177,7 @@ export async function createDatabaseAsync(
   // Allow env var override for testing WASM path in Docker
   if (process.env.SKILLSMITH_FORCE_WASM === 'true') {
     if (isSqlJsAvailable()) {
-      return await createSqlJsDatabase(path, options)
+      return await openSqlJs(path, options)
     }
     throw new Error(
       '[Skillsmith] SKILLSMITH_FORCE_WASM is set but sql.js (WASM) is not available.\n\n' +
@@ -196,7 +212,7 @@ export async function createDatabaseAsync(
         console.warn(message)
       }
     }
-    return await createSqlJsDatabase(path, options)
+    return await openSqlJs(path, options)
   }
 
   throw new Error(

@@ -16,10 +16,17 @@
  */
 
 import { createRequire } from 'node:module'
-import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
+import type { Database, Statement, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { corruptDatabaseError } from '../corrupt-refusal.js'
 import { sqlJsCorruptionCode, refuseIfCorrupt } from './sqljsDriver.corruption.js'
+import {
+  heldElsewhereError,
+  heldElsewhereMessage,
+  rethrowWriteError,
+  sidecarsOf,
+} from './sqljsDriver.holder.js'
+import { SqlJsStatementAdapter, type SqlJsDatabase } from './sqljsDriver.statement.js'
 
 // ESM-compatible require for dynamic module loading
 const require = createRequire(import.meta.url)
@@ -29,26 +36,6 @@ const require = createRequire(import.meta.url)
 interface SqlJsStatic {
   Database: new (data?: ArrayLike<number> | Buffer | null) => SqlJsDatabase
 }
-
-interface SqlJsDatabase {
-  run(sql: string): void
-  prepare(sql: string): SqlJsStatement
-  export(): Uint8Array
-  close(): void
-}
-
-interface SqlJsStatement {
-  bind(params?: SqlJsBindParams): boolean
-  step(): boolean
-  get(): SqlJsValue[]
-  getColumnNames(): string[]
-  reset(): void
-  free(): void
-}
-
-// sql.js bind parameters type
-type SqlJsValue = string | number | null | Uint8Array
-type SqlJsBindParams = SqlJsValue[] | Record<string, SqlJsValue>
 
 // Cached sql.js module to avoid reloading WASM
 let sqlJsModule: SqlJsStatic | null = null
@@ -98,128 +85,6 @@ async function loadSqlJs(): Promise<SqlJsStatic> {
 }
 
 /**
- * Wraps a sql.js prepared statement to implement our Statement interface
- *
- * sql.js statements work differently from better-sqlite3:
- * - bind() and step() are separate operations
- * - get() returns column values as array, not object
- * - We need to handle the conversion to named objects
- */
-class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
-  private stmt: SqlJsStatement
-  private columnNames: string[] = []
-  // Cached statement for changes() and last_insert_rowid() queries
-  // Created once per adapter instance, reused on every run() call
-  private changesStmt: SqlJsStatement
-
-  constructor(
-    private readonly db: SqlJsDatabase,
-    private readonly sql: string
-  ) {
-    this.stmt = db.prepare(sql)
-    // Get column names from the statement
-    this.columnNames = this.stmt.getColumnNames()
-    // Cache the changes query statement for performance
-    this.changesStmt = db.prepare('SELECT changes() as changes, last_insert_rowid() as lastId')
-  }
-
-  private rowToObject(row: SqlJsValue[] | null): T | undefined {
-    if (!row) return undefined
-
-    const obj: Record<string, SqlJsValue> = {}
-    for (let i = 0; i < this.columnNames.length; i++) {
-      obj[this.columnNames[i]] = row[i]
-    }
-    return obj as T
-  }
-
-  run(...params: unknown[]): RunResult {
-    // Reset and bind parameters
-    this.stmt.reset()
-    if (params.length > 0) {
-      this.stmt.bind(params as SqlJsBindParams)
-    }
-
-    // Execute without fetching results
-    this.stmt.step()
-    this.stmt.reset()
-
-    // Query changes() and last_insert_rowid() using cached statement
-    // This avoids creating a new prepared statement on every run() call
-    this.changesStmt.reset()
-    this.changesStmt.step()
-    const result = this.changesStmt.get()
-    this.changesStmt.reset()
-
-    return {
-      changes: (result?.[0] as number) ?? 0,
-      lastInsertRowid: (result?.[1] as number) ?? 0,
-    }
-  }
-
-  get(...params: unknown[]): T | undefined {
-    this.stmt.reset()
-    if (params.length > 0) {
-      this.stmt.bind(params as SqlJsBindParams)
-    }
-
-    const hasRow = this.stmt.step()
-    if (!hasRow) {
-      this.stmt.reset()
-      return undefined
-    }
-
-    const row = this.stmt.get()
-    this.stmt.reset()
-    return this.rowToObject(row)
-  }
-
-  all(...params: unknown[]): T[] {
-    this.stmt.reset()
-    if (params.length > 0) {
-      this.stmt.bind(params as SqlJsBindParams)
-    }
-
-    const results: T[] = []
-    while (this.stmt.step()) {
-      const row = this.stmt.get()
-      const obj = this.rowToObject(row)
-      if (obj !== undefined) {
-        results.push(obj)
-      }
-    }
-    this.stmt.reset()
-    return results
-  }
-
-  *iterate(...params: unknown[]): IterableIterator<T> {
-    this.stmt.reset()
-    if (params.length > 0) {
-      this.stmt.bind(params as SqlJsBindParams)
-    }
-
-    while (this.stmt.step()) {
-      const row = this.stmt.get()
-      const obj = this.rowToObject(row)
-      if (obj !== undefined) {
-        yield obj
-      }
-    }
-    this.stmt.reset()
-  }
-
-  finalize(): void {
-    this.stmt.free()
-    this.changesStmt.free()
-  }
-
-  bind(...params: unknown[]): this {
-    this.stmt.bind(params as SqlJsBindParams)
-    return this
-  }
-}
-
-/**
  * Wraps a sql.js Database to implement our Database interface
  */
 export class SqlJsDatabaseAdapter implements Database {
@@ -229,21 +94,38 @@ export class SqlJsDatabaseAdapter implements Database {
   // Track transaction nesting depth for SAVEPOINT-based nested transactions
   private _transactionDepth = 0
 
+  /**
+   * @param heldBy - SMI-7260: SQLite sidecar files found beside the database at
+   *   open. When set, the handle is read-only (`query_only`), a write throws
+   *   `DatabaseHeldElsewhereError`, and nothing is ever persisted — not even
+   *   after the sidecars disappear, since this image may predate a holder's
+   *   checkpoint. See sqljsDriver.holder.ts.
+   */
   constructor(
     private readonly db: SqlJsDatabase,
     private readonly filePath: string,
-    options?: DatabaseOptions
+    options?: DatabaseOptions,
+    private readonly heldBy?: readonly string[]
   ) {
     this._memory = filePath === ':memory:'
     this._readonly = options?.readonly ?? false
+    if (heldBy !== undefined) this.db.run('PRAGMA query_only = ON')
   }
 
+  /** Rethrow a sql.js error, naming a write refused because the file is held. */
+  private readonly onError = (error: unknown): never =>
+    rethrowWriteError(error, this.filePath, this.heldBy)
+
   exec(sql: string): void {
-    this.db.run(sql)
+    try {
+      this.db.run(sql)
+    } catch (error) {
+      this.onError(error)
+    }
   }
 
   prepare<T = unknown>(sql: string): Statement<T> {
-    return new SqlJsStatementAdapter<T>(this.db, sql)
+    return new SqlJsStatementAdapter<T>(this.db, sql, this.onError)
   }
 
   transaction<T, Args extends unknown[] = []>(fn: (...args: Args) => T): (...args: Args) => T {
@@ -291,7 +173,7 @@ export class SqlJsDatabaseAdapter implements Database {
 
     if (value !== undefined) {
       // Setting a pragma value
-      this.db.run(`PRAGMA ${name} = ${value}`)
+      this.exec(`PRAGMA ${name} = ${value}`)
       return undefined
     }
 
@@ -310,13 +192,17 @@ export class SqlJsDatabaseAdapter implements Database {
   close(): void {
     if (!this._open) return
 
-    // Persist to file before closing (if not memory and not readonly)
-    if (!this._memory && !this._readonly && this.filePath) {
-      this.persist()
+    // Persist to file before closing (if not memory, not readonly, and not
+    // held by another process — SMI-7260). The handle is freed even when the
+    // persist refuses, so the refusal is reported without leaking WASM memory.
+    try {
+      if (!this._memory && !this._readonly && this.heldBy === undefined && this.filePath) {
+        this.persist()
+      }
+    } finally {
+      this.db.close()
+      this._open = false
     }
-
-    this.db.close()
-    this._open = false
   }
 
   /**
@@ -329,14 +215,21 @@ export class SqlJsDatabaseAdapter implements Database {
    * openDatabaseAsync() then silently misclassifies as a fresh/legacy import
    * instead of a corrupt file — see schema.ts. rename() is atomic on the
    * same filesystem, so the target is only ever fully-old or fully-new.
+   *
+   * SMI-7260: never renames over a database another process may hold. Refuses
+   * when sidecars were present at open, and re-checks immediately before the
+   * rename, because a native process can open the file after this one did.
    */
   persist(): void {
     if (this._memory || !this.filePath) return
+    if (this.heldBy !== undefined) throw heldElsewhereError(this.filePath, this.heldBy)
 
     const data = this.db.export()
     const tmpPath = `${this.filePath}.tmp`
     try {
       writeFileSync(tmpPath, Buffer.from(data))
+      const lateSidecars = sidecarsOf(this.filePath)
+      if (lateSidecars.length > 0) throw heldElsewhereError(this.filePath, lateSidecars)
       renameSync(tmpPath, this.filePath)
     } catch (error) {
       try {
@@ -373,6 +266,14 @@ export class SqlJsDatabaseAdapter implements Database {
   }
 
   /**
+   * SMI-7260: why this handle refuses writes, as one line for the user, or
+   * `undefined` when it may write. Set only for a database found held at open.
+   */
+  get readOnlyReason(): string | undefined {
+    return this.heldBy === undefined ? undefined : heldElsewhereMessage(this.filePath, this.heldBy)
+  }
+
+  /**
    * Get the underlying sql.js database instance
    * Use with caution - this bypasses the abstraction layer
    */
@@ -394,6 +295,11 @@ export async function createSqlJsDatabase(
   options?: DatabaseOptions
 ): Promise<SqlJsDatabaseAdapter> {
   const SQL = await loadSqlJs()
+
+  // SMI-7260: sidecars beside the file mean another process may hold it (or
+  // holds data not yet in it). Checked BEFORE the read, so the image this handle
+  // loads is never treated as writable when a holder was present.
+  const sidecars = path === ':memory:' || options?.readonly ? [] : sidecarsOf(path)
 
   // Load existing database from file if it exists
   let data: Uint8Array | undefined
@@ -472,7 +378,7 @@ export async function createSqlJsDatabase(
     refuseIfCorrupt(db, path)
   }
 
-  return new SqlJsDatabaseAdapter(db, path, options)
+  return new SqlJsDatabaseAdapter(db, path, options, sidecars.length > 0 ? sidecars : undefined)
 }
 
 /**

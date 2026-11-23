@@ -125,3 +125,50 @@ export class CorruptDatabaseError extends Error {
 export function isCorruptDatabaseError(error: unknown): error is CorruptDatabaseError {
   return (error as { code?: unknown } | null | undefined)?.code === DB_CORRUPT_CODE
 }
+
+/**
+ * Stable discriminator for "the WASM driver refused to write a database another
+ * process may hold" (SMI-7260).
+ */
+export const DB_HELD_ELSEWHERE_CODE = 'SKILLSMITH_DB_HELD_ELSEWHERE' as const
+
+/**
+ * A write refused by the sql.js (WASM) driver because SQLite's own sidecar
+ * files (`-wal`, `-shm`, `-journal`) show another connection may hold the
+ * database, or holds data not yet in the main file.
+ *
+ * **Why refuse rather than write.** sql.js loads the whole file into memory and
+ * saves by writing a new file and renaming it over the original. A native
+ * process holding the database keeps its open descriptor on the OLD inode and
+ * its `-wal`/`-shm` beside the NEW one: its later work is silently lost, and
+ * the next native open folds a WAL written for the old file into the new one,
+ * corrupting it at rest. sql.js takes no file locks, so it cannot coordinate;
+ * the only safe answer is not to write. Nothing was modified when this is
+ * thrown. Match on `code` via `isDatabaseHeldElsewhereError`, as above.
+ */
+export class DatabaseHeldElsewhereError extends Error {
+  readonly code: typeof DB_HELD_ELSEWHERE_CODE = DB_HELD_ELSEWHERE_CODE
+
+  /** The database that was not written. */
+  readonly path: string
+
+  /** The sidecar files found beside it, e.g. `['skills.db-wal']`. */
+  readonly sidecars: readonly string[]
+
+  constructor(args: {
+    message: string
+    path: string
+    sidecars: readonly string[]
+    cause?: unknown
+  }) {
+    super(args.message, args.cause === undefined ? undefined : { cause: args.cause })
+    this.name = 'DatabaseHeldElsewhereError'
+    this.path = args.path
+    this.sidecars = args.sidecars
+  }
+}
+
+/** Structural predicate for `DatabaseHeldElsewhereError`; reads `code` only. */
+export function isDatabaseHeldElsewhereError(error: unknown): error is DatabaseHeldElsewhereError {
+  return (error as { code?: unknown } | null | undefined)?.code === DB_HELD_ELSEWHERE_CODE
+}
