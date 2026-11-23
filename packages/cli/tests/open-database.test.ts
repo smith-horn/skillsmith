@@ -16,6 +16,7 @@ import {
   SearchService,
   SkillRepository,
   closeDatabase,
+  getBestDriver,
   isCorruptDatabaseError,
   type DatabaseType,
 } from '@skillsmith/core'
@@ -94,6 +95,36 @@ describe('SMI-4917 Bug 1: openCliDatabase', () => {
   it('the skills table is queryable on a fresh DB', async () => {
     const db = await open()
     expect(new SkillRepository(db).count()).toBe(0)
+  })
+})
+
+/**
+ * SMI-7260: a first run, where `~/.skillsmith` does not exist yet. The native
+ * driver, which the CLI now ships, refuses to create a database in a missing
+ * directory ("Cannot open database because the directory does not exist");
+ * the WASM driver never noticed, because it opens in memory.
+ */
+describe('SMI-7260: openCliDatabase creates a missing parent directory', () => {
+  let dir: string
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('opens a database whose parent directory does not exist yet', async () => {
+    // Precondition: this is the native driver's behaviour, so run on it.
+    expect(getBestDriver()).toBe('better-sqlite3')
+    dir = mkdtempSync(join(tmpdir(), 'cli-open-missing-dir-'))
+    const path = join(dir, 'not-yet', 'skills.db')
+    expect(existsSync(join(dir, 'not-yet'))).toBe(false)
+
+    const db = await openCliDatabase(path)
+    try {
+      expect(new SkillRepository(db).count()).toBe(0)
+    } finally {
+      closeDatabase(db)
+    }
+    expect(existsSync(path)).toBe(true)
   })
 })
 

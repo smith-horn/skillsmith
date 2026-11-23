@@ -19,7 +19,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const cliRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const coreRoot = join(cliRoot, '..', 'core')
 
 interface Manifest {
   scripts?: Record<string, string>
@@ -36,17 +35,63 @@ function runtimeVersion(pkg: Manifest, name: string): string | undefined {
   return pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name]
 }
 
+/** An exact `MAJOR.MINOR.PATCH` version: no range operator, wildcard or tag. */
+function isExactVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version)
+}
+
+/** The major version of an exact version string. */
+function majorOf(version: string): number {
+  return Number(version.split('.')[0])
+}
+
+/**
+ * The first major that bundles prebuilt binaries and has no install script and
+ * no `prebuild-install` dependency (deprecated; SMI-5427 removed it from the
+ * CLI's install tree). Core stays on 12.x; the CLI pins 13.x on purpose.
+ */
+const MIN_NATIVE_DRIVER_MAJOR = 13
+
 describe('CLI ships the native SQLite driver (SMI-7260)', () => {
   const cli = manifest(cliRoot)
-  const core = manifest(coreRoot)
 
   it('declares better-sqlite3 as a runtime dependency of its own', () => {
     expect(runtimeVersion(cli, 'better-sqlite3')).toBeDefined()
   })
 
-  it('declares the same better-sqlite3 version the bundled core is built against', () => {
-    expect(runtimeVersion(core, 'better-sqlite3')).toBeDefined()
-    expect(runtimeVersion(cli, 'better-sqlite3')).toBe(runtimeVersion(core, 'better-sqlite3'))
+  it('pins better-sqlite3 in optionalDependencies at an exact version', () => {
+    const pinned = cli.optionalDependencies?.['better-sqlite3']
+    expect(pinned, 'optionalDependencies["better-sqlite3"]').toBeDefined()
+    expect(isExactVersion(pinned ?? ''), `exact version, got "${pinned}"`).toBe(true)
+  })
+
+  it(`pins a better-sqlite3 major of at least ${MIN_NATIVE_DRIVER_MAJOR} (prebuilt, no install script)`, () => {
+    const pinned = cli.optionalDependencies?.['better-sqlite3'] ?? ''
+    expect(majorOf(pinned), `major of "${pinned}"`).toBeGreaterThanOrEqual(MIN_NATIVE_DRIVER_MAJOR)
+  })
+
+  // The two predicates above, against known-good and known-bad values, so a
+  // predicate that accepts everything cannot pass the real-manifest tests.
+  it.each([
+    ['13.0.3', true],
+    ['^13.0.3', false],
+    ['~13.0.3', false],
+    ['>=13.0.3', false],
+    ['13.x', false],
+    ['13.0.3 || 14.0.0', false],
+    ['13.0.3-beta.1', false],
+    ['latest', false],
+  ])('isExactVersion(%s) is %s', (version, exact) => {
+    expect(isExactVersion(version)).toBe(exact)
+  })
+
+  it.each([
+    ['13.0.3', true],
+    ['14.1.0', true],
+    ['12.10.0', false],
+    ['11.10.0', false],
+  ])('a pin of %s meets the major floor: %s', (version, meets) => {
+    expect(majorOf(version) >= MIN_NATIVE_DRIVER_MAJOR).toBe(meets)
   })
 
   // Today core loads the driver through `createRequire`, which esbuild never

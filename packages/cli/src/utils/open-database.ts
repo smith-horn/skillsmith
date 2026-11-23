@@ -14,6 +14,8 @@
  * `openCliDatabase` makes the footgun structurally impossible: it is the one
  * unmissable way a CLI command opens a database.
  */
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { createDatabaseAsync, initializeSchema, type DatabaseType } from '@skillsmith/core'
 
 /**
@@ -41,6 +43,13 @@ export async function openCliDatabase(
   if (options?.readonly) {
     return createDatabaseAsync(path, { readonly: true })
   }
+
+  // SMI-7260: the native driver (now shipped with the CLI) refuses to create a
+  // database in a directory that does not exist — "Cannot open database
+  // because the directory does not exist" — where the WASM driver opened it in
+  // memory. On a first run `~/.skillsmith` may not exist yet, so create the
+  // parent directory, as the MCP server already does for the same path.
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
 
   let db: DatabaseType | undefined
   try {
