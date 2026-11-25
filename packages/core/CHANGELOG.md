@@ -12,19 +12,28 @@ All notable changes to `@skillsmith/core` are documented here.
   exported with `isDatabaseReadOnlyDriverError`). A missing file starts as an empty in-memory
   database that its opener seals after building its schema (`initializeSchema` and
   `openDatabaseAsync` do), so a first run works with empty local results and nothing is written;
-  an unsealed handle that was written warns at `close()` that its changes were not saved.
-  `{ readonly: true }` is now really read-only (writes used to succeed in memory and vanish).
-  `:memory:` is unchanged. `createDatabaseAsync` prints one line per database saying it was opened
+  an unsealed handle that was written to (any statement other than a single `SELECT`, DDL and
+  pragmas included) warns at `close()` that its changes were not saved. The store factories
+  (`AnalyticsStorage`, the L2 and tiered caches, `EmbeddingService`, `HNSWEmbeddingStore`,
+  `PatternStore`, `HybridSearch`) also seal a first-run handle after creating their tables; on an
+  existing file whose table is absent, their `CREATE TABLE` throws the named error.
+  `{ readonly: true }` is now really read-only, on `:memory:` too (writes used to succeed in memory
+  and vanish). A plain `:memory:` is unchanged. `readOnlyReasonOf(db)` is exported: the line
+  explaining why a handle refuses writes, or `undefined`. `createDatabaseAsync` prints one line per database saying it was opened
   read-only and how to get the native driver back (naming `SKILLSMITH_FORCE_WASM` when that is
   why), replacing "[Skillsmith] Using WASM SQLite driver ...". On a read-only handle at the
   current schema, `initializeSchema` and `runMigrationsSafe` do nothing; behind it,
-  `initializeSchema` throws the named error and `runMigrationsSafe` warns once. The search cache
+  `initializeSchema` throws the named error and `runMigrationsSafe` warns once (silent under
+  `SKILLSMITH_QUIET`, as is the unsealed-close warning). The search cache
   and the default `sync_config` row are not written, and `QuarantineRepository` and
   `ApprovalRepository` (new `available` flag) find nothing instead of failing when their lazily
-  created table is absent. Before refusing a database as corrupt, the driver re-reads it (up to 3
-  more times); the corrupt verdict, with its advice to move the file aside, needs two identical
-  failing reads, and a file that keeps changing gets `DatabaseReadUnstableError` (code
-  `SKILLSMITH_DB_READ_UNSTABLE`), which says to try again. Residual risk: a WASM session reads a
+  created table is absent. The WASM driver never declares a database corrupt: when a file does not
+  read cleanly it re-reads it (up to 3 more times), accepts the first clean read, and otherwise
+  throws `DatabaseReadUnstableError` (code `SKILLSMITH_DB_READ_UNSTABLE`, exported with
+  `isDatabaseReadUnstableError`). That error moves nothing aside: it says another Skillsmith
+  process may be writing the file, to try again, and how to check it for damage with the native
+  driver (`skillsmith list`). A read racing a native checkpoint can tear even on identical
+  re-reads, so only the native driver gives the corrupt verdict. Residual risk: a WASM session reads a
   snapshot taken at open, so it misses changes still in another process's WAL; WASM-only users
   have no local persistence.
 

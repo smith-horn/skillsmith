@@ -19,6 +19,7 @@ import { dirname } from 'path'
 import {
   SecurityScanner,
   QuarantineRepository,
+  isDatabaseReadOnlyDriverError,
   type QuarantineSeverity,
   type SkillDependencyRepository,
 } from '@skillsmith/core'
@@ -94,6 +95,12 @@ export interface SkillRescanEntry {
   }
   /** Error message if skill could not be read */
   error?: string
+  /**
+   * SMI-7260: set when the skill failed the scan but its quarantine entry
+   * could not be recorded (a read-only WASM database). The findings above are
+   * still the result; only the local quarantine record is missing.
+   */
+  quarantineNote?: string
   /**
    * SMI-5645: number of `skill_dependencies` rows written (inserted or
    * upserted) for this skill during this rescan. Reflects the CURRENTLY
@@ -447,15 +454,23 @@ async function executeSkillRescanImpl(
               siblingScan.rejectableFiles.join(', ')
           )
         }
-        quarantineRepo.create({
-          skillId: localSkillKey,
-          source: 'rescan',
-          quarantineReason:
-            `Security rescan detected ${reasonParts.join('; ')} ` +
-            `(riskScore=${Math.max(report.riskScore, siblingScan.maxSiblingRiskScore)})`,
-          severity: quarantineSeverity,
-          detectedPatterns,
-        })
+        // SMI-7260: on a read-only (WASM) database the write is refused. Note
+        // it on this entry and carry on, so the scan results, and every other
+        // skill's, are still returned. Any other failure propagates as before.
+        try {
+          quarantineRepo.create({
+            skillId: localSkillKey,
+            source: 'rescan',
+            quarantineReason:
+              `Security rescan detected ${reasonParts.join('; ')} ` +
+              `(riskScore=${Math.max(report.riskScore, siblingScan.maxSiblingRiskScore)})`,
+            severity: quarantineSeverity,
+            detectedPatterns,
+          })
+        } catch (error) {
+          if (!isDatabaseReadOnlyDriverError(error)) throw error
+          entry.quarantineNote = `quarantine not recorded: ${error.message}`
+        }
       }
     }
   }

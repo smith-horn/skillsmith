@@ -231,9 +231,9 @@ export async function getSkillsFromDirectory(
   // failure CODE, which it cannot do. This asks a different question.
   if (dbPath && existsSync(dbPath)) {
     try {
-      // SMI-5139: this is a pure-read version lookup — open read-only so the
-      // WASM driver does not persist (write) on close() and throw EROFS when
-      // dbPath is unwritable.
+      // SMI-5139: this is a pure-read version lookup — open read-only, so no
+      // driver writes to dbPath (the native driver would otherwise open it
+      // read-write; the WASM driver never writes a database file, SMI-7260).
       dbConn = await openCliDatabase(dbPath, { readonly: true })
       versionRepo = new SkillVersionRepository(dbConn)
     } catch (error) {

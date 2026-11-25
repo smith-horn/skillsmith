@@ -1,5 +1,6 @@
 /**
- * SMI-7260 D2: re-read before a corruption verdict.
+ * SMI-7260 D2: re-read when a file does not read cleanly, and never give the
+ * corrupt verdict from sql.js (only the native driver gives it).
  *
  * A sql.js open that races a native checkpoint can read a torn image of an
  * intact file. To reproduce that deterministically, `readFileSync` for the
@@ -11,6 +12,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSqlJsDatabase } from '../../src/db/drivers/sqljsDriver.js'
+import { createBetterSqlite3Database } from '../../src/db/drivers/betterSqlite3Driver.js'
 import { RETRY_DELAYS_MS } from '../../src/db/drivers/sqljsDriver.read.js'
 import { DB_CORRUPT_CODE, DB_READ_UNSTABLE_CODE } from '../../src/db/db-errors.js'
 
@@ -73,17 +75,17 @@ function bytesOnDisk(path: string): Buffer {
   }
 }
 
-async function openError(path: string): Promise<{ code?: unknown } | undefined> {
+async function openError(path: string): Promise<{ code?: unknown; message?: string } | undefined> {
   try {
     const db = await createSqlJsDatabase(path)
     db.close()
     return undefined
   } catch (error) {
-    return error as { code?: unknown }
+    return error as { code?: unknown; message?: string }
   }
 }
 
-describe('SMI-7260 D2: sql.js re-reads before refusing a database as corrupt', () => {
+describe('SMI-7260 D2: sql.js re-reads, and never declares a database corrupt', () => {
   it('accepts a torn first read once a re-read is healthy', async () => {
     const good = await goodImage()
     writeFileSync(reads.path, good)
@@ -99,14 +101,30 @@ describe('SMI-7260 D2: sql.js re-reads before refusing a database as corrupt', (
     expect(reads.count).toBe(2)
   })
 
-  it('still refuses a stably corrupt file as corrupt, without touching it', async () => {
+  it('refuses a stably corrupt file as UNSTABLE, not corrupt, after every re-read, untouched', async () => {
     const corrupt = damaged(await goodImage(), 0xff)
     writeFileSync(reads.path, corrupt)
 
     const error = await openError(reads.path)
-    expect(error?.code).toBe(DB_CORRUPT_CODE)
-    // Two byte-identical failing reads are the verdict; no more reads after that.
-    expect(reads.count).toBe(2)
+    expect(error?.code).toBe(DB_READ_UNSTABLE_CODE)
+    expect(error?.code).not.toBe(DB_CORRUPT_CODE)
+    // Identical failing reads are no longer a verdict: it reads to the bound.
+    expect(reads.count).toBe(RETRY_DELAYS_MS.length + 1)
+    expect(bytesOnDisk(reads.path).equals(corrupt)).toBe(true)
+  })
+
+  it('the native driver still refuses that same file as corrupt (the paired control)', async () => {
+    const corrupt = damaged(await goodImage(), 0xff)
+    writeFileSync(reads.path, corrupt)
+
+    let code: unknown
+    try {
+      createBetterSqlite3Database(reads.path, { readonly: true }).close()
+      code = 'opened'
+    } catch (error) {
+      code = (error as { code?: unknown }).code
+    }
+    expect(code).toBe(DB_CORRUPT_CODE)
     expect(bytesOnDisk(reads.path).equals(corrupt)).toBe(true)
   })
 
@@ -119,9 +137,39 @@ describe('SMI-7260 D2: sql.js re-reads before refusing a database as corrupt', (
 
     const error = await openError(reads.path)
     expect(error?.code).toBe(DB_READ_UNSTABLE_CODE)
-    expect(error?.code).not.toBe(DB_CORRUPT_CODE)
     // The bound: one read plus one per retry, then it stops.
     expect(reads.count).toBe(RETRY_DELAYS_MS.length + 1)
     expect(bytesOnDisk(reads.path).equals(corrupt)).toBe(true)
+  })
+})
+
+describe('SMI-7260 F7: only stat and -wal evidence choose the wording', () => {
+  const WRITER = /it changed while being read, so another Skillsmith process is probably writing it/
+  const MAYBE = /Another Skillsmith process may be writing it/
+
+  it('says another process is probably writing it when a -wal sidecar exists', async () => {
+    const corrupt = damaged(await goodImage(), 0xff)
+    writeFileSync(reads.path, corrupt)
+    writeFileSync(`${reads.path}-wal`, Buffer.alloc(0))
+
+    const error = await openError(reads.path)
+    expect(error?.code).toBe(DB_READ_UNSTABLE_CODE)
+    expect(error?.message).toMatch(WRITER)
+    expect(error?.message).not.toMatch(MAYBE)
+  })
+
+  it('says another process may be writing it, and how to check for damage, with no evidence', async () => {
+    const good = await goodImage()
+    writeFileSync(reads.path, damaged(good, 0xff))
+    // The bytes differ on every read, but the stat and the sidecars do not:
+    // differing bytes alone must not pick the "writing it" wording.
+    reads.queue = [damaged(good, 0x11), damaged(good, 0x22), damaged(good, 0x33)]
+
+    const error = await openError(reads.path)
+    expect(error?.code).toBe(DB_READ_UNSTABLE_CODE)
+    expect(error?.message).toMatch(MAYBE)
+    expect(error?.message).not.toMatch(WRITER)
+    // The way to tell a damaged file apart, named in both wordings.
+    expect(error?.message).toContain('skillsmith list')
   })
 })

@@ -172,16 +172,17 @@ export function isDatabaseReadOnlyDriverError(
 export const DB_READ_UNSTABLE_CODE = 'SKILLSMITH_DB_READ_UNSTABLE' as const
 
 /**
- * The WASM driver's image of the database failed its integrity check, and the
- * file kept changing on every re-read, so the driver cannot tell a damaged file
- * from one another process was writing while it read (SMI-7260).
+ * The WASM driver could not read the database cleanly on any of its bounded
+ * re-reads, so it cannot tell a damaged file from one another process was
+ * writing while it read (SMI-7260).
  *
- * **Deliberately not a corruption refusal.** A sql.js open that races a native
- * checkpoint can read a torn image of an intact file. Calling that corrupt
- * would advise moving the database aside, destroying a healthy file. A
- * corruption verdict (`CorruptDatabaseError`) is given only when two
- * consecutive reads are byte-identical and both fail; anything else is this
- * error, which says to try again. Nothing was modified.
+ * **Deliberately not a corruption refusal, and the WASM driver never gives
+ * one.** A sql.js open that races a native checkpoint can read a torn image of
+ * an intact file, and a stalled checkpoint can make even identical re-reads
+ * fail. Calling that corrupt would advise moving the database aside,
+ * destroying a healthy file. So this error says to try again, and how to check
+ * the file with the native driver, which alone gives the corrupt verdict
+ * (`CorruptDatabaseError`). Nothing was modified.
  */
 export class DatabaseReadUnstableError extends Error {
   readonly code: typeof DB_READ_UNSTABLE_CODE = DB_READ_UNSTABLE_CODE

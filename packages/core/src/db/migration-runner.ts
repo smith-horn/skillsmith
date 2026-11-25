@@ -30,6 +30,7 @@ import { applyMigrationV17 } from './migrations/v17-curated-trust-tier.js'
 import { MIGRATION_V18_SQL } from './migrations/v18-skill-versions-real-content-hash.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
 import { readOnlyReasonOf } from './read-only-reason.js'
+import { isQuietModeEnabled } from '../utils/quiet-mode.js'
 
 /**
  * Migration definition for schema upgrades.
@@ -225,15 +226,17 @@ export function runMigrationsSafe(db: Database): number {
   // SMI-7260: a read-only WASM handle cannot migrate. Say that once per
   // database, plainly, instead of letting every migration fail and warn
   // "Migration N failed". The caller (the MCP server) continues on the old schema.
+  // Honours quiet mode; the once-per-database guard is recorded either way.
   if (readOnlyReasonOf(db) !== undefined) {
     if (currentVersion < LATEST_SCHEMA_VERSION && !schemaBehindWarned.has(db.name)) {
       schemaBehindWarned.add(db.name)
-      console.warn(
-        `[Skillsmith] ${db.name} is at schema version ${currentVersion}; this Skillsmith ` +
-          `expects ${LATEST_SCHEMA_VERSION}. It was not upgraded because the WASM SQLite ` +
-          'driver opened it read-only, so features that need the newer schema may fail. ' +
-          'Run any Skillsmith command with the native driver (better-sqlite3) to upgrade it.'
-      )
+      if (!isQuietModeEnabled())
+        console.warn(
+          `[Skillsmith] ${db.name} is at schema version ${currentVersion}; this Skillsmith ` +
+            `expects ${LATEST_SCHEMA_VERSION}. It was not upgraded because the WASM SQLite ` +
+            'driver opened it read-only, so features that need the newer schema may fail. ' +
+            'Run any Skillsmith command with the native driver (better-sqlite3) to upgrade it.'
+        )
     }
     return 0
   }

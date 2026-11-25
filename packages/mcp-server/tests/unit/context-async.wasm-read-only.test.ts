@@ -102,6 +102,7 @@ describe('SMI-7260 test 6: no background sync on a read-only handle', () => {
   it('does not start it on WASM, and does start it on the native driver (paired control)', async () => {
     const start = vi.spyOn(BackgroundSyncService.prototype, 'start').mockImplementation(() => {})
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubEnv('SKILLSMITH_QUIET', '')
 
     const nativeCtx = await context(nativeSkillsDb('native.db'), true)
     expect(start).toHaveBeenCalledTimes(1)
@@ -115,6 +116,22 @@ describe('SMI-7260 test 6: no background sync on a read-only handle', () => {
     const syncOff = errors.mock.calls.filter((c) => String(c[0]).includes('Background sync is off'))
     expect(syncOff).toHaveLength(1)
   })
+
+  it('the "sync is off" line is silent in quiet mode, and printed without it (the paired run)', async () => {
+    vi.spyOn(BackgroundSyncService.prototype, 'start').mockImplementation(() => {})
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const syncOff = () =>
+      errors.mock.calls.filter((c) => String(c[0]).includes('Background sync is off'))
+    vi.stubEnv('SKILLSMITH_FORCE_WASM', 'true')
+
+    vi.stubEnv('SKILLSMITH_QUIET', '1')
+    await context(nativeSkillsDb('quiet.db'), true)
+    expect(syncOff()).toHaveLength(0)
+
+    vi.stubEnv('SKILLSMITH_QUIET', '')
+    await context(nativeSkillsDb('loud.db'), true)
+    expect(syncOff()).toHaveLength(1)
+  })
 })
 
 describe('SMI-7260 test 9 (MCP): an older schema on the WASM driver', () => {
@@ -122,12 +139,16 @@ describe('SMI-7260 test 9 (MCP): an older schema on the WASM driver', () => {
     const path = nativeSkillsDb('old.db', 10)
     const before = readFileSync(path)
     vi.stubEnv('SKILLSMITH_FORCE_WASM', 'true')
+    vi.stubEnv('SKILLSMITH_QUIET', '')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const ctx = await context(path)
     expect(getSchemaVersion(ctx.db)).toBe(10)
     expect(ctx.skillRepository.findById('probe/one')?.id).toBe('probe/one')
-    expect(warn.mock.calls.filter((c) => String(c[0]).includes(path))).toHaveLength(1)
+    const schemaLines = warn.mock.calls.filter(
+      (c) => String(c[0]).includes(path) && String(c[0]).includes('schema version')
+    )
+    expect(schemaLines).toHaveLength(1)
 
     ctx.db.close()
     expect(readFileSync(path).equals(before)).toBe(true)

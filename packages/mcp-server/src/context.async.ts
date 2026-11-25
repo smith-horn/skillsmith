@@ -36,6 +36,7 @@ import {
   setTelemetryIdentityProvider,
   setTelemetryIdentityInvalidationHandler,
   readOnlyReasonOf,
+  isQuietModeEnabled,
   type SyncResult,
   type DatabaseType,
   type TelemetryIdentity,
@@ -300,7 +301,7 @@ export async function createToolContextAsync(
   // fetched; worse, recording its schedule and its run both write, so it would
   // throw at startup or every interval. Don't start it; say so once.
   const readOnlyReason = readOnlyReasonOf(db)
-  if (backgroundSyncEnabled && readOnlyReason !== undefined) {
+  if (backgroundSyncEnabled && readOnlyReason !== undefined && !isQuietModeEnabled()) {
     console.error(
       '[skillsmith] Background sync is off: the database is read-only (WASM SQLite driver).'
     )

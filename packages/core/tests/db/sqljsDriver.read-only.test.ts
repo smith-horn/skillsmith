@@ -32,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
   dir = undefined
 })
@@ -126,6 +127,26 @@ describe('SMI-7260 test 2: :memory: is unchanged', () => {
   })
 })
 
+describe('SMI-7260 B1: { readonly: true } on :memory:', () => {
+  it('gives a sealed memory handle, while a plain :memory: stays writable', async () => {
+    const plain = await createSqlJsDatabase(':memory:')
+    const sealed = await createSqlJsDatabase(':memory:', { readonly: true })
+    try {
+      expect(plain.readonly).toBe(false)
+      expect(codeOf(() => plain.exec('CREATE TABLE t (id INTEGER)'))).toBe('no throw')
+      expect(sealed.readonly).toBe(true)
+      // Reads work on the sealed handle; the write is refused by SQLite itself.
+      expect(sealed.prepare('SELECT 1 AS one').get()).toEqual({ one: 1 })
+      expect(() => sealed.exec('CREATE TABLE t (id INTEGER)')).toThrow(
+        'attempt to write a readonly database'
+      )
+    } finally {
+      plain.close()
+      sealed.close()
+    }
+  })
+})
+
 describe('SMI-7260 test 3: { readonly: true } is really read-only', () => {
   it('refuses a write on a missing path, where nothing else would seal it', async () => {
     const path = pathIn('absent.db')
@@ -208,6 +229,33 @@ describe('SMI-7260: an unsealed first-run handle warns at close that its writes 
     expect(existsSync(writtenPath)).toBe(false)
   })
 
+  it('warns after CREATE then DROP, which leave no row or table behind', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const path = pathIn('create-drop.db')
+    const db = await createSqlJsDatabase(path)
+    db.exec('CREATE TABLE t (id INTEGER)')
+    db.exec('DROP TABLE t')
+    db.close()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0][0])).toContain(path)
+  })
+
+  it('stays silent in quiet mode, and warns without it (the paired run)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubEnv('SKILLSMITH_QUIET', '1')
+    const quiet = await createSqlJsDatabase(pathIn('quiet.db'))
+    quiet.exec('CREATE TABLE t (id INTEGER)')
+    quiet.close()
+    expect(warn).not.toHaveBeenCalled()
+
+    vi.stubEnv('SKILLSMITH_QUIET', '')
+    const loud = await createSqlJsDatabase(pathIn('loud.db'))
+    loud.exec('CREATE TABLE t (id INTEGER)')
+    loud.close()
+    expect(warn).toHaveBeenCalledTimes(1)
+    vi.unstubAllEnvs()
+  })
+
   it('does not warn for a handle that was sealed', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const path = pathIn('sealed.db')
@@ -223,33 +271,37 @@ describe('SMI-7260 test 7: a WASM session never loses a native process’s write
   it('a native holder keeps every row and an intact file across a WASM read, write attempt and close', async () => {
     const path = pathIn('skills.db')
     const native = createBetterSqlite3Database(path)
-    native.pragma('journal_mode = WAL')
-    native.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)')
-    const insert = native.prepare('INSERT INTO t (v) VALUES (?)')
-    for (let i = 0; i < 10; i += 1) insert.run(`base-${i}`)
-    native.pragma('wal_checkpoint(TRUNCATE)')
-    // Hold uncheckpointed writes in the WAL, as a live MCP server does.
-    native.pragma('wal_autocheckpoint = 0')
-    for (let i = 0; i < 5; i += 1) insert.run(`wal-${i}`)
-    expect(existsSync(`${path}-wal`)).toBe(true)
+    try {
+      native.pragma('journal_mode = WAL')
+      native.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)')
+      const insert = native.prepare('INSERT INTO t (v) VALUES (?)')
+      for (let i = 0; i < 10; i += 1) insert.run(`base-${i}`)
+      native.pragma('wal_checkpoint(TRUNCATE)')
+      // Hold uncheckpointed writes in the WAL, as a live MCP server does.
+      native.pragma('wal_autocheckpoint = 0')
+      for (let i = 0; i < 5; i += 1) insert.run(`wal-${i}`)
+      expect(existsSync(`${path}-wal`)).toBe(true)
 
-    const wasm = await createSqlJsDatabase(path)
-    // It reads the main file: a consistent snapshot without the WAL frames.
-    expect(count(wasm)).toBe(10)
-    expect(codeOf(() => wasm.exec("INSERT INTO t (v) VALUES ('wasm')"))).toBe(
-      DB_WASM_READ_ONLY_CODE
-    )
-    wasm.close()
+      const wasm = await createSqlJsDatabase(path)
+      // It reads the main file: a consistent snapshot without the WAL frames.
+      expect(count(wasm)).toBe(10)
+      expect(codeOf(() => wasm.exec("INSERT INTO t (v) VALUES ('wasm')"))).toBe(
+        DB_WASM_READ_ONLY_CODE
+      )
+      wasm.close()
 
-    // The native process carries on after the WASM session ended, and
-    // checkpoints, as a live server's autocheckpoint does. Measured: when the
-    // old sql.js save had renamed a new file over the database, this checkpoint
-    // writes to the replaced file, and the reopen below finds only the rows in
-    // the WASM image (10 of 18). Without a checkpoint the WAL folds back and
-    // nothing is lost, so a test without one would pass on the bug.
-    for (let i = 0; i < 3; i += 1) insert.run(`after-${i}`)
-    native.pragma('wal_checkpoint(TRUNCATE)')
-    native.close()
+      // The native process carries on after the WASM session ended, and
+      // checkpoints, as a live server's autocheckpoint does. Measured: when the
+      // old sql.js save had renamed a new file over the database, this checkpoint
+      // writes to the replaced file, and the reopen below finds only the rows in
+      // the WASM image (10 of 18). Without a checkpoint the WAL folds back and
+      // nothing is lost, so a test without one would pass on the bug.
+      for (let i = 0; i < 3; i += 1) insert.run(`after-${i}`)
+      native.pragma('wal_checkpoint(TRUNCATE)')
+    } finally {
+      // Closed on every path, so a failed assertion above cannot leak the handle.
+      if (native.open) native.close()
+    }
 
     const reopened = createBetterSqlite3Database(path)
     try {

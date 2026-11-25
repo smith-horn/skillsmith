@@ -156,6 +156,7 @@ describe('SMI-7260 test 9 (core): an older schema on a read-only WASM handle', (
 
   it('openDatabaseAsync (the MCP path) warns once per database and continues', async () => {
     vi.stubEnv('SKILLSMITH_FORCE_WASM', 'true')
+    vi.stubEnv('SKILLSMITH_QUIET', '')
     const path = nativeSkillsDb('old-mcp.db', 10)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const first = await openDatabaseAsync(path)
@@ -167,8 +168,29 @@ describe('SMI-7260 test 9 (core): an older schema on a read-only WASM handle', (
       first.close()
       second.close()
     }
-    const schemaWarnings = warn.mock.calls.filter((c) => String(c[0]).includes(path))
+    const schemaWarnings = warn.mock.calls.filter(
+      (c) => String(c[0]).includes(path) && String(c[0]).includes('schema version')
+    )
     expect(schemaWarnings).toHaveLength(1)
+  })
+
+  it('the schema warning is silent in quiet mode, and printed without it (the paired run)', async () => {
+    vi.stubEnv('SKILLSMITH_FORCE_WASM', 'true')
+    const quietPath = nativeSkillsDb('old-quiet.db', 10)
+    const loudPath = nativeSkillsDb('old-loud.db', 10)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const schemaLines = (path: string) =>
+      warn.mock.calls.filter(
+        (c) => String(c[0]).includes(path) && String(c[0]).includes('schema version')
+      )
+
+    vi.stubEnv('SKILLSMITH_QUIET', '1')
+    ;(await openDatabaseAsync(quietPath)).close()
+    expect(schemaLines(quietPath)).toHaveLength(0)
+
+    vi.stubEnv('SKILLSMITH_QUIET', '')
+    ;(await openDatabaseAsync(loudPath)).close()
+    expect(schemaLines(loudPath)).toHaveLength(1)
   })
 
   it('initializeSchema at the current schema is a no-op on a read-only handle', async () => {

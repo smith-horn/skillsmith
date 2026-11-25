@@ -70,7 +70,7 @@ The FTS5 ranking weights `name` and `tags` higher than `description` and `author
 
 A nice side effect of doing search locally: it's basically free latency-wise. Typical FTS5 query times against the full registry cache are sub-millisecond, which means the whole search-to-render cycle in your editor or chat is dominated by network calls *you didn't make* (because you're hitting your own disk).
 
-There's a small footnote: native `better-sqlite3` is the default driver, but if its prebuilt binary fails to load (Node ABI mismatch after a Node upgrade is the usual cause), Skillsmith automatically falls back to a WASM SQLite build via `fts5-sql-bundle`. The user-visible behavior is identical; the only difference is a small startup cost the first time the WASM module loads. The fallback policy is deterministic: real ONNX embeddings when the runtime is available, and a stable mock embedding otherwise.
+There's a small footnote: native `better-sqlite3` is the default driver, but if its prebuilt binary fails to load (Node ABI mismatch after a Node upgrade is the usual cause), Skillsmith falls back to a WASM SQLite build via `fts5-sql-bundle`. That fallback is read-only. It can search a database the native driver already built, but it never saves to the file, because it cannot safely share the file with a native process that has it open. On a first run with no database, local results stay empty and searches go to the Skillsmith API. Skillsmith prints one line saying so, and `npm rebuild better-sqlite3` brings the native driver back. The embedding fallback policy is deterministic: real ONNX embeddings when the runtime is available, and a stable mock embedding otherwise.
 
 ## Semantic search — opt-in
 

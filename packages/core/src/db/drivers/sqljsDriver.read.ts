@@ -1,33 +1,38 @@
 /**
  * SMI-7260 D2: reading an existing database file into sql.js, re-reading
- * before any corruption verdict.
+ * when it does not read cleanly.
  *
  * **Why re-read.** sql.js reads the whole file in one go and takes no locks. A
  * read that races a native (better-sqlite3) process's WAL checkpoint can see a
  * torn image: some pages from before the checkpoint, some from after. The
- * ADR-175 integrity probe then fails on an intact file, and the corruption
- * refusal advises moving the database aside, which would destroy it. Measured
- * in the SMI-7260 research: rare at a sync-like write rate, near-certain under
- * heavy churn.
+ * ADR-175 integrity probes then fail on an intact file. Measured in the
+ * SMI-7260 research: rare at a sync-like write rate, near-certain under heavy
+ * churn. A torn first read that comes back healthy on a re-read is accepted.
  *
- * **The rule (owner decision, design review round 1).** Every integrity
- * failure gets a bounded re-read: up to {@link RETRY_DELAYS_MS}`.length` more
- * reads, after the listed waits. The corruption verdict, with its move-aside
- * advice, is given only when two consecutive reads are byte-identical (hash
- * compared) and both fail. Any other outcome that never produced a healthy
- * read is `DatabaseReadUnstableError`, which says to try again. Whether the
- * file's `stat` changed during a read, or a `-wal` exists, only chooses that
- * message's wording; it never decides whether to retry.
+ * **sql.js never declares a database corrupt (owner decision, re-derived).** A
+ * checkpoint can stall mid-write for longer than every retry delay, so even two
+ * byte-identical failing reads can come from a healthy file. A corruption
+ * verdict tells the user to move the database aside, which would destroy that
+ * file, and sql.js cannot tell the two cases apart without locks. So when no
+ * read in the bounded set ({@link RETRY_DELAYS_MS}) is clean, this always
+ * throws the non-destructive `DatabaseReadUnstableError`, never
+ * `CorruptDatabaseError`. The corrupt verdict comes only from the native
+ * driver, which reads under SQLite's own locking; the message says how to run
+ * that check.
  *
- * **Why this cannot weaken the guard.** A damaged file that nothing is writing
- * reads identically every time, so its second read is the corrupt verdict, as
- * before. It cannot loop: the number of reads is fixed.
+ * **What the stat and `-wal` evidence decide.** Only the message's wording:
+ * whether the file's `stat` changed during or between reads, or a `-wal`
+ * sidecar exists. It never decides whether to retry or what to throw. It
+ * cannot loop: the number of reads is fixed.
  */
 
-import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { corruptDatabaseError } from '../corrupt-refusal.js'
-import { DatabaseReadUnstableError, isCorruptDatabaseError } from '../db-errors.js'
+import {
+  DatabaseReadUnstableError,
+  isCorruptDatabaseError,
+  type CorruptDatabaseError,
+} from '../db-errors.js'
 import { refuseIfCorrupt, sqlJsCorruptionCode } from './sqljsDriver.corruption.js'
 import type { SqlJsDatabase } from './sqljsDriver.statement.js'
 
@@ -49,7 +54,9 @@ export interface SqlJsConstructor {
  * them. sql.js validates lazily (`new SQL.Database(data)` succeeds on garbage),
  * which is why the probes run here rather than at an arbitrary later query.
  *
- * @throws CorruptDatabaseError when either probe fails; any other error as is.
+ * @throws CorruptDatabaseError when either probe fails (an internal
+ *   classification: `openExistingImage` never lets it escape); any other
+ *   error as is.
  */
 export function openImage(SQL: SqlJsConstructor, data: Uint8Array, path: string): SqlJsDatabase {
   let db: SqlJsDatabase | undefined
@@ -66,7 +73,7 @@ export function openImage(SQL: SqlJsConstructor, data: Uint8Array, path: string)
     }
     const sqliteCode = sqlJsCorruptionCode(error)
     if (sqliteCode === undefined) throw error
-    // The same refusal the native driver throws, from the same builder.
+    // Classified with the native driver's builder; converted by the caller.
     throw corruptDatabaseError(
       path,
       error instanceof Error ? error.message : String(error),
@@ -99,55 +106,58 @@ function sameStamp(a: StatStamp | null, b: StatStamp | null): boolean {
   return a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs
 }
 
-function digestOf(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex')
-}
-
 function unstableReadError(
   path: string,
   attempts: number,
   writerSeen: boolean,
-  cause: unknown
+  lastFailure: CorruptDatabaseError | undefined
 ): DatabaseReadUnstableError {
-  const why = writerSeen
-    ? 'changed while being read (another Skillsmith process is writing it)'
-    : 'read differently each time it was opened, so its integrity could not be checked'
+  const first = writerSeen
+    ? `[Skillsmith] Could not read ${path} consistently: it changed while being read, so another ` +
+      'Skillsmith process is probably writing it. Try again in a moment.'
+    : `[Skillsmith] Could not read ${path} consistently. Another Skillsmith process may be ` +
+      'writing it; try again in a moment.'
   return new DatabaseReadUnstableError({
-    message: `[Skillsmith] ${path} ${why}; try again. Nothing was changed.`,
+    message:
+      `${first} If this keeps happening when no other Skillsmith process is running, the file may ` +
+      'be damaged: once the native SQLite driver loads (`npm rebuild better-sqlite3`), run ' +
+      '`skillsmith list`, which checks the database and reports damage. Nothing was changed.',
     path,
     attempts,
-    cause,
+    // The integrity verdict only, as a plain Error: the CorruptDatabaseError
+    // itself carries move-aside advice, which must not surface through a cause chain.
+    cause: lastFailure === undefined ? undefined : new Error(lastFailure.verdict),
   })
 }
 
 /**
  * Read an existing database file and open it, applying the D2 rule above.
  *
- * @throws CorruptDatabaseError only for two consecutive byte-identical failing
- *   reads; DatabaseReadUnstableError when the reads never settled; any
- *   non-integrity error (unreadable file, WASM failure) unchanged.
+ * @throws DatabaseReadUnstableError when no read was clean (never
+ *   CorruptDatabaseError); any non-integrity error (unreadable file, WASM
+ *   failure) unchanged.
  */
 export async function openExistingImage(
   SQL: SqlJsConstructor,
   path: string
 ): Promise<SqlJsDatabase> {
-  let previousDigest: string | undefined
-  let lastFailure: unknown
+  let lastFailure: CorruptDatabaseError | undefined
+  let previousStamp: StatStamp | null | undefined
   let writerSeen = false
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
     if (attempt > 0)
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]))
     const before = stampOf(path)
     const bytes = readFileSync(path)
-    if (!sameStamp(before, stampOf(path))) writerSeen = true
-    const digest = digestOf(bytes)
+    const after = stampOf(path)
+    // Wording evidence only: the file changed during this read, or since the last one.
+    if (!sameStamp(before, after)) writerSeen = true
+    if (previousStamp !== undefined && !sameStamp(previousStamp, before)) writerSeen = true
+    previousStamp = after
     try {
       return openImage(SQL, bytes, path)
     } catch (error) {
       if (!isCorruptDatabaseError(error)) throw error
-      if (digest === previousDigest) throw error
-      if (previousDigest !== undefined) writerSeen = true
-      previousDigest = digest
       lastFailure = error
     }
   }

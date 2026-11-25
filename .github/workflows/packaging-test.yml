@@ -175,11 +175,20 @@ jobs:
           HOME=$(mktemp -d)
           export HOME
           # Empty local DB + offline is a normal, handled state (prints a hint,
-          # exits 0). The assertions: opening the WASM DB does not crash with a
-          # missing-module error; WASM really ran (its FORCE_WASM notice, a
-          # positive proof); and the search reached the database (the marker).
-          OUT=$(env -u SKILLSMITH_QUIET node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1) || true
+          # exits 0). The assertions: the CLI exits 0; opening the WASM DB does
+          # not crash with a missing-module error; WASM really ran (its
+          # FORCE_WASM notice, a positive proof); and the search reached the
+          # database (the marker). SMI-7260 (B3): the output and the exit status
+          # are captured separately, so a crash cannot pass as a string match.
+          set +e
+          OUT=$(env -u SKILLSMITH_QUIET node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1)
+          ST=$?
+          set -e
           echo "$OUT"
+          if [ "$ST" -ne 0 ]; then
+            echo "::error::forced WASM search exited $ST (expected 0)"
+            exit 1
+          fi
           if echo "$OUT" | grep -qiE "Cannot find module|MODULE_NOT_FOUND|Error: No SQLite driver"; then
             echo "::error::search 'test' failed to open the WASM DB (native/WASM fallback missing)"
             exit 1
@@ -235,17 +244,26 @@ jobs:
           NOTICE='Skillsmith is using the WASM driver'
           CAUSE='the native SQLite driver (better-sqlite3) did not load'
           MARKER='Skillsmith is offline and your local skill index is empty'
+          # SMI-7260 (B3): output into SEARCH_OUT, exit status into SEARCH_ST,
+          # captured separately. Measured: all three runs below (native, and
+          # the control on an existing database) exit 0 offline, so a nonzero
+          # status fails each of them before its strings are checked.
           run_search() {
-            env -u SKILLSMITH_QUIET SKILLSMITH_OFFLINE_MODE=true SKILLSMITH_USE_MOCK_EMBEDDINGS=true node "$CLI" search "test" 2>&1 || true
+            set +e
+            SEARCH_OUT=$(env -u SKILLSMITH_QUIET SKILLSMITH_OFFLINE_MODE=true SKILLSMITH_USE_MOCK_EMBEDDINGS=true node "$CLI" search "test" 2>&1)
+            SEARCH_ST=$?
+            set -e
           }
           resolve_driver_dir() {
             node -e 'const { createRequire } = require("module"); const path = require("path"); process.stdout.write(path.dirname(createRequire(path.resolve("node_modules/@skillsmith/cli/package.json")).resolve("better-sqlite3/package.json")))'
           }
 
           # Native run: no WASM notice, and the search reached the database.
-          NATIVE_OUT=$(run_search)
+          run_search
+          NATIVE_OUT=$SEARCH_OUT
           echo "--- native run ---"
           echo "$NATIVE_OUT"
+          if [ "$SEARCH_ST" -ne 0 ]; then echo "::error::native run exited $SEARCH_ST (expected 0)"; exit 1; fi
           case "$NATIVE_OUT" in
             *"$NOTICE"*) echo "::error::native run used the WASM driver"; exit 1 ;;
           esac
@@ -272,10 +290,12 @@ jobs:
             echo "::error::control cannot isolate the driver: better-sqlite3 still resolves at $STILL"
             exit 1
           fi
-          CONTROL_OUT=$(run_search)
+          run_search
+          CONTROL_OUT=$SEARCH_OUT
           restore_driver
           echo "--- control run (driver moved aside) ---"
           echo "$CONTROL_OUT"
+          if [ "$SEARCH_ST" -ne 0 ]; then echo "::error::control run exited $SEARCH_ST (expected 0)"; exit 1; fi
           case "$CONTROL_OUT" in
             *"$NOTICE"*) ;;
             *) echo "::error::control run did not fall back to WASM (notice missing)"; exit 1 ;;

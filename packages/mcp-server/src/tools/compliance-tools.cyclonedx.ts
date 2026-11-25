@@ -195,8 +195,9 @@ async function resolveDependencies(
       warnings.push(
         `backfillDependencies was requested but refused: the active database driver is ` +
           `'${driver ?? 'none'}', not 'better-sqlite3'. The WASM driver opens the database ` +
-          'read-only, so skill_dependencies cannot be written. Run the skill_rescan MCP tool directly, ' +
-          'or re-run this export from an environment where the native driver is available.'
+          'read-only, so skill_dependencies cannot be written. To fix it, rebuild the native ' +
+          'driver (`npm rebuild better-sqlite3`, or reinstall with install scripts enabled), ' +
+          'restart, and re-run this export.'
       )
     } else {
       // Reuse the EXACT SMI-5645 extraction+persistence pipeline (never a

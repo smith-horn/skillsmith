@@ -233,9 +233,11 @@ See [ADR-107: Async/Sync Context Separation](../adr/107-async-sync-context-separ
 
 **Root Cause**: The `better-sqlite3` native binary was compiled against the old Node ABI. After upgrading Node, the binary can't load.
 
-**Behavior since core 0.4.10**: The WASM fallback (`sql.js`) auto-activates. `isBetterSqlite3Available()` now instantiates an in-memory database to trigger the actual `dlopen`, catching ABI mismatches before the fallback decision. The MCP server logs: `[Skillsmith] Native SQLite unavailable, using WASM driver`.
+**Behavior since core 0.4.10**: The WASM fallback (`sql.js`) auto-activates. `isBetterSqlite3Available()` now instantiates an in-memory database to trigger the actual `dlopen`, catching ABI mismatches before the fallback decision.
 
-**To restore native performance**:
+**Since SMI-7260 that fallback is read-only.** The WASM driver opens an existing `skills.db` read-only and never writes the file, so syncs, installs and quarantine records are not saved until the native driver loads again. It prints one line naming the database, for example `[Skillsmith] Opened ~/.skillsmith/skills.db read-only: the native SQLite driver (better-sqlite3) did not load, so Skillsmith is using the WASM driver, which can read but not save. ...`.
+
+**To restore the native driver** (and with it, saving):
 
 ```bash
 npm rebuild better-sqlite3

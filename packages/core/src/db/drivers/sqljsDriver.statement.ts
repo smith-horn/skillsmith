@@ -9,6 +9,20 @@
 
 import type { Statement, RunResult } from '../database-interface.js'
 
+/**
+ * SMI-7260: whether `sql` may change the database. sql.js has no authorizer
+ * hook, and its update hook does not fire for DDL or pragmas, so this is
+ * classified from the text, conservatively: anything other than a single
+ * `SELECT` counts (a `WITH` query, a writable pragma and a multi-statement
+ * script included). A false positive only costs a spurious "not saved"
+ * warning on an unsealed handle; a false negative would hide lost writes.
+ */
+export function isMutatingSql(sql: string): boolean {
+  const text = sql.replace(/^(\s+|--[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)+/, '')
+  if (!/^select\b/i.test(text)) return true
+  return /;\s*\S/.test(text)
+}
+
 export interface SqlJsDatabase {
   run(sql: string): void
   prepare(sql: string): SqlJsStatement
@@ -44,11 +58,21 @@ export class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
   // Created once per adapter instance, reused on every run() call
   private changesStmt: SqlJsStatement
 
+  /** SMI-7260: whether a successful step of this statement may have written. */
+  private readonly mutating: boolean
+
+  /**
+   * @param onWrite - SMI-7260: called after a successful step of a statement
+   *   that may write (see {@link isMutatingSql}), so the adapter can tell an
+   *   unsealed handle that was written from one that was not.
+   */
   constructor(
     db: SqlJsDatabase,
     sql: string,
-    private readonly onError: (error: unknown) => never
+    private readonly onError: (error: unknown) => never,
+    private readonly onWrite: () => void = () => {}
   ) {
+    this.mutating = isMutatingSql(sql)
     this.stmt = db.prepare(sql)
     // Get column names from the statement
     this.columnNames = this.stmt.getColumnNames()
@@ -59,7 +83,9 @@ export class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
   /** `stmt.step()`, with a thrown error reset and routed through `onError`. */
   private step(): boolean {
     try {
-      return this.stmt.step()
+      const hasRow = this.stmt.step()
+      if (this.mutating) this.onWrite()
+      return hasRow
     } catch (error) {
       this.stmt.reset()
       return this.onError(error)

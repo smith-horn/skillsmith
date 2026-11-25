@@ -1,6 +1,12 @@
 /**
  * The WASM driver refuses a corrupt database and does not touch it (SMI-6961).
  *
+ * SMI-7260: the refusal is now always `DatabaseReadUnstableError`, never the
+ * corrupt verdict. sql.js cannot tell a damaged file from one a native process
+ * was writing while it read, so the destructive verdict (move the file aside)
+ * comes only from the native driver; each arm below has a native control on
+ * the same bytes that still gets `SKILLSMITH_DB_CORRUPT`.
+ *
  * This file is the test that would have caught the defect on day one, and it
  * did not exist: `grep -c -iE 'corrupt|backup|malformed'` over the two existing
  * sql.js driver test files returned **0** for both.
@@ -9,7 +15,8 @@
  * user's database aside and returned a fresh empty one, and its guard never
  * consulted `options.readonly`. So a read-only `skillsmith list` — a
  * *diagnostic* command — destroyed the file it was asked to report on. Worse,
- * `close()` skips `persist()` when read-only, so nothing was written back: the
+ * `close()` then skipped its save because the handle was read-only (since
+ * SMI-7260 this driver never saves a file at all), so nothing was written back: the
  * path was simply **gone**, and the next run found no database and reported
  * every skill "Up to date". The false currency claim SMI-6946 removed came
  * back one run later through the absent-database path.
@@ -39,11 +46,16 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSqlJsDatabase } from '../../src/db/drivers/sqljsDriver.js'
+import { createBetterSqlite3Database } from '../../src/db/drivers/betterSqlite3Driver.js'
 import {
   sqlJsCorruptionCode,
   quickCheckVerdict,
 } from '../../src/db/drivers/sqljsDriver.corruption.js'
-import { isCorruptDatabaseError, DB_CORRUPT_CODE } from '../../src/db/db-errors.js'
+import {
+  isCorruptDatabaseError,
+  DB_CORRUPT_CODE,
+  DB_READ_UNSTABLE_CODE,
+} from '../../src/db/db-errors.js'
 
 let dir: string
 
@@ -72,6 +84,18 @@ function snapshot(path: string) {
     bytes: readFileSync(path),
     mtimeMs: statSync(path).mtimeMs,
     entries: readdirSync(dir).sort(),
+  }
+}
+
+/** The error an open rejects with, or `undefined` when it opened (and is closed again). */
+async function openError(
+  open: () => Promise<{ close(): void }>
+): Promise<{ code?: unknown } | undefined> {
+  try {
+    ;(await open()).close()
+    return undefined
+  } catch (error) {
+    return error as { code?: unknown }
   }
 }
 
@@ -152,124 +176,99 @@ describe('quickCheckVerdict — the integrity report', () => {
   })
 })
 
-describe('createSqlJsDatabase — corrupt-file refusal (SMI-6961)', () => {
+describe('createSqlJsDatabase — corrupt-file refusal (SMI-6961, SMI-7260)', () => {
+  // The three damaged fixtures, by kind. Each is refused by sql.js as
+  // UNSTABLE (never corrupt, never move-aside advice) and left untouched; the
+  // native control below refuses the same bytes as CORRUPT.
+  const fixtures: Array<[string, () => Promise<Buffer>]> = [
+    [
+      'a non-database file',
+      async () => Buffer.from('this is definitely not a sqlite database file'),
+    ],
+    [
+      'a truncated database',
+      async () => {
+        const good = await seedBytes()
+        return good.subarray(0, Math.floor(good.length / 2))
+      },
+    ],
+    // PROBE PARITY (step 2b). A VALID header and intact schema page, with 0xff
+    // over every page from 4096 on — the exact SMI-6931 condition. It PASSES
+    // `SELECT name FROM sqlite_master LIMIT 1`, so only `quick_check` catches it.
+    [
+      'a header-valid, page-corrupt database',
+      async () => {
+        const damaged = Buffer.from(await seedBytes())
+        for (let o = 4096; o < damaged.length; o += 1) damaged[o] = 0xff
+        return damaged
+      },
+    ],
+  ]
+
   // `readonly: true` is the arm that matters: it is what `skillsmith list` and
   // `manage` pass, and it is the case the old guard never consulted.
-  it.each([
-    ['readonly', { readonly: true }],
-    ['read-write', undefined],
-  ])('refuses a non-database file and leaves it untouched (%s)', async (_label, options) => {
-    const dbPath = join(dir, 'skills.db')
-    writeFileSync(dbPath, Buffer.from('this is definitely not a sqlite database file'))
-    const before = snapshot(dbPath)
+  for (const [kind, build] of fixtures) {
+    it.each([
+      ['readonly', { readonly: true }],
+      ['read-write', undefined],
+    ])(
+      `refuses ${kind} as unstable, not corrupt, and leaves it untouched (%s)`,
+      async (_l, options) => {
+        const dbPath = join(dir, 'skills.db')
+        writeFileSync(dbPath, await build())
+        const before = snapshot(dbPath)
 
-    await expect(createSqlJsDatabase(dbPath, options)).rejects.toThrow(
-      /is corrupt and cannot be read/
+        const error = await openError(() => createSqlJsDatabase(dbPath, options))
+        expect(error?.code).toBe(DB_READ_UNSTABLE_CODE)
+        expect(isCorruptDatabaseError(error)).toBe(false)
+        expectUntouched(dbPath, before)
+      }
     )
-    expectUntouched(dbPath, before)
-  })
 
-  it.each([
-    ['readonly', { readonly: true }],
-    ['read-write', undefined],
-  ])('refuses a truncated database and leaves it untouched (%s)', async (_label, options) => {
-    const dbPath = join(dir, 'skills.db')
-    const good = await seedBytes()
-    writeFileSync(dbPath, good.subarray(0, Math.floor(good.length / 2)))
-    const before = snapshot(dbPath)
-
-    await expect(createSqlJsDatabase(dbPath, options)).rejects.toThrow(
-      /is corrupt and cannot be read/
-    )
-    expectUntouched(dbPath, before)
-  })
-
-  // PROBE PARITY (step 2b). This fixture has a VALID header and intact schema
-  // page, with 0xff over every page from 4096 on — the exact SMI-6931
-  // condition. Measured: it PASSES `SELECT name FROM sqlite_master LIMIT 1`
-  // and opens cleanly, so only `quick_check` catches it. Without the integrity
-  // report this driver would not refuse the file the native driver refuses,
-  // which ADR-175 § 1 forbids.
-  it.each([
-    ['readonly', { readonly: true }],
-    ['read-write', undefined],
-  ])(
-    'refuses a header-valid, page-corrupt database and leaves it untouched (%s)',
-    async (_label, options) => {
+    it(`the native driver still refuses ${kind} as corrupt (the paired control)`, async () => {
       const dbPath = join(dir, 'skills.db')
-      const good = await seedBytes()
-      const damaged = Buffer.from(good)
-      for (let o = 4096; o < damaged.length; o += 1) damaged[o] = 0xff
-      writeFileSync(dbPath, damaged)
+      writeFileSync(dbPath, await build())
       const before = snapshot(dbPath)
 
-      await expect(createSqlJsDatabase(dbPath, options)).rejects.toThrow(
-        /is corrupt and cannot be read/
+      const error = await openError(async () =>
+        createBetterSqlite3Database(dbPath, { readonly: true })
       )
+      expect(error?.code).toBe(DB_CORRUPT_CODE)
       expectUntouched(dbPath, before)
-    }
-  )
+    })
+  }
 
-  it('carries no sqliteCode on the reported-verdict path, unlike the thrown path', async () => {
-    // quick_check REPORTS; there is no thrown error to read a code from. This
-    // is why ADR-175 § 7 makes `sqliteCode` optional rather than deriving it
-    // from `cause` — a consumer relying on `cause` would find nothing here.
-    const dbPath = join(dir, 'skills.db')
-    const good = await seedBytes()
-    const damaged = Buffer.from(good)
-    for (let o = 4096; o < damaged.length; o += 1) damaged[o] = 0xff
-    writeFileSync(dbPath, damaged)
-
-    let error: unknown
-    try {
-      await createSqlJsDatabase(dbPath, { readonly: true })
-    } catch (e) {
-      error = e
-    }
-    expect(isCorruptDatabaseError(error)).toBe(true)
-    const refusal = error as { sqliteCode?: string; verdict: string }
-    expect(refusal.sqliteCode).toBeUndefined()
-    expect(refusal.verdict).toMatch(/btreeInitPage|malformed|page/i)
-  })
-
-  it('throws the same structured refusal the native driver throws', async () => {
+  it('never surfaces move-aside advice, in the message or through the cause chain', async () => {
+    // A CorruptDatabaseError's message tells the user to `mv` the database
+    // aside. A logger that prints a cause chain must not print that either.
     const dbPath = join(dir, 'skills.db')
     writeFileSync(dbPath, Buffer.from('this is definitely not a sqlite database file'))
 
-    let error: unknown
-    try {
-      await createSqlJsDatabase(dbPath, { readonly: true })
-    } catch (e) {
-      error = e
-    }
-
-    // Matched on `code`, exactly as a consumer must — never `instanceof`,
-    // which fails across duplicate copies of @skillsmith/core.
-    expect(isCorruptDatabaseError(error)).toBe(true)
-    const refusal = error as { code: string; path: string; sqliteCode?: string; verdict: string }
-    expect(refusal.code).toBe(DB_CORRUPT_CODE)
-    expect(refusal.path).toBe(dbPath)
-    expect(refusal.sqliteCode).toBe('SQLITE_NOTADB')
-    expect(refusal.verdict).toBe('file is not a database')
+    const error = (await openError(() => createSqlJsDatabase(dbPath, { readonly: true }))) as
+      | (Error & { code?: unknown })
+      | undefined
+    expect(error?.code).toBe(DB_READ_UNSTABLE_CODE)
+    const chain: unknown[] = []
+    for (let e: unknown = error; e instanceof Error; e = e.cause) chain.push(e)
+    // Presence: the integrity verdict is still carried, as a plain cause.
+    expect(chain).toHaveLength(2)
+    expect((chain[1] as Error).message).toBe('file is not a database')
+    // Absence: nothing in the chain is a corruption refusal or says to move the file.
+    expect(chain.some((e) => isCorruptDatabaseError(e))).toBe(false)
+    expect(chain.some((e) => /\bmv\b|\.corrupt-/.test((e as Error).message))).toBe(false)
   })
 
-  // THE SECOND-RUN ARM. This is the mutation a single-call byte-identity test
-  // passes: the old code deleted the file on call 1, so call 2 found no
-  // database at all and the CLI reported "Up to date". A fix that still deleted
-  // would satisfy every assertion above on its first call.
   it('refuses identically on a SECOND open — the file is still there to refuse', async () => {
+    // THE SECOND-RUN ARM: the old code deleted the file on call 1, so call 2
+    // found no database at all and the CLI reported "Up to date".
     const dbPath = join(dir, 'skills.db')
     writeFileSync(dbPath, Buffer.from('this is definitely not a sqlite database file'))
     const before = snapshot(dbPath)
 
-    await expect(createSqlJsDatabase(dbPath, { readonly: true })).rejects.toThrow(
-      /is corrupt and cannot be read/
-    )
-    // The load-bearing assertion: the file survived the first refusal, so the
-    // second open sees a corrupt database rather than an absent one.
-    await expect(createSqlJsDatabase(dbPath, { readonly: true })).rejects.toThrow(
-      /is corrupt and cannot be read/
-    )
+    const first = await openError(() => createSqlJsDatabase(dbPath, { readonly: true }))
+    const second = await openError(() => createSqlJsDatabase(dbPath, { readonly: true }))
+    expect(first?.code).toBe(DB_READ_UNSTABLE_CODE)
+    expect(second?.code).toBe(DB_READ_UNSTABLE_CODE)
     expectUntouched(dbPath, before)
   })
 
