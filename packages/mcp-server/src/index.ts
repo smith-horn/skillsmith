@@ -87,11 +87,7 @@ import { formatDbInitFailure } from './db-init-troubleshooting.js'
 // SMI-5479: flush-on-shutdown wiring lives in shutdown.js (own module — no
 // top-level side effects, so it stays independently unit-testable; this file
 // has `main().catch(...)` at module scope, which importing would trigger).
-import {
-  createShutdownTrigger,
-  startPeriodicFlush,
-  installGlobalCrashHandlers,
-} from './shutdown.js'
+import { createShutdownTrigger, installGlobalCrashHandlers } from './shutdown.js'
 import { quiesceBackgroundSync } from './index.shutdown-helpers.js'
 // SMI-5039: probe extracted from this file to @skillsmith/core/embeddings/probe.
 // The call site (before server.connect) is unchanged; only the implementation
@@ -297,7 +293,7 @@ export { maybeInstallMissingTier1Skills }
 
 // SMI-5479 (pass 2) / SMI-5649 (extended): the ONE shutdown-trigger
 // registration site — see shutdown.ts for the coordinator's ordered
-// sequence (quiesce -> close LLM failover -> close/persist db -> flush
+// sequence (quiesce -> close LLM failover -> close db -> flush
 // telemetry). `context.async.ts` and `context.ts` previously each registered
 // their own independent SIGTERM/SIGINT handlers whose fire-and-forget
 // `backgroundSync?.stop()` raced this trigger's db close with no ordering
@@ -346,9 +342,6 @@ async function main() {
     toolContext = await getToolContextAsync()
     // SMI-5615/SMI-5981: plain console.error of the resolved path (not raw env).
     console.error(buildDbInitializedLogMessage())
-    // SMI-5640: arm the periodic autosave timer now that toolContext exists.
-    // No-op unless the db is WASM + file-backed (see shutdown.ts).
-    startPeriodicFlush(() => toolContext?.db)
   } catch (error) {
     const errorDetail = error instanceof Error ? error.message : String(error)
     // SMI-5615: single '\n'-joined message reproduces the prior 8-line stderr

@@ -4,20 +4,29 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
-- **Fixed**: SMI-7260 -- the WASM (sql.js) SQLite driver no longer replaces a database another
-  process may hold or has changed. When `-wal`, `-shm` or `-journal` exists beside the file at
-  open, the handle is read-only: writes throw `DatabaseHeldElsewhereError` (code
-  `SKILLSMITH_DB_HELD_ELSEWHERE`, exported with `isDatabaseHeldElsewhereError`), `close()` does
-  not save, and `createDatabaseAsync` prints one line saying so. Immediately before renaming over
-  the database, a save also refuses if one of those files has appeared or the file is no longer the
-  one the handle last read or wrote (another process wrote it and closed); the handle is then
-  read-only for the rest of the session. On a read-only handle whose schema is current,
-  `initializeSchema` and `runMigrationsSafe` do nothing, so reads still work; behind the current
-  schema, `initializeSchema` refuses with the named error and `runMigrationsSafe` prints one line
-  saying the database was not upgraded because it is read-only, instead of "Migration N failed"
-  for each migration. The search cache is not written on a read-only handle. Previously a save
-  renamed a new file over the database, so a native process holding it lost its writes and a
-  later checkpoint could corrupt the file.
+- **Fixed**: SMI-7260 -- the WASM (sql.js) SQLite driver never writes a database file. It used to
+  save by renaming a new file over the database; when a native (better-sqlite3) process held that
+  database in WAL mode, the rename lost the native process's writes, and its next checkpoint could
+  corrupt the file. An existing file now opens read-only (`readonly === true`, `readOnlyReason`
+  set), and a write throws `DatabaseReadOnlyDriverError` (code `SKILLSMITH_DB_WASM_READ_ONLY`,
+  exported with `isDatabaseReadOnlyDriverError`). A missing file starts as an empty in-memory
+  database that its opener seals after building its schema (`initializeSchema` and
+  `openDatabaseAsync` do), so a first run works with empty local results and nothing is written;
+  an unsealed handle that was written warns at `close()` that its changes were not saved.
+  `{ readonly: true }` is now really read-only (writes used to succeed in memory and vanish).
+  `:memory:` is unchanged. `createDatabaseAsync` prints one line per database saying it was opened
+  read-only and how to get the native driver back (naming `SKILLSMITH_FORCE_WASM` when that is
+  why), replacing "[Skillsmith] Using WASM SQLite driver ...". On a read-only handle at the
+  current schema, `initializeSchema` and `runMigrationsSafe` do nothing; behind it,
+  `initializeSchema` throws the named error and `runMigrationsSafe` warns once. The search cache
+  and the default `sync_config` row are not written, and `QuarantineRepository` and
+  `ApprovalRepository` (new `available` flag) find nothing instead of failing when their lazily
+  created table is absent. Before refusing a database as corrupt, the driver re-reads it (up to 3
+  more times); the corrupt verdict, with its advice to move the file aside, needs two identical
+  failing reads, and a file that keeps changing gets `DatabaseReadUnstableError` (code
+  `SKILLSMITH_DB_READ_UNSTABLE`), which says to try again. Residual risk: a WASM session reads a
+  snapshot taken at open, so it misses changes still in another process's WAL; WASM-only users
+  have no local persistence.
 
 - **Changed**: SMI-6531 -- A1 step 8-i-a-3a: doctor classifies an install's set-aside copy (FI4:
   the skill path empty, nothing left in the op dir) whenever the manifest entry is not the

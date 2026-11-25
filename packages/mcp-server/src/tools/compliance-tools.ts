@@ -43,7 +43,7 @@ export const complianceReportInputSchema = z.object({
       'cyclonedx format only. Opt-in: when installed skills have no skill_dependencies ' +
         'rows yet, run inline dependency extraction before export instead of emitting a ' +
         'pending-rescan placeholder. Requires the better-sqlite3 driver — refused (not a ' +
-        'silent no-op) on sql.js/WASM, which has no cross-process write coordination. ' +
+        'silent no-op) on sql.js/WASM, which opens the database read-only. ' +
         'Default: false.'
     ),
 })

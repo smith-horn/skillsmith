@@ -16,6 +16,7 @@
 
 import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 // IMPORTANT: Keep this type-only import here (prevents circular runtime dependency)
 import type { SimilarityResult } from './index.js'
 
@@ -395,6 +396,8 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
   private async initDatabaseAsync(dbPath: string): Promise<void> {
     this.db = await createDatabaseAsync(dbPath)
     this.initEmbeddingsTable()
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(this.db!)
   }
 
   private initEmbeddingsTable(): void {

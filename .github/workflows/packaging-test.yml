@@ -24,6 +24,14 @@ jobs:
     name: Fresh Install Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # SMI-7260 (L4): the shell, stated rather than left to the runner default.
+    # `bash -e {0}` IS that default; it is spelled out so nobody "fixes" it to a
+    # bare `shell: bash`, which GitHub runs with `-o pipefail` as well. Several
+    # steps below rely on non-pipefail semantics: `npm ls X | grep -q X` must
+    # find X even when `npm ls` exits non-zero for an unrelated tree problem.
+    defaults:
+      run:
+        shell: bash -e {0}
 
     steps:
       - name: Checkout
@@ -56,9 +64,11 @@ jobs:
           '
 
       - name: Install dependencies
+        id: npm_ci
         run: npm ci --ignore-scripts
 
       - name: Build CLI bundle (with inlined workspace deps)
+        id: build
         # SMI-5427: the esbuild bundle inlines @skillsmith/core + @skillsmith/mcp-server,
         # whose package exports resolve to dist/. After `npm ci` those packages are
         # unbuilt, so build the CLI WITH its workspace deps in dependency order
@@ -109,6 +119,7 @@ jobs:
           echo "No prebuild-install / boolean / keytar deprecation warnings found"
 
       - name: Verify binary is the bundle
+        id: verify_binary
         run: |
           CLI_BIN=/tmp/fresh-install-test/wrapper/node_modules/.bin/skillsmith
           if [ ! -f "$CLI_BIN" ]; then
@@ -159,15 +170,28 @@ jobs:
           # --help smokes above never open a database.
           SKILLSMITH_FORCE_WASM: 'true'
         run: |
+          # SMI-7260 (L3): a HOME of this step's own, so it is a true first run
+          # and cannot see a database another step created.
+          HOME=$(mktemp -d)
+          export HOME
           # Empty local DB + offline is a normal, handled state (prints a hint,
-          # exits 0). The assertion is that opening the WASM DB does not crash with
-          # a missing-module error.
-          OUT=$(node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1) || true
+          # exits 0). The assertions: opening the WASM DB does not crash with a
+          # missing-module error; WASM really ran (its FORCE_WASM notice, a
+          # positive proof); and the search reached the database (the marker).
+          OUT=$(env -u SKILLSMITH_QUIET node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1) || true
           echo "$OUT"
           if echo "$OUT" | grep -qiE "Cannot find module|MODULE_NOT_FOUND|Error: No SQLite driver"; then
             echo "::error::search 'test' failed to open the WASM DB (native/WASM fallback missing)"
             exit 1
           fi
+          case "$OUT" in
+            *'SKILLSMITH_FORCE_WASM is set, so Skillsmith is using the WASM driver'*) ;;
+            *) echo "::error::forced run did not print the FORCE_WASM read-only notice (WASM did not run)"; exit 1 ;;
+          esac
+          case "$OUT" in
+            *'Skillsmith is offline and your local skill index is empty'*) ;;
+            *) echo "::error::forced run did not reach the database (completion marker missing)"; exit 1 ;;
+          esac
           echo "WASM DB-open fallback OK"
 
       - name: Native SQLite driver loads (SMI-7260)
@@ -178,6 +202,10 @@ jobs:
         # itself uses it, with a control run where the driver is moved aside.
         run: |
           set -u
+          # SMI-7260 (L3): a HOME of this step's own. The native run creates the
+          # database here; the control run then opens that existing file.
+          HOME=$(mktemp -d)
+          export HOME
           # (a) Load proof, resolved the way the bundle resolves it: createRequire
           # anchored at the CLI's own package.json.
           node -e '
@@ -202,7 +230,10 @@ jobs:
           # SKILLSMITH_QUIET, which would hide the notice; 2>&1 captures it,
           # because the notice goes out through console.warn.
           CLI=./node_modules/@skillsmith/cli/dist/cli.js
-          NOTICE='[Skillsmith] Using WASM SQLite driver'
+          # SMI-7260: the WASM driver's open notice. Every variant contains NOTICE;
+          # CAUSE is the variant for a native driver that did not load.
+          NOTICE='Skillsmith is using the WASM driver'
+          CAUSE='the native SQLite driver (better-sqlite3) did not load'
           MARKER='Skillsmith is offline and your local skill index is empty'
           run_search() {
             env -u SKILLSMITH_QUIET SKILLSMITH_OFFLINE_MODE=true SKILLSMITH_USE_MOCK_EMBEDDINGS=true node "$CLI" search "test" 2>&1 || true
@@ -248,6 +279,10 @@ jobs:
           case "$CONTROL_OUT" in
             *"$NOTICE"*) ;;
             *) echo "::error::control run did not fall back to WASM (notice missing)"; exit 1 ;;
+          esac
+          case "$CONTROL_OUT" in
+            *"$CAUSE"*) ;;
+            *) echo "::error::control run's WASM notice does not say the native driver failed to load"; exit 1 ;;
           esac
           case "$CONTROL_OUT" in
             *"$MARKER"*) ;;
@@ -305,11 +340,14 @@ jobs:
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           # SMI-7260: each row shows its step's real outcome, not a fixed "checked".
           echo "| Runtime meets the CLI engines floor | ${{ steps.engines.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm ci (scripts ignored) | ${{ steps.npm_ci.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| turbo build of the CLI and its workspace deps | ${{ steps.build.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| esbuild bundle produced | ${{ steps.bundle.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| CLI tarball (no core/mcp-server) | ${{ steps.pack.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Nested install, no prebuild-install/boolean/keytar deprecation warnings | ${{ steps.install.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Installed binary resolves to the bundle | ${{ steps.verify_binary.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| CLI help commands | ${{ steps.cli_commands.outcome }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| WASM fallback (forced) opens the DB | ${{ steps.wasm_fallback.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| WASM fallback (forced) opens the DB read-only, with its notice | ${{ steps.wasm_fallback.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Native driver loads, and the CLI uses it (with control) | ${{ steps.native_driver.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| --version no-import guard | ${{ steps.version_guard.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "| prebuild-install, boolean, keytar absent from the tree | ${{ steps.severance.outcome }} |" >> $GITHUB_STEP_SUMMARY

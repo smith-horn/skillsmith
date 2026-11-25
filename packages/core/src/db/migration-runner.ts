@@ -136,15 +136,8 @@ export const MIGRATIONS: Migration[] = [
 /** The newest schema version any migration produces. */
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0)
 
-/**
- * SMI-7260: a handle that refuses writes but whose schema is already current,
- * so schema initialization and migrations have nothing to do and may be
- * skipped. On such a handle they would fail at their first write — including
- * the no-op `INSERT OR IGNORE` stamps — and turn every read into a refusal.
- */
-export function isReadOnlyWithCurrentSchema(db: Database): boolean {
-  return readOnlyReasonOf(db) !== undefined && getSchemaVersion(db) >= LATEST_SCHEMA_VERSION
-}
+/** SMI-7260: databases whose "not upgraded" warning this process has printed. */
+const schemaBehindWarned = new Set<string>()
 
 /**
  * Get the current schema version from the database
@@ -229,14 +222,17 @@ export function runMigrationsSafe(db: Database): number {
   const currentVersion = getSchemaVersion(db)
   let migrationsRun = 0
 
-  // SMI-7260: a read-only handle cannot migrate. Say that once, plainly,
-  // instead of letting every migration fail and warn "Migration N failed".
+  // SMI-7260: a read-only WASM handle cannot migrate. Say that once per
+  // database, plainly, instead of letting every migration fail and warn
+  // "Migration N failed". The caller (the MCP server) continues on the old schema.
   if (readOnlyReasonOf(db) !== undefined) {
-    if (currentVersion < LATEST_SCHEMA_VERSION) {
+    if (currentVersion < LATEST_SCHEMA_VERSION && !schemaBehindWarned.has(db.name)) {
+      schemaBehindWarned.add(db.name)
       console.warn(
-        `[Skillsmith] The database schema is at version ${currentVersion}; this Skillsmith ` +
-          `expects ${LATEST_SCHEMA_VERSION}. It was not upgraded because the database is ` +
-          'read-only for this session, so features that need the newer schema may fail.'
+        `[Skillsmith] ${db.name} is at schema version ${currentVersion}; this Skillsmith ` +
+          `expects ${LATEST_SCHEMA_VERSION}. It was not upgraded because the WASM SQLite ` +
+          'driver opened it read-only, so features that need the newer schema may fail. ' +
+          'Run any Skillsmith command with the native driver (better-sqlite3) to upgrade it.'
       )
     }
     return 0

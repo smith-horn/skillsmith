@@ -28,8 +28,6 @@ import { createDatabaseAsync, initializeSchema, type DatabaseType } from '@skill
  *   (e.g. version lookups). A read-only handle CANNOT run schema DDL, so
  *   `initializeSchema` is skipped — the caller must tolerate an absent schema
  *   (queries on a missing table throw, which read consumers already catch).
- *   This also prevents the WASM `SqlJsDatabaseAdapter` from persisting (writing)
- *   on `close()`, which would throw `EROFS` on an unwritable/absent db path.
  * @returns A connected database. Caller owns `db.close()`.
  */
 export async function openCliDatabase(
@@ -37,7 +35,7 @@ export async function openCliDatabase(
   options?: { readonly?: boolean }
 ): Promise<DatabaseType> {
   // SMI-5139: read-only consumers open read-only and skip schema init (DDL is
-  // impossible on a read-only handle; sql.js close() then skips persist()).
+  // impossible on a read-only handle).
   // The open itself may throw (native better-sqlite3 read-only-opens of an
   // absent file throw) — that is the caller's signal to degrade gracefully.
   if (options?.readonly) {
@@ -48,16 +46,19 @@ export async function openCliDatabase(
   // database in a directory that does not exist — "Cannot open database
   // because the directory does not exist" — where the WASM driver opened it in
   // memory. On a first run `~/.skillsmith` may not exist yet, so create the
-  // parent directory, as the MCP server already does for the same path.
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
+  // parent directory, as the MCP server already does for the same path. Owner
+  // only (0o700): it holds the user's skill index; `recursive` leaves an
+  // existing directory's mode alone.
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
 
   let db: DatabaseType | undefined
   try {
     db = await createDatabaseAsync(path)
-    // SMI-7260: on a WASM handle another process may hold (read-only for the
-    // session), `initializeSchema` is a no-op when the schema is current, so
-    // read commands still work and writes fail with DatabaseHeldElsewhereError.
-    // When the schema is NOT current it throws that error itself.
+    // SMI-7260: on the WASM driver an existing database opens read-only:
+    // `initializeSchema` is a no-op when its schema is current, so read
+    // commands work and writes fail with DatabaseReadOnlyDriverError; when the
+    // schema is older it throws that error itself, since this command could
+    // not record anything. A missing database is built in memory and sealed.
     initializeSchema(db)
     return db
   } catch (err) {

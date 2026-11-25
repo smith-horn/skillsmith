@@ -94,11 +94,11 @@ export function runStartupDiagnostics(version = 'unknown'): void {
 ║  Your Node.js version (${process.version.padEnd(10)}) doesn't match the       ║
 ║  pre-compiled native modules.                                ║
 ║                                                              ║
-║  To fix, run one of:                                         ║
+║  To fix, rebuild the native SQLite driver:                   ║
 ║                                                              ║
-║    SKILLSMITH_FORCE_WASM=true to use WASM SQLite fallback    ║
+║    npm rebuild better-sqlite3                                ║
 ║                                                              ║
-║  Or reinstall completely:                                    ║
+║  Or reinstall completely, with install scripts enabled:      ║
 ║                                                              ║
 ║    npm uninstall @skillsmith/mcp-server                      ║
 ║    npm install @skillsmith/mcp-server                        ║

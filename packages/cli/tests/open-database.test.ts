@@ -9,7 +9,15 @@
  * not throw on a brand-new database.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -105,18 +113,22 @@ describe('SMI-4917 Bug 1: openCliDatabase', () => {
  * the WASM driver never noticed, because it opens in memory.
  */
 describe('SMI-7260: openCliDatabase creates a missing parent directory', () => {
-  let dir: string
+  let dir: string | undefined
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
+    // Guarded: a test that failed before creating `dir` must not throw here and
+    // hide its own failure.
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+    dir = undefined
   })
 
   it('opens a database whose parent directory does not exist yet', async () => {
     // Precondition: this is the native driver's behaviour, so run on it.
     expect(getBestDriver()).toBe('better-sqlite3')
-    dir = mkdtempSync(join(tmpdir(), 'cli-open-missing-dir-'))
-    const path = join(dir, 'not-yet', 'skills.db')
-    expect(existsSync(join(dir, 'not-yet'))).toBe(false)
+    const root = mkdtempSync(join(tmpdir(), 'cli-open-missing-dir-'))
+    dir = root
+    const path = join(root, 'not-yet', 'skills.db')
+    expect(existsSync(join(root, 'not-yet'))).toBe(false)
 
     const db = await openCliDatabase(path)
     try {
@@ -125,6 +137,8 @@ describe('SMI-7260: openCliDatabase creates a missing parent directory', () => {
       closeDatabase(db)
     }
     expect(existsSync(path)).toBe(true)
+    // L1: the directory it created holds the user's skill index; owner only.
+    expect(statSync(join(root, 'not-yet')).mode & 0o777).toBe(0o700)
   })
 })
 

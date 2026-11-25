@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Database } from '../../src/db/database-interface.js'
 import {
   createDatabaseSync,
@@ -281,58 +284,58 @@ describe('Database Abstraction Layer', () => {
     })
   })
 
-  describe('WASM fallback notice quiet-mode (SMI-5897 Wave 4 fix)', () => {
-    // The WASM-fallback console.warn only fires on the "native unavailable,
-    // fall back to sql.js" branch — reached only when isBetterSqlite3Available()
-    // returns false, which SKILLSMITH_FORCE_WASM (used above) does NOT exercise
-    // (that env var takes an earlier, separate branch). Mock the driver module
-    // to force the fallback branch, and use resetModules() + a dynamic import
-    // to get a fresh `wasmFallbackNoticeEmitted` module-level guard per test —
-    // otherwise only the FIRST test in the whole run to hit this branch would
-    // ever see the warning (print-once-per-process, SMI-4807).
+  describe('WASM notice (SMI-5897 quiet mode; SMI-7260 text)', () => {
+    // The fallback branch is reached only when isBetterSqlite3Available()
+    // returns false, which SKILLSMITH_FORCE_WASM does NOT exercise (that env var
+    // takes an earlier branch). Mock the driver module to force the fallback,
+    // and resetModules() + a dynamic import give each test a fresh
+    // once-per-database guard. SMI-7260: the notice is about a file-backed
+    // database, so these open a (missing) file path; `:memory:` has none.
+    let dir: string | undefined
+
     afterEach(() => {
       vi.doUnmock('../../src/db/drivers/betterSqlite3Driver.js')
       vi.resetModules()
       delete process.env.SKILLSMITH_QUIET
+      if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+      dir = undefined
     })
 
-    it('suppresses the WASM fallback console.warn when SKILLSMITH_QUIET=1', async () => {
+    async function openOnFallback(quiet: boolean) {
       vi.doMock('../../src/db/drivers/betterSqlite3Driver.js', async (importOriginal) => {
         const actual =
           await importOriginal<typeof import('../../src/db/drivers/betterSqlite3Driver.js')>()
         return { ...actual, isBetterSqlite3Available: () => false }
       })
-      process.env.SKILLSMITH_QUIET = '1'
+      if (quiet) process.env.SKILLSMITH_QUIET = '1'
+      else delete process.env.SKILLSMITH_QUIET
       vi.resetModules()
-
+      dir = mkdtempSync(join(tmpdir(), 'smi7260-notice-'))
+      const path = join(dir, 'skills.db')
       const { createDatabaseAsync: freshCreateDatabaseAsync } =
         await import('../../src/db/createDatabase.js')
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-      const db = await freshCreateDatabaseAsync(':memory:')
+      try {
+        const first = await freshCreateDatabaseAsync(path)
+        const second = await freshCreateDatabaseAsync(path)
+        first.close()
+        second.close()
+        return { path, calls: warnSpy.mock.calls.map((c) => String(c[0])) }
+      } finally {
+        warnSpy.mockRestore()
+      }
+    }
 
-      expect(warnSpy).not.toHaveBeenCalled()
-      db.close()
-      warnSpy.mockRestore()
+    it('suppresses the WASM notice when SKILLSMITH_QUIET=1', async () => {
+      const { calls } = await openOnFallback(true)
+      expect(calls).toEqual([])
     })
 
-    it('still warns (unsuppressed) when SKILLSMITH_QUIET is unset', async () => {
-      vi.doMock('../../src/db/drivers/betterSqlite3Driver.js', async (importOriginal) => {
-        const actual =
-          await importOriginal<typeof import('../../src/db/drivers/betterSqlite3Driver.js')>()
-        return { ...actual, isBetterSqlite3Available: () => false }
-      })
-      delete process.env.SKILLSMITH_QUIET
-      vi.resetModules()
-
-      const { createDatabaseAsync: freshCreateDatabaseAsync } =
-        await import('../../src/db/createDatabase.js')
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-      const db = await freshCreateDatabaseAsync(':memory:')
-
-      expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy.mock.calls[0][0]).toContain('Using WASM SQLite driver')
-      db.close()
-      warnSpy.mockRestore()
+    it('prints one notice per database, naming it, when SKILLSMITH_QUIET is unset', async () => {
+      const { path, calls } = await openOnFallback(false)
+      // Two opens of the same database, one line, and the line names it.
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toContain(path)
     })
   })
 

@@ -105,9 +105,9 @@ export class CacheRepository {
   /**
    * Set a cached value with optional TTL in seconds.
    *
-   * SMI-7260: a no-op on a handle that refuses writes (another process may hold
-   * the database). The cache only speeds up repeat reads, so skipping it keeps
-   * a read such as a local search working instead of failing on its cache write.
+   * SMI-7260: a no-op on a read-only (WASM) handle, which refuses writes. The
+   * cache only speeds up repeat reads, so skipping it keeps a read such as a
+   * local search working instead of failing on its cache write.
    */
   set<T>(key: string, value: T, ttlSeconds?: number): void {
     if (readOnlyReasonOf(this.db) !== undefined) return

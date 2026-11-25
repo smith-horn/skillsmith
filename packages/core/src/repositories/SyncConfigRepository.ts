@@ -107,9 +107,9 @@ export class SyncConfigRepository {
       `)
     }
 
-    // Ensure default config exists. SMI-7260: not on a handle that refuses
-    // writes (another process may hold the database) — the seed is a no-op on
-    // any database that has synced, and getConfig() already handles its absence.
+    // Ensure default config exists. SMI-7260: not on a read-only (WASM) handle,
+    // which refuses writes — the seed is a no-op on any database that has
+    // synced, and getConfig() already handles its absence.
     if (readOnlyReasonOf(this.db) !== undefined) return
     this.db.exec("INSERT OR IGNORE INTO sync_config (id) VALUES ('default')")
   }

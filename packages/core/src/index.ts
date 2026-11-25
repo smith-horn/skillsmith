@@ -21,8 +21,8 @@ export * from './exports/repositories.js'
 // SMI-2721 (L1): Export createDatabaseAsync for CLI + enterprise async migration
 export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 // SMI-3140 Wave 1: driver-type detection, needed to hard-gate the CycloneDX
-// export's opt-in inline dependency backfill to better-sqlite3 only (sql.js/
-// WASM has no cross-process write coordination — see compliance-tools.cyclonedx.ts).
+// export's opt-in inline dependency backfill to better-sqlite3 only (a
+// file-backed sql.js/WASM database is read-only, SMI-7260 — see compliance-tools.cyclonedx.ts).
 export { getBestDriver, type DriverType } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
 // SMI-4484's `isCorruptionError` and `backupCorruptDbFile` were REMOVED here
@@ -48,11 +48,17 @@ export {
   isCorruptDatabaseError,
   DB_CORRUPT_CODE,
   type RemedyKind,
-  // SMI-7260: the WASM driver refused to write a database another process may hold.
-  DatabaseHeldElsewhereError,
-  isDatabaseHeldElsewhereError,
-  DB_HELD_ELSEWHERE_CODE,
+  // SMI-7260: the WASM driver opens a file-backed database read-only and
+  // refused a write; or its reads of the file never settled.
+  DatabaseReadOnlyDriverError,
+  isDatabaseReadOnlyDriverError,
+  DB_WASM_READ_ONLY_CODE,
+  DatabaseReadUnstableError,
+  isDatabaseReadUnstableError,
+  DB_READ_UNSTABLE_CODE,
 } from './db/db-errors.js'
+// SMI-7260: why a (WASM) handle refuses writes, or undefined when it may write.
+export { readOnlyReasonOf } from './db/read-only-reason.js'
 export {
   classifyProbeFailure,
   isCorruptionCode,

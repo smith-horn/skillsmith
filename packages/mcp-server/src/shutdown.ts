@@ -26,10 +26,11 @@
  * ordering guarantee — an in-flight sync write could hit a closed db. Both
  * independent registrations are now deleted; `index.ts` is the single
  * registration site, and `runShutdownSequence` below owns the ordered
- * sequence: quiesce background work -> close LLM failover -> close/persist db
- * -> flush telemetry. A periodic autosave timer (SMI-5640) also lives here,
- * bounding data loss on an *ungraceful* kill (SIGKILL/crash/power-loss) that
- * no shutdown hook can ever catch.
+ * sequence: quiesce background work -> close LLM failover -> close db
+ * -> flush telemetry. SMI-7260 removed the SMI-5640 periodic autosave timer
+ * that also lived here: the WASM driver no longer writes a database file, and
+ * the native driver writes through on every statement, so there is nothing to
+ * save periodically.
  *
  * See docs/internal/implementation/mcp-shutdown-followup-hardening-wave-a-design.md
  * for the full design rationale.
@@ -50,15 +51,6 @@ export const TELEMETRY_SHUTDOWN_FLUSH_TIMEOUT_MS = 2000
  */
 export const SHUTDOWN_QUIESCE_TIMEOUT_MS = 2000
 
-/**
- * Default periodic autosave cadence for the WASM driver (SMI-5640): 5
- * minutes. Overridable via `SKILLSMITH_AUTOSAVE_INTERVAL_MS` (primarily so
- * tests don't wait 5 real minutes); disable entirely via
- * `SKILLSMITH_AUTOSAVE_DISABLE=1`. See
- * docs/internal/process/guards-and-opt-outs.md.
- */
-const DEFAULT_AUTOSAVE_INTERVAL_MS = 300_000
-
 const logger = createLogger('mcp')
 
 // ── coordinator-owned module state ──────────────────────────────────────────
@@ -67,8 +59,6 @@ let shuttingDown = false
  * sequence rather than racing a second, independent one. Load-bearing, not
  * cosmetic — see the design doc §1.3 Subtlety A. */
 let shutdownPromise: Promise<void> | null = null
-/** Periodic autosave timer handle (SMI-5640). */
-let flushTimer: ReturnType<typeof setInterval> | null = null
 
 /**
  * Late-bound cleanup steps handed to the ONE shutdown coordinator by
@@ -135,24 +125,23 @@ export async function flushTelemetryOnShutdown(
 export function _resetShutdownGuardForTests(): void {
   shuttingDown = false
   shutdownPromise = null
-  readOnlyAutosaveNoticeLogged = false
-  stopPeriodicFlush()
 }
 
 /**
- * Fail-soft, synchronous close of the tool-context database on shutdown.
+ * Fail-soft, synchronous close of the tool-context database on shutdown
+ * (SMI-5639): releases the handle, and on the native driver lets SQLite
+ * checkpoint and remove its `-wal`/`-shm` cleanly.
  *
- * On the WASM (`sql.js`) driver, `close()` is the only thing that ever
- * persists the in-memory database to disk (`sqljsDriver.ts`'s `close()` →
- * `persist()` → `writeFileSync`) — see SMI-5639. Before this, nothing in the
- * shutdown path ever called `close()`, so every write made during a session
- * was silently discarded on normal exit.
+ * SMI-7260: closing no longer saves anything on the WASM (`sql.js`) driver. It
+ * used to (`close()` -> `persist()`), which is why this was added; that driver
+ * now never writes a database file, because its save renamed a new file over
+ * one a native process might hold. The native driver has always written
+ * through on every statement.
  *
  * Never throws — a `getDb()` that itself throws, or a `close()` that
  * throws, is caught and logged via `logger.error` (NOT `.debug`/`.info`,
- * which are disk-only per SMI-5615 — a failed persist is a genuine
- * data-loss event and must be visible on stderr, not silently swallowed the
- * same way the original bug was invisible).
+ * which are disk-only per SMI-5615 — a failed close must be visible on
+ * stderr, not silently swallowed).
  *
  * Idempotent by construction: `db.open` reflects the driver's real closed
  * state (both `SqlJsDatabaseAdapter` and `BetterSqlite3Database` expose a
@@ -170,10 +159,7 @@ export function closeDbOnShutdown(getDb?: () => DatabaseType | undefined): void 
       db.close()
     }
   } catch (error) {
-    logger.error(
-      '[skillsmith] Failed to close database on shutdown — recent writes may not be persisted',
-      { err: error }
-    )
+    logger.error('[skillsmith] Failed to close database on shutdown', { err: error })
   }
 }
 
@@ -213,22 +199,20 @@ function safeCloseLlmFailover(closeLlmFailover?: () => void): void {
  * the SAME promise rather than racing a second, independent sequence — this
  * is load-bearing (design doc §1.3 Subtlety A), not cosmetic: without it, a
  * second trigger (e.g. `onclose` firing while a `SIGTERM`-triggered sequence
- * is still parked in quiesce) could exit the process mid-persist, re-losing
- * exactly the data this wave protects.
+ * is still parked in quiesce) could exit the process before the db is closed
+ * or the telemetry flushed.
  *
- * Ordered sequence: stop the autosave timer -> quiesce background work
- * (abort + await in-flight sync, bounded fail-soft) -> close the LLM
- * failover chain -> close/persist the db (idempotent via `db.open`) -> flush
- * telemetry (bounded fail-soft).
+ * Ordered sequence: quiesce background work (abort + await in-flight sync,
+ * bounded fail-soft) -> close the LLM failover chain -> close the db
+ * (idempotent via `db.open`) -> flush telemetry (bounded fail-soft).
  */
 export function runShutdownSequence(hooks: ShutdownHooks): Promise<void> {
   if (shutdownPromise) return shutdownPromise
   shutdownPromise = (async () => {
     shuttingDown = true
-    stopPeriodicFlush() // 0. stop autosave before we begin tearing down
     await runQuiesce(hooks.quiesce) // 1. abort + await in-flight sync (bounded, fail-soft)
     safeCloseLlmFailover(hooks.closeLlmFailover) // 2. close LLM failover
-    closeDbOnShutdown(hooks.getDb) // 3. close/persist db (idempotent via db.open)
+    closeDbOnShutdown(hooks.getDb) // 3. close db (idempotent via db.open)
     await doFlushTelemetry() // 4. flush PostHog (bounded, fail-soft)
   })()
   return shutdownPromise
@@ -251,120 +235,6 @@ export function runShutdownSequence(hooks: ShutdownHooks): Promise<void> {
 export function createShutdownTrigger(onDone: () => void, hooks: ShutdownHooks = {}): () => void {
   return () => {
     void runShutdownSequence(hooks).finally(onDone)
-  }
-}
-
-// ── SMI-5640: periodic autosave (WASM driver only) ──────────────────────────
-
-/** Structural shape of the WASM driver's explicit persist method. Not on the
- * shared `Database`/`DatabaseType` interface — `SqlJsDatabaseAdapter` alone
- * exposes it (`sqljsDriver.ts`). Kept localized here (a structural guard)
- * rather than widening the shared interface, since the native
- * (better-sqlite3) driver has no meaningful equivalent — it writes through
- * to disk on every statement and needs no timer. */
-type Persistable = { persist: () => void; readonly readOnlyReason?: string }
-
-/**
- * SMI-7260: the WASM driver makes a handle read-only when another process may
- * hold, or has changed, the database file. Autosave then has nothing it may
- * write; this guards the one line saying so from repeating every interval.
- */
-let readOnlyAutosaveNoticeLogged = false
-
-function logReadOnlyAutosaveOnce(reason: string): void {
-  if (readOnlyAutosaveNoticeLogged) return
-  readOnlyAutosaveNoticeLogged = true
-  logger.warn(`${reason} Autosave is off for this session; nothing will be written to it.`)
-}
-
-function isPersistable(db: unknown): db is Persistable {
-  return !!db && typeof (db as Partial<Persistable>).persist === 'function'
-}
-
-/**
- * Fail-soft periodic persist for the WASM driver (SMI-5640): calls the
- * driver's own `persist()` (export + `writeFileSync`, without tearing down
- * the WASM instance — see the design doc §3.1 for why this is preferred over
- * `close()`+reopen). No-op on the native (better-sqlite3) driver — it has no
- * `persist` method and needs none — and on a closed or in-memory db.
- */
-export function persistDbIfSupported(getDb?: () => DatabaseType | undefined): void {
-  let db: DatabaseType | undefined
-  try {
-    db = getDb?.()
-    if (db && db.open && !db.memory && isPersistable(db)) {
-      // SMI-7260: a read-only handle refuses every persist by design; calling
-      // it would log a false "recent writes may not survive" each interval.
-      if (db.readOnlyReason !== undefined) {
-        logReadOnlyAutosaveOnce(db.readOnlyReason)
-        return
-      }
-      db.persist()
-    }
-  } catch (error) {
-    // SMI-7260: this persist found the file held or changed and refused; the
-    // handle is now read-only. That is a deliberate refusal, not a failure.
-    const reason = isPersistable(db) ? db.readOnlyReason : undefined
-    if (reason !== undefined) {
-      readOnlyAutosaveNoticeLogged = true
-      logger.warn(
-        `${reason} Autosave did not write it, because that would replace the other ` +
-          "process's changes; changes this session made since its last save were not " +
-          'written. Autosave is off for this session.',
-        { err: error }
-      )
-      return
-    }
-    logger.error(
-      '[skillsmith] Periodic autosave persist failed — recent writes may not survive an ungraceful kill',
-      { err: error }
-    )
-  }
-}
-
-/**
- * Start the periodic autosave timer (SMI-5640): defense-in-depth for an
- * *ungraceful* kill (SIGKILL, crash, power loss) that no shutdown hook can
- * ever catch. Only arms the timer for a WASM + file-backed db — no pointless
- * wakeups on the native path or in-memory tests. `unref()`'d so it can never
- * keep the event loop alive or block process exit.
- *
- * Cadence: `SKILLSMITH_AUTOSAVE_INTERVAL_MS` env override, else
- * {@link DEFAULT_AUTOSAVE_INTERVAL_MS} (5 minutes — see design doc §3.3 for
- * the cost/benefit rationale). Disable entirely via
- * `SKILLSMITH_AUTOSAVE_DISABLE=1`.
- *
- * The flush callback no-ops while `shuttingDown` is set — the shutdown
- * sequence owns the final persist (step 3 above), so once it starts, the
- * timer callback (if it fires again before `stopPeriodicFlush()` clears it)
- * must not race it. See design doc §3.5 for the full flush-vs-live-query
- * atomicity argument (every driver op is synchronous within one microtask,
- * so a timer-driven `persist()` can never observe a half-applied statement).
- */
-export function startPeriodicFlush(getDb: () => DatabaseType | undefined): void {
-  if (process.env.SKILLSMITH_AUTOSAVE_DISABLE === '1') return
-  const db = getDb()
-  if (!db || db.memory || !isPersistable(db)) return // WASM + file-backed only
-  // SMI-7260: a handle already read-only at start has nothing autosave may write.
-  if (db.readOnlyReason !== undefined) {
-    logReadOnlyAutosaveOnce(db.readOnlyReason)
-    return
-  }
-  const intervalMs =
-    Number(process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS) || DEFAULT_AUTOSAVE_INTERVAL_MS
-  flushTimer = setInterval(() => {
-    if (shuttingDown) return // shutdown owns the final persist
-    persistDbIfSupported(getDb)
-  }, intervalMs)
-  flushTimer.unref?.()
-}
-
-/** Stop the periodic autosave timer. Idempotent. Called as step 0 of
- * {@link runShutdownSequence} and by {@link _resetShutdownGuardForTests}. */
-export function stopPeriodicFlush(): void {
-  if (flushTimer) {
-    clearInterval(flushTimer)
-    flushTimer = null
   }
 }
 

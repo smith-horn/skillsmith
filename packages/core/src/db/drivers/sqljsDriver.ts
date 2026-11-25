@@ -7,28 +7,35 @@
  * sql.js is a JavaScript implementation of SQLite that runs in WebAssembly.
  * It requires async initialization but provides cross-platform compatibility.
  *
- * Key differences from better-sqlite3:
- * - Async initialization (WASM loading)
- * - In-memory by default, manual persistence to file
- * - Different API for prepared statements
+ * **A file-backed sql.js handle never writes to disk (SMI-7260).** sql.js holds
+ * the whole database in memory and could only save by writing a new file and
+ * renaming it over the old one. It takes no file locks, so it can never know
+ * whether a native (better-sqlite3) process holds the database in WAL mode; when
+ * one does, that rename silently loses the native process's work, and a later
+ * native open folds a stale WAL into the new file and corrupts it. No heuristic
+ * can detect a live holder without locks, so this driver does not try:
+ *
+ * - **An existing file** is read once (with the D2 re-read rule,
+ *   sqljsDriver.read.ts) and the handle is sealed at open: `PRAGMA query_only`,
+ *   `readonly === true`, `readOnlyReason` set. A write throws
+ *   `DatabaseReadOnlyDriverError`.
+ * - **A missing file** starts as an empty in-memory database that stays
+ *   writable until its opener calls `seal()` once after building its schema
+ *   (`initializeSchema`, `openDatabaseAsync`, or a store's own initializer).
+ *   It never reaches the disk either; if it is closed unsealed after being
+ *   written, `close()` warns once, naming the path, that the writes were
+ *   discarded.
+ * - **`{ readonly: true }`** on any path is a sealed handle.
+ * - **`:memory:`** is unchanged: writable, and `export()` returns its bytes.
  *
  * @see https://github.com/sql-js/sql.js
  */
 
 import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
 import type { Database, Statement, DatabaseOptions } from '../database-interface.js'
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
-import { corruptDatabaseError } from '../corrupt-refusal.js'
-import { sqlJsCorruptionCode, refuseIfCorrupt } from './sqljsDriver.corruption.js'
-import {
-  fileIdentityOf,
-  heldElsewhereError,
-  heldElsewhereReason,
-  rethrowWriteError,
-  sameFileIdentity,
-  sidecarsOf,
-  type FileIdentity,
-} from './sqljsDriver.holder.js'
+import { rethrowSqlJsWriteError, wasmOpenNotice, type WasmOpenKind } from '../wasm-read-only.js'
+import { openExistingImage } from './sqljsDriver.read.js'
 import { SqlJsStatementAdapter, type SqlJsDatabase } from './sqljsDriver.statement.js'
 
 // ESM-compatible require for dynamic module loading
@@ -93,48 +100,39 @@ async function loadSqlJs(): Promise<SqlJsStatic> {
 export class SqlJsDatabaseAdapter implements Database {
   private _open = true
   private readonly _memory: boolean
-  private readonly _readonly: boolean
   // Track transaction nesting depth for SAVEPOINT-based nested transactions
   private _transactionDepth = 0
-
-  // SMI-7260 (sqljsDriver.holder.ts): set once the database is found held by,
-  // or changed by, another process; the handle is then read-only for good.
-  // An empty list means "changed", a non-empty one names the sidecars found.
-  private _heldBy: readonly string[] | undefined
-  // SMI-7260: the file this handle last read or wrote, checked before a rename.
-  private _identity: FileIdentity | null
+  // SMI-7260: true once the handle is read-only (`query_only`) for good.
+  private _sealed = false
 
   /**
-   * @param heldBy - SMI-7260: SQLite sidecar files found beside the database at
-   *   open. When set, the handle is read-only (`query_only`), a write throws
-   *   `DatabaseHeldElsewhereError`, and nothing is ever persisted — not even
-   *   after the sidecars disappear, since this image may predate a holder's
-   *   checkpoint. See sqljsDriver.holder.ts.
-   * @param identity - the file's identity when this handle read it (`null`
-   *   when it did not exist).
+   * @param kind - SMI-7260: for a file-backed handle, whether the file existed
+   *   at open. `undefined` for `:memory:`.
+   * @param sealNow - seal at construction (an existing file, or `readonly`).
    */
   constructor(
     private readonly db: SqlJsDatabase,
     private readonly filePath: string,
-    options?: DatabaseOptions,
-    heldBy?: readonly string[],
-    identity: FileIdentity | null = null
+    private readonly kind?: WasmOpenKind,
+    sealNow = false
   ) {
     this._memory = filePath === ':memory:'
-    this._readonly = options?.readonly ?? false
-    this._identity = identity
-    if (heldBy !== undefined) this.markHeld(heldBy)
+    if (sealNow) this.seal()
   }
 
-  /** Make this handle read-only for the rest of the session (SMI-7260). */
-  private markHeld(sidecars: readonly string[]): void {
-    this._heldBy = sidecars
-    this.db.run('PRAGMA query_only = ON')
-  }
-
-  /** Rethrow a sql.js error, naming a write refused because the file is held. */
+  /** Rethrow a sql.js error, naming a write refused by a sealed handle. */
   private readonly onError = (error: unknown): never =>
-    rethrowWriteError(error, this.filePath, this._heldBy)
+    rethrowSqlJsWriteError(error, this.filePath, this._sealed)
+
+  /**
+   * SMI-7260 D1: make a file-backed handle read-only (`query_only`) for good.
+   * One-shot: a no-op on `:memory:` and on a handle already sealed.
+   */
+  seal(): void {
+    if (this._memory || this._sealed || !this._open) return
+    this.db.run('PRAGMA query_only = ON')
+    this._sealed = true
+  }
 
   exec(sql: string): void {
     try {
@@ -209,15 +207,19 @@ export class SqlJsDatabaseAdapter implements Database {
     return undefined
   }
 
+  /**
+   * Free the WASM handle. Never writes the file (SMI-7260). An unsealed
+   * first-run handle that was written to warns once that those writes are gone,
+   * so a missing seal cannot lose data silently.
+   */
   close(): void {
     if (!this._open) return
-
-    // Persist to file before closing (if not memory, not readonly, and not
-    // held by another process — SMI-7260). The handle is freed even when the
-    // persist refuses, so the refusal is reported without leaking WASM memory.
     try {
-      if (!this._memory && !this._readonly && this._heldBy === undefined && this.filePath) {
-        this.persist()
+      if (!this._memory && !this._sealed && this.wasWritten()) {
+        console.warn(
+          `[Skillsmith] ${this.filePath}: changes made in this session were not saved; ` +
+            'the WASM SQLite driver never writes a database file.'
+        )
       }
     } finally {
       this.db.close()
@@ -225,54 +227,20 @@ export class SqlJsDatabaseAdapter implements Database {
     }
   }
 
-  /**
-   * Persist the in-memory database to file
-   *
-   * SMI-5997: writes atomically (temp file + rename) rather than a direct
-   * writeFileSync to filePath. A direct write truncates the target file
-   * before the new bytes land; a process kill/crash mid-write (OOM, SIGKILL,
-   * machine sleep) during that window leaves a 0-byte file on disk, which
-   * openDatabaseAsync() then silently misclassifies as a fresh/legacy import
-   * instead of a corrupt file — see schema.ts. rename() is atomic on the
-   * same filesystem, so the target is only ever fully-old or fully-new.
-   *
-   * SMI-7260: never renames over a database another process may hold or has
-   * changed. Refuses once the handle is held; otherwise checks, immediately
-   * before the rename, for sidecars and for a file that is no longer the one
-   * this handle last read or wrote. Either makes the handle held for good.
-   */
-  persist(): void {
-    if (this._memory || !this.filePath) return
-    if (this._heldBy !== undefined) throw heldElsewhereError(this.filePath, this._heldBy)
-
-    const data = this.db.export()
-    const tmpPath = `${this.filePath}.tmp`
+  /** Whether anything (rows or schema) was written to this in-memory image. */
+  private wasWritten(): boolean {
+    const stmt = this.db.prepare(
+      'SELECT total_changes() + (SELECT count(*) FROM sqlite_master) AS n'
+    )
     try {
-      writeFileSync(tmpPath, Buffer.from(data))
-      const lateSidecars = sidecarsOf(this.filePath)
-      if (lateSidecars.length > 0) {
-        this.markHeld(lateSidecars)
-        throw heldElsewhereError(this.filePath, lateSidecars)
-      }
-      if (!sameFileIdentity(fileIdentityOf(this.filePath), this._identity)) {
-        this.markHeld([])
-        throw heldElsewhereError(this.filePath, [])
-      }
-      renameSync(tmpPath, this.filePath)
-      this._identity = fileIdentityOf(this.filePath)
-    } catch (error) {
-      try {
-        if (existsSync(tmpPath)) unlinkSync(tmpPath)
-      } catch {
-        // best-effort cleanup — surface the original error either way
-      }
-      throw error
+      return stmt.step() && Number(stmt.get()[0]) > 0
+    } finally {
+      stmt.free()
     }
   }
 
   /**
-   * Export the database as a Uint8Array
-   * Useful for manual persistence or serialization
+   * Export the database as a Uint8Array. Returns bytes only; never writes.
    */
   export(): Uint8Array {
     return this.db.export()
@@ -291,15 +259,24 @@ export class SqlJsDatabaseAdapter implements Database {
   }
 
   get readonly(): boolean {
-    return this._readonly
+    return this._sealed
+  }
+
+  /**
+   * SMI-7260: the one line Skillsmith prints when this driver opens a
+   * file-backed database, or `undefined` for `:memory:`.
+   */
+  get openNotice(): string | undefined {
+    return this.kind === undefined ? undefined : wasmOpenNotice(this.filePath, this.kind)
   }
 
   /**
    * SMI-7260: why this handle refuses writes, as one line for the user, or
-   * `undefined` when it may write. Set only for a database found held at open.
+   * `undefined` while it may write (`:memory:`, or a first-run handle not yet
+   * sealed).
    */
   get readOnlyReason(): string | undefined {
-    return this._heldBy === undefined ? undefined : heldElsewhereReason(this.filePath, this._heldBy)
+    return this._sealed ? this.openNotice : undefined
   }
 
   /**
@@ -318,6 +295,9 @@ export class SqlJsDatabaseAdapter implements Database {
  * @param options - Database connection options
  * @returns Promise resolving to a Database instance wrapping sql.js
  * @throws Error if sql.js WASM module fails to load
+ * @throws CorruptDatabaseError if the file is stably corrupt (ADR-175 § 1:
+ *   refused, never renamed or rebuilt); DatabaseReadUnstableError if it kept
+ *   changing while being read (SMI-7260 D2)
  */
 export async function createSqlJsDatabase(
   path: string = ':memory:',
@@ -325,98 +305,29 @@ export async function createSqlJsDatabase(
 ): Promise<SqlJsDatabaseAdapter> {
   const SQL = await loadSqlJs()
 
-  // SMI-7260: sidecars beside the file mean another process may hold it (or
-  // holds data not yet in it). Checked BEFORE the read, so the image this handle
-  // loads is never treated as writable when a holder was present.
-  const sidecars = path === ':memory:' || options?.readonly ? [] : sidecarsOf(path)
-  // ...and the file's identity BEFORE the read, so a change that lands while
-  // reading is caught (as a change) at the first save rather than missed.
-  const identity = path === ':memory:' ? null : fileIdentityOf(path)
+  if (path === ':memory:') {
+    const db = new SQL.Database()
+    db.run('PRAGMA foreign_keys = ON')
+    return new SqlJsDatabaseAdapter(db, path)
+  }
 
-  // Load existing database from file if it exists
-  let data: Uint8Array | undefined
-  if (path !== ':memory:' && existsSync(path)) {
-    data = readFileSync(path)
-  } else if (path !== ':memory:' && options?.fileMustExist) {
+  // An existing file: read it (re-reading before any corruption verdict) and
+  // seal at open. A corrupt file is REFUSED, never renamed aside and rebuilt
+  // (ADR-175 § 1, SMI-6961).
+  if (existsSync(path)) {
+    const db = await openExistingImage(SQL, path)
+    return new SqlJsDatabaseAdapter(db, path, 'existing', true)
+  }
+  if (options?.fileMustExist) {
     throw new Error(`SQLITE_CANTOPEN: unable to open database file: ${path}`)
   }
 
-  // Open the database. If the on-disk file is corrupt, REFUSE — do not rename
-  // it aside and rebuild (ADR-175 § 1, SMI-6961). This driver used to do
-  // exactly that, inherited from SMI-4484, and it did so without consulting
-  // `options.readonly`: a read-only `skillsmith list` renamed the user's
-  // database and then, because `close()` skips `persist()` when read-only,
-  // wrote nothing back. The file was simply gone, and the NEXT run found no
-  // database and reported every skill "Up to date" — the false currency claim
-  // SMI-6946 had just removed, reappearing one run later through the
-  // absent-database path.
-  //
-  // sql.js validates the file lazily — `new SQL.Database(data)` and a no-op
-  // PRAGMA can both succeed on garbage bytes; corruption only surfaces on the
-  // first read of a page. We therefore probe inside the try-block so corruption
-  // is detected here rather than at an arbitrary later query.
-  //
-  // TWO probes, and neither subsumes the other. `sqlite_master` (here) reads
-  // only the schema page, so it throws on a bad header and opens a
-  // page-damaged file cleanly; `quick_check(1)` (below) reaches the later pages
-  // but REPORTS rather than throws, so it cannot live in this catch. ADR-175
-  // § 2. Do not collapse them.
-  let db: SqlJsDatabase
-  let partialDb: SqlJsDatabase | undefined
-  try {
-    partialDb = new SQL.Database(data)
-    db = partialDb
-    // Set default pragmas for consistency.
-    // Note: WAL mode is intentionally NOT set for sql.js because:
-    // 1. sql.js operates fully in-memory with manual file persistence
-    // 2. Journal modes are meaningless without filesystem integration
-    // 3. Setting WAL would create false parity expectations with better-sqlite3
-    db.run('PRAGMA foreign_keys = ON')
-    // SCHEMA-PAGE probe, not the integrity check: it forces a read of page 1,
-    // which is what makes a bad header throw here rather than at an arbitrary
-    // later query. `quick_check` below reaches the later pages. Skipped for a
-    // brand-new empty database (no `data`), where there is nothing to validate.
-    if (data !== undefined) {
-      db.run('SELECT name FROM sqlite_master LIMIT 1')
-    }
-  } catch (error) {
-    // Free the partially-opened handle's WASM heap memory before we rebuild or
-    // rethrow — otherwise it leaks for the process lifetime (SMI-4484).
-    if (partialDb) {
-      try {
-        partialDb.close()
-      } catch {
-        // handle already unusable — nothing more to free
-      }
-    }
-    const sqliteCode = sqlJsCorruptionCode(error)
-    if (sqliteCode === undefined || path === ':memory:') {
-      throw error
-    }
-    // The same refusal the native driver throws, from the same builder, so the
-    // two drivers cannot drift apart about what a corrupt database means.
-    throw corruptDatabaseError(
-      path,
-      error instanceof Error ? error.message : String(error),
-      sqliteCode,
-      error
-    )
-  }
-
-  // Integrity verdict, deliberately OUTSIDE the try above: `quick_check`
-  // REPORTS rather than throws, so no catch can observe it (ADR-175 § 2).
-  // Skipped for a brand-new empty database, where there is nothing to verify.
-  if (data !== undefined) {
-    refuseIfCorrupt(db, path)
-  }
-
-  return new SqlJsDatabaseAdapter(
-    db,
-    path,
-    options,
-    sidecars.length > 0 ? sidecars : undefined,
-    identity
-  )
+  // A missing file (SMI-7260 D1): an empty in-memory database, writable until
+  // its opener seals it. `{ readonly: true }` is sealed now.
+  // Note: WAL mode is intentionally NOT set; sql.js has no filesystem VFS.
+  const db = new SQL.Database()
+  db.run('PRAGMA foreign_keys = ON')
+  return new SqlJsDatabaseAdapter(db, path, 'first-run', options?.readonly === true)
 }
 
 /**

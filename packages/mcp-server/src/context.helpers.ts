@@ -61,11 +61,13 @@ export function buildDbInitializedLogMessage(): string {
 }
 
 /**
- * Ensure the database directory exists
+ * Ensure the database directory exists. SMI-7260: created owner-only (0o700),
+ * like the CLI's, because it holds the user's skill index; an existing
+ * directory's mode is left alone.
  */
 export function ensureDbDirectory(dbPath: string): void {
   const dir = dirname(dbPath)
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
 }

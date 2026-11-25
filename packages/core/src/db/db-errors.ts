@@ -127,48 +127,80 @@ export function isCorruptDatabaseError(error: unknown): error is CorruptDatabase
 }
 
 /**
- * Stable discriminator for "the WASM driver refused to write a database another
- * process may hold" (SMI-7260).
+ * Stable discriminator for "the WASM driver opened this database read-only and
+ * refused a write" (SMI-7260).
  */
-export const DB_HELD_ELSEWHERE_CODE = 'SKILLSMITH_DB_HELD_ELSEWHERE' as const
+export const DB_WASM_READ_ONLY_CODE = 'SKILLSMITH_DB_WASM_READ_ONLY' as const
 
 /**
- * A write refused by the sql.js (WASM) driver because SQLite's own sidecar
- * files (`-wal`, `-shm`, `-journal`) show another connection may hold the
- * database, or holds data not yet in the main file.
+ * A write refused because the database was opened by the sql.js (WASM) driver,
+ * which never writes a file-backed database (SMI-7260).
  *
- * **Why refuse rather than write.** sql.js loads the whole file into memory and
- * saves by writing a new file and renaming it over the original. A native
- * process holding the database keeps its open descriptor on the OLD inode and
- * its `-wal`/`-shm` beside the NEW one: its later work is silently lost, and
- * the next native open folds a WAL written for the old file into the new one,
- * corrupting it at rest. sql.js takes no file locks, so it cannot coordinate;
- * the only safe answer is not to write. Nothing was modified when this is
- * thrown. Match on `code` via `isDatabaseHeldElsewhereError`, as above.
+ * **Why the WASM driver cannot write.** sql.js loads the whole file into
+ * memory and can only save by writing a new file and renaming it over the old
+ * one. It takes no file locks, so it can never know whether a native
+ * (better-sqlite3) process holds the database in WAL mode. When one does, the
+ * rename silently loses that process's work, and a later native open folds a
+ * WAL written for the old file into the new one, corrupting it. Writing needs
+ * the native driver. Nothing was modified when this is thrown. Match on `code`
+ * via `isDatabaseReadOnlyDriverError`, as above.
  */
-export class DatabaseHeldElsewhereError extends Error {
-  readonly code: typeof DB_HELD_ELSEWHERE_CODE = DB_HELD_ELSEWHERE_CODE
+export class DatabaseReadOnlyDriverError extends Error {
+  readonly code: typeof DB_WASM_READ_ONLY_CODE = DB_WASM_READ_ONLY_CODE
 
   /** The database that was not written. */
   readonly path: string
 
-  /** The sidecar files found beside it, e.g. `['skills.db-wal']`. */
-  readonly sidecars: readonly string[]
-
-  constructor(args: {
-    message: string
-    path: string
-    sidecars: readonly string[]
-    cause?: unknown
-  }) {
+  constructor(args: { message: string; path: string; cause?: unknown }) {
     super(args.message, args.cause === undefined ? undefined : { cause: args.cause })
-    this.name = 'DatabaseHeldElsewhereError'
+    this.name = 'DatabaseReadOnlyDriverError'
     this.path = args.path
-    this.sidecars = args.sidecars
   }
 }
 
-/** Structural predicate for `DatabaseHeldElsewhereError`; reads `code` only. */
-export function isDatabaseHeldElsewhereError(error: unknown): error is DatabaseHeldElsewhereError {
-  return (error as { code?: unknown } | null | undefined)?.code === DB_HELD_ELSEWHERE_CODE
+/** Structural predicate for `DatabaseReadOnlyDriverError`; reads `code` only. */
+export function isDatabaseReadOnlyDriverError(
+  error: unknown
+): error is DatabaseReadOnlyDriverError {
+  return (error as { code?: unknown } | null | undefined)?.code === DB_WASM_READ_ONLY_CODE
+}
+
+/**
+ * Stable discriminator for "the database file changed while the WASM driver
+ * was reading it, so no verdict was reached" (SMI-7260).
+ */
+export const DB_READ_UNSTABLE_CODE = 'SKILLSMITH_DB_READ_UNSTABLE' as const
+
+/**
+ * The WASM driver's image of the database failed its integrity check, and the
+ * file kept changing on every re-read, so the driver cannot tell a damaged file
+ * from one another process was writing while it read (SMI-7260).
+ *
+ * **Deliberately not a corruption refusal.** A sql.js open that races a native
+ * checkpoint can read a torn image of an intact file. Calling that corrupt
+ * would advise moving the database aside, destroying a healthy file. A
+ * corruption verdict (`CorruptDatabaseError`) is given only when two
+ * consecutive reads are byte-identical and both fail; anything else is this
+ * error, which says to try again. Nothing was modified.
+ */
+export class DatabaseReadUnstableError extends Error {
+  readonly code: typeof DB_READ_UNSTABLE_CODE = DB_READ_UNSTABLE_CODE
+
+  /** The database that could not be read consistently. */
+  readonly path: string
+
+  /** How many times the file was read before giving up. */
+  readonly attempts: number
+
+  constructor(args: { message: string; path: string; attempts: number; cause?: unknown }) {
+    super(args.message, args.cause === undefined ? undefined : { cause: args.cause })
+    this.name = 'DatabaseReadUnstableError'
+    this.path = args.path
+    this.attempts = args.attempts
+  }
+}
+
+/** Structural predicate for `DatabaseReadUnstableError`; reads `code` only. */
+export function isDatabaseReadUnstableError(error: unknown): error is DatabaseReadUnstableError {
+  return (error as { code?: unknown } | null | undefined)?.code === DB_READ_UNSTABLE_CODE
 }

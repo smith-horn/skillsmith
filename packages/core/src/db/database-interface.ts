@@ -112,8 +112,9 @@ export interface Database {
   pragma(pragma: string): unknown
 
   /**
-   * Close the database connection and release all resources
-   * For file-based databases, this ensures all changes are persisted
+   * Close the database connection and release all resources.
+   * The native driver has already written every change; the WASM (sql.js)
+   * driver never writes a database file (SMI-7260)
    */
   close(): void
 

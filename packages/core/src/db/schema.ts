@@ -34,10 +34,13 @@ export type { Migration } from './migration-runner.js'
 
 // Re-import for use within this file (openDatabase, openDatabaseAsync, initializeSchema)
 import {
-  isReadOnlyWithCurrentSchema,
+  getSchemaVersion,
+  LATEST_SCHEMA_VERSION,
   runMigrations,
   runMigrationsSafe,
 } from './migration-runner.js'
+import { readOnlyReasonOf, sealDatabase } from './read-only-reason.js'
+import { wasmReadOnlyError } from './wasm-read-only.js'
 
 export type DatabaseType = Database
 
@@ -60,23 +63,35 @@ export const SCHEMA_VERSION = 18
  * see the DB as already-current and skip every migration — leaving fresh DBs
  * stuck at v1 schema. Now we mark v1 (idempotent via OR IGNORE) and run
  * migrations to reach the current version.
+ *
+ * SMI-7260: seals the handle afterwards (a no-op except on a first-run WASM
+ * handle, which was writable only so the schema could be built here). On a
+ * handle that is already read-only (WASM, existing file) it writes nothing: at
+ * the current schema there is nothing to do, so reads work; behind it, it
+ * throws `DatabaseReadOnlyDriverError`, because the schema cannot be upgraded.
  */
 export function initializeSchema(db: DatabaseType): void {
-  // SMI-7260: a handle that refuses writes (another process may hold the file)
-  // and is already at the current schema has nothing to initialize — skip it so
-  // reads still work. Not current: fall through, and the first write throws
-  // `DatabaseHeldElsewhereError`, which is the right refusal.
-  if (isReadOnlyWithCurrentSchema(db)) return
+  if (readOnlyReasonOf(db) !== undefined) {
+    const version = getSchemaVersion(db)
+    if (version >= LATEST_SCHEMA_VERSION) return
+    throw wasmReadOnlyError(
+      db.name,
+      `${db.name} is at schema version ${version}; this Skillsmith needs version ` +
+        `${LATEST_SCHEMA_VERSION}, and the database cannot be upgraded while it is read-only.`
+    )
+  }
   db.exec(SCHEMA_SQL)
   db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (1)').run()
   runMigrations(db)
+  sealDatabase(db)
 }
 
 /**
  * SMI-5997: shared by openDatabase() and openDatabaseAsync() — a database
  * missing schema_version is only a legacy import if it has OTHER tables. A
  * file with zero tables at all is empty or corrupt (e.g. truncated by an
- * interrupted sql.js persist() — see sqljsDriver.ts), not a legacy import.
+ * interrupted write; the sql.js driver's old persist() was one source, and it
+ * no longer writes files, SMI-7260), not a legacy import.
  * Silently stamping schema_version=1 in that case used to run every
  * migration against a database with no base tables, failing opaquely with
  * "no such table: skills" and eventually crashing entirely. Fail loudly
@@ -186,6 +201,10 @@ export async function createDatabaseAsync(path: string = ':memory:'): Promise<Da
  * Open an existing database asynchronously with WASM fallback
  * Runs any pending migrations
  *
+ * SMI-7260: on a WASM handle (read-only for an existing file) nothing is
+ * written: the legacy-import stamp is skipped and `runMigrationsSafe` warns
+ * once instead of migrating. The handle is sealed before it is returned.
+ *
  * @param path - Path to existing database file
  * @returns Promise resolving to database with migrations applied
  * @throws Error if file does not exist (SQLITE_CANTOPEN)
@@ -207,17 +226,20 @@ export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
 
     // Database has no version tracking but has other tables - assume it's a
     // legacy import. Create schema_version table and set to version 1.
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS schema_version (
-        version INTEGER PRIMARY KEY,
-        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      INSERT OR IGNORE INTO schema_version (version) VALUES (1);
-    `)
+    if (readOnlyReasonOf(db) === undefined) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+      `)
+    }
   }
 
   // Run pending migrations safely
   runMigrationsSafe(db)
 
+  sealDatabase(db)
   return db
 }

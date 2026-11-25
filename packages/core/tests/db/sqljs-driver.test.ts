@@ -56,7 +56,7 @@ describe('sql.js Driver', () => {
       expect(db.name).toBe(':memory:')
     })
 
-    it('should create a file-based database', async () => {
+    it('should open a file-backed database without creating the file (SMI-7260)', async () => {
       const path = tempDbPath()
       try {
         db = await createSqlJsDatabase(path)
@@ -65,7 +65,8 @@ describe('sql.js Driver', () => {
         expect(db.memory).toBe(false)
         expect(db.name).toBe(path)
         db.close()
-        expect(existsSync(path)).toBe(true)
+        // SMI-7260: the WASM driver never writes a database file.
+        expect(existsSync(path)).toBe(false)
       } finally {
         cleanupFile(path)
       }
@@ -213,24 +214,23 @@ describe('sql.js Driver', () => {
   })
 
   describe('File persistence', () => {
-    it('should persist data across open/close cycles', async () => {
+    it('should not persist data across open/close cycles (SMI-7260)', async () => {
       const path = tempDbPath()
 
       try {
-        // Create and populate database
+        // A missing file opens as an empty, writable in-memory database...
         const db1 = await createSqlJsDatabase(path)
         db1.exec('CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)')
-        db1.exec("INSERT INTO test (value) VALUES ('persisted')")
+        db1.exec("INSERT INTO test (value) VALUES ('not persisted')")
+        expect(db1.prepare<{ c: number }>('SELECT count(*) AS c FROM test').get()?.c).toBe(1)
         db1.close()
 
-        // Reopen and verify data
+        // ...that never reaches the disk, so a reopen starts empty again.
+        expect(existsSync(path)).toBe(false)
         const db2 = await createSqlJsDatabase(path)
-        const stmt = db2.prepare<{ value: string }>('SELECT value FROM test')
-        const row = stmt.get()
-        stmt.finalize()
+        const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
         db2.close()
-
-        expect(row?.value).toBe('persisted')
+        expect(tables).toEqual([])
       } finally {
         cleanupFile(path)
       }

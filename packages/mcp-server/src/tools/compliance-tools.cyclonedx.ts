@@ -31,8 +31,8 @@
  *    skill that still has zero — see `resolveDependencies`' doc comment).
  *    Inline backfill is opt-in (`backfillDependencies: true`), attempted only
  *    for the skills actually sparse, and hard-gated to
- *    `getBestDriver() === 'better-sqlite3'` (sql.js/WASM has no
- *    cross-process write coordination — refused with a warning, not a
+ *    `getBestDriver() === 'better-sqlite3'` (a file-backed sql.js/WASM
+ *    database is read-only since SMI-7260 — refused with a warning, not a
  *    silent no-op).
  * 2. `inferred_static` dependency rows are advisory-only: a `properties`
  *    annotation on the owning component, NEVER a `dependencies` graph edge.
@@ -194,8 +194,8 @@ async function resolveDependencies(
       // CONFIRMED decision #1: refuse loudly, never a silent no-op.
       warnings.push(
         `backfillDependencies was requested but refused: the active database driver is ` +
-          `'${driver ?? 'none'}', not 'better-sqlite3'. sql.js/WASM has no cross-process write ` +
-          'coordination for skill_dependencies writes. Run the skill_rescan MCP tool directly, ' +
+          `'${driver ?? 'none'}', not 'better-sqlite3'. The WASM driver opens the database ` +
+          'read-only, so skill_dependencies cannot be written. Run the skill_rescan MCP tool directly, ' +
           'or re-run this export from an environment where the native driver is available.'
       )
     } else {
