@@ -4,15 +4,24 @@
  *
  * This test lived in `shutdown-persistence-subprocess.test.ts`, which SMI-7260
  * deleted because its other cases proved WASM persistence that no longer
- * exists. This one never depended on persistence. It runs on the NATIVE driver
- * now: the WASM driver no longer starts background sync at all, so on WASM the
- * race this test exists for cannot happen.
+ * exists. It runs on the NATIVE driver: the WASM driver does not start
+ * background sync at all.
  *
- * It spawns the real built `dist/src/index.js`, points the API client at a
- * local stub whose `/registry-sync` never answers, waits until a real sync is
- * mid-fetch, and sends SIGTERM. The shutdown coordinator must quiesce (abort
- * and await) that sync before closing the database: a clean exit 0 and an
- * intact database prove no write raced the close.
+ * **The contract it pins is today's (owner decision; SMI-7267 tracks making
+ * quiesce cancel).** The shutdown quiesce does not abort a request already in
+ * flight: the sync is not handed the signal at the HTTP layer, so quiesce
+ * WAITS for the answer (bounded by `SHUTDOWN_QUIESCE_TIMEOUT_MS`, 2 s). Once
+ * the answer arrives, the aborted sync skips its upsert but still records its
+ * run (`setLastSync`, `completeRun`), and only then does the database close.
+ *
+ * So the stub holds `/registry-sync` until SIGTERM, then answers
+ * {@link ANSWER_DELAY_MS} later with a valid payload. Measured (native, this
+ * container): with the quiesce, the answer was flushed 202 ms after SIGTERM,
+ * the server exited 0 at 274 ms, and the run was recorded `success` with
+ * `last_sync_at` set. With `await runQuiesce(...)` removed, the server exited
+ * 15 ms after SIGTERM, before the answer, leaving the run `running` and
+ * `last_sync_at` NULL. The recorded run is therefore the assertion that pins
+ * the quiesce; the stub's "response sent" marker proves the answer landed.
  */
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -30,11 +39,34 @@ const __dirname = path.dirname(__filename)
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
 const DIST_ENTRY = path.join(REPO_ROOT, 'packages', 'mcp-server', 'dist', 'src', 'index.js')
 
+/** How long after SIGTERM the stub answers: well inside the 2 s quiesce bound. */
+const ANSWER_DELAY_MS = 200
+
 // SMI-5548: a local pre-push run in a worktree may have no built dist/; skip
 // only in that exact combination. CI never sets SKILLSMITH_PREPUSH.
 const skipInPrePush = process.env['SKILLSMITH_PREPUSH'] === '1' && !existsSync(DIST_ENTRY)
 if (skipInPrePush) {
   console.warn('[SMI-5548] skipping background-sync subprocess test in pre-push (dist absent)')
+}
+
+/** A valid `/registry-sync` page (one skill), as SearchResponseSchema parses it. */
+function registrySyncPage(): string {
+  return JSON.stringify({
+    data: [
+      {
+        id: 'probe/late-skill',
+        name: 'late-skill',
+        description: 'answered after SIGTERM',
+        author: 'probe',
+        repo_url: 'https://github.com/probe/late-skill',
+        quality_score: 0.5,
+        trust_tier: 'community',
+        tags: [],
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    meta: { limit: 100, offset: 0, since: null },
+  })
 }
 
 describe.skipIf(skipInPrePush)('SMI-5649 shutdown with an in-flight background sync', () => {
@@ -57,20 +89,22 @@ describe.skipIf(skipInPrePush)('SMI-5649 shutdown with an in-flight background s
     tmpDbPath = undefined
   })
 
-  it('an in-flight background sync at SIGTERM time settles cleanly before db close (no write races the close)', async () => {
+  it('waits for the in-flight sync answered after SIGTERM, records the run, then closes the db cleanly', async () => {
     const dbPath = path.join(
       os.tmpdir(),
       `skillsmith-shutdown-sync-race-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
     )
     tmpDbPath = dbPath
 
+    // Server-side markers: what the stub saw and did, in order.
+    const stubLog: string[] = []
+    let heldResponse: http.ServerResponse | undefined
     let syncRequestReceived: () => void = () => {}
     const syncRequestReceivedPromise = new Promise<void>((resolve) => {
       syncRequestReceived = resolve
     })
 
-    // /health answers fast; /registry-sync never answers, so the sync stays
-    // genuinely in flight until quiesce aborts it.
+    // /health answers at once; /registry-sync is held until SIGTERM.
     const stubServer = http.createServer((req, res) => {
       if (req.url?.startsWith('/health')) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -78,6 +112,8 @@ describe.skipIf(skipInPrePush)('SMI-5649 shutdown with an in-flight background s
         return
       }
       if (req.url?.startsWith('/registry-sync')) {
+        stubLog.push('registry-sync held')
+        heldResponse = res
         syncRequestReceived()
         return
       }
@@ -132,7 +168,7 @@ describe.skipIf(skipInPrePush)('SMI-5649 shutdown with an in-flight background s
         ),
       ])
 
-      const exitCode = await new Promise<number | null>((resolve, reject) => {
+      const exited = new Promise<number | null>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(
             new Error(
@@ -144,19 +180,48 @@ describe.skipIf(skipInPrePush)('SMI-5649 shutdown with an in-flight background s
           clearTimeout(timeout)
           resolve(code)
         })
-        proc.kill('SIGTERM')
       })
+      proc.kill('SIGTERM')
+      // The held request is answered after SIGTERM, well inside the quiesce bound.
+      const answered = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          heldResponse?.writeHead(200, { 'Content-Type': 'application/json' })
+          heldResponse?.end(registrySyncPage(), () => stubLog.push('response sent'))
+          resolve()
+        }, ANSWER_DELAY_MS)
+      })
+      const exitCode = await exited
+      await answered
 
-      // Quiesce settled before close: no hang, no crash from a write on a closed db.
+      // A clean exit, and an intact native database.
       expect(exitCode).toBe(0)
-      // The native driver wrote the database, and it is intact.
       expect(stderrChunks.join('')).not.toContain('Skillsmith is using the WASM driver')
       const reopened = createDatabaseSync(dbPath)
+      let runs: Array<{ status: string; completed_at: string | null }>
+      let lastSyncAt: string | null | undefined
       try {
         expect(reopened.prepare('PRAGMA quick_check').all()).toEqual([{ quick_check: 'ok' }])
+        runs = reopened
+          .prepare('SELECT status, completed_at FROM sync_history ORDER BY started_at')
+          .all() as Array<{ status: string; completed_at: string | null }>
+        lastSyncAt = (
+          reopened.prepare("SELECT last_sync_at FROM sync_config WHERE id = 'default'").get() as
+            | { last_sync_at: string | null }
+            | undefined
+        )?.last_sync_at
       } finally {
         reopened.close()
       }
+      // THE QUIESCE: the late answer was waited for, and the sync recorded its
+      // run before the database closed. Without the quiesce the process exits
+      // first and this run is left `running`, with last_sync_at NULL.
+      expect(runs).toHaveLength(1)
+      expect(runs[0]?.status).toBe('success')
+      expect(runs[0]?.completed_at).not.toBeNull()
+      expect(lastSyncAt).not.toBeNull()
+      // The control: the stub's answer really went out, so the run above was
+      // recorded from it rather than from some other path.
+      expect(stubLog).toEqual(['registry-sync held', 'response sent'])
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL')
       await new Promise<void>((resolve) => stubServer.close(() => resolve()))

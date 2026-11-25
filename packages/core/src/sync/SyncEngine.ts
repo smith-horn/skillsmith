@@ -26,12 +26,19 @@ export interface SyncOptions {
   /** Progress callback */
   onProgress?: (progress: SyncProgress) => void
   /**
-   * Abort signal (SMI-5649). Checked at loop and pre-write boundaries so a
-   * shutdown quiesce can stop an in-flight sync before it writes against a
-   * db that is about to be closed. Every driver write is synchronous, so
-   * once the signal is aborted, no new write ever begins — this is what
-   * makes it safe for the coordinator to proceed to `db.close()` once its
-   * bounded quiesce timeout elapses, even if this method hasn't returned yet.
+   * Abort signal (SMI-5649). Checked at two points only: the pagination loop
+   * (no further page is requested) and just before the upsert (the skill rows
+   * are not written).
+   *
+   * It does NOT cancel a request already in flight: `syncRegistry` and
+   * `checkHealth` are not given the signal, so the shutdown quiesce waits for
+   * the answer (bounded by `SHUTDOWN_QUIESCE_TIMEOUT_MS`). And after an abort
+   * the post-fetch sync-state writes still run: `setLastSync` and
+   * `completeRun`/`completeRunPartial` (or `failRun` on an error). Under the
+   * awaited quiesce they land before `db.close()`. If the quiesce bound
+   * elapses first, the coordinator closes the db anyway and those late writes
+   * would meet a closed handle. Making abort cancel the request and skip
+   * those writes is SMI-7267.
    */
   signal?: AbortSignal
 }
