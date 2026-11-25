@@ -653,9 +653,9 @@ describe('R1: residual (documented, not a bug)', () => {
 // ── F1-F*: SMI-7238 flag-only exemption (design E) ──────────────────────────
 // Through the real .sh: --write-sentinel saves the installed lockfile bytes,
 // and `_classify()` asks lockfile-change-needs-install.mjs before printing
-// `real`. These cases deliberately do NOT call record() -- the B-3 pinned
-// count in fixtures/deps-drift-corpus.expected-count covers the legacy corpus
-// above only. The omit probe is pinned empty so the host's npm config cannot
+// `real`. The classifier-verdict cases F1-F10 call record() (ADR-157 corpus,
+// pinned in fixtures/deps-drift-corpus.expected-count); the stub-helper and
+// publication cases test plumbing, not verdicts, and do not. The omit probe is pinned empty so the host's npm config cannot
 // change a verdict.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -736,6 +736,7 @@ describe('F: SMI-7238 flag-only changes', () => {
       expect(check.status).toBe(0)
       expect(check.output).toContain('No install needed')
       expect(check.output).toContain('dependency flags and same-spec section moves')
+      record('clean')
     } finally {
       cleanup(fx)
     }
@@ -749,6 +750,7 @@ describe('F: SMI-7238 flag-only changes', () => {
     })
     try {
       expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      record('clean')
     } finally {
       cleanup(fx)
     }
@@ -759,6 +761,7 @@ describe('F: SMI-7238 flag-only changes', () => {
     try {
       expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
       expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(1)
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -772,6 +775,7 @@ describe('F: SMI-7238 flag-only changes', () => {
     })
     try {
       expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -781,6 +785,7 @@ describe('F: SMI-7238 flag-only changes', () => {
     const fx = installedThen((l) => mutate.P3(instance2(l)))
     try {
       expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -790,6 +795,7 @@ describe('F: SMI-7238 flag-only changes', () => {
     const fx = installedThen((l) => mutate.P6(instance2(l)))
     try {
       expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -803,6 +809,7 @@ describe('F: SMI-7238 saved-copy and omit guards', () => {
       rmSync(join(fx.root, 'node_modules', COPY_NAME), { force: true })
       expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
       expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(1)
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -813,6 +820,7 @@ describe('F: SMI-7238 saved-copy and omit guards', () => {
     try {
       writeFileSync(join(fx.root, 'node_modules', COPY_NAME), '{"packages":{}}\n', 'utf8')
       expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -823,6 +831,7 @@ describe('F: SMI-7238 saved-copy and omit guards', () => {
     try {
       expect(classify(fx.root, { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: 'dev' })).toBe('real')
       expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      record('poisoned')
     } finally {
       cleanup(fx)
     }
@@ -834,6 +843,7 @@ describe('F: SMI-7238 saved-copy and omit guards', () => {
       rmSync(join(fx.root, 'node_modules', '.skillsmith-deps-hash-shadow'), { force: true })
       expect(classify(fx.root, OMIT_EMPTY)).toBe('unknown')
       expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(1)
+      record('unknown')
     } finally {
       cleanup(fx)
     }
