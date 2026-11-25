@@ -1676,7 +1676,8 @@ jobs:
   # globs. SMI-4549, SMI-4640, and the 2026-05-02 install.test.ts hotfix
   # (#883) all slipped through that gap. Pre-push and post-merge-verify both
   # ran the combined `vitest.config.root-tests.ts` and caught what PR matrix
-  # missed; this job closes the gap in PR matrix.
+  # missed; this job closes the gap in PR matrix. Since SMI-7218, pre-push no
+  # longer runs the root config; this job and Test (root) are its PR coverage.
   test-root-colocated:
     name: Test (root colocated)
     runs-on: ubuntu-latest

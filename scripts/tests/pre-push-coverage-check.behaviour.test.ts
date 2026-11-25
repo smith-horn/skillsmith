@@ -189,5 +189,43 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
     // a 1s budget would have timed the 3s stub out if a timeout wrapped it
     expect(r.out).toContain('RC=0')
     expect(r.out).not.toMatch(/exceeded its/)
+    expect(r.out).toMatch(/NO_PG_SWEEP=1: suites run plainly/)
+  })
+
+  it('i2: without NO_PG_SWEEP the plain-run notice is not printed (paired control)', () => {
+    const r = runStub('exit 0', FAST)
+    expect(r.out).toContain('RC=0')
+    expect(r.out).not.toMatch(/suites run plainly/)
+  })
+
+  it('j: a quick SIGKILL (OOM-shaped 137) well inside the budget is a failure, not a timeout', () => {
+    const r = runStub('kill -KILL $$', FAST)
+    expect(r.out).toContain('RC=137')
+    expect(r.out).toMatch(/✗ packages\/stubpkg failed \(exit 137/)
+    expect(r.out).not.toMatch(/exceeded its/)
+  })
+
+  it('k: the hook backstop follows a valid override and ignores an invalid one (block executed under sh)', () => {
+    const hook = readFileSync(join(__dirname, '..', '..', '.husky', 'pre-push'), 'utf8')
+    const block = /# >>> backstop[^\n]*\n([\s\S]*?)# <<< backstop/.exec(hook)
+    expect(block).not.toBeNull()
+    const backstop = (override?: string) => {
+      const env: Record<string, string> = { PATH: process.env['PATH'] ?? '/usr/bin:/bin' }
+      if (override !== undefined) env['SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS'] = override
+      const r = spawnSync(
+        'sh',
+        ['-e', '-c', `${block![1]}\nprintf '%s' "$COVERAGE_BACKSTOP_SECS"`],
+        {
+          encoding: 'utf8',
+          env,
+        }
+      )
+      expect(r.status).toBe(0)
+      return Number(r.stdout)
+    }
+    expect(backstop()).toBe(930)
+    expect(backstop('200')).toBe(4 * (200 + 15) + 60)
+    expect(backstop('30')).toBe(4 * (30 + 15) + 60)
+    for (const bad of ['0', '07', '-5', '1.5', 'abc', '']) expect(backstop(bad)).toBe(930)
   })
 })

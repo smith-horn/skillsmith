@@ -698,7 +698,9 @@ function instance2(l: any): any {
   return l
 }
 
-const OMIT_EMPTY = { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: '' }
+// The omit override is honoured only with the test marker (SMI-7238 review).
+const OMIT_EMPTY = { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: '', SKILLSMITH_DEPS_PROBE_TEST: '1' }
+const OMIT_DEV = { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: 'dev', SKILLSMITH_DEPS_PROBE_TEST: '1' }
 const COPY_NAME = '.skillsmith-deps-lock.json'
 
 /** Install from flagLock(), then put `mutated` on disk as the current lockfile. */
@@ -829,7 +831,7 @@ describe('F: SMI-7238 saved-copy and omit guards', () => {
   it('F9: non-empty omit set (paired with F1) -> real', () => {
     const fx = installedThen(instance2)
     try {
-      expect(classify(fx.root, { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: 'dev' })).toBe('real')
+      expect(classify(fx.root, OMIT_DEV)).toBe('real')
       expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
       record('poisoned')
     } finally {
@@ -939,12 +941,14 @@ describe('F: SMI-7238 unchanged behaviour and publication', () => {
     try {
       writeLockfile(fx.root, flagLock())
       writeSentinel(fx.root)
-      const leftovers = execFileSync('ls', ['-A', join(fx.root, 'node_modules')], {
+      const listing = execFileSync('ls', ['-A', join(fx.root, 'node_modules')], {
         encoding: 'utf8',
-      })
-        .split('\n')
-        .filter((n) => n.includes('.tmp.'))
-      expect(leftovers).toEqual([])
+      }).split('\n')
+      // Same-run positive: the publication actually happened.
+      expect(listing).toEqual(
+        expect.arrayContaining([COPY_NAME, '.skillsmith-deps-hash', '.skillsmith-deps-hash-shadow'])
+      )
+      expect(listing.filter((n) => n.includes('.tmp.'))).toEqual([])
     } finally {
       cleanup(fx)
     }
@@ -958,11 +962,39 @@ describe('F: SMI-7238 unchanged behaviour and publication', () => {
           .map((n) => readFileSync(join(fx.root, 'node_modules', n), 'utf8'))
           .join('\u0000')
       const before = snap()
-      classify(fx.root, OMIT_EMPTY)
-      checkMode(fx.root, OMIT_EMPTY)
+      // Same-run positives: both modes reached the exemption, not an early exit.
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(0)
       expect(snap()).toBe(before)
     } finally {
       cleanup(fx)
+    }
+  })
+
+  it('F16: --write-sentinel publishes copy, then shadow, then raw sentinel (mv order)', () => {
+    const fx = makeFixture()
+    const shim = makeFixtureTempDir('deps-fresh-mv-shim')
+    try {
+      const realMv = execFileSync('sh', ['-c', 'command -v mv'], { encoding: 'utf8' }).trim()
+      const log = join(shim, 'mv.log')
+      writeFileSync(
+        join(shim, 'mv'),
+        `#!/bin/sh\nprintf '%s\\n' "$(basename "$2")" >> '${log}'\nexec '${realMv}' "$@"\n`,
+        { encoding: 'utf8', mode: 0o755 }
+      )
+      writeLockfile(fx.root, flagLock())
+      const r = run(fx.root, ['--write-sentinel'], {
+        PATH: `${shim}:${process.env['PATH'] ?? '/usr/bin:/bin'}`,
+      })
+      expect(r.status).toBe(0)
+      expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
+        COPY_NAME,
+        '.skillsmith-deps-hash-shadow',
+        '.skillsmith-deps-hash',
+      ])
+    } finally {
+      cleanup(fx)
+      rmSync(shim, { recursive: true, force: true })
     }
   })
 })

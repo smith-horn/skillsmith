@@ -2,9 +2,10 @@
  * SMI-7238 -- unit corpus for scripts/lib/lockfile-change-needs-install.mjs.
  *
  * Every lockfile below is built in this file (never derived from the helper).
- * The helper runs as a real `node` child process, with the omit probe pinned
- * through SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT so the host's npm config cannot
- * change a verdict. Each case declares its expected token up front; the
+ * The helper runs as a real `node` child process. Most cases pin the omit probe
+ * through SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT (honoured only with
+ * SKILLSMITH_DEPS_PROBE_TEST=1) so the host's npm config cannot change a
+ * verdict; the "real npm probes" block runs npm itself, or a stub npm on PATH. Each case declares its expected token up front; the
  * exempt cases are paired with must-block cases so a helper that always says
  * `no-install-needed` (or always `install-needed`) turns a test red.
  */
@@ -117,8 +118,12 @@ interface RunOpts {
   noSentinel?: boolean
   /** omit-probe stdout; null = do not set the override (really spawn npm) */
   omit?: string | null
-  /** PATH for the child (used to make the real npm probe unspawnable) */
+  /** PATH for the child (used to make the real npm probe unspawnable, or to stub npm) */
   path?: string
+  /** extra env for the child (e.g. npm_config_omit) */
+  env?: Record<string, string>
+  /** set the omit override WITHOUT the test marker (it must then be ignored) */
+  noMarker?: boolean
 }
 
 function runHelper(l0: Lock, l1: Lock, opts: RunOpts = {}) {
@@ -132,8 +137,15 @@ function runHelper(l0: Lock, l1: Lock, opts: RunOpts = {}) {
   writeFileSync(cur, opts.curText ?? JSON.stringify(l1, null, 2) + '\n', 'utf8')
   if (!opts.noCopy) writeFileSync(copy, savedText, 'utf8')
   if (!opts.noSentinel) writeFileSync(sentinel, (opts.sentinel ?? sha256(savedText)) + '\n', 'utf8')
-  const env: Record<string, string> = { PATH: opts.path ?? process.env['PATH'] ?? '/usr/bin:/bin' }
-  if (opts.omit !== null) env['SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT'] = opts.omit ?? ''
+  const env: Record<string, string> = {
+    PATH: opts.path ?? process.env['PATH'] ?? '/usr/bin:/bin',
+    HOME: process.env['HOME'] ?? dir,
+    ...(opts.env ?? {}),
+  }
+  if (opts.omit !== null) {
+    env['SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT'] = opts.omit ?? ''
+    if (!opts.noMarker) env['SKILLSMITH_DEPS_PROBE_TEST'] = '1'
+  }
   const r = spawnSync(process.execPath, [HELPER, cur, copy, sentinel], {
     cwd: dir,
     encoding: 'utf8',
@@ -250,7 +262,9 @@ const MUST_BLOCK: Array<[string, (l0: Lock, l1: Lock) => void]> = [
   ['entry added', (_a, l1) => (l1.packages['node_modules/brand-new'] = { version: '1.0.0' })],
   ['entry removed', (_a, l1) => delete l1.packages['node_modules/zod']],
   [
-    // Same entry count, different key set: catches a count-only key comparison.
+    // Same entry count, different key set. A count-only key comparison would
+    // still fail this case (the renamed key has no L1 entry, so the per-key
+    // loop rejects it), which is why that mutation is equivalent, not caught.
     'entry renamed (one removed, one added, same count)',
     (_a, l1) => {
       l1.packages['node_modules/zod-renamed'] = l1.packages['node_modules/zod']
@@ -387,7 +401,133 @@ describe('SMI-7238 helper: effective omit set', () => {
     l1.packages['node_modules/zod'].dev = true
     const r = runHelper(l0, l1, { omit: null, path: join(tmpMissingDir(), 'nope') })
     expect(r.stdout).toBe('install-needed\n')
+    expect(r.stderr).toContain('could not read npm version')
+  })
+})
+
+/** A stub `npm` on PATH: prints `version` for --version; `config get omit` prints `omit` or exits `omitStatus`. */
+function stubNpmPath(version: string, omit: string, omitStatus = 0): string {
+  const d = makeFixtureTempDir('lockfile-needs-install-stubnpm')
+  dirs.push(d)
+  const script = [
+    '#!/bin/sh',
+    `if [ "$1" = "--version" ]; then printf '%s\\n' '${version}'; exit 0; fi`,
+    `if [ "$1 $2 $3" = "config get omit" ]; then printf '%s\\n' '${omit}'; exit ${omitStatus}; fi`,
+    'exit 99',
+    '',
+  ].join('\n')
+  writeFileSync(join(d, 'npm'), script, { encoding: 'utf8', mode: 0o755 })
+  return `${d}:/usr/bin:/bin`
+}
+
+describe('SMI-7238 helper: real npm probes (no omit override)', () => {
+  const flagOnly = (_a: Lock, l1: Lock) => (l1.packages['node_modules/zod'].dev = true)
+  const real = (env: Record<string, string> = {}) =>
+    runHelper(
+      baseLock(),
+      (() => {
+        const l1 = baseLock()
+        flagOnly(baseLock(), l1)
+        return l1
+      })(),
+      { omit: null, env }
+    )
+
+  it('positive control: real npm, clean env -> no-install-needed', () => {
+    const r = real()
+    expect(r.stderr).toContain('only dev/devOptional/peer flags')
+    expect(r.stdout).toBe('no-install-needed\n')
+  })
+
+  it('real npm with npm_config_omit=dev -> install-needed', () => {
+    const r = real({ npm_config_omit: 'dev' })
+    expect(r.stderr).toContain('npm omit set is not empty ("dev")')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+
+  it('real npm with NODE_ENV=production -> install-needed', () => {
+    const r = real({ NODE_ENV: 'production' })
+    expect(r.stderr).toContain('npm omit set is not empty ("dev")')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+
+  it('the override is ignored without the test marker', () => {
+    const l1 = baseLock()
+    flagOnly(baseLock(), l1)
+    const r = runHelper(baseLock(), l1, {
+      omit: '',
+      noMarker: true,
+      env: { npm_config_omit: 'dev' },
+    })
+    expect(r.stderr).toContain('npm omit set is not empty ("dev")')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+
+  it('stub npm 10, empty omit -> no-install-needed (stub positive control)', () => {
+    const l1 = baseLock()
+    flagOnly(baseLock(), l1)
+    const r = runHelper(baseLock(), l1, { omit: null, path: stubNpmPath('10.9.8', '') })
+    expect(r.stdout).toBe('no-install-needed\n')
+  })
+
+  it('stub npm whose omit probe exits 1 with empty stdout -> install-needed', () => {
+    const l1 = baseLock()
+    flagOnly(baseLock(), l1)
+    const r = runHelper(baseLock(), l1, { omit: null, path: stubNpmPath('10.9.8', '', 1) })
     expect(r.stderr).toContain('could not read npm omit configuration')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+
+  it.each(['11.0.0', '9.8.1', 'garbage', ''])('stub npm version "%s" -> install-needed', (v) => {
+    const l1 = baseLock()
+    flagOnly(baseLock(), l1)
+    const r = runHelper(baseLock(), l1, { omit: null, path: stubNpmPath(v, '') })
+    expect(r.stderr).toContain('outside the measured range')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+})
+
+describe('SMI-7238 helper: section moves only on root and workspace entries', () => {
+  const withLinkTarget = (l: Lock) => {
+    l.packages['vendor/local-lib'] = {
+      name: 'local-lib',
+      version: '1.0.0',
+      dependencies: { zod: '^3.0.0' },
+    }
+    l.packages['node_modules/local-lib'] = { resolved: 'vendor/local-lib', link: true }
+  }
+
+  it('a same-spec move on a non-workspace link target -> install-needed', () => {
+    const r = verdict((l0, l1) => {
+      withLinkTarget(l0)
+      withLinkTarget(l1)
+      l1.packages['vendor/local-lib'].devDependencies = { zod: '^3.0.0' }
+      delete l1.packages['vendor/local-lib'].dependencies
+    })
+    expect(r).toBe('install-needed\n')
+  })
+
+  it('paired control: the same link target unchanged -> no-install-needed', () => {
+    const r = verdict((l0, l1) => {
+      withLinkTarget(l0)
+      withLinkTarget(l1)
+    })
+    expect(r).toBe('no-install-needed\n')
+  })
+
+  it('a deeper path under a workspace glob is not a workspace', () => {
+    const r = verdict((l0, l1) => {
+      for (const l of [l0, l1]) {
+        l.packages['packages/website/sub'] = {
+          name: 'sub',
+          version: '1.0.0',
+          dependencies: { zod: '^3.0.0' },
+        }
+      }
+      l1.packages['packages/website/sub'].devDependencies = { zod: '^3.0.0' }
+      delete l1.packages['packages/website/sub'].dependencies
+    })
+    expect(r).toBe('install-needed\n')
   })
 })
 

@@ -73,20 +73,23 @@ describe('pre-push suite runner — SMI-7218 static checks', () => {
   })
 
   it('defines the four per-suite budgets', () => {
-    expect(budgets()).toEqual({ core: 360, cli: 90, 'mcp-server': 120, enterprise: 60 })
+    expect(budgets()).toEqual({ core: 540, cli: 90, 'mcp-server': 120, enterprise: 60 })
   })
 
   it('package.json has the opt-in test:root script', () => {
     expect(pkg.scripts['test:root']).toBe('vitest run --config vitest.config.root-tests.ts')
   })
 
-  it('the host backstop lies above the sum of the budgets (parsed, not hardcoded on one side)', () => {
-    const m = hook.match(/COVERAGE_BACKSTOP_SECS=(\d+)/)
+  it('the host backstop covers every budget plus its kill-after, with a startup margin (parsed)', () => {
+    const m = hook.match(/COVERAGE_BACKSTOP_SECS=(\d+)\n/)
     expect(m).not.toBeNull()
     const backstop = Number(m![1])
-    const sum = Object.values(budgets()).reduce((a, b) => a + b, 0)
-    expect(backstop).toBeGreaterThan(sum)
-    expect(backstop).toBe(690)
+    const killAfter = Number(/SUITE_KILL_AFTER=(\d+)/.exec(lib)![1])
+    const b = Object.values(budgets())
+    const worst = b.reduce((a, x) => a + x + killAfter, 0)
+    // At least 30 s left for docker exec startup and the hook's own work.
+    expect(backstop - worst).toBeGreaterThanOrEqual(30)
+    expect(b.length).toBe(4)
     expect(hook).toMatch(/timeout "\$COVERAGE_BACKSTOP_SECS" bash/)
     expect(hook).toMatch(/gtimeout "\$COVERAGE_BACKSTOP_SECS" bash/)
   })

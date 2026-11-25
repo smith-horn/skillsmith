@@ -20,13 +20,16 @@
 # when it fires, even if the host client is already gone (measured: 0 survivors).
 
 # ---- Per-suite budgets (seconds) --------------------------------------------
-# Measured idle on 10 CPUs: core 157-163 s, cli 16-17 s, mcp-server 23-24 s,
-# enterprise 9 s. Each budget is roughly 2x the measurement (core ~2.2x) so a
-# loaded laptop passes, while a hung suite is cut off. The host backstop in
-# .husky/pre-push (690 s) must stay above the SUM of these (630 s).
+# Measured on 10 CPUs, three runs each (SMI-7218). Idle: core 157-163 s,
+# cli 16-17 s, mcp-server 23-24 s, enterprise 9 s. With a second core suite
+# looping in the same container: core 328-343 s, cli 28-51 s, mcp-server
+# 41-45 s, enterprise 16-26 s. Each budget sits well above the loaded maximum
+# (core about 1.6x), so a busy laptop passes while a hung suite is cut off.
+# The host backstop in .husky/pre-push must stay above the sum of
+# (budget + kill-after) plus a startup margin; its tests check that.
 suite_budget() {
   case "$1" in
-    core) echo 360 ;;
+    core) echo 540 ;;
     cli) echo 90 ;;
     mcp-server) echo 120 ;;
     enterprise) echo 60 ;;
@@ -56,7 +59,9 @@ init_suite_budgets() {
   if [[ "$ka" =~ ^[1-9][0-9]*$ ]]; then SUITE_KILL_AFTER="$ka"; else SUITE_KILL_AFTER=15; fi
 
   SUITE_TIMEOUT_BIN=""
-  if [ "${SKILLSMITH_PRE_PUSH_NO_PG_SWEEP:-0}" != "1" ]; then
+  if [ "${SKILLSMITH_PRE_PUSH_NO_PG_SWEEP:-0}" = "1" ]; then
+    echo "ℹ️  SKILLSMITH_PRE_PUSH_NO_PG_SWEEP=1: suites run plainly, with no process-group sweep and no per-suite timeout"
+  else
     if [ "${USE_DOCKER:-0}" = "1" ]; then
       SUITE_TIMEOUT_BIN="timeout" # GNU timeout lives in the dev container image
     elif command -v timeout >/dev/null 2>&1; then

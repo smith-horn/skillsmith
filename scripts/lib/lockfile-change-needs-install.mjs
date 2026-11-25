@@ -19,16 +19,25 @@
  * Exempt (no install needed), and nothing else:
  *   - `dev`, `devOptional`, `peer` flag changes on `node_modules/` entries;
  *   - a dependency moving between `dependencies` and `devDependencies` of the
- *     root or a workspace entry with an unchanged spec.
+ *     root entry (`""`) or a workspace entry (a key matched by the root's
+ *     `workspaces` globs, `dir/*` or exact) with an unchanged spec. Any other
+ *     non-`node_modules/` entry (e.g. a `file:` link target) must be identical.
  * Every other field of every entry, the key set, and the top-level lockfile
  * fields must be JSON-identical (object key order is ignored; array order is
  * not). Valid only when npm's effective omit set is empty, since the flags
  * matter only to what an omit would prune.
  *
- * Test seam: SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT, when set (even to the empty
- * string), replaces the stdout of `npm config get omit` and skips running npm.
- * Measured on npm 10.9.8: the default prints an empty line, NODE_ENV=production
- * prints `dev`, and npm ignores `--json` for this key.
+ * Valid only on npm major 10 (`npm --version`), the versions this rule was
+ * measured on (10.9.7 on the macOS host, 10.9.8 in the container). Any other
+ * version, or a version probe that fails, is install-needed.
+ *
+ * Measured on both: `npm config get omit` prints an empty line by default and
+ * `dev` under npm_config_omit=dev or NODE_ENV=production; npm ignores `--json`
+ * for this key.
+ *
+ * Test seam: SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT replaces the stdout of
+ * `npm config get omit` (skipping that one npm run), but only when
+ * SKILLSMITH_DEPS_PROBE_TEST=1 is also set, so it can't take effect on a push.
  */
 
 import { readFileSync } from 'node:fs'
@@ -38,7 +47,8 @@ import { dirname, resolve } from 'node:path'
 
 const NODE_FLAG_FIELDS = new Set(['dev', 'devOptional', 'peer'])
 const SECTION_FIELDS = new Set(['dependencies', 'devDependencies'])
-const OMIT_PROBE_TIMEOUT_MS = 10_000
+const NPM_PROBE_TIMEOUT_MS = 10_000
+const SUPPORTED_NPM_MAJOR = 10
 
 class NeedsInstall extends Error {}
 
@@ -106,21 +116,48 @@ function sectionPairs(entry, key, label) {
   return pairs.sort()
 }
 
-function checkOmitEmpty(repoRoot) {
-  const override = process.env.SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT
-  let out
-  if (override !== undefined) {
-    out = override
-  } else {
-    const r = spawnSync('npm', ['config', 'get', 'omit'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      timeout: OMIT_PROBE_TIMEOUT_MS,
-    })
-    if (r.error || r.status !== 0) fail('could not read npm omit configuration')
-    out = r.stdout ?? ''
+function runNpm(args, repoRoot, what) {
+  const r = spawnSync('npm', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    timeout: NPM_PROBE_TIMEOUT_MS,
+  })
+  if (r.error || r.status !== 0) fail(`could not read ${what}`)
+  return r.stdout ?? ''
+}
+
+function checkNpmVersion(repoRoot) {
+  const v = runNpm(['--version'], repoRoot, 'npm version').trim()
+  const m = /^(\d+)\.\d+\.\d+/.exec(v)
+  if (!m || Number(m[1]) !== SUPPORTED_NPM_MAJOR) {
+    fail(`npm ${v || '(empty)'} is outside the measured range (major ${SUPPORTED_NPM_MAJOR})`)
   }
+}
+
+function checkOmitEmpty(repoRoot) {
+  const override =
+    process.env.SKILLSMITH_DEPS_PROBE_TEST === '1'
+      ? process.env.SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT
+      : undefined
+  const out =
+    override !== undefined
+      ? override
+      : runNpm(['config', 'get', 'omit'], repoRoot, 'npm omit configuration')
   if (out.trim() !== '') fail(`npm omit set is not empty ("${out.trim()}")`)
+}
+
+/** Root workspace globs: `dir/*` (one level) or an exact path; anything else matches nothing. */
+function isWorkspaceKey(key, root) {
+  const globs = isPlainObject(root) && Array.isArray(root.workspaces) ? root.workspaces : []
+  return globs.some((g) => {
+    if (typeof g !== 'string') return false
+    if (g.endsWith('/*')) {
+      const prefix = g.slice(0, -1)
+      const rest = key.startsWith(prefix) ? key.slice(prefix.length) : ''
+      return rest !== '' && !rest.includes('/')
+    }
+    return !g.includes('*') && g === key
+  })
 }
 
 function compareLocks(l0, l1) {
@@ -138,11 +175,13 @@ function compareLocks(l0, l1) {
     if (!isPlainObject(e0) || !isPlainObject(e1)) fail(`entry "${key}" is not an object`)
     if (key.includes('node_modules/')) {
       if (!fieldsEqual(e0, e1, NODE_FLAG_FIELDS)) fail(`entry "${key}" differs beyond flags`)
-    } else {
+    } else if (key === '' || isWorkspaceKey(key, p0[''])) {
       if (!fieldsEqual(e0, e1, SECTION_FIELDS)) fail(`entry "${key}" differs beyond sections`)
       const s0 = sectionPairs(e0, key, 'saved')
       const s1 = sectionPairs(e1, key, 'current')
       if (!deepEqual(s0, s1)) fail(`entry "${key}" dependency names or specs differ`)
+    } else if (!deepEqual(e0, e1)) {
+      fail(`entry "${key}" is not root, a workspace or under node_modules/, and differs`)
     }
   }
 }
@@ -163,7 +202,9 @@ function decide(curPath, savedPath, sentinelPath) {
   const l1 = parseLock(readFileSync(curPath, 'utf8'), 'current lockfile')
   // Compare first: a real difference never needs the (slower) npm probe.
   compareLocks(l0, l1)
-  checkOmitEmpty(dirname(resolve(curPath)))
+  const repoRoot = dirname(resolve(curPath))
+  checkNpmVersion(repoRoot)
+  checkOmitEmpty(repoRoot)
 }
 
 const [, , curPath, savedPath, sentinelPath] = process.argv
