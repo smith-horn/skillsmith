@@ -130,7 +130,7 @@ done
 
 # SMI-7218 (owner decision D1): the root + colocated suite is CI-only in
 # pre-push. CI (Test (root), Test (root colocated)) and post-merge-verify run it.
-echo "  ℹ️  root + colocated tests are not run here: CI (Test (root), Test (root colocated)) and post-merge-verify run them. Locally: npm run test:root"
+echo "  ℹ️  root + colocated tests are not run here: CI (Test (root), Test (root colocated)) and post-merge-verify run them. Locally: ./scripts/worktree-docker.sh exec -- npm run test:root (worktree) or docker exec skillsmith-dev-1 npm run test:root (main checkout)"
 
 if [ -z "$FAILED_PACKAGES" ]; then
   echo "✅ Test check passed"
