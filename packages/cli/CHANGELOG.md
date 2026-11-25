@@ -17,7 +17,11 @@ All notable changes to `@skillsmith/cli` are documented here.
   `import`, `import-local`, `sync`, `sync config`) fails with an error naming the cause and the
   fix. On a database at an older schema, `search`, `info` and the commands that change the
   database fail with that error, because the WASM driver cannot upgrade it; `list` still reads it.
-  A first run with no database works with empty local results.
+  A first run with no database works with empty local results. `skillsmith list` now reports a
+  database it cannot open (a corruption refusal, with its remedy, or any other open error) once,
+  on its own, and exits 1, even when no skills are installed; before, a corrupt database with
+  nothing installed printed "No skills installed" and exited 0. No database file at all is still
+  not an error.
   The CLI creates the database directory owner-only (0700) when it does not exist, which the native
   driver needs on a first run.
 

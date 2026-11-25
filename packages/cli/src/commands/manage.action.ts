@@ -36,6 +36,7 @@ import { removeExitCode, removeSkill } from './manage.remove.js'
 // ADR-175 § 5 / SMI-6946: extracted to stay under the 500-line standard, same
 // reason manage.update.helpers.ts exists.
 import { warnUndetermined } from './manage.update-status.js'
+import { listDatabaseFailure, reportListDatabaseFailure } from './manage.list-database.js'
 
 const logger = getCliLogger()
 
@@ -188,6 +189,9 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
       clientOpt !== undefined
         ? await getInstalledSkillsForClient(resolvedClient, dbPath)
         : await getInstalledSkills(dbPath)
+    // SMI-7260: whether the database itself could be opened, independent of
+    // whether any skill row exists to carry that news (manage.list-database.ts).
+    const dbFailure = await listDatabaseFailure(dbPath ?? DEFAULT_DB_PATH)
     // ADR-175 § 5. `--outdated` filters on a CONFIRMED newer version, so an
     // entry whose state could not be determined is neither listed as outdated
     // nor silently counted as current — it is reported separately below.
@@ -208,11 +212,14 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
         console.log(chalk.yellow('\nNo updates found among the skills that could be checked.\n'))
       }
       warnUndetermined(undetermined, skills.length)
-      return
+    } else {
+      displaySkillsTable(filtered, resolvedClient)
+      warnUndetermined(undetermined, skills.length)
     }
 
-    displaySkillsTable(filtered, resolvedClient)
-    warnUndetermined(undetermined, skills.length)
+    // SMI-7260: a database that could not be opened is reported once, on its
+    // own, and fails the command, even when no skill row exists to carry it.
+    if (dbFailure !== undefined) reportListDatabaseFailure(dbFailure)
   } catch (error) {
     logger.error(`${chalk.red('Error listing skills:')} ${sanitizeError(error)}`)
     process.exit(1)
