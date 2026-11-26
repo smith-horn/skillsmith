@@ -55,44 +55,35 @@ export function warnUndetermined(undetermined: InstalledSkill[], total: number):
  * SMI-7260: the one warning for a command whose database exists but at least
  * one of whose opens failed (ADR-175 § 5: one warning per command, naming the
  * cause and the remedy; the command still exits 0). Used INSTEAD of
- * {@link warnUndetermined} in that case, so the open failure is printed once,
- * with no skills installed too.
+ * {@link warnUndetermined} in that case, with no skills installed too.
  *
  * The scan opens the one database once per directory it scans, so the opens
- * can disagree (a transient WASM unstable read in one, a clean read in
- * another). Hence the three shapes:
+ * can disagree. The warning is built as:
  *
- * - no skills: the failure, and that no update status could be checked;
- * - skills, none undetermined: one open failed but every listed skill was
- *   still checked (so it does not contradict "All installed skills are up to
- *   date.");
- * - some undetermined: how many, the open failure, and any OTHER reason among
- *   those rows (a lookup that failed after a good open), named so it is not
- *   lost.
+ * 1. a headline: no skills (no update status could be checked); skills, none
+ *    Unknown (one open failed but every listed skill was still checked); or
+ *    some Unknown (how many, and that the database could not be opened);
+ * 2. for EACH distinct failed-open reason, that open's error, which carries
+ *    its remedy (for a corruption refusal, the files and the commands);
+ * 3. `Also:` with each distinct Unknown-row reason that is not one of those
+ *    printed reasons (a lookup that failed after a good open).
  *
- * @param error - the first open failure; its message carries the remedy (for
- *   a corruption refusal, the files and the commands).
- * @param openReasons - the per-skill reasons the failed opens were classified
- *   as; undetermined rows with any other reason are named separately.
+ * A row is explained only by a reason whose error is printed. The benign
+ * absent case never reaches here: the scan does not report it.
+ *
+ * @param openFailures - each distinct classified reason of a failed open,
+ *   mapped to the first error seen for it.
  */
 export function warnDatabaseUnopenable(
-  error: unknown,
-  openReasons: ReadonlySet<string>,
+  openFailures: ReadonlyMap<string, unknown>,
   undetermined: InstalledSkill[],
   total: number
 ): void {
-  const otherReasons = [
-    ...new Set(
-      undetermined
-        .map((s) => s.updateStatusReason)
-        .filter((r): r is string => !!r && !openReasons.has(r))
-    ),
-  ]
-  let scope: string
+  let headline: string
   if (total === 0) {
-    scope = 'The local database could not be opened, so no update status could be checked.'
+    headline = 'The local database could not be opened, so no update status could be checked.'
   } else if (undetermined.length === 0) {
-    scope =
+    headline =
       "One of the local database's opens failed, but every listed skill's update status was " +
       'still checked.'
   } else {
@@ -100,10 +91,18 @@ export function warnDatabaseUnopenable(
       undetermined.length === total
         ? "No skill's update status could be determined"
         : `${undetermined.length} of ${total} skills' update status could not be determined`
-    const also = otherReasons.length > 0 ? `; also: ${otherReasons.join('; ')}` : ''
-    scope =
-      `${count}: the local database could not be opened${also}. ` +
+    headline =
+      `${count}: the local database could not be opened. ` +
       `Shown as "Unknown" rather than "Up to date" — this is not a claim that they are current.`
   }
-  logger.warn(chalk.yellow(scope) + `\n${sanitizeError(error)}`)
+  const causes = [...openFailures.values()].map((error) => sanitizeError(error))
+  const otherReasons = [
+    ...new Set(
+      undetermined
+        .map((s) => s.updateStatusReason)
+        .filter((r): r is string => !!r && !openFailures.has(r))
+    ),
+  ]
+  const also = otherReasons.length > 0 ? [`Also: ${otherReasons.join('; ')}.`] : []
+  logger.warn([chalk.yellow(headline), ...causes, ...also].join('\n'))
 }

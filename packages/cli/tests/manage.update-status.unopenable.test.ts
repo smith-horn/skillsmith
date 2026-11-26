@@ -40,7 +40,7 @@ describe('SMI-7260: warnDatabaseUnopenable', () => {
   it('(a) names a lookup failure among the Unknown rows that the open failure does not explain', () => {
     const undetermined = [row('a', 'unknown', OPEN_REASON), row('b', 'unknown', LOOKUP_REASON)]
 
-    warnDatabaseUnopenable(ERROR, new Set([OPEN_REASON]), undetermined, 3)
+    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), undetermined, 3)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain('2 of 3')
@@ -52,14 +52,14 @@ describe('SMI-7260: warnDatabaseUnopenable', () => {
   })
 
   it('(a) adds no extra reason when the open failure explains every Unknown row (the control)', () => {
-    warnDatabaseUnopenable(ERROR, new Set([OPEN_REASON]), [row('a', 'unknown', OPEN_REASON)], 1)
+    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), [row('a', 'unknown', OPEN_REASON)], 1)
 
     expect(warned).toHaveLength(1)
-    expect(warned[0]).not.toContain('also:')
+    expect(warned[0]).not.toContain('Also:')
   })
 
   it('(b) says every listed skill was still checked when none is Unknown', () => {
-    warnDatabaseUnopenable(ERROR, new Set([OPEN_REASON]), [], 2)
+    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), [], 2)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain("every listed skill's update status was still checked")
@@ -68,7 +68,7 @@ describe('SMI-7260: warnDatabaseUnopenable', () => {
   })
 
   it('with no skills installed it says no update status could be checked (the control)', () => {
-    warnDatabaseUnopenable(ERROR, new Set([OPEN_REASON]), [], 0)
+    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), [], 0)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain('no update status could be checked')

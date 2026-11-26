@@ -174,9 +174,10 @@ async function resolvesToDirectory(
  *                    scan) that don't need untracked detection, in which
  *                    case every entry gets `untracked: false`.
  * @param onOpenFailure SMI-7260: called with the error, and the per-skill
- *                    reason it was classified as, when the database exists
- *                    but could not be opened, so a caller can report the
- *                    failure from this same open.
+ *                    reason it was classified as, when the open failed for
+ *                    a reason that leaves update state unknowable, so a
+ *                    caller can report it from this same open. Not called
+ *                    for the benign absent case (ADR-175 § 5).
  */
 export async function getSkillsFromDirectory(
   skillsDir: string,
@@ -184,7 +185,7 @@ export async function getSkillsFromDirectory(
   installedVia: ClientId | 'local' = CANONICAL_CLIENT,
   scope: InstallScope = 'global',
   manifestPath?: string,
-  onOpenFailure?: (error: unknown, reason?: string) => void
+  onOpenFailure?: (error: unknown, reason: string) => void
 ): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
   const effectiveClient: ClientId = installedVia === 'local' ? CANONICAL_CLIENT : installedVia
@@ -216,7 +217,10 @@ export async function getSkillsFromDirectory(
   // see skills-directory.version-lookup.ts). `unknownReason` is set when the
   // lookup is unavailable for a reason that leaves update state UNKNOWABLE.
   const { versionRepo, dbConn, unknownReason, openError } = await openVersionLookup(dbPath)
-  if (openError !== undefined) onOpenFailure?.(openError, unknownReason)
+  // ADR-175 § 5: an open that failed because the file is gone (a delete racing
+  // the existence check) is the benign absent case, so it is not reported.
+  if (openError !== undefined && unknownReason !== undefined)
+    onOpenFailure?.(openError, unknownReason)
 
   try {
     const entries = await readdir(skillsDir, { withFileTypes: true })
@@ -402,7 +406,7 @@ async function dedupeByNameAndPath(ordered: InstalledSkill[]): Promise<Installed
 
 export async function getInstalledSkills(
   dbPath?: string,
-  onOpenFailure?: (error: unknown, reason?: string) => void
+  onOpenFailure?: (error: unknown, reason: string) => void
 ): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   const targets = buildScanTargets(process.cwd())
@@ -447,7 +451,7 @@ export async function getInstalledSkills(
 export async function getInstalledSkillsForClient(
   client: ClientId,
   dbPath?: string,
-  onOpenFailure?: (error: unknown, reason?: string) => void
+  onOpenFailure?: (error: unknown, reason: string) => void
 ): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   const cwd = process.cwd()

@@ -184,13 +184,13 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // declaration) — only the footer text's client resolution, not the scan
     // filter, changes here.
     const resolvedClient = resolveClientId(clientOpt)
-    // SMI-7260: the scan's own open failure, kept so it can be reported once,
-    // even when no skill row exists to carry it. No second open.
-    let dbOpenError: unknown
-    const openReasons = new Set<string>()
-    const noteOpenFailure = (error: unknown, reason?: string) => {
-      dbOpenError ??= error
-      if (reason !== undefined) openReasons.add(reason)
+    // SMI-7260: every failed open the scan made (it opens the database once
+    // per directory), keyed by its classified reason, keeping the first error
+    // for each distinct reason. Reported in one warning, even when no skill
+    // row exists to carry it. No second open.
+    const openFailures = new Map<string, unknown>()
+    const noteOpenFailure = (error: unknown, reason: string) => {
+      if (!openFailures.has(reason)) openFailures.set(reason, error)
     }
     const skills =
       clientOpt !== undefined
@@ -202,11 +202,11 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     const undetermined = skills.filter((s) => s.updateStatus === 'unknown')
     // ADR-175 § 5: one warning per command, and a database fault costs the
     // update column, not the command (exit 0). When an open failed, its one
-    // warning replaces the per-skill one: the cause is printed once, and any
-    // other reason (a lookup that failed after a good open) is named in it.
+    // warning replaces the per-skill one: each distinct cause is printed once,
+    // and any other reason (a lookup that failed after a good open) is named.
     const warn = () =>
-      dbOpenError !== undefined
-        ? warnDatabaseUnopenable(dbOpenError, openReasons, undetermined, skills.length)
+      openFailures.size > 0
+        ? warnDatabaseUnopenable(openFailures, undetermined, skills.length)
         : warnUndetermined(undetermined, skills.length)
     const filtered = outdated ? skills.filter((s) => s.updateStatus === 'available') : skills
 

@@ -23,27 +23,36 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDatabaseSync, initializeSchema } from '@skillsmith/core'
 
-// Passthrough, except that with `failScanOpens` set, every open made BY THE
+// Passthrough, except that with `scanFailure` set, every open made BY THE
 // SCAN (from skills-directory.version-lookup.ts, which every scan target uses)
-// throws, while an open from anywhere else succeeds. Deterministic: the scan
-// opens once per target, in parallel, so failing "the next open" could hit a
-// target other than the skill's.
-const inject = vi.hoisted(() => ({ failScanOpens: false }))
+// throws the error it returns for that call (0, 1, ... in call order), while
+// an open from anywhere else succeeds. Deterministic: the scan opens once per
+// target, in parallel, so failing "the next open" could hit a target other
+// than the skill's.
+const inject = vi.hoisted(() => ({
+  scanFailure: null as null | ((call: number) => Error),
+  scanCalls: 0,
+}))
 vi.mock('../src/utils/open-database.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/utils/open-database.js')>()
   return {
     ...actual,
     openCliDatabase: (...args: Parameters<typeof actual.openCliDatabase>) => {
       if (
-        inject.failScanOpens &&
+        inject.scanFailure !== null &&
         /skills-directory\.version-lookup/.test(new Error().stack ?? '')
       ) {
-        return Promise.reject(new Error('injected: the scan could not open the database'))
+        return Promise.reject(inject.scanFailure(inject.scanCalls++))
       }
       return actual.openCliDatabase(...args)
     },
   }
 })
+
+/** An error carrying a SQLite result code, as the native driver throws it. */
+function sqliteError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code })
+}
 
 import { listAction } from '../src/commands/manage.action.js'
 import { getCliLogger } from '../src/cli-logger.js'
@@ -58,7 +67,8 @@ let exitCodes: unknown[]
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'smi7260-list-'))
   mkdirSync(join(root, 'cwd'))
-  inject.failScanOpens = false
+  inject.scanFailure = null
+  inject.scanCalls = 0
   logged = []
   errors = []
   warned = []
@@ -80,7 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  inject.failScanOpens = false
+  inject.scanFailure = null
   if (skillDir !== undefined) rmSync(skillDir, { recursive: true, force: true })
   skillDir = undefined
   if (root !== undefined) rmSync(root, { recursive: true, force: true })
@@ -148,7 +158,7 @@ describe('SMI-7260: list reports a database it could not open, once, and exits 0
   it('reports the failure of the scan’s own open, even when a later open would succeed', async () => {
     const db = skillsDb(false)
     installOneSkill()
-    inject.failScanOpens = true
+    inject.scanFailure = () => new Error('injected: the scan could not open the database')
 
     await listAction({ db })
 
@@ -161,6 +171,55 @@ describe('SMI-7260: list reports a database it could not open, once, and exits 0
     expect(dbMessages()[0]).toContain("No skill's update status could be determined")
     expect(dbMessages()[0]).toContain('injected: the scan could not open the database')
     expect(exitCodes).toEqual([])
+  })
+
+  it('two failed opens with different causes: both are named, in the one warning', async () => {
+    const db = skillsDb(false)
+    installOneSkill()
+    inject.scanFailure = (call) =>
+      call === 0
+        ? sqliteError('SQLITE_BUSY', 'injected BUSY: database is locked')
+        : sqliteError('SQLITE_READONLY', 'injected READONLY: attempt to write a readonly database')
+
+    await listAction({ db })
+
+    expect(inject.scanCalls).toBeGreaterThanOrEqual(2)
+    expect(dbMessages()).toHaveLength(1)
+    expect(dbMessages()[0]).toContain('injected BUSY: database is locked')
+    expect(dbMessages()[0]).toContain('injected READONLY: attempt to write a readonly database')
+    expect(exitCodes).toEqual([])
+  })
+
+  it('two failed opens with the same cause: it is printed once', async () => {
+    const db = skillsDb(false)
+    installOneSkill()
+    inject.scanFailure = () => sqliteError('SQLITE_READONLY', 'injected READONLY: same cause')
+
+    await listAction({ db })
+
+    expect(inject.scanCalls).toBeGreaterThanOrEqual(2)
+    expect(dbMessages()).toHaveLength(1)
+    expect((dbMessages()[0] ?? '').split('injected READONLY: same cause')).toHaveLength(2)
+  })
+
+  it('an open that fails because the file vanished (CANTOPEN, now absent) reports nothing', async () => {
+    const db = skillsDb(false)
+    installOneSkill()
+    // The file existed for the scan's existence check and is gone at the open:
+    // the delete race. Absence is ADR-175 § 5's benign case.
+    inject.scanFailure = () => {
+      rmSync(db, { force: true })
+      return sqliteError('SQLITE_CANTOPEN', 'injected CANTOPEN: unable to open database file')
+    }
+
+    await listAction({ db })
+
+    expect(inject.scanCalls).toBeGreaterThanOrEqual(1)
+    expect(warned).toEqual([])
+    expect(dbMessages()).toEqual([])
+    expect(exitCodes).toEqual([])
+    // Presence: the skill is still listed.
+    expect(all()).toContain('smi7260-probe-skill')
   })
 
   it('control: a healthy database with no skills prints "No skills installed", no warning, exit 0', async () => {
