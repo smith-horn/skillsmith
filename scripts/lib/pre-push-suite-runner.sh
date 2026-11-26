@@ -45,6 +45,10 @@ suite_budget() {
 SUITE_BUDGET_OVERRIDE=""
 SUITE_KILL_AFTER=15
 SUITE_TIMEOUT_BIN=""
+# Set at source time too (not only in init_suite_budgets), so a caller that
+# sources this file and never calls init_suite_budgets still works under set -u.
+TIMED_OUT_PACKAGES=""
+SUITE_SUGGESTED_BUDGET=0
 
 # suggest_budget <budget>
 # Twice the budget, capped at the override's 5-digit limit (99999). Prints

@@ -260,6 +260,21 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
     expect(summary(' core', ' core', '0')).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS/)
   })
 
+  it('p: sourcing the runner without init_suite_budgets works under set -u', () => {
+    const r = spawnSync(
+      'bash',
+      [
+        '-c',
+        `set -u; . "${RUNNER}"; FAILED_PACKAGES=" core"; print_failure_summary "" V; echo "EXIT=$?"`,
+      ],
+      { encoding: 'utf8' }
+    )
+    expect(r.stderr).toBe('')
+    expect(r.stdout).toContain('❌ Tests failed in packages/core!')
+    expect(r.stdout).toContain('   Bypass: git push --no-verify')
+    expect(r.stdout).toContain('EXIT=0')
+  })
+
   it('o: the hook backstop message, executed under sh: cause, a valid larger override, then last resort', () => {
     const hook = readFileSync(join(__dirname, '..', '..', '.husky', 'pre-push'), 'utf8')
     const block = /# >>> backstop-message[^\n]*\n([\s\S]*?)# <<< backstop-message/.exec(hook)
