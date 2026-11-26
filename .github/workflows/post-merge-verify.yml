@@ -132,8 +132,10 @@ jobs:
           - Run: $RUN_URL
           - Triggered by: @${{ github.actor }}
 
-          This workflow runs host-equivalent typecheck and the root vitest config
-          (\`vitest.config.root-tests.ts\`) which are not covered by the PR matrix.
+          This workflow runs host-equivalent typecheck and the combined root vitest
+          config (\`vitest.config.root-tests.ts\`). The PR matrix runs that config
+          split in two (Test (root), Test (root colocated)); pre-push does not run
+          it since SMI-7218.
           See \`docs/internal/implementation/smi-4210-4212-ci-safety-net.md\` (SMI-4211).
           EOF
           )

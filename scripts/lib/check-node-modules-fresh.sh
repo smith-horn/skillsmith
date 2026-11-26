@@ -16,8 +16,10 @@
 #   --write-sentinel  (postinstall) — write sha256(package-lock.json) →
 #                     node_modules/.skillsmith-deps-hash, plus a normalized
 #                     "shadow hash" (see SENTINEL_SHADOW_NAME below) →
-#                     node_modules/.skillsmith-deps-hash-shadow. Idempotent,
-#                     fail-soft.
+#                     node_modules/.skillsmith-deps-hash-shadow, plus the exact
+#                     lockfile bytes → node_modules/.skillsmith-deps-lock.json
+#                     (SMI-7238), published copy → shadow → raw sentinel, each
+#                     by temp file + rename. Idempotent, fail-soft.
 #   --classify        (hooks, guards) — READ-ONLY. Prints exactly one of
 #                     fresh|cosmetic|real|unknown to stdout and exits 0. Every
 #                     consumer that decides install-or-not, or block-or-not,
@@ -53,9 +55,13 @@
 # Worktree-symlink semantics: in a worktree, node_modules (hence the sentinel)
 # is the MAIN checkout's (symlinked by create-worktree.sh), written at main's
 # last install; package-lock.json is the WORKTREE branch's own file. Equal
-# hashes ⇒ main's tree satisfies the worktree's lockfile (fresh); differing
-# hashes ⇒ the worktree added/changed a dep the symlinked tree lacks (drift).
-# This is the desired semantics, unaffected by the classifier flip.
+# hashes ⇒ main's tree satisfies the worktree's lockfile (fresh). Differing
+# hashes are classified further: `cosmetic` when the only differences need no
+# install (workspace-self version fields, SMI-6496; or dev/devOptional/peer
+# flags and same-spec dependency section moves, SMI-7238, decided by
+# lockfile-change-needs-install.mjs against the lockfile copy saved at install
+# time); otherwise `real` (the worktree added/changed a dep the symlinked tree
+# lacks).
 #
 # POSIX sh — no `local`, no `[[ ]]`, no arrays.
 
@@ -66,6 +72,9 @@ SENTINEL_NAME=".skillsmith-deps-hash"
 # SMI-6606/SMI-6614 (ADR-158) this is no longer diagnostic-only — --classify
 # and check mode both use it to distinguish `cosmetic` from `real` drift.
 SENTINEL_SHADOW_NAME=".skillsmith-deps-hash-shadow"
+# SMI-7238: the exact lockfile bytes the last install used, saved by
+# --write-sentinel. Trusted only when its sha256 equals the raw sentinel.
+LOCK_COPY_NAME=".skillsmith-deps-lock.json"
 
 # --- repo-root resolution (robust from main repo OR a worktree) -------------
 # package-lock.json is hashed against the CURRENT working tree (the worktree's
@@ -81,7 +90,9 @@ fi
 LOCKFILE="$REPO_ROOT/package-lock.json"
 SENTINEL="$REPO_ROOT/node_modules/$SENTINEL_NAME"
 SENTINEL_SHADOW="$REPO_ROOT/node_modules/$SENTINEL_SHADOW_NAME"
+LOCK_COPY="$REPO_ROOT/node_modules/$LOCK_COPY_NAME"
 NORMALIZE_SCRIPT="$REPO_ROOT/scripts/lib/normalize-lockfile-for-freshness.mjs"
+NEEDS_INSTALL_SCRIPT="$REPO_ROOT/scripts/lib/lockfile-change-needs-install.mjs"
 PACKAGE_JSON="$REPO_ROOT/package.json"
 ADVICE_SCRIPT="$REPO_ROOT/scripts/lib/print-deps-refresh-advice.sh"
 
@@ -106,6 +117,15 @@ _shadow_hash() {
     [ -r "$NORMALIZE_SCRIPT" ] || { printf ''; return; }
     [ -r "$PACKAGE_JSON" ] || { printf ''; return; }
     node "$NORMALIZE_SCRIPT" "$LOCKFILE" "$PACKAGE_JSON" 2>/dev/null
+}
+
+# SMI-7238: prints `no-install-needed` only when the helper says the change
+# since the last install needs no install. Read-only. Prints nothing (treated
+# as "install needed" by the caller) when node or the helper is unavailable.
+_lockfile_change_needs_no_install() {
+    command -v node >/dev/null 2>&1 || { printf ''; return; }
+    [ -r "$NEEDS_INSTALL_SCRIPT" ] || { printf ''; return; }
+    node "$NEEDS_INSTALL_SCRIPT" "$LOCKFILE" "$LOCK_COPY" "$SENTINEL" 2>/dev/null
 }
 
 # --- classifier (SMI-6606 / SMI-6614, ADR-158) -------------------------------
@@ -145,13 +165,40 @@ _classify() {
             if [ "$_sentinel_shadow_hash" = "$_cur_shadow_hash" ]; then
                 echo cosmetic
             else
-                echo real
+                # SMI-7238: shadow hashes differ, but the change may still
+                # need no install (flag-only / same-spec section moves).
+                # Anything but the exact token keeps `real`.
+                if [ "$(_lockfile_change_needs_no_install)" = "no-install-needed" ]; then
+                    echo cosmetic
+                else
+                    echo real
+                fi
             fi
             return 0
         fi
     fi
 
     echo unknown
+}
+
+# Atomic publication helpers (SMI-7238): write to a temp name in the SAME
+# directory, then rename. Return non-zero (never abort) on any failure.
+_publish_copy() {
+    _pc_tmp="$2.tmp.$$"
+    if cp "$1" "$_pc_tmp" 2>/dev/null && mv "$_pc_tmp" "$2" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$_pc_tmp" 2>/dev/null
+    return 1
+}
+
+_publish_text() {
+    _pt_tmp="$2.tmp.$$"
+    if printf '%s\n' "$1" > "$_pt_tmp" 2>/dev/null && mv "$_pt_tmp" "$2" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$_pt_tmp" 2>/dev/null
+    return 1
 }
 
 # --- mode: --write-sentinel (install time only) -----------------------------
@@ -168,9 +215,18 @@ if [ "${1:-}" = "--write-sentinel" ]; then
     # next real lockfile change before a shadow sentinel exists. Best-effort:
     # a failure here (see _shadow_hash's fail-soft contract) never blocks or
     # fails the raw sentinel write that follows.
+    #
+    # SMI-7238 publication order, each by temp file in the same directory then
+    # an atomic `mv`: lockfile copy first, shadow sentinel second, raw sentinel
+    # LAST. A reader that sees a raw sentinel whose hash differs from the copy
+    # treats it as an incomplete publication (install-needed).
+    if ! cmp -s "$LOCKFILE" "$LOCK_COPY" 2>/dev/null; then
+        _publish_copy "$LOCKFILE" "$LOCK_COPY" || true
+    fi
+
     NEW_SHADOW="$(_shadow_hash)"
     if [ -n "$NEW_SHADOW" ]; then
-        printf '%s\n' "$NEW_SHADOW" > "$SENTINEL_SHADOW" 2>/dev/null || true
+        _publish_text "$NEW_SHADOW" "$SENTINEL_SHADOW" || true
     fi
 
     # Idempotent: skip the write when unchanged (avoids needless mtime churn
@@ -179,7 +235,7 @@ if [ "${1:-}" = "--write-sentinel" ]; then
         OLD_HASH="$(cat "$SENTINEL" 2>/dev/null || echo '')"
         [ "$OLD_HASH" = "$NEW_HASH" ] && exit 0
     fi
-    printf '%s\n' "$NEW_HASH" > "$SENTINEL" 2>/dev/null || exit 0
+    _publish_text "$NEW_HASH" "$SENTINEL" || exit 0
     exit 0
 fi
 
@@ -211,7 +267,7 @@ case "$VERDICT" in
         exit 0
         ;;
     cosmetic)
-        printf 'package-lock.json changed only in workspace-self version fields; installed dependencies still match. No install needed.\n'
+        printf 'package-lock.json changed only in ways that need no install (workspace-self version fields, or dependency flags and same-spec section moves); the installed tree'\''s install input is otherwise identical. No install needed.\n'
         exit 0
         ;;
 esac

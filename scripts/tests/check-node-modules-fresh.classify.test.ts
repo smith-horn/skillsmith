@@ -54,12 +54,14 @@ import {
 } from 'node:fs'
 import { join, resolve, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = resolve(__dirname, '..', 'lib', 'check-node-modules-fresh.sh')
 const NORMALIZE_SRC = resolve(__dirname, '..', 'lib', 'normalize-lockfile-for-freshness.mjs')
+const NEEDS_INSTALL_SRC = resolve(__dirname, '..', 'lib', 'lockfile-change-needs-install.mjs')
 const EXPECTED_COUNT_FILE = resolve(__dirname, 'fixtures', 'deps-drift-corpus.expected-count')
 
 // ── B-1: harness-owned base objects (never derived from the normalizer) ────
@@ -151,6 +153,7 @@ function makeFixture(): Fixture {
   execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '--quiet', root], { env })
   mkdirSync(join(root, 'scripts', 'lib'), { recursive: true })
   copyFileSync(NORMALIZE_SRC, join(root, 'scripts', 'lib', 'normalize-lockfile-for-freshness.mjs'))
+  copyFileSync(NEEDS_INSTALL_SRC, join(root, 'scripts', 'lib', 'lockfile-change-needs-install.mjs'))
   writeFileSync(
     join(root, 'package.json'),
     JSON.stringify(BASE_PACKAGE_JSON, null, 2) + '\n',
@@ -643,6 +646,355 @@ describe('R1: residual (documented, not a bug)', () => {
       record('residual')
     } finally {
       cleanup(fx)
+    }
+  })
+})
+
+// ── F1-F*: SMI-7238 flag-only exemption (design E) ──────────────────────────
+// Through the real .sh: --write-sentinel saves the installed lockfile bytes,
+// and `_classify()` asks lockfile-change-needs-install.mjs before printing
+// `real`. The classifier-verdict cases F1-F10 call record() (ADR-157 corpus,
+// pinned in fixtures/deps-drift-corpus.expected-count); the stub-helper and
+// publication cases test plumbing, not verdicts, and do not. The omit probe is pinned empty so the host's npm config cannot
+// change a verdict.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function flagLock(): any {
+  const l = baseLock()
+  l.packages['']['dependencies'] = { tsx: '^4.0.0' }
+  l.packages['packages/a'].dependencies['@tw/vite'] = '^4.1.0'
+  l.packages['node_modules/tsx'] = {
+    version: '4.0.1',
+    resolved: 'https://registry.npmjs.org/tsx/-/tsx-4.0.1.tgz',
+    integrity: 'sha512-TSX',
+  }
+  l.packages['node_modules/lightningcss-x'] = {
+    version: '1.0.0',
+    resolved: 'https://registry.npmjs.org/lightningcss-x/-/l-1.0.0.tgz',
+    integrity: 'sha512-LX',
+    optional: true,
+  }
+  l.packages['node_modules/shared'] = {
+    version: '2.0.0',
+    resolved: 'https://registry.npmjs.org/shared/-/shared-2.0.0.tgz',
+    integrity: 'sha512-SH',
+    devOptional: true,
+  }
+  return l
+}
+
+/** The instance-2 shape: flags change and two same-spec section moves. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function instance2(l: any): any {
+  l.packages['node_modules/tsx'].dev = true
+  l.packages['node_modules/lightningcss-x'].peer = true
+  delete l.packages['node_modules/shared'].devOptional
+  const root = l.packages['']
+  root.devDependencies = { tsx: root.dependencies.tsx }
+  delete root.dependencies.tsx
+  const a = l.packages['packages/a']
+  a.devDependencies = { '@tw/vite': a.dependencies['@tw/vite'] }
+  delete a.dependencies['@tw/vite']
+  return l
+}
+
+// The omit override is honoured only with the test marker (SMI-7238 review).
+const OMIT_EMPTY = { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: '', SKILLSMITH_DEPS_PROBE_TEST: '1' }
+const OMIT_DEV = { SKILLSMITH_DEPS_OMIT_PROBE_OUTPUT: 'dev', SKILLSMITH_DEPS_PROBE_TEST: '1' }
+const COPY_NAME = '.skillsmith-deps-lock.json'
+
+/** Install from flagLock(), then put `mutated` on disk as the current lockfile. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function installedThen(mutate: (l: any) => any): Fixture {
+  const fx = makeFixture()
+  writeLockfile(fx.root, flagLock())
+  writeSentinel(fx.root)
+  writeLockfile(fx.root, mutate(flagLock()))
+  return fx
+}
+
+describe('F: SMI-7238 paired differ-check', () => {
+  const pairs: Array<[string, () => unknown, string, () => unknown, string]> = [
+    [
+      'instance-2 vs version bump',
+      () => instance2(flagLock()),
+      'cosmetic',
+      () => mutate.P1(instance2(flagLock())),
+      'real',
+    ],
+  ]
+  it.each(pairs)('%s: bytes differ and expected verdicts differ', (_l, a, ea, b, eb) => {
+    expect(JSON.stringify(a())).not.toBe(JSON.stringify(b()))
+    expect(ea).not.toBe(eb)
+  })
+})
+
+describe('F: SMI-7238 flag-only changes', () => {
+  it('F1: instance-2 shape -> cosmetic, check exit 0 with the reworded info line', () => {
+    const fx = installedThen(instance2)
+    try {
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      const check = checkMode(fx.root, OMIT_EMPTY)
+      expect(check.status).toBe(0)
+      expect(check.output).toContain('No install needed')
+      expect(check.output).toContain('dependency flags and same-spec section moves')
+      record('clean')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F2: a same-spec section move alone -> cosmetic', () => {
+    const fx = installedThen((l) => {
+      l.packages['packages/a'].devDependencies = { 'external-x': '^0.3.11' }
+      delete l.packages['packages/a'].dependencies['external-x']
+      return l
+    })
+    try {
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      record('clean')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F3: instance-2 shape PLUS a version change -> real, check exit 1', () => {
+    const fx = installedThen((l) => mutate.P1(instance2(l)))
+    try {
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(1)
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F4: section move that changes the spec -> real', () => {
+    const fx = installedThen((l) => {
+      l.packages[''].devDependencies = { tsx: '^5.0.0' }
+      delete l.packages[''].dependencies.tsx
+      return l
+    })
+    try {
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F5: workspace dependency added alongside flag changes -> real', () => {
+    const fx = installedThen((l) => mutate.P3(instance2(l)))
+    try {
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F6: lockfileVersion changed alongside flag changes -> real', () => {
+    const fx = installedThen((l) => mutate.P6(instance2(l)))
+    try {
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+})
+
+describe('F: SMI-7238 saved-copy and omit guards', () => {
+  it('F7: no saved copy -> real (tree installed before this change)', () => {
+    const fx = installedThen(instance2)
+    try {
+      rmSync(join(fx.root, 'node_modules', COPY_NAME), { force: true })
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(1)
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F8: saved copy whose hash differs from the raw sentinel -> real', () => {
+    const fx = installedThen(instance2)
+    try {
+      writeFileSync(join(fx.root, 'node_modules', COPY_NAME), '{"packages":{}}\n', 'utf8')
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F9: non-empty omit set (paired with F1) -> real', () => {
+    const fx = installedThen(instance2)
+    try {
+      expect(classify(fx.root, OMIT_DEV)).toBe('real')
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      record('poisoned')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F10: shadow sentinel deleted with a flag-only change stays unknown, never cosmetic', () => {
+    const fx = installedThen(instance2)
+    try {
+      rmSync(join(fx.root, 'node_modules', '.skillsmith-deps-hash-shadow'), { force: true })
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('unknown')
+      expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(1)
+      record('unknown')
+    } finally {
+      cleanup(fx)
+    }
+  })
+})
+
+describe('F: SMI-7238 helper output is trusted only when it is exactly the token', () => {
+  const helperPath = (root: string) =>
+    join(root, 'scripts', 'lib', 'lockfile-change-needs-install.mjs')
+  const stub = (out: string) => `process.stdout.write(${JSON.stringify(out)})\n`
+
+  it.each([
+    ['exact token (control: the stub IS consulted)', 'no-install-needed\n', 'cosmetic'],
+    ['token plus extra text', 'no-install-needed extra\n', 'real'],
+    ['token on a second line after noise', 'noise\nno-install-needed\n', 'real'],
+    ['unexpected token', 'cosmetic\n', 'real'],
+    ['empty stdout', '', 'real'],
+  ])('%s -> %s', (_label, out, expected) => {
+    const fx = installedThen(instance2)
+    try {
+      writeFileSync(helperPath(fx.root), stub(out), 'utf8')
+      expect(classify(fx.root, OMIT_EMPTY)).toBe(expected)
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('a crashing helper -> real', () => {
+    const fx = installedThen(instance2)
+    try {
+      writeFileSync(helperPath(fx.root), 'throw new Error("boom")\n', 'utf8')
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('a missing helper -> real', () => {
+    const fx = installedThen(instance2)
+    try {
+      rmSync(helperPath(fx.root), { force: true })
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('real')
+    } finally {
+      cleanup(fx)
+    }
+  })
+})
+
+describe('F: SMI-7238 unchanged behaviour and publication', () => {
+  it('F11: SKILLSMITH_SKIP_DEPS_FRESHNESS=1 exits 0 in check mode; --classify ignores it', () => {
+    const fx = installedThen((l) => mutate.P1(instance2(l)))
+    try {
+      const env = { ...OMIT_EMPTY, SKILLSMITH_SKIP_DEPS_FRESHNESS: '1' }
+      expect(checkMode(fx.root, env).status).toBe(0)
+      expect(classify(fx.root, env)).toBe('real')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F12: --write-sentinel saves the exact lockfile bytes and the raw sentinel hashes them', () => {
+    const fx = makeFixture()
+    try {
+      writeLockfile(fx.root, flagLock())
+      writeSentinel(fx.root)
+      const copy = readFileSync(join(fx.root, 'node_modules', COPY_NAME))
+      const lock = readFileSync(join(fx.root, 'package-lock.json'))
+      expect(copy.equals(lock)).toBe(true)
+      const sentinel = readFileSync(join(fx.root, 'node_modules', '.skillsmith-deps-hash'), 'utf8')
+      expect(sentinel.trim()).toBe(createHash('sha256').update(copy).digest('hex'))
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F13: re-running --write-sentinel after the lockfile changes refreshes the copy', () => {
+    const fx = makeFixture()
+    try {
+      writeLockfile(fx.root, flagLock())
+      writeSentinel(fx.root)
+      writeLockfile(fx.root, instance2(flagLock()))
+      writeSentinel(fx.root)
+      const copy = readFileSync(join(fx.root, 'node_modules', COPY_NAME))
+      expect(copy.equals(readFileSync(join(fx.root, 'package-lock.json')))).toBe(true)
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('fresh')
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F14: --write-sentinel leaves no temp files behind', () => {
+    const fx = makeFixture()
+    try {
+      writeLockfile(fx.root, flagLock())
+      writeSentinel(fx.root)
+      const listing = execFileSync('ls', ['-A', join(fx.root, 'node_modules')], {
+        encoding: 'utf8',
+      }).split('\n')
+      // Same-run positive: the publication actually happened.
+      expect(listing).toEqual(
+        expect.arrayContaining([COPY_NAME, '.skillsmith-deps-hash', '.skillsmith-deps-hash-shadow'])
+      )
+      expect(listing.filter((n) => n.includes('.tmp.'))).toEqual([])
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F15: --classify and check mode never write the saved copy or sentinels', () => {
+    const fx = installedThen(instance2)
+    try {
+      const snap = () =>
+        ['.skillsmith-deps-hash', '.skillsmith-deps-hash-shadow', COPY_NAME]
+          .map((n) => readFileSync(join(fx.root, 'node_modules', n), 'utf8'))
+          .join('\u0000')
+      const before = snap()
+      // Same-run positives: both modes reached the exemption, not an early exit.
+      expect(classify(fx.root, OMIT_EMPTY)).toBe('cosmetic')
+      expect(checkMode(fx.root, OMIT_EMPTY).status).toBe(0)
+      expect(snap()).toBe(before)
+    } finally {
+      cleanup(fx)
+    }
+  })
+
+  it('F16: --write-sentinel publishes copy, then shadow, then raw sentinel (mv order)', () => {
+    const fx = makeFixture()
+    const shim = makeFixtureTempDir('deps-fresh-mv-shim')
+    try {
+      const realMv = execFileSync('sh', ['-c', 'command -v mv'], { encoding: 'utf8' }).trim()
+      const log = join(shim, 'mv.log')
+      writeFileSync(
+        join(shim, 'mv'),
+        `#!/bin/sh\nfor a do last=$a; done\nprintf '%s\\n' "$(basename "$last")" >> '${log}'\nexec '${realMv}' "$@"\n`,
+        { encoding: 'utf8', mode: 0o755 }
+      )
+      writeLockfile(fx.root, flagLock())
+      const r = run(fx.root, ['--write-sentinel'], {
+        PATH: `${shim}:${process.env['PATH'] ?? '/usr/bin:/bin'}`,
+      })
+      expect(r.status).toBe(0)
+      expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
+        COPY_NAME,
+        '.skillsmith-deps-hash-shadow',
+        '.skillsmith-deps-hash',
+      ])
+    } finally {
+      cleanup(fx)
+      rmSync(shim, { recursive: true, force: true })
     }
   })
 })

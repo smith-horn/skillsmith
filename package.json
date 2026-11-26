@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:root": "vitest run --config vitest.config.root-tests.ts",
     "test:vscode": "bash scripts/lib/check-node-modules-fresh.sh && vitest run -c vitest.config.vscode.ts",
     "docker:health": "bash scripts/docker-health.sh",
     "lint": "eslint .",
