@@ -24,8 +24,9 @@ All notable changes to `@skillsmith/cli` are documented here.
   warning replaces the per-skill "could not be determined" note rather than repeating the cause.
   Before, a corrupt database with nothing installed printed "No skills installed" and said nothing
   about it. No database file at all is still not an error.
-  The CLI creates the database directory owner-only (0700) when it does not exist, which the native
-  driver needs on a first run.
+  The CLI creates its own state directory, `~/.skillsmith`, owner-only (0700) when it does not
+  exist, which the native driver needs on a first run. It creates no other directory: a database
+  path given with `-d` whose directory does not exist is refused, as before.
 
 - **Changed**: SMI-6531 -- A1 step 8-i-a-3a: `skillsmith update` stopped because the staging
   folder's records could not be listed says "the records of unfinished operations in `<staging>`";

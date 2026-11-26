@@ -15,8 +15,14 @@
  * unmissable way a CLI command opens a database.
  */
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { createDatabaseAsync, initializeSchema, type DatabaseType } from '@skillsmith/core'
+
+/** Whether `dir` is Skillsmith's own state directory, `~/.skillsmith`. */
+function isSkillsmithStateDir(dir: string): boolean {
+  return dir === join(homedir(), '.skillsmith')
+}
 
 /**
  * Open a CLI database with the full schema initialized and all migrations
@@ -45,11 +51,15 @@ export async function openCliDatabase(
   // SMI-7260: the native driver (now shipped with the CLI) refuses to create a
   // database in a directory that does not exist — "Cannot open database
   // because the directory does not exist" — where the WASM driver opened it in
-  // memory. On a first run `~/.skillsmith` may not exist yet, so create the
-  // parent directory, as the MCP server already does for the same path. Owner
-  // only (0o700): it holds the user's skill index; `recursive` leaves an
-  // existing directory's mode alone.
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  // memory. On a first run `~/.skillsmith` may not exist yet, so create it,
+  // owner only (0o700, since it holds the user's skill index; `recursive`
+  // leaves an existing directory's mode alone). ONLY Skillsmith's own state
+  // directory: a missing directory in a path the user named with `-d` (a
+  // typo, say) is not created, and the driver refuses the open as it always
+  // did. Computed per call, so a stubbed HOME is honoured.
+  if (path !== ':memory:' && isSkillsmithStateDir(dirname(resolve(path)))) {
+    mkdirSync(dirname(resolve(path)), { recursive: true, mode: 0o700 })
+  }
 
   let db: DatabaseType | undefined
   try {

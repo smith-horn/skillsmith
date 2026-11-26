@@ -110,25 +110,31 @@ describe('SMI-4917 Bug 1: openCliDatabase', () => {
  * SMI-7260: a first run, where `~/.skillsmith` does not exist yet. The native
  * driver, which the CLI now ships, refuses to create a database in a missing
  * directory ("Cannot open database because the directory does not exist");
- * the WASM driver never noticed, because it opens in memory.
+ * the WASM driver never noticed, because it opens in memory. So
+ * `openCliDatabase` creates Skillsmith's own state directory, and ONLY that:
+ * a missing directory in a path the user named with `-d` (a typo) is not
+ * created, and the open is refused as it always was (CLI E2E pins this).
+ * HOME is a throwaway directory, read at call time.
  */
-describe('SMI-7260: openCliDatabase creates a missing parent directory', () => {
-  let dir: string | undefined
+describe('SMI-7260: openCliDatabase creates ~/.skillsmith, and no other missing directory', () => {
+  let home: string | undefined
 
   afterEach(() => {
-    // Guarded: a test that failed before creating `dir` must not throw here and
-    // hide its own failure.
-    if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
-    dir = undefined
+    vi.unstubAllEnvs()
+    // Guarded: a test that failed before creating `home` must not throw here
+    // and hide its own failure.
+    if (home !== undefined) rmSync(home, { recursive: true, force: true })
+    home = undefined
   })
 
-  it('opens a database whose parent directory does not exist yet', async () => {
+  it('the default path under a missing ~/.skillsmith: created, owner only, and opened', async () => {
     // Precondition: this is the native driver's behaviour, so run on it.
     expect(getBestDriver()).toBe('better-sqlite3')
-    const root = mkdtempSync(join(tmpdir(), 'cli-open-missing-dir-'))
-    dir = root
-    const path = join(root, 'not-yet', 'skills.db')
-    expect(existsSync(join(root, 'not-yet'))).toBe(false)
+    home = mkdtempSync(join(tmpdir(), 'cli-open-first-run-'))
+    vi.stubEnv('HOME', home)
+    const stateDir = join(home, '.skillsmith')
+    const path = join(stateDir, 'skills.db')
+    expect(existsSync(stateDir)).toBe(false)
 
     const db = await openCliDatabase(path)
     try {
@@ -138,7 +144,25 @@ describe('SMI-7260: openCliDatabase creates a missing parent directory', () => {
     }
     expect(existsSync(path)).toBe(true)
     // L1: the directory it created holds the user's skill index; owner only.
-    expect(statSync(join(root, 'not-yet')).mode & 0o777).toBe(0o700)
+    expect(statSync(stateDir).mode & 0o777).toBe(0o700)
+  })
+
+  it('control: an explicit path in a missing other directory is not created, and the open rejects', async () => {
+    expect(getBestDriver()).toBe('better-sqlite3')
+    home = mkdtempSync(join(tmpdir(), 'cli-open-explicit-'))
+    vi.stubEnv('HOME', home)
+    const typoDir = join(home, 'not-skillsmith', 'nested')
+    const path = join(typoDir, 'db.db')
+
+    let rejected = false
+    try {
+      closeDatabase(await openCliDatabase(path))
+    } catch {
+      rejected = true
+    }
+    // The pair: the open was refused AND nothing was created for it.
+    expect(rejected).toBe(true)
+    expect(existsSync(join(home, 'not-skillsmith'))).toBe(false)
   })
 })
 
