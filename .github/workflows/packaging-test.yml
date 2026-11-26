@@ -245,8 +245,8 @@ jobs:
           CAUSE='the native SQLite driver (better-sqlite3) did not load'
           MARKER='Skillsmith is offline and your local skill index is empty'
           # SMI-7260 (B3): output into SEARCH_OUT, exit status into SEARCH_ST,
-          # captured separately. Measured: all three runs below (native, and
-          # the control on an existing database) exit 0 offline, so a nonzero
+          # captured separately. Measured: both runs below (native, and the
+          # control on an existing database) exit 0 offline, so a nonzero
           # status fails each of them before its strings are checked.
           run_search() {
             set +e

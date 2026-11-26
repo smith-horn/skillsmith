@@ -4,18 +4,15 @@
  */
 
 import { readdir, readFile, realpath, stat } from 'fs/promises'
-import { existsSync } from 'node:fs'
 import { join } from 'path'
 import {
   ManifestManager,
   SkillParser,
-  SkillVersionRepository,
   manifestKeyFor,
-  type Database,
   type SkillManifestEntry,
   type TrustTier,
 } from '@skillsmith/core'
-import { openCliDatabase } from './open-database.js'
+import { openVersionLookup } from './skills-directory.version-lookup.js'
 import {
   CANONICAL_CLIENT,
   CLIENT_NATIVE_PATHS,
@@ -68,11 +65,7 @@ export {
   resolveUpdateStatus,
   type UpdateStatus,
 } from './skills-directory.update-status.js'
-import {
-  classifyOpenFailure,
-  resolveUpdateStatus,
-  type UpdateStatus,
-} from './skills-directory.update-status.js'
+import { resolveUpdateStatus, type UpdateStatus } from './skills-directory.update-status.js'
 
 export interface InstalledSkill {
   name: string
@@ -180,13 +173,17 @@ async function resolvesToDirectory(
  *                    entirely by callers (like the per-harness inventory
  *                    scan) that don't need untracked detection, in which
  *                    case every entry gets `untracked: false`.
+ * @param onOpenFailure SMI-7260: called with the error when the database
+ *                    exists but could not be opened, so a caller can report
+ *                    the failure from this same open.
  */
 export async function getSkillsFromDirectory(
   skillsDir: string,
   dbPath?: string,
   installedVia: ClientId | 'local' = CANONICAL_CLIENT,
   scope: InstallScope = 'global',
-  manifestPath?: string
+  manifestPath?: string,
+  onOpenFailure?: (error: unknown) => void
 ): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
   const effectiveClient: ClientId = installedVia === 'local' ? CANONICAL_CLIENT : installedVia
@@ -214,34 +211,11 @@ export async function getSkillsFromDirectory(
     }
   }
 
-  // Open the version repository if a db path was provided
-  let versionRepo: SkillVersionRepository | null = null
-  let dbConn: Database | null = null
-  // Non-null when the version lookup is unavailable for a reason that leaves
-  // update state UNKNOWABLE, rather than knowably "nothing installed".
-  let unknownReason: string | undefined
-  // ADR-175 § 5: absence is decided BEFORE the open, because the two drivers
-  // disagree about what an absent path does. Native throws SQLITE_CANTOPEN;
-  // WASM **succeeds** with an empty in-memory database, so the absence would
-  // resurface as a per-skill query failure and render `unknown` — wrong, since
-  // an absent database is this contract's one benign case. Reachable on any
-  // machine without a native build, which is the normal npx install.
-  //
-  // Not the precheck ADR § 2 forbids: that bars `existsSync` from classifying a
-  // failure CODE, which it cannot do. This asks a different question.
-  if (dbPath && existsSync(dbPath)) {
-    try {
-      // SMI-5139: this is a pure-read version lookup — open read-only, so no
-      // driver writes to dbPath (the native driver would otherwise open it
-      // read-write; the WASM driver never writes a database file, SMI-7260).
-      dbConn = await openCliDatabase(dbPath, { readonly: true })
-      versionRepo = new SkillVersionRepository(dbConn)
-    } catch (error) {
-      versionRepo = null
-      dbConn = null
-      unknownReason = classifyOpenFailure(error, dbPath)
-    }
-  }
+  // Open the version repository if a db path was provided (absence first;
+  // see skills-directory.version-lookup.ts). `unknownReason` is set when the
+  // lookup is unavailable for a reason that leaves update state UNKNOWABLE.
+  const { versionRepo, dbConn, unknownReason, openError } = await openVersionLookup(dbPath)
+  if (openError !== undefined) onOpenFailure?.(openError)
 
   try {
     const entries = await readdir(skillsDir, { withFileTypes: true })
@@ -425,12 +399,22 @@ async function dedupeByNameAndPath(ordered: InstalledSkill[]): Promise<Installed
   return out
 }
 
-export async function getInstalledSkills(dbPath?: string): Promise<InstalledSkill[]> {
+export async function getInstalledSkills(
+  dbPath?: string,
+  onOpenFailure?: (error: unknown) => void
+): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   const targets = buildScanTargets(process.cwd())
   const lists = await Promise.all(
     targets.map((t) =>
-      getSkillsFromDirectory(t.dir, resolvedDbPath, t.installedVia, t.scope, t.manifestPath)
+      getSkillsFromDirectory(
+        t.dir,
+        resolvedDbPath,
+        t.installedVia,
+        t.scope,
+        t.manifestPath,
+        onOpenFailure
+      )
     )
   )
   return dedupeByNameAndPath(lists.flat())
@@ -461,7 +445,8 @@ export async function getInstalledSkills(dbPath?: string): Promise<InstalledSkil
  */
 export async function getInstalledSkillsForClient(
   client: ClientId,
-  dbPath?: string
+  dbPath?: string,
+  onOpenFailure?: (error: unknown) => void
 ): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   const cwd = process.cwd()
@@ -490,7 +475,14 @@ export async function getInstalledSkillsForClient(
 
   const lists = await Promise.all(
     targets.map((t) =>
-      getSkillsFromDirectory(t.dir, resolvedDbPath, t.installedVia, t.scope, t.manifestPath)
+      getSkillsFromDirectory(
+        t.dir,
+        resolvedDbPath,
+        t.installedVia,
+        t.scope,
+        t.manifestPath,
+        onOpenFailure
+      )
     )
   )
   return dedupeByNameAndPath(lists.flat())

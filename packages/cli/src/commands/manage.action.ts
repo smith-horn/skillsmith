@@ -35,8 +35,7 @@ import { getSkillDiff, updateSkill, updateSkills } from './manage.update.js'
 import { removeExitCode, removeSkill } from './manage.remove.js'
 // ADR-175 § 5 / SMI-6946: extracted to stay under the 500-line standard, same
 // reason manage.update.helpers.ts exists.
-import { warnUndetermined } from './manage.update-status.js'
-import { listDatabaseFailure, reportListDatabaseFailure } from './manage.list-database.js'
+import { warnDatabaseUnopenable, warnUndetermined } from './manage.update-status.js'
 
 const logger = getCliLogger()
 
@@ -185,17 +184,27 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // declaration) — only the footer text's client resolution, not the scan
     // filter, changes here.
     const resolvedClient = resolveClientId(clientOpt)
+    // SMI-7260: the scan's own open failure, kept so it can be reported once,
+    // even when no skill row exists to carry it. No second open.
+    let dbOpenError: unknown
+    const noteOpenFailure = (error: unknown) => {
+      dbOpenError ??= error
+    }
     const skills =
       clientOpt !== undefined
-        ? await getInstalledSkillsForClient(resolvedClient, dbPath)
-        : await getInstalledSkills(dbPath)
-    // SMI-7260: whether the database itself could be opened, independent of
-    // whether any skill row exists to carry that news (manage.list-database.ts).
-    const dbFailure = await listDatabaseFailure(dbPath ?? DEFAULT_DB_PATH)
+        ? await getInstalledSkillsForClient(resolvedClient, dbPath, noteOpenFailure)
+        : await getInstalledSkills(dbPath, noteOpenFailure)
     // ADR-175 § 5. `--outdated` filters on a CONFIRMED newer version, so an
     // entry whose state could not be determined is neither listed as outdated
     // nor silently counted as current — it is reported separately below.
     const undetermined = skills.filter((s) => s.updateStatus === 'unknown')
+    // ADR-175 § 5: one warning per command, and a database fault costs the
+    // update column, not the command (exit 0). When the open failed, its one
+    // warning replaces the per-skill one, so the cause is printed once.
+    const warn = () =>
+      dbOpenError !== undefined
+        ? warnDatabaseUnopenable(dbOpenError, undetermined.length, skills.length)
+        : warnUndetermined(undetermined, skills.length)
     const filtered = outdated ? skills.filter((s) => s.updateStatus === 'available') : skills
 
     if (outdated && filtered.length === 0) {
@@ -211,15 +220,12 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
         // restate the warning, so it is omitted rather than duplicated.
         console.log(chalk.yellow('\nNo updates found among the skills that could be checked.\n'))
       }
-      warnUndetermined(undetermined, skills.length)
-    } else {
-      displaySkillsTable(filtered, resolvedClient)
-      warnUndetermined(undetermined, skills.length)
+      warn()
+      return
     }
 
-    // SMI-7260: a database that could not be opened is reported once, on its
-    // own, and fails the command, even when no skill row exists to carry it.
-    if (dbFailure !== undefined) reportListDatabaseFailure(dbFailure)
+    displaySkillsTable(filtered, resolvedClient)
+    warn()
   } catch (error) {
     logger.error(`${chalk.red('Error listing skills:')} ${sanitizeError(error)}`)
     process.exit(1)

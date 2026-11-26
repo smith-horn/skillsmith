@@ -8,6 +8,7 @@
 import chalk from 'chalk'
 import { getCliLogger } from '../cli-logger.js'
 import type { InstalledSkill } from '../utils/skills-directory.js'
+import { sanitizeError } from '../utils/sanitize.js'
 
 // Deliberately the CLI's own logger rather than core's `createLogger`: this
 // file is reached by suites that mock '@skillsmith/core' wholesale, and adding
@@ -48,4 +49,27 @@ export function warnUndetermined(undetermined: InstalledSkill[], total: number):
         `Shown as "Unknown" rather than "Up to date" — this is not a claim that they are current.`
     )
   )
+}
+
+/**
+ * SMI-7260: the one warning for a command whose database exists but could not
+ * be opened (ADR-175 § 5: one warning per command, naming the cause and the
+ * remedy; the command still exits 0). Used INSTEAD of {@link warnUndetermined}
+ * in that case, so the cause is not printed twice: every undetermined row is
+ * explained by this one failure. Printed with no skills installed too, so the
+ * database fault is visible even when no row could carry it.
+ *
+ * @param error - the open failure; its message carries the remedy (for a
+ *   corruption refusal, the files and the commands).
+ * @param undetermined - how many rows are "Unknown"; normally all of them,
+ *   fewer only if the scan's several opens of the one file disagreed.
+ */
+export function warnDatabaseUnopenable(error: unknown, undetermined: number, total: number): void {
+  const opened = 'the local database could not be opened'
+  const scope =
+    undetermined === 0
+      ? `The local database could not be opened${total === 0 ? ', so no update status could be checked' : ''}`
+      : `${undetermined === total ? "No skill's update status could be determined" : `${undetermined} of ${total} skills' update status could not be determined`}: ${opened}. ` +
+        `Shown as "Unknown" rather than "Up to date" — this is not a claim that they are current`
+  logger.warn(chalk.yellow(`${scope}.`) + `\n${sanitizeError(error)}`)
 }

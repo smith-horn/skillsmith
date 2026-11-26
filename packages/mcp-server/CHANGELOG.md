@@ -5,7 +5,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 ## [Unreleased]
 
 - **Fixed**: SMI-7260 -- on the WASM SQLite driver the database is read-only, so the server no
-  longer starts background sync (it says so once), and the SMI-5640 periodic autosave is gone,
+  longer starts background sync (it says so once, silent under `SKILLSMITH_QUIET`), and the
+  SMI-5640 periodic autosave is gone,
   along with `SKILLSMITH_AUTOSAVE_INTERVAL_MS` and `SKILLSMITH_AUTOSAVE_DISABLE`: nothing
   file-backed is ever saved. A database at an older schema is served as it is, with one warning.
   A tool's write to the local database (install records, `publish_private`, quarantine during
