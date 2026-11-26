@@ -190,6 +190,24 @@ describe('SMI-7260: list reports a database it could not open, once, and exits 0
     expect(exitCodes).toEqual([])
   })
 
+  it('two failed opens with one reason but different errors: both errors are named', async () => {
+    const db = skillsDb(false)
+    installOneSkill()
+    // READONLY and PERM both classify as "could not be read"; each is still printed.
+    inject.scanFailure = (call) =>
+      call === 0
+        ? sqliteError('SQLITE_READONLY_RECOVERY', 'injected READONLY_RECOVERY: needs recovery')
+        : sqliteError('SQLITE_PERM', 'injected PERM: access permission denied')
+
+    await listAction({ db })
+
+    expect(inject.scanCalls).toBeGreaterThanOrEqual(2)
+    expect(dbMessages()).toHaveLength(1)
+    expect(dbMessages()[0]).toContain('injected READONLY_RECOVERY: needs recovery')
+    expect(dbMessages()[0]).toContain('injected PERM: access permission denied')
+    expect(exitCodes).toEqual([])
+  })
+
   it('two failed opens with the same cause: it is printed once', async () => {
     const db = skillsDb(false)
     installOneSkill()

@@ -185,12 +185,15 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // filter, changes here.
     const resolvedClient = resolveClientId(clientOpt)
     // SMI-7260: every failed open the scan made (it opens the database once
-    // per directory), keyed by its classified reason, keeping the first error
-    // for each distinct reason. Reported in one warning, even when no skill
-    // row exists to carry it. No second open.
-    const openFailures = new Map<string, unknown>()
+    // per directory). Its classified reasons decide which Unknown rows are
+    // explained; its errors are what gets printed, deduped by their printed
+    // text (several different errors share one reason). Reported in one
+    // warning, even when no skill row exists to carry it. No second open.
+    const openReasons = new Set<string>()
+    const openErrors: unknown[] = []
     const noteOpenFailure = (error: unknown, reason: string) => {
-      if (!openFailures.has(reason)) openFailures.set(reason, error)
+      openReasons.add(reason)
+      openErrors.push(error)
     }
     const skills =
       clientOpt !== undefined
@@ -205,8 +208,8 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // warning replaces the per-skill one: each distinct cause is printed once,
     // and any other reason (a lookup that failed after a good open) is named.
     const warn = () =>
-      openFailures.size > 0
-        ? warnDatabaseUnopenable(openFailures, undetermined, skills.length)
+      openErrors.length > 0
+        ? warnDatabaseUnopenable(openReasons, openErrors, undetermined, skills.length)
         : warnUndetermined(undetermined, skills.length)
     const filtered = outdated ? skills.filter((s) => s.updateStatus === 'available') : skills
 

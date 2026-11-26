@@ -40,26 +40,28 @@ describe('SMI-7260: warnDatabaseUnopenable', () => {
   it('(a) names a lookup failure among the Unknown rows that the open failure does not explain', () => {
     const undetermined = [row('a', 'unknown', OPEN_REASON), row('b', 'unknown', LOOKUP_REASON)]
 
-    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), undetermined, 3)
+    warnDatabaseUnopenable(new Set([OPEN_REASON]), [ERROR], undetermined, 3)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain('2 of 3')
     expect(warned[0]).toContain('could not be opened')
     expect(warned[0]).toContain(LOOKUP_REASON)
+    // Paired with the control's absence check below.
+    expect(warned[0]).toContain('Also:')
     // The open's own reason is not repeated: the error below already states it.
     expect(warned[0]).not.toContain(OPEN_REASON)
     expect(warned[0]).toContain(ERROR.message)
   })
 
   it('(a) adds no extra reason when the open failure explains every Unknown row (the control)', () => {
-    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), [row('a', 'unknown', OPEN_REASON)], 1)
+    warnDatabaseUnopenable(new Set([OPEN_REASON]), [ERROR], [row('a', 'unknown', OPEN_REASON)], 1)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).not.toContain('Also:')
   })
 
   it('(b) says every listed skill was still checked when none is Unknown', () => {
-    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), [], 2)
+    warnDatabaseUnopenable(new Set([OPEN_REASON]), [ERROR], [], 2)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain("every listed skill's update status was still checked")
@@ -67,8 +69,19 @@ describe('SMI-7260: warnDatabaseUnopenable', () => {
     expect(warned[0]).toContain(ERROR.message)
   })
 
+  it('(b) with two distinct causes says "Some of", not "One of"', () => {
+    const second = new Error('[Skillsmith] another, different failure')
+    warnDatabaseUnopenable(new Set([OPEN_REASON]), [ERROR, second, ERROR], [], 2)
+
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain("Some of the local database's opens failed")
+    expect(warned[0]).not.toContain('One of')
+    expect(warned[0]).toContain(ERROR.message)
+    expect(warned[0]).toContain(second.message)
+  })
+
   it('with no skills installed it says no update status could be checked (the control)', () => {
-    warnDatabaseUnopenable(new Map([[OPEN_REASON, ERROR]]), [], 0)
+    warnDatabaseUnopenable(new Set([OPEN_REASON]), [ERROR], [], 0)
 
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain('no update status could be checked')

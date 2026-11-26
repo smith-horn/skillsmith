@@ -61,31 +61,37 @@ export function warnUndetermined(undetermined: InstalledSkill[], total: number):
  * can disagree. The warning is built as:
  *
  * 1. a headline: no skills (no update status could be checked); skills, none
- *    Unknown (one open failed but every listed skill was still checked); or
- *    some Unknown (how many, and that the database could not be opened);
- * 2. for EACH distinct failed-open reason, that open's error, which carries
- *    its remedy (for a corruption refusal, the files and the commands);
- * 3. `Also:` with each distinct Unknown-row reason that is not one of those
- *    printed reasons (a lookup that failed after a good open).
+ *    Unknown ("One of"/"Some of" the opens failed, by the number of distinct
+ *    causes, but every listed skill was still checked); or some Unknown (how
+ *    many, and that the database could not be opened);
+ * 2. each distinct failed-open error, deduped by its PRINTED text, which
+ *    carries its remedy (for a corruption refusal, the files and the
+ *    commands). Not deduped by reason: `classifyOpenFailure` maps several
+ *    different errors to one reason, and each must still be named;
+ * 3. `Also:` with each distinct Unknown-row reason that is not a failed-open
+ *    reason (a lookup that failed after a good open).
  *
- * A row is explained only by a reason whose error is printed. The benign
- * absent case never reaches here: the scan does not report it.
+ * A row is explained only by a failed-open reason, and every failed open's
+ * error is printed. The benign absent case never reaches here: the scan does
+ * not report it.
  *
- * @param openFailures - each distinct classified reason of a failed open,
- *   mapped to the first error seen for it.
+ * @param openReasons - the classified reasons of the failed opens.
+ * @param openErrors - every failed open's error, in the order seen.
  */
 export function warnDatabaseUnopenable(
-  openFailures: ReadonlyMap<string, unknown>,
+  openReasons: ReadonlySet<string>,
+  openErrors: readonly unknown[],
   undetermined: InstalledSkill[],
   total: number
 ): void {
+  const causes = [...new Set(openErrors.map((error) => sanitizeError(error)))]
   let headline: string
   if (total === 0) {
     headline = 'The local database could not be opened, so no update status could be checked.'
   } else if (undetermined.length === 0) {
     headline =
-      "One of the local database's opens failed, but every listed skill's update status was " +
-      'still checked.'
+      `${causes.length > 1 ? 'Some' : 'One'} of the local database's opens failed, but every ` +
+      "listed skill's update status was still checked."
   } else {
     const count =
       undetermined.length === total
@@ -95,12 +101,11 @@ export function warnDatabaseUnopenable(
       `${count}: the local database could not be opened. ` +
       `Shown as "Unknown" rather than "Up to date" — this is not a claim that they are current.`
   }
-  const causes = [...openFailures.values()].map((error) => sanitizeError(error))
   const otherReasons = [
     ...new Set(
       undetermined
         .map((s) => s.updateStatusReason)
-        .filter((r): r is string => !!r && !openFailures.has(r))
+        .filter((r): r is string => !!r && !openReasons.has(r))
     ),
   ]
   const also = otherReasons.length > 0 ? [`Also: ${otherReasons.join('; ')}.`] : []
