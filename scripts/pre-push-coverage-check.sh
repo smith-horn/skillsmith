@@ -148,11 +148,7 @@ HINT_PREFIX=""
 if [ -n "$RUN_PREFIX" ]; then
   HINT_PREFIX="$RUN_PREFIX "
 fi
-for pkg in $FAILED_PACKAGES; do
-  echo "❌ Tests failed in packages/$pkg!"
-  echo "   Run: ${HINT_PREFIX}bash -c \"cd packages/$pkg && ${VITEST_BIN} run\""
-done
-
-echo ""
-echo "   Bypass: git push --no-verify"
+# SMI-7218: timed-out suites are named as such, and the one-push budget
+# override comes before --no-verify (print_failure_summary, in the runner lib).
+print_failure_summary "$HINT_PREFIX" "$VITEST_BIN"
 exit 1

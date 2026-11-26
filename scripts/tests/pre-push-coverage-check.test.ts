@@ -98,6 +98,9 @@ describe('pre-push suite runner — SMI-7218 static checks', () => {
     expect(hook).not.toMatch(/Coverage check timed out/)
     expect(hook).not.toMatch(/Docker is frozen/)
     expect(hook).toMatch(/Test check exceeded its overall/)
+    // The narrower escape comes before the last-resort --no-verify.
+    // The backstop message's suggestion starts from core's default budget.
+    expect(Number(/_bs_cur=(\d+)\n/.exec(hook)![1])).toBe(budgets().core)
     expect(hook).toMatch(/\{\n[\s\S]*?\} \|\| COVERAGE_STATUS=\$\?/)
   })
 
