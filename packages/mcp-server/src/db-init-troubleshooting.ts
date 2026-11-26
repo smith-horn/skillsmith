@@ -17,14 +17,21 @@
  * So the last thing a user read after a correct refusal was advice that cannot
  * work, sending them after a configuration problem they do not have — and this
  * is the npx path, where WASM is already the default driver.
+ *
+ * **SMI-7260: the availability block no longer offers WASM at all.** A
+ * file-backed WASM database is read-only (the driver never writes the file), so
+ * "use the WASM fallback" would trade a startup failure for a server that
+ * cannot save. The block now names the native fix: rebuild better-sqlite3, or
+ * reinstall with install scripts enabled.
  */
 import { isCorruptDatabaseError } from '@skillsmith/core'
 
 /** The availability block: a driver that will not load, not a damaged file. */
 const DRIVER_AVAILABILITY = [
-  '  - In Docker: Ensure container is running',
-  '  - On macOS: sql.js WASM should load automatically',
-  '  - Set SKILLSMITH_FORCE_WASM=true to use the WASM SQLite fallback',
+  '  - In Docker: ensure the container is running',
+  '  - Rebuild the native SQLite driver: npm rebuild better-sqlite3',
+  '  - Or reinstall with install scripts enabled (not --ignore-scripts), then restart',
+  '  - Without the native driver Skillsmith uses the WASM driver, which can read but not save',
 ].join('\n')
 
 /**

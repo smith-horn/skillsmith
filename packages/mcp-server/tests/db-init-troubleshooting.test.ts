@@ -10,12 +10,16 @@
  *
  * This is the npx path, where WASM is already the default driver, so the user
  * was being told to switch to the driver they were already using.
+ *
+ * SMI-7260: the generic block must not offer FORCE_WASM for ANY failure now,
+ * because a file-backed WASM database is read-only. It names the native fix.
  */
 import { describe, it, expect } from 'vitest'
 import { CorruptDatabaseError } from '@skillsmith/core'
 import { troubleshootingFor, formatDbInitFailure } from '../src/db-init-troubleshooting.js'
 
 const FORCE_WASM = 'SKILLSMITH_FORCE_WASM'
+const NATIVE_FIX = 'npm rebuild better-sqlite3'
 
 function refusal(): CorruptDatabaseError {
   return new CorruptDatabaseError({
@@ -36,13 +40,15 @@ describe('SMI-6991: a corruption refusal is not followed by driver-switch advice
 
   it('still offers availability advice for every OTHER failure — the control', () => {
     // This is what makes the arm above meaningful. It also pins the thing the
-    // block is actually for: a driver that will not load.
+    // block is actually for: a driver that will not load, fixed natively.
     const generic = troubleshootingFor(new Error('Cannot find module better_sqlite3.node'))
     expect(generic).not.toBeNull()
-    expect(generic).toContain(FORCE_WASM)
+    expect(generic).toContain(NATIVE_FIX)
+    // SMI-7260: never offers the WASM driver as a remedy; it cannot save.
+    expect(generic).not.toContain(FORCE_WASM)
   })
 
-  it('never emits the FORCE_WASM line in a rendered refusal, but does otherwise', () => {
+  it('renders no advice for a refusal, and the native fix (never FORCE_WASM) otherwise', () => {
     // Asserted on the RENDERED text, because that is what a user reads. A
     // caller mishandling the null case would print the literal "null" here.
     const onRefusal = formatDbInitFailure('detail', refusal())
@@ -52,8 +58,9 @@ describe('SMI-6991: a corruption refusal is not followed by driver-switch advice
     expect(onRefusal).toContain('detail')
 
     const onOther = formatDbInitFailure('detail', new Error('ABI mismatch'))
-    expect(onOther).toContain(FORCE_WASM)
     expect(onOther).toContain('Troubleshooting:')
+    expect(onOther).toContain(NATIVE_FIX)
+    expect(onOther).not.toContain(FORCE_WASM)
   })
 
   it('discriminates on code, not on message text or identity', () => {

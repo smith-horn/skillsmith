@@ -5,6 +5,7 @@
 
 import type { Database } from '../db/database-interface.js'
 import { createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 import { EmbeddingService } from '../embeddings/index.js'
 import { TieredCache, L1Cache, type SearchResult } from '../cache/index.js'
 
@@ -100,6 +101,8 @@ export class HybridSearch {
         : undefined,
     })
     instance.initFTS()
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(instance.db)
     return instance
   }
 

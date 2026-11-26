@@ -11,6 +11,7 @@
 
 import type { Database } from '../db/database-interface.js'
 import { createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 
 // Import types and utilities from extracted modules
 export type {
@@ -133,13 +134,12 @@ export class EmbeddingService {
         embedding BLOB NOT NULL,
         text TEXT NOT NULL,
         created_at INTEGER DEFAULT (unixepoch())
-      )
-    `)
-
-    this.db.exec(`
+      );
       CREATE INDEX IF NOT EXISTS idx_embeddings_skill
       ON skill_embeddings(skill_id)
     `)
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(this.db)
   }
 
   /** Static: Check if the transformers module is available without loading it */

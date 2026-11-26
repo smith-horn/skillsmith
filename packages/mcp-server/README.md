@@ -455,7 +455,7 @@ Installing a registry skill outside official, verified, curated, community and l
 |----------|-------------|---------|
 | `SKILLSMITH_DB_PATH` | Database file location | `~/.skillsmith/skills.db` |
 | `SKILLSMITH_TELEMETRY_ENABLED` | Enable anonymous telemetry | `false` |
-| `SKILLSMITH_USE_WASM` | Force WASM SQLite driver (sql.js) | `false` |
+| `SKILLSMITH_FORCE_WASM` | Force the WASM SQLite driver (sql.js), for testing. The database is then read-only: nothing local is saved | unset |
 | `SKILLSMITH_ERROR_LOG_DISABLE` | Disable structured error logging to disk (set to `'1'` or `'true'` to opt-out) | unset (logging ON) |
 | `SKILLSMITH_LOG_LEVEL` | Filter log verbosity: `debug`, `info`, `warn`, `error` | `warn` |
 | `POSTHOG_API_KEY` | PostHog API key (required if telemetry enabled) | - |
@@ -545,15 +545,17 @@ Distribute that value through a secure channel (e.g., 1Password vault, encrypted
 
 If you only use Community/Individual tools (search, install, recommend, etc.), this variable is not needed.
 
-### WASM Fallback (v0.3.18+)
+### WASM Fallback (read-only)
 
-The MCP server automatically falls back to a WASM-based SQLite driver (sql.js) when native better-sqlite3 is unavailable. This ensures the server works in environments where native modules can't be compiled.
+When the native SQLite driver (better-sqlite3) does not load, the MCP server falls back to a WASM driver (sql.js). That fallback **can read but not save**: it opens an existing database read-only and never writes the file, and on a first run local results stay empty. Searches through the Skillsmith API still work; anything that records locally (installs, sync, quarantine records) fails with a message naming the cause. The server prints one line at startup when this happens.
 
-The fallback is automatic—no configuration needed. To force WASM mode:
+To get the native driver back, rebuild it, or reinstall with install scripts enabled, then restart your MCP client:
 
 ```bash
-export SKILLSMITH_USE_WASM=true
+npm rebuild better-sqlite3
 ```
+
+Set `SKILLSMITH_DEBUG=1` to see why the native driver did not load. `SKILLSMITH_FORCE_WASM=true` forces the WASM driver, for testing only: with it set, the database is read-only.
 
 ## Telemetry
 

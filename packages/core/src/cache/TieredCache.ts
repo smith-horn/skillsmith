@@ -6,6 +6,7 @@
 import { LRUCache } from 'lru-cache'
 import type { Database, Statement } from '../db/database-interface.js'
 import { createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 import type { SearchResult } from './lru.js'
 import {
   type CacheEntry,
@@ -187,6 +188,8 @@ export class EnhancedTieredCache {
       CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache_entries(expires_at);
       CREATE INDEX IF NOT EXISTS idx_cache_tier ON cache_entries(ttl_tier);
     `)
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(db)
     this.stmts = {
       get: db.prepare(
         `SELECT key, data_json, total_count, created_at, expires_at,

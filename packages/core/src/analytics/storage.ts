@@ -11,6 +11,7 @@
 
 import type { Database } from '../db/database-interface.js'
 import { createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync } from 'fs'
@@ -87,6 +88,8 @@ export class AnalyticsStorage {
     const instance = Object.create(AnalyticsStorage.prototype) as AnalyticsStorage
     instance.db = await createDatabaseAsync(resolvedPath)
     instance.initSchema()
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(instance.db)
     return instance
   }
 

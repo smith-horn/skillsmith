@@ -35,6 +35,8 @@ import {
   resolveFreshAccessToken,
   setTelemetryIdentityProvider,
   setTelemetryIdentityInvalidationHandler,
+  readOnlyReasonOf,
+  isQuietModeEnabled,
   type SyncResult,
   type DatabaseType,
   type TelemetryIdentity,
@@ -295,7 +297,17 @@ export async function createToolContextAsync(
     process.env.SKILLSMITH_BACKGROUND_SYNC !== 'false' &&
     options.backgroundSyncConfig?.enabled !== false
 
-  if (backgroundSyncEnabled) {
+  // SMI-7260: a WASM handle is read-only, so a sync could never store what it
+  // fetched; worse, recording its schedule and its run both write, so it would
+  // throw at startup or every interval. Don't start it; say so once.
+  const readOnlyReason = readOnlyReasonOf(db)
+  if (backgroundSyncEnabled && readOnlyReason !== undefined && !isQuietModeEnabled()) {
+    console.error(
+      '[skillsmith] Background sync is off: the database is read-only (WASM SQLite driver).'
+    )
+  }
+
+  if (backgroundSyncEnabled && readOnlyReason === undefined) {
     const syncConfigRepo = new SyncConfigRepository(db)
     const syncHistoryRepo = new SyncHistoryRepository(db)
     const skillVersionRepo = new SkillVersionRepository(db)

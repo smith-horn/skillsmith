@@ -22,6 +22,12 @@ import {
   QUARANTINE_SEVERITY_POLICIES,
 } from '../../db/quarantine-schema.js'
 import type { AuditLogger } from '../../security/AuditLogger.js'
+import { ensureLazyTable } from '../read-only-guard.js'
+import {
+  absentQuarantineStatements,
+  emptyQuarantinePage,
+  emptyQuarantineStats,
+} from './unavailable.js'
 
 import type {
   QuarantineRow,
@@ -91,18 +97,20 @@ export class QuarantineRepository {
   private auditLogger?: AuditLogger
   private stmts!: PreparedStatements
 
+  /**
+   * SMI-7260: false when the handle is read-only and the quarantine table does
+   * not exist (it is created lazily, here, not by the schema). Then nothing is
+   * prepared against the table: reads report no entries and mutations throw
+   * the read-only refusal (`DatabaseReadOnlyDriverError` on a WASM handle).
+   */
+  readonly available: boolean
+
   constructor(db: DatabaseType, auditLogger?: AuditLogger) {
     this.db = db
     this.auditLogger = auditLogger
-    this.ensureTableExists()
-    this.prepareStatements()
-  }
-
-  /**
-   * Ensure the quarantine table exists
-   */
-  private ensureTableExists(): void {
-    initializeQuarantineSchema(this.db)
+    this.available = ensureLazyTable(db, 'quarantine', initializeQuarantineSchema)
+    if (this.available) this.prepareStatements()
+    else this.stmts = absentQuarantineStatements(db)
   }
 
   /**
@@ -264,6 +272,7 @@ export class QuarantineRepository {
    */
   query(filter: QuarantineQueryFilter): PaginatedQuarantineResults {
     const { limit = 20, offset = 0 } = filter
+    if (!this.available) return emptyQuarantinePage(limit, offset)
     const { query, countQuery, params, countParams } = buildFilteredQuery(filter)
 
     const rows = this.db.prepare(query).all(...params) as QuarantineRow[]
@@ -416,6 +425,7 @@ export class QuarantineRepository {
    * @returns Quarantine statistics
    */
   getStats(): QuarantineStats {
+    if (!this.available) return emptyQuarantineStats()
     const totalResult = this.db.prepare(STATS_TOTAL_QUERY).get() as { count: number }
 
     const severityResults = this.db.prepare(STATS_BY_SEVERITY_QUERY).all() as Array<{

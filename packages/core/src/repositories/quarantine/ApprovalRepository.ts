@@ -7,9 +7,10 @@
  * @module @skillsmith/core/repositories/quarantine/ApprovalRepository
  */
 
-import type { Database as DatabaseType } from '../../db/database-interface.js'
+import type { Database as DatabaseType, Statement } from '../../db/database-interface.js'
 import { randomUUID } from 'crypto'
 import { initializeQuarantineApprovalsSchema } from '../../db/quarantine-approvals-schema.js'
+import { absentTableStatement, ensureLazyTable } from '../read-only-guard.js'
 
 // ============================================================================
 // Types
@@ -140,16 +141,26 @@ const SELECT_FIRST_PENDING_QUERY = `
 export class ApprovalRepository {
   private db: DatabaseType
 
+  /**
+   * SMI-7260: false when the handle is read-only and the quarantine_approvals
+   * table does not exist (it is created lazily, here). Then nothing is prepared
+   * against it: reads find no approvals and mutations throw the read-only
+   * refusal (`DatabaseReadOnlyDriverError` on a WASM handle).
+   */
+  readonly available: boolean
+
   constructor(db: DatabaseType) {
     this.db = db
-    this.ensureTableExists()
+    this.available = ensureLazyTable(
+      db,
+      'quarantine_approvals',
+      initializeQuarantineApprovalsSchema
+    )
   }
 
-  /**
-   * Ensure the quarantine_approvals table exists
-   */
-  private ensureTableExists(): void {
-    initializeQuarantineApprovalsSchema(this.db)
+  /** Prepare `sql`, or stand in for it when the table is unavailable (SMI-7260). */
+  private prepare<T = unknown>(sql: string): Statement<T> {
+    return this.available ? this.db.prepare<T>(sql) : absentTableStatement<T>(this.db)
   }
 
   /**
@@ -163,21 +174,19 @@ export class ApprovalRepository {
     const id = randomUUID()
     const requiredApprovals = input.requiredApprovals ?? 2
 
-    this.db
-      .prepare(INSERT_APPROVAL_QUERY)
-      .run(
-        id,
-        input.skillId,
-        input.reviewerId,
-        input.reviewerEmail,
-        input.decision,
-        input.reason ?? null,
-        requiredApprovals
-      )
+    this.prepare(INSERT_APPROVAL_QUERY).run(
+      id,
+      input.skillId,
+      input.reviewerId,
+      input.reviewerEmail,
+      input.decision,
+      input.reason ?? null,
+      requiredApprovals
+    )
 
-    const row = this.db
-      .prepare('SELECT * FROM quarantine_approvals WHERE id = ?')
-      .get(id) as ApprovalRow
+    const row = this.prepare('SELECT * FROM quarantine_approvals WHERE id = ?').get(
+      id
+    ) as ApprovalRow
 
     return rowToEntry(row)
   }
@@ -189,7 +198,7 @@ export class ApprovalRepository {
    * @returns All approval entries for this skill
    */
   getApprovals(skillId: string): ApprovalEntry[] {
-    const rows = this.db.prepare(SELECT_BY_SKILL_ID_QUERY).all(skillId) as ApprovalRow[]
+    const rows = this.prepare(SELECT_BY_SKILL_ID_QUERY).all(skillId) as ApprovalRow[]
 
     return rows.map(rowToEntry)
   }
@@ -201,7 +210,7 @@ export class ApprovalRepository {
    * @returns Pending approval entries
    */
   getPendingApprovals(skillId: string): ApprovalEntry[] {
-    const rows = this.db.prepare(SELECT_PENDING_BY_SKILL_ID_QUERY).all(skillId) as ApprovalRow[]
+    const rows = this.prepare(SELECT_PENDING_BY_SKILL_ID_QUERY).all(skillId) as ApprovalRow[]
 
     return rows.map(rowToEntry)
   }
@@ -214,7 +223,7 @@ export class ApprovalRepository {
    * @returns True if the reviewer already has a pending approval
    */
   hasReviewerApproved(skillId: string, reviewerId: string): boolean {
-    const row = this.db.prepare(CHECK_REVIEWER_EXISTS_QUERY).get(skillId, reviewerId)
+    const row = this.prepare(CHECK_REVIEWER_EXISTS_QUERY).get(skillId, reviewerId)
 
     return !!row
   }
@@ -227,9 +236,9 @@ export class ApprovalRepository {
    * @returns True if approval count meets or exceeds required
    */
   isComplete(skillId: string, requiredApprovals: number = 2): boolean {
-    const { count } = this.db.prepare(COUNT_PENDING_APPROVALS_QUERY).get(skillId) as {
-      count: number
-    }
+    const count =
+      (this.prepare(COUNT_PENDING_APPROVALS_QUERY).get(skillId) as { count: number } | undefined)
+        ?.count ?? 0
 
     return count >= requiredApprovals
   }
@@ -241,7 +250,7 @@ export class ApprovalRepository {
    * @returns Number of rows updated
    */
   markComplete(skillId: string): number {
-    const result = this.db.prepare(MARK_COMPLETE_QUERY).run(skillId)
+    const result = this.prepare(MARK_COMPLETE_QUERY).run(skillId)
 
     return result.changes
   }
@@ -253,7 +262,7 @@ export class ApprovalRepository {
    * @returns Number of rows deleted
    */
   clearApprovals(skillId: string): number {
-    const result = this.db.prepare(DELETE_BY_SKILL_ID_QUERY).run(skillId)
+    const result = this.prepare(DELETE_BY_SKILL_ID_QUERY).run(skillId)
 
     return result.changes
   }
@@ -265,7 +274,7 @@ export class ApprovalRepository {
    * @returns ISO date string of the first approval, or null if none
    */
   getWorkflowStartTime(skillId: string): string | null {
-    const row = this.db.prepare(SELECT_FIRST_PENDING_QUERY).get(skillId) as
+    const row = this.prepare(SELECT_FIRST_PENDING_QUERY).get(skillId) as
       | { created_at: string }
       | undefined
 
@@ -279,9 +288,9 @@ export class ApprovalRepository {
    * @returns Count of pending approved entries
    */
   getPendingApprovalCount(skillId: string): number {
-    const { count } = this.db.prepare(COUNT_PENDING_APPROVALS_QUERY).get(skillId) as {
-      count: number
-    }
+    const count =
+      (this.prepare(COUNT_PENDING_APPROVALS_QUERY).get(skillId) as { count: number } | undefined)
+        ?.count ?? 0
 
     return count
   }

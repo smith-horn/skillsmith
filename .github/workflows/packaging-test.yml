@@ -24,6 +24,14 @@ jobs:
     name: Fresh Install Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # SMI-7260 (L4): the shell, stated rather than left to the runner default.
+    # `bash -e {0}` IS that default; it is spelled out so nobody "fixes" it to a
+    # bare `shell: bash`, which GitHub runs with `-o pipefail` as well. Several
+    # steps below rely on non-pipefail semantics: `npm ls X | grep -q X` must
+    # find X even when `npm ls` exits non-zero for an unrelated tree problem.
+    defaults:
+      run:
+        shell: bash -e {0}
 
     steps:
       - name: Checkout
@@ -34,10 +42,33 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Runtime meets the CLI engines floor (SMI-7260)
+        id: engines
+        # NODE_VERSION floats within the major and npm only warns on an engines
+        # mismatch, so check the runtime against the CLI's own engines.node.
+        run: |
+          node -e '
+            const want = require("./packages/cli/package.json").engines.node;
+            const m = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(want);
+            if (!m) { console.error("::error::unexpected engines.node format: " + want); process.exit(1); }
+            const have = process.versions.node.split(".").map(Number);
+            const need = m.slice(1).map(Number);
+            for (let i = 0; i < 3; i++) {
+              if (have[i] > need[i]) break;
+              if (have[i] < need[i]) {
+                console.error("::error::Node " + process.versions.node + " does not satisfy the CLI engines " + want);
+                process.exit(1);
+              }
+            }
+            console.log("Node " + process.versions.node + " satisfies the CLI engines " + want);
+          '
+
       - name: Install dependencies
+        id: npm_ci
         run: npm ci --ignore-scripts
 
       - name: Build CLI bundle (with inlined workspace deps)
+        id: build
         # SMI-5427: the esbuild bundle inlines @skillsmith/core + @skillsmith/mcp-server,
         # whose package exports resolve to dist/. After `npm ci` those packages are
         # unbuilt, so build the CLI WITH its workspace deps in dependency order
@@ -45,6 +76,7 @@ jobs:
         run: npx turbo build --filter=@skillsmith/cli
 
       - name: Verify bundle exists
+        id: bundle
         run: |
           if [ ! -f packages/cli/dist/cli.js ]; then
             echo "::error::dist/cli.js not produced by build"
@@ -53,6 +85,7 @@ jobs:
           echo "Bundle size: $(wc -c < packages/cli/dist/cli.js) bytes"
 
       - name: Pack CLI tarball only
+        id: pack
         run: |
           mkdir -p /tmp/packages
           cd packages/cli && npm pack --pack-destination /tmp/packages
@@ -60,6 +93,7 @@ jobs:
           ls -la /tmp/packages
 
       - name: Install CLI as nested (non-root) dependency
+        id: install
         # SMI-5427: install the packed CLI inside a wrapper package so the
         # test-root's overrides and dedup cannot mask a deprecation a real
         # downstream user would hit. This is the canonical "fresh user" scenario.
@@ -85,6 +119,7 @@ jobs:
           echo "No prebuild-install / boolean / keytar deprecation warnings found"
 
       - name: Verify binary is the bundle
+        id: verify_binary
         run: |
           CLI_BIN=/tmp/fresh-install-test/wrapper/node_modules/.bin/skillsmith
           if [ ! -f "$CLI_BIN" ]; then
@@ -100,6 +135,7 @@ jobs:
           fi
 
       - name: Test CLI commands
+        id: cli_commands
         working-directory: /tmp/fresh-install-test/wrapper
         env:
           SKILLSMITH_USE_MOCK_EMBEDDINGS: 'true'
@@ -120,28 +156,167 @@ jobs:
           echo "telemetry --help OK"
 
       - name: Exercise the WASM DB-open fallback (SMI-5427)
+        id: wasm_fallback
         working-directory: /tmp/fresh-install-test/wrapper
         env:
           SKILLSMITH_USE_MOCK_EMBEDDINGS: 'true'
-          # Force the local branch so search opens the local DB, exercising the
-          # fts5-sql-bundle WASM fallback (better-sqlite3 is externalized + NOT
-          # declared, so it is absent here). A lazy-require MODULE_NOT_FOUND on the
-          # DB-open path would otherwise ship undetected — the --help smokes above
-          # never open a database.
+          # Force the local branch so search opens the local DB.
           SKILLSMITH_OFFLINE_MODE: 'true'
+          # SMI-7260: the CLI now installs better-sqlite3, so without this the
+          # step would open the database with the native driver and nothing
+          # would test the WASM path. FORCE_WASM makes createDatabaseAsync take
+          # the fts5-sql-bundle (sql.js) path unconditionally. A lazy-require
+          # MODULE_NOT_FOUND on that path would otherwise ship undetected: the
+          # --help smokes above never open a database.
+          SKILLSMITH_FORCE_WASM: 'true'
         run: |
+          # SMI-7260 (L3): a HOME of this step's own, so it is a true first run
+          # and cannot see a database another step created.
+          HOME=$(mktemp -d)
+          export HOME
           # Empty local DB + offline is a normal, handled state (prints a hint,
-          # exits 0). The assertion is that opening the WASM DB does not crash with
-          # a missing-module error.
-          OUT=$(node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1) || true
+          # exits 0). The assertions: the CLI exits 0; opening the WASM DB does
+          # not crash with a missing-module error; WASM really ran (its
+          # FORCE_WASM notice, a positive proof); and the search reached the
+          # database (the marker). SMI-7260 (B3): the output and the exit status
+          # are captured separately, so a crash cannot pass as a string match.
+          set +e
+          OUT=$(env -u SKILLSMITH_QUIET node ./node_modules/@skillsmith/cli/dist/cli.js search "test" 2>&1)
+          ST=$?
+          set -e
           echo "$OUT"
+          if [ "$ST" -ne 0 ]; then
+            echo "::error::forced WASM search exited $ST (expected 0)"
+            exit 1
+          fi
           if echo "$OUT" | grep -qiE "Cannot find module|MODULE_NOT_FOUND|Error: No SQLite driver"; then
             echo "::error::search 'test' failed to open the WASM DB (native/WASM fallback missing)"
             exit 1
           fi
+          case "$OUT" in
+            *'SKILLSMITH_FORCE_WASM is set, so Skillsmith is using the WASM driver'*) ;;
+            *) echo "::error::forced run did not print the FORCE_WASM read-only notice (WASM did not run)"; exit 1 ;;
+          esac
+          case "$OUT" in
+            *'Skillsmith is offline and your local skill index is empty'*) ;;
+            *) echo "::error::forced run did not reach the database (completion marker missing)"; exit 1 ;;
+          esac
           echo "WASM DB-open fallback OK"
 
+      - name: Native SQLite driver loads (SMI-7260)
+        id: native_driver
+        working-directory: /tmp/fresh-install-test/wrapper
+        # The CLI declares better-sqlite3 as an optional dependency. (a) proves the
+        # installed copy loads and is the version the CLI pins; (b) proves the CLI
+        # itself uses it, with a control run where the driver is moved aside.
+        run: |
+          set -u
+          # SMI-7260 (L3): a HOME of this step's own. The native run creates the
+          # database here; the control run then opens that existing file.
+          HOME=$(mktemp -d)
+          export HOME
+          # (a) Load proof, resolved the way the bundle resolves it: createRequire
+          # anchored at the CLI's own package.json.
+          node -e '
+            const { createRequire } = require("module");
+            const path = require("path");
+            const cliPkg = path.resolve("node_modules/@skillsmith/cli/package.json");
+            const req = createRequire(cliPkg);
+            const want = (require(cliPkg).optionalDependencies || {})["better-sqlite3"];
+            const got = req("better-sqlite3/package.json").version;
+            const Database = req("better-sqlite3");
+            const db = new Database(":memory:");
+            const sqlite = db.prepare("select sqlite_version() as v").get().v;
+            db.close();
+            console.log("better-sqlite3 " + got + " loaded (SQLite " + sqlite + "); the CLI pins " + (want || "(none declared)"));
+            if (got !== want) {
+              console.error("::error::installed better-sqlite3 " + got + " is not the CLI pin " + (want || "(none declared)"));
+              process.exit(1);
+            }
+          '
+
+          # (b) Mechanism proof through the real CLI. env -u drops an inherited
+          # SKILLSMITH_QUIET, which would hide the notice; 2>&1 captures it,
+          # because the notice goes out through console.warn.
+          CLI=./node_modules/@skillsmith/cli/dist/cli.js
+          # SMI-7260: the WASM driver's open notice. Every variant contains NOTICE;
+          # CAUSE is the variant for a native driver that did not load.
+          NOTICE='Skillsmith is using the WASM driver'
+          CAUSE='the native SQLite driver (better-sqlite3) did not load'
+          MARKER='Skillsmith is offline and your local skill index is empty'
+          # SMI-7260 (B3): output into SEARCH_OUT, exit status into SEARCH_ST,
+          # captured separately. Measured: both runs below (native, and the
+          # control on an existing database) exit 0 offline, so a nonzero
+          # status fails each of them before its strings are checked.
+          run_search() {
+            set +e
+            SEARCH_OUT=$(env -u SKILLSMITH_QUIET SKILLSMITH_OFFLINE_MODE=true SKILLSMITH_USE_MOCK_EMBEDDINGS=true node "$CLI" search "test" 2>&1)
+            SEARCH_ST=$?
+            set -e
+          }
+          resolve_driver_dir() {
+            node -e 'const { createRequire } = require("module"); const path = require("path"); process.stdout.write(path.dirname(createRequire(path.resolve("node_modules/@skillsmith/cli/package.json")).resolve("better-sqlite3/package.json")))'
+          }
+
+          # Native run: no WASM notice, and the search reached the database.
+          run_search
+          NATIVE_OUT=$SEARCH_OUT
+          echo "--- native run ---"
+          echo "$NATIVE_OUT"
+          if [ "$SEARCH_ST" -ne 0 ]; then echo "::error::native run exited $SEARCH_ST (expected 0)"; exit 1; fi
+          case "$NATIVE_OUT" in
+            *"$NOTICE"*) echo "::error::native run used the WASM driver"; exit 1 ;;
+          esac
+          case "$NATIVE_OUT" in
+            *"$MARKER"*) ;;
+            *) echo "::error::native run did not reach the database (completion marker missing)"; exit 1 ;;
+          esac
+
+          # Control run: move aside the directory the CLI actually resolves, so the
+          # same command must fall back to WASM and print the notice. The trap is
+          # installed BEFORE the move, so any failure path restores it.
+          DRIVER_DIR=$(resolve_driver_dir)
+          ASIDE="$DRIVER_DIR.smi7260-aside"
+          echo "The CLI resolves better-sqlite3 at: $DRIVER_DIR"
+          restore_driver() {
+            if [ -d "$ASIDE" ] && [ ! -e "$DRIVER_DIR" ]; then mv "$ASIDE" "$DRIVER_DIR"; fi
+          }
+          trap restore_driver EXIT
+          mv "$DRIVER_DIR" "$ASIDE"
+          # If another copy still resolves from the CLI (a stray node_modules
+          # higher up), the control would quietly test the native driver again.
+          STILL=$(resolve_driver_dir 2>/dev/null || true)
+          if [ -n "$STILL" ]; then
+            echo "::error::control cannot isolate the driver: better-sqlite3 still resolves at $STILL"
+            exit 1
+          fi
+          run_search
+          CONTROL_OUT=$SEARCH_OUT
+          restore_driver
+          echo "--- control run (driver moved aside) ---"
+          echo "$CONTROL_OUT"
+          if [ "$SEARCH_ST" -ne 0 ]; then echo "::error::control run exited $SEARCH_ST (expected 0)"; exit 1; fi
+          case "$CONTROL_OUT" in
+            *"$NOTICE"*) ;;
+            *) echo "::error::control run did not fall back to WASM (notice missing)"; exit 1 ;;
+          esac
+          case "$CONTROL_OUT" in
+            *"$CAUSE"*) ;;
+            *) echo "::error::control run's WASM notice does not say the native driver failed to load"; exit 1 ;;
+          esac
+          case "$CONTROL_OUT" in
+            *"$MARKER"*) ;;
+            *) echo "::error::control run did not reach the database (completion marker missing)"; exit 1 ;;
+          esac
+          AFTER=$(resolve_driver_dir)
+          if [ "$AFTER" != "$DRIVER_DIR" ]; then
+            echo "::error::better-sqlite3 was not restored (resolves to: $AFTER)"
+            exit 1
+          fi
+          echo "Native driver loads and the CLI uses it; control fell back to WASM; driver restored"
+
       - name: Assert --version does not trigger import
+        id: version_guard
         working-directory: /tmp/fresh-install-test/wrapper
         run: |
           # If the self-exec guard was still present, --version would start a
@@ -157,6 +332,7 @@ jobs:
           echo "Output was: $OUT"
 
       - name: Verify deprecation severance
+        id: severance
         working-directory: /tmp/fresh-install-test/wrapper
         run: |
           # npm ls exits non-zero if a package is missing or extraneous but
@@ -182,14 +358,19 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| esbuild bundle produced | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| CLI tarball (no core/mcp-server) | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| Nested install (real-user scenario) | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| No prebuild-install deprecation | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| No boolean deprecation | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| No keytar deprecation | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| --version no-import guard | checked |" >> $GITHUB_STEP_SUMMARY
-          echo "| CLI help commands | checked |" >> $GITHUB_STEP_SUMMARY
+          # SMI-7260: each row shows its step's real outcome, not a fixed "checked".
+          echo "| Runtime meets the CLI engines floor | ${{ steps.engines.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm ci (scripts ignored) | ${{ steps.npm_ci.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| turbo build of the CLI and its workspace deps | ${{ steps.build.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| esbuild bundle produced | ${{ steps.bundle.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CLI tarball (no core/mcp-server) | ${{ steps.pack.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Nested install, no prebuild-install/boolean/keytar deprecation warnings | ${{ steps.install.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Installed binary resolves to the bundle | ${{ steps.verify_binary.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CLI help commands | ${{ steps.cli_commands.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| WASM fallback (forced) opens the DB read-only, with its notice | ${{ steps.wasm_fallback.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Native driver loads, and the CLI uses it (with control) | ${{ steps.native_driver.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| --version no-import guard | ${{ steps.version_guard.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| prebuild-install, boolean, keytar absent from the tree | ${{ steps.severance.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Run triggered: $(date -u)" >> $GITHUB_STEP_SUMMARY
 
@@ -208,7 +389,7 @@ jobs:
 
   # SMI-5609: lightweight backstop for packages/mcp-server/Dockerfile (Docker MCP
   # registry submission, docker/mcp-registry `source.directory: packages/mcp-server`).
-  # A successful `docker build` alone is the target here — catches dependency
+  # A successful `docker build` alone is the target here: it catches dependency
   # resolution / native-module build breaks cheaply. Full functional smoke
   # (MCP initialize, no-auth trial, volume-mount write) is deliberately out of
   # scope for this CI job; see docs/internal/implementation/docker-mcp-registry-publish.md.

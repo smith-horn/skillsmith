@@ -2,7 +2,7 @@
  * Corruption classification for the sql.js driver (ADR-175 § 2, SMI-6961).
  *
  * A sibling module rather than functions inside `sqljsDriver.ts` for two
- * reasons: that file is at the 500-line standard, and these predicates are
+ * reasons: that file was at the 500-line standard, and these predicates are
  * worth testing directly against a case table rather than only through a
  * driver open.
  */

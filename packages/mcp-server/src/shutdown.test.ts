@@ -58,10 +58,9 @@ function createMockDb(open = true): MockDb {
   return { open, close: vi.fn() }
 }
 
-// SMI-5649: coordinator (runShutdownSequence), autosave
-// (persistDbIfSupported/startPeriodicFlush/stopPeriodicFlush), and the
-// single-registration-site tests moved to shutdown-coordinator.test.ts
-// (SMI-5649) to keep this file under the 500-LOC file-size gate.
+// SMI-5649: coordinator (runShutdownSequence) and the single-registration-site
+// tests moved to shutdown-coordinator.test.ts (SMI-5649) to keep this file
+// under the 500-LOC file-size gate. SMI-7260 removed the periodic autosave.
 
 describe('flushTelemetryOnShutdown (SMI-5479)', () => {
   beforeEach(() => {
@@ -166,9 +165,10 @@ describe('createShutdownTrigger (SMI-5479)', () => {
 
 /**
  * SMI-5639 Wave 2 Step 1 (part 1): direct coverage of the `closeDbOnShutdown`
- * export itself, independent of `createShutdownTrigger`'s wiring. This is
- * the fail-soft synchronous close that persists the WASM driver's in-memory
- * database to disk on shutdown (`sqljsDriver.ts`'s `close()` -> `persist()`).
+ * export itself, independent of `createShutdownTrigger`'s wiring: the
+ * fail-soft synchronous close of the tool-context database on shutdown.
+ * (Until SMI-7260 it also persisted the WASM driver's in-memory database;
+ * that driver no longer writes a database file.)
  */
 describe('closeDbOnShutdown (SMI-5639)', () => {
   beforeEach(() => {
@@ -217,7 +217,7 @@ describe('closeDbOnShutdown (SMI-5639)', () => {
 
     expect(() => closeDbOnShutdown(() => db as unknown as DatabaseType)).not.toThrow()
 
-    // Per SMI-5615, a failed persist must be visible on stderr — logger.error
+    // Per SMI-5615, a failed close must be visible on stderr — logger.error
     // (not .debug/.info, which are disk-only) is the only level that
     // guarantees that. Assert the specific level, not just "some log call".
     expect(mockLogger.error).toHaveBeenCalledTimes(1)

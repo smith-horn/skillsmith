@@ -1,6 +1,7 @@
 /**
- * @fileoverview Tests for the unified shutdown coordinator + periodic
- * autosave (SMI-5649 + SMI-5640).
+ * @fileoverview Tests for the unified shutdown coordinator (SMI-5649).
+ * SMI-7260 removed the SMI-5640 periodic autosave and its tests: the WASM
+ * driver no longer writes a database file, so there is nothing to autosave.
  *
  * Split from shutdown.test.ts (SMI-5649) to stay under the 500-LOC file-size
  * gate — same module under test, same mocking approach (see that file's
@@ -14,9 +15,6 @@ import type { DatabaseType } from '@skillsmith/core'
 import {
   createShutdownTrigger,
   runShutdownSequence,
-  persistDbIfSupported,
-  startPeriodicFlush,
-  stopPeriodicFlush,
   _resetShutdownGuardForTests,
   SHUTDOWN_QUIESCE_TIMEOUT_MS,
 } from './shutdown.js'
@@ -54,25 +52,10 @@ function createMockDb(open = true): MockDb {
 }
 
 /**
- * Mock matching the WASM-driver-shaped surface `persistDbIfSupported` /
- * `startPeriodicFlush` structurally detect via `isPersistable` (an explicit
- * `persist()` method) — see shutdown.ts's `Persistable` type guard.
- */
-interface MockPersistableDb {
-  open: boolean
-  memory: boolean
-  persist: ReturnType<typeof vi.fn>
-}
-
-function createMockPersistableDb(overrides?: Partial<MockPersistableDb>): MockPersistableDb {
-  return { open: true, memory: false, persist: vi.fn(), ...overrides }
-}
-
-/**
  * SMI-5649: `runShutdownSequence` — the ONE coordinator. Tests the ordered
- * sequence (quiesce -> close LLM failover -> close/persist db -> flush
+ * sequence (quiesce -> close LLM failover -> close db -> flush
  * telemetry) and the re-entrancy latch that prevents a second signal from
- * racing a mid-persist first sequence.
+ * racing a first sequence that is mid-close.
  */
 describe('runShutdownSequence (SMI-5649)', () => {
   beforeEach(() => {
@@ -175,7 +158,7 @@ describe('runShutdownSequence (SMI-5649)', () => {
 
     // Load-bearing (design doc §1.3 Subtlety A): a naive re-implementation
     // would start a SECOND independent sequence here, which could exit the
-    // process mid-persist on the first. The coordinator must return the
+    // process mid-close on the first. The coordinator must return the
     // exact same in-flight promise instead.
     expect(second).toBe(first)
 
@@ -198,179 +181,6 @@ describe('runShutdownSequence (SMI-5649)', () => {
   })
 })
 
-/**
- * SMI-5640: periodic autosave for the WASM driver — `persistDbIfSupported`
- * (the fail-soft persist helper) and `startPeriodicFlush`/`stopPeriodicFlush`
- * (the timer lifecycle). Exercises the structural `isPersistable` guard
- * indirectly via db shapes with/without an explicit `persist()` method.
- */
-describe('persistDbIfSupported (SMI-5640)', () => {
-  beforeEach(() => {
-    mockLogger.error.mockClear()
-  })
-
-  it('calls persist() on an open, file-backed, persistable db', () => {
-    const db = createMockPersistableDb()
-
-    persistDbIfSupported(() => db as unknown as DatabaseType)
-
-    expect(db.persist).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not call persist() on a closed db', () => {
-    const db = createMockPersistableDb({ open: false })
-
-    persistDbIfSupported(() => db as unknown as DatabaseType)
-
-    expect(db.persist).not.toHaveBeenCalled()
-  })
-
-  it('does not call persist() on an in-memory db', () => {
-    const db = createMockPersistableDb({ memory: true })
-
-    persistDbIfSupported(() => db as unknown as DatabaseType)
-
-    expect(db.persist).not.toHaveBeenCalled()
-  })
-
-  it('no-ops on a native-driver-shaped db with no persist() method', () => {
-    const nativeShapedDb = { open: true, memory: false, close: vi.fn() }
-
-    expect(() =>
-      persistDbIfSupported(() => nativeShapedDb as unknown as DatabaseType)
-    ).not.toThrow()
-  })
-
-  it('no-ops safely when getDb is undefined or returns undefined', () => {
-    expect(() => persistDbIfSupported(undefined)).not.toThrow()
-    expect(() => persistDbIfSupported(() => undefined)).not.toThrow()
-  })
-
-  it('logs via logger.error (fail-soft) when persist() itself throws', () => {
-    const persistError = new Error('disk full')
-    const db = createMockPersistableDb()
-    db.persist.mockImplementation(() => {
-      throw persistError
-    })
-
-    expect(() => persistDbIfSupported(() => db as unknown as DatabaseType)).not.toThrow()
-    expect(mockLogger.error).toHaveBeenCalledWith(
-      expect.stringContaining('Periodic autosave persist failed'),
-      expect.objectContaining({ err: persistError })
-    )
-  })
-})
-
-describe('startPeriodicFlush / stopPeriodicFlush (SMI-5640)', () => {
-  const ORIGINAL_ENV = { ...process.env }
-
-  beforeEach(() => {
-    vi.useFakeTimers()
-    _resetShutdownGuardForTests()
-  })
-
-  afterEach(() => {
-    stopPeriodicFlush()
-    vi.useRealTimers()
-    process.env = { ...ORIGINAL_ENV }
-  })
-
-  it('persists on the configured interval and is unref-able', () => {
-    delete process.env.SKILLSMITH_AUTOSAVE_DISABLE
-    process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS = '1000'
-    const db = createMockPersistableDb()
-
-    startPeriodicFlush(() => db as unknown as DatabaseType)
-
-    expect(db.persist).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(1000)
-    expect(db.persist).toHaveBeenCalledTimes(1)
-    vi.advanceTimersByTime(1000)
-    expect(db.persist).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not arm the timer when SKILLSMITH_AUTOSAVE_DISABLE=1', () => {
-    process.env.SKILLSMITH_AUTOSAVE_DISABLE = '1'
-    process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS = '1000'
-    const db = createMockPersistableDb()
-
-    startPeriodicFlush(() => db as unknown as DatabaseType)
-
-    vi.advanceTimersByTime(10_000)
-    expect(db.persist).not.toHaveBeenCalled()
-  })
-
-  it('does not arm the timer for a non-persistable (native-shaped) db', () => {
-    delete process.env.SKILLSMITH_AUTOSAVE_DISABLE
-    process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS = '1000'
-    const nativeShapedDb = { open: true, memory: false, close: vi.fn() }
-
-    startPeriodicFlush(() => nativeShapedDb as unknown as DatabaseType)
-
-    vi.advanceTimersByTime(10_000)
-    // Nothing to assert beyond "does not throw" — a native-shaped db has no
-    // persist() to spy on; the real assertion is the absence of a crash from
-    // calling a nonexistent method, proven by not throwing.
-  })
-
-  it('does not arm the timer for an in-memory db', () => {
-    delete process.env.SKILLSMITH_AUTOSAVE_DISABLE
-    process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS = '1000'
-    const db = createMockPersistableDb({ memory: true })
-
-    startPeriodicFlush(() => db as unknown as DatabaseType)
-
-    vi.advanceTimersByTime(10_000)
-    expect(db.persist).not.toHaveBeenCalled()
-  })
-
-  it('stopPeriodicFlush clears the timer (no further persists after stop)', () => {
-    delete process.env.SKILLSMITH_AUTOSAVE_DISABLE
-    process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS = '1000'
-    const db = createMockPersistableDb()
-
-    startPeriodicFlush(() => db as unknown as DatabaseType)
-    vi.advanceTimersByTime(1000)
-    expect(db.persist).toHaveBeenCalledTimes(1)
-
-    stopPeriodicFlush()
-    vi.advanceTimersByTime(10_000)
-    expect(db.persist).toHaveBeenCalledTimes(1)
-  })
-
-  it('the flush callback no-ops once shuttingDown is set, even if the timer fires again before it is stopped', () => {
-    delete process.env.SKILLSMITH_AUTOSAVE_DISABLE
-    process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS = '1000'
-    const db = createMockPersistableDb()
-
-    startPeriodicFlush(() => db as unknown as DatabaseType)
-    vi.advanceTimersByTime(1000)
-    expect(db.persist).toHaveBeenCalledTimes(1)
-
-    // Simulate the coordinator having started (sets shuttingDown) without
-    // yet having called stopPeriodicFlush — belt-and-suspenders guard.
-    void runShutdownSequence({ getDb: () => db as unknown as DatabaseType })
-    vi.advanceTimersByTime(1000)
-    // No additional persist beyond whatever the coordinator's own db-close
-    // step triggers (it does not call persistDbIfSupported directly — this
-    // asserts the TIMER callback specifically stayed a no-op).
-    expect(db.persist.mock.calls.length).toBeLessThanOrEqual(2)
-  })
-
-  it('defaults to a 5-minute interval when SKILLSMITH_AUTOSAVE_INTERVAL_MS is unset', () => {
-    delete process.env.SKILLSMITH_AUTOSAVE_DISABLE
-    delete process.env.SKILLSMITH_AUTOSAVE_INTERVAL_MS
-    const db = createMockPersistableDb()
-
-    startPeriodicFlush(() => db as unknown as DatabaseType)
-
-    vi.advanceTimersByTime(299_999)
-    expect(db.persist).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(1)
-    expect(db.persist).toHaveBeenCalledTimes(1)
-  })
-})
-
 describe('SHUTDOWN_QUIESCE_TIMEOUT_MS (SMI-5649)', () => {
   it('exports the documented default timeout constant', () => {
     expect(SHUTDOWN_QUIESCE_TIMEOUT_MS).toBe(2000)
@@ -379,8 +189,8 @@ describe('SHUTDOWN_QUIESCE_TIMEOUT_MS (SMI-5649)', () => {
 
 /**
  * SMI-5649: single-registration-site invariant. Per the design doc's Finding
- * 2, this MUST be an in-process vitest unit test (not the full-boot
- * subprocess test in tests/shutdown-persistence-subprocess.test.ts) —
+ * 2, this MUST be an in-process vitest unit test (not a full-boot
+ * subprocess test) —
  * `packages/core/src/api/event-batcher.ts` attaches its own SIGTERM/SIGINT
  * drain handlers when a real `SkillsmithApiClient` is constructed outside a
  * VITEST-detected environment, which would be a confounder in a spawned

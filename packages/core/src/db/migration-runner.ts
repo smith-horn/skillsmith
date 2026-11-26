@@ -29,6 +29,8 @@ import { applyMigrationV16 } from './migrations/v16-skill-source.js'
 import { applyMigrationV17 } from './migrations/v17-curated-trust-tier.js'
 import { MIGRATION_V18_SQL } from './migrations/v18-skill-versions-real-content-hash.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
+import { readOnlyReasonOf } from './read-only-reason.js'
+import { isQuietModeEnabled } from '../utils/quiet-mode.js'
 
 /**
  * Migration definition for schema upgrades.
@@ -132,6 +134,12 @@ export const MIGRATIONS: Migration[] = [
   },
 ]
 
+/** The newest schema version any migration produces. */
+export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0)
+
+/** SMI-7260: databases whose "not upgraded" warning this process has printed. */
+const schemaBehindWarned = new Set<string>()
+
 /**
  * Get the current schema version from the database
  */
@@ -214,6 +222,24 @@ function applyMigration(db: Database, migration: Migration): void {
 export function runMigrationsSafe(db: Database): number {
   const currentVersion = getSchemaVersion(db)
   let migrationsRun = 0
+
+  // SMI-7260: a read-only WASM handle cannot migrate. Say that once per
+  // database, plainly, instead of letting every migration fail and warn
+  // "Migration N failed". The caller (the MCP server) continues on the old schema.
+  // Honours quiet mode; the once-per-database guard is recorded either way.
+  if (readOnlyReasonOf(db) !== undefined) {
+    if (currentVersion < LATEST_SCHEMA_VERSION && !schemaBehindWarned.has(db.name)) {
+      schemaBehindWarned.add(db.name)
+      if (!isQuietModeEnabled())
+        console.warn(
+          `[Skillsmith] ${db.name} is at schema version ${currentVersion}; this Skillsmith ` +
+            `expects ${LATEST_SCHEMA_VERSION}. It was not upgraded because the WASM SQLite ` +
+            'driver opened it read-only, so features that need the newer schema may fail. ' +
+            'Run any Skillsmith command with the native driver (better-sqlite3) to upgrade it.'
+        )
+    }
+    return 0
+  }
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {

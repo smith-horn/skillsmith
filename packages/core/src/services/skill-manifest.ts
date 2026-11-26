@@ -212,8 +212,8 @@ export class ManifestManager {
    * clobbered it mid-flight or failed outright. Each call now owns a
    * uniquely-named temp file for its own lifetime. The write+rename is
    * wrapped in try/catch so a failure best-effort removes only *this
-   * invocation's* temp file before rethrowing the original error (mirrors
-   * `sqljsDriver.ts`'s `persist()`, SMI-5997) — the error is never swallowed.
+   * invocation's* temp file before rethrowing the original error (as the
+   * sql.js driver's former `persist()` did, SMI-5997) — the error is never swallowed.
    */
   async save(manifest: SkillManifest): Promise<void> {
     assertNotRealUserHome(this.manifestPath, 'write')

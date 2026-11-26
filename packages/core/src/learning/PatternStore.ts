@@ -5,6 +5,7 @@
  */
 import type { Database } from '../db/database-interface.js'
 import { createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 import { randomUUID } from 'crypto'
 import { EmbeddingService } from '../embeddings/index.js'
 
@@ -123,6 +124,8 @@ export class PatternStore {
 
     this.db = await createDatabaseAsync(this.config.dbPath || ':memory:')
     this.db.exec(PATTERN_STORE_SCHEMA)
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(this.db)
     this.fisherMatrix = new FisherInformationMatrix(this.config.dimensions)
     this.loadFisherMatrix()
     this.embeddingService = new EmbeddingService({ useFallback: true })

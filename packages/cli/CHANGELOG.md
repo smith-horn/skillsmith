@@ -4,6 +4,30 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7260 -- the CLI now installs the native SQLite driver (`better-sqlite3` 13.0.3,
+  an optional dependency). It was bundled out and never installed, so every install used the WASM
+  driver, whose saves could lose the MCP server's writes and corrupt the database. The CLI pins
+  13.0.3 while core stays on 12.10.0, on purpose: 13.0.3 ships prebuilt binaries in its package
+  and has no install script, while 12.10.0 depends on the deprecated `prebuild-install`, which
+  SMI-5427 removed from the CLI's install tree. Core's database tests pass on 13.0.3, except one
+  lock-timing test with no SQLite use that fails on 12.10.0 too (SMI-7263). Where the WASM driver
+  is still in use (install scripts disabled, no prebuilt binary, or `SKILLSMITH_FORCE_WASM`), the
+  database opens read-only and the CLI says so in one line: read commands (`search`, `info`,
+  `list`, `sync status`) work, and a change to the database (by `install`, `remove`, `update`,
+  `import`, `import-local`, `sync`, `sync config`) fails with an error naming the cause and the
+  fix. On a database at an older schema, `search`, `info` and the commands that change the
+  database fail with that error, because the WASM driver cannot upgrade it; `list` still reads it.
+  A first run with no database works with empty local results. `skillsmith list` now reports a
+  database it cannot open (a corruption refusal, with its remedy, or any other open error) in one
+  warning per command, even when no skills are installed, and still exits 0 (ADR-175 § 5: a
+  database fault costs the update column, not the command). With skills installed, that one
+  warning replaces the per-skill "could not be determined" note rather than repeating the cause.
+  Before, a corrupt database with nothing installed printed "No skills installed" and said nothing
+  about it. No database file at all is still not an error.
+  The CLI creates its own state directory, `~/.skillsmith`, owner-only (0700) when it does not
+  exist, which the native driver needs on a first run. It creates no other directory: a database
+  path given with `-d` whose directory does not exist is refused, as before.
+
 - **Changed**: SMI-6531 -- A1 step 8-i-a-3a: `skillsmith update` stopped because the staging
   folder's records could not be listed says "the records of unfinished operations in `<staging>`";
   `skillsmith restore` warns when the folder the copy was set aside in cannot be synced; `skillsmith

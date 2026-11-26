@@ -5,6 +5,7 @@
 
 import type { Database, Statement } from '../db/database-interface.js'
 import { createDatabaseAsync } from '../db/createDatabase.js'
+import { sealDatabase } from '../db/read-only-reason.js'
 import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js'
 import { isValidCacheKey } from './CacheEntry.js'
 
@@ -59,6 +60,8 @@ export class L2Cache {
     const instance = new L2Cache({ ttlSeconds: options.ttlSeconds })
     instance.db = await createDatabaseAsync(options.dbPath)
     instance.initTable()
+    // SMI-7260 D1: this store's setup is done; a first-run WASM handle is now read-only.
+    sealDatabase(instance.db)
     instance.stmts = instance.prepareStatements()
     return instance
   }

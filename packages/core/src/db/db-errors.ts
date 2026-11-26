@@ -125,3 +125,83 @@ export class CorruptDatabaseError extends Error {
 export function isCorruptDatabaseError(error: unknown): error is CorruptDatabaseError {
   return (error as { code?: unknown } | null | undefined)?.code === DB_CORRUPT_CODE
 }
+
+/**
+ * Stable discriminator for "the WASM driver opened this database read-only and
+ * refused a write" (SMI-7260).
+ */
+export const DB_WASM_READ_ONLY_CODE = 'SKILLSMITH_DB_WASM_READ_ONLY' as const
+
+/**
+ * A write refused because the database was opened by the sql.js (WASM) driver,
+ * which never writes a file-backed database (SMI-7260).
+ *
+ * **Why the WASM driver cannot write.** sql.js loads the whole file into
+ * memory and can only save by writing a new file and renaming it over the old
+ * one. It takes no file locks, so it can never know whether a native
+ * (better-sqlite3) process holds the database in WAL mode. When one does, the
+ * rename silently loses that process's work, and a later native open folds a
+ * WAL written for the old file into the new one, corrupting it. Writing needs
+ * the native driver. Nothing was modified when this is thrown. Match on `code`
+ * via `isDatabaseReadOnlyDriverError`, as above.
+ */
+export class DatabaseReadOnlyDriverError extends Error {
+  readonly code: typeof DB_WASM_READ_ONLY_CODE = DB_WASM_READ_ONLY_CODE
+
+  /** The database that was not written. */
+  readonly path: string
+
+  constructor(args: { message: string; path: string; cause?: unknown }) {
+    super(args.message, args.cause === undefined ? undefined : { cause: args.cause })
+    this.name = 'DatabaseReadOnlyDriverError'
+    this.path = args.path
+  }
+}
+
+/** Structural predicate for `DatabaseReadOnlyDriverError`; reads `code` only. */
+export function isDatabaseReadOnlyDriverError(
+  error: unknown
+): error is DatabaseReadOnlyDriverError {
+  return (error as { code?: unknown } | null | undefined)?.code === DB_WASM_READ_ONLY_CODE
+}
+
+/**
+ * Stable discriminator for "the database file changed while the WASM driver
+ * was reading it, so no verdict was reached" (SMI-7260).
+ */
+export const DB_READ_UNSTABLE_CODE = 'SKILLSMITH_DB_READ_UNSTABLE' as const
+
+/**
+ * The WASM driver could not read the database cleanly on any of its bounded
+ * re-reads, so it cannot tell a damaged file from one another process was
+ * writing while it read (SMI-7260).
+ *
+ * **Deliberately not a corruption refusal, and the WASM driver never gives
+ * one.** A sql.js open that races a native checkpoint can read a torn image of
+ * an intact file, and a stalled checkpoint can make even identical re-reads
+ * fail. Calling that corrupt would advise moving the database aside,
+ * destroying a healthy file. So this error says to try again, and how to check
+ * the file with the native driver, which alone gives the corrupt verdict
+ * (`CorruptDatabaseError`). Nothing was modified.
+ */
+export class DatabaseReadUnstableError extends Error {
+  readonly code: typeof DB_READ_UNSTABLE_CODE = DB_READ_UNSTABLE_CODE
+
+  /** The database that could not be read consistently. */
+  readonly path: string
+
+  /** How many times the file was read before giving up. */
+  readonly attempts: number
+
+  constructor(args: { message: string; path: string; attempts: number; cause?: unknown }) {
+    super(args.message, args.cause === undefined ? undefined : { cause: args.cause })
+    this.name = 'DatabaseReadUnstableError'
+    this.path = args.path
+    this.attempts = args.attempts
+  }
+}
+
+/** Structural predicate for `DatabaseReadUnstableError`; reads `code` only. */
+export function isDatabaseReadUnstableError(error: unknown): error is DatabaseReadUnstableError {
+  return (error as { code?: unknown } | null | undefined)?.code === DB_READ_UNSTABLE_CODE
+}

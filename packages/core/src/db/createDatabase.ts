@@ -3,7 +3,8 @@
  *
  * Creates database connections with automatic driver selection:
  * 1. Try native better-sqlite3 first (fastest, requires native module)
- * 2. Fall back to sql.js WASM (cross-platform, no native compilation)
+ * 2. Fall back to sql.js WASM (cross-platform, no native compilation). A
+ *    file-backed WASM database is read-only and never written (SMI-7260).
  *
  * This enables the MCP server to work on any platform without Docker.
  *
@@ -23,18 +24,41 @@ import {
   isBetterSqlite3Available,
   getBetterSqlite3FailureReason,
 } from './drivers/betterSqlite3Driver.js'
-import { createSqlJsDatabase, isSqlJsAvailable } from './drivers/sqljsDriver.js'
-// SMI-5897 (C-18/C-19, Wave 4 fix): shared SKILLSMITH_QUIET guard — this was
-// the second, unguarded fallback-warning path C-18/C-19 didn't originally
-// cover; the WASM-driver notice below always printed at least once per
-// process regardless of SKILLSMITH_QUIET.
+import {
+  createSqlJsDatabase,
+  isSqlJsAvailable,
+  type SqlJsDatabaseAdapter,
+} from './drivers/sqljsDriver.js'
+// SMI-5897 (C-18/C-19, Wave 4 fix): shared SKILLSMITH_QUIET guard for the
+// WASM-driver notice below.
 import { isQuietModeEnabled } from '../utils/quiet-mode.js'
 
 /**
- * SMI-4807: guard so the WASM-fallback notice is emitted at most once per
- * process, no matter how many database connections are opened.
+ * SMI-4807 / SMI-7260: the paths whose WASM notice this process has already
+ * printed, so the notice appears once per database, however many times a
+ * command reopens it. Recorded even in quiet mode, so a later non-quiet caller
+ * does not re-announce a decision already made this process.
  */
-let wasmFallbackNoticeEmitted = false
+const wasmNoticePrinted = new Set<string>()
+
+/**
+ * SMI-7260: open with sql.js and say, once per database on stderr, that the
+ * WASM driver opened it read-only and how to get the native driver back. This
+ * replaces the old "[Skillsmith] Using WASM SQLite driver ..." line rather than
+ * printing beside it. `:memory:` databases have no notice.
+ */
+async function openSqlJs(path: string, options?: DatabaseOptions): Promise<SqlJsDatabaseAdapter> {
+  const db = await createSqlJsDatabase(path, options)
+  const notice = db.openNotice
+  if (notice !== undefined && !wasmNoticePrinted.has(path)) {
+    wasmNoticePrinted.add(path)
+    if (!isQuietModeEnabled()) {
+      const reason = process.env.SKILLSMITH_DEBUG ? getBetterSqlite3FailureReason() : undefined
+      console.warn(reason ? `${notice} Reason: ${reason}` : notice)
+    }
+  }
+  return db
+}
 
 /**
  * Driver type used for database connections
@@ -161,7 +185,7 @@ export async function createDatabaseAsync(
   // Allow env var override for testing WASM path in Docker
   if (process.env.SKILLSMITH_FORCE_WASM === 'true') {
     if (isSqlJsAvailable()) {
-      return await createSqlJsDatabase(path, options)
+      return await openSqlJs(path, options)
     }
     throw new Error(
       '[Skillsmith] SKILLSMITH_FORCE_WASM is set but sql.js (WASM) is not available.\n\n' +
@@ -174,29 +198,9 @@ export async function createDatabaseAsync(
     return createBetterSqlite3Database(path, options)
   }
 
-  // Fall back to sql.js WASM
+  // Fall back to sql.js WASM. openSqlJs prints the notice (SMI-7260).
   if (isSqlJsAvailable()) {
-    if (!wasmFallbackNoticeEmitted) {
-      wasmFallbackNoticeEmitted = true
-      // SMI-5897 (Wave 4 fix): honor SKILLSMITH_QUIET, same as the
-      // embeddings-layer fallback warnings — the notice still guards
-      // print-once-per-process via wasmFallbackNoticeEmitted above (set
-      // regardless of quiet mode, so a later non-quiet caller doesn't get a
-      // stale re-print of a decision already made this process).
-      if (!isQuietModeEnabled()) {
-        let message =
-          '[Skillsmith] Using WASM SQLite driver ' +
-          '(native better-sqlite3 not loaded — expected on direct macOS/npx installs).'
-        if (process.env.SKILLSMITH_DEBUG) {
-          const reason = getBetterSqlite3FailureReason()
-          if (reason) {
-            message += ` Reason: ${reason}`
-          }
-        }
-        console.warn(message)
-      }
-    }
-    return await createSqlJsDatabase(path, options)
+    return await openSqlJs(path, options)
   }
 
   throw new Error(

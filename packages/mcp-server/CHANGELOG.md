@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7260 -- on the WASM SQLite driver the database is read-only, so the server no
+  longer starts background sync (it says so once, silent under `SKILLSMITH_QUIET`), and the
+  SMI-5640 periodic autosave is gone,
+  along with `SKILLSMITH_AUTOSAVE_INTERVAL_MS` and `SKILLSMITH_AUTOSAVE_DISABLE`: nothing
+  file-backed is ever saved. A database at an older schema is served as it is, with one warning.
+  A tool's write to the local database (install records, `publish_private`, quarantine during
+  `skill_rescan`) fails with `DatabaseReadOnlyDriverError`, whose message names the cause and the
+  fix; search no longer fails on a database without a quarantine table, and API tools work.
+  `skill_rescan` still returns every skill's findings when it cannot record a quarantine there:
+  the flagged entry gets `quarantineNote` ("quarantine not recorded: ..."). The startup advice for
+  a native driver that will not load (the database-init troubleshooting block and the
+  NODE_MODULE_VERSION box) now gives the native fix, `npm rebuild better-sqlite3` or a reinstall
+  with install scripts enabled, instead of `SKILLSMITH_FORCE_WASM=true`, and the CycloneDX export's
+  refused dependency backfill gives the same fix. The server creates its database directory
+  owner-only (0700) when it does not exist. The README describes the WASM fallback as read-only and
+  drops `SKILLSMITH_USE_WASM`, which nothing read. The shutdown close no longer claims to persist
+  anything.
+
 - **Fixed**: SMI-6531 -- 8-i-a-1 (pre-merge gate): `uninstall_skill` no longer removes the
   cross-client links of an install that claimed the same name while the removal ran; the result's
   `warning` says they were left for that install.
