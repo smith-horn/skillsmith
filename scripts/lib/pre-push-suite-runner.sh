@@ -10,8 +10,10 @@
 #   USE_DOCKER   0|1   (from scripts/lib/hook-docker-detect.sh)
 #   run_cmd <args...>  (docker exec on the Docker route, plain exec on host)
 #
-# DEFINES: suite_budget, init_suite_budgets, run_suite, run_suite_timed
-# SETS (run_suite_timed): FAILED_PACKAGES (appended)
+# DEFINES: suite_budget, suggest_budget, init_suite_budgets, run_suite,
+#          run_suite_timed, print_failure_summary
+# SETS (run_suite_timed): FAILED_PACKAGES, TIMED_OUT_PACKAGES (appended),
+#          SUITE_SUGGESTED_BUDGET (largest suggestion so far; 0 = none)
 #
 # Why the timeout lives INSIDE the container: the host-side `timeout` in
 # .husky/pre-push only kills the `docker exec` client. The in-container `wait`
@@ -44,7 +46,20 @@ SUITE_BUDGET_OVERRIDE=""
 SUITE_KILL_AFTER=15
 SUITE_TIMEOUT_BIN=""
 
+# suggest_budget <budget>
+# Twice the budget, capped at the override's 5-digit limit (99999). Prints
+# nothing when that would not raise the budget, so no message ever suggests a
+# value that cannot help.
+suggest_budget() {
+  local s=$(($1 * 2))
+  if [ "$s" -gt 99999 ]; then s=99999; fi
+  if [ "$s" -gt "$1" ]; then echo "$s"; fi
+  return 0
+}
+
 init_suite_budgets() {
+  TIMED_OUT_PACKAGES=""
+  SUITE_SUGGESTED_BUDGET=0
   SUITE_BUDGET_OVERRIDE=""
   local raw="${SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS:-}"
   if [ -n "$raw" ]; then
@@ -104,9 +119,10 @@ run_suite() {
 
 # run_suite_timed <pkg> <command-string>
 # Runs the suite, prints elapsed seconds, tells a timeout from a failure, and
-# appends the package to FAILED_PACKAGES on either.
+# appends the package to FAILED_PACKAGES on either (and to TIMED_OUT_PACKAGES
+# on a timeout).
 run_suite_timed() {
-  local pkg="$1" cmd="$2" budget out ec start elapsed
+  local pkg="$1" cmd="$2" budget out ec start elapsed suggestion
   budget="${SUITE_BUDGET_OVERRIDE:-$(suite_budget "$pkg")}"
   start=$SECONDS
   out=$(run_suite "$budget" "$cmd" 2>&1)
@@ -117,16 +133,47 @@ run_suite_timed() {
     return 0
   fi
   FAILED_PACKAGES="$FAILED_PACKAGES $pkg"
-  # 124 = timeout fired; 137 = needed the kill-after SIGKILL. 137 alone could
-  # be an OOM kill, so it only counts as a timeout once the budget has elapsed.
-  if [ -n "$SUITE_TIMEOUT_BIN" ] && { [ "$ec" -eq 124 ] || { [ "$ec" -eq 137 ] && [ "$elapsed" -ge "$budget" ]; }; }; then
+  # A suite reaches its budget only when `timeout` fires (124, or 137 once the
+  # kill-after SIGKILL was needed), so a timeout needs BOTH that status AND the
+  # elapsed time. A 124 or 137 the suite produced itself before its budget (an
+  # OOM kill, or a tool's own status) is a plain failure. Residual: elapsed is
+  # measured on the host and includes docker exec startup, so a suite's own
+  # 124/137 within about a second of the budget can still read as a timeout.
+  if [ -n "$SUITE_TIMEOUT_BIN" ] && { [ "$ec" -eq 124 ] || [ "$ec" -eq 137 ]; } && [ "$elapsed" -ge "$budget" ]; then
+    TIMED_OUT_PACKAGES="$TIMED_OUT_PACKAGES $pkg"
     echo "  ⏱  packages/$pkg exceeded its ${budget}s budget (timed out; killed) after ${elapsed}s"
     echo "     Cause: the suite hung, or the machine is busy enough to slow it past the budget."
-    echo "     If it is only slow, raise every suite's budget for this push (seconds, at most 5 digits):"
-    echo "       SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=900 git push"
+    suggestion="$(suggest_budget "$budget")"
+    if [ -n "$suggestion" ]; then
+      if [ "$suggestion" -gt "$SUITE_SUGGESTED_BUDGET" ]; then SUITE_SUGGESTED_BUDGET="$suggestion"; fi
+      echo "     If it is only slow, raise every suite's budget for one push:"
+      echo "       SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=$suggestion git push"
+    fi
   else
     echo "  ✗ packages/$pkg failed (exit $ec, ${elapsed}s)"
   fi
   echo "$out"
   return "$ec"
+}
+
+# print_failure_summary <hint-prefix> <vitest-bin>
+# The end-of-phase summary. Timed-out suites are named as such, and when any
+# timed out with a useful suggestion, the one-push budget override is named
+# before the last-resort --no-verify.
+print_failure_summary() {
+  local prefix="$1" vitest="$2" pkg
+  for pkg in $FAILED_PACKAGES; do
+    case " $TIMED_OUT_PACKAGES " in
+      *" $pkg "*) echo "⏱  packages/$pkg timed out (budget exceeded)" ;;
+      *) echo "❌ Tests failed in packages/$pkg!" ;;
+    esac
+    echo "   Run: ${prefix}bash -c \"cd packages/$pkg && ${vitest} run\""
+  done
+  echo ""
+  if [ -n "$TIMED_OUT_PACKAGES" ] && [ "${SUITE_SUGGESTED_BUDGET:-0}" -gt 0 ]; then
+    echo "   If a timed-out suite is only slow: SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=$SUITE_SUGGESTED_BUDGET git push"
+    echo "   Last resort, skipping every pre-push check: git push --no-verify"
+  else
+    echo "   Bypass: git push --no-verify"
+  fi
 }

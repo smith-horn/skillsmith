@@ -82,6 +82,8 @@ init_suite_budgets
 run_suite_timed stubpkg "$STUB"
 echo "RC=$?"
 echo "FAILED=[$FAILED_PACKAGES]"
+echo "TIMED=[$TIMED_OUT_PACKAGES]"
+echo "SUGGESTED=$SUITE_SUGGESTED_BUDGET"
 `
   )
   const t0 = Date.now()
@@ -119,6 +121,7 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
     expect(r.out).not.toMatch(/exceeded its/)
     // A real failure must not suggest a bigger budget.
     expect(r.out).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
+    expect(r.out).toContain('TIMED=[]')
     expect(r.failed).toBe(' stubpkg')
   })
 
@@ -128,9 +131,18 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
       SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS: '2',
     })
     expect(r.out).toMatch(/⏱ {2}packages\/stubpkg exceeded its 2s budget \(timed out; killed\)/)
-    // SMI-7218 done-when: a timeout names a cause and an escape narrower than --no-verify.
-    expect(r.out).toMatch(/Cause: the suite hung, or the machine is busy/)
-    expect(r.out).toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
+    // SMI-7218 done-when: a timeout names a cause and an escape narrower than
+    // --no-verify, and the escape is valid and actually raises the budget.
+    expect(r.out).toMatch(
+      /^ {5}Cause: the suite hung, or the machine is busy enough to slow it past the budget\.$/m
+    )
+    const hint = /^ {7}SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=(\d+) git push$/m.exec(r.out)
+    expect(hint).not.toBeNull()
+    const suggested = Number(hint![1])
+    expect(suggested).toBeGreaterThan(2) // the 2 s budget that timed out
+    expect(suggested).toBeLessThanOrEqual(99999)
+    expect(r.out).toContain(`SUGGESTED=${suggested}`)
+    expect(r.out).toContain('TIMED=[ stubpkg]')
     expect(r.out).not.toMatch(/--no-verify/)
     expect(r.out).not.toMatch(/✗ packages\/stubpkg failed/)
     expect(r.failed).toBe(' stubpkg')
@@ -196,6 +208,94 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
     expect(r.out).toContain('RC=0')
     expect(r.out).not.toMatch(/exceeded its/)
     expect(r.out).toMatch(/NO_PG_SWEEP=1: suites run plainly/)
+    expect(r.out).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
+  })
+
+  it('l: a suite that exits 124 on its own, well inside its budget, is a failure with no budget hint', () => {
+    const r = runStub('exit 124', FAST)
+    expect(r.out).toContain('RC=124')
+    expect(r.out).toMatch(/✗ packages\/stubpkg failed \(exit 124/)
+    expect(r.out).not.toMatch(/exceeded its/)
+    expect(r.out).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
+    expect(r.out).toContain('TIMED=[]')
+    expect(r.out).toContain('SUGGESTED=0')
+  })
+
+  it('m: suggest_budget doubles, caps at 99999, and prints nothing when it cannot raise the budget', () => {
+    const run = (b: string) =>
+      spawnSync('bash', ['-c', `. "${RUNNER}"; suggest_budget ${b}`], { encoding: 'utf8' }).stdout
+    expect(run('2')).toBe('4\n')
+    expect(run('540')).toBe('1080\n')
+    expect(run('49999')).toBe('99998\n')
+    expect(run('50000')).toBe('99999\n')
+    expect(run('99998')).toBe('99999\n')
+    expect(run('99999')).toBe('')
+  })
+
+  it('n: the failure summary names timed-out suites and puts the override before --no-verify', () => {
+    const summary = (failed: string, timed: string, suggested: string) =>
+      spawnSync(
+        'bash',
+        [
+          '-c',
+          `. "${RUNNER}"; FAILED_PACKAGES="${failed}"; TIMED_OUT_PACKAGES="${timed}"; SUITE_SUGGESTED_BUDGET=${suggested}; print_failure_summary "P " V`,
+        ],
+        { encoding: 'utf8' }
+      ).stdout
+    const mixed = summary(' core cli', ' cli', '180').split('\n')
+    expect(mixed).toEqual([
+      '❌ Tests failed in packages/core!',
+      '   Run: P bash -c "cd packages/core && V run"',
+      '⏱  packages/cli timed out (budget exceeded)',
+      '   Run: P bash -c "cd packages/cli && V run"',
+      '',
+      '   If a timed-out suite is only slow: SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=180 git push',
+      '   Last resort, skipping every pre-push check: git push --no-verify',
+      '',
+    ])
+    const plain = summary(' core', '', '0')
+    expect(plain).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS/)
+    expect(plain).toContain('   Bypass: git push --no-verify')
+    // A timeout with no useful suggestion (budget already at the cap) names no override.
+    expect(summary(' core', ' core', '0')).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS/)
+  })
+
+  it('o: the hook backstop message, executed under sh: cause, a valid larger override, then last resort', () => {
+    const hook = readFileSync(join(__dirname, '..', '..', '.husky', 'pre-push'), 'utf8')
+    const block = /# >>> backstop-message[^\n]*\n([\s\S]*?)# <<< backstop-message/.exec(hook)
+    expect(block).not.toBeNull()
+    const msg = (status: number, override?: string) => {
+      const env: Record<string, string> = { PATH: process.env['PATH'] ?? '/usr/bin:/bin' }
+      if (override !== undefined) env['SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS'] = override
+      const r = spawnSync(
+        'sh',
+        ['-e', '-c', `COVERAGE_STATUS=${status}; COVERAGE_BACKSTOP_SECS=930\n${block![1]}`],
+        { encoding: 'utf8', env }
+      )
+      return { status: r.status, out: r.stdout }
+    }
+    const fired = msg(124)
+    expect(fired.status).toBe(1)
+    expect(fired.out).toMatch(/Test check exceeded its overall 930s backstop/)
+    const lines = fired.out.split('\n')
+    const narrow = lines.indexOf('     SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=1080 git push')
+    const broad = lines.indexOf(
+      '   Last resort, skipping every pre-push check: git push --no-verify'
+    )
+    expect(narrow).toBeGreaterThan(-1)
+    expect(broad).toBeGreaterThan(narrow)
+    expect(fired.out).not.toMatch(/Bypass:/)
+    expect(msg(124, '600').out).toContain('SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=1200 git push')
+    expect(msg(124, '70000').out).toContain('SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=99999 git push')
+    const capped = msg(124, '99999')
+    expect(capped.out).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
+    expect(capped.out).toContain('Last resort, skipping every pre-push check')
+    const failed = msg(1)
+    expect(failed.status).toBe(1)
+    expect(failed.out).toBe('')
+    const passed = msg(0)
+    expect(passed.status).toBe(0)
+    expect(passed.out).toBe('')
   })
 
   it('i2: without NO_PG_SWEEP the plain-run notice is not printed (paired control)', () => {
