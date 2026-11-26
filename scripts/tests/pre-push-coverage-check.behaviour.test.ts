@@ -117,6 +117,8 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
     expect(r.out).toMatch(/✗ packages\/stubpkg failed \(exit 1/)
     expect(r.out).toContain('SUITE-OUTPUT-MARKER')
     expect(r.out).not.toMatch(/exceeded its/)
+    // A real failure must not suggest a bigger budget.
+    expect(r.out).not.toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
     expect(r.failed).toBe(' stubpkg')
   })
 
@@ -126,6 +128,10 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
       SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS: '2',
     })
     expect(r.out).toMatch(/⏱ {2}packages\/stubpkg exceeded its 2s budget \(timed out; killed\)/)
+    // SMI-7218 done-when: a timeout names a cause and an escape narrower than --no-verify.
+    expect(r.out).toMatch(/Cause: the suite hung, or the machine is busy/)
+    expect(r.out).toMatch(/SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=\d+ git push/)
+    expect(r.out).not.toMatch(/--no-verify/)
     expect(r.out).not.toMatch(/✗ packages\/stubpkg failed/)
     expect(r.failed).toBe(' stubpkg')
     expect(r.wallMs).toBeLessThan(8_000)

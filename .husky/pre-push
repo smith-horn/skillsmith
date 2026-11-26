@@ -346,7 +346,10 @@ if [ $COVERAGE_STATUS -eq 124 ]; then
   echo "   worktree's container to clear them:"
   echo "     ./scripts/worktree-docker.sh stop && ./scripts/worktree-docker.sh start"
   echo ""
-  echo "   Bypass: git push --no-verify"
+  echo "   If the suites are only slow (a busy machine), raise their budgets for one"
+  echo "   push; the backstop grows with them:"
+  echo "     SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=900 git push"
+  echo "   Last resort, skipping every pre-push check: git push --no-verify"
   exit 1
 elif [ $COVERAGE_STATUS -ne 0 ]; then
   exit 1

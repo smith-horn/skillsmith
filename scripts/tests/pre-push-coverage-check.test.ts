@@ -98,6 +98,16 @@ describe('pre-push suite runner — SMI-7218 static checks', () => {
     expect(hook).not.toMatch(/Coverage check timed out/)
     expect(hook).not.toMatch(/Docker is frozen/)
     expect(hook).toMatch(/Test check exceeded its overall/)
+    // The narrower escape comes before the last-resort --no-verify.
+    const start = hook.indexOf('Test check exceeded its overall')
+    const msg = hook.slice(start, hook.indexOf('elif [ $COVERAGE_STATUS', start))
+    expect(start).toBeGreaterThan(-1)
+    expect(msg.length).toBeGreaterThan(100)
+    const narrow = msg.indexOf('SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=900 git push')
+    const broad = msg.indexOf('Last resort, skipping every pre-push check: git push --no-verify')
+    expect(narrow).toBeGreaterThan(-1)
+    expect(broad).toBeGreaterThan(narrow)
+    expect(msg).not.toMatch(/Bypass: git push --no-verify/)
     expect(hook).toMatch(/\{\n[\s\S]*?\} \|\| COVERAGE_STATUS=\$\?/)
   })
 

@@ -121,6 +121,9 @@ run_suite_timed() {
   # be an OOM kill, so it only counts as a timeout once the budget has elapsed.
   if [ -n "$SUITE_TIMEOUT_BIN" ] && { [ "$ec" -eq 124 ] || { [ "$ec" -eq 137 ] && [ "$elapsed" -ge "$budget" ]; }; }; then
     echo "  ⏱  packages/$pkg exceeded its ${budget}s budget (timed out; killed) after ${elapsed}s"
+    echo "     Cause: the suite hung, or the machine is busy enough to slow it past the budget."
+    echo "     If it is only slow, raise every suite's budget for this push (seconds, at most 5 digits):"
+    echo "       SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=900 git push"
   else
     echo "  ✗ packages/$pkg failed (exit $ec, ${elapsed}s)"
   fi
