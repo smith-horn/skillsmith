@@ -5,7 +5,7 @@
 #   1. Warns about uncommitted changes (SMI-1342)
 #   2. Security checks (SMI-727)
 #   3. Format check (SMI-1835) - catches Prettier issues before CI
-#   4. Coverage check (SMI-1602)
+#   4. Test check (SMI-1602, SMI-7218)
 #
 # Configuration:
 #   --no-verify  - Skip all hooks (use with caution): git push --no-verify
@@ -21,8 +21,9 @@
 #     - Hardcoded secrets pattern detection
 #   Phase 3 (SMI-1835): Format check
 #     - Prettier formatting across entire codebase
-#   Phase 4 (SMI-1602): Coverage check
-#     - Test coverage thresholds
+#   Phase 4 (SMI-1602, SMI-7218): Test check
+#     - Per-package vitest suites, pass/fail only (no coverage thresholds), each under its
+#       own in-container budget; the root suite runs in CI and post-merge-verify only
 #   Phase 5 (SMI-2633): Linear issue sync (non-blocking)
 #     - Syncs unpushed commits with Linear issues
 #     - Marks issues as "in_review" before push
@@ -299,31 +300,38 @@ else
   exit 1
 fi
 
-# Phase 4: Per-workspace coverage validation (SMI-1602, SMI-2166, SMI-3502, SMI-3504)
-# SMI-3502: Runs coverage per workspace to avoid aggregate I/O contention.
-# SMI-3504: 5-minute timeout prevents indefinite hangs (e.g., Docker freeze).
+# Phase 4: Per-workspace test check (SMI-1602, SMI-2166, SMI-3502, SMI-3504, SMI-7218)
+# SMI-3502: Runs tests per workspace to avoid aggregate I/O contention.
+# SMI-7218: each suite carries its OWN in-container budget (see
+# scripts/lib/pre-push-suite-runner.sh), which kills the whole vitest process
+# group. The host-side timeout below is a liveness backstop ONLY: it kills just
+# the `docker exec` client, never the in-container processes. It is the sum over
+# the four suites of (budget + 15 s kill-after), plus 60 s for startup: 930 s by
+# default, or 4 x (override + 15) + 60 under SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS
+# (same rule the runner applies: a positive integer of at most 5 digits; a longer
+# value would overflow, or abort dash with "Illegal number", under sh -e).
 # Docker already confirmed available in Phase 3.
 COVERAGE_SCRIPT="$(dirname "$0")/../scripts/pre-push-coverage-check.sh"
+# >>> backstop (SMI-7218; executed by scripts/tests/pre-push-coverage-check.behaviour.test.ts)
+COVERAGE_BACKSTOP_SECS=930
+case "${SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS:-}" in
+  '' | *[!0-9]* | 0* | ??????*) ;;
+  *) COVERAGE_BACKSTOP_SECS=$((4 * (SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS + 15) + 60)) ;;
+esac
+# <<< backstop
 
-# SMI-6967 H-3(a): this hook runs under `sh -e` (.husky/_/h), so the bare
-# three-branch if/elif/else below followed by `COVERAGE_STATUS=$?` on its own
-# line was errexit-UNSAFE -- measured: under `sh -e`, a 124 (timeout) exit
-# from any of the three branches killed the hook immediately with no output
-# and exit 124, never reaching the "timed out after 5 minutes" diagnostic
-# below, making that diagnostic dead code. This is the one bare-cmd-then-$?
-# site in this hook that actually lost something (the Phase 1/2/6 captures
-# in this file do not -- see their own comments). `{ ... } || VAR=$?` scopes
-# the errexit bypass to only this compound command, so `sh -e` stays live
-# for everything else in the hook -- unlike Phase 4's own prior code, this is
-# NOT a blanket `set +e` (this is a BLOCKING hook; see .husky/post-merge and
-# .husky/post-checkout for where a blanket `set +e` is the correct fix
-# instead, because those are non-blocking).
+# SMI-6967 H-3(a): this hook runs under `sh -e` (.husky/_/h), so a bare
+# if/elif/else followed by `COVERAGE_STATUS=$?` on its own line is
+# errexit-UNSAFE: a 124 (timeout) exit killed the hook with no output, making
+# the timeout diagnostic below dead code. `{ ... } || VAR=$?` scopes the
+# errexit bypass to only this compound command, so `sh -e` stays live for the
+# rest of the hook (this is a BLOCKING hook; a blanket `set +e` is wrong here).
 COVERAGE_STATUS=0
 {
   if command -v timeout > /dev/null 2>&1; then
-    timeout 300 bash "$COVERAGE_SCRIPT"
+    timeout "$COVERAGE_BACKSTOP_SECS" bash "$COVERAGE_SCRIPT"
   elif command -v gtimeout > /dev/null 2>&1; then
-    gtimeout 300 bash "$COVERAGE_SCRIPT"
+    gtimeout "$COVERAGE_BACKSTOP_SECS" bash "$COVERAGE_SCRIPT"
   else
     bash "$COVERAGE_SCRIPT"
   fi
@@ -331,9 +339,12 @@ COVERAGE_STATUS=0
 
 if [ $COVERAGE_STATUS -eq 124 ]; then
   echo ""
-  echo "❌ Coverage check timed out after 5 minutes!"
-  echo "   This usually means Docker is frozen or under extreme load."
-  echo "   Try: docker compose --profile dev restart"
+  echo "❌ Test check exceeded its overall ${COVERAGE_BACKSTOP_SECS}s backstop!"
+  echo "   The in-container per-suite timeouts should normally fire first; reaching"
+  echo "   this backstop means they did not (a frozen Docker is one cause)."
+  echo "   Test processes may still be running in the container. Restart this"
+  echo "   worktree's container to clear them:"
+  echo "     ./scripts/worktree-docker.sh stop && ./scripts/worktree-docker.sh start"
   echo ""
   echo "   Bypass: git push --no-verify"
   exit 1
