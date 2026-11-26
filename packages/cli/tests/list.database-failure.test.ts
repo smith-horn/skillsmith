@@ -23,16 +23,21 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDatabaseSync, initializeSchema } from '@skillsmith/core'
 
-// Passthrough, except that `failNextOpen` makes the NEXT open throw. Lets one
-// test fail the scan's open while any later open would succeed.
-const inject = vi.hoisted(() => ({ failNextOpen: false }))
+// Passthrough, except that with `failScanOpens` set, every open made BY THE
+// SCAN (from skills-directory.version-lookup.ts, which every scan target uses)
+// throws, while an open from anywhere else succeeds. Deterministic: the scan
+// opens once per target, in parallel, so failing "the next open" could hit a
+// target other than the skill's.
+const inject = vi.hoisted(() => ({ failScanOpens: false }))
 vi.mock('../src/utils/open-database.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/utils/open-database.js')>()
   return {
     ...actual,
     openCliDatabase: (...args: Parameters<typeof actual.openCliDatabase>) => {
-      if (inject.failNextOpen) {
-        inject.failNextOpen = false
+      if (
+        inject.failScanOpens &&
+        /skills-directory\.version-lookup/.test(new Error().stack ?? '')
+      ) {
         return Promise.reject(new Error('injected: the scan could not open the database'))
       }
       return actual.openCliDatabase(...args)
@@ -53,7 +58,7 @@ let exitCodes: unknown[]
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'smi7260-list-'))
   mkdirSync(join(root, 'cwd'))
-  inject.failNextOpen = false
+  inject.failScanOpens = false
   logged = []
   errors = []
   warned = []
@@ -75,7 +80,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  inject.failNextOpen = false
+  inject.failScanOpens = false
   if (skillDir !== undefined) rmSync(skillDir, { recursive: true, force: true })
   skillDir = undefined
   if (root !== undefined) rmSync(root, { recursive: true, force: true })
@@ -143,14 +148,17 @@ describe('SMI-7260: list reports a database it could not open, once, and exits 0
   it('reports the failure of the scan’s own open, even when a later open would succeed', async () => {
     const db = skillsDb(false)
     installOneSkill()
-    inject.failNextOpen = true
+    inject.failScanOpens = true
 
     await listAction({ db })
 
-    // The scan's open failed (the row is Unknown); the database itself is
-    // healthy, so a second open would have found nothing to report.
+    // Every scan open failed, so the skill's row is Unknown...
+    const row = logged.flatMap((l) => l.split('\n')).find((l) => l.includes('smi7260-probe-skill'))
+    expect(row).toContain('Unknown')
+    // ...and the one message says so, from the scan's own error. The database
+    // itself is healthy, so a second open would have found nothing to report.
     expect(dbMessages()).toHaveLength(1)
-    expect(dbMessages()[0]).toContain('could not be opened')
+    expect(dbMessages()[0]).toContain("No skill's update status could be determined")
     expect(dbMessages()[0]).toContain('injected: the scan could not open the database')
     expect(exitCodes).toEqual([])
   })

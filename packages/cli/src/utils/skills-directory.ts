@@ -173,9 +173,10 @@ async function resolvesToDirectory(
  *                    entirely by callers (like the per-harness inventory
  *                    scan) that don't need untracked detection, in which
  *                    case every entry gets `untracked: false`.
- * @param onOpenFailure SMI-7260: called with the error when the database
- *                    exists but could not be opened, so a caller can report
- *                    the failure from this same open.
+ * @param onOpenFailure SMI-7260: called with the error, and the per-skill
+ *                    reason it was classified as, when the database exists
+ *                    but could not be opened, so a caller can report the
+ *                    failure from this same open.
  */
 export async function getSkillsFromDirectory(
   skillsDir: string,
@@ -183,7 +184,7 @@ export async function getSkillsFromDirectory(
   installedVia: ClientId | 'local' = CANONICAL_CLIENT,
   scope: InstallScope = 'global',
   manifestPath?: string,
-  onOpenFailure?: (error: unknown) => void
+  onOpenFailure?: (error: unknown, reason?: string) => void
 ): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
   const effectiveClient: ClientId = installedVia === 'local' ? CANONICAL_CLIENT : installedVia
@@ -215,7 +216,7 @@ export async function getSkillsFromDirectory(
   // see skills-directory.version-lookup.ts). `unknownReason` is set when the
   // lookup is unavailable for a reason that leaves update state UNKNOWABLE.
   const { versionRepo, dbConn, unknownReason, openError } = await openVersionLookup(dbPath)
-  if (openError !== undefined) onOpenFailure?.(openError)
+  if (openError !== undefined) onOpenFailure?.(openError, unknownReason)
 
   try {
     const entries = await readdir(skillsDir, { withFileTypes: true })
@@ -401,7 +402,7 @@ async function dedupeByNameAndPath(ordered: InstalledSkill[]): Promise<Installed
 
 export async function getInstalledSkills(
   dbPath?: string,
-  onOpenFailure?: (error: unknown) => void
+  onOpenFailure?: (error: unknown, reason?: string) => void
 ): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   const targets = buildScanTargets(process.cwd())
@@ -446,7 +447,7 @@ export async function getInstalledSkills(
 export async function getInstalledSkillsForClient(
   client: ClientId,
   dbPath?: string,
-  onOpenFailure?: (error: unknown) => void
+  onOpenFailure?: (error: unknown, reason?: string) => void
 ): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   const cwd = process.cwd()

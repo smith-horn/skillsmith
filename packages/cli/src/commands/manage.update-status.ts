@@ -52,24 +52,58 @@ export function warnUndetermined(undetermined: InstalledSkill[], total: number):
 }
 
 /**
- * SMI-7260: the one warning for a command whose database exists but could not
- * be opened (ADR-175 § 5: one warning per command, naming the cause and the
- * remedy; the command still exits 0). Used INSTEAD of {@link warnUndetermined}
- * in that case, so the cause is not printed twice: every undetermined row is
- * explained by this one failure. Printed with no skills installed too, so the
- * database fault is visible even when no row could carry it.
+ * SMI-7260: the one warning for a command whose database exists but at least
+ * one of whose opens failed (ADR-175 § 5: one warning per command, naming the
+ * cause and the remedy; the command still exits 0). Used INSTEAD of
+ * {@link warnUndetermined} in that case, so the open failure is printed once,
+ * with no skills installed too.
  *
- * @param error - the open failure; its message carries the remedy (for a
- *   corruption refusal, the files and the commands).
- * @param undetermined - how many rows are "Unknown"; normally all of them,
- *   fewer only if the scan's several opens of the one file disagreed.
+ * The scan opens the one database once per directory it scans, so the opens
+ * can disagree (a transient WASM unstable read in one, a clean read in
+ * another). Hence the three shapes:
+ *
+ * - no skills: the failure, and that no update status could be checked;
+ * - skills, none undetermined: one open failed but every listed skill was
+ *   still checked (so it does not contradict "All installed skills are up to
+ *   date.");
+ * - some undetermined: how many, the open failure, and any OTHER reason among
+ *   those rows (a lookup that failed after a good open), named so it is not
+ *   lost.
+ *
+ * @param error - the first open failure; its message carries the remedy (for
+ *   a corruption refusal, the files and the commands).
+ * @param openReasons - the per-skill reasons the failed opens were classified
+ *   as; undetermined rows with any other reason are named separately.
  */
-export function warnDatabaseUnopenable(error: unknown, undetermined: number, total: number): void {
-  const opened = 'the local database could not be opened'
-  const scope =
-    undetermined === 0
-      ? `The local database could not be opened${total === 0 ? ', so no update status could be checked' : ''}`
-      : `${undetermined === total ? "No skill's update status could be determined" : `${undetermined} of ${total} skills' update status could not be determined`}: ${opened}. ` +
-        `Shown as "Unknown" rather than "Up to date" — this is not a claim that they are current`
-  logger.warn(chalk.yellow(`${scope}.`) + `\n${sanitizeError(error)}`)
+export function warnDatabaseUnopenable(
+  error: unknown,
+  openReasons: ReadonlySet<string>,
+  undetermined: InstalledSkill[],
+  total: number
+): void {
+  const otherReasons = [
+    ...new Set(
+      undetermined
+        .map((s) => s.updateStatusReason)
+        .filter((r): r is string => !!r && !openReasons.has(r))
+    ),
+  ]
+  let scope: string
+  if (total === 0) {
+    scope = 'The local database could not be opened, so no update status could be checked.'
+  } else if (undetermined.length === 0) {
+    scope =
+      "One of the local database's opens failed, but every listed skill's update status was " +
+      'still checked.'
+  } else {
+    const count =
+      undetermined.length === total
+        ? "No skill's update status could be determined"
+        : `${undetermined.length} of ${total} skills' update status could not be determined`
+    const also = otherReasons.length > 0 ? `; also: ${otherReasons.join('; ')}` : ''
+    scope =
+      `${count}: the local database could not be opened${also}. ` +
+      `Shown as "Unknown" rather than "Up to date" — this is not a claim that they are current.`
+  }
+  logger.warn(chalk.yellow(scope) + `\n${sanitizeError(error)}`)
 }

@@ -187,8 +187,10 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // SMI-7260: the scan's own open failure, kept so it can be reported once,
     // even when no skill row exists to carry it. No second open.
     let dbOpenError: unknown
-    const noteOpenFailure = (error: unknown) => {
+    const openReasons = new Set<string>()
+    const noteOpenFailure = (error: unknown, reason?: string) => {
       dbOpenError ??= error
+      if (reason !== undefined) openReasons.add(reason)
     }
     const skills =
       clientOpt !== undefined
@@ -199,11 +201,12 @@ async function listActionImpl(opts: Record<string, string | boolean | undefined>
     // nor silently counted as current — it is reported separately below.
     const undetermined = skills.filter((s) => s.updateStatus === 'unknown')
     // ADR-175 § 5: one warning per command, and a database fault costs the
-    // update column, not the command (exit 0). When the open failed, its one
-    // warning replaces the per-skill one, so the cause is printed once.
+    // update column, not the command (exit 0). When an open failed, its one
+    // warning replaces the per-skill one: the cause is printed once, and any
+    // other reason (a lookup that failed after a good open) is named in it.
     const warn = () =>
       dbOpenError !== undefined
-        ? warnDatabaseUnopenable(dbOpenError, undetermined.length, skills.length)
+        ? warnDatabaseUnopenable(dbOpenError, openReasons, undetermined, skills.length)
         : warnUndetermined(undetermined, skills.length)
     const filtered = outdated ? skills.filter((s) => s.updateStatus === 'available') : skills
 
