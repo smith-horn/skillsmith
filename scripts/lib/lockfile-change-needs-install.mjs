@@ -19,8 +19,11 @@
  * Exempt (no install needed), and nothing else:
  *   - `dev`, `devOptional`, `peer` flag changes on `node_modules/` entries;
  *   - a dependency moving between `dependencies` and `devDependencies` of the
- *     root entry (`""`) or a workspace entry (a key matched by the root's
- *     `workspaces` globs, `dir/*` or exact) with an unchanged spec. Any other
+ *     root entry (`""`) or a workspace entry with an unchanged spec. A workspace
+ *     entry is a key matched by a root `workspaces` pattern of exactly one of
+ *     two forms: `dir/*` (one level) or an exact path. Other forms (`./dir/*`,
+ *     `dir/**`, a trailing slash, negation, a non-array value) match nothing,
+ *     so those entries take the strict rule below. Any other
  *     non-`node_modules/` entry (e.g. a `file:` link target) must be identical.
  * Every other field of every entry, the key set, and the top-level lockfile
  * fields must be JSON-identical (object key order is ignored; array order is
@@ -128,7 +131,7 @@ function runNpm(args, repoRoot, what) {
 
 function checkNpmVersion(repoRoot) {
   const v = runNpm(['--version'], repoRoot, 'npm version').trim()
-  const m = /^(\d+)\.\d+\.\d+/.exec(v)
+  const m = /^(\d+)\.\d+\.\d+$/.exec(v)
   if (!m || Number(m[1]) !== SUPPORTED_NPM_MAJOR) {
     fail(`npm ${v || '(empty)'} is outside the measured range (major ${SUPPORTED_NPM_MAJOR})`)
   }

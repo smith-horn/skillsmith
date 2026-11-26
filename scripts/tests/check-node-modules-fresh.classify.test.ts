@@ -979,7 +979,7 @@ describe('F: SMI-7238 unchanged behaviour and publication', () => {
       const log = join(shim, 'mv.log')
       writeFileSync(
         join(shim, 'mv'),
-        `#!/bin/sh\nprintf '%s\\n' "$(basename "$2")" >> '${log}'\nexec '${realMv}' "$@"\n`,
+        `#!/bin/sh\nfor a do last=$a; done\nprintf '%s\\n' "$(basename "$last")" >> '${log}'\nexec '${realMv}' "$@"\n`,
         { encoding: 'utf8', mode: 0o755 }
       )
       writeLockfile(fx.root, flagLock())

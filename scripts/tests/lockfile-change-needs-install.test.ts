@@ -124,6 +124,10 @@ interface RunOpts {
   env?: Record<string, string>
   /** set the omit override WITHOUT the test marker (it must then be ignored) */
   noMarker?: boolean
+  /** write this text as <fixture>/.npmrc (the repository's npm config) */
+  repoNpmrc?: string
+  /** run the child from a different directory than the lockfile's */
+  otherCwd?: boolean
 }
 
 function runHelper(l0: Lock, l1: Lock, opts: RunOpts = {}) {
@@ -137,9 +141,16 @@ function runHelper(l0: Lock, l1: Lock, opts: RunOpts = {}) {
   writeFileSync(cur, opts.curText ?? JSON.stringify(l1, null, 2) + '\n', 'utf8')
   if (!opts.noCopy) writeFileSync(copy, savedText, 'utf8')
   if (!opts.noSentinel) writeFileSync(sentinel, (opts.sentinel ?? sha256(savedText)) + '\n', 'utf8')
+  if (opts.repoNpmrc !== undefined) writeFileSync(join(dir, '.npmrc'), opts.repoNpmrc, 'utf8')
+  // Hermetic npm config: no developer or CI ~/.npmrc can reach the probe.
+  const home = join(dir, 'home')
+  mkdirSync(home, { recursive: true })
+  const userconfig = join(home, '.npmrc')
+  writeFileSync(userconfig, '', 'utf8')
   const env: Record<string, string> = {
     PATH: opts.path ?? process.env['PATH'] ?? '/usr/bin:/bin',
-    HOME: process.env['HOME'] ?? dir,
+    HOME: home,
+    npm_config_userconfig: userconfig,
     ...(opts.env ?? {}),
   }
   if (opts.omit !== null) {
@@ -147,7 +158,9 @@ function runHelper(l0: Lock, l1: Lock, opts: RunOpts = {}) {
     if (!opts.noMarker) env['SKILLSMITH_DEPS_PROBE_TEST'] = '1'
   }
   const r = spawnSync(process.execPath, [HELPER, cur, copy, sentinel], {
-    cwd: dir,
+    // An unrelated temp dir: npm walks up to the nearest folder with node_modules,
+    // so a subfolder of the fixture would still find the fixture .npmrc.
+    cwd: opts.otherCwd ? tmpMissingDir() : dir,
     encoding: 'utf8',
     env,
     timeout: 20_000,
@@ -451,6 +464,22 @@ describe('SMI-7238 helper: real npm probes (no omit override)', () => {
     expect(r.stdout).toBe('install-needed\n')
   })
 
+  it('a repository .npmrc with omit=dev -> install-needed (project config is read)', () => {
+    const l1 = baseLock()
+    flagOnly(baseLock(), l1)
+    const r = runHelper(baseLock(), l1, { omit: null, repoNpmrc: 'omit=dev\n' })
+    expect(r.stderr).toContain('npm omit set is not empty ("dev")')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+
+  it('the probe reads the lockfile directory config even when started elsewhere', () => {
+    const l1 = baseLock()
+    flagOnly(baseLock(), l1)
+    const r = runHelper(baseLock(), l1, { omit: null, repoNpmrc: 'omit=dev\n', otherCwd: true })
+    expect(r.stderr).toContain('npm omit set is not empty ("dev")')
+    expect(r.stdout).toBe('install-needed\n')
+  })
+
   it('the override is ignored without the test marker', () => {
     const l1 = baseLock()
     flagOnly(baseLock(), l1)
@@ -478,13 +507,16 @@ describe('SMI-7238 helper: real npm probes (no omit override)', () => {
     expect(r.stdout).toBe('install-needed\n')
   })
 
-  it.each(['11.0.0', '9.8.1', 'garbage', ''])('stub npm version "%s" -> install-needed', (v) => {
-    const l1 = baseLock()
-    flagOnly(baseLock(), l1)
-    const r = runHelper(baseLock(), l1, { omit: null, path: stubNpmPath(v, '') })
-    expect(r.stderr).toContain('outside the measured range')
-    expect(r.stdout).toBe('install-needed\n')
-  })
+  it.each(['11.0.0', '9.8.1', 'garbage', '', '10.9.8garbage', '10.9.8-pre'])(
+    'stub npm version "%s" -> install-needed',
+    (v) => {
+      const l1 = baseLock()
+      flagOnly(baseLock(), l1)
+      const r = runHelper(baseLock(), l1, { omit: null, path: stubNpmPath(v, '') })
+      expect(r.stderr).toContain('outside the measured range')
+      expect(r.stdout).toBe('install-needed\n')
+    }
+  )
 })
 
 describe('SMI-7238 helper: section moves only on root and workspace entries', () => {
@@ -511,6 +543,27 @@ describe('SMI-7238 helper: section moves only on root and workspace entries', ()
     const r = verdict((l0, l1) => {
       withLinkTarget(l0)
       withLinkTarget(l1)
+    })
+    expect(r).toBe('no-install-needed\n')
+  })
+
+  it.each(['./packages/*', 'packages/**', 'packages/website/', '!packages/*'])(
+    'workspaces pattern "%s" is outside the supported grammar: a section move -> install-needed',
+    (glob) => {
+      const r = verdict((l0, l1) => {
+        l0.packages[''].workspaces = [glob]
+        l1.packages[''].workspaces = [glob]
+        l1.packages['packages/website'].devDependencies.astro = '^5.0.0'
+        delete l1.packages['packages/website'].dependencies.astro
+      })
+      expect(r).toBe('install-needed\n')
+    }
+  )
+
+  it('paired control: the same move under "packages/*" -> no-install-needed', () => {
+    const r = verdict((_l0, l1) => {
+      l1.packages['packages/website'].devDependencies.astro = '^5.0.0'
+      delete l1.packages['packages/website'].dependencies.astro
     })
     expect(r).toBe('no-install-needed\n')
   })

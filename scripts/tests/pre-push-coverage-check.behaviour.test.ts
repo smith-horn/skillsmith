@@ -173,10 +173,10 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
   })
 
   it('h: zero and negative overrides are rejected as invalid', () => {
-    for (const bad of ['0', '-5', '1.5', '']) {
+    for (const bad of ['0', '-5', '1.5', '', '100000', '999999999999999999999']) {
       const r = runStub('exit 0', { ...FAST, SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS: bad })
       expect(r.out).not.toMatch(/every suite gets a/)
-      if (bad !== '') expect(r.out).toMatch(/is not a positive integer/)
+      if (bad !== '') expect(r.out).toMatch(/is not a positive integer of at most 5 digits/)
     }
   })
 
@@ -226,6 +226,8 @@ describe.skipIf(!hasTimeout)('pre-push suite runner — SMI-7218 behaviour (host
     expect(backstop()).toBe(930)
     expect(backstop('200')).toBe(4 * (200 + 15) + 60)
     expect(backstop('30')).toBe(4 * (30 + 15) + 60)
-    for (const bad of ['0', '07', '-5', '1.5', 'abc', '']) expect(backstop(bad)).toBe(930)
+    expect(backstop('99999')).toBe(4 * (99999 + 15) + 60)
+    for (const bad of ['0', '07', '-5', '1.5', 'abc', '', '100000', '999999999999999999999'])
+      expect(backstop(bad)).toBe(930)
   })
 })

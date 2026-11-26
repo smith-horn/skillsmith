@@ -308,13 +308,14 @@ fi
 # the `docker exec` client, never the in-container processes. It is the sum over
 # the four suites of (budget + 15 s kill-after), plus 60 s for startup: 930 s by
 # default, or 4 x (override + 15) + 60 under SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS
-# (same positive-integer rule the runner applies).
+# (same rule the runner applies: a positive integer of at most 5 digits; a longer
+# value would overflow, or abort dash with "Illegal number", under sh -e).
 # Docker already confirmed available in Phase 3.
 COVERAGE_SCRIPT="$(dirname "$0")/../scripts/pre-push-coverage-check.sh"
 # >>> backstop (SMI-7218; executed by scripts/tests/pre-push-coverage-check.behaviour.test.ts)
 COVERAGE_BACKSTOP_SECS=930
 case "${SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS:-}" in
-  '' | *[!0-9]* | 0*) ;;
+  '' | *[!0-9]* | 0* | ??????*) ;;
   *) COVERAGE_BACKSTOP_SECS=$((4 * (SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS + 15) + 60)) ;;
 esac
 # <<< backstop

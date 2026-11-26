@@ -48,11 +48,11 @@ init_suite_budgets() {
   SUITE_BUDGET_OVERRIDE=""
   local raw="${SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS:-}"
   if [ -n "$raw" ]; then
-    if [[ "$raw" =~ ^[1-9][0-9]*$ ]]; then
+    if [[ "$raw" =~ ^[1-9][0-9]{0,4}$ ]]; then
       SUITE_BUDGET_OVERRIDE="$raw"
       echo "ℹ️  SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS=$raw: every suite gets a ${raw}s budget (defaults ignored)"
     else
-      echo "⚠️  SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS='$raw' is not a positive integer — using default per-suite budgets"
+      echo "⚠️  SKILLSMITH_PRE_PUSH_SUITE_BUDGET_SECS='$raw' is not a positive integer of at most 5 digits — using default per-suite budgets"
     fi
   fi
   local ka="${SKILLSMITH_PRE_PUSH_KILL_AFTER_SECS:-15}"
