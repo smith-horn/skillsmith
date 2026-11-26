@@ -52,8 +52,34 @@ function majorOf(version: string): number {
  */
 const MIN_NATIVE_DRIVER_MAJOR = 13
 
+/**
+ * The owner-approved pin (SMI-7260, 2026-11-23): 13.0.3 passed core's database
+ * suites through a resolver redirect, and 13.1.0 is marked "NOT A VIABLE
+ * RELEASE" upstream. Moving the pin is a decision, so it must change this
+ * constant too, not just the manifest.
+ */
+const APPROVED_PIN = '13.0.3'
+
+/** The lockfile entry npm installs for the CLI's better-sqlite3, if any. */
+function lockedDriver(): { version?: string; hasInstallScript?: boolean } | undefined {
+  const lock = JSON.parse(readFileSync(join(cliRoot, '..', '..', 'package-lock.json'), 'utf8')) as {
+    packages?: Record<string, { version?: string; hasInstallScript?: boolean }>
+  }
+  return lock.packages?.['packages/cli/node_modules/better-sqlite3']
+}
+
 describe('CLI ships the native SQLite driver (SMI-7260)', () => {
   const cli = manifest(cliRoot)
+
+  it(`pins exactly the approved better-sqlite3 ${APPROVED_PIN}, and the lockfile installs that version with no install script`, () => {
+    expect(cli.optionalDependencies?.['better-sqlite3']).toBe(APPROVED_PIN)
+    const locked = lockedDriver()
+    expect(locked, 'package-lock.json entry packages/cli/node_modules/better-sqlite3').toBeDefined()
+    expect(locked?.version).toBe(APPROVED_PIN)
+    expect(locked?.hasInstallScript, 'the locked release must not run an install script').not.toBe(
+      true
+    )
+  })
 
   it('declares better-sqlite3 as a runtime dependency of its own', () => {
     expect(runtimeVersion(cli, 'better-sqlite3')).toBeDefined()
