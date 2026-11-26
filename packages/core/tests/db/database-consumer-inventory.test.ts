@@ -181,9 +181,11 @@ const KNOWN_OPENERS: Readonly<Record<string, { sites: number; note: string }>> =
   },
 
   // --- The consumer SMI-6946 fixed ---
-  'packages/cli/src/utils/skills-directory.ts': {
+  // SMI-7260 moved its open into a sibling: version-lookup opens read-only and
+  // returns the error; skills-directory.ts classifies the refusal.
+  'packages/cli/src/utils/skills-directory.version-lookup.ts': {
     sites: 1,
-    note: 'READ-ONLY; classifies the refusal (ADR-175 § 5)',
+    note: 'READ-ONLY; returns the refusal, classified by skills-directory.ts (ADR-175 § 5)',
   },
 
   // --- MCP server ---
@@ -224,7 +226,7 @@ describe('the database-opening consumer inventory (ADR-175)', () => {
   // --- failing when aimed wrongly, so both directions are pinned first.
   it('known-positive: the scan finds call sites that certainly exist', () => {
     const found = inventory(root)
-    expect(found['packages/cli/src/utils/skills-directory.ts']).toBeGreaterThan(0)
+    expect(found['packages/cli/src/utils/skills-directory.version-lookup.ts']).toBeGreaterThan(0)
     expect(found['packages/cli/src/utils/open-database.ts']).toBeGreaterThan(0)
   })
 
