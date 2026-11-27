@@ -11,7 +11,7 @@
  */
 
 import type { Database, RunResult, Statement } from '../db/database-interface.js'
-import { isReadOnlyHandle, readOnlyReasonOf } from '../db/read-only-reason.js'
+import { isReadOnlyHandle, nativeAdviceOf, readOnlyReasonOf } from '../db/read-only-reason.js'
 import { wasmReadOnlyError } from '../db/wasm-read-only.js'
 
 /** Whether `table` exists in `db`. */
@@ -43,7 +43,7 @@ export function ensureLazyTable(
 /** The refusal of a write to a table a read-only handle could not create. */
 export function readOnlyWriteError(db: Database): Error {
   return readOnlyReasonOf(db) !== undefined
-    ? wasmReadOnlyError(db.name)
+    ? wasmReadOnlyError(db.name, nativeAdviceOf(db))
     : new Error(`[Skillsmith] Not saved: ${db.name} was opened read-only.`)
 }
 

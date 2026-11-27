@@ -39,7 +39,7 @@ import {
   runMigrations,
   runMigrationsSafe,
 } from './migration-runner.js'
-import { readOnlyReasonOf, sealDatabase } from './read-only-reason.js'
+import { nativeAdviceOf, readOnlyReasonOf, sealDatabase } from './read-only-reason.js'
 import { wasmReadOnlyError } from './wasm-read-only.js'
 
 export type DatabaseType = Database
@@ -76,6 +76,7 @@ export function initializeSchema(db: DatabaseType): void {
     if (version >= LATEST_SCHEMA_VERSION) return
     throw wasmReadOnlyError(
       db.name,
+      nativeAdviceOf(db),
       `${db.name} is at schema version ${version}; this Skillsmith needs version ` +
         `${LATEST_SCHEMA_VERSION}, and the database cannot be upgraded while it is read-only.`
     )

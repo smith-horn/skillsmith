@@ -316,47 +316,6 @@ function probeForCorruption(
 let betterSqlite3FailureReason: string | undefined
 
 /**
- * Why the native driver did not load (SMI-7271), which decides the remedy:
- * - `not-installed`: the `better-sqlite3` package itself is absent, e.g. an
- *   install with `--omit=optional` or an optional dependency that failed to
- *   install. Reinstalling with optional dependencies fixes it; a rebuild cannot.
- * - `no-prebuilt`: the package is present but has no binary for this platform.
- *   better-sqlite3 13 (the CLI's pin) loads `prebuilds/<platform>-<arch>.node`
- *   and otherwise falls back to `build/Release/better_sqlite3.node`, which it
- *   never builds (`gypfile: false`, no install script), so a rebuild or a
- *   reinstall with install scripts cannot help.
- * - `load-failed`: the package is present but its binary did not load (a
- *   corrupt or wrong-ABI binary, a missing build directory on 11.x/12.x, a
- *   missing dependency of the package). A rebuild or reinstall is the fix.
- */
-export type NativeLoadFailureKind = 'not-installed' | 'no-prebuilt' | 'load-failed'
-
-let betterSqlite3FailureKind: NativeLoadFailureKind | undefined
-
-/** The module Node could not resolve, from the first line of its error. */
-const MODULE_NOT_FOUND_LINE = /^Cannot find module '(.+)'$/
-
-/**
- * Classify a native-driver load error. Only `MODULE_NOT_FOUND` errors can be
- * anything but `load-failed`, and the module they name decides which:
- * exactly `better-sqlite3` is `not-installed`; a path ending in
- * `better_sqlite3.node` is better-sqlite3 13's fallback for a platform with no
- * prebuilt binary, `no-prebuilt`. Any other name (`'bindings'`, a missing
- * dependency) means the package IS installed. 11.x/12.x's missing build
- * directory throws "Could not locate the bindings file" with no code, which a
- * rebuild can fix, so it stays `load-failed`.
- */
-export function classifyNativeLoadFailure(error: unknown): NativeLoadFailureKind {
-  const code = (error as { code?: unknown } | null)?.code
-  if (code !== 'MODULE_NOT_FOUND') return 'load-failed'
-  const message = error instanceof Error ? error.message : String(error)
-  const missing = MODULE_NOT_FOUND_LINE.exec(message.split('\n', 1)[0])?.[1]
-  if (missing === 'better-sqlite3') return 'not-installed'
-  if (missing?.endsWith('better_sqlite3.node')) return 'no-prebuilt'
-  return 'load-failed'
-}
-
-/**
  * Get the reason the native better-sqlite3 module last failed to load.
  *
  * @returns The failure message, or `undefined` if the native module loaded
@@ -364,16 +323,6 @@ export function classifyNativeLoadFailure(error: unknown): NativeLoadFailureKind
  */
 export function getBetterSqlite3FailureReason(): string | undefined {
   return betterSqlite3FailureReason
-}
-
-/**
- * Get the kind of the last native-driver load failure (SMI-7271).
- *
- * @returns The kind, or `undefined` if the native module loaded successfully or
- *   has not been checked yet (as under `SKILLSMITH_FORCE_WASM`, which skips the check).
- */
-export function getBetterSqlite3FailureKind(): NativeLoadFailureKind | undefined {
-  return betterSqlite3FailureKind
 }
 
 /**
@@ -388,12 +337,10 @@ export function isBetterSqlite3Available(): boolean {
     const testDb = new Database(':memory:')
     testDb.close()
     betterSqlite3FailureReason = undefined
-    betterSqlite3FailureKind = undefined
     return true
   } catch (err) {
     // SMI-4807: capture the failure reason instead of silently discarding it.
     betterSqlite3FailureReason = err instanceof Error ? err.message : String(err)
-    betterSqlite3FailureKind = classifyNativeLoadFailure(err)
     return false
   }
 }

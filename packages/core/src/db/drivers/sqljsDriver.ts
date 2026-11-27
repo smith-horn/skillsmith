@@ -34,7 +34,13 @@
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import type { Database, Statement, DatabaseOptions } from '../database-interface.js'
-import { rethrowSqlJsWriteError, wasmOpenNotice, type WasmOpenKind } from '../wasm-read-only.js'
+import {
+  captureWasmAdvice,
+  rethrowSqlJsWriteError,
+  wasmOpenNotice,
+  type WasmAdvice,
+  type WasmOpenKind,
+} from '../wasm-read-only.js'
 import { isQuietModeEnabled } from '../../utils/quiet-mode.js'
 import { openExistingImage } from './sqljsDriver.read.js'
 import {
@@ -129,8 +135,14 @@ export class SqlJsDatabaseAdapter implements Database {
     sealNow = false
   ) {
     this._memory = filePath === ':memory:'
+    // SMI-7271: captured once, so every later notice, reason and refusal for
+    // this handle gives the same advice.
+    this.advice = kind === undefined ? undefined : captureWasmAdvice()
     if (sealNow) this.applySeal()
   }
+
+  /** SMI-7271: the native-driver advice captured when this handle opened. */
+  private readonly advice: WasmAdvice | undefined
 
   /**
    * Rethrow a sql.js error, naming a write refused by a sealed file-backed
@@ -138,7 +150,12 @@ export class SqlJsDatabaseAdapter implements Database {
    * the WASM driver did not make it read-only, its caller did.
    */
   private readonly onError = (error: unknown): never =>
-    rethrowSqlJsWriteError(error, this.filePath, this._sealed && this.kind !== undefined)
+    rethrowSqlJsWriteError(
+      error,
+      this.filePath,
+      this._sealed && this.kind !== undefined,
+      this.advice
+    )
 
   private applySeal(): void {
     this.db.run('PRAGMA query_only = ON')
@@ -276,7 +293,17 @@ export class SqlJsDatabaseAdapter implements Database {
    * file-backed database, or `undefined` for `:memory:`.
    */
   get openNotice(): string | undefined {
-    return this.kind === undefined ? undefined : wasmOpenNotice(this.filePath, this.kind)
+    return this.kind === undefined
+      ? undefined
+      : wasmOpenNotice(this.filePath, this.kind, this.advice)
+  }
+
+  /**
+   * SMI-7271: the advice captured at open (`undefined` for `:memory:`), for
+   * write refusals raised outside this adapter (`nativeAdviceOf`).
+   */
+  get nativeAdvice(): WasmAdvice | undefined {
+    return this.advice
   }
 
   /**

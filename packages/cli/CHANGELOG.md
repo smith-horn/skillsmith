@@ -5,15 +5,15 @@ All notable changes to `@skillsmith/cli` are documented here.
 ## [Unreleased]
 
 - **Fixed**: SMI-7271 -- (#3290 retro) the read-only notice and the write refusal on the WASM
-  driver name the fix for how the native driver failed: when `better-sqlite3` is not installed,
-  reinstall Skillsmith without `--omit=optional`; when it has no prebuilt binary for this
-  platform, it names the platform and the supported ones (darwin, linux, linuxmusl and win32, on
-  x64 or arm64), because nothing can be rebuilt; when it is installed but did not load, `npm
-  rebuild better-sqlite3` or a reinstall with install scripts enabled. Before, every case said to
-  reinstall with install scripts enabled, which does nothing for the CLI's `better-sqlite3`
-  13.0.3: it has no install script. `skillsmith list` on a database another process is writing
-  now says the database "is being written by another process; try again" instead of "could not
-  be queried".
+  driver name a fix that works for the installed `better-sqlite3`. When it is not installed:
+  reinstall Skillsmith without `--omit=optional`, or fix npm's install error first. The CLI's
+  13.0.3 builds nothing (`gypfile: false`, no install script), so it is never told to rebuild:
+  with no prebuilt binary for this platform the message names the platform and the supported ones
+  (darwin, linux, linuxmusl and win32, on x64 or arm64); with one that did not load (damaged, or
+  not matching this Node.js) it says to reinstall Skillsmith. Before, every case said to reinstall
+  with install scripts enabled, which does nothing for 13.0.3. `skillsmith list` on a database
+  another process is writing now says the database "is being written by another process; try
+  again" instead of "could not be queried".
 
 - **Fixed**: SMI-7260 -- the CLI now installs the native SQLite driver (`better-sqlite3` 13.0.3,
   an optional dependency). It was bundled out and never installed, so every install used the WASM
