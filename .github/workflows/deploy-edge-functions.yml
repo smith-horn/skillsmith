@@ -136,7 +136,7 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -151,7 +151,7 @@ jobs:
           printf 'version=%s\n' "$PIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           version: ${{ steps.supabase-pin.outputs.version }}
 
@@ -254,7 +254,7 @@ jobs:
           git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -269,7 +269,7 @@ jobs:
           printf 'version=%s\n' "$PIN" >> "$GITHUB_OUTPUT"
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           version: ${{ steps.supabase-pin.outputs.version }}
 
