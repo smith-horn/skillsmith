@@ -120,7 +120,7 @@ function unstableReadError(
   return new DatabaseReadUnstableError({
     message:
       `${first} If this keeps happening when no other Skillsmith process is running, the file may ` +
-      'be damaged: once the native SQLite driver loads (`npm rebuild better-sqlite3`), run ' +
+      'be damaged: once the native SQLite driver loads, run ' +
       '`skillsmith list`, which checks the database and reports damage. Nothing was changed.',
     path,
     attempts,

@@ -4,6 +4,12 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7271 -- (#3290 retro) on the WASM driver, the read-only notice and the error a
+  refused write returns choose their fix from the installed `better-sqlite3`, not from its load
+  error: when it is not installed at all, reinstall without `--omit=optional` (or fix npm's install
+  error first); the server's 12.x, which builds through an install script, keeps `npm rebuild
+  better-sqlite3` or a reinstall with install scripts enabled.
+
 - **Fixed**: SMI-7260 -- on the WASM SQLite driver the database is read-only, so the server no
   longer starts background sync (it says so once, silent under `SKILLSMITH_QUIET`), and the
   SMI-5640 periodic autosave is gone,

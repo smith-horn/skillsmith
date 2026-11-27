@@ -4,6 +4,24 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7271 -- (#3290 retro) the WASM read-only notice and `DatabaseReadOnlyDriverError`
+  choose their remedy from what the installed better-sqlite3 package can do, never from the shape
+  of its load error (which stays the cause, shown under `SKILLSMITH_DEBUG`). A package that does
+  not resolve says to reinstall without `--omit=optional`, or to fix npm's install error first; a
+  package that can build (an install script, or a `binding.gyp` without `gypfile: false`, as
+  12.x) says `npm rebuild better-sqlite3` or a reinstall with install scripts enabled; a
+  prebuilt-only package (`gypfile: false`, no install script, as 13.x) is never told to rebuild:
+  with no `prebuilds/<platform>-<arch>.node` for this platform (better-sqlite3's own rule,
+  linuxmusl included) it names the platform and the supported ones (darwin, linux, linuxmusl and
+  win32, on x64 or arm64); with one present on a linux-glibc system older than the prebuilds'
+  glibc floor (2.34, measured on 13.0.3's linux prebuilds) it names both glibc versions and says
+  to upgrade to a distribution with glibc 2.34 or newer or to use the Skillsmith MCP server,
+  whose native driver builds on older systems; otherwise it says that binary failed to load (the
+  file may be damaged) and to reinstall. `SKILLSMITH_FORCE_WASM` still names the variable. A
+  sql.js handle captures this advice when it opens, so its notice, `readOnlyReason` and every
+  write refusal agree for its whole life. The unstable-read error no longer tells the user to run
+  `npm rebuild better-sqlite3`.
+
 - **Fixed**: SMI-7260 -- the WASM (sql.js) SQLite driver never writes a database file. It used to
   save by renaming a new file over the database; when a native (better-sqlite3) process held that
   database in WAL mode, the rename lost the native process's writes, and its next checkpoint could

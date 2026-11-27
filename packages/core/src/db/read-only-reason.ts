@@ -8,6 +8,7 @@
  */
 
 import type { Database } from './database-interface.js'
+import type { WasmAdvice } from './wasm-read-only.js'
 
 /**
  * Why this handle refuses writes, as one line for the user, or `undefined`
@@ -17,6 +18,15 @@ import type { Database } from './database-interface.js'
 export function readOnlyReasonOf(db: Database): string | undefined {
   const reason = (db as { readOnlyReason?: unknown }).readOnlyReason
   return typeof reason === 'string' ? reason : undefined
+}
+
+/**
+ * SMI-7271: the native-driver advice a sql.js handle captured when it opened,
+ * or `undefined` for any other handle. Read structurally, like the reason.
+ */
+export function nativeAdviceOf(db: Database): WasmAdvice | undefined {
+  const advice = (db as { nativeAdvice?: unknown }).nativeAdvice
+  return typeof advice === 'object' && advice !== null ? (advice as WasmAdvice) : undefined
 }
 
 /**

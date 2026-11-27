@@ -7,7 +7,11 @@
  * `skills-directory.ts`, so call sites import from there unchanged.
  */
 import { existsSync } from 'node:fs'
-import { isCorruptDatabaseError, isCorruptionCode } from '@skillsmith/core'
+import {
+  isCorruptDatabaseError,
+  isCorruptionCode,
+  isDatabaseReadUnstableError,
+} from '@skillsmith/core'
 import { sanitizePath } from './sanitize.js'
 
 /** The one clause that names a corrupt database, so both callers agree. */
@@ -44,8 +48,12 @@ export type UpdateStatus = 'available' | 'current' | 'unknown'
  * permission to read, and one locked by another process. A wrong schema is the
  * fifth cause and does NOT arrive here — a read-only open skips
  * `initializeSchema`, so it surfaces at query time and is classified by
- * `describeQueryFailure` instead. Only the absent case licenses "no updates
- * available" — nothing is installed that could be out of date. The other four leave the answer unknowable, and
+ * `describeQueryFailure` instead. Since SMI-7260 one more open failure reaches
+ * this function, on the WASM driver only: a read that kept changing under it
+ * because another process was writing the file (`SKILLSMITH_DB_READ_UNSTABLE`),
+ * which gets its own "try again" reason (SMI-7271). Only the absent case
+ * licenses "no updates available" — nothing is installed that could be out of
+ * date. Every other cause leaves the answer unknowable, and
  * reporting them as "up to date" is a positive false statement, which is the
  * defect SMI-6946 exists to remove.
  *
@@ -60,6 +68,12 @@ export function classifyOpenFailure(error: unknown, dbPath: string): string | un
   // @skillsmith/core between the CLI and the MCP server (ADR-175 § 7).
   if (isCorruptDatabaseError(error)) {
     return corruptClause(error.path)
+  }
+
+  // SMI-7271: the WASM driver's unstable read, matched on its stable code for the
+  // same reason. Not corruption: the file was changing while it was read.
+  if (isDatabaseReadUnstableError(error)) {
+    return `the local database at ${sanitizePath(error.path)} is being written by another process; try again`
   }
 
   const code = (error as { code?: unknown } | null | undefined)?.code

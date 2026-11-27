@@ -4,6 +4,20 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7271 -- (#3290 retro) the read-only notice and the write refusal on the WASM
+  driver name a fix that works for the installed `better-sqlite3`. When it is not installed:
+  reinstall Skillsmith without `--omit=optional`, or fix npm's install error first. The CLI's
+  13.0.3 builds nothing (`gypfile: false`, no install script), so it is never told to rebuild:
+  with no prebuilt binary for this platform the message names the platform and the supported ones
+  (darwin, linux, linuxmusl and win32, on x64 or arm64); on a linux system whose glibc is older
+  than 2.34, which 13.0.3's linux prebuilds need, it names both glibc versions and says to upgrade
+  to a distribution with glibc 2.34 or newer or to use the Skillsmith MCP server, whose native
+  driver builds on older systems; with a binary that did not load otherwise (the file may be
+  damaged) it says to reinstall Skillsmith. Before, every case said to reinstall
+  with install scripts enabled, which does nothing for 13.0.3. `skillsmith list` on a database
+  another process is writing now says the database "is being written by another process; try
+  again" instead of "could not be queried".
+
 - **Fixed**: SMI-7260 -- the CLI now installs the native SQLite driver (`better-sqlite3` 13.0.3,
   an optional dependency). It was bundled out and never installed, so every install used the WASM
   driver, whose saves could lose the MCP server's writes and corrupt the database. The CLI pins
@@ -11,7 +25,8 @@ All notable changes to `@skillsmith/cli` are documented here.
   and has no install script, while 12.10.0 depends on the deprecated `prebuild-install`, which
   SMI-5427 removed from the CLI's install tree. Core's database tests pass on 13.0.3, except one
   lock-timing test with no SQLite use that fails on 12.10.0 too (SMI-7263). Where the WASM driver
-  is still in use (install scripts disabled, no prebuilt binary, or `SKILLSMITH_FORCE_WASM`), the
+  is still in use (the optional dependency skipped with `--omit=optional` or failed to install, a
+  platform with no prebuilt binary, or `SKILLSMITH_FORCE_WASM`), the
   database opens read-only and the CLI says so in one line: read commands (`search`, `info`,
   `list`, `sync status`) work, and a change to the database (by `install`, `remove`, `update`,
   `import`, `import-local`, `sync`, `sync config`) fails with an error naming the cause and the
