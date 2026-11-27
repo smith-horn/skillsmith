@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import type { NativeDriverAdvice } from '../../src/db/drivers/native-driver-advice.js'
 
 const live = vi.hoisted(() => ({
-  advice: { kind: 'rebuild' } as NativeDriverAdvice,
+  advice: { kind: 'rebuild', manifest: '/m/package.json' } as NativeDriverAdvice,
 }))
 
 vi.mock('../../src/db/drivers/native-driver-advice.js', async (importOriginal) => {
@@ -32,7 +32,7 @@ let dir: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'smi7271-capture-'))
-  live.advice = { kind: 'rebuild' }
+  live.advice = { kind: 'rebuild', manifest: '/m/package.json' }
 })
 
 afterEach(() => {
@@ -65,7 +65,7 @@ describe('SMI-7271: advice captured at open', () => {
   it('a later change to what the package lookup says does not change this handle', async () => {
     const db = await createSqlJsDatabase(nativeDb())
     // Opened while the lookup said "rebuild"; now it would say "no-prebuilt".
-    live.advice = { kind: 'no-prebuilt', target: 'freebsd-x64' }
+    live.advice = { kind: 'no-prebuilt', manifest: '/m/package.json', target: 'freebsd-x64' }
 
     const renders = {
       openNotice: db.openNotice ?? '',
@@ -95,7 +95,7 @@ describe('SMI-7271: advice captured at open', () => {
 
   it('the initializeSchema refusal on an older schema uses the captured advice', async () => {
     const db = await createSqlJsDatabase(nativeDb(LATEST_SCHEMA_VERSION - 1))
-    live.advice = { kind: 'no-prebuilt', target: 'freebsd-x64' }
+    live.advice = { kind: 'no-prebuilt', manifest: '/m/package.json', target: 'freebsd-x64' }
 
     const text = refusal(() => initializeSchema(db)).message
     expect(text).toContain('cannot be upgraded while it is read-only')

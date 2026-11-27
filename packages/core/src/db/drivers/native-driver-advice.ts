@@ -33,13 +33,18 @@ const require = createRequire(import.meta.url)
  *   (`runtime`). No reinstall or rebuild changes that.
  * - `prebuilt-failed`: a prebuilt-only package whose binary for `target` exists
  *   and did not load (the file may be damaged).
+ *
+ * Every kind derived from a resolved package carries `manifest`, the absolute
+ * path of the `package.json` it read, so a test can pin WHICH package the
+ * advice describes (the resolution base is the defect a kind alone cannot see).
+ * It never appears in a remedy text.
  */
 export type NativeDriverAdvice =
   | { kind: 'not-installed' }
-  | { kind: 'rebuild' }
-  | { kind: 'no-prebuilt'; target: string }
-  | { kind: 'glibc-too-old'; target: string; runtime: string; required: string }
-  | { kind: 'prebuilt-failed'; target: string }
+  | { kind: 'rebuild'; manifest: string }
+  | { kind: 'no-prebuilt'; manifest: string; target: string }
+  | { kind: 'glibc-too-old'; manifest: string; target: string; runtime: string; required: string }
+  | { kind: 'prebuilt-failed'; manifest: string; target: string }
 
 /** The platform facts the prebuilt lookup needs; injectable for tests. */
 export interface NativePlatform {
@@ -115,37 +120,38 @@ export function adviseFor(
   platform: NativePlatform = HOST
 ): NativeDriverAdvice {
   let manifestPath: string
-  let manifest: PackageManifest
+  let pkg: PackageManifest
   try {
     manifestPath = resolve('better-sqlite3/package.json')
-    manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as PackageManifest
+    pkg = JSON.parse(readFileSync(manifestPath, 'utf8')) as PackageManifest
   } catch {
     // Not resolvable, or a manifest that cannot be read: either way the
     // install is missing or broken, and reinstalling is the fix.
     return { kind: 'not-installed' }
   }
   const root = dirname(manifestPath)
-  const scripts = manifest.scripts ?? {}
+  const scripts = pkg.scripts ?? {}
   // npm runs an install/preinstall script, and runs node-gyp itself for a
   // package with a binding.gyp unless `gypfile: false`.
   const canBuild =
     typeof scripts.install === 'string' ||
     typeof scripts.preinstall === 'string' ||
-    (manifest.gypfile !== false && existsSync(join(root, 'binding.gyp')))
-  if (canBuild) return { kind: 'rebuild' }
+    (pkg.gypfile !== false && existsSync(join(root, 'binding.gyp')))
+  const manifest = manifestPath
+  if (canBuild) return { kind: 'rebuild', manifest }
 
   const target = prebuildTarget(platform)
   const supported =
     PREBUILD_PLATFORMS.includes(platform.platform) && PREBUILD_ARCHS.includes(platform.arch)
   if (!supported || !existsSync(join(root, 'prebuilds', `${target}.node`))) {
-    return { kind: 'no-prebuilt', target }
+    return { kind: 'no-prebuilt', manifest, target }
   }
   // A linux-glibc prebuild that needs a newer glibc than this system has.
   const runtime = platform.platform === 'linux' ? platform.glibcVersionRuntime() : undefined
   if (runtime !== undefined && glibcOlderThan(runtime, PREBUILT_GLIBC_FLOOR)) {
-    return { kind: 'glibc-too-old', target, runtime, required: PREBUILT_GLIBC_FLOOR }
+    return { kind: 'glibc-too-old', manifest, target, runtime, required: PREBUILT_GLIBC_FLOOR }
   }
-  return { kind: 'prebuilt-failed', target }
+  return { kind: 'prebuilt-failed', manifest, target }
 }
 
 /** Advice for the better-sqlite3 this process would load. */

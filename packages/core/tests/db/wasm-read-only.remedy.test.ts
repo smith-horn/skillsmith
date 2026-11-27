@@ -10,7 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Module, { createRequire } from 'node:module'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import {
@@ -24,7 +24,8 @@ import { wasmOpenNotice, wasmReadOnlyError, type WasmAdvice } from '../../src/db
 let root: string
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'smi7271-advice-'))
+  // Realpath: Node's resolver returns real paths, and a tmpdir may be a symlink.
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'smi7271-advice-')))
   mkdirSync(join(root, 'node_modules'))
 })
 
@@ -43,6 +44,11 @@ const MUSL_X64: NativePlatform = {
   platform: 'linux',
   arch: 'x64',
   glibcVersionRuntime: () => undefined,
+}
+
+/** The manifest the fixture's better-sqlite3 advice must name. */
+function manifestPath(): string {
+  return join(root, 'node_modules', 'better-sqlite3', 'package.json')
 }
 
 /**
@@ -90,18 +96,25 @@ describe('SMI-7271: advice from the installed package', () => {
 
   it('12.x-like (an install script): rebuild', () => {
     installPackage(V12, { 'binding.gyp': '{}' })
-    expect(adviseFor(fixtureResolve, LINUX_X64)).toEqual({ kind: 'rebuild' })
+    expect(adviseFor(fixtureResolve, LINUX_X64)).toEqual({
+      kind: 'rebuild',
+      manifest: manifestPath(),
+    })
   })
 
   it('a binding.gyp with no gypfile:false and no script: rebuild (npm runs node-gyp)', () => {
     installPackage({ version: '12.0.0' }, { 'binding.gyp': '{}' })
-    expect(adviseFor(fixtureResolve, LINUX_X64)).toEqual({ kind: 'rebuild' })
+    expect(adviseFor(fixtureResolve, LINUX_X64)).toEqual({
+      kind: 'rebuild',
+      manifest: manifestPath(),
+    })
   })
 
   it('13.x-like with no prebuild for the platform: no-prebuilt, naming it', () => {
     installPackage(V13, { 'binding.gyp': '{}', 'prebuilds/darwin-arm64.node': 'x' })
     expect(adviseFor(fixtureResolve, LINUX_X64)).toEqual({
       kind: 'no-prebuilt',
+      manifest: manifestPath(),
       target: 'linux-x64',
     })
   })
@@ -110,6 +123,7 @@ describe('SMI-7271: advice from the installed package', () => {
     installPackage(V13, { 'binding.gyp': '{}', 'prebuilds/linux-x64.node': 'x' })
     expect(adviseFor(fixtureResolve, LINUX_X64)).toEqual({
       kind: 'prebuilt-failed',
+      manifest: manifestPath(),
       target: 'linux-x64',
     })
   })
@@ -118,11 +132,13 @@ describe('SMI-7271: advice from the installed package', () => {
     installPackage(V13, { 'prebuilds/linux-x64.node': 'x' })
     expect(adviseFor(fixtureResolve, MUSL_X64)).toEqual({
       kind: 'no-prebuilt',
+      manifest: manifestPath(),
       target: 'linuxmusl-x64',
     })
     writeFileSync(join(root, 'node_modules/better-sqlite3/prebuilds/linuxmusl-x64.node'), 'x')
     expect(adviseFor(fixtureResolve, MUSL_X64)).toEqual({
       kind: 'prebuilt-failed',
+      manifest: manifestPath(),
       target: 'linuxmusl-x64',
     })
   })
@@ -132,6 +148,7 @@ describe('SMI-7271: advice from the installed package', () => {
     expect(PREBUILT_GLIBC_FLOOR).toBe('2.34')
     expect(adviseFor(fixtureResolve, glibc('2.31'))).toEqual({
       kind: 'glibc-too-old',
+      manifest: manifestPath(),
       target: 'linux-x64',
       runtime: '2.31',
       required: '2.34',
@@ -142,6 +159,7 @@ describe('SMI-7271: advice from the installed package', () => {
     installPackage(V13, { 'prebuilds/linux-x64.node': 'x' })
     expect(adviseFor(fixtureResolve, glibc('2.34'))).toEqual({
       kind: 'prebuilt-failed',
+      manifest: manifestPath(),
       target: 'linux-x64',
     })
   })
@@ -155,13 +173,17 @@ describe('SMI-7271: advice from the installed package', () => {
     installPackage(V13, { 'prebuilds/linuxmusl-x64.node': 'x' })
     expect(adviseFor(fixtureResolve, MUSL_X64)).toEqual({
       kind: 'prebuilt-failed',
+      manifest: manifestPath(),
       target: 'linuxmusl-x64',
     })
   })
 
   it('a package that can build ignores the floor (it builds against this glibc)', () => {
     installPackage(V12, { 'binding.gyp': '{}', 'prebuilds/linux-x64.node': 'x' })
-    expect(adviseFor(fixtureResolve, glibc('2.31'))).toEqual({ kind: 'rebuild' })
+    expect(adviseFor(fixtureResolve, glibc('2.31'))).toEqual({
+      kind: 'rebuild',
+      manifest: manifestPath(),
+    })
   })
 
   it('an unsupported platform is no-prebuilt even with a matching file', () => {
@@ -173,6 +195,7 @@ describe('SMI-7271: advice from the installed package', () => {
     }
     expect(adviseFor(fixtureResolve, freebsd)).toEqual({
       kind: 'no-prebuilt',
+      manifest: manifestPath(),
       target: 'freebsd-x64',
     })
   })
@@ -202,7 +225,11 @@ describe('SMI-7271: a damaged 13.x prebuilt is never told to rebuild', () => {
     expect(isBetterSqlite3Available()).toBe(false)
 
     const advice = adviseFor(fixtureResolve, LINUX_X64)
-    expect(advice).toEqual({ kind: 'prebuilt-failed', target: 'linux-x64' })
+    expect(advice).toEqual({
+      kind: 'prebuilt-failed',
+      manifest: manifestPath(),
+      target: 'linux-x64',
+    })
     const text = wasmOpenNotice('/home/u/.skillsmith/skills.db', 'existing', advice)
     expect(text).toContain('The prebuilt native SQLite driver for linux-x64 failed to load')
     expect(text).not.toContain('npm rebuild')
@@ -212,6 +239,8 @@ describe('SMI-7271: a damaged 13.x prebuilt is never told to rebuild', () => {
 
 describe('SMI-7271: the remedy text for each advice', () => {
   const path = '/home/u/.skillsmith/skills.db'
+  /** A manifest path, which must never reach a remedy text. */
+  const M = '/opt/smi7271-manifest/better-sqlite3/package.json'
   const surfaces = [
     ['existing-file notice', (a: WasmAdvice | undefined) => wasmOpenNotice(path, 'existing', a)],
     ['first-run notice', (a: WasmAdvice | undefined) => wasmOpenNotice(path, 'first-run', a)],
@@ -229,7 +258,7 @@ describe('SMI-7271: the remedy text for each advice', () => {
     })
 
     it('rebuild: npm rebuild or install scripts', () => {
-      const text = render({ kind: 'rebuild' })
+      const text = render({ kind: 'rebuild', manifest: M })
       expect(text).toContain('npm rebuild better-sqlite3')
       expect(text).toContain('install scripts enabled')
       expect(text).toContain('SKILLSMITH_DEBUG=1')
@@ -237,7 +266,7 @@ describe('SMI-7271: the remedy text for each advice', () => {
     })
 
     it('no-prebuilt: names the platform and the supported ones, never a rebuild', () => {
-      const text = render({ kind: 'no-prebuilt', target: 'freebsd-x64' })
+      const text = render({ kind: 'no-prebuilt', manifest: M, target: 'freebsd-x64' })
       expect(text).toContain('for this platform (freebsd-x64)')
       expect(text).toContain('darwin, linux, linuxmusl and win32, on x64 or arm64')
       expect(text).toContain('reads but cannot save')
@@ -247,7 +276,7 @@ describe('SMI-7271: the remedy text for each advice', () => {
     })
 
     it('prebuilt-failed: reinstall, never a rebuild', () => {
-      const text = render({ kind: 'prebuilt-failed', target: 'linux-arm64' })
+      const text = render({ kind: 'prebuilt-failed', manifest: M, target: 'linux-arm64' })
       expect(text).toContain('for linux-arm64 failed to load (the file may be damaged)')
       expect(text).toContain('reinstall Skillsmith, then restart')
       expect(text).not.toContain('Node.js')
@@ -259,6 +288,7 @@ describe('SMI-7271: the remedy text for each advice', () => {
     it('glibc-too-old: names both versions and the ways out, never a rebuild or reinstall', () => {
       const text = render({
         kind: 'glibc-too-old',
+        manifest: M,
         target: 'linux-x64',
         runtime: '2.31',
         required: '2.34',
@@ -271,6 +301,23 @@ describe('SMI-7271: the remedy text for each advice', () => {
       expect(text).not.toContain('rebuild')
       expect(text).not.toContain('reinstall')
       expect(text).not.toContain('install scripts')
+    })
+
+    it('the manifest path never appears in any text', () => {
+      for (const advice of [
+        { kind: 'rebuild', manifest: M },
+        { kind: 'no-prebuilt', manifest: M, target: 'freebsd-x64' },
+        { kind: 'prebuilt-failed', manifest: M, target: 'linux-x64' },
+        {
+          kind: 'glibc-too-old',
+          manifest: M,
+          target: 'linux-x64',
+          runtime: '2.31',
+          required: '2.34',
+        },
+      ] as const) {
+        expect(render(advice)).not.toContain('smi7271-manifest')
+      }
     })
 
     it('forced: names the variable', () => {
