@@ -13,13 +13,19 @@
  * same nested copy, so a cwd-based lookup would be invisible. This pins
  * `process.cwd()` to the repo root, where the root copy differs, and a control
  * proves the two bases really do reach different packages.
+ *
+ * **The test also owns the module load.** The module builds its `require` at
+ * import time, so a static import would evaluate it before the cwd stub exists,
+ * under the real (CI) cwd, and a module-scope regression to a cwd-based
+ * `require` would stay green. So the stub goes in first, then
+ * `vi.resetModules()` and a dynamic import evaluate the module fresh under it.
+ * That catches a cwd lookup at call time and at module scope alike.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { nativeDriverAdvice } from '../../src/db/drivers/native-driver-advice.js'
 
 const MODULE_URL = new URL('../../src/db/drivers/native-driver-advice.ts', import.meta.url)
 /** packages/core/tests/db -> the repo root, from this file's own location. */
@@ -38,8 +44,11 @@ describe('SMI-7271: nativeDriverAdvice resolves from its own module', () => {
     expect(existsSync(join(REPO_ROOT, 'packages', 'core', 'package.json'))).toBe(true)
   })
 
-  it('reads the manifest its module resolves, not the one cwd resolves', () => {
+  it('reads the manifest its module resolves, not the one cwd resolves', async () => {
+    // The stub first, then a fresh module evaluated under it (see the header).
     vi.spyOn(process, 'cwd').mockReturnValue(REPO_ROOT)
+    vi.resetModules()
+    const { nativeDriverAdvice } = await import('../../src/db/drivers/native-driver-advice.js')
     const expected = createRequire(MODULE_URL).resolve('better-sqlite3/package.json')
     const cwdResolved = createRequire(join(REPO_ROOT, 'noop.js')).resolve(
       'better-sqlite3/package.json'
