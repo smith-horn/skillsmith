@@ -304,19 +304,28 @@ describe('SMI-7271: the remedy text for each advice', () => {
     })
 
     it('the manifest path never appears in any text', () => {
-      for (const advice of [
-        { kind: 'rebuild', manifest: M },
-        { kind: 'no-prebuilt', manifest: M, target: 'freebsd-x64' },
-        { kind: 'prebuilt-failed', manifest: M, target: 'linux-x64' },
-        {
-          kind: 'glibc-too-old',
-          manifest: M,
-          target: 'linux-x64',
-          runtime: '2.31',
-          required: '2.34',
-        },
-      ] as const) {
-        expect(render(advice)).not.toContain('smi7271-manifest')
+      const cases = [
+        [{ kind: 'rebuild', manifest: M }, 'npm rebuild better-sqlite3'],
+        [{ kind: 'no-prebuilt', manifest: M, target: 'freebsd-x64' }, '(freebsd-x64)'],
+        [{ kind: 'prebuilt-failed', manifest: M, target: 'linux-x64' }, 'linux-x64 failed to load'],
+        [
+          {
+            kind: 'glibc-too-old',
+            manifest: M,
+            target: 'linux-x64',
+            runtime: '2.31',
+            required: '2.34',
+          },
+          'this system has glibc 2.31',
+        ],
+      ] as const
+      for (const [advice, phrase] of cases) {
+        const text = render(advice)
+        // Presence first: the render produced this kind's text, so the absence
+        // below is about a real message, not an empty or wrong one.
+        expect(text).toContain('[Skillsmith]')
+        expect(text).toContain(phrase)
+        expect(text).not.toContain('smi7271-manifest')
       }
     })
 
