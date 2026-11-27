@@ -549,7 +549,7 @@ If you only use Community/Individual tools (search, install, recommend, etc.), t
 
 When the native SQLite driver (better-sqlite3) does not load, the MCP server falls back to a WASM driver (sql.js). That fallback **can read but not save**: it opens an existing database read-only and never writes the file, and on a first run local results stay empty. Searches through the Skillsmith API still work; anything that records locally (installs, sync, quarantine records) fails with a message naming the cause. The server prints one line at startup when this happens.
 
-To get the native driver back, rebuild it, or reinstall with install scripts enabled, then restart your MCP client:
+If better-sqlite3 is not installed at all (an install with `--omit=optional`), the startup line says so: reinstall without that flag. Otherwise, to get the native driver back, rebuild it, or reinstall with install scripts enabled, then restart your MCP client:
 
 ```bash
 npm rebuild better-sqlite3

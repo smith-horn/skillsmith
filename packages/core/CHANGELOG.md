@@ -4,6 +4,16 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7271 -- (#3290 retro) the WASM read-only notice and `DatabaseReadOnlyDriverError`
+  choose their remedy from how better-sqlite3 failed to load: a missing package (Node's
+  `MODULE_NOT_FOUND` for `better-sqlite3` itself) says to reinstall without `--omit=optional`;
+  better-sqlite3 13 with no prebuilt binary for the platform (`MODULE_NOT_FOUND` for its
+  `better_sqlite3.node` fallback) names the platform and the supported ones (darwin, linux,
+  linuxmusl and win32, on x64 or arm64) and never suggests a rebuild, since 13.x builds nothing; a
+  package that is present but did not load otherwise says `npm rebuild better-sqlite3` or a reinstall with
+  install scripts enabled; `SKILLSMITH_FORCE_WASM` still names the variable. The unstable-read
+  error no longer tells the user to run `npm rebuild better-sqlite3`.
+
 - **Fixed**: SMI-7260 -- the WASM (sql.js) SQLite driver never writes a database file. It used to
   save by renaming a new file over the database; when a native (better-sqlite3) process held that
   database in WAL mode, the rename lost the native process's writes, and its next checkpoint could

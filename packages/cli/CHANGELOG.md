@@ -4,6 +4,17 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Fixed**: SMI-7271 -- (#3290 retro) the read-only notice and the write refusal on the WASM
+  driver name the fix for how the native driver failed: when `better-sqlite3` is not installed,
+  reinstall Skillsmith without `--omit=optional`; when it has no prebuilt binary for this
+  platform, it names the platform and the supported ones (darwin, linux, linuxmusl and win32, on
+  x64 or arm64), because nothing can be rebuilt; when it is installed but did not load, `npm
+  rebuild better-sqlite3` or a reinstall with install scripts enabled. Before, every case said to
+  reinstall with install scripts enabled, which does nothing for the CLI's `better-sqlite3`
+  13.0.3: it has no install script. `skillsmith list` on a database another process is writing
+  now says the database "is being written by another process; try again" instead of "could not
+  be queried".
+
 - **Fixed**: SMI-7260 -- the CLI now installs the native SQLite driver (`better-sqlite3` 13.0.3,
   an optional dependency). It was bundled out and never installed, so every install used the WASM
   driver, whose saves could lose the MCP server's writes and corrupt the database. The CLI pins
@@ -11,7 +22,8 @@ All notable changes to `@skillsmith/cli` are documented here.
   and has no install script, while 12.10.0 depends on the deprecated `prebuild-install`, which
   SMI-5427 removed from the CLI's install tree. Core's database tests pass on 13.0.3, except one
   lock-timing test with no SQLite use that fails on 12.10.0 too (SMI-7263). Where the WASM driver
-  is still in use (install scripts disabled, no prebuilt binary, or `SKILLSMITH_FORCE_WASM`), the
+  is still in use (the optional dependency skipped with `--omit=optional` or failed to install, a
+  platform with no prebuilt binary, or `SKILLSMITH_FORCE_WASM`), the
   database opens read-only and the CLI says so in one line: read commands (`search`, `info`,
   `list`, `sync status`) work, and a change to the database (by `install`, `remove`, `update`,
   `import`, `import-local`, `sync`, `sync config`) fails with an error naming the cause and the

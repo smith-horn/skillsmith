@@ -6,8 +6,8 @@
  * as the coordinator's `quiesce` hook. It has no top-level side effects
  * (unlike `index.ts` itself), so it can be imported and unit-tested
  * directly — this is the in-process complement to the subprocess proof in
- * `tests/shutdown-persistence-subprocess.test.ts` (which exercises the same
- * bound end-to-end against a real stalled network call, but isn't captured
+ * `tests/shutdown-background-sync-subprocess.test.ts` (which exercises the same
+ * bound end-to-end against a held network call, but isn't captured
  * by source-file coverage since it runs the compiled binary in a separate
  * process).
  */

@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseReadUnstableError } from '@skillsmith/core'
 import {
   classifyOpenFailure,
   describeQueryFailure,
@@ -114,6 +115,25 @@ describe('classifyOpenFailure', () => {
     // The error's OWN path wins over the argument, since the refusal knows
     // which file it refused.
     expect(reason).toContain('/tmp/from-the-error/skills.db')
+  })
+
+  it('SMI-7271: names the WASM driver’s unstable read as a concurrent write, not a query failure', () => {
+    // Built from the real core class, then matched by `code`, as a consumer must.
+    const unstable = new DatabaseReadUnstableError({
+      message: '[Skillsmith] Could not read ... consistently ...',
+      path: '/tmp/from-the-error/skills.db',
+      attempts: 3,
+    })
+    const reason = classifyOpenFailure(unstable, '/tmp/from-the-argument/skills.db')
+    expect(reason).toContain('is being written by another process; try again')
+    expect(reason).toContain('/tmp/from-the-error/skills.db')
+    expect(reason).not.toMatch(/could not be queried|is corrupt/)
+    // The same discrimination from a structural copy (a second copy of core).
+    const copy = Object.assign(new Error('copy'), {
+      code: 'SKILLSMITH_DB_READ_UNSTABLE',
+      path: '/tmp/copy/skills.db',
+    })
+    expect(classifyOpenFailure(copy, ABSENT)).toContain('/tmp/copy/skills.db is being written')
   })
 })
 

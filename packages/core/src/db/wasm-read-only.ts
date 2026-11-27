@@ -6,10 +6,14 @@
  * `drivers/sqljsDriver.ts`). The notice and the error share one explanation of
  * why, and one remedy, built here so the two cannot drift apart. When
  * `SKILLSMITH_FORCE_WASM` is set the remedy names that variable instead of the
- * reinstall advice, because reinstalling would not change anything.
+ * reinstall advice, because reinstalling would not change anything. Otherwise
+ * the remedy follows the measured load failure (SMI-7271): a missing package
+ * needs a reinstall with optional dependencies, a binary that failed to load
+ * needs a rebuild.
  */
 
 import { DatabaseReadOnlyDriverError } from './db-errors.js'
+import { getBetterSqlite3FailureKind } from './drivers/betterSqlite3Driver.js'
 
 /** Which situation a read-only sql.js handle was opened in. */
 export type WasmOpenKind = 'existing' | 'first-run'
@@ -29,11 +33,45 @@ function driverClause(): string {
   return `${why}, so Skillsmith is using the WASM driver, which can read but not save.`
 }
 
+const DEBUG_HINT = 'Set SKILLSMITH_DEBUG=1 to see why it did not load.'
+
+/**
+ * SMI-7271: the fix depends on how the native driver failed, not on which
+ * package bundled core. The CLI's better-sqlite3 ships prebuilt binaries and
+ * has no install script, so "rebuild" does nothing for an install that skipped
+ * the package; the MCP server's builds through an install script, so a rebuild
+ * is its fix when the package is present but its binary did not load. When the
+ * CLI's package has no prebuilt binary for the platform, nothing can be built,
+ * so that case names the platform and the supported ones instead.
+ */
 function remedy(): string {
-  return forced()
-    ? 'Unset SKILLSMITH_FORCE_WASM to use the native driver.'
-    : 'To fix it, reinstall with install scripts enabled (or run `npm rebuild better-sqlite3`), ' +
-        'then restart. Set SKILLSMITH_DEBUG=1 to see why it did not load.'
+  if (forced()) return 'Unset SKILLSMITH_FORCE_WASM to use the native driver.'
+  switch (getBetterSqlite3FailureKind()) {
+    case 'not-installed':
+      return (
+        'better-sqlite3 is not installed: reinstall Skillsmith without --omit=optional ' +
+        '(optional dependencies must be installed), then restart.'
+      )
+    case 'no-prebuilt':
+      // better-sqlite3 13 never builds from source, so no rebuild advice here.
+      return (
+        `No prebuilt native SQLite driver exists for this platform (${process.platform}-` +
+        `${process.arch}), so here the WASM driver reads but cannot save. Prebuilt drivers ` +
+        'cover darwin, linux, linuxmusl and win32, on x64 or arm64; on one of those, the ' +
+        `install is incomplete: reinstall Skillsmith, then restart. ${DEBUG_HINT}`
+      )
+    case 'load-failed':
+      return (
+        'To fix it, run `npm rebuild better-sqlite3`, or reinstall Skillsmith with install ' +
+        `scripts enabled, then restart. ${DEBUG_HINT}`
+      )
+    default:
+      // The load was never attempted in this process, so the cause is unknown.
+      return (
+        'To fix it, reinstall Skillsmith with optional dependencies and install scripts ' +
+        'enabled (or run `npm rebuild better-sqlite3`), then restart.'
+      )
+  }
 }
 
 function capitalized(text: string): string {

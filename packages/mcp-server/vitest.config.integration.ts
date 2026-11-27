@@ -15,15 +15,15 @@ import { sharedTestConfig } from '../../vitest.preset'
 // `vitest.config.ts`, which has no such alias.
 // SMI-6343 Wave 1 — THIS FILE IS THE REGRESSION SITE.
 //
-// `tests/integration/shutdown-persistence.integration.test.ts` and
-// `tests/integration/install.execution.integration.test.ts` are the two files
-// whose unmocked manifest path historically wrote fixture rows into a real
-// user's ~/.skillsmith/manifest.json (before ADR-139/SMI-6274 Wave 4, #2634,
-// merged 2026-08-30, added the `manifestPath` override those tests now use —
-// two days before this fix, so those two specific files were already
-// isolated by the time this investigation started; see
-// `scripts/tests/audit-manifest-hygiene.test.ts`'s header for the full
-// timeline). This config is the ONLY one that runs them (the root config's
+// `tests/integration/install.execution.integration.test.ts` and the former
+// `shutdown-persistence.integration.test.ts` (deleted by SMI-7260) are the two
+// files whose unmocked manifest path historically wrote fixture rows into a
+// real user's ~/.skillsmith/manifest.json (before ADR-139/SMI-6274 Wave 4,
+// #2634, merged 2026-08-30, added the `manifestPath` override both used and
+// the remaining file still uses — two days before this fix, so both were already isolated by the time
+// this investigation started; see `scripts/tests/audit-manifest-hygiene.test.ts`'s
+// header for the full timeline). This config is the ONLY one that runs the
+// `*.integration.test.ts` files under `tests/integration/` (the root config's
 // `exclude` and packages/mcp-server/vitest.config.ts both skip
 // `*.integration.test.ts`), and `test-mcp-server-integration` is the only CI
 // job that loads it — so a HOME sandbox declared anywhere else does not
