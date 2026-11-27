@@ -24,7 +24,7 @@ vi.mock('../../src/db/drivers/native-driver-advice.js', async (importOriginal) =
 
 import { createSqlJsDatabase } from '../../src/db/drivers/sqljsDriver.js'
 import { createBetterSqlite3Database } from '../../src/db/drivers/betterSqlite3Driver.js'
-import { initializeSchema } from '../../src/db/schema.js'
+import { initializeSchema, LATEST_SCHEMA_VERSION } from '../../src/db/schema.js'
 import { readOnlyWriteError } from '../../src/repositories/read-only-guard.js'
 import { DB_WASM_READ_ONLY_CODE } from '../../src/db/db-errors.js'
 
@@ -40,10 +40,13 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function nativeDb(): string {
+function nativeDb(schemaVersion?: number): string {
   const path = join(dir, 'skills.db')
   const db = createBetterSqlite3Database(path)
   initializeSchema(db)
+  if (schemaVersion !== undefined) {
+    db.prepare('DELETE FROM schema_version WHERE version > ?').run(schemaVersion)
+  }
   db.close()
   return path
 }
@@ -83,9 +86,21 @@ describe('SMI-7271: advice captured at open', () => {
     vi.unstubAllEnvs()
 
     expect(db.openNotice).toContain('Unset SKILLSMITH_FORCE_WASM')
+    expect(db.readOnlyReason).toContain('Unset SKILLSMITH_FORCE_WASM')
     expect(refusal(() => db.exec('CREATE TABLE smi7271_probe (x)')).message).toContain(
       'SKILLSMITH_FORCE_WASM is set'
     )
+    db.close()
+  })
+
+  it('the initializeSchema refusal on an older schema uses the captured advice', async () => {
+    const db = await createSqlJsDatabase(nativeDb(LATEST_SCHEMA_VERSION - 1))
+    live.advice = { kind: 'no-prebuilt', target: 'freebsd-x64' }
+
+    const text = refusal(() => initializeSchema(db)).message
+    expect(text).toContain('cannot be upgraded while it is read-only')
+    expect(text).toContain('npm rebuild better-sqlite3')
+    expect(text).not.toContain('freebsd-x64')
     db.close()
   })
 

@@ -13,7 +13,11 @@ import Module, { createRequire } from 'node:module'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { adviseFor, type NativePlatform } from '../../src/db/drivers/native-driver-advice.js'
+import {
+  adviseFor,
+  PREBUILT_GLIBC_FLOOR,
+  type NativePlatform,
+} from '../../src/db/drivers/native-driver-advice.js'
 import { isBetterSqlite3Available } from '../../src/db/drivers/betterSqlite3Driver.js'
 import { wasmOpenNotice, wasmReadOnlyError, type WasmAdvice } from '../../src/db/wasm-read-only.js'
 
@@ -29,8 +33,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-const LINUX_X64: NativePlatform = { platform: 'linux', arch: 'x64', isMusl: () => false }
-const MUSL_X64: NativePlatform = { platform: 'linux', arch: 'x64', isMusl: () => true }
+const glibc = (version: string): NativePlatform => ({
+  platform: 'linux',
+  arch: 'x64',
+  glibcVersionRuntime: () => version,
+})
+const LINUX_X64 = glibc('2.36')
+const MUSL_X64: NativePlatform = {
+  platform: 'linux',
+  arch: 'x64',
+  glibcVersionRuntime: () => undefined,
+}
 
 /**
  * Node's own resolution from inside the fixture, confined to it: a package
@@ -114,9 +127,50 @@ describe('SMI-7271: advice from the installed package', () => {
     })
   })
 
+  it('glibc 2.31, below the 13.0.3 prebuilds’ measured floor: glibc-too-old', () => {
+    installPackage(V13, { 'prebuilds/linux-x64.node': 'x' })
+    expect(PREBUILT_GLIBC_FLOOR).toBe('2.34')
+    expect(adviseFor(fixtureResolve, glibc('2.31'))).toEqual({
+      kind: 'glibc-too-old',
+      target: 'linux-x64',
+      runtime: '2.31',
+      required: '2.34',
+    })
+  })
+
+  it('glibc 2.34, at the floor: prebuilt-failed', () => {
+    installPackage(V13, { 'prebuilds/linux-x64.node': 'x' })
+    expect(adviseFor(fixtureResolve, glibc('2.34'))).toEqual({
+      kind: 'prebuilt-failed',
+      target: 'linux-x64',
+    })
+  })
+
+  it('glibc 2.4 is older than 2.34 (numeric, not string, comparison)', () => {
+    installPackage(V13, { 'prebuilds/linux-x64.node': 'x' })
+    expect(adviseFor(fixtureResolve, glibc('2.4')).kind).toBe('glibc-too-old')
+  })
+
+  it('musl is unaffected by the glibc floor', () => {
+    installPackage(V13, { 'prebuilds/linuxmusl-x64.node': 'x' })
+    expect(adviseFor(fixtureResolve, MUSL_X64)).toEqual({
+      kind: 'prebuilt-failed',
+      target: 'linuxmusl-x64',
+    })
+  })
+
+  it('a package that can build ignores the floor (it builds against this glibc)', () => {
+    installPackage(V12, { 'binding.gyp': '{}', 'prebuilds/linux-x64.node': 'x' })
+    expect(adviseFor(fixtureResolve, glibc('2.31'))).toEqual({ kind: 'rebuild' })
+  })
+
   it('an unsupported platform is no-prebuilt even with a matching file', () => {
     installPackage(V13, { 'prebuilds/freebsd-x64.node': 'x' })
-    const freebsd: NativePlatform = { platform: 'freebsd', arch: 'x64', isMusl: () => false }
+    const freebsd: NativePlatform = {
+      platform: 'freebsd',
+      arch: 'x64',
+      glibcVersionRuntime: () => undefined,
+    }
     expect(adviseFor(fixtureResolve, freebsd)).toEqual({
       kind: 'no-prebuilt',
       target: 'freebsd-x64',
@@ -194,10 +248,28 @@ describe('SMI-7271: the remedy text for each advice', () => {
 
     it('prebuilt-failed: reinstall, never a rebuild', () => {
       const text = render({ kind: 'prebuilt-failed', target: 'linux-arm64' })
-      expect(text).toContain('for linux-arm64 failed to load')
+      expect(text).toContain('for linux-arm64 failed to load (the file may be damaged)')
       expect(text).toContain('reinstall Skillsmith, then restart')
+      expect(text).not.toContain('Node.js')
       expect(text).toContain('SKILLSMITH_DEBUG=1')
       expect(text).not.toContain('npm rebuild')
+      expect(text).not.toContain('install scripts')
+    })
+
+    it('glibc-too-old: names both versions and the ways out, never a rebuild or reinstall', () => {
+      const text = render({
+        kind: 'glibc-too-old',
+        target: 'linux-x64',
+        runtime: '2.31',
+        required: '2.34',
+      })
+      expect(text).toContain('needs glibc 2.34 or newer')
+      expect(text).toContain('this system has glibc 2.31')
+      expect(text).toContain('reads but cannot save')
+      expect(text).toContain('Upgrade to a distribution with glibc 2.34 or newer')
+      expect(text).toContain('Skillsmith MCP server, whose native driver builds on older systems')
+      expect(text).not.toContain('rebuild')
+      expect(text).not.toContain('reinstall')
       expect(text).not.toContain('install scripts')
     })
 

@@ -28,21 +28,29 @@ const require = createRequire(import.meta.url)
  *   unreadable): it was skipped (`--omit=optional`) or failed to install.
  * - `rebuild`: the package can build its binary (12.x).
  * - `no-prebuilt`: a prebuilt-only package (13.x) with no binary for `target`.
+ * - `glibc-too-old`: a prebuilt-only package whose linux-glibc binary for
+ *   `target` exists but needs a newer glibc (`required`) than this system's
+ *   (`runtime`). No reinstall or rebuild changes that.
  * - `prebuilt-failed`: a prebuilt-only package whose binary for `target` exists
- *   and did not load (damaged, or it does not match this Node.js).
+ *   and did not load (the file may be damaged).
  */
 export type NativeDriverAdvice =
   | { kind: 'not-installed' }
   | { kind: 'rebuild' }
   | { kind: 'no-prebuilt'; target: string }
+  | { kind: 'glibc-too-old'; target: string; runtime: string; required: string }
   | { kind: 'prebuilt-failed'; target: string }
 
 /** The platform facts the prebuilt lookup needs; injectable for tests. */
 export interface NativePlatform {
   platform: string
   arch: string
-  /** Only consulted on linux, like better-sqlite3's own rule. */
-  isMusl: () => boolean
+  /**
+   * The runtime glibc version (`process.report` header `glibcVersionRuntime`),
+   * or `undefined` on musl. Only consulted on linux, like better-sqlite3's own
+   * rule: on linux, no glibc version means musl.
+   */
+  glibcVersionRuntime: () => string | undefined
 }
 
 // better-sqlite3 13's own rule, lib/binding.js (getPrebuildPath, isLinuxMusl).
@@ -53,24 +61,41 @@ const PREBUILD_ARCHS = ['x64', 'arm64']
 export const SUPPORTED_PREBUILDS = 'darwin, linux, linuxmusl and win32, on x64 or arm64'
 
 /**
- * Musl detection exactly as better-sqlite3 13 does it. Measured (SMI-7271):
- * `glibcVersionRuntime` is "2.36" in the node:22-slim dev container and absent
+ * The newest glibc symbol version better-sqlite3 13.0.3's linux prebuilds
+ * require. Measured (SMI-7271): `objdump -T` on the 13.0.3 tarball's
+ * `prebuilds/linux-x64.node` and `prebuilds/linux-arm64.node` both top out at
+ * `GLIBC_2.34`. A pin change must re-measure this.
+ */
+export const PREBUILT_GLIBC_FLOOR = '2.34'
+
+/**
+ * The runtime glibc version, read where better-sqlite3 13 reads it to detect
+ * musl. Measured (SMI-7271): "2.36" in the node:22-slim dev container, absent
  * under Alpine's musl Node.
  */
-function hostIsMusl(): boolean {
+function hostGlibcVersion(): string | undefined {
   const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } }
-  return !report.header?.glibcVersionRuntime
+  return report.header?.glibcVersionRuntime || undefined
 }
 
 const HOST: NativePlatform = {
   platform: process.platform,
   arch: process.arch,
-  isMusl: hostIsMusl,
+  glibcVersionRuntime: hostGlibcVersion,
+}
+
+/** Whether glibc `version` is older than `floor` ("major.minor"); false if unparseable. */
+function glibcOlderThan(version: string, floor: string): boolean {
+  const parse = (v: string) => /^(\d+)\.(\d+)/.exec(v)?.slice(1, 3).map(Number)
+  const have = parse(version)
+  const need = parse(floor)
+  if (have === undefined || need === undefined) return false
+  return have[0] !== need[0] ? have[0] < need[0] : have[1] < need[1]
 }
 
 /** The `prebuilds/` basename better-sqlite3 13 would load on this platform. */
 export function prebuildTarget(p: NativePlatform): string {
-  const os = p.platform === 'linux' && p.isMusl() ? 'linuxmusl' : p.platform
+  const os = p.platform === 'linux' && !p.glibcVersionRuntime() ? 'linuxmusl' : p.platform
   return `${os}-${p.arch}`
 }
 
@@ -112,9 +137,15 @@ export function adviseFor(
   const target = prebuildTarget(platform)
   const supported =
     PREBUILD_PLATFORMS.includes(platform.platform) && PREBUILD_ARCHS.includes(platform.arch)
-  return supported && existsSync(join(root, 'prebuilds', `${target}.node`))
-    ? { kind: 'prebuilt-failed', target }
-    : { kind: 'no-prebuilt', target }
+  if (!supported || !existsSync(join(root, 'prebuilds', `${target}.node`))) {
+    return { kind: 'no-prebuilt', target }
+  }
+  // A linux-glibc prebuild that needs a newer glibc than this system has.
+  const runtime = platform.platform === 'linux' ? platform.glibcVersionRuntime() : undefined
+  if (runtime !== undefined && glibcOlderThan(runtime, PREBUILT_GLIBC_FLOOR)) {
+    return { kind: 'glibc-too-old', target, runtime, required: PREBUILT_GLIBC_FLOOR }
+  }
+  return { kind: 'prebuilt-failed', target }
 }
 
 /** Advice for the better-sqlite3 this process would load. */

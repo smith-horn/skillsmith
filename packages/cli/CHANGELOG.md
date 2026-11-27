@@ -9,8 +9,11 @@ All notable changes to `@skillsmith/cli` are documented here.
   reinstall Skillsmith without `--omit=optional`, or fix npm's install error first. The CLI's
   13.0.3 builds nothing (`gypfile: false`, no install script), so it is never told to rebuild:
   with no prebuilt binary for this platform the message names the platform and the supported ones
-  (darwin, linux, linuxmusl and win32, on x64 or arm64); with one that did not load (damaged, or
-  not matching this Node.js) it says to reinstall Skillsmith. Before, every case said to reinstall
+  (darwin, linux, linuxmusl and win32, on x64 or arm64); on a linux system whose glibc is older
+  than 2.34, which 13.0.3's linux prebuilds need, it names both glibc versions and says to upgrade
+  to a distribution with glibc 2.34 or newer or to use the Skillsmith MCP server, whose native
+  driver builds on older systems; with a binary that did not load otherwise (the file may be
+  damaged) it says to reinstall Skillsmith. Before, every case said to reinstall
   with install scripts enabled, which does nothing for 13.0.3. `skillsmith list` on a database
   another process is writing now says the database "is being written by another process; try
   again" instead of "could not be queried".

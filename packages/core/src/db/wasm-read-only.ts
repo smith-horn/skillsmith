@@ -11,7 +11,8 @@
  * package that is not installed needs a reinstall with optional dependencies; a
  * package that builds (12.x, the MCP server's) needs a rebuild; a prebuilt-only
  * package (13.x, the CLI's) is never told to rebuild, and is told instead that
- * no binary exists for the platform, or that the one there did not load. When
+ * no binary exists for the platform, that the one there needs a newer glibc,
+ * or that the one there did not load. When
  * `SKILLSMITH_FORCE_WASM` is set the remedy names that variable, because
  * reinstalling would not change anything.
  *
@@ -75,10 +76,18 @@ function remedy(advice: WasmAdvice | undefined): string {
         `supported: ${SUPPORTED_PREBUILDS}. Here the WASM driver reads but cannot save. ` +
         DEBUG_HINT
       )
+    case 'glibc-too-old':
+      // No rebuild or reinstall: the prebuilt binary needs a newer glibc.
+      return (
+        `The prebuilt native SQLite driver for ${advice.target} needs glibc ${advice.required} ` +
+        `or newer, and this system has glibc ${advice.runtime}, so here the WASM driver reads ` +
+        `but cannot save. Upgrade to a distribution with glibc ${advice.required} or newer, or ` +
+        `use the Skillsmith MCP server, whose native driver builds on older systems. ${DEBUG_HINT}`
+      )
     case 'prebuilt-failed':
       return (
-        `The prebuilt native SQLite driver for ${advice.target} failed to load (damaged, or it ` +
-        `does not match this Node.js): reinstall Skillsmith, then restart. ${DEBUG_HINT}`
+        `The prebuilt native SQLite driver for ${advice.target} failed to load (the file may ` +
+        `be damaged): reinstall Skillsmith, then restart. ${DEBUG_HINT}`
       )
     default:
       // A handle with no captured advice: not opened by the sql.js driver, so
