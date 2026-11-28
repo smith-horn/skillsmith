@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.8.1
+
 - **Fixed**: SMI-7271 -- (#3290 retro) on the WASM driver, the read-only notice and the error a
   refused write returns choose their fix from the installed `better-sqlite3`, not from its load
   error: when it is not installed at all, reinstall without `--omit=optional` (or fix npm's install

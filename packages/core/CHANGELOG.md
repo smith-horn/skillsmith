@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+## v0.15.0
+
 - **Fixed**: SMI-7271 -- (#3290 retro) the WASM read-only notice and `DatabaseReadOnlyDriverError`
   choose their remedy from what the installed better-sqlite3 package can do, never from the shape
   of its load error (which stays the cause, shown under `SKILLSMITH_DEBUG`). A package that does
