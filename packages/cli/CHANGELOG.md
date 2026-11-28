@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.8.17
+
 - **Fixed**: SMI-7271 -- (#3290 retro) the read-only notice and the write refusal on the WASM
   driver name a fix that works for the installed `better-sqlite3`. When it is not installed:
   reinstall Skillsmith without `--omit=optional`, or fix npm's install error first. The CLI's
